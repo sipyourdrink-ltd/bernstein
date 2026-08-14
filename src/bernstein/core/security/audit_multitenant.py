@@ -85,7 +85,7 @@ from bernstein.core.security.audit_head_signature import (
     build_head_signature,
     verify_head_signature,
 )
-from bernstein.core.security.tenanting import normalize_tenant_id
+from bernstein.core.security.tenanting import normalize_tenant_id, try_normalize_tenant_id
 
 if TYPE_CHECKING:
     from cryptography import x509
@@ -243,17 +243,23 @@ def _read_audit_events(audit_dir: Path) -> list[dict[str, Any]]:
     return events
 
 
-def _event_tenant_id(event: dict[str, Any]) -> str:
+def _event_tenant_id(event: dict[str, Any]) -> str | None:
     """Extract the canonical tenant id for an event.
 
-    Looks at ``details.tenant_id`` first (the canonical opt-in path);
-    falls back to ``DEFAULT_TENANT_ID`` via :func:`normalize_tenant_id`.
+    Looks at ``details.tenant_id`` first (the canonical opt-in path); an
+    absent value falls back to ``DEFAULT_TENANT_ID``.
+
+    The stored value is read as written rather than coerced. ``str()`` on a
+    ``true`` or a ``123`` yields a string the tenant rules accept, so a
+    malformed event would have been exported and matched under a tenant name
+    nothing wrote it for. A value that cannot be read returns ``None``, which
+    matches no tenant.
     """
     details = event.get("details") or {}
     raw = None
     if isinstance(details, dict):
         raw = details.get("tenant_id")
-    return normalize_tenant_id(str(raw) if raw is not None else None)
+    return try_normalize_tenant_id(raw)
 
 
 def _event_in_window(event: dict[str, Any], since: str, until: str) -> bool:
@@ -616,15 +622,25 @@ def _verify_anchor_consistency(bundle: dict[str, Any]) -> list[str]:
 def _verify_tenant_purity(
     bundle: dict[str, Any],
 ) -> list[str]:
-    """Ensure every event in the slice carries the declared tenant id."""
-    declared = normalize_tenant_id(str(bundle.get("tenant_id", "")))
+    """Ensure every event in the slice carries the declared tenant id.
+
+    Values are read as stored. Coercing with ``str()`` first turned a bundle
+    carrying a ``true`` or a ``123`` into one declaring a valid-looking tenant,
+    so a malformed slice verified clean. Reading them as written also keeps
+    this a verifier: an unreadable value is one more error in the returned
+    list, where strict normalization would have raised out of the check and
+    left the caller with no findings at all.
+    """
+    declared = try_normalize_tenant_id(bundle.get("tenant_id"))
     errors: list[str] = []
+    if declared is None:
+        errors.append(f"tenant_id: unreadable declared tenant {bundle.get('tenant_id')!r}")
     for idx, event in enumerate(bundle.get("events") or []):
         details = event.get("details") or {}
-        observed = normalize_tenant_id(
-            str(details.get("tenant_id", "")) if isinstance(details, dict) else None,
-        )
-        if observed != declared:
+        observed = try_normalize_tenant_id(details.get("tenant_id") if isinstance(details, dict) else None)
+        if observed is None:
+            errors.append(f"events[{idx}]: unreadable tenant_id {details.get('tenant_id')!r}")
+        elif observed != declared:
             errors.append(
                 f"events[{idx}]: tenant_id mismatch (declared {declared!r}, observed {observed!r})",
             )

@@ -614,3 +614,59 @@ class TestInputValidation:
             write=False,
         )
         assert export.tenant_id == "default"
+
+
+class TestMalformedTenantValuesAreReportedNotCoerced:
+    """A bundle's tenant fields are read as written.
+
+    `str()` on a stored `true` or `123` yields a string the tenant rules
+    accept, so a bundle declaring one verified clean under a tenant name
+    nothing wrote it for.
+    """
+
+    @pytest.mark.parametrize("malformed", [True, 123, "../escape", "tenant with spaces"])
+    def test_unreadable_declared_tenant_is_an_error_not_a_pass(self, tmp_path: Path, malformed: object) -> None:
+        audit_dir = tmp_path / ".sdd" / "audit"
+        _seed_two_tenants(audit_dir)
+        since, until = _today_window()
+        export = export_tenant_slice(
+            audit_dir=audit_dir,
+            tenant_id="acme",
+            since=since,
+            until=until,
+            key=_TEST_KEY,
+            output_dir=tmp_path / "out",
+            write=True,
+        )
+        assert export.bundle_path is not None
+        bundle = json.loads(export.bundle_path.read_text(encoding="utf-8"))
+        bundle["tenant_id"] = malformed
+
+        result = verify_tenant_slice(bundle, key=_TEST_KEY)
+
+        assert not result.ok
+        assert any("tenant" in err for err in result.errors)
+
+    def test_verification_returns_findings_rather_than_raising(self, tmp_path: Path) -> None:
+        """A verifier that raises leaves the caller with no findings at all."""
+        audit_dir = tmp_path / ".sdd" / "audit"
+        _seed_two_tenants(audit_dir)
+        since, until = _today_window()
+        export = export_tenant_slice(
+            audit_dir=audit_dir,
+            tenant_id="acme",
+            since=since,
+            until=until,
+            key=_TEST_KEY,
+            output_dir=tmp_path / "out",
+            write=True,
+        )
+        assert export.bundle_path is not None
+        bundle = json.loads(export.bundle_path.read_text(encoding="utf-8"))
+        for event in bundle.get("events") or []:
+            event.setdefault("details", {})["tenant_id"] = "../escape"
+
+        result = verify_tenant_slice(bundle, key=_TEST_KEY)
+
+        assert not result.ok
+        assert result.errors

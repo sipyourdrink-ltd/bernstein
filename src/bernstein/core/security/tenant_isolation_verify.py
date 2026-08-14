@@ -21,7 +21,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.security.tenant_isolation import tenant_data_paths
-from bernstein.core.security.tenanting import normalize_tenant_id, try_normalize_tenant_id
+from bernstein.core.security.tenanting import (
+    DEFAULT_TENANT_ID,
+    normalize_tenant_id,
+    try_normalize_tenant_id,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -38,10 +42,20 @@ def _tenant_fields(record: dict[str, Any], *fields: str) -> tuple[set[str], list
     scan would report clean for a record it can in fact attribute. Which field
     a writer used is a question about the record's age, not about who owns it.
 
-    A field that is absent, null, or blank states nothing and is skipped -- it
-    is not evidence either way. A field that holds something the tenant rules
-    cannot read is reported: the record names an owner, and the scan cannot
-    say who. That is the case a caller must not silently treat as clean.
+    Each field is looked for at the top level and inside ``labels``, because
+    the metrics collector puts the tenant in the label map rather than beside
+    it. A scan that read only the top level saw none of its records' owners.
+
+    A field that is absent, null, or blank states nothing and is skipped. A
+    field holding something the tenant rules cannot read is reported instead:
+    the record names an owner and the scan cannot say who, which is the case a
+    caller must not treat as clean.
+
+    A record that states no owner anywhere is attributed to
+    ``DEFAULT_TENANT_ID``. That is the same reading `try_normalize_tenant_id`
+    gives an absent value and the same one `TaskStore.read_archive` filters by,
+    so a pre-tenancy row is verified rather than skipped by one surface and
+    counted by the other.
 
     Args:
         record: One decoded JSONL record.
@@ -52,19 +66,27 @@ def _tenant_fields(record: dict[str, Any], *fields: str) -> tuple[set[str], list
         fields that name an owner the rules cannot read.
     """
 
+    labels = record.get("labels")
+    sources: list[tuple[str, dict[str, Any]]] = [("", record)]
+    if isinstance(labels, dict):
+        sources.append(("labels.", labels))
+
     attributable: set[str] = set()
     unreadable: list[str] = []
-    for field in fields:
-        if field not in record:
-            continue
-        value = record[field]
-        if value is None or (isinstance(value, str) and not value.strip()):
-            continue
-        normalized = try_normalize_tenant_id(value)
-        if normalized is None:
-            unreadable.append(f"{field}={value!r}")
-        else:
-            attributable.add(normalized)
+    for prefix, source in sources:
+        for field in fields:
+            if field not in source:
+                continue
+            value = source[field]
+            if value is None or (isinstance(value, str) and not value.strip()):
+                continue
+            normalized = try_normalize_tenant_id(value)
+            if normalized is None:
+                unreadable.append(f"{prefix}{field}={value!r}")
+            else:
+                attributable.add(normalized)
+    if not attributable and not unreadable:
+        attributable.add(DEFAULT_TENANT_ID)
     return attributable, unreadable
 
 
@@ -504,6 +526,12 @@ class TenantIsolationVerifier:
                     record = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                # A JSONL line is valid JSON, not necessarily an object: an
+                # array, a scalar or `null` decodes fine and has no `.get`.
+                # Reading one raised `AttributeError` past the decode handler
+                # and ended the scan, so every later row went unchecked.
+                if not isinstance(record, dict):
+                    continue
                 # Unchanged, not coerced: `str()` on a stored `true` or `123`
                 # yields a string the tenant rules accept, which would sort the
                 # record into a tenant nothing wrote it for.
@@ -629,6 +657,10 @@ class TenantIsolationVerifier:
                 try:
                     record = json.loads(line)
                 except json.JSONDecodeError:
+                    continue
+                # An array, a scalar or `null` decodes fine and has no `.get`;
+                # reading one raised past the decode handler and ended the scan.
+                if not isinstance(record, dict):
                     continue
                 # Unchanged, not coerced: `str()` on a stored `true` or `123`
                 # yields a string the tenant rules accept, which would sort the
