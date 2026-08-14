@@ -1015,6 +1015,25 @@ def _parse_pyproject_scripts(pyproj: Path) -> dict[str, str]:
     return {str(k): str(v) for k, v in scripts.items()} if isinstance(scripts, dict) else {}
 
 
+#: A GitHub merge-queue ref: ``gh-readonly-queue/<base>/pr-<n>-<base_sha>``.
+#: The base branch may itself contain slashes, so the trailing ``pr-`` segment
+#: is what anchors the split.
+_MERGE_QUEUE_REF = re.compile(r"^gh-readonly-queue/(?P<base>.+)/pr-\d+-[0-9a-f]{7,40}$")
+
+
+def _base_branch_of_merge_queue_ref(branch: str) -> str | None:
+    """Return the base branch a merge-queue ref was built against.
+
+    A queued group is checked out as a real branch named after the ephemeral
+    ref, so the detached-HEAD guard in :func:`_git_default_branch` does not
+    fire and the ref name would otherwise be rendered into AGENTS.md as the
+    repository's default branch. Every entry in the queue would then fail the
+    mirror-drift guard, which blocks the queue rather than reporting a defect.
+    """
+    match = _MERGE_QUEUE_REF.match(branch)
+    return match.group("base") if match else None
+
+
 def _git_default_branch(repo_path: Path) -> str | None:
     """Return the default branch (``main``/``master``/...) or ``None``.
 
@@ -1033,6 +1052,10 @@ def _git_default_branch(repo_path: Path) -> str | None:
        current branch name when neither ``main`` nor ``master`` exists.
        Skipped when HEAD is detached (returns the literal ``HEAD``)
        because that would inject the PR-branch name into AGENTS.md.
+       A merge-queue ref is checked out *as a branch*, not detached, so
+       the detached-HEAD guard does not cover it; the base branch is
+       recovered from the ref's own shape instead (see
+       ``_base_branch_of_merge_queue_ref``).
     """
     try:
         result = subprocess.run(
@@ -1075,6 +1098,9 @@ def _git_default_branch(repo_path: Path) -> str | None:
         )
         if result.returncode == 0:
             branch = result.stdout.strip()
+            queue_base = _base_branch_of_merge_queue_ref(branch)
+            if queue_base:
+                return queue_base
             if branch and branch != "HEAD":
                 return branch
     except (subprocess.TimeoutExpired, OSError):
