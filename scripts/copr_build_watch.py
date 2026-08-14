@@ -36,8 +36,17 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 API_URL = "https://copr.fedorainfracloud.org/api_3/build/{build_id}"
+CHROOT_API_URL = "https://copr.fedorainfracloud.org/api_3/build-chroot/list?build_id={build_id}"
 BUILD_URL = "https://copr.fedorainfracloud.org/coprs/build/{build_id}"
 USER_AGENT = "bernstein-copr-build-watch"
+
+# Copr reports one state for the whole build, and that state is `failed` when
+# any single chroot failed. `publish.yml` deliberately submits to rawhide
+# without gating the release on it: rawhide is a moving target whose churn
+# costs more than it catches. Reading the aggregate state alone contradicts
+# that, so a `failed` aggregate is re-read per chroot and only the gating ones
+# decide the verdict.
+NON_GATING_CHROOT_MARKERS = ("rawhide",)
 
 SUCCESS_STATES = frozenset({"succeeded"})
 # `skipped` means Copr already had this exact build and did not rebuild it. It
@@ -61,6 +70,17 @@ def classify(state: str) -> str:
     return "pending"
 
 
+def is_gating_chroot(name: str) -> bool:
+    """Return whether a chroot's outcome decides the release verdict."""
+    lowered = name.strip().lower()
+    return not any(marker in lowered for marker in NON_GATING_CHROOT_MARKERS)
+
+
+def failed_gating_chroots(chroots: dict[str, str]) -> list[str]:
+    """Return the gating chroots that did not succeed."""
+    return sorted(name for name, state in chroots.items() if is_gating_chroot(name) and classify(state) == "failure")
+
+
 def fetch_state(build_id: int) -> str:
     """Return the current Copr state for ``build_id``."""
     # Fixed https API host, no user-controlled scheme.
@@ -73,10 +93,64 @@ def fetch_state(build_id: int) -> str:
     return str(payload["state"])
 
 
+def fetch_chroots(build_id: int) -> dict[str, str]:
+    """Return ``{chroot name: state}`` for ``build_id``."""
+    # Fixed https API host, no user-controlled scheme.
+    request = urllib.request.Request(
+        CHROOT_API_URL.format(build_id=build_id),
+        headers={"User-Agent": USER_AGENT},
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        payload = json.load(response)
+    items = payload if isinstance(payload, list) else payload["items"]
+    return {str(item["name"]): str(item["state"]) for item in items}
+
+
+def _verdict_from_chroots(
+    build_id: int,
+    build_url: str,
+    *,
+    fetch_chroot_states: Callable[[int], dict[str, str]],
+) -> int:
+    """Decide a `failed` aggregate by the gating chroots alone.
+
+    Returns 0 when every failure sits in a non-gating chroot and at least one
+    gating chroot published, 1 otherwise. An unreadable chroot list is a
+    failure: an aggregate that says `failed` with no evidence about where is
+    not something to wave through.
+    """
+    try:
+        chroots = fetch_chroot_states(build_id)
+    except READ_ERRORS as exc:
+        print(f"::error::Copr build {build_id} failed and its chroots were unreadable ({exc}): {build_url}")
+        return 1
+
+    blocking = failed_gating_chroots(chroots)
+    if blocking:
+        print(f"::error::Copr build {build_id} failed on gating chroot(s) {', '.join(blocking)}: {build_url}")
+        return 1
+
+    published = sorted(
+        name for name, state in chroots.items() if is_gating_chroot(name) and classify(state) == "success"
+    )
+    if not published:
+        print(f"::error::Copr build {build_id} published no gating chroot: {build_url}")
+        return 1
+
+    tolerated = sorted(name for name in chroots if not is_gating_chroot(name))
+    print(
+        f"::notice::Copr build {build_id} published {len(published)} gating chroot(s) "
+        f"({', '.join(published)}); non-gating {', '.join(tolerated)} did not build and "
+        f"does not hold the release: {build_url}"
+    )
+    return 0
+
+
 def watch(
     build_id: int,
     *,
     fetch: Callable[[int], str] = fetch_state,
+    fetch_chroot_states: Callable[[int], dict[str, str]] = fetch_chroots,
     deadline_seconds: float = 900,
     poll_seconds: float = 30,
     time_fn: Callable[[], float] = time.monotonic,
@@ -104,6 +178,8 @@ def watch(
                 print(f"Copr published build {build_id}: {build_url}")
                 return 0
             if verdict == "failure":
+                if state.strip().lower() == "failed":
+                    return _verdict_from_chroots(build_id, build_url, fetch_chroot_states=fetch_chroot_states)
                 print(f"::error::Copr build {build_id} ended in state '{state}': {build_url}")
                 return 1
 

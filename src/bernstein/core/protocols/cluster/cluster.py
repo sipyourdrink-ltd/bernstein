@@ -211,6 +211,21 @@ class NodeRegistry:
         """Look up a node by ID."""
         return self._nodes.get(node_id)
 
+    def find_by_identity(self, name: str, url: str) -> NodeInfo | None:
+        """Look up a node by its operator-visible identity (name + url).
+
+        ``register`` keys on the node id, which a caller that mints a fresh
+        ``NodeInfo`` per attempt does not carry across a restart. Registration
+        surfaces use this to resolve the id an already-known worker was given,
+        so a restarting worker updates its entry instead of adding one.
+
+        A blank ``name`` or ``url`` never matches: those carry no identity, so
+        collapsing them would merge unrelated anonymous nodes into one entry.
+        """
+        if not name or not url:
+            return None
+        return next((n for n in self._nodes.values() if n.name == name and n.url == url), None)
+
     def list_nodes(self, status: NodeStatus | None = None) -> list[NodeInfo]:
         """List all nodes, optionally filtered by status."""
         nodes = list(self._nodes.values())

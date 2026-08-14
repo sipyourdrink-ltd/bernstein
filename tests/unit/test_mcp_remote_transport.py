@@ -180,6 +180,32 @@ class TestRemoteMCPConfig:
         cfg = RemoteMCPConfig(host="127.0.0.1", auth_type="none")
         assert cfg.host == "127.0.0.1"
 
+    def test_auth_type_oauth_rejected_at_construction(self, _clear_token_env: None) -> None:
+        """auth_type='oauth' is documented nowhere and must not construct.
+
+        Regression test for issue #3463: the field comment used to list
+        "oauth" as a supported value while ``_authenticate`` silently denied
+        it, so a server configured this way looked valid and refused every
+        request, including correctly authenticated ones. Construction must
+        fail loudly instead.
+        """
+        with pytest.raises(RemoteMCPConfigError, match="auth_type='oauth'"):
+            RemoteMCPConfig(host="127.0.0.1", auth_type="oauth")
+
+    def test_auth_type_unknown_value_rejected_at_construction(self, _clear_token_env: None) -> None:
+        """Any auth_type outside {'none', 'bearer'} is refused, not just 'oauth'."""
+        with pytest.raises(RemoteMCPConfigError, match="auth_type='totally-bogus'"):
+            RemoteMCPConfig(host="127.0.0.1", auth_type="totally-bogus")
+
+    def test_auth_type_oauth_rejected_even_on_public_bind(self, _clear_token_env: None) -> None:
+        """The auth_type check runs before the loopback/token checks.
+
+        A caller cannot dodge the auth_type validation by also supplying a
+        token and a public bind -- the invalid mode is refused on its own.
+        """
+        with pytest.raises(RemoteMCPConfigError, match="auth_type='oauth'"):
+            RemoteMCPConfig(host="0.0.0.0", auth_type="oauth", auth_token="whatever")
+
 
 # ---------------------------------------------------------------------------
 # Authentication tests
@@ -216,6 +242,16 @@ class TestAuthentication:
         t = StreamableHTTPTransport(config=cfg)
         assert t._authenticate({"authorization": "Bearer "}) is False
         assert t._authenticate({"authorization": "Bearer anything"}) is False
+
+    @pytest.mark.anyio
+    async def test_unknown_auth_type_denies_as_defence_in_depth(self, transport: StreamableHTTPTransport) -> None:
+        """An auth_type outside {'none', 'bearer'} must still deny at
+        _authenticate, even though __post_init__ already blocks it from
+        reaching a live config through normal construction (frozen dataclass
+        bypassed here via object.__setattr__ to exercise the fallback)."""
+        object.__setattr__(transport._config, "auth_type", "oauth")
+        assert transport._authenticate({}) is False
+        assert transport._authenticate({"authorization": "Bearer anything"}) is False
 
 
 # ---------------------------------------------------------------------------

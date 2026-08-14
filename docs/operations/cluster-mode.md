@@ -171,13 +171,47 @@ Default scopes, defined in `cluster_auth.py:23-25`:
 
 | Scope             | Required by                                         |
 | ----------------- | --------------------------------------------------- |
-| `node:register`   | `POST /cluster/nodes`                               |
-| `node:heartbeat`  | `POST /cluster/nodes/{id}/heartbeat`                |
-| `node:admin`      | `cordon`, `uncordon`, `drain`, `DELETE /cluster/nodes` |
+| `node:register`   | `POST /cluster/nodes`, `ClusterService.RegisterNode` |
+| `node:heartbeat`  | `POST /cluster/nodes/{id}/heartbeat`, `ClusterService.Heartbeat`, `ClusterService.StreamHeartbeats` |
+| `node:admin`      | `cordon`, `uncordon`, `drain`, `DELETE /cluster/nodes`, and their `ClusterService` counterparts |
 
 The worker side of the flow lives in `worker_cmd.py:134-164` (registration)
 and `:165-190` (heartbeat). On HTTP 404 from the heartbeat the worker
 re-registers automatically (eviction recovery).
+
+### The gRPC cluster surface
+
+`ClusterService` (`proto/bernstein/v1/cluster.proto`) mirrors the routes above
+for node-to-node traffic. It is not started by anything in `src/` today; the
+notes here apply once an operator wires `BernsteinGrpcServer.start()` into a
+deployment.
+
+- **Same scopes, gRPC status codes.** Pass the `ClusterAuthenticator` as
+  `start(..., cluster_authenticator=...)` and every mutating RPC verifies it.
+  A missing or invalid credential is refused `UNAUTHENTICATED`; a valid
+  credential without the required scope is refused `PERMISSION_DENIED`. Reads
+  (`ListNodes`, `GetClusterStatus`) are unauthenticated, matching
+  `GET /cluster/nodes` and `GET /cluster/status`.
+- **Where the credential goes.** In the `authorization` call metadata as
+  `Bearer <token>` -- the gRPC counterpart of the HTTP header. Set
+  `GrpcClientConfig.auth_token` to the cluster secret or an operator-minted
+  node JWT.
+- **`RegisterNodeResponse.auth_token`.** Populated with a node JWT minted
+  against the registered node id, carrying `node:register` and
+  `node:heartbeat` (not `node:admin`). `ClusterClient` adopts it for every
+  subsequent call, so heartbeats travel under the node's own token rather than
+  the join credential. With no authenticator wired the field stays empty --
+  nothing would verify a token minted there.
+- **Re-registration is idempotent on node identity.** `RegisterNode` resolves
+  an existing entry by `(name, url)` and updates it. A worker that restarts
+  therefore refreshes its row instead of adding one, and `GET /cluster/status`
+  keeps counting its capacity once. A blank `name` or `url` never matches, so
+  anonymous registrations stay distinct.
+- **Insecure port.** Without `tls_cert_path` / `tls_key_path` the server binds
+  an insecure port. Credential enforcement is unaffected -- it lives in the
+  servicer, not the transport -- but node tokens then cross the wire in
+  cleartext, and the server logs a warning saying so. Terminate TLS in front of
+  the port or configure the cert pair.
 
 ## Operational primitives: drain / cordon / uncordon / steal
 

@@ -47,6 +47,12 @@ URL:            https://github.com/sipyourdrink-ltd/bernstein
 # (cryptography, pillow, lxml, pydantic-core, grpcio), so the built package is
 # specific to both the architecture and the interpreter ABI of its chroot.
 BuildRequires:  %{python_pkg}
+# A C++ toolchain, because not every chroot has a prebuilt wheel for every
+# dependency. On the released Fedora and EPEL chroots the closure resolves to
+# manylinux wheels and nothing compiles; on a chroot whose interpreter is ahead
+# of the wheel publishers - rawhide is permanently in that state - pip falls
+# back to building a sdist and the build dies on a missing `g++`.
+BuildRequires:  gcc-c++
 Requires:       %{python_pkg}
 
 # The venv is a self-contained tree. The manylinux wheels inside it carry their

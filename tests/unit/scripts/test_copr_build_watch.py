@@ -86,7 +86,7 @@ def test_succeeded_build_passes(mod: ModuleType) -> None:
     assert code == 0
 
 
-@pytest.mark.parametrize("state", ["failed", "canceled", "cancelled", "skipped"])
+@pytest.mark.parametrize("state", ["canceled", "cancelled", "skipped"])
 def test_terminal_failure_fails_the_job(mod: ModuleType, state: str, capsys: pytest.CaptureFixture[str]) -> None:
     """A build that ends badly must fail the job, not warn inside a green run."""
     clock = FakeClock()
@@ -104,6 +104,107 @@ def test_terminal_failure_fails_the_job(mod: ModuleType, state: str, capsys: pyt
     assert "::error::" in out
     assert state in out
     assert str(BUILD_ID) in out
+
+
+# A `failed` aggregate says only that some chroot failed, never which. Copr
+# reports it whether a released Fedora target broke or rawhide churned, and
+# publish.yml submits rawhide precisely because it does not gate the release.
+# These pin which of those a failed aggregate is allowed to mean.
+
+GATING_PUBLISHED = {
+    "fedora-43-x86_64": "succeeded",
+    "fedora-44-x86_64": "succeeded",
+    "epel-9-x86_64": "succeeded",
+    "epel-10-x86_64": "succeeded",
+}
+RAWHIDE_FAILED = {
+    "fedora-rawhide-x86_64": "failed",
+    "fedora-rawhide-aarch64": "failed",
+}
+
+
+def _chroots(states: dict[str, str]):
+    def fetch(build_id: int) -> dict[str, str]:
+        assert build_id == BUILD_ID
+        return dict(states)
+
+    return fetch
+
+
+def test_failure_confined_to_rawhide_does_not_hold_the_release(
+    mod: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Every released chroot published; only rawhide broke. That ships."""
+    clock = FakeClock()
+    code = mod.watch(
+        BUILD_ID,
+        fetch=_fetcher(["pending", "failed"]),
+        fetch_chroot_states=_chroots({**GATING_PUBLISHED, **RAWHIDE_FAILED}),
+        deadline_seconds=600,
+        poll_seconds=30,
+        time_fn=clock.time,
+        sleep_fn=clock.sleep,
+    )
+    assert code == 0
+
+    out = capsys.readouterr().out
+    assert "::error::" not in out
+    assert "::notice::" in out
+    assert "fedora-rawhide-x86_64" in out
+
+
+def test_failure_on_a_released_chroot_still_fails_the_job(mod: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:
+    """A broken Fedora 44 is a broken release, whatever rawhide did."""
+    clock = FakeClock()
+    code = mod.watch(
+        BUILD_ID,
+        fetch=_fetcher(["failed"]),
+        fetch_chroot_states=_chroots({**GATING_PUBLISHED, "fedora-44-x86_64": "failed", **RAWHIDE_FAILED}),
+        deadline_seconds=600,
+        poll_seconds=30,
+        time_fn=clock.time,
+        sleep_fn=clock.sleep,
+    )
+    assert code == 1
+
+    out = capsys.readouterr().out
+    assert "::error::" in out
+    assert "fedora-44-x86_64" in out
+
+
+def test_failure_with_no_gating_chroot_published_fails_the_job(mod: ModuleType) -> None:
+    """Tolerating rawhide must not tolerate a build that published nothing."""
+    clock = FakeClock()
+    code = mod.watch(
+        BUILD_ID,
+        fetch=_fetcher(["failed"]),
+        fetch_chroot_states=_chroots(RAWHIDE_FAILED),
+        deadline_seconds=600,
+        poll_seconds=30,
+        time_fn=clock.time,
+        sleep_fn=clock.sleep,
+    )
+    assert code == 1
+
+
+def test_failure_with_unreadable_chroots_fails_the_job(mod: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:
+    """A failure with no evidence about where is not something to wave through."""
+
+    def unreadable(build_id: int) -> dict[str, str]:
+        raise OSError("connection reset")
+
+    clock = FakeClock()
+    code = mod.watch(
+        BUILD_ID,
+        fetch=_fetcher(["failed"]),
+        fetch_chroot_states=unreadable,
+        deadline_seconds=600,
+        poll_seconds=30,
+        time_fn=clock.time,
+        sleep_fn=clock.sleep,
+    )
+    assert code == 1
+    assert "::error::" in capsys.readouterr().out
 
 
 def test_build_still_queued_at_the_deadline_hands_off_to_the_reconciler(

@@ -190,6 +190,99 @@ class TestMetricsDirContract:
             tenanting.tenant_metrics_dir(metrics, "..")
 
 
+class TestContainmentRoutedThroughPathContainment:
+    """`tenanting.py` delegates its realpath check to `path_containment`.
+
+    `tenant_paths` and `_tenant_metrics_anchor` must call
+    `bernstein.core.security.path_containment.contained_path` for the
+    containment check itself rather than re-deriving it locally (#3693: the
+    same shape #3692 removed elsewhere). Patching that name out from under
+    `tenanting` and asserting it fires is what proves the call site actually
+    routes through it, as opposed to merely producing an equivalent result
+    via independent logic.
+    """
+
+    def test_tenant_paths_delegates_the_containment_check_to_contained_path(
+        self, sdd_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from bernstein.core.security import path_containment, tenanting
+
+        calls: list[tuple[object, ...]] = []
+
+        def spy_contained_path(base: Path, *segments: str, label: str = "identifier") -> Path:
+            calls.append((base, *segments))
+            raise path_containment.PathContainmentError("forced for test")
+
+        monkeypatch.setattr(tenanting, "contained_path", spy_contained_path)
+
+        with pytest.raises(InvalidTenantIdError):
+            tenanting.tenant_paths(sdd_dir, "acme")
+        assert calls == [(sdd_dir, "acme")]
+
+    def test_tenant_metrics_dir_delegates_the_containment_check_to_contained_path(
+        self, sdd_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from bernstein.core.security import path_containment, tenanting
+
+        metrics = sdd_dir / "metrics"
+        metrics.mkdir()
+        calls: list[tuple[object, ...]] = []
+
+        def spy_contained_path(base: Path, *segments: str, label: str = "identifier") -> Path:
+            calls.append((base, *segments))
+            raise path_containment.PathContainmentError("forced for test")
+
+        monkeypatch.setattr(tenanting, "contained_path", spy_contained_path)
+
+        with pytest.raises(InvalidTenantIdError):
+            tenanting.tenant_metrics_dir(metrics, "acme")
+        assert calls == [(sdd_dir, "acme", "metrics")]
+
+    def test_tenant_paths_refuses_an_escaping_id_without_touching_the_filesystem(
+        self, sdd_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from bernstein.core.security import tenanting
+
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (sdd_dir / "acme").symlink_to(outside, target_is_directory=True)
+        monkeypatch.setattr(tenanting, "normalize_tenant_id", lambda raw: str(raw))
+
+        with pytest.raises(InvalidTenantIdError):
+            tenanting.tenant_paths(sdd_dir, "acme")
+        assert list(outside.iterdir()) == []
+
+    def test_ensure_tenant_layout_refuses_an_escaping_id_before_any_mkdir(
+        self, sdd_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from bernstein.core.security import tenanting
+
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (sdd_dir / "acme").symlink_to(outside, target_is_directory=True)
+        monkeypatch.setattr(tenanting, "normalize_tenant_id", lambda raw: str(raw))
+
+        with pytest.raises(InvalidTenantIdError):
+            tenanting.ensure_tenant_layout(sdd_dir, "acme")
+        assert list(outside.iterdir()) == []
+
+    def test_tenant_metrics_dir_refuses_an_escaping_id_via_symlinked_tenant_segment(
+        self, sdd_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from bernstein.core.security import tenanting
+
+        metrics = sdd_dir / "metrics"
+        metrics.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (sdd_dir / "acme").symlink_to(outside, target_is_directory=True)
+        monkeypatch.setattr(tenanting, "normalize_tenant_id", lambda raw: str(raw))
+
+        with pytest.raises(InvalidTenantIdError):
+            tenanting.tenant_metrics_dir(metrics, "acme")
+        assert not (outside / "metrics").exists()
+
+
 def test_layout_is_created_when_the_sdd_directory_does_not_exist_yet(tmp_path: Path) -> None:
     """A first run in an empty project must create the layout, not refuse it.
 
