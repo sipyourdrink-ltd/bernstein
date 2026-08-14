@@ -281,24 +281,50 @@ headroom, and `resume` restores from that receipt.
 | `resume TASK_ID` | Resume a parked task from its attested suspend receipt. | `cli/commands/task_cmd.py:1035` |
 | `list-suspended` | List parked tasks with their parked-at hash and freed resources. | `cli/commands/task_cmd.py:1154` |
 
-`complete` resolves the task-server URL and the session token itself, from
+The group itself takes no flags beyond `--help`; each subcommand carries its
+own, below.
+
+##### `bernstein task complete`
+
+Resolves the task-server URL and the session token itself, from
 `BERNSTEIN_SERVER_URL` / `.sdd/runtime/server.port` and `BERNSTEIN_AUTH_TOKEN`
 / the persisted run-token file, so a completion does not have to be
 hand-assembled as a request with a bearer header.
 
-| Flag | Applies to | Default | Meaning |
-|---|---|---|---|
-| `--summary TEXT` / `-s` | `complete` | required | Result summary recorded on the task (max 2000 chars). |
-| `--workdir PATH` | `suspend`, `resume`, `list-suspended` | `.` | Project root (the parent of `.sdd/`). |
-| `--adapter TEXT` | `suspend` | latest checkpoint | Adapter owning the session. |
-| `--session-id TEXT` | `suspend` | latest checkpoint | Native session id. |
-| `--worktree TEXT` | `suspend`, `resume` | checkpoint worktree / parked path | Worktree to hash. |
-| `--envelope TEXT` | `suspend` | `subscription` | Quota envelope whose headroom is freed. |
-| `--reserved-usd FLOAT` | `suspend` | none | Envelope headroom reserved for the task. |
-| `--spent-usd FLOAT` | `suspend` | none | Spend recorded against the reservation at park time. |
-| `--until approval` | `suspend` | off | Resume only once `bernstein approve TASK_ID` lands. |
-| `--mode [warm\|fork\|cold]` | `resume` | `warm` | Requested continuation mode; downgraded, never upgraded, on drift. |
-| `--json` | all four | off | Emit the result as JSON instead of a table. |
+| Flag | Default | Meaning |
+|---|---|---|
+| `--summary TEXT` / `-s` | required | Result summary recorded on the task (max 2000 chars). |
+| `--json` | off | Print the server's task payload as JSON. |
+
+##### `bernstein task suspend`
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--workdir PATH` | `.` | Project root (the parent of `.sdd/`). |
+| `--adapter TEXT` | latest checkpoint | Adapter owning the session. |
+| `--session-id TEXT` | latest checkpoint | Native session id. |
+| `--worktree TEXT` | checkpoint worktree, else cwd | Worktree to hash. |
+| `--envelope TEXT` | `subscription` | Quota envelope whose headroom is freed. |
+| `--reserved-usd FLOAT` | none | Envelope headroom reserved for the task. |
+| `--spent-usd FLOAT` | none | Spend recorded against the reservation at park time. |
+| `--until approval` | off | Resume only once `bernstein approve TASK_ID` lands. |
+| `--json` | off | Print the park result as JSON. |
+
+##### `bernstein task resume`
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--workdir PATH` | `.` | Project root (the parent of `.sdd/`). |
+| `--worktree TEXT` | the parked path | Re-materialized worktree to hash. |
+| `--mode [warm\|fork\|cold]` | `warm` | Requested continuation mode; downgraded, never upgraded, on drift. |
+| `--json` | off | Print the resume result as JSON. |
+
+##### `bernstein task list-suspended`
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--workdir PATH` | `.` | Project root (the parent of `.sdd/`). |
+| `--json` | off | Print the parked tasks as JSON. |
 
 ---
 
