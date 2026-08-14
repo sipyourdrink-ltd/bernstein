@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import yaml
 
+from bernstein.evolution.admission import AdmissionPolicy
 from bernstein.evolution.proposals import UpgradeCategory, UpgradeProposal
 from bernstein.evolution.upgrade_targets import upgrade_target_paths
 
@@ -38,32 +39,64 @@ class FileUpgradeExecutor:
     Supports atomic file writes with rollback capability.
     """
 
-    def __init__(self, state_dir: Path) -> None:
+    def __init__(
+        self,
+        state_dir: Path,
+        admission: AdmissionPolicy | None = None,
+    ) -> None:
         self.state_dir = state_dir
         self.upgrades_dir = state_dir / "upgrades"
         self.config_dir = state_dir / "config"
         self.upgrades_dir.mkdir(parents=True, exist_ok=True)
         self.config_dir.mkdir(parents=True, exist_ok=True)
 
+        # The gate lives here rather than at each call site: both the
+        # EvolutionLoop path and the older EvolutionEngine.execute_pending_upgrades
+        # path reach the same executor, so one wiring covers both without
+        # copying a gate into each.
+        self._admission = admission if admission is not None else AdmissionPolicy()
+
         self._backup_files: dict[str, Path] = {}
 
     def execute_upgrade(self, proposal: UpgradeProposal) -> bool:
-        """Execute an upgrade by applying configuration changes."""
+        """Execute an upgrade by applying configuration changes.
+
+        Admission is checked first: a proposal whose producer has no measured
+        history, or a poor one, does not reach the filesystem. The outcome is
+        recorded only after the apply returns, against the same key admission
+        used.
+        """
+        decision = self._admission.evaluate(proposal)
+        if not decision.admitted:
+            logger.warning(
+                "Upgrade %s refused by admission policy: %s",
+                proposal.id,
+                decision.reason,
+            )
+            return False
+
+        applied = False
         try:
             if proposal.category == UpgradeCategory.POLICY_UPDATE:
-                return self._apply_policy_update(proposal)
+                applied = self._apply_policy_update(proposal)
             elif proposal.category == UpgradeCategory.ROUTING_RULES:
-                return self._apply_routing_rules(proposal)
+                applied = self._apply_routing_rules(proposal)
             elif proposal.category == UpgradeCategory.MODEL_ROUTING:
-                return self._apply_model_routing(proposal)
+                applied = self._apply_model_routing(proposal)
             elif proposal.category == UpgradeCategory.PROVIDER_CONFIG:
-                return self._apply_provider_config(proposal)
+                applied = self._apply_provider_config(proposal)
             else:
                 # Role templates need special handling
-                return self._apply_role_template(proposal)
+                applied = self._apply_role_template(proposal)
         except Exception as exc:
             logger.exception("Failed to execute upgrade %s: %s", proposal.category, exc)
-            return False
+            applied = False
+
+        # Recorded after the apply resolves, including the failure path: a gate
+        # that only learns from successes cannot lower its opinion of a
+        # producer that keeps breaking things.
+        self._admission.record_outcome(decision, applied)
+        return applied
 
     def rollback_upgrade(self, _proposal: UpgradeProposal) -> bool:
         """Rollback an upgrade by restoring backup files."""

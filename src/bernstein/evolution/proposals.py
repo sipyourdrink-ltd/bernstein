@@ -72,6 +72,10 @@ class UpgradeProposal:
     created_at: float = field(default_factory=time.time)
     applied_at: float | None = None
     triggered_by: AnalysisTrigger = AnalysisTrigger.SCHEDULED
+    #: Agent that produced this proposal. The admission gate measures the
+    #: proposer; ``to_task`` below sets ``role="manager"`` for routing, which
+    #: identifies the executor and is deliberately not the same thing.
+    produced_by: str = ""
 
     def to_task(self) -> Task:
         """Convert upgrade proposal to a Task."""
