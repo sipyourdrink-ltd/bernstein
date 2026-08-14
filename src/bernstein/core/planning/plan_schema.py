@@ -43,8 +43,6 @@ SCOPE_VALUES: list[str] = ["small", "medium", "large"]
 
 COMPLEXITY_VALUES: list[str] = ["low", "medium", "high"]
 
-MODEL_VALUES: list[str] = ["auto", "opus", "sonnet", "haiku"]
-
 EFFORT_VALUES: list[str] = ["low", "normal", "high", "max"]
 
 PHASE_VALUES: list[str] = ["research", "plan", "implement", "verify"]
@@ -169,7 +167,7 @@ _STEP_SCHEMA: dict[str, Any] = {
         },
         "model": {
             "type": "string",
-            "enum": MODEL_VALUES,
+            "minLength": 1,
             "description": "Model override for this step.",
         },
         "effort": {
@@ -369,7 +367,6 @@ _STEP_ENUM_FIELDS: list[tuple[str, list[str]]] = [
     ("role", KNOWN_ROLES),
     ("scope", SCOPE_VALUES),
     ("complexity", COMPLEXITY_VALUES),
-    ("model", MODEL_VALUES),
     ("effort", EFFORT_VALUES),
 ]
 
@@ -388,6 +385,17 @@ def _validate_step_enums(step: dict[str, Any], path: str, errors: list[str]) -> 
             errors.append(f"{path}.{field_name}: expected type string, got {type(value).__name__}")
             continue
         _validate_enum(value, allowed, f"{path}.{field_name}", errors)
+
+
+def _validate_step_string_fields(step: dict[str, Any], path: str, errors: list[str]) -> None:
+    """Validate free-form string fields whose schema requires a value."""
+    if "model" not in step:
+        return
+    value = step["model"]
+    if not isinstance(value, str):
+        errors.append(f"{path}.model: expected type string, got {type(value).__name__}")
+    elif not value:
+        errors.append(f"{path}.model: must not be empty")
 
 
 def _validate_step_priority(step: dict[str, Any], path: str, errors: list[str]) -> None:
@@ -495,6 +503,7 @@ def _validate_step(step: dict[str, Any], path: str, errors: list[str]) -> None:
         errors.append(f"{path}: step must have a 'title' or 'goal' field")
 
     _validate_step_enums(step, path, errors)
+    _validate_step_string_fields(step, path, errors)
     _validate_step_priority(step, path, errors)
     _validate_step_estimated_minutes(step, path, errors)
 
@@ -646,8 +655,8 @@ def validate_plan(plan_data: dict[str, Any], warnings: list[str] | None = None) 
 
     Performs manual structural checks mirroring :data:`PLAN_JSON_SCHEMA`
     without requiring the ``jsonschema`` package. Enforced as errors: required
-    fields, field and array-item types, enum membership (including the string
-    type of every enum field), and the declared minimums (``max_agents``,
+    fields, field and array-item types, enum membership, string types, and the
+    declared minimums (``max_agents``,
     ``priority``, ``estimated_minutes``). The schema's ``additionalProperties:
     false`` is reported through *warnings* instead, because plans carrying
     extra keys validate today and failing them needs a deprecation window

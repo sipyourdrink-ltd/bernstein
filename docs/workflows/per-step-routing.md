@@ -21,15 +21,15 @@ orchestrator actually took.
 | Field | Type | Scope | Wins over |
 |-------|------|-------|-----------|
 | `cli` | string | One step | Top-level plan `cli:` and role policy. |
-| `model` | enum | One step | Cascade router initial pick. |
+| `model` | string | One step | Cascade router initial pick. |
 | `effort` | enum | One step | Cascade router effort default. |
 
 - Set them inside `steps:` in a plan YAML.
 - Leave them off when the step should follow the plan-wide default.
 - `bernstein.yaml` itself takes a top-level `cli:` only; the per-step
   override lives on each plan step.
-- Workflow manifests under `templates/workflows/*.yaml` do **not**
-  carry these fields today; see [Where it works](#where-it-works) below.
+- Workflow manifests under `templates/workflows/*.yaml` accept the same
+  fields on agent nodes; see [Where it works](#where-it-works) below.
 
 ---
 
@@ -51,9 +51,8 @@ error rather than silently substituting a different one.
 
 ### `model`
 
-Pins the model variant for one step: `auto`, `opus`, `sonnet`,
-`haiku`. Only meaningful when the resolved adapter is Claude-compatible
-(other adapters bind their own models and ignore this hint). When set,
+Pins the provider-specific model identifier for one step, such as
+`provider/model-name`. When set,
 the cascade router skips its initial selection logic and uses the
 pinned model as attempt 0.
 
@@ -119,13 +118,13 @@ manager agent needed; the plan is the decomposition.
 | Plan YAML (`bernstein run --from-plan`) | Yes | Read in `plan_loader._parse_step`. Stored on the resulting `Task` row. |
 | `POST /tasks` on the task server | Yes | The HTTP payload accepts the same keys; the planner forwards them when it creates child tasks (`planner.py:86`). |
 | Manager-emitted plans | Yes | When the manager agent decomposes a goal it can stamp `cli` and `model` on individual steps. |
-| Workflow manifests (`templates/workflows/*.yaml`) | No | The declarative manifest schema validates with `extra="forbid"` (`workflow_spec.py`). Per-node routing is tracked separately; use a plan YAML when you need it today. |
+| Workflow manifests (`templates/workflows/*.yaml`) | Yes, on agent nodes | The manifest schema validates the fields and the runner forwards them to the spawned `Task`. |
 | `bernstein.yaml` | Top-level only | The seed file has one global `cli:`. Per-step routing belongs on the plan or task. |
 
-If you write a workflow manifest and need per-step routing, the
-recommended path is to author it as a plan YAML instead. Plans and
-workflows are sibling primitives that target different shapes; the
-plan loader is the one with full routing-hint support today.
+Plans and workflow manifests are sibling primitives: use a plan when the
+stage-oriented plan loader is the better fit, or a workflow manifest when
+you want an explicit node DAG. Both surfaces preserve routing hints on the
+resulting task.
 
 ---
 
@@ -150,13 +149,12 @@ The hint is dropped (silently or with a warning) in these cases:
 
 - The adapter named in `cli:` is not installed. The run aborts with a
   registry-miss error; it does **not** substitute `auto`.
-- `model:` / `effort:` are set on a step whose resolved adapter is not
-  Claude-compatible. The fields are accepted by the schema but the
-  non-Claude adapter ignores them. No warning today; track the actual
-  pick in the trace (next section).
-- Workflow manifest nodes carry `cli:` or `model:`. The manifest
-  loader rejects the file at validation time (`workflow_spec.py`
-  enforces `extra="forbid"`).
+- An adapter does not expose a flag for one of the requested hints. The
+  task still records the requested value; adapter-specific support is
+  visible in the actual spawn event in the trace (next section).
+- Command nodes carry `cli:`, `model:`, or `effort:`. These fields only
+  apply to agent nodes, so the manifest loader rejects them rather than
+  silently ignoring the configuration.
 
 ---
 

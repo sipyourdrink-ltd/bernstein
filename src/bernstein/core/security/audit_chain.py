@@ -2671,6 +2671,7 @@ def record_escalation_receipt(
     chain: AuditChainStore,
     run_id: str,
     worker_id: str,
+    session_id: str = "",
     stall_reason: str,
     recommended_action: str,
     journal_head_at_stall: str,
@@ -2693,6 +2694,10 @@ def record_escalation_receipt(
         chain: The audit chain store accepting the entry.
         run_id: The run whose journal the receipt anchored.
         worker_id: The stalled worker the receipt covers.
+        session_id: The stalled session id, when known (default: empty). When
+            truthy it is recorded in the details payload so the session link is
+            readable from the record itself rather than reconstructed from
+            matching ids.
         stall_reason: The structured stall reason recorded on the receipt.
         recommended_action: The deterministic recommended action.
         journal_head_at_stall: The run journal Merkle head at stall time.
@@ -2707,21 +2712,24 @@ def record_escalation_receipt(
         The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
         its details payload.
     """
+    details: dict[str, object] = {
+        "run_id": run_id,
+        "worker_id": worker_id,
+        "stall_reason": stall_reason,
+        "recommended_action": recommended_action,
+        "journal_head_at_stall": journal_head_at_stall,
+        "window_size": window_size,
+        "fork_snapshot_sha": fork_snapshot_sha,
+        "journal_entry_hash": journal_entry_hash,
+    }
+    if session_id:
+        details["session_id"] = session_id
     return chain.log_with_prev_digest(
         event_type=EVENT_ESCALATION_RECEIPT,
         actor=actor,
         resource_type="escalation_receipt",
         resource_id=journal_entry_hash,
-        details={
-            "run_id": run_id,
-            "worker_id": worker_id,
-            "stall_reason": stall_reason,
-            "recommended_action": recommended_action,
-            "journal_head_at_stall": journal_head_at_stall,
-            "window_size": window_size,
-            "fork_snapshot_sha": fork_snapshot_sha,
-            "journal_entry_hash": journal_entry_hash,
-        },
+        details=details,
     )
 
 

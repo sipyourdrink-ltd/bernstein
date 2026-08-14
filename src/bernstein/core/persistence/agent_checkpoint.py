@@ -4,10 +4,29 @@ On each heartbeat, the agent's current state (files modified, last output,
 step count) is saved to disk. After a crash, the orchestrator can detect
 recoverable tasks (worktree has uncommitted changes) and spawn a new agent
 with checkpoint context so work continues instead of restarting.
+
+Issue #3649 — grant-bound recovery
+-----------------------------------
+A checkpoint is now also an authority record.  At suspend time the checkpoint
+captures a hash of the grant that was live: role name, resolved
+``allowed_paths`` / ``denied_paths`` (from :func:`get_permissions_for_role`),
+``task_id``, ``parent_run_id``, and the chain head at that moment.
+
+At resume time :func:`is_checkpoint_recoverable` re-derives the current grant
+from the same inputs and compares hashes **before** any side effect is taken.
+A narrowed role, reassigned task, or cancelled parent causes an explicit refusal
+naming the bindings the grant hash covers.
+
+A successful resume appends a :class:`ContinuationEntry` to the run journal
+binding ``(checkpoint_hash, grant_hash, chain_head_at_suspend,
+chain_head_at_resume)`` so a verifier can chain suspend → resume with no
+filesystem access.  Absence of the entry means the resume never completed; the
+verifier treats absence as a new run, never as evidence of continuity.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -16,8 +35,101 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from bernstein.core.persistence.atomic_write import write_atomic_json
+from bernstein.core.security.permissions import AgentPermissions, get_permissions_for_role
 
 _CHECKPOINT_FILENAME = "checkpoint.json"
+
+
+# ---------------------------------------------------------------------------
+# Grant hashing
+# ---------------------------------------------------------------------------
+
+
+def compute_grant_hash(
+    role: str,
+    permissions: AgentPermissions,
+    task_id: str,
+    parent_run_id: str,
+    chain_head: str,
+) -> str:
+    """Stable SHA-256 of the grant that was live at suspend time.
+
+    The hash binds: role name, resolved ``allowed_paths`` / ``denied_paths``
+    (sorted for stability), ``task_id``, ``parent_run_id``, and the Merkle
+    chain head at the moment of suspension.
+
+    Args:
+        role: Agent role name (e.g. ``"backend"``).
+        permissions: Resolved :class:`AgentPermissions` for the role.
+        task_id: Task the agent was executing.
+        parent_run_id: Run that owns the task.
+        chain_head: Journal Merkle-head hash at suspend time.
+
+    Returns:
+        Lowercase hex SHA-256 string.
+    """
+    payload = json.dumps(
+        {
+            "role": role,
+            "allowed_paths": sorted(permissions.allowed_paths),
+            "denied_paths": sorted(permissions.denied_paths),
+            "task_id": task_id,
+            "parent_run_id": parent_run_id,
+            "chain_head_at_suspend": chain_head,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def checkpoint_hash(checkpoint: AgentCheckpoint) -> str:
+    """Stable SHA-256 fingerprint of an :class:`AgentCheckpoint`.
+
+    Excludes timing fields (``checkpointed_at``, ``elapsed_seconds``) so
+    two logically identical checkpoints written at different wall-clock times
+    produce the same digest.  Used by the continuation entry.
+    """
+    stable = {k: v for k, v in asdict(checkpoint).items() if k not in {"checkpointed_at", "elapsed_seconds"}}
+    payload = json.dumps(stable, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# ContinuationEntry — appended to the journal on a successful resume
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ContinuationEntry:
+    """Authenticated chain link written to the journal on successful resume.
+
+    A verifier that finds this entry can reconstruct the suspend → resume
+    arc with no filesystem access: it re-derives the grant hash from current
+    configuration and confirms it matches ``grant_hash``.
+
+    Absence of this entry for a given checkpoint means the resumed run never
+    completed its first side-effect-free authority check; the verifier treats
+    the run as a *new* run, never as a continuation.
+
+    Attributes:
+        checkpoint_hash: SHA-256 of the :class:`AgentCheckpoint` at suspend.
+        grant_hash: SHA-256 of the grant that was live at suspend time.
+        chain_head_at_suspend: Journal Merkle-head at the moment of suspension.
+        chain_head_at_resume: Journal Merkle-head at the moment of resumption.
+        resumed_at: Unix timestamp of resumption.
+    """
+
+    checkpoint_hash: str
+    grant_hash: str
+    chain_head_at_suspend: str
+    chain_head_at_resume: str
+    resumed_at: float = field(default_factory=time.time)
+
+
+# ---------------------------------------------------------------------------
+# AgentCheckpoint dataclass
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -34,6 +146,10 @@ class AgentCheckpoint:
         elapsed_seconds: Wall-clock seconds the agent has been running.
         checkpointed_at: Unix timestamp when the checkpoint was written.
         crash_recoverable: Whether this checkpoint is eligible for recovery.
+        role: Agent role name at suspend time (e.g. ``"backend"``).
+        grant_hash: SHA-256 of the live grant at suspend time.
+        parent_run_id: Run that owns the task.
+        chain_head_at_suspend: Journal Merkle-head at the moment of suspension.
     """
 
     agent_id: str
@@ -45,6 +161,11 @@ class AgentCheckpoint:
     elapsed_seconds: float = 0.0
     checkpointed_at: float = field(default_factory=time.time)
     crash_recoverable: bool = True
+    # --- grant fields (issue #3649) ---
+    role: str = ""
+    grant_hash: str = ""
+    parent_run_id: str = ""
+    chain_head_at_suspend: str = ""
 
 
 def save_checkpoint(checkpoint: AgentCheckpoint, runtime_dir: Path) -> Path:
@@ -69,6 +190,33 @@ def load_checkpoint(agent_id: str, runtime_dir: Path) -> AgentCheckpoint | None:
     if not path.exists():
         return None
     return AgentCheckpoint(**json.loads(path.read_text()))
+
+
+def find_checkpoint_for_task(task_id: str, runtime_dir: Path) -> AgentCheckpoint | None:
+    """Find the checkpoint for ``task_id`` across all agent directories.
+
+    Checkpoints are stored per **agent** (``agents/{agent_id}/checkpoint.json``)
+    while resume is driven by **task**, so callers resolving a task must scan
+    rather than key by id — looking up ``agents/{task_id}/`` would silently
+    miss every real checkpoint. Returns the newest match (``checkpointed_at``)
+    when several agents checkpointed the same task; ``None`` when none did.
+    """
+    agents_dir = runtime_dir / "agents"
+    if not agents_dir.is_dir():
+        return None
+    best: AgentCheckpoint | None = None
+    for path in agents_dir.glob(f"*/{_CHECKPOINT_FILENAME}"):
+        try:
+            candidate = AgentCheckpoint(**json.loads(path.read_text()))
+        except (OSError, TypeError, ValueError):
+            # A single unreadable checkpoint must not block resume of
+            # unrelated tasks; corrupt files surface via scan tooling.
+            continue
+        if candidate.task_id != task_id:
+            continue
+        if best is None or candidate.checkpointed_at > best.checkpointed_at:
+            best = candidate
+    return best
 
 
 def scan_orphaned_checkpoints(runtime_dir: Path) -> list[AgentCheckpoint]:
@@ -140,16 +288,55 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def is_checkpoint_recoverable(checkpoint: AgentCheckpoint) -> tuple[bool, str]:
+def is_checkpoint_recoverable(
+    checkpoint: AgentCheckpoint,
+    *,
+    role_overrides: dict[str, AgentPermissions] | None = None,
+) -> tuple[bool, str]:
     """Check if a checkpoint can be recovered.
+
+    Performs **both** a liveness check (worktree exists, has uncommitted
+    changes) and an **authority check** (issue #3649): the grant that was
+    live at suspend time is re-derived from current configuration and its
+    hash compared against the stored :attr:`~AgentCheckpoint.grant_hash`.
+
+    The authority check runs **before** the liveness checks so that a
+    narrowed or revoked grant is detected before any filesystem side effect
+    is taken.
 
     Args:
         checkpoint: The checkpoint to inspect.
+        role_overrides: Optional per-project permission overrides forwarded
+            to :func:`get_permissions_for_role`.
 
     Returns:
-        ``(recoverable, reason)``. Recoverable if the worktree exists and has
-        uncommitted changes that can be resumed.
+        ``(recoverable, reason)``. Recoverable if the grant still holds and
+        the worktree has uncommitted changes that can be resumed.
     """
+    # --- Authority check (must happen before any side effect) ---
+    if checkpoint.grant_hash:
+        current_perms = get_permissions_for_role(checkpoint.role, role_overrides)
+        expected_hash = compute_grant_hash(
+            role=checkpoint.role,
+            permissions=current_perms,
+            task_id=checkpoint.task_id,
+            parent_run_id=checkpoint.parent_run_id,
+            chain_head=checkpoint.chain_head_at_suspend,
+        )
+        if expected_hash != checkpoint.grant_hash:
+            # Only the hash of the suspend-time grant is stored, so the
+            # refusal cannot prove which single input moved; it names the
+            # bindings the hash covers so the operator knows where to look.
+            reason = (
+                "grant mismatch — resume refused before first side effect; "
+                f"role '{checkpoint.role}' permissions narrowed or changed, "
+                f"or a grant-bound field no longer matches (task "
+                f"'{checkpoint.task_id}', parent run '{checkpoint.parent_run_id}', "
+                "chain head at suspend)"
+            )
+            return False, reason
+
+    # --- Liveness checks (only reached when grant is valid or absent) ---
     worktree = Path(checkpoint.worktree_path)
     if not worktree.exists():
         return False, "worktree missing"
@@ -194,6 +381,36 @@ def _git_status(worktree: Path) -> str | None:
         return result.stdout
     except (subprocess.SubprocessError, OSError):
         return None
+
+
+def build_continuation_entry(
+    checkpoint: AgentCheckpoint,
+    *,
+    chain_head_at_resume: str = "",
+) -> ContinuationEntry:
+    """Build the authenticated journal entry for a successful resume.
+
+    Call this **after** :func:`is_checkpoint_recoverable` returns ``True``
+    and **before** dispatching the first agent side effect.  Persist the
+    returned entry to the run journal so a verifier can chain suspend →
+    resume with no filesystem access.
+
+    Absence of a continuation entry for a checkpoint is always read as
+    *new run*, never as evidence of continuity.
+
+    Args:
+        checkpoint: The checkpoint that was verified and is now resuming.
+        chain_head_at_resume: The journal Merkle-head at resumption time.
+
+    Returns:
+        A :class:`ContinuationEntry` ready to append to the journal.
+    """
+    return ContinuationEntry(
+        checkpoint_hash=checkpoint_hash(checkpoint),
+        grant_hash=checkpoint.grant_hash,
+        chain_head_at_suspend=checkpoint.chain_head_at_suspend,
+        chain_head_at_resume=chain_head_at_resume,
+    )
 
 
 def build_resume_prompt(checkpoint: AgentCheckpoint, original_goal: str) -> str:

@@ -495,6 +495,9 @@ class WorkflowRunner:
             title=f"workflow:{node.id}",
             description=prompt_body,
             role=node.agent,
+            cli=node.cli,
+            model=node.model,
+            effort=node.effort,
         )
 
         try:

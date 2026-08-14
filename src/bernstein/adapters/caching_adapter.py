@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -109,6 +110,8 @@ class CachingAdapter(CLIAdapter):
         budget_multiplier: float = 1.0,
         system_addendum: str = "",
         multimodal_context: Any | None = None,
+        task_id: str = "",
+        task_title: str = "",
     ) -> SpawnResult:
         """Spawn agent with caching: process prompt, check response cache, then delegate.
 
@@ -186,6 +189,18 @@ class CachingAdapter(CLIAdapter):
         # so that type checkers catch future drift - missing budget_multiplier
         # or system_addendum silently broke retry budgets and role-scoped
         # system prompts.
+        # Task identity sits outside the base interface, so it is relayed
+        # only when the inner adapter's spawn() accepts it - the same
+        # signature gate the spawner applies. Production always wraps the
+        # adapter in this class, so without the relay the spawner would gate
+        # on the wrapper's signature and the identity would never reach an
+        # inner adapter that wants it.
+        _identity_kwargs: dict[str, Any] = {}
+        _inner_params = inspect.signature(self._inner.spawn).parameters
+        if task_id and "task_id" in _inner_params:
+            _identity_kwargs["task_id"] = task_id
+        if task_title and "task_title" in _inner_params:
+            _identity_kwargs["task_title"] = task_title
         return self._inner.spawn(
             prompt=prompt,
             workdir=workdir,
@@ -197,6 +212,7 @@ class CachingAdapter(CLIAdapter):
             budget_multiplier=budget_multiplier,
             system_addendum=system_addendum,
             multimodal_context=multimodal_context,
+            **_identity_kwargs,
         )
 
     def name(self) -> str:

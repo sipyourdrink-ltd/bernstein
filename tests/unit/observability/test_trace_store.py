@@ -98,6 +98,31 @@ def test_put_returns_sha256_indexed_entry(tmp_path: Path) -> None:
     assert entry.codec in {"gzip", "zstd"}
 
 
+def test_put_redacts_before_content_addressing_and_verification(tmp_path: Path) -> None:
+    store = ContentAddressedTraceStore(tmp_path, prefer_zstd=False)
+    canary = "sk-proj-0123456789abcdefghijklmnop"
+    sha256 = "a3" * 32
+    raw = json.dumps(
+        {
+            "trace_id": "trace-secret",
+            "task_ids": ["T-secret"],
+            "detail": f"Authorization: Bearer {canary}",
+            "content_sha256": sha256,
+        }
+    ).encode()
+
+    entry = store.put(raw)
+    persisted = store.get("trace-secret")
+
+    assert persisted is not None
+    assert canary.encode() not in persisted
+    assert b"[REDACTED]" in persisted
+    assert sha256.encode() in persisted
+    assert entry.sha256 == hashlib.sha256(persisted).hexdigest()
+    assert entry.byte_size == len(persisted)
+    assert store.verify("trace-secret") is True
+
+
 def test_blob_uses_content_addressed_layout(tmp_path: Path) -> None:
     store = ContentAddressedTraceStore(tmp_path, prefer_zstd=False)
     raw = _agent_trace_json()
