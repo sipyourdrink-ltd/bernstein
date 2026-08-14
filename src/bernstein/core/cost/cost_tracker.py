@@ -1144,7 +1144,15 @@ class CostTracker:
         return file_path
 
     @classmethod
-    def load(cls, base_dir: Path, run_id: str, *, tenant_id: str | None = None) -> CostTracker | None:
+    def load(
+        cls,
+        base_dir: Path,
+        run_id: str,
+        *,
+        tenant_id: str | None = None,
+        budget_usd: float | None = None,
+        hard_budget_usd: float | None = None,
+    ) -> CostTracker | None:
         """Load a previously persisted CostTracker from disk.
 
         Args:
@@ -1160,10 +1168,30 @@ class CostTracker:
                 the narrowed set and is in-scope by construction.  ``None``
                 keeps the whole file, for callers that legitimately span
                 tenants (the orchestrator's own budget enforcement).
+            budget_usd: Soft cap that applies to the scope being loaded.  The
+                cap persisted in a run file bounds the whole run across every
+                tenant that spent against it, so a narrowed load that leaves
+                it in place makes ``status()`` divide one tenant's spend by
+                everybody's cap.  A caller that narrows by tenant and reports
+                percentages, remaining amounts or warn/stop flags therefore
+                passes the tenant's own configured cap here.  ``None`` keeps
+                the persisted run-wide value, which is the right cap when the
+                run and the scope are the same thing.
+            hard_budget_usd: Hard cap for the scope being loaded, with the
+                same rule as *budget_usd*.  Pass ``0.0`` to load a scope that
+                has no hard cap of its own rather than inherit the run's.
 
         Returns:
             Restored ``CostTracker``, or ``None`` if the file doesn't exist
             or is corrupt.
+
+        Note:
+            Replay is bounded by what the run file holds.  ``save()`` writes
+            the retained ``usages`` buffer (see :attr:`usage_buffer_size`),
+            so on a run long enough to have evicted rows every load - scoped
+            or not - reflects the retained window rather than the run's whole
+            history.  Full history lives in the JSONL rotation files under
+            :attr:`rotation_dir` when one is configured.
         """
         file_path = base_dir / "runtime" / "costs" / f"{run_id}.json"
         if not file_path.exists():
@@ -1172,8 +1200,8 @@ class CostTracker:
             data = json.loads(file_path.read_text())
             tracker = cls(
                 run_id=data["run_id"],
-                budget_usd=float(data.get("budget_usd", 0.0)),
-                hard_budget_usd=float(data.get("hard_budget_usd", 0.0)),
+                budget_usd=float(data.get("budget_usd", 0.0) if budget_usd is None else budget_usd),
+                hard_budget_usd=float(data.get("hard_budget_usd", 0.0) if hard_budget_usd is None else hard_budget_usd),
                 warn_threshold=float(data.get("warn_threshold", DEFAULT_WARN_THRESHOLD)),
                 critical_threshold=float(data.get("critical_threshold", DEFAULT_CRITICAL_THRESHOLD)),
                 hard_stop_threshold=float(data.get("hard_stop_threshold", DEFAULT_HARD_STOP_THRESHOLD)),

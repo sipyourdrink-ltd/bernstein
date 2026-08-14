@@ -81,6 +81,28 @@ def _resolve_request_tenant_scope(request: Request, requested_tenant: str | None
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+def _tenant_cap_overrides(request: Request, tenant_id: str) -> dict[str, float]:
+    """Return the ``CostTracker.load`` cap overrides for a tenant-scoped read.
+
+    A run file's persisted caps bound the whole run: everything every tenant
+    may spend against it.  Reporting one tenant's spend against them yields a
+    percentage of the wrong cap, so where the deployment configures per-tenant
+    caps, the tenant's own cap replaces the run-wide pair.  Tenant
+    configuration carries a soft cap only, so the run's hard cap - which does
+    not bound a single tenant either - is dropped rather than inherited.
+
+    A deployment that configures no tenants gets no overrides: there the run
+    and the tenant are the same thing and the persisted caps are correct.
+    """
+    registry = _get_tenant_registry(request)
+    if registry is None or not registry.is_configured:
+        return {}
+    config = registry.get(tenant_id)
+    if config is None:
+        return {}
+    return {"budget_usd": float(config.budget_usd or 0.0), "hard_budget_usd": 0.0}
+
+
 def _build_breakdowns(tracker: Any) -> dict[str, Any]:
     """Build per-agent and per-model cost breakdowns from tracker usages.
 
@@ -208,7 +230,11 @@ def get_costs(request: Request, tenant: str | None = None) -> JSONResponse:
         tracker = CostTracker.load(sdd_dir, run_id, tenant_id=tenant_id)
         if tracker is None:
             continue
-        tenant_usages = [usage for usage in tracker.usages if usage.tenant_id == tenant_id]
+        # Already narrowed by the scoped load, which compares normalized
+        # tenant ids.  Re-filtering on the raw field here would drop rows the
+        # load admitted - a usage persisted as "  default  " normalizes into
+        # this scope but is not equal to it - and undercount the totals.
+        tenant_usages = tracker.usages
         if not tenant_usages:
             continue
         total_spent += sum(usage.cost_usd for usage in tenant_usages)
@@ -273,7 +299,9 @@ def get_cost_live(request: Request, tenant: str | None = None) -> JSONResponse:
             content={"spent_usd": 0.0, "budget_usd": 0.0, "per_agent": {}, "per_model": {}, "tenant_id": tenant_id}
         )
 
-    tenant_usages = [usage for usage in tracker.usages if usage.tenant_id == tenant_id]
+    # Narrowed by the scoped load; see ``get_costs`` for why the raw field is
+    # not re-compared here.
+    tenant_usages = tracker.usages
     spent_usd = sum(usage.cost_usd for usage in tenant_usages)
     per_agent: dict[str, float] = defaultdict(float)
     per_model: dict[str, float] = defaultdict(float)
@@ -391,7 +419,7 @@ def get_cost_current(request: Request) -> JSONResponse:
         return JSONResponse(content=empty)
 
     run_id = cost_files[0].stem
-    tracker = CostTracker.load(sdd_dir, run_id, tenant_id=tenant_id)
+    tracker = CostTracker.load(sdd_dir, run_id, tenant_id=tenant_id, **_tenant_cap_overrides(request, tenant_id))
     if tracker is None:
         return JSONResponse(content=empty)
 
@@ -473,7 +501,9 @@ def get_cost_alerts(request: Request) -> JSONResponse:
     if costs_dir.exists():
         cost_files = sorted(costs_dir.glob(_JSON_GLOB), key=lambda p: p.stat().st_mtime, reverse=True)
         if cost_files:
-            tracker = CostTracker.load(sdd_dir, cost_files[0].stem, tenant_id=tenant_id)
+            tracker = CostTracker.load(
+                sdd_dir, cost_files[0].stem, tenant_id=tenant_id, **_tenant_cap_overrides(request, tenant_id)
+            )
             if tracker is not None:
                 spent_usd = tracker.spent_usd
                 budget_usd = tracker.budget_usd
@@ -1516,7 +1546,7 @@ def get_cost_budget(run_id: str, request: Request) -> JSONResponse:
 
     sdd_dir = _get_sdd_dir(request)
     tenant_id = _resolve_request_tenant_scope(request)
-    tracker = CostTracker.load(sdd_dir, run_id, tenant_id=tenant_id)
+    tracker = CostTracker.load(sdd_dir, run_id, tenant_id=tenant_id, **_tenant_cap_overrides(request, tenant_id))
     if tracker is None:
         raise HTTPException(status_code=404, detail=f"No cost data for run '{run_id}'")
 

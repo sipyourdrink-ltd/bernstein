@@ -828,3 +828,102 @@ async def test_cost_current_still_reports_the_callers_own_spend(
 
     assert response.status_code == 200
     assert response.json()["spent_usd"] == pytest.approx(seeded_costs)
+
+
+# ---------------------------------------------------------------------------
+# Narrowing correctness: what the scoped readers must NOT drop or mis-divide
+# ---------------------------------------------------------------------------
+# The leak cases above pin that out-of-scope rows stay out.  These pin the
+# other half - that narrowing keeps every in-scope row, and that a figure
+# derived from the narrowed set is divided by the cap that bounds that set.
+
+
+def _rewrite_usage_tenants(sdd_dir: Path, run_id: str, stored: str) -> None:
+    """Rewrite the persisted tenant on every usage of a run file.
+
+    Usage records are persisted verbatim - ``TokenUsage.from_dict`` does not
+    normalize - so a file written before the tenant was normalized on the way
+    in carries whatever string was recorded, padding included.
+    """
+    import json
+
+    path = sdd_dir / "runtime" / "costs" / f"{run_id}.json"
+    payload = json.loads(path.read_text())
+    for usage in payload["usages"]:
+        usage["tenant_id"] = stored
+    path.write_text(json.dumps(payload))
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("endpoint", ["/costs", "/costs/live"])
+async def test_scoped_totals_keep_usages_whose_stored_tenant_needs_normalizing(
+    fx: Fixture,
+    client: AsyncClient,
+    sdd_dir: Path,
+    endpoint: str,
+) -> None:
+    """A legacy tenant string that normalizes into scope is still counted.
+
+    ``CostTracker.load`` admits a usage by comparing normalized tenant ids,
+    so a row persisted as ``"  default  "`` belongs to the default scope.  A
+    reducer that re-compared the raw field afterwards would drop exactly the
+    rows the load admitted and report a total short by their spend.
+    """
+    from bernstein.core.cost_tracker import CostTracker
+
+    recorded_cost = 2.25
+    tracker = CostTracker(run_id="legacy-tenant-run", budget_usd=10_000.0)
+    tracker.record(
+        "legacy-agent",
+        fx.task_default_id,
+        "legacy-model",
+        1_000,
+        500,
+        cost_usd=recorded_cost,
+        tenant_id=DEFAULT_TENANT_ID,
+    )
+    tracker.save(sdd_dir)
+    _rewrite_usage_tenants(sdd_dir, "legacy-tenant-run", f"  {DEFAULT_TENANT_ID}  ")
+
+    credential = _credential(fx, "legacy_bearer")
+    response = await client.get(endpoint, headers=credential.headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    reported = body["total_spent_usd"] if endpoint == "/costs" else body["spent_usd"]
+    assert reported == pytest.approx(recorded_cost)
+    assert body["per_agent"]["legacy-agent"] == pytest.approx(recorded_cost)
+    assert body["per_model"]["legacy-model"] == pytest.approx(recorded_cost)
+
+
+@pytest.mark.anyio()
+async def test_scoped_status_divides_by_the_tenants_cap_not_the_runs(
+    fx: Fixture,
+    client: AsyncClient,
+    sdd_dir: Path,
+    seeded_costs: float,
+) -> None:
+    """A tenant-scoped budget figure uses the tenant's configured cap.
+
+    The cap persisted in a run file bounds the whole run across every tenant
+    that spent against it.  Reporting one tenant's narrowed spend against it
+    divides an in-scope numerator by an out-of-scope denominator, so the
+    percentage, the remaining amount and the warn/stop flags all describe a
+    budget the caller does not have.  Where the deployment configures a cap
+    for the tenant, that cap is the one the scoped read must use.
+    """
+    from bernstein.core.tenanting import TenantConfig, TenantRegistry
+
+    tenant_cap = 3.0
+    assert seeded_costs < tenant_cap, "precondition: in-scope spend fits inside the tenant cap"
+    fx.app.state.tenant_registry = TenantRegistry(tenants=(TenantConfig(id=DEFAULT_TENANT_ID, budget_usd=tenant_cap),))
+
+    credential = _credential(fx, "legacy_bearer")
+    response = await client.get("/costs/current", headers=credential.headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    # The run file was seeded with a 10_000.0 run-wide cap; the tenant's is 3.0.
+    assert body["budget_usd"] == pytest.approx(tenant_cap)
+    assert body["percentage_used"] == pytest.approx(seeded_costs / tenant_cap, abs=1e-4)
+    assert body["remaining_usd"] == pytest.approx(tenant_cap - seeded_costs)
