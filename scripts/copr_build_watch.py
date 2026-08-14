@@ -78,11 +78,7 @@ def is_gating_chroot(name: str) -> bool:
 
 def failed_gating_chroots(chroots: dict[str, str]) -> list[str]:
     """Return the gating chroots that did not succeed."""
-    return sorted(
-        name
-        for name, state in chroots.items()
-        if is_gating_chroot(name) and classify(state) == "failure"
-    )
+    return sorted(name for name, state in chroots.items() if is_gating_chroot(name) and classify(state) == "failure")
 
 
 def fetch_state(build_id: int) -> str:
@@ -131,21 +127,14 @@ def _verdict_from_chroots(
 
     blocking = failed_gating_chroots(chroots)
     if blocking:
-        print(
-            f"::error::Copr build {build_id} failed on gating chroot(s) "
-            f"{', '.join(blocking)}: {build_url}"
-        )
+        print(f"::error::Copr build {build_id} failed on gating chroot(s) {', '.join(blocking)}: {build_url}")
         return 1
 
     published = sorted(
-        name
-        for name, state in chroots.items()
-        if is_gating_chroot(name) and classify(state) == "success"
+        name for name, state in chroots.items() if is_gating_chroot(name) and classify(state) == "success"
     )
     if not published:
-        print(
-            f"::error::Copr build {build_id} published no gating chroot: {build_url}"
-        )
+        print(f"::error::Copr build {build_id} published no gating chroot: {build_url}")
         return 1
 
     tolerated = sorted(name for name in chroots if not is_gating_chroot(name))
@@ -190,9 +179,7 @@ def watch(
                 return 0
             if verdict == "failure":
                 if state.strip().lower() == "failed":
-                    return _verdict_from_chroots(
-                        build_id, build_url, fetch_chroot_states=fetch_chroot_states
-                    )
+                    return _verdict_from_chroots(build_id, build_url, fetch_chroot_states=fetch_chroot_states)
                 print(f"::error::Copr build {build_id} ended in state '{state}': {build_url}")
                 return 1
 

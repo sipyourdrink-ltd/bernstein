@@ -153,17 +153,13 @@ def test_failure_confined_to_rawhide_does_not_hold_the_release(
     assert "fedora-rawhide-x86_64" in out
 
 
-def test_failure_on_a_released_chroot_still_fails_the_job(
-    mod: ModuleType, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_failure_on_a_released_chroot_still_fails_the_job(mod: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:
     """A broken Fedora 44 is a broken release, whatever rawhide did."""
     clock = FakeClock()
     code = mod.watch(
         BUILD_ID,
         fetch=_fetcher(["failed"]),
-        fetch_chroot_states=_chroots(
-            {**GATING_PUBLISHED, "fedora-44-x86_64": "failed", **RAWHIDE_FAILED}
-        ),
+        fetch_chroot_states=_chroots({**GATING_PUBLISHED, "fedora-44-x86_64": "failed", **RAWHIDE_FAILED}),
         deadline_seconds=600,
         poll_seconds=30,
         time_fn=clock.time,
@@ -191,9 +187,7 @@ def test_failure_with_no_gating_chroot_published_fails_the_job(mod: ModuleType) 
     assert code == 1
 
 
-def test_failure_with_unreadable_chroots_fails_the_job(
-    mod: ModuleType, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_failure_with_unreadable_chroots_fails_the_job(mod: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:
     """A failure with no evidence about where is not something to wave through."""
 
     def unreadable(build_id: int) -> dict[str, str]:
