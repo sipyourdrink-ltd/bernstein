@@ -117,8 +117,16 @@ jobs:
                   # pip / uv / pipx all resolve to the same PyPI distribution;
                   # `uv tool install` is the one runner-side installer that
                   # puts the console script on PATH for every one of them.
-                  print(f"::group::uv tool install {spec}")
-                  rc = subprocess.run(["uv", "tool", "install", spec], check=False).returncode
+                  # An `install.python` pin in the contract selects the
+                  # interpreter: an unpinned install can resolve to a
+                  # runtime the CLI crashes under, which probes as a
+                  # chronic skip rather than an install failure (#3719).
+                  cmd = ["uv", "tool", "install", spec]
+                  pin = install.get("python", "")
+                  if pin:
+                      cmd[3:3] = ["--python", str(pin)]
+                  print(f"::group::{' '.join(cmd)}")
+                  rc = subprocess.run(cmd, check=False).returncode
                   print(f"::endgroup::")
                   if rc != 0:
                       print(f"::warning::install failed for {target.adapter} ({spec}); will probe as skip")

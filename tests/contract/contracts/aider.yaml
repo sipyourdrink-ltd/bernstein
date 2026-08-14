@@ -6,6 +6,10 @@ binary: aider
 install:
   method: pipx
   spec: "aider-chat"
+  # Interpreter the console script must run under. aider 0.86.x crashes at
+  # import on 3.13+, so an unpinned install yields a binary whose --help
+  # is a traceback and the canary records a chronic skip (#3719).
+  python: "3.12"
 auth:
   required_for_help: false
   required_for_models: false
