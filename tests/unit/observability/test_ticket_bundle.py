@@ -129,9 +129,7 @@ def test_persisted_trace_secret_cannot_reappear_in_ticket_bundle(tmp_path: Path)
     canary = "gho_0123456789abcdefghijklmnopqrstuv"
     store = TraceStore(tmp_path / ".sdd" / "traces")
     trace = new_trace("sess-secret", ["ENG-42"], "backend", "sonnet", "high")
-    trace.steps.append(
-        TraceStep(type="verify", timestamp=1.0, detail=f"Authorization: Bearer {canary}")
-    )
+    trace.steps.append(TraceStep(type="verify", timestamp=1.0, detail=f"Authorization: Bearer {canary}"))
     store.write(trace)
     out = tmp_path / "ENG-42.tar.gz"
     bundle = TicketBundle(

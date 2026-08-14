@@ -147,9 +147,7 @@ def test_persisted_trace_secret_cannot_reappear_in_debug_bundle(
     canary = "ghp_0123456789abcdefghijklmnopqrstuv"
     store = TraceStore(tmp_path / ".sdd" / "traces")
     trace = new_trace("run-secret", ["task-secret"], "backend", "sonnet", "high")
-    trace.steps.append(
-        TraceStep(type="verify", timestamp=1.0, detail=f"Authorization: Bearer {canary}")
-    )
+    trace.steps.append(TraceStep(type="verify", timestamp=1.0, detail=f"Authorization: Bearer {canary}"))
     store.write(trace)
     (tmp_path / ".sdd" / "runtime").mkdir(parents=True)
     (tmp_path / ".sdd" / "runtime" / "run_id").write_text("task-secret\n", encoding="utf-8")
