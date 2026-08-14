@@ -889,8 +889,14 @@ def _do_reload_seed_config(workdir: Path, jsonl_path: Path, application: Any) ->
             application.state.tenant_registry = fallback_registry  # type: ignore[attr-defined]
             logger.error("Seed reload rejected a tenant id: %s", exc)
     else:
+        # A seed that is gone is not a seed that says "no tenants". Blanking
+        # the registry here dropped the allowlist a running server was already
+        # enforcing, and an unconfigured registry accepts every tenant name, so
+        # deleting the file or pointing BERNSTEIN_SEED_PATH at a missing one
+        # widened the server rather than narrowing it. The last registry that
+        # loaded is kept; a server that never had one still starts empty.
         application.state.seed_config = None  # type: ignore[attr-defined]
-        application.state.tenant_registry = TenantRegistry()  # type: ignore[attr-defined]
+        application.state.tenant_registry = fallback_registry  # type: ignore[attr-defined]
     write_config_state(
         sdd_dir,
         config_hash=config_hash,

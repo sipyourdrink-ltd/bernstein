@@ -275,3 +275,31 @@ class TestReloadValidatesTheWholeTenantLayout:
 
         assert payload["loaded"] is False
         assert "team-a" in payload["error"]
+
+
+class TestADisappearingSeedDoesNotDropTheAllowlist:
+    """A seed that is gone is not a seed that says "no tenants".
+
+    An unconfigured registry accepts every tenant name, so blanking it when
+    the file goes missing widened the running server instead of narrowing it.
+    """
+
+    def test_deleting_the_seed_keeps_the_registry_that_loaded(self, tmp_path: Path) -> None:
+        _write_seed(tmp_path)
+        application = create_app(jsonl_path=tmp_path / ".sdd" / "runtime" / "tasks.jsonl")
+        assert application.state.reload_seed_config()["loaded"] is True
+
+        (tmp_path / "bernstein.yaml").unlink()
+        payload = application.state.reload_seed_config()
+
+        assert payload["loaded"] is False
+        assert [t.id for t in application.state.tenant_registry.tenants] == ["team-a", "team-b"]
+        assert application.state.tenant_registry.is_configured is True
+
+    def test_a_server_that_never_had_a_seed_starts_empty(self, tmp_path: Path) -> None:
+        application = create_app(jsonl_path=tmp_path / ".sdd" / "runtime" / "tasks.jsonl")
+
+        payload = application.state.reload_seed_config()
+
+        assert payload["loaded"] is False
+        assert application.state.tenant_registry.tenants == ()
