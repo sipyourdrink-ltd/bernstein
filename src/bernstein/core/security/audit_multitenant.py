@@ -254,11 +254,17 @@ def _event_tenant_id(event: dict[str, Any]) -> str | None:
     malformed event would have been exported and matched under a tenant name
     nothing wrote it for. A value that cannot be read returns ``None``, which
     matches no tenant.
+
+    ``details`` that is not a mapping is unreadable for the same reason a
+    malformed ``tenant_id`` inside one is: the event carries a details field
+    and nothing can be read out of it. Treating it as an absent details -- the
+    reading that produced ``DEFAULT_TENANT_ID`` -- filed such an event under
+    the default tenant's evidence, which is an attribution no writer made.
     """
-    details = event.get("details") or {}
-    raw = None
-    if isinstance(details, dict):
-        raw = details.get("tenant_id")
+    details = event.get("details")
+    if details is not None and not isinstance(details, dict):
+        return None
+    raw = details.get("tenant_id") if isinstance(details, dict) else None
     return try_normalize_tenant_id(raw)
 
 

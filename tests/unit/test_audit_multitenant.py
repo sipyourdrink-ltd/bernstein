@@ -27,6 +27,7 @@ import pytest
 from bernstein.core.security.audit import AuditLog
 from bernstein.core.security.audit_multitenant import (
     EXPORT_SCHEMA_VERSION,
+    _filter_tenant_events,
     export_tenant_slice,
     verify_tenant_slice,
 )
@@ -58,6 +59,12 @@ def _today_window() -> tuple[str, str]:
     since = f"{today.isoformat()}T00:00:00+00:00"
     until = f"{(today + timedelta(days=1)).isoformat()}T00:00:00+00:00"
     return since, until
+
+
+def _in_window_timestamp(since: str, until: str) -> str:
+    """Return a timestamp the window filter accepts."""
+    assert since < until
+    return since
 
 
 def _exported_bundle(tmp_path: Path) -> dict:
@@ -800,3 +807,74 @@ class TestExportRefusesToDropUnreadableEvidence:
 
         assert export.bundle_path is not None
         assert verify_tenant_slice(export.bundle_path, key=_TEST_KEY).ok
+
+
+class TestNonMappingDetailsIsUnreadableNotDefault:
+    """A details field nothing can be read out of names no tenant.
+
+    Reading it as an absent details filed the event under the default
+    tenant's evidence, which is an attribution no writer made.
+    """
+
+    @pytest.mark.parametrize("details", [["x"], [], "a string", 42, True])
+    def test_filter_quarantines_a_non_mapping_details(self, details: object) -> None:
+        since, until = _today_window()
+        stamp = _in_window_timestamp(since, until)
+        events = [
+            {"timestamp": stamp, "hmac": "a", "details": {"tenant_id": "acme"}},
+            {"timestamp": stamp, "hmac": "b", "details": details},
+        ]
+
+        matched, unreadable = _filter_tenant_events(events, "default", since, until)
+
+        assert matched == []
+        assert unreadable == [1]
+
+    @pytest.mark.parametrize("details", [["x"], "a string", 42])
+    def test_a_non_mapping_details_never_joins_another_tenant_slice(self, details: object) -> None:
+        since, until = _today_window()
+        stamp = _in_window_timestamp(since, until)
+        events = [{"timestamp": stamp, "hmac": "b", "details": details}]
+
+        for tenant in ("default", "acme", "globex"):
+            matched, unreadable = _filter_tenant_events(events, tenant, since, until)
+            assert matched == []
+            assert unreadable == [0]
+
+    def test_an_absent_details_still_reads_as_the_default_tenant(self) -> None:
+        """Absent states nothing; unreadable states something illegible."""
+        since, until = _today_window()
+        stamp = _in_window_timestamp(since, until)
+        events = [
+            {"timestamp": stamp, "hmac": "a"},
+            {"timestamp": stamp, "hmac": "b", "details": {}},
+            {"timestamp": stamp, "hmac": "c", "details": None},
+        ]
+
+        matched, unreadable = _filter_tenant_events(events, "default", since, until)
+
+        assert unreadable == []
+        assert len(matched) == 3
+
+    def test_export_refuses_a_slice_holding_a_non_mapping_details(self, tmp_path: Path) -> None:
+        audit_dir = tmp_path / ".sdd" / "audit"
+        _seed_two_tenants(audit_dir)
+        since, until = _today_window()
+
+        segment = next(iter(audit_dir.glob("*.jsonl")))
+        lines = segment.read_text(encoding="utf-8").splitlines()
+        first = json.loads(lines[0])
+        first["details"] = ["not", "a", "mapping"]
+        lines[0] = json.dumps(first)
+        segment.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="unreadable"):
+            export_tenant_slice(
+                audit_dir=audit_dir,
+                tenant_id="acme",
+                since=since,
+                until=until,
+                key=_TEST_KEY,
+                output_dir=tmp_path / "out",
+                write=True,
+            )
