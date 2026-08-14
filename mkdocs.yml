@@ -520,6 +520,7 @@ nav:
       - Release notes:
           - Changelog: CHANGELOG.md
           - Unreleased: release-notes/unreleased.md
+          - v3.15.1: release-notes/v3.15.1.md
           - v3.15.0: release-notes/v3.15.0.md
           - v3.14.159: release-notes/v3.14.159.md
           - v3.13.0: release-notes/v3.13.0.md
