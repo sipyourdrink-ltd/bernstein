@@ -9,6 +9,7 @@ import tarfile
 from pathlib import Path
 
 import pytest
+from bernstein.core.traces import TraceStep, TraceStore, new_trace
 
 from bernstein.core.lineage.identity import AgentCard, generate_keypair
 from bernstein.core.observability.ticket_bundle import (
@@ -122,6 +123,33 @@ def test_assemble_includes_filename_and_content_matches(workdir: Path) -> None:
     # Noise was excluded
     assert "transcripts/agent-backend-OTHER-1.jsonl" not in arcnames
     assert "audit/unrelated.jsonl" not in arcnames
+
+
+def test_persisted_trace_secret_cannot_reappear_in_ticket_bundle(tmp_path: Path) -> None:
+    canary = "gho_0123456789abcdefghijklmnopqrstuv"
+    store = TraceStore(tmp_path / ".sdd" / "traces")
+    trace = new_trace("sess-secret", ["ENG-42"], "backend", "sonnet", "high")
+    trace.steps.append(
+        TraceStep(type="verify", timestamp=1.0, detail=f"Authorization: Bearer {canary}")
+    )
+    store.write(trace)
+    out = tmp_path / "ENG-42.tar.gz"
+    bundle = TicketBundle(
+        workdir=tmp_path,
+        tracker="github",
+        ticket_id="ENG-42",
+        selector=_selector_without_git(tmp_path),
+    )
+
+    manifest = bundle.assemble(out=out)
+
+    assert any(entry.arcname == "traces/ENG-42.jsonl" for entry in manifest.files)
+    with tarfile.open(out, mode="r:*") as tf:
+        trace_payload = tf.extractfile("traces/ENG-42.jsonl")
+        assert trace_payload is not None
+        persisted = trace_payload.read()
+    assert canary.encode() not in persisted
+    assert b"[REDACTED]" in persisted
 
 
 def test_manifest_schema_and_metadata(workdir: Path) -> None:

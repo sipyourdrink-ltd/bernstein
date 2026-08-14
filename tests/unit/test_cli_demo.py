@@ -725,8 +725,7 @@ def test_stop_demo_processes_waits_for_finalization_before_reap(tmp_path):
     # These fail on current teardown (child killed before .proceed)
     # and pass after the fix (teardown waited for .finalized).
     assert (runtime_dir / ".finalized").exists(), (
-        "finalization did not complete before teardown — "
-        "teardown killed the orchestrator mid-finalization"
+        "finalization did not complete before teardown — teardown killed the orchestrator mid-finalization"
     )
     assert (project_dir / "spine.sealed").exists(), "lineage spine was not sealed"
     assert (project_dir / "run.receipt").exists(), "run receipt was not written"

@@ -308,7 +308,6 @@ class TestOutOfRangeEnumValues:
         [
             pytest.param("complexity", "epic", id="complexity"),
             pytest.param("scope", "galactic", id="scope"),
-            pytest.param("model", "gpt9000", id="model"),
             pytest.param("effort", "turbo", id="effort"),
         ],
     )
@@ -341,6 +340,39 @@ class TestOutOfRangeEnumValues:
         assert value in result.output
         assert "Traceback" not in result.output
         assert result.exception is None or isinstance(result.exception, SystemExit)
+
+    def test_arbitrary_model_identifier_is_valid_at_command_surface(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        from bernstein.cli.main import cli
+
+        plan_file = _write_plan(
+            tmp_path,
+            {
+                "name": "Arbitrary Model Plan",
+                "stages": [
+                    {
+                        "name": "Stage 1",
+                        "steps": [
+                            {
+                                "title": "Task A",
+                                "role": "backend",
+                                "model": "provider/model-name",
+                            },
+                        ],
+                    },
+                ],
+            },
+        )
+
+        result = runner.invoke(cli, ["plan", "validate", str(plan_file)])
+
+        assert result.exit_code == 0
+        assert "Plan is valid." in result.output
+        assert "Traceback" not in result.output
+        assert result.exception is None
 
 
 class TestSchemaParityAtTheCommand:

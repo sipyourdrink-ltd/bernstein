@@ -91,7 +91,7 @@ def _check_schema(plan_file: Path, errors: list[str], warnings: list[str]) -> No
 
     ``load_plan`` parses a plan; it does not judge it. It reads ``stages`` and
     ``steps`` and takes whatever it finds, so a plan with no ``name``, a
-    ``priority`` outside 1-5, or a role/model string that is not in the enum
+    ``priority`` outside 1-5, or a role string that is not in the enum
     parses cleanly and reaches every later check intact -- and those checks look
     at the task graph, not at the fields. Without this the command answers
     "Plan is valid." for a plan the scheduler will reject.

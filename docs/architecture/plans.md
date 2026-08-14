@@ -86,7 +86,7 @@ alias).
 | `priority` | int 1-5 | `2` | 1 = highest, 5 = lowest. Affects orchestrator ordering when multiple steps are ready. |
 | `scope` | enum | `medium` | `small` (<30min), `medium` (30-90min), `large` (90min+). Influences cost/model picks. |
 | `complexity` | enum | `medium` | `low`, `medium`, `high`. Drives router/cascade tier choice. |
-| `model` | enum | - | Override model: `auto`, `opus`, `sonnet`, `haiku`. |
+| `model` | string | - | Override model with an adapter/provider-specific identifier, such as `provider/model-name`. |
 | `effort` | enum | - | Effort knob: `low`, `normal`, `high`, `max`. |
 | `estimated_minutes` | int | `30` | Used by the duration predictor and plan cost estimate. |
 | `mode` | string | - | Execution mode (e.g. `batch`). |
@@ -499,7 +499,7 @@ The plan loader validates fields strictly. This table documents the load-time be
 | `role` | Known role enum | Unknown string | — | — |
 | `scope` | Known scope enum | Unknown string | — | — |
 | `complexity` | Known complexity enum | Unknown string | — | — |
-| `model` | Known model enum | Unknown string | — | — |
+| `model` | Non-empty string | Empty or non-string value | — | — |
 | `effort` | Known effort enum | Unknown string | — | — |
 | `completion_signals` | `list[CompletionSignal]` | — | `[]` (if missing) | — |
 

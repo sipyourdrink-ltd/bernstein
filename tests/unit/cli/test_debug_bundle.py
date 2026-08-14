@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from bernstein.core.traces import TraceStep, TraceStore, new_trace
 from click.testing import CliRunner
 
 from bernstein.cli.debug_bundle import (
@@ -138,6 +139,29 @@ def test_bernstein_yaml_secrets_are_redacted(tmp_path: Path, monkeypatch: pytest
     assert secret_value not in body
     assert "REDACTED" in body
     assert manifest["redactions_applied"] >= 1
+
+
+def test_persisted_trace_secret_cannot_reappear_in_debug_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    canary = "ghp_0123456789abcdefghijklmnopqrstuv"
+    store = TraceStore(tmp_path / ".sdd" / "traces")
+    trace = new_trace("run-secret", ["task-secret"], "backend", "sonnet", "high")
+    trace.steps.append(
+        TraceStep(type="verify", timestamp=1.0, detail=f"Authorization: Bearer {canary}")
+    )
+    store.write(trace)
+    (tmp_path / ".sdd" / "runtime").mkdir(parents=True)
+    (tmp_path / ".sdd" / "runtime" / "run_id").write_text("task-secret\n", encoding="utf-8")
+    _stub_doctor(monkeypatch)
+
+    result = build_debug_bundle(tmp_path, task="task-secret")
+
+    assert result.output_path is not None
+    with zipfile.ZipFile(result.output_path) as zf:
+        trace_payloads = b"\n".join(zf.read(name) for name in zf.namelist() if name.startswith("traces/"))
+    assert canary.encode() not in trace_payloads
+    assert b"REDACTED" in trace_payloads
 
 
 # ---------------------------------------------------------------------------
