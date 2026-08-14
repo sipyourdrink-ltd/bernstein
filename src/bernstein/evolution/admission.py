@@ -28,13 +28,16 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from bernstein.core.quality.empirical_confidence import (
     Confidence,
     ConfidenceQuery,
 )
-from bernstein.evolution.proposals import UpgradeProposal
+
+if TYPE_CHECKING:
+    from bernstein.evolution.proposals import UpgradeProposal
 
 logger = logging.getLogger(__name__)
 
@@ -51,14 +54,14 @@ DEFAULT_MIN_CONFIDENCE: float = 0.5
 UNATTRIBUTED_PRODUCER = "unattributed"
 
 
-class ColdStartMode(str, Enum):
+class ColdStartMode(StrEnum):
     """What to do with a key that has fewer than ``min_samples`` outcomes."""
 
     FAIL_CLOSED = "fail_closed"
     FAIL_OPEN = "fail_open"
 
 
-class AdmissionMode(str, Enum):
+class AdmissionMode(StrEnum):
     """Whether a refusal actually blocks.
 
     ``OBSERVE`` is the default, and deliberately so. Enforcing on a cold

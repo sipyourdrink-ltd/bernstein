@@ -225,6 +225,7 @@
 | File                       | Purpose |
 |----------------------------|---------|
 | `_shared.py`               | Shared constants, data classes, and helpers for the evolution loop modules |
+| `admission.py`             | Empirical-confidence admission gate for upgrade proposals |
 | `aggregator.py`            | Metrics aggregation with EWMA, CUSUM, BOCPD, and Goodhart defenses |
 | `applicator.py`            | Change applicator - execute upgrades via file modification |
 | `benchmark.py`             | Tiered benchmark runner for evolution validation |

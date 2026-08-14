@@ -5,16 +5,16 @@ from __future__ import annotations
 import pytest
 
 from bernstein.core.quality.empirical_confidence import ConfidenceQuery
+from bernstein.core.tasks.models import RiskAssessment, RollbackPlan
 from bernstein.evolution.admission import (
     DEFAULT_MIN_CONFIDENCE,
     UNATTRIBUTED_PRODUCER,
-    AdmissionPolicy,
     AdmissionMode,
+    AdmissionPolicy,
     ColdStartMode,
     decision_key,
     producer_identity,
 )
-from bernstein.core.tasks.models import RiskAssessment, RollbackPlan
 from bernstein.evolution.detector import UpgradeCategory
 from bernstein.evolution.proposals import AnalysisTrigger, UpgradeProposal
 
