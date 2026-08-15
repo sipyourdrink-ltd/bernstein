@@ -43,7 +43,7 @@ def manifest():
     return load_manifest(MANIFEST_PATH.read_text(encoding="utf-8"))
 
 
-def test_the_repositorys_own_manifest_loads(manifest) -> None:
+def test_this_projects_own_manifest_loads(manifest) -> None:
     """The first project must not silently drop out of its own program."""
     assert manifest.version == 1
     assert manifest.license == "Apache-2.0"
@@ -76,7 +76,7 @@ def test_the_lint_gates_are_the_commands_ci_runs(manifest) -> None:
         )
 
 
-def test_the_test_gate_is_the_repositorys_own_runner(manifest) -> None:
+def test_the_test_gate_is_this_projects_own_runner(manifest) -> None:
     """`scripts/run_tests.py`, not pytest.
 
     The repository runs its suite through an isolated per-file runner because a
