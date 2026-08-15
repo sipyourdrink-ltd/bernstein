@@ -31,12 +31,30 @@ name: "Contract Drift Autofix"
 #   * When the source PR is auto-deleted on merge, there is no orphaned
 #     bot branch left re-targeting to main with a giant diff.
 #
-# Fallback paths (preserved for safety):
-#   * Fork PRs (no push to head ref): post the patch as an idempotent PR
-#     comment with copy-paste-able apply instructions.
+# Fallback paths (same-repo PRs, where the token can write):
 #   * Unhandled drift / LOC-cap trip: open a tracking issue.
 #   * Push to head ref fails (branch protection, lease conflict): post
-#     the patch as a PR comment so the operator can apply locally.
+#     the patch as an idempotent PR comment so the operator can apply it
+#     locally.
+#
+# Fork PRs: report, don't write
+# ----------------------------
+# `permissions:` is a ceiling, not a grant. A pull_request event raised
+# from a fork caps GITHUB_TOKEN at read on every scope, so none of the
+# three write paths above can fire: the push, the PR comment, and the
+# tracking issue all return "Resource not accessible by integration".
+#
+# Attempting one anyway is worse than skipping it. The step fails, and a
+# GitHub permissions error becomes the visible reason the check is red -
+# so the contributor reads a token scope they cannot change instead of
+# the drift they can fix. Observed on PR #3903 (run 31906285880), where
+# the real cause was a CLI command registered without a cli-reference.md
+# entry and the visible failure was `createIssue` 403.
+#
+# So fork PRs terminate at the fork_report step, which renders the
+# captured `[regen] ...` diagnostics (plus the patch, when regen produced
+# one) into the job summary and fails on those. The actionable message is
+# the one on the check.
 #
 # Recursion guards
 # ----------------
@@ -169,12 +187,23 @@ jobs:
         id: regen
         run: |
           set +e
-          uv run python scripts/regen_contract_drift.py --fixture all
+          # Split the streams rather than just letting them land in the log.
+          # The script prints progress to stdout ("running X", "nothing to
+          # add") and the actionable diagnosis to stderr - the line that names
+          # the offending command, e.g. "registered, but neither documented in
+          # cli-reference.md nor exempt: receipt". The reporting steps below
+          # read regen.err back so that line reaches the contributor instead of
+          # staying buried in the raw log.
+          uv run python scripts/regen_contract_drift.py --fixture all \
+            > "${RUNNER_TEMP}/regen.out" 2> "${RUNNER_TEMP}/regen.err"
           # The regen script returns 0 only when at least one fixture was
           # patched. Any non-zero exit means nothing was patched - either
           # because the drift wasn't one of the three known patterns or
           # because the diff exceeded the 30-LOC safety cap.
           regen_status=$?
+          # Replay both streams so the job log is unchanged by the capture.
+          cat "${RUNNER_TEMP}/regen.out"
+          cat "${RUNNER_TEMP}/regen.err" >&2
           echo "regen_status=$regen_status" >> "$GITHUB_OUTPUT"
           exit 0
 
@@ -226,6 +255,127 @@ jobs:
           fi
           exit 0
 
+      - name: Report drift in the job summary and fail (fork PRs)
+        # Fork PRs terminate here. `permissions:` is a ceiling, not a grant: a
+        # pull_request event raised from a fork caps GITHUB_TOKEN at read for
+        # every scope, so neither write fallback below can fire. Attempting one
+        # anyway is worse than skipping it - the step dies with "Resource not
+        # accessible by integration" and that permissions error becomes the
+        # visible reason the check is red, burying the drift that caused it
+        # (observed on PR #3903, run 31906285880, where the real cause was a
+        # command registered without a cli-reference.md entry).
+        #
+        # So render what regen actually said into the job summary and fail on
+        # that instead. The contributor reads "document your new command",
+        # which is a thing they can act on, rather than a token scope they
+        # cannot change.
+        if: >
+          steps.drift.outputs.drift == 'true' &&
+          steps.forkcheck.outputs.is_fork == 'true'
+        id: fork_report
+        env:
+          REGEN_CHANGED: ${{ steps.verify.outputs.changed }}
+          REVERIFY_STATUS: ${{ steps.reverify.outputs.status }}
+          LOC_DELTA: ${{ steps.verify.outputs.loc_delta }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # Matches the runner's default shell (bash -eo pipefail) so this
+          # script behaves the same when run by hand.
+          set -euo pipefail
+
+          REGEN_ERR="${RUNNER_TEMP}/regen.err"
+          PATCH_FILE="${RUNNER_TEMP}/contract-drift.patch"
+
+          # Prefer the tagged lines; fall back to raw stderr, then to a pointer
+          # at the step log. An empty summary would reintroduce exactly the
+          # problem this step exists to fix.
+          #
+          # Every grep here is `|| true`: a no-match exits 1, and under `set -e`
+          # a failing command substitution aborts the step -- which would leave
+          # the summary empty and the annotation unwritten, i.e. the silent
+          # failure this whole step exists to prevent.
+          DIAGNOSTICS="$(grep -F '[regen]' "$REGEN_ERR" 2>/dev/null || true)"
+          [ -n "$DIAGNOSTICS" ] || DIAGNOSTICS="$(cat "$REGEN_ERR" 2>/dev/null || true)"
+          [ -n "$DIAGNOSTICS" ] || DIAGNOSTICS="regen emitted no diagnostics; see the 'Regenerate drift fixtures' step log."
+
+          # Markdown backticks are written as \` inside double quotes rather
+          # than inside single quotes: shellcheck reads a single-quoted
+          # backtick as a command substitution that will not expand (SC2016).
+          # A heredoc would read better but cannot be used here -- its body
+          # would have to dedent past this YAML block scalar's indentation.
+          {
+            echo "## Contract drift on this PR"
+            echo
+            echo "One of the contract detectors failed:"
+            echo
+            echo "- \`tests/unit/test_readme_api_coverage.py::test_all_cli_commands_are_documented\`"
+            echo "- \`tests/unit/test_api_v1_routing.py::TestVersionedRoutesParity::test_every_root_route_has_v1_counterpart\`"
+            echo "- \`tests/unit/test_cli_run_params.py::test_run_params_match_cli_call\`"
+            echo
+            echo "\`scripts/regen_contract_drift.py\` reported:"
+            echo
+            echo "\`\`\`"
+            echo "$DIAGNOSTICS"
+            echo "\`\`\`"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${REGEN_CHANGED}" = "true" ] && [ "${REVERIFY_STATUS}" = "0" ] && [ -f "$PATCH_FILE" ]; then
+            # Mechanical drift with a working patch. The bot can neither push
+            # to a fork head ref nor comment on the PR, so hand the patch over.
+            {
+              echo "### How to fix"
+              echo
+              echo "Regen produced a working patch (${LOC_DELTA:-?} LOC, cap: 30). Run it on your branch:"
+              echo
+              echo "\`\`\`bash"
+              echo 'uv run python scripts/regen_contract_drift.py --fixture all'
+              echo 'git commit -am "chore(ci): regenerate contract drift allow-lists"'
+              echo "\`\`\`"
+              echo
+              echo '<details><summary>Patch</summary>'
+              echo
+              echo "\`\`\`diff"
+              cat "$PATCH_FILE"
+              echo "\`\`\`"
+              echo
+              echo '</details>'
+            } >> "$GITHUB_STEP_SUMMARY"
+            SUMMARY_LINE="Contract drift: run 'uv run python scripts/regen_contract_drift.py --fixture all' and commit the result."
+          else
+            # Regen deliberately declined, or its patch did not clear the
+            # detectors. Both need a decision a bot should not make: an
+            # exemption records a reason, and a bot-written one records none.
+            {
+              echo "### How to fix"
+              echo
+              echo "This one is not auto-patchable - it needs a decision, not a regen:"
+              echo
+              echo "- A new CLI command must be documented in \`docs/reference/cli-reference.md\`, or"
+              echo "  recorded in \`UNDOCUMENTED_EXEMPTIONS\` in"
+              echo "  \`tests/unit/test_readme_api_coverage.py\` with the reason it is exempt."
+              echo "- A new root-mounted route needs an \`/api/v1/*\` counterpart, or an entry in"
+              echo "  \`_INFRASTRUCTURE_PATHS\` in \`tests/unit/test_api_v1_routing.py\`."
+              echo "- A new \`run()\` parameter must be forwarded by the \`cli()\` click callback."
+              echo
+              echo "Reproduce locally with:"
+              echo
+              echo "\`\`\`bash"
+              echo 'uv run python scripts/regen_contract_drift.py --fixture all'
+              echo "\`\`\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            SUMMARY_LINE="$(printf '%s' "$DIAGNOSTICS" | grep -F '[regen]' | head -n 1 || true)"
+            [ -n "$SUMMARY_LINE" ] || SUMMARY_LINE="Contract drift could not be auto-patched; see the job summary."
+          fi
+
+          echo "Run: ${RUN_URL}" >> "$GITHUB_STEP_SUMMARY"
+
+          # Annotations are single-line: % and newlines have to be escaped or
+          # the body is truncated at the first one.
+          ANNOTATION="$(printf '%s' "$SUMMARY_LINE" | sed -e 's/%/%25/g' -e 's/\r/%0D/g')"
+          echo "::error title=Contract drift::${ANNOTATION}"
+          exit 1
+
       - name: Commit regen inline to source PR head ref
         # Primary path. Same-repo PRs receive the regen patch directly on
         # their head branch via git push, so the autofix rides into main
@@ -264,17 +414,21 @@ jobs:
           echo "pushed=true" >> "$GITHUB_OUTPUT"
 
       - name: Post drift patch as PR comment (fallback)
-        # Fallback path. Fires when:
-        #   * the PR is from a fork (no push access to head ref), OR
-        #   * the inline push step failed (lease conflict, branch protection,
-        #     transient API outage).
+        # Fallback path for same-repo PRs whose inline push was rejected (lease
+        # conflict, branch protection, transient API outage).
+        #
+        # Fork PRs are excluded: createComment needs pull-requests:write, which
+        # a fork's read-only GITHUB_TOKEN does not have regardless of the
+        # permissions block above, so this step could only 403 there. The
+        # fork_report step renders the same patch into the job summary instead.
+        #
         # Body is idempotent on a hidden marker so re-runs edit the same
         # comment rather than spamming the PR.
         if: >
           steps.drift.outputs.drift == 'true' &&
           steps.verify.outputs.changed == 'true' &&
-          steps.reverify.outputs.status == '0' && (
-            steps.forkcheck.outputs.is_fork == 'true' ||
+          steps.reverify.outputs.status == '0' &&
+          steps.forkcheck.outputs.is_fork == 'false' && (
             steps.inline_push.outcome == 'failure' ||
             steps.inline_push.outputs.pushed != 'true'
           )
@@ -285,7 +439,6 @@ jobs:
           CHANGED_FILES: ${{ steps.verify.outputs.changed_files }}
           LOC_DELTA: ${{ steps.verify.outputs.loc_delta }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          IS_FORK: ${{ steps.forkcheck.outputs.is_fork }}
           INLINE_OUTCOME: ${{ steps.inline_push.outcome }}
         with:
           script: |
@@ -297,12 +450,11 @@ jobs:
             const changedFiles = (process.env.CHANGED_FILES || '').trim();
             const locDelta = process.env.LOC_DELTA || '?';
             const runUrl = process.env.RUN_URL;
-            const isFork = process.env.IS_FORK === 'true';
             const inlineOutcome = process.env.INLINE_OUTCOME || '';
 
-            const reason = isFork
-              ? 'PR is from a fork; the bot cannot push to fork head refs, so apply the patch below manually.'
-              : `Inline autofix push failed (\`${inlineOutcome || 'skipped'}\`). Apply the patch below manually.`;
+            // Fork PRs never reach this step (read-only token), so a failed or
+            // skipped inline push is the only way to get here.
+            const reason = `Inline autofix push failed (\`${inlineOutcome || 'skipped'}\`). Apply the patch below manually.`;
 
             const patchPath = path.join(process.env.RUNNER_TEMP, 'contract-drift.patch');
             let patch = fs.readFileSync(patchPath, 'utf-8');
@@ -401,29 +553,57 @@ jobs:
             }
 
       - name: Fall back to issue when regen could not fix the drift
+        # Same-repo PRs only: gh issue create needs issues:write, which a fork
+        # PR's read-only GITHUB_TOKEN does not have. Running it there fails the
+        # job on "Resource not accessible by integration" and hides the drift,
+        # so forks are routed to the fork_report step instead.
         if: >
-          steps.drift.outputs.drift == 'true' && (
+          steps.drift.outputs.drift == 'true' &&
+          steps.forkcheck.outputs.is_fork == 'false' && (
             steps.verify.outputs.changed != 'true' ||
             steps.reverify.outputs.status != '0'
           )
+        id: issue_fallback
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          set -euo pipefail
           # Title is idempotent on PR number so re-runs don't spam issues.
-          TITLE="Contract drift on PR #${{ github.event.pull_request.number }} could not be auto-patched"
+          TITLE="Contract drift on PR #${PR_NUMBER} could not be auto-patched"
           EXISTING=$(gh issue list --search "$TITLE in:title" --state open --json number --jq '.[0].number // ""')
           if [ -n "$EXISTING" ]; then
             echo "::notice::Issue #$EXISTING already tracks this drift - skipping."
             exit 0
           fi
+
+          # Quote what regen actually said. Listing the possible reasons without
+          # the actual one makes the reader open the run log to find something
+          # the bot already had in hand.
+          # `|| true`: grep exits 1 on no-match, and `set -e` would abort the
+          # step before the issue is ever opened.
+          DIAGNOSTICS="$(grep -F '[regen]' "${RUNNER_TEMP}/regen.err" 2>/dev/null || true)"
+          [ -n "$DIAGNOSTICS" ] || DIAGNOSTICS="(regen emitted no diagnostics; see the run log)"
+
+          BODY_FILE="${RUNNER_TEMP}/drift-issue.md"
+          {
+            echo "Contract drift was detected on PR #${PR_NUMBER} but \`scripts/regen_contract_drift.py\` could not produce a clean patch."
+            echo
+            echo '```'
+            echo "$DIAGNOSTICS"
+            echo '```'
+            echo
+            echo "Possible reasons:"
+            echo "- Drift exceeded the 30-LOC safety cap (real semantic change, not drift)."
+            echo "- Drift pattern is not one of the three the script handles."
+            echo "- The fixture declines to patch itself (an exemption records a decision; a bot-written one records none)."
+            echo "- Regen ran but the targeted tests still fail (regen bug)."
+            echo
+            echo "See workflow run ${RUN_URL} for details. Refs #1273."
+          } > "$BODY_FILE"
+
           gh issue create \
             --title "$TITLE" \
             --label ci,contract-drift,bot \
-            --body "Contract drift was detected on PR #${{ github.event.pull_request.number }} but \`scripts/regen_contract_drift.py\` could not produce a clean patch.
-
-          Possible reasons:
-          - Drift exceeded the 30-LOC safety cap (real semantic change, not drift).
-          - Drift pattern is not one of the three the script handles.
-          - Regen ran but the targeted tests still fail (regen bug).
-
-          See workflow run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} for details. Refs #1273."
+            --body-file "$BODY_FILE"

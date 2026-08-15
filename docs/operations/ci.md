@@ -276,6 +276,40 @@ Everything else that triggers on `pull_request` is advisory:
 `spa-bundle-freshness`, `spiffe-extra-e2e`, `trufflehog`, `typecheck-ts`,
 `zizmor`.
 
+### Fork pull requests get a read-only token
+
+`permissions:` is a ceiling, not a grant. On a `pull_request` event raised
+from a fork, GitHub caps `GITHUB_TOKEN` at read for **every** scope, whatever
+the workflow or job asks for. A write call made anyway fails with
+`Resource not accessible by integration`.
+
+This matters for any lane whose only output is a write:
+
+| Lane output | Same-repo PR | Fork PR |
+|-------------|--------------|---------|
+| Push to the PR head ref | works | 403 |
+| PR comment | works | 403 |
+| Tracking issue | works | 403 |
+
+The failure mode is worse than doing nothing: the permission error becomes
+the visible reason the check is red, so the contributor reads a token scope
+they cannot change instead of the problem they can fix.
+
+`contract-drift-autofix.yml` is the worked example. Same-repo PRs keep all
+three write paths. Fork PRs skip them and take a report-only path instead:
+the captured `[regen] ...` diagnostics (plus the patch, when regen produced
+one) are written to the job summary and the step fails on those. The
+workflow is advisory, so the red check does not block the merge - it just
+says what to fix. `tests/unit/test_contract_drift_autofix_workflow_yaml.py`
+replays the step guards for both fork states and runs the reporting script
+under the runner's shell, so neither the routing nor the message can
+regress silently.
+
+A lane that needs to write on a fork PR has to move the write off the
+`pull_request` event entirely (`workflow_run`, or a separate
+`pull_request_target` job with a reviewed trigger) rather than widen
+`permissions:`, which does nothing here.
+
 ### Pull requests opened by automation
 
 A pull request created with the Actions token (`secrets.GITHUB_TOKEN`, or
