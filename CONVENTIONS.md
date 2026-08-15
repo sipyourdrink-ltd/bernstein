@@ -80,6 +80,7 @@ Bernstein is a deterministic orchestrator for CLI coding agents (Claude Code, Co
 | `trackers/`                 | Tracker adapter subsystem |
 | `trigger_sources/`          | Trigger source adapters - normalize raw events into TriggerEvent |
 | `tunnels/`                  | Tunnel provider abstraction and registry |
+| `volunteer/`                | Volunteer-workers substrate: opt-in project policy and its trust anchor |
 | `workflows/`                | Declarative YAML workflow manifests |
 | `worktrees/`                | Worktree inventory and garbage-collection helpers |
 

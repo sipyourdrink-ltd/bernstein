@@ -509,6 +509,7 @@ nav:
           - Eventing v2 (unified feed): events/grammar.md
           - .well-known manifest: protocols/well-known-manifest.md
           - SPIFFE workload identity: reference/spiffe-workload-identity.md
+          - Volunteer project manifest: reference/volunteer-manifest.md
           - MCP catalog: reference/mcp-catalog.md
           - MCP tool tiers: mcp/tool_tiers.md
       - Compatibility & limits:
