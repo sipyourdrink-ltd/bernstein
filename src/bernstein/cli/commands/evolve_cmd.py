@@ -59,6 +59,34 @@ def evolve() -> None:
     """
 
 
+def _load_evolve_config_from_seed(
+    root: Path,
+    github_sync: bool,
+    github_repo: str | None,
+) -> tuple[bool, str | None]:
+    """Read evolve config from bernstein.yaml if CLI flags were not set."""
+    for seed_name in ("bernstein.yaml", "bernstein.yml"):
+        seed_path = root / seed_name
+        if not seed_path.exists():
+            continue
+        with suppress(Exception):
+            import yaml as _yaml
+
+            raw = _yaml.safe_load(seed_path.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                break
+            evolve_cfg = cast("dict[str, Any]", raw).get("evolve", {})
+            if not isinstance(evolve_cfg, dict):
+                break
+            evolve_dict = cast("dict[str, Any]", evolve_cfg)
+            if not github_sync and evolve_dict.get("github_sync"):
+                github_sync = True
+            if github_repo is None and evolve_dict.get("github_repo"):
+                github_repo = str(evolve_dict["github_repo"])
+        break
+    return github_sync, github_repo
+
+
 @evolve.command("run")
 @click.option(
     "--window",
@@ -97,34 +125,6 @@ def evolve() -> None:
     default=None,
     help="GitHub repo slug (owner/repo). Inferred from git remote if omitted.",
 )
-def _load_evolve_config_from_seed(
-    root: Path,
-    github_sync: bool,
-    github_repo: str | None,
-) -> tuple[bool, str | None]:
-    """Read evolve config from bernstein.yaml if CLI flags were not set."""
-    for seed_name in ("bernstein.yaml", "bernstein.yml"):
-        seed_path = root / seed_name
-        if not seed_path.exists():
-            continue
-        with suppress(Exception):
-            import yaml as _yaml
-
-            raw = _yaml.safe_load(seed_path.read_text(encoding="utf-8"))
-            if not isinstance(raw, dict):
-                break
-            evolve_cfg = cast("dict[str, Any]", raw).get("evolve", {})
-            if not isinstance(evolve_cfg, dict):
-                break
-            evolve_dict = cast("dict[str, Any]", evolve_cfg)
-            if not github_sync and evolve_dict.get("github_sync"):
-                github_sync = True
-            if github_repo is None and evolve_dict.get("github_repo"):
-                github_repo = str(evolve_dict["github_repo"])
-        break
-    return github_sync, github_repo
-
-
 def evolve_run(
     window: str,
     max_proposals: int,

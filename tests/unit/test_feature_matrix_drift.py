@@ -289,3 +289,47 @@ def test_named_verification_surfaces_stay_indexed(command: str) -> None:
     only reporting that some command fell out of the matrix.
     """
     assert command in documented_commands(), f"`bernstein {command}` is not named by any matrix row"
+
+
+def _matrix_row_for(command: str) -> str:
+    """Return the feature-matrix row that documents a command."""
+    for line in _MATRIX.read_text(encoding="utf-8").splitlines():
+        if line.lstrip().startswith("|") and command in line:
+            return line
+    raise AssertionError(f"No feature-matrix row found for {command!r}")
+
+
+@pytest.mark.parametrize(
+    ("command", "entry_page", "entry_marker", "blocker"),
+    [
+        (
+            "bernstein evolve",
+            _REPO_ROOT / "docs" / "reference" / "cli-reference.md",
+            "> **Preview:** `bernstein evolve run`",
+            ".sdd/",
+        ),
+        (
+            "bernstein listen",
+            _REPO_ROOT / "docs" / "operations" / "voice-control.md",
+            "> **Preview:** `bernstein listen`",
+            "bernstein[voice]",
+        ),
+    ],
+)
+def test_preview_fences_stay_visible(
+    command: str,
+    entry_page: Path,
+    entry_marker: str,
+    blocker: str,
+) -> None:
+    """Fenced maturity-2 commands keep their Preview marker and blocker."""
+    row = _matrix_row_for(command)
+
+    assert "| 2 |" in row
+    assert "**Preview.**" in row
+    assert blocker in row
+
+    entry_text = entry_page.read_text(encoding="utf-8")
+
+    assert entry_marker in entry_text
+    assert blocker in entry_text

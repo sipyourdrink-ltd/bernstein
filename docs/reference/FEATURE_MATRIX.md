@@ -247,7 +247,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | `bernstein demo` | Full | 2 | Zero-config demo |
 | [`bernstein demo --flask-todo`](../getting-started/quickstart-demo.md) | Full | 2 | Flask TODO demo (3 tasks). `bernstein quickstart` is a deprecated alias, removed in 4.0.0. |
 | `bernstein agents ...` | Full | 3 | Catalog management |
-| `bernstein evolve ...` | Full | 2 | Self-improvement |
+| `bernstein evolve ...` | Full | 2 | **Preview.** A clean directory exits before the evolution loop starts because `.sdd/` is missing; initialise a Bernstein workspace first. |
 | `bernstein ci fix` | Full | 3 | CI autofix |
 | `bernstein github setup` | Full | 3 | GitHub App setup |
 | [`bernstein worker`](../operations/cluster-mode.md) | Full | 2 | Join cluster as worker |
@@ -270,7 +270,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein gateway`](../operations/mcp-gateway.md) | Full | 3 | MCP gateway proxy |
 | [`bernstein workflow`](../operations/workflow-manifests.md) | Full | 3 | Workflow DSL |
 | [`bernstein watch`](../operations/watch.md) | Full | 3 | Directory file watcher |
-| [`bernstein listen`](../operations/voice-control.md) | Full | 2 | Voice commands (experimental). Needs the optional `voice` extra (`pip install 'bernstein[voice]'`); without it the command exits with the install hint rather than starting a session |
+| [`bernstein listen`](../operations/voice-control.md) | Full | 2 | **Preview.** Voice commands are experimental. A base install exits with the `pip install 'bernstein[voice]'` hint; a usable first run also requires microphone/audio support and downloads the selected Whisper model on first use. |
 | [`bernstein completions`](../operations/shell-completions.md) | Full | 3 | Shell completion scripts |
 | [`bernstein self`](../operations/updates.md) | Full | 3 | Provenance-verified update lifecycle: signed feed, chain-anchored advisory, pre-install wheel verification, pin, receipted rollback |
 | [`bernstein self-update`](../operations/self-update.md) | Full | 3 | Compatibility alias for `bernstein self` |

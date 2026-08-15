@@ -1,5 +1,7 @@
 # Voice control
 
+> **Preview:** `bernstein listen` does not start from a base Bernstein installation. Without the optional `voice` dependencies it exits with the `pip install 'bernstein[voice]'` hint. After installing the extra, voice operation also requires working microphone/audio support, and the selected Whisper model is downloaded on first use.
+
 `bernstein listen` is an experimental voice front-end: capture audio
 from your microphone, transcribe it locally with `faster-whisper`,
 match the result against a small grammar plus a user-defined alias

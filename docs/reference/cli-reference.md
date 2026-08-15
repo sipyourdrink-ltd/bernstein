@@ -704,6 +704,8 @@ See [`operations/cluster-mode.md`](../operations/cluster-mode.md) for the full s
 
 #### `bernstein evolve`
 
+> **Preview:** `bernstein evolve run` is not a zero-workspace first-run path. In a clean directory it exits before starting the evolution loop because `.sdd/` is missing. Initialise a Bernstein workspace first, then run the command from that workspace.
+
 Group: self-evolution proposals and their review lifecycle.
 
 | Subcommand | Purpose |
