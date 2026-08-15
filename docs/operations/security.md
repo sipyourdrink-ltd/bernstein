@@ -43,12 +43,12 @@ existing artefacts in this repository.
 | Project website and discussion channel | `https://bernstein.run`, GitHub Issues, GitHub Discussions. |
 | Documented contribution process | `CONTRIBUTING.md`. |
 | OSI-approved license, license file present | `LICENSE` (Apache-2.0). |
-| Documented build instructions | `README.md` "install" section; `docs/getting-started/install.md`. |
+| Documented build instructions | `README.md` "install in 30 seconds" section; `docs/getting-started/install.md`. |
 | Cryptographically signed releases | Tag-based `.github/workflows/auto-release.yml` hands off to `publish.yml` (Sigstore build-provenance attestation) + signed PyPI uploads; `SECURITY.md`. |
 | Vulnerability reporting process | `SECURITY.md`. |
 | Documented secure development knowledge for at least one committer | `docs/operations/security-and-identity.md`; CONTRIBUTING checklist. |
 | Public bug tracker | GitHub Issues. |
-| Test suite invocable with a documented command | `pytest`; `README.md` "Build & test" block. |
+| Test suite invocable with a documented command | `pytest`; `AGENTS.md` "Build & test" block. |
 | Static analysis (SAST) in CI | CodeQL (`.github/workflows/codeql.yml`); Bandit and Semgrep jobs in `.github/workflows/ci.yml`; `.github/workflows/static-analysis-extended.yml`. |
 | Dynamic analysis / fuzzing | Hypothesis property tests in `tests/`; ClusterFuzzLite at `.clusterfuzzlite/` + `.github/workflows/cifuzz-pr.yml`. |
 | Dependency vulnerability scanning | Dependabot, OSV via Scorecard, `.github/workflows/dependency-review.yml`. |

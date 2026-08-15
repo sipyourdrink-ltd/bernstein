@@ -111,8 +111,8 @@ work.
   `modal` runs in dedicated serverless containers.
 - **Capabilities.** `e2b`, `modal`, `daytona`, `runloop`, `vercel`, and `microvm` support snapshot/resume (as does the local `worktree`);
   only `modal` exposes GPU today.
-- **Supported exec semantics.** All four backends handle argv-based
-  exec with exit-code, stdout, and stderr capture.
+- **Supported exec semantics.** Every first-party backend handles
+  argv-based exec with exit-code, stdout, and stderr capture.
 
 ## MicroVM backend and deterministic fork-and-race
 
