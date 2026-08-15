@@ -37,6 +37,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from bernstein.adapters.advisories import ADAPTER_MIN_SAFE_VERSIONS, AdapterAdvisory
+from bernstein.core.security.path_containment import (
+    PathContainmentError,
+    PathTooLongError,
+    contained_path,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -442,12 +447,19 @@ def write_preflight_receipt(base_dir: Path, receipt: dict[str, Any]) -> Path:
         raise ValueError(f"invalid adapter name for receipt filename: {adapter!r}")
     sha = receipt_sha256(receipt)
     base_dir.mkdir(parents=True, exist_ok=True)
-    resolved_base = base_dir.resolve()
-    candidate = (resolved_base / f"{adapter}-{sha[:16]}.json").resolve()
-    if not candidate.is_relative_to(resolved_base):
-        raise ValueError("receipt path escapes the receipts directory")
+    stem = f"{adapter}-{sha[:16]}"
+    try:
+        candidate = contained_path(base_dir, f"{stem}.json", label="receipt path")
+        # The temporary sibling is opened *before* the rename, so it needs the
+        # same proof as the final name. A pre-placed symlink at the .tmp path
+        # otherwise captures the write and lands the receipt body outside the
+        # receipts directory, then the rename seals the link into place.
+        tmp = contained_path(base_dir, f"{stem}.json.tmp", label="receipt temp path")
+    except PathTooLongError as exc:
+        raise ValueError(f"receipt filename is too long for this filesystem: {stem}.json") from exc
+    except PathContainmentError as exc:
+        raise ValueError("receipt path escapes the receipts directory") from exc
     doc = {"receipt": receipt, "receipt_sha256": sha}
-    tmp = candidate.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     tmp.replace(candidate)
     return candidate
