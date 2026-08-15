@@ -17,7 +17,13 @@ from bernstein.cli.helpers import (
     is_alive,
     print_banner,
 )
-from bernstein.cli.run_confirm import _lineage_progress, _status_task_rows
+from bernstein.cli.run_confirm import (
+    _demo_exit_code,
+    _DemoOutcome,
+    _fetch_demo_outcome,
+    _lineage_progress,
+    _status_task_rows,
+)
 
 _QUICKSTART_PORT = 8056
 _QUICKSTART_GOAL = "Add input validation, error handling, and tests to the TODO API"
@@ -243,32 +249,30 @@ def _stop_quickstart_processes(project_dir: Path) -> None:
 
 def _print_quickstart_summary(
     project_dir: Path,
-    server_url: str,
+    outcome: _DemoOutcome | None,
     elapsed_secs: float = 0.0,
     keep: bool = False,
 ) -> None:
     """Print final quickstart summary: tasks completed, cost, next steps.
 
+    Takes an already-captured snapshot rather than querying the server itself.
+    The caller tears the server down during cleanup, so a query from here read
+    an empty task list and rendered ``0 / 0`` for every run - including runs in
+    which three seeded tasks visibly failed one line above (issue #3902).
+
     Args:
         project_dir: Quickstart project root.
-        server_url: Base URL of the task server.
+        outcome: Task outcome snapshot taken before cleanup, or None when no
+            snapshot was captured (an interrupted or crashed run).
         elapsed_secs: Wall-clock seconds the orchestration took.
         keep: Whether the temp directory was kept.
     """
     from rich.table import Table
 
-    tasks_data: list[dict[str, Any]] = []
-    total_cost: float = 0.0
-    with suppress(Exception):
-        resp = httpx.get(f"{server_url}/status", timeout=3.0, headers=auth_headers())
-        if resp.status_code == 200:
-            payload = resp.json()
-            tasks_data = payload.get("tasks", [])
-            total_cost = payload.get("total_cost_usd", 0.0)
-
-    done = sum(1 for t in tasks_data if t.get("status") == "done")
-    failed = sum(1 for t in tasks_data if t.get("status") == "failed")
-    total = len(tasks_data)
+    done = outcome.done if outcome is not None else 0
+    failed = outcome.failed if outcome is not None else len(_QUICKSTART_TASKS)
+    total = outcome.total if outcome is not None else len(_QUICKSTART_TASKS)
+    total_cost = outcome.cost_usd if outcome is not None else 0.0
 
     elapsed_str = f"{elapsed_secs:.0f}s" if elapsed_secs > 0 else "-"
 
@@ -280,6 +284,8 @@ def _print_quickstart_summary(
     table.add_row("Tasks completed", f"[green]{done}[/green] / {total}")
     if failed:
         table.add_row("Tasks failed", f"[red]{failed}[/red]")
+    if outcome is not None and not outcome.server_reachable:
+        table.add_row("Task server", "[red]unreachable - counts unread[/red]")
     table.add_row("Elapsed", elapsed_str)
     py_files = [p for p in project_dir.glob("**/*.py") if ".sdd" not in p.parts]
     table.add_row("Python files", str(len(py_files)))
@@ -362,6 +368,8 @@ def quickstart_cmd(keep: bool, timeout: int, adapter: str | None) -> None:
     server_url = f"http://127.0.0.1:{_QUICKSTART_PORT}"
     orchestration_start = time.monotonic()
 
+    outcome: _DemoOutcome | None = None
+    bootstrap_error: Exception | None = None
     try:
         console.print("\n[bold]Starting orchestration…[/bold]")
         from bernstein.core.bootstrap import bootstrap_from_goal
@@ -378,7 +386,9 @@ def quickstart_cmd(keep: bool, timeout: int, adapter: str | None) -> None:
             deadline=orchestration_start + timeout,
             expected_total=len(_QUICKSTART_TASKS),
         )
-        console.print("[green]✓[/green] Orchestration finished")
+        # Snapshot while the server is still alive: the cleanup below tears it
+        # down, and a query after that reads an empty task list.
+        outcome = _fetch_demo_outcome(server_url, expected_total=len(_QUICKSTART_TASKS))
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted.[/yellow]")
@@ -386,17 +396,31 @@ def quickstart_cmd(keep: bool, timeout: int, adapter: str | None) -> None:
         from bernstein.cli.errors import bootstrap_failed
 
         bootstrap_failed(exc).print()
+        bootstrap_error = exc
     finally:
         _stop_quickstart_processes(project_dir)
 
+    if outcome is not None and outcome.all_fixed:
+        console.print("[green]✓[/green] Orchestration finished")
+    else:
+        console.print("[yellow]![/yellow] Orchestration finished with unresolved tasks")
+
     elapsed = time.monotonic() - orchestration_start
-    _print_quickstart_summary(project_dir, server_url, elapsed_secs=elapsed, keep=keep)
+    _print_quickstart_summary(project_dir, outcome, elapsed_secs=elapsed, keep=keep)
 
     if not keep:
         import contextlib
 
         with contextlib.suppress(Exception):
             shutil.rmtree(project_dir, ignore_errors=True)
+
+    # Exit code reflects the result: 0 only when every seeded task reached done,
+    # nonzero on any failure or a crashed bootstrap. The scenario reported
+    # success after all three tasks failed, so a CI job or wrapper script could
+    # not tell a broken run from a good one (issue #3902).
+    exit_code = _demo_exit_code(outcome, bootstrap_error=bootstrap_error)
+    if exit_code != 0:
+        raise SystemExit(exit_code)
 
 
 @click.command("quickstart", help="[Deprecated] Use 'bernstein demo --flask-todo' instead.")

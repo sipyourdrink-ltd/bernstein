@@ -1,9 +1,12 @@
 # Zero-config Flask TODO demo
 
-> **Preview.** This command does not yet complete a first run. `bernstein demo
-> --flask-todo` exits 0 while completing none of its tasks: all three seeded
-> tasks fail, the task server dies and restarts mid-run, and the summary
-> reports `Tasks completed 0 / 0` rather than `0 / 3`. Plain `bernstein demo`
+> **Preview.** This command does not yet complete a first run: all three seeded
+> tasks fail and the task server can die and restart mid-run. What it no longer
+> does is claim otherwise — the summary reports `Tasks completed 0 / 3` against
+> the seeded count and the command exits non-zero, so a wrapper or CI job can
+> tell the run apart from a good one
+> ([#3902](https://github.com/sipyourdrink-ltd/bernstein/issues/3902)). Plain
+> `bernstein demo`
 > has a separate first-run failure — a cold run can exceed the task-server
 > readiness budget and exit 1 (the error says `10.0s`; the actual budget is
 > 30s, see [#3905](https://github.com/sipyourdrink-ltd/bernstein/issues/3905))
@@ -59,6 +62,18 @@ bernstein demo --flask-todo --real --adapter codex
 6. Prints a summary table (tasks completed, elapsed time, Python files
    produced, API cost) and, unless `--keep` is passed, deletes the temp
    directory.
+
+## Exit code
+
+`0` only when all three seeded tasks reached `done`. Anything else — a failed
+task, an interrupted run, a bootstrap that raised — exits `1`.
+
+The denominator in `Tasks completed` is the seeded count, not the length of the
+task list the server happens to hold, so a retry that spawns a fresh task id
+cannot inflate it and a torn-down server cannot deflate it to `0 / 0`. The
+snapshot behind the table is taken while the server is still running; if it
+could not be read, the table says `Task server unreachable` instead of quietly
+reporting zeros.
 
 ## Cost
 

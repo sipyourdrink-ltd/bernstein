@@ -544,12 +544,19 @@ class _DemoOutcome:
     server list length, so retries that spawn fresh task ids cannot inflate the
     denominator (issue #2799). ``done`` is clamped to ``total`` and ``failed`` is
     the number of seeded bugs left unfixed.
+
+    ``server_reachable`` records whether the snapshot actually reached the task
+    server. A snapshot taken from a dead server is all zeros, which is
+    indistinguishable from a run in which every task failed - and the two call
+    for different reactions, so the summary has to be able to tell them apart
+    (issue #3902).
     """
 
     done: int
     failed: int
     total: int
     cost_usd: float
+    server_reachable: bool = True
 
     @property
     def all_fixed(self) -> bool:
@@ -575,12 +582,14 @@ def _fetch_demo_outcome(server_url: str, *, expected_total: int) -> _DemoOutcome
     """
     tasks_data: list[dict[str, Any]] = []
     total_cost = 0.0
+    reachable = False
     with suppress(Exception):
         resp = httpx.get(f"{server_url}/status", timeout=3.0, headers=auth_headers())
         if resp.status_code == 200:
             payload = resp.json()
             tasks_data = _status_task_rows(payload)
             total_cost = float(payload.get("total_cost_usd", 0.0) or 0.0)
+            reachable = True
 
     # Count done LINEAGES against the seeded set. A failed task spawns a retry
     # task with a fresh id, so the live list balloons past the seeded count
@@ -592,7 +601,13 @@ def _fetch_demo_outcome(server_url: str, *, expected_total: int) -> _DemoOutcome
     done_lineages, _, _ = _lineage_progress(tasks_data)
     done = min(len(done_lineages), expected_total)
     failed = max(expected_total - done, 0)
-    return _DemoOutcome(done=done, failed=failed, total=expected_total, cost_usd=total_cost)
+    return _DemoOutcome(
+        done=done,
+        failed=failed,
+        total=expected_total,
+        cost_usd=total_cost,
+        server_reachable=reachable,
+    )
 
 
 def _print_demo_summary(project_dir: Path, outcome: _DemoOutcome | None, elapsed_secs: float = 0.0) -> None:
@@ -622,6 +637,8 @@ def _print_demo_summary(project_dir: Path, outcome: _DemoOutcome | None, elapsed
     table.add_row("Bugs fixed", f"[green]{done}[/green] / {total}")
     if failed:
         table.add_row("Tasks failed", f"[red]{failed}[/red]")
+    if outcome is not None and not outcome.server_reachable:
+        table.add_row("Task server", "[red]unreachable - counts unread[/red]")
     table.add_row("Elapsed", elapsed_str)
 
     # Count Python files in the project dir (excluding .sdd/)
