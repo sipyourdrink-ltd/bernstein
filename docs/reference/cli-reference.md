@@ -868,7 +868,7 @@ Multi-project dashboard.
 | `list` | List instances discovered under the fleet root. |
 | `ls` | List configured projects without launching the dashboard. |
 | `reload` | Rescan the fleet root and report what would be picked up. |
-| `bulk-cost-report` | Run `bernstein cost report` against every matching project. |
+| `bulk-cost-report` | Run `bernstein cost` against every matching project. |
 | `bulk-pause` / `bulk-resume` / `bulk-stop` | Pause, resume, or stop every matching project. |
 
 The group also accepts `--web [host:]port` to run the web view instead of the TUI. (`cli/commands/fleet_cmd.py:50+`.)

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import click
 import pytest
 
+from bernstein.cli.main import cli
 from bernstein.core.fleet.aggregator import ProjectSnapshot, ProjectState
 from bernstein.core.fleet.bulk import (
+    bulk_cost_report,
     bulk_pause,
     bulk_resume,
     bulk_stop,
@@ -138,3 +141,86 @@ async def test_bulk_records_failure_per_project(tmp_path: Path) -> None:
     assert "alpha" in result.succeeded
     assert "bravo" in result.failed
     assert "boom" in result.failed["bravo"]
+
+
+def _resolve(path: str) -> click.Command | None:
+    """Walk ``path`` through the real CLI, returning None at the first miss.
+
+    Same walk ``tests/unit/test_cli_command_registration.py`` uses on doc
+    tables; kept local so this file has no cross-test import.
+    """
+    node: click.Command | None = cli
+    for word in path.split():
+        if not isinstance(node, click.Group):
+            return None
+        node = node.get_command(click.Context(node), word)
+        if node is None:
+            return None
+    return node
+
+
+async def _capture_dispatch(project: ProjectConfig) -> list[str]:
+    """Run ``bulk_cost_report`` against a stub runner and return the argv it dispatched."""
+    captured: list[list[str]] = []
+
+    async def runner(cmd: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, str, str]:
+        captured.append(list(cmd))
+        return 0, "ok", ""
+
+    await bulk_cost_report([project], runner=runner)
+    assert len(captured) == 1
+    # Drop the `python -m bernstein` prefix chosen by `_bernstein_command()`.
+    cmd = captured[0]
+    return cmd[cmd.index("bernstein") + 1 :]
+
+
+@pytest.mark.asyncio
+async def test_bulk_cost_report_dispatches_a_command_that_resolves(tmp_path: Path) -> None:
+    """The argv ``bulk_cost_report`` spawns is a spelling the CLI actually has.
+
+    Guards issue #3755: the dispatch asked for ``bernstein cost report``, which
+    has never been a registered subcommand, so every project in the fleet came
+    back with click's exit 2 and the whole sweep reported failure.  Asserting on
+    the argv rather than on a subprocess keeps the check hermetic; the exit code
+    is pinned separately below.
+    """
+    args = await _capture_dispatch(_project(tmp_path, "alpha"))
+
+    assert _resolve(" ".join(args)) is not None, (
+        f"fleet bulk-cost-report dispatches `bernstein {' '.join(args)}`, "
+        "which does not resolve through the top-level CLI"
+    )
+
+
+@pytest.mark.asyncio
+async def test_bulk_cost_report_passes_extra_args_through(tmp_path: Path) -> None:
+    """``extra_args`` land after the command, so ``--json`` still reaches it."""
+    captured: list[list[str]] = []
+
+    async def runner(cmd: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, str, str]:
+        captured.append(list(cmd))
+        return 0, "ok", ""
+
+    await bulk_cost_report([_project(tmp_path, "alpha")], runner=runner, extra_args=["--json"])
+    assert captured[0][-1] == "--json"
+
+
+@pytest.mark.asyncio
+async def test_bulk_cost_report_exits_zero_against_a_fixture_project(tmp_path: Path) -> None:
+    """The real subprocess returns 0 for a project that has run bernstein before.
+
+    The argv test above cannot see click's exit code, and "resolves" is not the
+    same claim as "succeeds".  This one spawns the actual interpreter against a
+    fixture project, which is what a fleet operator gets.
+
+    The fixture carries an (empty) ``.sdd/metrics`` directory on purpose: a
+    project that has never run bernstein has no such directory and ``bernstein
+    cost`` exits 1 there.  That asymmetry is a separate defect and is reported
+    on #3755 rather than fixed here.
+    """
+    (tmp_path / ".sdd" / "metrics").mkdir(parents=True)
+    project = _project(tmp_path, "alpha")
+
+    result = await bulk_cost_report([project])
+
+    assert result.succeeded == ["alpha"], f"expected a clean sweep, got failures: {result.failed}"

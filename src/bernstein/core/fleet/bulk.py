@@ -234,8 +234,19 @@ async def bulk_cost_report(
     runner: SubprocessRunner | None = None,
     extra_args: list[str] | None = None,
 ) -> BulkActionResult:
-    """Run ``bernstein cost report`` on every selected project."""
-    args = ["cost", "report", *(extra_args or [])]
+    """Run ``bernstein cost`` on every selected project.
+
+    The report is the ``cost`` group's own output: the group is declared
+    ``invoke_without_command=True`` and its callback prints the per-project
+    breakdown titled "Bernstein Cost Report". ``cost report`` was never a
+    registered subcommand (issue #3755), so the dispatch used to hand click a
+    spelling it rejects with exit 2 for every project in the fleet.
+
+    Deliberately not ``cost profile-report``: that one writes a report artifact
+    and appends an event to the project's audit chain, so a fleet-wide read
+    would mutate every project it touched.
+    """
+    args = ["cost", *(extra_args or [])]
     return await _bulk_dispatch("cost-report", projects, args, runner=runner)
 
 

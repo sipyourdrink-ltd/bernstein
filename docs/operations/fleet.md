@@ -97,9 +97,10 @@ bernstein fleet bulk-cost-report   [--names …] [--filter …]
 - **`bulk-pause`** - stop the project's daemon (`fleet_cmd.py:239-252`).
 - **`bulk-resume`** - restart the project's daemon
   (`fleet_cmd.py:255-268`).
-- **`bulk-cost-report`** - run `bernstein cost report` against every
-  selected project and emit a JSON envelope per project
-  (`fleet_cmd.py:271-284`).
+- **`bulk-cost-report`** - run `bernstein cost` against every selected
+  project (`fleet_cmd.py:271-284`). The per-project stdout is collected
+  into `BulkActionResult.outputs`; what the command prints is the one
+  aggregate envelope described below, not a per-project one.
 
 Output is a compact JSON blob: `{"action": "...", "succeeded": [...],
 "failed": {project: error_message}}` (`fleet_cmd.py:214-220`).

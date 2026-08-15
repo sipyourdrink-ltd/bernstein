@@ -311,7 +311,7 @@ def bulk_cost_report_cmd(
     names: tuple[str, ...],
     filter_expression: str | None,
 ) -> None:
-    """Run ``bernstein cost report`` against every matching project."""
+    """Run ``bernstein cost`` against every matching project."""
     config = _resolve_config(ctx.obj.get("config_path"))
     targets = _bulk_target(config, names, filter_expression)
     result = asyncio.run(bulk_cost_report(targets))

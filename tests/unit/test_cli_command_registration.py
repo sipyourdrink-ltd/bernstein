@@ -498,14 +498,7 @@ def test_subcommand_rows_resolve_and_accept_their_flags(path: str, flags: frozen
 # Spellings a table cell names that do not resolve, each with the reason it is
 # tolerated.  An entry here records a documented invocation that fails; keep
 # this as close to empty as the surface allows.
-UNREGISTERED_MENTION_EXEMPTIONS: dict[str, str] = {
-    "cost report": (
-        "never existed as a command; `bernstein fleet bulk-cost-report` dispatches it "
-        "to every project, so the doc row mirrors a live runtime bug in "
-        "src/bernstein/core/fleet/bulk.py:238 -- tracked separately, fixing it here "
-        "would change fleet behaviour"
-    ),
-}
+UNREGISTERED_MENTION_EXEMPTIONS: dict[str, str] = {}
 
 
 def _table_command_mentions() -> list[pytest.param]:
