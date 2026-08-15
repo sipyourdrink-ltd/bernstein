@@ -1183,10 +1183,15 @@ jobs:
     # PyPI CVE scan. Production deps are strict (any vulnerability
     # fails); dev deps are advisory (continue-on-error). The free
     # PyPI advisory DB is updated daily.
+    #
+    # Both audit steps retry transient pypi.org failures rather than
+    # reddening on the first blip - a single read timeout used to eject
+    # otherwise-healthy PRs from the merge queue. The timeout budget below
+    # covers the retry attempts and their backoff.
     name: pip-audit (deps)
     needs: [lint]
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -1207,9 +1212,10 @@ jobs:
       - name: Export dev requirements (no project, hashed)
         run: uv export --no-emit-project --format requirements-txt -o /tmp/req-dev.txt
       - name: Production deps (strict)
-        # `--no-deps` is safe: the exported file is fully pinned and the
-        # transitive closure is resolved by `uv.lock`. `--disable-pip`
-        # avoids spinning up a sub-venv just to run `pip install`.
+        # Both audit steps go through the pip-audit-retry composite, which
+        # retries transient network failures with backoff and raises the
+        # per-request timeout above pip-audit's 15s default. A run that
+        # actually reports an advisory fails immediately without retrying.
         #
         # `--ignore-vuln PYSEC-2025-183` (CVE-2025-45768): disputed advisory
         # against pyjwt that affects all released versions (introduced at 0,
@@ -1217,10 +1223,14 @@ jobs:
         # The maintainer disputes it because the key length is chosen by the
         # calling application, not the library. There is nothing to upgrade
         # to, so it is ignored with the rationale recorded here.
-        run: uv run pip-audit -r /tmp/req-prod.txt --strict --disable-pip --no-deps --ignore-vuln PYSEC-2025-183
+        uses: ./.github/actions/pip-audit-retry
+        with:
+          requirements: /tmp/req-prod.txt
       - name: Dev deps (advisory)
         continue-on-error: true
-        run: uv run pip-audit -r /tmp/req-dev.txt --strict --disable-pip --no-deps --ignore-vuln PYSEC-2025-183
+        uses: ./.github/actions/pip-audit-retry
+        with:
+          requirements: /tmp/req-dev.txt
 
   beartype:
     # Runtime type-check enforcement via beartype.claw. Imports the

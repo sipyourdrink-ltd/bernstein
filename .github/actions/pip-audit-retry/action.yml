@@ -1,0 +1,93 @@
+name: "pip-audit with transient-failure retry"
+description: >
+  Runs `pip-audit` against an exported requirements file, retrying only when
+  the failure is NOT a vulnerability verdict. pip-audit exits 1 for every
+  failure mode - a real advisory, a service error, and an uncaught
+  `requests.exceptions.ReadTimeout` alike - so the exit code on its own cannot
+  distinguish "this dependency is vulnerable" from "pypi.org did not answer in
+  time". This composite classifies on pip-audit's own summary line instead:
+  a run that printed `Found N known vulnerabilities` is a deterministic verdict
+  and fails immediately without retrying, while any other non-zero exit is
+  treated as infrastructure noise and retried with backoff. Must be invoked
+  AFTER the bootstrap composite, because it shells out to `uv run`.
+
+inputs:
+  requirements:
+    description: "Path to the exported requirements file to audit."
+    required: true
+  attempts:
+    description: >
+      Total number of pip-audit invocations before giving up. Only non-verdict
+      failures consume an attempt.
+    required: false
+    default: "3"
+  initial-delay:
+    description: "Seconds to sleep before the second attempt. Tripled each retry."
+    required: false
+    default: "5"
+  timeout:
+    description: >
+      Per-request socket timeout in seconds, passed through as `--timeout`.
+      pip-audit defaults to 15s to match pip; that is too tight for a loaded
+      pypi.org and is what produced the ReadTimeout crashes.
+    required: false
+    default: "60"
+  ignore-vuln:
+    description: "Advisory ID passed through as `--ignore-vuln`."
+    required: false
+    default: "PYSEC-2025-183"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run pip-audit with retry on transient failures
+      shell: bash
+      env:
+        PIP_AUDIT_REQUIREMENTS: ${{ inputs.requirements }}
+        PIP_AUDIT_ATTEMPTS: ${{ inputs.attempts }}
+        PIP_AUDIT_INITIAL_DELAY: ${{ inputs.initial-delay }}
+        PIP_AUDIT_TIMEOUT: ${{ inputs.timeout }}
+        PIP_AUDIT_IGNORE_VULN: ${{ inputs.ignore-vuln }}
+      run: |
+        # `--no-deps` is safe: the exported file is fully pinned and the
+        # transitive closure is resolved by `uv.lock`. `--disable-pip` avoids
+        # spinning up a sub-venv just to run `pip install`.
+        delay="$PIP_AUDIT_INITIAL_DELAY"
+        status=0
+
+        for attempt in $(seq 1 "$PIP_AUDIT_ATTEMPTS"); do
+          status=0
+          # `|| status=$?` keeps the default `-e` from aborting the step so
+          # the exit code can be classified below.
+          output="$(uv run pip-audit \
+            -r "$PIP_AUDIT_REQUIREMENTS" \
+            --strict \
+            --disable-pip \
+            --no-deps \
+            --timeout "$PIP_AUDIT_TIMEOUT" \
+            --ignore-vuln "$PIP_AUDIT_IGNORE_VULN" 2>&1)" || status=$?
+          printf '%s\n' "$output"
+
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+
+          # A vulnerability verdict is deterministic: report it now. Retrying
+          # would only reprint the same advisory and delay the red build.
+          if printf '%s\n' "$output" | grep -Eq 'Found [0-9]+ known vulnerabilit'; then
+            echo "::error::pip-audit reported a vulnerability advisory. Failing without retry."
+            exit "$status"
+          fi
+
+          if [ "$attempt" -lt "$PIP_AUDIT_ATTEMPTS" ]; then
+            echo "::warning::pip-audit attempt ${attempt}/${PIP_AUDIT_ATTEMPTS} exited ${status} without a vulnerability verdict (treating as transient); retrying in ${delay}s."
+            sleep "$delay"
+            delay=$((delay * 3))
+          fi
+        done
+
+        # Exhausted every attempt and never got a clean run or a verdict. This
+        # is still a real failure - the step reddens with pip-audit's own exit
+        # code rather than being swallowed.
+        echo "::error::pip-audit failed ${PIP_AUDIT_ATTEMPTS} attempts without producing a vulnerability verdict (last exit ${status})."
+        exit "$status"
