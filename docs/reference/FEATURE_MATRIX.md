@@ -245,7 +245,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein checkpoint`](../operations/checkpoint.md) | Full | 3 | Session snapshot |
 | [`bernstein wrap-up`](../operations/wrap-up.md) | Full | 3 | End session with summary |
 | `bernstein demo` | Full | 2 | Zero-config demo |
-| [`bernstein demo --flask-todo`](../getting-started/quickstart-demo.md) | Full | 2 | Flask TODO demo (3 tasks). `bernstein quickstart` is a deprecated alias, removed in 4.0.0. |
+| [`bernstein demo --flask-todo`](../getting-started/quickstart-demo.md) | Full | 2 | Flask TODO demo (3 tasks). `bernstein quickstart` is a deprecated alias, removed in v4.0.0. |
 | `bernstein agents ...` | Full | 3 | Catalog management |
 | `bernstein evolve ...` | Full | 2 | **Preview.** A clean directory exits before the evolution loop starts because `.sdd/` is missing; initialise a Bernstein workspace first. |
 | `bernstein ci fix` | Full | 3 | CI autofix |

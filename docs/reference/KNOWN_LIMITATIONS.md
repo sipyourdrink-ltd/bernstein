@@ -115,4 +115,4 @@ Bernstein ships a lot of functionality, but several constraints still matter in 
 
 ---
 
-*Last updated: 2026-07-16.*
+*Last updated: 2026-08-15.*
