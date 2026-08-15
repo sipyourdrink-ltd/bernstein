@@ -40,7 +40,7 @@ If you nodded at two of those bullets, this fits.
 
 The commands below assume the basics from the
 [first run](getting-started/first-run.md): at least one agent CLI with its API
-key configured, and a checked-out **working branch** - `bernstein -g` refuses to
+key configured, and a checked-out **working branch**. `bernstein -g` refuses to
 start on the repository default branch.
 
 ### Parallel test generation with AI agents

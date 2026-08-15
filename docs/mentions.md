@@ -60,7 +60,7 @@ Mirrors: [icopy-site/awesome](https://github.com/icopy-site/awesome),
 [trackawesomelist/trackawesomelist](https://github.com/trackawesomelist/trackawesomelist).
 
 Entries here are lists that have actually merged a Bernstein entry. Submissions
-we have opened and that are still awaiting a maintainer are not listed: a
+we have opened that are still awaiting a maintainer are not listed: a
 pending request is not coverage.
 
 ## Packaged or installable by third parties

@@ -72,7 +72,7 @@ A message sent to a stalled agent to prompt it to continue working. Part of the 
 
 ### Protocol Negotiation
 
-Runtime handshake that determines which protocol version (MCP, A2A, ACP) a connected client or agent supports, ensuring compatibility is verified at connection time rather than at failure time. Implemented in `src/bernstein/core/protocols/protocol_negotiation.py`.
+Runtime handshake that determines which protocol version (MCP, A2A, ACP) a connected client or agent supports. Compatibility is verified at connection time, not at failure time. Implemented in `src/bernstein/core/protocols/protocol_negotiation.py`.
 
 ### Quality Gate
 
@@ -88,7 +88,7 @@ Software-Defined Development - the `.sdd/` directory where all runtime state liv
 
 ### Schema Registry
 
-A versioned catalog of message schemas for MCP, A2A, and ACP protocols, enabling forward/backward compatibility checks and migration paths. Implemented in `src/bernstein/core/protocols/schema_registry.py`.
+A versioned catalog of message schemas for MCP, A2A, and ACP protocols. Backs forward/backward compatibility checks and migration paths. Implemented in `src/bernstein/core/protocols/schema_registry.py`.
 
 ### Skills Injector
 

@@ -5,8 +5,8 @@ Every translated `README.<ietf-tag>.md` mirrors the English
 HTML-comment binding to a content hash of the English section it
 mirrors. `bernstein readme-l10n verify` recomputes those hashes and
 fails on drift, naming the language and the exact stale section
-heading - so a PR that edits an English section and leaves a
-translation behind turns red in the same CI run.
+heading. A PR that edits an English section and leaves a translation
+behind turns red in the same CI run.
 
 This is the same drift-gate shape as `agents-md verify`: the gate is
 the deliverable, the translations are its payload.
@@ -126,10 +126,10 @@ This is stricter than the hash contract below, deliberately. Hash
 normalisation absorbs blank-line reflow of the *English source* so a
 formatting pass does not invalidate every binding. Parity compares
 English against translation, where a merged pair of paragraphs and a
-dropped paragraph are indistinguishable from the outside - so joining
-two translated paragraphs that are separate in English is an exit-1
-failure, even though no content is missing. Split them back apart to
-match the English layout.
+dropped paragraph are indistinguishable from the outside. Joining two
+translated paragraphs that are separate in English is therefore an
+exit-1 failure, even though no content is missing. Split them back
+apart to match the English layout.
 
 ## Hash stability
 
