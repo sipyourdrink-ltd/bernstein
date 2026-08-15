@@ -46,7 +46,6 @@ import base64
 import hashlib
 import json
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.security.audit_dsse import (
@@ -64,6 +63,8 @@ from bernstein.core.security.audit_dsse import (
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from cryptography.hazmat.primitives.asymmetric.ed25519 import (
         Ed25519PrivateKey,
         Ed25519PublicKey,
@@ -318,9 +319,7 @@ def verify_result_bundle(
     """
     errors: list[FieldError] = []
 
-    env_v = verify_envelope(
-        envelope, public_key, expected_predicate_type=RESULT_RECEIPT_PREDICATE_TYPE
-    )
+    env_v = verify_envelope(envelope, public_key, expected_predicate_type=RESULT_RECEIPT_PREDICATE_TYPE)
     if not env_v.ok:
         # signature / envelope-shape failure: nothing below can be trusted.
         return BundleVerification(
@@ -341,28 +340,34 @@ def verify_result_bundle(
     # subject digest byte-for-byte.
     recomputed = _sha256_hex(canonical_bytes(bundle_dict))
     if recomputed != attested_digest:
-        errors.append(FieldError(
-            "subject.digest.sha256",
-            f"embedded bundle hashes to {recomputed}, envelope attests {attested_digest}",
-        ))
+        errors.append(
+            FieldError(
+                "subject.digest.sha256",
+                f"embedded bundle hashes to {recomputed}, envelope attests {attested_digest}",
+            )
+        )
 
     # (3) the signer is the worker the bundle names.
     worker = bundle_dict.get("worker", {})
     if worker.get("keyid") and env_v.keyid and worker["keyid"] != env_v.keyid:
-        errors.append(FieldError(
-            "worker.keyid",
-            f"bundle names worker {worker['keyid']}, signature is by {env_v.keyid}",
-        ))
+        errors.append(
+            FieldError(
+                "worker.keyid",
+                f"bundle names worker {worker['keyid']}, signature is by {env_v.keyid}",
+            )
+        )
 
     # (4) patch integrity.
     patch = bundle_dict.get("patch", "")
     attested_patch = bundle_dict.get("patch_sha256", "")
     actual_patch = _sha256_hex(patch.encode("utf-8"))
     if actual_patch != attested_patch:
-        errors.append(FieldError(
-            "patch",
-            f"patch hashes to {actual_patch}, bundle attests {attested_patch}",
-        ))
+        errors.append(
+            FieldError(
+                "patch",
+                f"patch hashes to {actual_patch}, bundle attests {attested_patch}",
+            )
+        )
 
     # (5) gate-log integrity, per gate.
     for index, gate in enumerate(bundle_dict.get("gates", [])):
@@ -370,11 +375,12 @@ def verify_result_bundle(
         attested_log = gate.get("log_sha256", "")
         actual_log = _sha256_hex(log.encode("utf-8"))
         if actual_log != attested_log:
-            errors.append(FieldError(
-                f"gates[{index}].log",
-                f"log for {gate.get('command', '?')!r} hashes to {actual_log}, "
-                f"bundle attests {attested_log}",
-            ))
+            errors.append(
+                FieldError(
+                    f"gates[{index}].log",
+                    f"log for {gate.get('command', '?')!r} hashes to {actual_log}, bundle attests {attested_log}",
+                )
+            )
 
     # (6) chain link shape and, optionally, continuity with a predecessor.
     chain = bundle_dict.get("chain", {})
@@ -383,10 +389,12 @@ def verify_result_bundle(
     elif not isinstance(chain.get("length"), int) or chain["length"] < 1:
         errors.append(FieldError("chain.length", f"invalid length {chain.get('length')!r}"))
     elif expected_prev_digest is not None and chain.get("anchor") != expected_prev_digest:
-        errors.append(FieldError(
-            "chain.anchor",
-            f"anchor {chain.get('anchor')} does not link to predecessor {expected_prev_digest}",
-        ))
+        errors.append(
+            FieldError(
+                "chain.anchor",
+                f"anchor {chain.get('anchor')} does not link to predecessor {expected_prev_digest}",
+            )
+        )
 
     return BundleVerification(
         ok=not errors,

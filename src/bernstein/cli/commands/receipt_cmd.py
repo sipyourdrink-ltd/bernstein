@@ -83,13 +83,18 @@ def verify_cmd(bundle_path: Path, pubkey_path: Path | None, prev_digest: str | N
     result = verify_result_bundle(envelope, public_key, expected_prev_digest=prev_digest)
 
     if as_json:
-        click.echo(json.dumps({
-            "ok": result.ok,
-            "keyid": result.keyid,
-            "digest": result.digest,
-            "pinned_key": pinned,
-            "errors": [{"field": e.field, "message": e.message} for e in result.errors],
-        }, indent=2))
+        click.echo(
+            json.dumps(
+                {
+                    "ok": result.ok,
+                    "keyid": result.keyid,
+                    "digest": result.digest,
+                    "pinned_key": pinned,
+                    "errors": [{"field": e.field, "message": e.message} for e in result.errors],
+                },
+                indent=2,
+            )
+        )
     else:
         if result.ok:
             trust = "pinned key" if pinned else "embedded key (trust on first use)"
@@ -149,11 +154,11 @@ def create_cmd(spec_path: Path, signing_key_path: Path, output_path: Path) -> No
         task = spec["task"]
         chain = spec["chain"]
         bundle = ResultBundle(
-            task=TaskRef(repo=task["repo"], commit_sha=task["commit_sha"],
-                         issue_number=task.get("issue_number")),
+            task=TaskRef(repo=task["repo"], commit_sha=task["commit_sha"], issue_number=task.get("issue_number")),
             patch=spec["patch"],
-            gates=tuple(GateResult(command=g["command"], exit_code=g["exit_code"], log=g["log"])
-                        for g in spec.get("gates", [])),
+            gates=tuple(
+                GateResult(command=g["command"], exit_code=g["exit_code"], log=g["log"]) for g in spec.get("gates", [])
+            ),
             manifest_sha256=spec["manifest_sha256"],
             adapter_id=spec["adapter_id"],
             model_id=spec["model_id"],

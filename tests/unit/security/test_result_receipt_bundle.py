@@ -111,16 +111,19 @@ def _sign_dict(key, bundle_dict):
     statement = ad.Statement(
         subjects=[subject],
         predicate_type=rb.RESULT_RECEIPT_PREDICATE_TYPE,
-        predicate={"schema_version": rb.BUNDLE_SCHEMA_VERSION, "bundle_kind": "result-receipt",
-                   "bundle": bundle_dict, "chain": bundle_dict["chain"]},
+        predicate={
+            "schema_version": rb.BUNDLE_SCHEMA_VERSION,
+            "bundle_kind": "result-receipt",
+            "bundle": bundle_dict,
+            "chain": bundle_dict["chain"],
+        },
     )
     payload = rb.canonical_bytes(statement.to_dict())
     sig = key.sign(ad.pae(ad.DSSE_PAYLOAD_TYPE, payload))
     return ad.Envelope(
         payload_type=ad.DSSE_PAYLOAD_TYPE,
         payload_b64=b64.b64encode(payload).decode(),
-        signatures=[ad.Signature(keyid=ad.keyid_from_public_key(key.public_key()),
-                                 sig=b64.b64encode(sig).decode())],
+        signatures=[ad.Signature(keyid=ad.keyid_from_public_key(key.public_key()), sig=b64.b64encode(sig).decode())],
     )
 
 
@@ -165,10 +168,16 @@ def test_chain_continuity():
     # the successor links to the first bundle's digest
     pub = key.public_key()
     second = ResultBundle(
-        task=first.task, patch="diff --git a/y b/y\n+two\n", gates=first.gates,
-        manifest_sha256="1" * 64, adapter_id=first.adapter_id, model_id=first.model_id,
-        sandbox_profile=first.sandbox_profile, selection_receipt="sel-2",
-        created_at="2026-08-15T01:00:00Z", worker_keyid=first.worker_keyid,
+        task=first.task,
+        patch="diff --git a/y b/y\n+two\n",
+        gates=first.gates,
+        manifest_sha256="1" * 64,
+        adapter_id=first.adapter_id,
+        model_id=first.model_id,
+        sandbox_profile=first.sandbox_profile,
+        selection_receipt="sel-2",
+        created_at="2026-08-15T01:00:00Z",
+        worker_keyid=first.worker_keyid,
         worker_public_key_pem=first.worker_public_key_pem,
         chain=ChainLink(anchor=first.digest, length=2),
     )

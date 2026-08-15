@@ -895,6 +895,7 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `bernstein approve-tool` | Approve a tool-call request (alias; flag form `approve --tool <id>`). | `cli/commands/approval_cmd.py:approve_tool_cmd` |
 | `bernstein reject-tool` | Reject a tool-call request (alias; flag form `reject --tool <id>`). | `cli/commands/approval_cmd.py:reject_tool_cmd` |
 | `bernstein review-receipt` | Attested PR review receipts binding issue / plan / tool calls / diff (group): `emit` / `verify`. | `cli/commands/review_receipt_cmd.py` |
+| `bernstein receipt` | Result receipt bundles binding a worker submission's patch / gate logs / task ref / sandbox selection into one DSSE-signed envelope, verifiable offline (group): `create` / `verify`. | `cli/commands/receipt_cmd.py` |
 | `bernstein gate verify <run>` | Verify a maker-checker / judge-panel gate's signed adjudication record: recompute `inputs_hash` from `--inputs` and confirm the panel saw exactly those inputs, then confirm the spine anchor still verifies. Exit 1 when no record, 2 on mismatch. | `cli/commands/gate_cmd.py` |
 | `bernstein governance verify <run>` | Recompute every RBAC access and per-subject budget decision recorded for a run from the signed spine and confirm the recorded verdicts: re-resolve roles from the signed `--bindings`, re-project spend from the `--ledger`, and match. Exit 1 when no records, 2 on mismatch. | `cli/commands/governance_cmd.py` |
 

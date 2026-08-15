@@ -124,6 +124,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | Compaction receipts | Full | 3 | Context and template compaction is recorded as a chain-anchored, reversible receipt (`core/tokens/compaction_receipt.py`) |
 | Tamper-evident memory | Full | 4 | Memory entries are hash-chained with provenance; `memory verify/why/forget` proves authorship, traces origin, and tombstones (`core/memory/chain.py`) |
 | [Review / autofix / escalation / consent / webhook-node receipts](../operations/review-receipts.md) | Full | 3 | Signed, journal-anchored receipts verified offline (`review-receipt verify`, `escalation verify`, `webhook verify`) |
+| Result receipt bundles | Brief | 3 | A worker submission's patch, gate logs, task ref, and sandbox selection sealed into one DSSE / in-toto envelope; `receipt verify` recomputes it offline and names the field that diverged (`core/security/result_receipt_bundle.py`) |
 | [Stall escalation receipts](../operations/stall-escalation.md) | Full | 3 | A stalled worker produces a signed escalation receipt embedding the last audit entries and a deterministic recommended action (`supervisor escalate`) |
 | C2PA content credentials | Full | 3 | Artifact lineage projected into signed C2PA credentials (`credential emit/verify`) |
 | Skill install receipts | Full | 3 | Install and usage links recomputable via `skill verify` / `skill provenance` |
@@ -296,6 +297,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein governance verify`](../operations/governance.md) | Full | 3 | Recompute access and budget verdicts for a run |
 | [`bernstein webhook verify`](../operations/webhook-node.md) | Full | 3 | Recompute inbound-event and outbound webhook-node hashes |
 | [`bernstein review-receipt emit/verify`](../operations/review-receipts.md) | Full | 3 | Bind and offline-verify PR review receipts (issue + plan + tool calls + diff) |
+| `bernstein receipt create/verify` | Brief | 3 | Sign a result receipt bundle from a JSON spec and verify one offline; `--pubkey` pins the worker key, `--prev-digest` asserts chain continuity, and without `--pubkey` the embedded key is trusted on first use. The group has no reference page of its own; `cli-reference.md` and `bernstein receipt --help` carry it |
 | [`bernstein escalation show/verify`](../operations/stall-escalation.md) | Full | 3 | Project and reconstruct escalation receipts from the journal |
 | [`bernstein supervisor status/escalate`](../api/supervisor.md) | Full | 3 | Supervise stalled workers and seal stall escalation receipts |
 | [`bernstein delegation verify`](../operations/delegation-verify.md) | Full | 4 | Reconstruct and verify a run's delegation chain |
