@@ -35,6 +35,11 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from bernstein.core.security.path_containment import (
+    PathContainmentError,
+    PathTooLongError,
+    contained_subpath,
+)
 from bernstein.core.skills.provenance import (
     InstallReceipt,
     InstallVerifyResult,
@@ -240,9 +245,15 @@ def _copy_tree(source: Path, dest: Path) -> None:
     dest_resolved = dest.resolve()
     for src_file in _iter_regular_files(source):
         rel = src_file.relative_to(source)
-        target = (dest_resolved / rel).resolve()
-        if not target.is_relative_to(dest_resolved):
-            raise PackagedInstallError(f"install path escapes destination: {rel.as_posix()}")
+        try:
+            target = contained_subpath(dest_resolved, rel.as_posix(), label="install path")
+        except PathTooLongError as exc:
+            # A capacity failure, not an escape. Reported separately so an
+            # over-long name is never described to the operator as an attack;
+            # previously it surfaced as OSError(ENAMETOOLONG) from copyfile.
+            raise PackagedInstallError(f"install path is too long for this filesystem: {rel.as_posix()}") from exc
+        except PathContainmentError as exc:
+            raise PackagedInstallError(f"install path escapes destination: {rel.as_posix()}") from exc
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(src_file, target)
 

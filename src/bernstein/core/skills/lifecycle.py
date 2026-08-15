@@ -48,6 +48,10 @@ from typing import Any, TypedDict, cast
 import yaml
 from pydantic import ValidationError
 
+from bernstein.core.security.path_containment import (
+    PathContainmentError,
+    contained_subpath,
+)
 from bernstein.core.skills.lint import LintSeverity, lint_skill
 from bernstein.core.skills.manifest import SkillManifest
 from bernstein.core.skills.sanitizer import strip_invisible_tags
@@ -323,24 +327,27 @@ def _referenced_files(skill_dir: Path, frontmatter: dict[str, Any]) -> list[Path
         values = frontmatter.get(bucket, [])
         if not isinstance(values, list):
             continue
-        bucket_root = (skill_dir / bucket).resolve()
         for entry in cast("list[object]", values):
             if not isinstance(entry, str):
                 continue
-            entry_path = Path(entry)
-            if entry_path.is_absolute() or ".." in entry_path.parts:
-                # Reject traversal / absolute paths: the digest must not
-                # depend on files outside the skill directory.
-                continue
+            # The bucket is part of the *candidate*, not the base, so a
+            # bucket that is itself a symlink out of the skill tree is
+            # refused rather than followed. Anchoring to a resolved bucket
+            # root admitted that escape and then tripped the sort key below
+            # with an uncaught ValueError. This matches what lint already
+            # reports as ``unsafe-reference-path``.
             try:
-                candidate = (bucket_root / entry_path).resolve()
-            except OSError:
-                continue
-            if not candidate.is_relative_to(bucket_root):
+                candidate = contained_subpath(skill_root, f"{bucket}/{entry}", label=f"{bucket} entry")
+            except (PathContainmentError, OSError):
+                # Best-effort by contract: the digest simply does not cover
+                # an entry it cannot prove is inside the skill directory.
+                # Lint is what surfaces these to the author.
                 continue
             if candidate.is_file():
                 out.append(candidate)
-    out.sort(key=lambda p: str(p.resolve().relative_to(skill_root)))
+    # Every path is a proven descendant of skill_root, so the relative key
+    # cannot raise.
+    out.sort(key=lambda p: str(p.relative_to(skill_root)))
     return out
 
 

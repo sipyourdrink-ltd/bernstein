@@ -32,14 +32,20 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import StrEnum
-from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import yaml
 from pydantic import ValidationError
 
+from bernstein.core.security.path_containment import (
+    PathContainmentError,
+    contained_subpath,
+)
 from bernstein.core.skills.manifest import SkillManifest
 from bernstein.core.skills.sanitizer import strip_invisible_tags
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 #: Body cap: 5 KB before we warn. The RFC sets this as a soft cap so a
 #: future skill that needs more context can still ship.
@@ -381,36 +387,22 @@ def lint_skill(skill_dir: Path, *, skill_name: str | None = None) -> list[LintFi
 
     # Anchor containment to the resolved skill root so a symlinked
     # bucket (``references -> /tmp/elsewhere``) cannot smuggle host
-    # files past the lint. The bucket directories themselves are not
-    # resolved; we build candidates from the unresolved path and check
-    # them against the resolved skill root.
+    # files past the lint. The bucket name is passed as part of the
+    # *candidate* rather than folded into the base, because the barrier
+    # resolves its base: making ``<skill>/references`` the base would
+    # follow that symlink and re-admit exactly the escape this refuses.
     skill_root = skill_dir.resolve()
     for bucket in _VALID_BUCKETS:
-        bucket_root = skill_root / bucket
         for filename in getattr(manifest, bucket):
-            rel = Path(filename)
-            if rel.is_absolute() or ".." in rel.parts:
+            try:
+                candidate = contained_subpath(skill_root, f"{bucket}/{filename}", label=f"{bucket} path")
+            except PathContainmentError as exc:
                 findings.append(
                     LintFinding(
                         skill_name=name,
                         severity=LintSeverity.ERROR,
                         code="unsafe-reference-path",
-                        message=(
-                            f"manifest declares unsafe {bucket} path {filename!r}; "
-                            "absolute paths and parent traversal are not allowed"
-                        ),
-                        path=skill_md,
-                    )
-                )
-                continue
-            candidate = (skill_dir / bucket / rel).resolve()
-            if not candidate.is_relative_to(bucket_root):
-                findings.append(
-                    LintFinding(
-                        skill_name=name,
-                        severity=LintSeverity.ERROR,
-                        code="unsafe-reference-path",
-                        message=(f"manifest {bucket} path {filename!r} escapes the {bucket}/ root"),
+                        message=f"manifest declares unsafe {bucket} path {filename!r}: {exc}",
                         path=skill_md,
                     )
                 )
