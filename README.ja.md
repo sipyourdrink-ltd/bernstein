@@ -82,7 +82,7 @@ CI は main への push ごとにコミット済みレシートを再検証し�
 | `bernstein live` — ターミナルダッシュボード | `bernstein gui serve` — ブラウザダッシュボード |
 
 ### 実行を証明する
-<!-- l10n: en="prove a run" hash="sha256:9a7739aefefb" -->
+<!-- l10n: en="prove a run" hash="sha256:a97100ca1818" -->
 
 ここでの決定性は、信じるものではなく確かめるものである。監査を有効にして一度走らせ、記録された内容を検証する:
 
@@ -100,7 +100,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 ジャーナルは毎回の実行で書かれる。リネージ・スパインは常時稼働で、リネージを持つステップごとにエントリが増えるため、短い実行が有効かつ空のスパインで終わることもある。`bernstein audit verify` が検査できるチェーンを持つのは、実行が `BERNSTEIN_AUDIT=1`、コンプライアンスプリセット、または `bernstein run --audit` で開始された場合だけである。`--audit` フラグは `bernstein run` のものなので、上の `bernstein -g` の形では環境変数を設定すること。
 
-1 つの実行レシートは、ジャーナルヘッド、実行がスパインエントリを書いた場合はリネージ・スパインヘッド、そしてオプトインで監査チェーンの範囲を、単一の Ed25519 署名対象のもとに束ね、公開鍵を埋め込む。そのファイルとオペレーターの公開鍵を持つレビュアーは、記録された動作が実際に実行されたものと寸分違わないことを確認できる。HMAC 鍵も、生きた `.sdd/` も要らない。改竄されていれば終了コード `2` で最初に食い違ったステップを名指しする。ファイルだけで `--public-key` による固定がない場合、検査は整合性のみになる。レシートが内部的に一貫していることは証明するが、誰が署名したかは証明しない。判定にもそう書かれる。詳細は[決定論的リプレイ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification)にある。
+1 つの実行レシートは、ジャーナルヘッド、実行がスパインエントリを書いた場合はリネージ・スパインヘッド、そしてオプトインで監査チェーンの範囲を、単一の Ed25519 署名対象のもとに束ね、公開鍵を埋め込む。そのファイルとオペレーターの公開鍵を持つレビュアーは、埋め込まれた動作とチェーンが改変されていないことを確認できる。HMAC 鍵も、生きた `.sdd/` も要らない。改竄されていれば終了コード `2` で最初に食い違ったステップを名指しする。このレシートが同定するのは、埋め込まれたジャーナル状態そのものである。その状態が完結したジャーナルの全体だと示すには、独立したヘッド／件数のシールが別に要る。ファイルだけで `--public-key` による固定がない場合、検査は整合性のみになる。レシートが内部的に一貫していることは証明するが、誰が署名したかは証明しない。判定にもそう書かれる。詳細は[決定論的リプレイ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification)にある。
 
 同じ検証可能性は評価の数値にも当てはまる。`bernstein bench run <suite> --reliability k`（`bernstein eval --reliability k` とも書ける）は各タスクを固定された協調のもとで `k` 回実行し、`pass^k` の下限（`k` 回すべてが通ること）を `pass@1` の上限と並べて報告する。その結果は署名済みレシートに封じられ、`bernstein bench reliability-verify` がオフラインで再計算するので、捏造された下限は検証に落ちる。詳細: [pass^k 信頼性下限](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md)。
 

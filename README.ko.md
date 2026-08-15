@@ -82,7 +82,7 @@ CI는 main에 푸시될 때마다 커밋된 영수증을 다시 검증하고, �
 | `bernstein live` — 터미널 대시보드 | `bernstein gui serve` — 브라우저 대시보드 |
 
 ### 실행을 증명하기
-<!-- l10n: en="prove a run" hash="sha256:9a7739aefefb" -->
+<!-- l10n: en="prove a run" hash="sha256:a97100ca1818" -->
 
 여기서 결정성은 믿는 것이 아니라 확인하는 것이다. 감사를 켜고 한 번 실행한 뒤, 기록된 내용을 검증하라:
 
@@ -100,7 +100,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 저널은 실행마다 기록된다. 리니지 스파인은 항상 켜져 있고 리니지를 가진 단계마다 항목이 늘어나므로, 짧은 실행은 유효하지만 비어 있는 스파인으로 끝날 수 있다. `bernstein audit verify`가 검사할 체인을 갖는 것은 실행이 `BERNSTEIN_AUDIT=1`, 컴플라이언스 프리셋, 또는 `bernstein run --audit`으로 시작된 경우뿐이다. `--audit` 플래그는 `bernstein run`의 것이므로, 위의 `bernstein -g` 형태에서는 환경 변수를 설정하라.
 
-하나의 실행 영수증은 저널 헤드, 실행이 스파인 항목을 기록했다면 리니지 스파인 헤드, 그리고 선택적으로 감사 체인 범위를 하나의 Ed25519 서명 대상 아래 묶고 공개 키를 담는다. 그 파일과 오퍼레이터의 공개 키를 가진 리뷰어는 기록된 동작이 실제로 실행된 것과 정확히 일치함을 확인할 수 있다. HMAC 키도, 살아 있는 `.sdd/`도 필요 없다. 변조되었다면 종료 코드 `2`로 처음 어긋난 단계를 지목한다. 파일만 있고 `--public-key` 고정이 없으면 검사는 무결성만 본다. 영수증이 내부적으로 일관됨은 증명하지만 누가 서명했는지는 증명하지 않으며, 판정에도 그렇게 적힌다. 자세한 내용은 [결정론적 리플레이](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification)에 있다.
+하나의 실행 영수증은 저널 헤드, 실행이 스파인 항목을 기록했다면 리니지 스파인 헤드, 그리고 선택적으로 감사 체인 범위를 하나의 Ed25519 서명 대상 아래 묶고 공개 키를 담는다. 그 파일과 오퍼레이터의 공개 키를 가진 리뷰어는 담긴 동작과 체인이 바뀌지 않았음을 확인할 수 있다. HMAC 키도, 살아 있는 `.sdd/`도 필요 없다. 변조되었다면 종료 코드 `2`로 처음 어긋난 단계를 지목한다. 이 영수증이 가리키는 것은 그 안에 담긴 저널 상태다. 그 상태가 완결된 저널 전체임을 증명하려면 독립적인 헤드/개수 봉인이 따로 있어야 한다. 파일만 있고 `--public-key` 고정이 없으면 검사는 무결성만 본다. 영수증이 내부적으로 일관됨은 증명하지만 누가 서명했는지는 증명하지 않으며, 판정에도 그렇게 적힌다. 자세한 내용은 [결정론적 리플레이](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification)에 있다.
 
 같은 검증 가능성이 평가 수치에도 적용된다. `bernstein bench run <suite> --reliability k`(`bernstein eval --reliability k`로도 쓴다)는 각 태스크를 고정된 협조 아래 `k`번 실행하고, `pass^k` 하한(`k`번 모두 통과)을 `pass@1` 상한과 나란히 보고한다. 그 결과는 서명된 영수증에 봉인되며 `bernstein bench reliability-verify`가 오프라인에서 다시 계산하므로, 조작된 하한은 검증에서 떨어진다. 자세한 내용: [pass^k 신뢰도 하한](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
