@@ -17,6 +17,7 @@ Bernstein is a deterministic orchestrator for CLI coding agents (Claude Code, Co
 | `defaults.py`               | Centralized default values for the Bernstein orchestrator |
 | `instrumentation.py`        | Wave-3 per-agent instrumentation: LLM calls, tool calls, and conversation history |
 | `parallel_admission.py`     | Parallel-execution admission from a code graph (#3237, scope step 3) |
+| `path_scope.py`             | Which repository-relative paths fall outside a set of globs |
 | `run_auth_token.py`         | Persist and read the auto-generated run Bearer token (issue #2794) |
 | `streaming_merge.py`        | Streaming task results for long-running agents (incremental merge) |
 | `admission/`                | Named resource pools with lease-backed admission (#2544) |
