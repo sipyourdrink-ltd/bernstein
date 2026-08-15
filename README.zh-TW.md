@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### 確定性多代理 CLI 編排
-<!-- l10n: en="deterministic multi-agent CLI orchestration" hash="sha256:470b2b2c31eb" -->
+<!-- l10n: en="deterministic multi-agent CLI orchestration" hash="sha256:7db8022f8b39" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -30,7 +30,7 @@
 
 [website](https://bernstein.run) &middot; [docs](https://bernstein.readthedocs.io/) &middot; [install](https://bernstein.readthedocs.io/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
 
-[简体中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/README.zh-Hans.md) &middot; [繁體中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/README.zh-TW.md)
+[简体中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/README.zh-Hans.md) &middot; [繁體中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/README.zh-TW.md) &middot; [日本語](https://github.com/sipyourdrink-ltd/bernstein/blob/main/README.ja.md) &middot; [한국어](https://github.com/sipyourdrink-ltd/bernstein/blob/main/README.ko.md)
 
 </div>
 
@@ -41,13 +41,13 @@
 Bernstein 是面向 CLI 編碼代理（Claude Code、Codex、Gemini CLI 以及 40 多個其他代理）的確定性編排器。它並行執行這些代理，對它們的產出設置門禁，並記錄足夠的執行資訊，供你事後核查。包含離線安裝（air-gap）設定。Apache-2.0 授權。
 
 ### 一覽
-<!-- l10n: en="at a glance" hash="sha256:49601a2ba935" -->
+<!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->
 
 有四件事讓它與眾不同；其餘都是細節。
 
 - **協調迴圈中沒有 LLM。** 排程是純 Python，因此執行可以端到端重現。重播昨天的計畫，得到昨天的任務圖。
-- **事後可核查。** 重播日誌記錄每一次執行，常駐的血統脊柱記錄每個產生血統的步驟；選用的 HMAC 鏈式稽核日誌（`BERNSTEIN_AUDIT=1`）增加了可離線驗證的收據。不確定性會在精確步驟處以雜湊失配的形式浮出水面，而不是一次偶發的重跑。非程式碼交付物也享有同樣待遇：任務可以在計畫步驟、積壓條目或任務 CLI 上宣告產物契約（報告、資料集、動作日誌、維運結果），並以簽署的血統收據而非 git 提交來宣告完成。
-- **構造上即隔離。** 每個編碼任務在合併門禁之後獲得自己的 git worktree；產物模式任務在 `.sdd/workspaces/` 下獲得工作目錄隔離。在這種預設隔離下，代理之間不共享可變的工作區；協調狀態（任務積壓）是共享的，並以原子方式認領。超出該隔離的檔案系統強制是選用的，來自[沙箱後端](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md)（停用 worktree 會在共享檢出中執行每個任務）。
+- **事後可核查。** 重播日誌記錄每一次執行，常駐的血統脊柱記錄每個產生血統的步驟；選用的 HMAC 鏈式稽核日誌（`BERNSTEIN_AUDIT=1`）增加了可離線驗證的收據。不確定性會在精確步驟處以雜湊失配的形式浮出水面，而不是一次偶發的重跑。非程式碼交付物也享有同樣待遇：任務可以宣告產物契約（報告、資料集、動作日誌、維運結果），並以簽署的血統收據而非 git 提交來宣告完成。
+- **構造上即隔離。** 每個編碼任務在合併門禁之後獲得自己的 git worktree；產物模式任務在 `.sdd/workspaces/` 下獲得工作目錄。代理之間預設不共享可變的工作區；唯一共享的狀態是任務積壓，並以原子方式認領。更嚴格的檔案系統強制是選用的，來自[沙箱後端](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md)（停用 worktree 會在共享檢出中執行每個任務）。
 - **廣泛且本地。** 40 多個 CLI 代理介面卡，外加通用的 `--prompt` 包裝器、基於檔案的狀態、無 SaaS 跳轉、無第三方資料平面。
 
 完整清單見[能力頁面](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)；[功能矩陣](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)是詳盡的索引。
@@ -82,7 +82,7 @@ CI 在每次推送到 main 時重新驗證已提交的收據——並證明被�
 | `bernstein live` — 終端機儀表板 | `bernstein gui serve` — 瀏覽器儀表板 |
 
 ### 證明一次執行
-<!-- l10n: en="prove a run" hash="sha256:10220d41f77e" -->
+<!-- l10n: en="prove a run" hash="sha256:9a7739aefefb" -->
 
 這裡的確定性是你要去核查的東西，而不是憑空相信。啟用稽核執行一次，然後驗證記錄的內容：
 
@@ -100,9 +100,9 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 日誌在每次執行時寫入；血統脊柱始終開啟，在每個產生血統的步驟上增加一條記錄，因此一次很短的執行可能以有效但為空的脊柱結束。`bernstein audit verify` 只有在執行以 `BERNSTEIN_AUDIT=1`、合規預設或 `bernstein run --audit` 啟動時才有鏈可查。`--audit` 旗標屬於 `bernstein run`；在上面的 `bernstein -g` 形式中，請設定環境變數。
 
-執行收據在一個 Ed25519 簽署主體下綁定日誌頭部——當執行寫入了脊柱條目時還綁定血統脊柱頭部——外加選用的稽核鏈範圍，並內嵌公開金鑰，因此持有檔案與操作者公開金鑰的審查者可以確認記錄的動作正是實際執行的動作——無需 HMAC 金鑰，無需活躍的 `.sdd/`，竄改時以退出碼 `2` 命名第一個分歧步驟。僅憑檔案（不釘 `--public-key`）時，檢查只是完整性檢查：它證明收據內部自洽，而非誰簽署的，結論也會如實說明。詳見[確定性重播](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification)。
+執行收據在一個 Ed25519 簽署主體下綁定日誌頭部、執行寫入脊柱條目時的血統脊柱頭部，以及選用的稽核鏈範圍，並內嵌公開金鑰。持有該檔案與操作者公開金鑰的審查者可以確認記錄的動作正是實際執行的動作：無需 HMAC 金鑰，無需活躍的 `.sdd/`，竄改時以退出碼 `2` 命名第一個分歧步驟。僅憑檔案（不釘 `--public-key`）時，檢查只是完整性檢查：它證明收據內部自洽，而非誰簽署的，結論也會如實說明。詳見[確定性重播](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification)。
 
-同樣的可核查性適用於評估數字：`bernstein bench run <suite> --reliability k`（也寫作 `bernstein eval --reliability k`）在固定協調下把每個任務執行 `k` 次，並在簽署的收據中報告 `pass^k` 下限（所有 `k` 次嘗試都必須通過）以及 `pass@1` 上限，`bernstein bench reliability-verify` 可離線重算該收據——偽造的下限會驗證失敗。詳情：[pass^k 可靠性下限](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md)。
+同樣的可核查性也適用於評估數字。`bernstein bench run <suite> --reliability k`（也寫作 `bernstein eval --reliability k`）在固定協調下把每個任務執行 `k` 次，然後報告 `pass^k` 下限（所有 `k` 次嘗試都必須通過）以及 `pass@1` 上限。該結果封裝在一份簽署的收據中，`bernstein bench reliability-verify` 可離線重算，因此偽造的下限會驗證失敗。詳情：[pass^k 可靠性下限](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md)。
 
 ### 運作原理
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
@@ -133,9 +133,9 @@ bernstein stop                    # graceful shutdown with drain
 儲存庫衛生門禁：`bernstein readme-l10n verify` 會讓翻譯版 README 偏離英文來源的 PR 失敗（並指出過期的章節），`bernstein readme-l10n sync` 在英文修改後重新綁定它們。見 [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)。
 
 ### 支援的代理
-<!-- l10n: en="supported agents" hash="sha256:5889943d6abf" -->
+<!-- l10n: en="supported agents" hash="sha256:8c94b4cde068" -->
 
-Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goose、Muse Code、OpenAI Agents SDK、Amp、Cody、Continue、Devin Terminal、Junie、Kilo、Kiro、AWS Q Developer、Ollama、OpenCode、OpenHands、Open Interpreter、gptme、Plandex、AIChat、Letta Code、Qwen 等等。[介面卡索引](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)為其中 30 個提供安裝命令。`bernstein integrations list` 從 `src/bernstein/adapters/registry.py` 中的登錄檔列舉全部 51 個已接線整合，該檔案是「什麼能解析」的唯一事實來源。其中 49 個是可選擇的代理介面卡，另外兩列是 `mock` 測試樁和 `self-hosted-endpoints` 端點設定檔。每個介面卡的面向終端使用者文案在 `src/bernstein/adapters/use_cases.py`。任何帶 `--prompt` 旗標的其他工具都可以透過通用包裝器運作。
+Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goose、Muse Code、OpenAI Agents SDK、Amp、Cody、Continue、Devin Terminal、Junie、Kilo、Kiro、AWS Q Developer、Ollama、OpenCode、OpenHands、Open Interpreter、gptme、Plandex、AIChat、Letta Code、Qwen 等等。[介面卡索引](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)為其中 30 個提供安裝命令。`bernstein integrations list` 從 `src/bernstein/adapters/registry.py` 中的登錄檔列舉全部 51 個已接線整合，該檔案是「什麼能解析」的唯一事實來源。其中 49 個是可選擇的代理介面卡，另外兩列是 `mock` 測試樁和 `self-hosted-endpoints` 端點設定檔。任何帶 `--prompt` 旗標的其他工具都可以透過通用包裝器運作。
 
 在同一執行中混用代理：用便宜的本地模型處理樣板，用更重的雲端模型處理架構。`bernstein integrations list --installed` 顯示你的機器上可用的內容。
 
