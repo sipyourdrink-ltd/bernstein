@@ -61,6 +61,10 @@ from bernstein.core.replay.review_board import (
     read_task_diff,
     record_review_decision,
 )
+from bernstein.core.security.path_containment import (
+    PathContainmentError,
+    contained_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -118,12 +122,19 @@ def _validate_task_id(task_id: str) -> str:
 
 
 def _contained_run_dir(sdd_dir: Path, run_id: str) -> Path:
-    """Resolve ``runs/<run_id>`` and verify it stays inside the runs root."""
-    runs_root = (sdd_dir / "runs").resolve()
-    resolved = (runs_root / run_id).resolve()
-    if resolved != runs_root and not resolved.is_relative_to(runs_root):
-        raise HTTPException(status_code=400, detail="invalid run id")
-    return resolved
+    """Resolve ``runs/<run_id>`` and verify it stays inside the runs root.
+
+    The barrier requires a strict descendant, so an id that resolves *to* the
+    runs root (``.``) is refused rather than returned. ``_RUN_ID_RE`` admits
+    both ``.`` and ``..``, so this is the check that separates them.
+    """
+    try:
+        return contained_path(sdd_dir / "runs", run_id, label="run id")
+    except PathContainmentError as exc:
+        # The barrier's message names the identifier and deliberately omits
+        # the base directory, but the API's own wording is kept so the
+        # response shape does not change.
+        raise HTTPException(status_code=400, detail="invalid run id") from exc
 
 
 # ---------------------------------------------------------------------------

@@ -34,6 +34,10 @@ from bernstein.core.approval.models import (
 from bernstein.core.approval.models import PendingApproval as QueuedApproval
 from bernstein.core.approval.queue import get_default_queue, promote_to_always_allow
 from bernstein.core.sanitize import sanitize_log
+from bernstein.core.security.path_containment import (
+    PathContainmentError,
+    contained_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,10 +106,12 @@ def _safe_child(base: Path, filename: str) -> Path:
 
     Raises HTTPException(400) if the resolved path escapes the directory.
     """
-    resolved = (base / filename).resolve()
-    if not resolved.is_relative_to(base.resolve()):
-        raise HTTPException(status_code=400, detail="Invalid task_id")
-    return resolved
+    try:
+        return contained_path(base, filename, label="task_id")
+    except PathContainmentError as exc:
+        # The API's own wording is kept so the response shape is unchanged;
+        # the barrier's message omits the base, and so must this one.
+        raise HTTPException(status_code=400, detail="Invalid task_id") from exc
 
 
 def _load_pending(filepath: Path) -> PendingApproval | None:

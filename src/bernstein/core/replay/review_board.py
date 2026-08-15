@@ -65,6 +65,10 @@ from bernstein.core.replay.journal import (
     run_journal_path,
     verify_journal,
 )
+from bernstein.core.security.path_containment import (
+    PathContainmentError,
+    contained_path,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -454,17 +458,27 @@ def diff_summary(diff_text: str) -> dict[str, Any]:
 def _contained_diff_path(sdd_dir: Path, run_id: str, task_id: str) -> Path | None:
     """Resolve ``runs/<run_id>/review/diffs/<task_id>.diff`` inside the run.
 
-    Returns ``None`` when the resolved path escapes the per-run diffs
-    directory (defence in depth against a crafted ``task_id`` / ``run_id``;
-    the route also slug-validates both before calling in).
+    Returns ``None`` when the resolved path escapes the runs root (defence in
+    depth against a crafted ``task_id`` / ``run_id``; the route also
+    slug-validates both before calling in).
+
+    Both identifiers are segments of the *candidate*, and the runs root is the
+    base. That ordering is what makes the promise above true: interpolating
+    ``run_id`` into the base instead let it relocate the very directory the
+    containment check then compared against, so a crafted ``run_id`` could not
+    be refused by it. Keeping ``review/diffs`` in the candidate likewise means
+    a symlinked ``diffs/`` is refused rather than followed.
     """
-    diffs_root = (sdd_dir / "runs" / run_id / REVIEW_DIFF_SUBDIR).resolve()
-    candidate = (diffs_root / f"{task_id}.diff").resolve()
-    if candidate != diffs_root and not candidate.is_relative_to(diffs_root):
+    try:
+        return contained_path(
+            sdd_dir / "runs",
+            run_id,
+            *REVIEW_DIFF_SUBDIR.split("/"),
+            f"{task_id}.diff",
+            label="run/task id",
+        )
+    except PathContainmentError:
         return None
-    if candidate.parent != diffs_root:
-        return None
-    return candidate
 
 
 def store_task_diff(sdd_dir: Path, run_id: str, task_id: str, diff_text: str) -> dict[str, Any] | None:

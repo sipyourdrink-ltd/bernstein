@@ -43,6 +43,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.security.path_containment import (
+    PathContainmentError,
+    contained_path,
+)
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -117,18 +122,16 @@ def _safe_child(base: Path, session_id: str, *, suffix: str = "") -> Path:
         InvalidSessionIdError: If the resolved child escapes ``base``.
     """
     validate_session_id(session_id)
-    candidate = base / f"{session_id}{suffix}"
     try:
-        resolved_base = base.resolve()
-        # ``strict=False`` so we can resolve a file that does not yet exist.
-        resolved_candidate = candidate.resolve(strict=False)
-    except (OSError, RuntimeError) as exc:  # pragma: no cover - defensive
-        raise InvalidSessionIdError(f"could not resolve path: {exc}") from exc
-    if not resolved_candidate.is_relative_to(resolved_base):
+        return contained_path(base, f"{session_id}{suffix}", label="session id")
+    except PathContainmentError as exc:
+        # The barrier's message names the identifier and omits the base, which
+        # is the property this error already had and must keep.
         raise InvalidSessionIdError(
             "resolved path escapes the hook base directory",
-        )
-    return resolved_candidate
+        ) from exc
+    except (OSError, RuntimeError) as exc:  # pragma: no cover - defensive
+        raise InvalidSessionIdError(f"could not resolve path: {exc}") from exc
 
 
 class HookEventType(Enum):
