@@ -10,6 +10,14 @@ extend-ignore-re = [
     # Mask any alphanumeric run that contains an embedded ZWSP so fixtures
     # stay intact without globally allowlisting the fragment.
     "[A-Za-z]+​[A-Za-z]+",
+    # Receipt digests in generated projections (adapter conformance canary
+    # table, last_green.json). The canary regenerates these on every run, so
+    # any digest can land on a dictionary near-miss -- ``a18d3caf54fc`` reads
+    # as "caf" -> "calf", the same false positive already path-excluded for
+    # the lineage fixtures below. Mask hex runs of 12 characters or more (the
+    # short-digest width and up); no English word is twelve characters drawn
+    # only from [0-9a-f], so this cannot hide a real prose typo.
+    '\b[0-9a-f]{12,}\b',
 ]
 
 [default.extend-words]
