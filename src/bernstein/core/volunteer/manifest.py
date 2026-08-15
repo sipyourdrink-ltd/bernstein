@@ -77,8 +77,10 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.path_scope import paths_outside_scope as _paths_outside_scope
+
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
     from pathlib import Path
 
 #: Repository-relative location of the manifest.  A project opts in by
@@ -258,6 +260,22 @@ class VolunteerManifest:
     def digest(self) -> str:
         """SHA-256 of the canonical form, as ``manifest_sha256`` carries it."""
         return manifest_digest(self)
+
+    def paths_outside_scope(self, paths: Iterable[str]) -> tuple[str, ...]:
+        """Return the patch paths this project's ``allowed_paths`` does not admit.
+
+        The refusal names these, so a contributor is told which files broke the
+        scope rather than that something did.  An empty ``allowed_paths`` admits
+        everything, which is what a project that never declared one carries.
+
+        Args:
+            paths: Repository-relative paths, as ``git diff --name-only`` prints
+                them.
+
+        Returns:
+            The offending paths in input order, empty when the patch is in scope.
+        """
+        return _paths_outside_scope(paths, self.allowed_paths)
 
 
 def canonical_manifest_bytes(manifest: VolunteerManifest) -> bytes:

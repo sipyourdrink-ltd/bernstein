@@ -72,6 +72,37 @@ manifest without the field.
 Any other field is preserved and binds to the digest, and the loader warns that
 it does not enforce it.
 
+## What a glob in `allowed_paths` matches
+
+Small on purpose, and the same language a patch is judged against wherever the
+question comes up.
+
+| | |
+|---|---|
+| `*` | any run of characters inside one path segment, including none |
+| `?` | exactly one character inside one path segment |
+| `**` | zero or more whole segments, and only as a complete segment |
+| anything else | itself, including `[` and `]` |
+
+Three consequences worth stating, because each is a place a scope can be wider
+or narrower than its author meant.
+
+**`*` stops at a separator.** `src/*` admits `src/a.py` and refuses
+`src/deep/b.py`. The `fnmatch` in most standard libraries does not draw that
+line, and a scope written expecting it to would admit the whole tree.
+
+**A pattern is not a prefix.** `src` admits a file named `src` and nothing
+under it; `src/**` is how a subtree is admitted. This is the rule people expect
+to work the other way round.
+
+**There are no character classes.** `[abc]` is three literal characters, so a
+half-open bracket in a committed manifest cannot change what the rest of the
+pattern means.
+
+An empty `allowed_paths` admits everything — that is what a project which never
+declared one carries, and it is the reason the list defaults to empty rather
+than to a starter set someone would have to widen.
+
 ## Gates are argv, never shell strings
 
 A gate is an argument vector — `["uv", "run", "pytest", "-q"]`, not
