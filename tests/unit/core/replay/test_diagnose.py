@@ -90,7 +90,7 @@ def test_diagnosis_names_first_divergent_step_index(tmp_path: Path) -> None:
 
     assert result.located is True
     assert result.culprit_index == 3
-    events = load_events(path)
+    events = load_events(path).events
     assert result.culprit_step_hash == events[3]["event_hash"]
     assert result.event_count == 5
     assert result.reason_code == REASON_CODE_FIRST_FAILING_TOOL_RESULT
@@ -199,7 +199,7 @@ def test_shared_loader_owns_the_malformed_line_policy(tmp_path: Path) -> None:
     with path.open("a", encoding="utf-8") as f:
         f.write("{garbage\n")
 
-    tolerant = load_events(path)
+    tolerant = load_events(path).events
     assert len(tolerant) == 3  # ordinary readers keep their torn-tail tolerance
 
     with pytest.raises(JournalParseError, match="unparsable line at physical line 3"):

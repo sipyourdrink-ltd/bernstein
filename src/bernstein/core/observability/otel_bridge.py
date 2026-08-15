@@ -718,7 +718,7 @@ def record_projection_audit_event(
     from bernstein.core.security.audit_dsse import keyid_from_public_key
     from bernstein.core.security.install_key import load_or_create_install_key, signing_key_path
 
-    events = load_events(journal_path)
+    events = load_events(journal_path).events
     if not events:
         return
     key = load_or_create_install_key(signing_key_path(workdir))

@@ -192,7 +192,7 @@ def test_dispatch_anchors_evidence_set_hash_in_journal(tmp_path: Path) -> None:
 
     assert outcome.journal_index == 0
     assert journal.event_count() == 1
-    rows = load_events(journal.path)
+    rows = load_events(journal.path).events
     assert rows[0]["event"] == ACTIVITY_RESULT_EVENT
     assert rows[0]["evidence_set_hash"] == result.evidence_set_hash
     assert rows[0]["artifact_hash"] == result.artifact_hash
@@ -216,8 +216,8 @@ def test_evidence_hash_is_replay_invariant_across_journals(tmp_path: Path) -> No
     j2 = _journal(tmp_path / "r2", run_id="r2")
     dispatch_activity(_result(observations=obs), stage_id="s0", journal=j1)
     dispatch_activity(_result(observations=obs), stage_id="s0", journal=j2)
-    rows1 = load_events(j1.path)
-    rows2 = load_events(j2.path)
+    rows1 = load_events(j1.path).events
+    rows2 = load_events(j2.path).events
     assert rows1[0]["evidence_set_hash"] == rows2[0]["evidence_set_hash"]
 
 
@@ -315,7 +315,7 @@ def test_refused_terminal_state_carries_reason_code(tmp_path: Path) -> None:
         reason_code="policy_denied",
     )
     outcome = dispatch_activity(result, stage_id="s0", journal=journal)
-    rows = load_events(journal.path)
+    rows = load_events(journal.path).events
     assert rows[0]["terminal_state"] == TerminalState.REFUSED.value
     assert rows[0]["reason_code"] == "policy_denied"
     assert outcome.result.reason_code == "policy_denied"

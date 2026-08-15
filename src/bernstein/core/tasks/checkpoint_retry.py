@@ -279,7 +279,7 @@ def record_task_checkpoint(
         The anchored :class:`CheckpointRef`.
 
     Raises:
-        ValueError: The existing journal fails chain verification.
+        ValueError: The existing journal fails chain or reader-coverage verification.
         RuntimeError: The journal append did not extend the chain.
     """
     journal = EventJournal.resume(task_run_id(task_id), sdd_dir)
@@ -315,6 +315,11 @@ def latest_checkpoint(sdd_dir: Path, task_id: str) -> CheckpointRef | None:
     restarts cold. A tampered checkpoint reference can therefore never fuel
     a warm resume.
 
+    This operational selector proves chain consistency and reader coverage,
+    not complete journal identity: task checkpoint journals have no external
+    terminal-head seal. A clean boundary truncation is therefore undetectable
+    here, and this function deliberately publishes no integrity verdict.
+
     A task id too long to name a file is treated as "no checkpoint" (cold
     restart), the same as a missing journal. A containment failure is not
     caught: a run directory that escapes the runs root must surface rather
@@ -329,14 +334,14 @@ def latest_checkpoint(sdd_dir: Path, task_id: str) -> CheckpointRef | None:
     if not path.exists():
         return None
     result = verify_journal(path)
-    if not result.ok:
+    if not result.chain_consistent or result.discarded_line_indices:
         logger.warning(
-            "checkpoint journal for task %s failed chain verification at index %s; forcing cold retry",
+            "checkpoint journal for task %s failed chain/reader-coverage verification at index %s; forcing cold retry",
             task_id,
             result.divergent_index,
         )
         return None
-    for row in reversed(load_events(path)):
+    for row in reversed(load_events(path).events):
         if row.get("event") != JOURNAL_EVENT_CHECKPOINT:
             continue
         if str(row.get("task_id", "")) != task_id:
@@ -598,7 +603,7 @@ def record_retry_decision(
         A :class:`RetryDecisionRecord` with the journal and spine anchors.
 
     Raises:
-        ValueError: The existing task journal fails chain verification.
+        ValueError: The existing task journal fails chain or reader-coverage verification.
         RuntimeError: The journal append did not extend the chain.
     """
     run_id = task_run_id(decision.task_id)

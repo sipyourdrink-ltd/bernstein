@@ -167,7 +167,7 @@ class TestCheckpointRecording:
         _record(sdd, tree)
         path = sdd / "runs" / task_run_id("t1") / "journal.jsonl"
         result = verify_journal(path)
-        assert result.ok
+        assert result.chain_consistent
         assert result.count == 2
 
     def test_latest_checkpoint_returns_most_recent(self, tmp_path: Path) -> None:
@@ -203,6 +203,17 @@ class TestCheckpointRecording:
         path.write_text(json.dumps(row) + "\n", encoding="utf-8")
         assert latest_checkpoint(sdd, "t1") is None
 
+    def test_unparsable_row_never_fuels_warm_resume(self, tmp_path: Path) -> None:
+        """Observable tolerant-reader loss fails the operational selector closed."""
+        sdd = tmp_path / ".sdd"
+        tree = _make_worktree(tmp_path)
+        _record(sdd, tree)
+        path = sdd / "runs" / task_run_id("t1") / "journal.jsonl"
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write("not json\n")
+
+        assert latest_checkpoint(sdd, "t1") is None
+
     def test_checkpoint_recording_survives_process_reopen(self, tmp_path: Path) -> None:
         # Each record call opens the journal fresh (as a new process would);
         # the chain must extend, not restart from genesis.
@@ -214,7 +225,7 @@ class TestCheckpointRecording:
         _record(sdd, tree)
         _record(sdd, tree)
         path = sdd / "runs" / task_run_id("t1") / "journal.jsonl"
-        events = load_events(path)
+        events = load_events(path).events
         assert [e["index"] for e in events] == [0, 1, 2]
         assert events[1]["prev_hash"] == events[0]["event_hash"]
         assert events[2]["prev_hash"] == events[1]["event_hash"]
@@ -448,7 +459,7 @@ class TestRecordRetryDecision:
         from bernstein.core.replay.journal import verify_journal
 
         result = verify_journal(sdd / "runs" / task_run_id("t1") / "journal.jsonl")
-        assert result.ok
+        assert result.chain_consistent
         assert result.count == 2  # checkpoint + decision
 
     def test_cold_downgrade_recorded_as_cold(self, tmp_path: Path) -> None:

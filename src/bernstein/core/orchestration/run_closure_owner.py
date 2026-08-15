@@ -130,14 +130,14 @@ def reconcile_spawner_run_owner(*, workdir: Path, owner: SpawnerRunOwner) -> boo
     sdd_dir = root / ".sdd"
     journal_path = run_journal_path(sdd_dir, owner.run_id)
     verification = verify_journal(journal_path)
-    if not verification.ok:
+    if not verification.chain_consistent or verification.discarded_line_indices:
         logger.warning(
             "Run closure recovery refused for %s: journal verification failed: %s",
             owner.run_id,
             verification.errors[:1],
         )
         return False
-    events = load_events(journal_path)
+    events = load_events(journal_path).events
     if not events:
         return False
     started = events[0]

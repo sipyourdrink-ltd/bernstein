@@ -72,7 +72,6 @@ from bernstein.core.orchestration.approval_gate import (
 )
 from bernstein.core.replay.journal import (
     EventJournal,
-    JournalVerifyResult,
     load_events,
     verify_journal,
 )
@@ -370,7 +369,7 @@ def record_task_suspension_row(
     identity, later bound into the audit chain *before* any release runs.
 
     Raises:
-        ValueError: The existing journal fails chain verification.
+        ValueError: The existing journal fails chain or reader-coverage verification.
         RuntimeError: The journal append did not extend the chain.
     """
     journal = EventJournal.resume(task_run_id(task_id), sdd_dir)
@@ -419,14 +418,14 @@ def latest_suspension(sdd_dir: Path, task_id: str) -> SuspendRow | None:
     if not path.exists():
         return None
     result = verify_journal(path)
-    if not result.ok:
+    if not result.chain_consistent or result.discarded_line_indices:
         logger.warning(
-            "suspend journal for task %s failed chain verification at index %s; refusing resume",
+            "suspend journal for task %s failed chain/reader-coverage verification at index %s; refusing resume",
             task_id,
             result.divergent_index,
         )
         return None
-    for row in reversed(load_events(path)):
+    for row in reversed(load_events(path).events):
         if row.get("event") != JOURNAL_EVENT_SUSPEND:
             continue
         if str(row.get("task_id", "")) != task_id:
@@ -1294,7 +1293,13 @@ class ContinuityResult:
             failure. Test ``status == CONTINUITY_VERIFIED`` (or ``resumed``)
             when you need a settled, proven continuity.
         chain_ok: Whether the HMAC audit chain verified.
-        journal_ok: Whether the task journal Merkle chain verified.
+        journal_ok: Whether the parsed task-journal chain verified with no
+            discarded physical lines. This is not a full-journal identity
+            claim.
+        journal_identity: Full-journal identity verdict. Task suspension
+            journals do not currently carry an external terminal-head seal,
+            so this remains ``unverifiable`` even when the receipt-bound rows
+            prove suspension continuity.
         resumed: Whether a resume receipt *bound to the parked suspend receipt*
             was found. A resume receipt for some other park does not count.
         effective_mode: The recorded continuation mode (``warm`` / ``fork`` /
@@ -1312,6 +1317,7 @@ class ContinuityResult:
     effective_mode: str
     workspace_match: bool
     downgrade_reason: str
+    journal_identity: str = "unverifiable"
     errors: list[str] = field(default_factory=list)
     status: str = CONTINUITY_FAILED
 
@@ -1331,6 +1337,7 @@ class ContinuityResult:
             "ok": self.ok,
             "chain_ok": self.chain_ok,
             "journal_ok": self.journal_ok,
+            "journal_identity": self.journal_identity,
             "resumed": self.resumed,
             "effective_mode": self.effective_mode,
             "workspace_match": self.workspace_match,
@@ -1339,15 +1346,11 @@ class ContinuityResult:
         }
 
 
-def _journal_verify(sdd_dir: Path, task_id: str) -> JournalVerifyResult:
-    return verify_journal(_journal_path(sdd_dir, task_id))
-
-
 def _journal_rows(sdd_dir: Path, task_id: str) -> list[dict[str, Any]]:
     path = _journal_path(sdd_dir, task_id)
     if not path.exists():
         return []
-    return list(load_events(path))
+    return list(load_events(path).events)
 
 
 def _row_present(rows: list[dict[str, Any]], event: str, task_id: str, event_hash: str) -> bool:
@@ -1408,13 +1411,19 @@ def verify_suspension_continuity(
     if not chain_ok:
         errors.extend(chain_errors)
 
-    journal_result = _journal_verify(sdd_dir, task_id)
-    journal_ok = journal_result.ok
+    journal_path = _journal_path(sdd_dir, task_id)
+    journal_result = verify_journal(journal_path)
+    journal_ok = (
+        journal_path.is_file() and journal_result.chain_consistent and not journal_result.discarded_line_indices
+    )
     if not journal_ok:
-        errors.append(
-            f"task journal chain broke at index {journal_result.divergent_index}: "
-            f"{'; '.join(journal_result.errors) or 'verification failed'}"
-        )
+        if not journal_path.is_file():
+            errors.append(f"task journal is missing for task {task_id!r}")
+        else:
+            errors.append(
+                f"task journal chain/reader-coverage verification failed at index {journal_result.divergent_index}: "
+                f"{'; '.join(journal_result.errors) or 'verification failed'}"
+            )
 
     suspend_events = [e for e in chain.query(event_type=EVENT_TASK_SUSPENDED) if e.details.get("task_id") == task_id]
     resume_events = [e for e in chain.query(event_type=EVENT_TASK_RESUMED) if e.details.get("task_id") == task_id]

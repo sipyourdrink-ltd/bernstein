@@ -65,7 +65,7 @@ def _exported_spans(project_root: Path, *, record_audit: bool = True) -> list[di
     Optionally records the ``otel.projection`` audit event so the exported
     spans' anchor resolves to the chain (the state after a real export).
     """
-    events = load_events(run_journal_path(project_root / ".sdd", _RUN_ID))
+    events = load_events(run_journal_path(project_root / ".sdd", _RUN_ID)).events
     key = load_or_create_install_key(signing_key_path(project_root))
     projection = project_spans(events, run_id=_RUN_ID, keyid=keyid_from_public_key(key.public_key()))
     signed = sign_projection(projection, signing_key=key)
@@ -346,7 +346,7 @@ def test_verdict_is_deterministic(project: Path) -> None:
 
 def test_verify_exported_span_recompute_uses_shared_derivation(project: Path) -> None:
     spans = _exported_spans(project)
-    events = load_events(run_journal_path(project / ".sdd", _RUN_ID))
+    events = load_events(run_journal_path(project / ".sdd", _RUN_ID)).events
     projections = [
         {
             "run_id": _RUN_ID,

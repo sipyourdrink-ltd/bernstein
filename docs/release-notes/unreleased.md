@@ -6,6 +6,18 @@ landed since the newest one.
 
 ## Security
 
+- Journal verification no longer presents a self-consistent prefix as proof of
+  the complete journal (#3651). Tolerant `load_events` reads now return both
+  accepted rows and the 0-based physical indices of discarded non-blank lines;
+  blank lines remain valid separators. `JournalVerifyResult` replaces the
+  ambiguous `ok` bit with separate chain-consistency, reader-coverage, and
+  sealed-identity verdicts. A clean prefix without an external head is
+  `unverifiable`; against a seal, deleting the last one or two complete rows is
+  a mismatch. Context verification consumes existing intent journal seals when
+  present, while artifact and suspension outputs explicitly state when no
+  whole-journal seal exists. Checkpoint selection fails closed on any observed
+  reader discard without changing the tolerant default for ordinary readers.
+
 - `bernstein_stop` now contains the `workdir` it is given. The MCP shutdown
   signal path is resolved and proven to stay inside the named project root,
   and the root must already hold a `.sdd` directory. **Behaviour change:** a

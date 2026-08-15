@@ -98,7 +98,7 @@ def test_plan_graph_event_lands_in_the_journal_with_its_digest(tmp_path: Path) -
     # the genesis sentinel here because this is the run's first append.
     assert row["event_hash"]
     assert "prev_hash" in row
-    assert journal.verify().ok
+    assert journal.verify().chain_consistent
 
 
 def test_digest_is_produced_by_the_shared_canonical_encoder(tmp_path: Path) -> None:
@@ -266,7 +266,7 @@ def test_journal_chain_verifies_after_plan_graph_events(tmp_path: Path) -> None:
     stub._record_plan_graph_digest([_task("t1")])
     stub._record_plan_graph_digest([_task("t1"), _task("t2", depends_on=["t1"])])
 
-    assert journal.verify().ok
+    assert journal.verify().chain_consistent
 
 
 @pytest.mark.parametrize("role", ["coder", "reviewer"])

@@ -128,6 +128,7 @@ def context_verify_cmd(task_id: str, workdir: str, as_json: bool) -> None:
             "signature_ok": result.signature_ok,
             "chain_ok": result.chain_ok,
             "journal_ok": result.journal_ok,
+            "journal_identity": result.journal_identity,
         }
         console.print_json(json.dumps(payload))
         if result.ok:
@@ -139,7 +140,8 @@ def context_verify_cmd(task_id: str, workdir: str, as_json: bool) -> None:
     console.print()
     console.print(f"[bold]Context verify[/bold] task={task_id}")
     if result.ok:
-        console.print("[green]OK[/green] -- the capsule re-derives byte-identically from the chain and journal.")
+        console.print("[green]OK[/green] -- the capsule re-derives from its signed record and parsed journal.")
+        console.print(f"Whole-journal identity: {result.journal_identity}")
         raise SystemExit(0)
     if result.capsule is None:
         console.print(f"[yellow]NO CAPSULE[/yellow] -- {result.reason}")

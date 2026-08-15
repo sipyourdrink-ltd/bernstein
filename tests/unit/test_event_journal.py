@@ -87,7 +87,8 @@ def test_verify_reports_byte_identity_on_unmodified_journal(tmp_path: Path) -> N
 
     result = journal.verify()
     assert isinstance(result, JournalVerifyResult)
-    assert result.ok
+    assert result.chain_consistent
+    assert result.identity == "unverifiable"
     assert result.divergent_index is None
     assert result.count == 3
 
@@ -106,7 +107,7 @@ def test_verify_reports_first_divergent_step_index(tmp_path: Path) -> None:
     journal.path.write_text("\n".join(rows) + "\n", encoding="utf-8")
 
     result = journal.verify()
-    assert not result.ok
+    assert not result.chain_consistent
     assert result.divergent_index == 1
 
 

@@ -448,7 +448,7 @@ def assemble_escalation_receipt(
     journal_path = _journal_path(sdd_dir, run_id)
     if not journal_path.exists():
         raise EscalationError(f"no journal for run {run_id!r} (looked at {journal_path})")
-    events = load_events(journal_path)
+    events = load_events(journal_path).events
     if not events:
         raise EscalationError(f"run {run_id!r} journal is empty; nothing to escalate")
 
@@ -617,7 +617,7 @@ def verify_escalation_receipt(
             receipt=receipt,
         )
     chain_result = verify_journal(journal_path)
-    if not chain_result.ok:
+    if not chain_result.chain_consistent or chain_result.discarded_line_indices:
         detail = chain_result.errors[0] if chain_result.errors else "chain break"
         return EscalationVerifyResult(
             ok=False,
@@ -625,7 +625,7 @@ def verify_escalation_receipt(
             receipt=receipt,
         )
 
-    events = load_events(journal_path)
+    events = load_events(journal_path).events
     reconstructed = tuple(str(e.get("event_hash", "")) for e in events[receipt.from_step :])
     if reconstructed != receipt.window_entry_hashes:
         return EscalationVerifyResult(

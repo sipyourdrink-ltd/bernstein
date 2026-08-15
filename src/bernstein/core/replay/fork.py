@@ -173,7 +173,7 @@ def fork_run(
     if not journal_path.exists():
         raise ForkError(f"no journal for run {run_id!r} (looked at {journal_path})")
 
-    events = load_events(journal_path)
+    events = load_events(journal_path).events
     if not events:
         raise ForkError(f"run {run_id!r} journal is empty; nothing to fork")
 

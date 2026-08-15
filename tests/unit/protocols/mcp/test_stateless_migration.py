@@ -412,7 +412,7 @@ class TestServedCallAnchoring:
         )
         assert status == 200
 
-        rows = [r for r in load_events(transport._journal.path) if r["event"] == "mcp.stateless_call"]
+        rows = [r for r in load_events(transport._journal.path).events if r["event"] == "mcp.stateless_call"]
         assert len(rows) == 1
         events = chain.query(event_type=EVENT_MCP_STATELESS_CALL)
         assert len(events) == 1
@@ -492,7 +492,7 @@ class TestCallIndexAllocation:
         with pytest.raises(ValueError, match="call_index claim 7"):
             anchor_stateless_call(journal=journal, method="tools/call", params=self._claim_params(7), chain=None)
         # The rejected call left no journal entry behind.
-        assert [r for r in load_events(journal.path) if r["event"] == "mcp.stateless_call"] == []
+        assert [r for r in load_events(journal.path).events if r["event"] == "mcp.stateless_call"] == []
 
     @pytest.mark.anyio
     async def test_transport_survives_mismatched_claim_without_anchoring(self, tmp_path: Path) -> None:

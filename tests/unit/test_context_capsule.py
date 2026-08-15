@@ -29,7 +29,11 @@ from bernstein.core.agents.context_capsule import (
 )
 from bernstein.core.lineage.identity import generate_keypair
 from bernstein.core.replay.journal import EventJournal
-from bernstein.core.security.audit_chain import EVENT_CONTEXT_CAPSULE, AuditChainStore
+from bernstein.core.security.audit_chain import (
+    EVENT_CONTEXT_CAPSULE,
+    AuditChainStore,
+    record_intent_journal_seal,
+)
 
 
 def _chain(sdd: Path) -> AuditChainStore:
@@ -98,7 +102,7 @@ def test_spawn_record_journal_capsule_share_params_hash(tmp_path: Path) -> None:
     # journal
     from bernstein.core.replay.journal import load_events
 
-    events = load_events(journal.path)
+    events = load_events(journal.path).events
     recorded = [e for e in events if e.get("event") == CAPSULE_RECORDED_EVENT]
     assert recorded and recorded[-1]["capsule_hash"] == capsule.capsule_hash()
 
@@ -122,7 +126,189 @@ def test_real_capsule_verifies_offline(tmp_path: Path) -> None:
     result = verify_context_capsule(sdd_dir=sdd, chain=_chain(sdd), task_id="task-1")
     assert result.ok, result.reason
     assert result.signature_ok and result.chain_ok and result.journal_ok
+    assert result.journal_identity == "unverifiable"
     assert not result.is_mock
+
+
+def test_context_verifier_uses_external_run_seal_when_available(tmp_path: Path) -> None:
+    sdd = tmp_path / ".sdd"
+    capsule = _capsule()
+    _seal(sdd, capsule)
+    chain = _chain(sdd)
+    journal = EventJournal.resume("run-1", sdd)
+    record_intent_journal_seal(
+        chain=chain,
+        task_id=capsule.task_id,
+        run_id=capsule.run_id,
+        capsule_hash=capsule.intent_capsule_hash,
+        journal_head=journal.head(),
+        event_count=journal.event_count(),
+    )
+
+    result = verify_context_capsule(sdd_dir=sdd, chain=chain, task_id="task-1")
+
+    assert result.ok, result.reason
+    assert result.journal_identity == "verified"
+
+
+def test_context_verifier_rejects_clean_truncation_against_external_seal(tmp_path: Path) -> None:
+    sdd = tmp_path / ".sdd"
+    capsule = _capsule()
+    _seal(sdd, capsule)
+    chain = _chain(sdd)
+    journal = EventJournal.resume("run-1", sdd)
+    record_intent_journal_seal(
+        chain=chain,
+        task_id=capsule.task_id,
+        run_id=capsule.run_id,
+        capsule_hash=capsule.intent_capsule_hash,
+        journal_head=journal.head(),
+        event_count=journal.event_count(),
+    )
+    lines = journal.path.read_text(encoding="utf-8").splitlines()
+    journal.path.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
+
+    result = verify_context_capsule(sdd_dir=sdd, chain=chain, task_id="task-1")
+
+    assert not result.ok
+    assert result.journal_identity == "mismatched"
+
+
+def test_context_verifier_reports_sealed_junk_as_mismatched(tmp_path: Path) -> None:
+    sdd = tmp_path / ".sdd"
+    capsule = _capsule()
+    _seal(sdd, capsule)
+    chain = _chain(sdd)
+    journal = EventJournal.resume("run-1", sdd)
+    record_intent_journal_seal(
+        chain=chain,
+        task_id=capsule.task_id,
+        run_id=capsule.run_id,
+        capsule_hash=capsule.intent_capsule_hash,
+        journal_head=journal.head(),
+        event_count=journal.event_count(),
+    )
+    lines = journal.path.read_text(encoding="utf-8").splitlines()
+    lines.insert(1, "not json")
+    journal.path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result = verify_context_capsule(sdd_dir=sdd, chain=chain, task_id="task-1")
+
+    assert not result.ok
+    assert result.journal_identity == "mismatched"
+
+
+def test_context_verifier_reports_deleted_sealed_journal_as_mismatched(tmp_path: Path) -> None:
+    sdd = tmp_path / ".sdd"
+    capsule = _capsule()
+    _seal(sdd, capsule)
+    chain = _chain(sdd)
+    journal = EventJournal.resume("run-1", sdd)
+    record_intent_journal_seal(
+        chain=chain,
+        task_id=capsule.task_id,
+        run_id=capsule.run_id,
+        capsule_hash=capsule.intent_capsule_hash,
+        journal_head=journal.head(),
+        event_count=journal.event_count(),
+    )
+    journal.path.unlink()
+
+    result = verify_context_capsule(sdd_dir=sdd, chain=chain, task_id="task-1")
+
+    assert not result.ok
+    assert result.journal_identity == "mismatched"
+    assert "journal" in result.reason.lower()
+
+
+def test_context_verifier_rejects_disagreeing_relevant_seals(tmp_path: Path) -> None:
+    sdd = tmp_path / ".sdd"
+    capsule = _capsule()
+    _seal(sdd, capsule)
+    chain = _chain(sdd)
+    journal = EventJournal.resume("run-1", sdd)
+    record_intent_journal_seal(
+        chain=chain,
+        task_id=capsule.task_id,
+        run_id=capsule.run_id,
+        capsule_hash=capsule.intent_capsule_hash,
+        journal_head=journal.head(),
+        event_count=journal.event_count(),
+    )
+    record_intent_journal_seal(
+        chain=chain,
+        task_id=capsule.task_id,
+        run_id=capsule.run_id,
+        capsule_hash=capsule.intent_capsule_hash,
+        journal_head="different-head",
+        event_count=journal.event_count(),
+    )
+
+    result = verify_context_capsule(sdd_dir=sdd, chain=chain, task_id="task-1")
+
+    assert not result.ok
+    assert result.journal_identity == "unverifiable"
+    assert "disagreeing external seals" in result.reason
+
+
+def test_context_verifier_ignores_another_tasks_seal_for_the_same_run(tmp_path: Path) -> None:
+    sdd = tmp_path / ".sdd"
+    capsule = _capsule()
+    _seal(sdd, capsule)
+    chain = _chain(sdd)
+    record_intent_journal_seal(
+        chain=chain,
+        task_id="different-task",
+        run_id=capsule.run_id,
+        capsule_hash="sha256:" + "x" * 64,
+        journal_head="wrong-head",
+        event_count=999,
+    )
+
+    result = verify_context_capsule(sdd_dir=sdd, chain=chain, task_id="task-1")
+
+    assert result.ok, result.reason
+    assert result.journal_identity == "unverifiable"
+
+
+def test_context_verifier_ignores_another_intent_capsules_seal(tmp_path: Path) -> None:
+    sdd = tmp_path / ".sdd"
+    capsule = _capsule()
+    _seal(sdd, capsule)
+    chain = _chain(sdd)
+    record_intent_journal_seal(
+        chain=chain,
+        task_id=capsule.task_id,
+        run_id=capsule.run_id,
+        capsule_hash="sha256:" + "x" * 64,
+        journal_head="wrong-head",
+        event_count=999,
+    )
+
+    result = verify_context_capsule(sdd_dir=sdd, chain=chain, task_id="task-1")
+
+    assert result.ok, result.reason
+    assert result.journal_identity == "unverifiable"
+
+
+def test_context_without_intent_binding_ignores_an_empty_hash_seal(tmp_path: Path) -> None:
+    sdd = tmp_path / ".sdd"
+    capsule = _capsule(intent_capsule_hash="")
+    _seal(sdd, capsule)
+    chain = _chain(sdd)
+    record_intent_journal_seal(
+        chain=chain,
+        task_id=capsule.task_id,
+        run_id=capsule.run_id,
+        capsule_hash="",
+        journal_head="wrong-head",
+        event_count=999,
+    )
+
+    result = verify_context_capsule(sdd_dir=sdd, chain=chain, task_id="task-1")
+
+    assert result.ok, result.reason
+    assert result.journal_identity == "unverifiable"
 
 
 def test_mock_capsule_fails_with_mock_diagnostic(tmp_path: Path) -> None:
@@ -239,6 +425,7 @@ def test_verify_rejects_when_journal_missing(tmp_path: Path) -> None:
     # No journal recorded -> verify fails on the missing journal.
     result = verify_context_capsule(sdd_dir=sdd, chain=_chain(sdd), task_id="task-1")
     assert result.ok is False
+    assert result.journal_identity == "unverifiable"
     assert "journal" in result.reason.lower()
 
 

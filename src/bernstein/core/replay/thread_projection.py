@@ -102,7 +102,7 @@ def project_journal(path: Path, *, after_index: int | None = None) -> list[Threa
         of the file, so repeated calls are byte-identical (determinism).
     """
     events: list[ThreadStreamEvent] = []
-    for row in load_events(path):
+    for row in load_events(path).events:
         try:
             index = int(row.get("index", 0))
         except (TypeError, ValueError):
@@ -159,7 +159,7 @@ def verify_thread_against_journal(path: Path) -> ThreadVerifyResult:
         ``ok`` with ``count == 0``.
     """
     chain = verify_journal(path)
-    if not chain.ok:
+    if not chain.chain_consistent or chain.discarded_line_indices:
         return ThreadVerifyResult(
             ok=False,
             count=chain.count,
@@ -167,7 +167,7 @@ def verify_thread_against_journal(path: Path) -> ThreadVerifyResult:
             errors=list(chain.errors),
         )
 
-    rows = load_events(path)
+    rows = load_events(path).events
     projected = project_journal(path)
     if len(projected) != len(rows):
         return ThreadVerifyResult(

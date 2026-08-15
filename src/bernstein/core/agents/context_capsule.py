@@ -406,6 +406,7 @@ class ContextVerifyResult:
     signature_ok: bool = False
     chain_ok: bool = False
     journal_ok: bool = False
+    journal_identity: str = "unverifiable"
     capsule: ContextCapsule | None = None
     matched_fields: tuple[str, ...] = field(default_factory=tuple)
 
@@ -431,8 +432,10 @@ def verify_context_capsule(
       context divergence -- different params, budget, or chain head -- is caught
       as a hash mismatch).
 
-    ``ok`` is True only when every check holds. A verifier holding only the
-    journal, the chain, and the capsule record can run this end to end.
+    ``ok`` is True only when the existing capsule and surviving-prefix checks
+    hold. ``journal_identity`` separately reports whether an external seal
+    proves that the journal is the complete finished journal; an unsealed run
+    remains ``unverifiable`` rather than being promoted to a full-journal pass.
     """
     from bernstein.core.replay.journal import (
         JournalPathError,
@@ -498,27 +501,76 @@ def verify_context_capsule(
             chain_ok=True,
             capsule=capsule,
         )
+    from bernstein.core.replay.journal import JournalIdentityStatus, JournalSeal
+    from bernstein.core.security.intent_capsule import find_journal_seals
+
+    seal_entries = (
+        find_journal_seals(
+            chain=chain,
+            task_id=task_id,
+            run_id=capsule.run_id,
+            capsule_hash_value=capsule.intent_capsule_hash,
+        )
+        if capsule.intent_capsule_hash
+        else []
+    )
+    agreed_seals = {
+        (str(entry.details.get("journal_head", "")), entry.details.get("event_count")) for entry in seal_entries
+    }
+    if len(agreed_seals) > 1:
+        return ContextVerifyResult(
+            ok=False,
+            reason="run journal has disagreeing external seals; its identity is ambiguous",
+            signature_ok=True,
+            chain_ok=True,
+            capsule=capsule,
+        )
+    seal: JournalSeal | None = None
+    if agreed_seals:
+        sealed_head, sealed_count = next(iter(agreed_seals))
+        if not isinstance(sealed_count, int) or isinstance(sealed_count, bool):
+            return ContextVerifyResult(
+                ok=False,
+                reason="run journal seal records no usable event_count",
+                signature_ok=True,
+                chain_ok=True,
+                capsule=capsule,
+            )
+        seal = JournalSeal(head=sealed_head, event_count=sealed_count)
+
+    jres = verify_journal(journal_path, seal=seal)
     if not journal_path.exists():
         return ContextVerifyResult(
             ok=False,
             reason=f"run journal for {capsule.run_id!r} is missing; cannot re-derive at chain position",
             signature_ok=True,
             chain_ok=True,
+            journal_identity=jres.identity.value,
             capsule=capsule,
         )
-    jres = verify_journal(journal_path)
-    if not jres.ok:
+    if not jres.chain_consistent or jres.discarded_line_indices:
         detail = jres.errors[0] if jres.errors else "chain break"
         return ContextVerifyResult(
             ok=False,
-            reason=f"run journal chain diverges ({detail}); steps were reordered or tampered",
+            reason=f"run journal chain/reader-coverage verification failed ({detail})",
             signature_ok=True,
             chain_ok=True,
+            journal_identity=jres.identity.value,
+            capsule=capsule,
+        )
+    if seal is not None and jres.identity != JournalIdentityStatus.VERIFIED:
+        return ContextVerifyResult(
+            ok=False,
+            reason="run journal does not match its external seal: " + ("; ".join(jres.errors) or "mismatch"),
+            signature_ok=True,
+            chain_ok=True,
+            journal_ok=True,
+            journal_identity=jres.identity.value,
             capsule=capsule,
         )
     journal_matches = [
         e
-        for e in load_events(journal_path)
+        for e in load_events(journal_path).events
         if e.get("event") == CAPSULE_RECORDED_EVENT
         and str(e.get("task_id", "")) == task_id
         and str(e.get("capsule_hash", "")) == recomputed
@@ -530,6 +582,7 @@ def verify_context_capsule(
             signature_ok=True,
             chain_ok=True,
             journal_ok=True,
+            journal_identity=jres.identity.value,
             capsule=capsule,
         )
 
@@ -539,6 +592,7 @@ def verify_context_capsule(
         signature_ok=True,
         chain_ok=True,
         journal_ok=True,
+        journal_identity=jres.identity.value,
         capsule=capsule,
         matched_fields=("params_hash", "capsule_hash", "audit_chain_head"),
     )

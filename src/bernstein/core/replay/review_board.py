@@ -353,7 +353,7 @@ def project_run(sdd_dir: Path, run_id: str) -> BoardProjection | None:
         return None
     if not journal_path.is_file():
         return None
-    events = load_events(journal_path)
+    events = load_events(journal_path).events
     board = project_board(events)
     verify = verify_journal(journal_path)
     head = str(events[-1].get("event_hash", "")) if events else ""
@@ -362,7 +362,7 @@ def project_run(sdd_dir: Path, run_id: str) -> BoardProjection | None:
         board=board,
         projection_hash=board_hash(board),
         journal_head=head,
-        journal_verified=verify.ok,
+        journal_verified=verify.chain_consistent and not verify.discarded_line_indices,
         event_count=len(events),
     )
 

@@ -32,7 +32,7 @@ def _journal(tmp_path: Path, run_id: str = "run-proj") -> EventJournal:
 def test_projected_event_carries_journal_entry_hash(tmp_path: Path) -> None:
     """Each streamed event carries its journal entry hash (AC2)."""
     journal = _journal(tmp_path)
-    rows = load_events(journal.path)
+    rows = load_events(journal.path).events
 
     events = project_journal(journal.path)
 

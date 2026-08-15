@@ -250,6 +250,7 @@ class TestFindingPayload:
         result = verify_run_artifacts(sdd, "task-1", hmac_key=_KEY)
         assert len(result) == 1
         assert result[0].ok, result[0].reason
+        assert result[0].journal_identity == "unverifiable"
 
     def test_verify_rejects_recorded_address_mismatch(self, tmp_path: Path) -> None:
         sdd = _sdd(tmp_path)

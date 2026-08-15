@@ -421,7 +421,7 @@ def telemetry_export_otel(
         journal_path = run_journal_path(root / ".sdd", run_id)
     except JournalPathError as exc:
         raise click.ClickException(sanitize_log(str(exc))) from exc
-    events = load_events(journal_path)
+    events = load_events(journal_path).events
     if not events:
         raise click.ClickException(
             f"no event journal for run {sanitize_log(run_id)} at {sanitize_log(str(journal_path))}",
@@ -594,7 +594,7 @@ def telemetry_verify_span(ctx: click.Context, run_id: str, workdir: str, span_so
     except JournalPathError as exc:
         raise click.ClickException(sanitize_log(str(exc))) from exc
     try:
-        events = load_events(journal_path, strict=True)
+        events = load_events(journal_path, strict=True).events
     except JournalParseError as exc:
         # A verifier attests over the journal on disk, not a filtered
         # sequence: a malformed row is exactly the corruption a verifier

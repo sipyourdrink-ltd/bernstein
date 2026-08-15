@@ -144,10 +144,10 @@ def test_malformed_frame_produces_no_journal_row(tmp_path: Path) -> None:
     sink.record(parse_inbound_frame(json.dumps(_STREAM_UPDATE_1), seq=0))
     with pytest.raises(ACPSchemaError):
         sink.record(parse_inbound_frame(b"{bad json", seq=1))
-    rows = [r for r in load_events(journal.path) if r.get("event") == ACP_EVENT_TYPE]
+    rows = [r for r in load_events(journal.path).events if r.get("event") == ACP_EVENT_TYPE]
     # Exactly the single valid event; the malformed frame wrote nothing.
     assert len(rows) == 1
-    assert journal.verify().ok
+    assert journal.verify().chain_consistent
 
 
 def test_drive_lifecycle_journals_every_event_content_addressed(tmp_path: Path) -> None:
@@ -160,9 +160,9 @@ def test_drive_lifecycle_journals_every_event_content_addressed(tmp_path: Path) 
     assert result.stop_reason == "end_turn"
     assert result.event_count == len(_RECORDED_SESSION)
     assert result.journal_head == journal.head()
-    assert journal.verify().ok
+    assert journal.verify().chain_consistent
 
-    rows = [r for r in load_events(journal.path) if r.get("event") == ACP_EVENT_TYPE]
+    rows = [r for r in load_events(journal.path).events if r.get("event") == ACP_EVENT_TYPE]
     assert len(rows) == len(_RECORDED_SESSION)
     for row, frame in zip(rows, _RECORDED_SESSION, strict=True):
         assert row["content_hash"] == frame_content_hash(frame)

@@ -662,7 +662,7 @@ def anchor_stateless_call(
     # baggage index is only a claim: a mismatch is rejected so the anchored
     # call_index sequence stays contiguous and attacker-independent (AC1).
     claimed_index = _call_index_from_baggage(meta)
-    call_index = sum(1 for row in load_events(journal.path) if row.get("event") == JOURNAL_EVENT_MCP_CALL)
+    call_index = sum(1 for row in load_events(journal.path).events if row.get("event") == JOURNAL_EVENT_MCP_CALL)
     if claimed_index is not None and claimed_index != call_index:
         msg = (
             f"mcp.call_index claim {claimed_index} does not match the allocated "

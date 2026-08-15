@@ -56,7 +56,7 @@ def _write_journal(sdd_dir, run_id: str = _RUN_ID) -> EventJournal:
 
 
 def _events(tmp_path, run_id: str = _RUN_ID) -> list[dict]:
-    return load_events(_write_journal(tmp_path / ".sdd", run_id).path)
+    return load_events(_write_journal(tmp_path / ".sdd", run_id).path).events
 
 
 def _bridge(exporter: InMemorySpanExporter) -> JournalOTLPBridge:
@@ -116,7 +116,7 @@ def test_anchor_recomputes_audit_event_trace_id(tmp_path, monkeypatch) -> None:
     from bernstein.core.security.audit import load_or_create_audit_key
     from bernstein.core.security.audit_chain import EVENT_OTEL_PROJECTION, AuditChainStore
 
-    events = load_events(journal.path)
+    events = load_events(journal.path).events
     audit = AuditChainStore(tmp_path / ".sdd" / "audit", key=load_or_create_audit_key()).query(
         event_type=EVENT_OTEL_PROJECTION
     )[0]
@@ -220,7 +220,7 @@ def test_incremental_equals_batch_multi_agent_interleaving(tmp_path) -> None:
     journal.record("workflow_phase_advanced", phase="review")
     journal.record("agent_reaped", agent_id="a1")
     journal.record("run_completed", ok=True)
-    events = load_events(journal.path)
+    events = load_events(journal.path).events
 
     batch = project_spans(events, run_id="run-multi")
     projector = IncrementalSpanProjector("run-multi")
@@ -259,7 +259,7 @@ def test_live_stream_exports_same_spans_as_backfill(tmp_path) -> None:
     journal.record("agent_reaped", agent_id="a1")
     journal.record("run_completed", ok=True)
 
-    events = load_events(journal.path)
+    events = load_events(journal.path).events
     projection = project_spans(events, run_id=_RUN_ID)
     backfill_exporter = InMemorySpanExporter()
     _bridge(backfill_exporter).export_projection(projection, events)
@@ -292,7 +292,7 @@ def test_observer_failure_never_breaks_journal_append(tmp_path) -> None:
     journal.record("run_started", goal="ship")
     journal.record("task_claimed", task_id="t1")
     assert journal.event_count() == 2
-    assert journal.verify().ok
+    assert journal.verify().chain_consistent
 
 
 def test_observer_delivery_preserves_concurrent_append_order(tmp_path: Path) -> None:
@@ -319,7 +319,7 @@ def test_observer_delivery_preserves_concurrent_append_order(tmp_path: Path) -> 
     second.join(timeout=2)
 
     assert seen == [0, 1]
-    assert journal.verify().ok
+    assert journal.verify().chain_consistent
 
 
 def test_live_stream_finalize_records_audit_event(tmp_path, monkeypatch) -> None:
@@ -340,7 +340,7 @@ def test_live_stream_finalize_records_audit_event(tmp_path, monkeypatch) -> None
     otel_events = [e for e in chain.query() if e.event_type == EVENT_OTEL_PROJECTION]
     assert len(otel_events) == 1
     details = otel_events[0].details
-    events = load_events(journal.path)
+    events = load_events(journal.path).events
     projection = project_spans(events, run_id=_RUN_ID)
     assert details["trace_id"] == projection.trace_id
     assert details["run_id"] == _RUN_ID

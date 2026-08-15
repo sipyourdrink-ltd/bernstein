@@ -83,7 +83,7 @@ def test_board_endpoint_projects_detached_run(tmp_path: Path) -> None:
     assert response.status_code == 200
     body = response.json()
 
-    expected_board = project_board(load_events(journal.path))
+    expected_board = project_board(load_events(journal.path).events)
     assert canonical_board_bytes(body["board"]) == canonical_board_bytes(expected_board)
     assert body["projection_hash"] == board_hash(expected_board)
     assert body["journal_head"] == journal.head()
@@ -356,16 +356,16 @@ def test_review_action_records_chained_and_signed_receipt(tmp_path: Path) -> Non
 
     # Chained receipt: the decision is a verifiable row in the run journal.
     journal_path = tmp_path / ".sdd" / "runs" / "run-act" / "journal.jsonl"
-    events = load_events(journal_path)
+    events = load_events(journal_path).events
     decisions = [e for e in events if e.get("event") == "task_review_decision"]
     assert len(decisions) == 1
     assert decisions[0]["principal"] == "operator-olga"
-    assert verify_journal(journal_path).ok
+    assert verify_journal(journal_path).chain_consistent
 
     # Signed receipt: named principal on the HMAC-chained audit log.
     audit_events: list[dict] = []
     for log_file in sorted((tmp_path / ".sdd" / "audit").glob("*.jsonl")):
-        audit_events.extend(load_events(log_file))
+        audit_events.extend(load_events(log_file).events)
     board_actions = [e for e in audit_events if e.get("event_type") == EVENT_REVIEW_BOARD_ACTION]
     assert len(board_actions) == 1
     assert board_actions[0]["details"]["principal"] == "operator-olga"

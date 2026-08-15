@@ -108,7 +108,7 @@ def test_ac1_receipt_is_signed_and_journal_anchored(tmp_path: Path) -> None:
     # The journal head at stall is captured and equals the live journal head.
     journal = EventJournal(_RUN_ID, _sdd(tmp_path))
     # Recompute the head over the on-disk journal.
-    events = load_events(journal.path)
+    events = load_events(journal.path).events
     assert receipt.journal_head_at_stall == events[-1]["event_hash"]
     assert receipt.window_entry_hashes  # non-empty window
     del journal
@@ -129,7 +129,7 @@ def test_ac1_receipt_persisted_and_reloads(tmp_path: Path) -> None:
 def test_ac2_verify_reconstructs_window(tmp_path: Path) -> None:
     receipt = _assemble(tmp_path, window=8)
     # The window binds exactly the trailing 8 event hashes of the journal.
-    events = load_events(EventJournal(_RUN_ID, _sdd(tmp_path)).path)
+    events = load_events(EventJournal(_RUN_ID, _sdd(tmp_path)).path).events
     expected = [e["event_hash"] for e in events[-8:]]
     assert list(receipt.window_entry_hashes) == expected
 
@@ -145,7 +145,7 @@ def test_ac2_verify_reconstructs_window(tmp_path: Path) -> None:
 def test_ac2_window_capped_to_journal_length(tmp_path: Path) -> None:
     # A window larger than the journal captures the whole journal, no crash.
     receipt = _assemble(tmp_path, window=1000)
-    events = load_events(EventJournal(_RUN_ID, _sdd(tmp_path)).path)
+    events = load_events(EventJournal(_RUN_ID, _sdd(tmp_path)).path).events
     assert len(receipt.window_entry_hashes) == len(events)
 
 

@@ -65,7 +65,7 @@ def test_run_acp_channel_reaches_terminal_without_text_parsing(tmp_path: Path) -
     assert result.stop_reason == "end_turn"
     assert result.event_count == len(_SESSION)
     assert result.journal_head == journal.head()
-    assert journal.verify().ok
+    assert journal.verify().chain_consistent
 
     # Lifecycle was driven purely from structured frames: no BERNSTEIN: text
     # signal appears anywhere in the recorded session.
@@ -89,6 +89,6 @@ def test_malformed_frame_mid_lifecycle_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ACPSchemaError):
         run_acp_channel(lines, journal=journal, session_id="kilo-bad")
     # The valid prefix is journaled; the malformed frame wrote nothing.
-    rows = [r for r in load_events(journal.path) if r.get("event") == "acp_event"]
+    rows = [r for r in load_events(journal.path).events if r.get("event") == "acp_event"]
     assert len(rows) == 1
-    assert journal.verify().ok
+    assert journal.verify().chain_consistent

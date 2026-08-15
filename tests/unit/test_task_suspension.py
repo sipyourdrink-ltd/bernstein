@@ -380,6 +380,8 @@ def test_verify_continuity_proves_warm_resume(tmp_path: Path) -> None:
     assert result.resumed
     assert result.effective_mode == "warm"
     assert result.workspace_match
+    assert result.journal_identity == "unverifiable"
+    assert result.to_dict()["journal_identity"] == "unverifiable"
 
 
 def test_verify_continuity_shows_cold_downgrade_with_reason(tmp_path: Path) -> None:
@@ -478,7 +480,7 @@ def test_mutating_suspend_row_fails_verification_at_that_index(tmp_path: Path) -
     journal_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     verify = verify_journal(journal_path)
-    assert not verify.ok
+    assert not verify.chain_consistent
     assert verify.divergent_index == idx
 
     # A tampered suspend row can never fuel a resume: fail-closed read returns None.
@@ -487,6 +489,19 @@ def test_mutating_suspend_row_fails_verification_at_that_index(tmp_path: Path) -
     result = verify_suspension_continuity(sdd_dir=sdd, task_id="T-tamper", chain=chain)
     assert not result.ok
     assert not result.journal_ok
+
+
+def test_missing_task_journal_is_not_reported_as_verified(tmp_path: Path) -> None:
+    result = verify_suspension_continuity(
+        sdd_dir=tmp_path / ".sdd",
+        task_id="T-missing",
+        chain=_chain(tmp_path),
+    )
+
+    assert not result.ok
+    assert not result.journal_ok
+    assert result.journal_identity == "unverifiable"
+    assert any("journal is missing" in error for error in result.errors)
 
 
 def test_mutating_suspend_receipt_breaks_hmac_chain(tmp_path: Path) -> None:
@@ -703,7 +718,7 @@ def _park(tmp_path: Path, chain: AuditChainStore, task_id: str, worktree: Path) 
 
 def _journal_rows(sdd: Path, task_id: str) -> list[dict[str, object]]:
     path = sdd / "runs" / task_run_id(task_id) / "journal.jsonl"
-    return list(load_events(path)) if path.exists() else []
+    return list(load_events(path).events) if path.exists() else []
 
 
 def test_resume_rejects_receipt_from_a_different_suspend_row(tmp_path: Path) -> None:

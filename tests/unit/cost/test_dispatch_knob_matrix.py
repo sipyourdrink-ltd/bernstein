@@ -399,7 +399,7 @@ def test_forced_knob_change_diverges_at_exact_step(tmp_path: Path) -> None:
     journal_path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
 
     result = EventJournal("run", sdd).verify()
-    assert result.ok is False
+    assert result.chain_consistent is False
     assert result.divergent_index == knob_idx
 
 

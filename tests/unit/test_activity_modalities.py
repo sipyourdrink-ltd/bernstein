@@ -201,7 +201,7 @@ def test_activity_event_shape_is_modality_agnostic(tmp_path: Path) -> None:
     dispatch_activity(r_result, stage_id="r0", journal=journal)
     dispatch_activity(b_result, stage_id="b0", journal=journal)
 
-    rows = load_events(journal.path)
+    rows = load_events(journal.path).events
     # Both modalities journal the same event type and the same key set, so the
     # scheduler dispatches and journals them identically (the epic's core goal).
     assert {r["event"] for r in rows} == {"activity.result"}

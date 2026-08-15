@@ -138,7 +138,9 @@ class RunReceipt:
 
     Attributes:
         run_id: The attested run.
-        journal_head: Recomputed journal Merkle head (the run identity).
+        journal_head: Recomputed journal Merkle head identifying the exact
+            journal state embedded in the receipt. This does not by itself
+            prove that the embedded state is the complete finished journal.
         spine_head: Recomputed lineage-spine head (empty for a run that
             recorded no spine entries).
         audit_head_sha256: Audit-range head when the opt-in block was
@@ -493,7 +495,7 @@ def build_run_receipt(
             f"no journal events for run {run_id!r} at {journal_path}; an empty run has no identity to attest",
         )
     journal_check = verify_events(events)
-    if not journal_check.ok:
+    if not journal_check.chain_consistent:
         raise RunReceiptError(
             f"refusing to sign run {run_id!r}: journal chain fails at step "
             f"{journal_check.divergent_index}: {'; '.join(journal_check.errors)}",
@@ -708,7 +710,7 @@ def verify_run_receipt(
 
     # 1. Journal: the exact verify_journal walk over the embedded rows.
     journal_result = verify_events(events)
-    if not journal_result.ok:
+    if not journal_result.chain_consistent or journal_result.discarded_line_indices:
         step = journal_result.divergent_index
         return _tampered(
             [f"journal diverges at step {step}: {'; '.join(journal_result.errors)}"],

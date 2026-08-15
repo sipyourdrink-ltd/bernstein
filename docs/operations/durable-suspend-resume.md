@@ -40,6 +40,13 @@ hash:
    kept out of the resume frontier: it wakes on an explicit resume, never on an
    auto-restart.
 
+The continuity verifier separately reports `journal_ok` (the parsed chain is
+consistent and the tolerant reader discarded no input) and
+`journal_identity`. Suspend/resume audit receipts independently bind the exact
+rows needed for the continuity proof, but the task journal has no terminal-head
+seal, so its whole-journal identity remains `unverifiable`. That is a coverage
+verdict, not a failed park.
+
 ## Released headroom
 
 The headroom returned to the pool is the reservation minus the spend recorded

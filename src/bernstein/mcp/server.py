@@ -827,7 +827,7 @@ async def _run_status_impl(run_id: str, workdir: str = ".", ctx: Context | None 
                 exc,
                 hint="run_id must be a plain run identifier",
             )
-        events = load_events(journal_path)
+        events = load_events(journal_path).events
         chain_head = _read_audit_chain_head(base / ".sdd" / "audit")
         # Both id forms project the identical handle: the handle is a
         # projection of the journal, not of how the caller addressed it.
@@ -915,6 +915,7 @@ async def _task_capsule_impl(task_id: str, workdir: str = ".", verify: bool = Fa
                 "signature_ok": result.signature_ok,
                 "chain_ok": result.chain_ok,
                 "journal_ok": result.journal_ok,
+                "journal_identity": result.journal_identity,
             }
         return json.dumps(body, indent=2)
     except Exception as exc:

@@ -7,14 +7,17 @@ recorded fixtures instead of live providers.
 Public surface:
 
 * :class:`EventJournal` - the single always-on Merkle-chained per-run
-  event recorder whose head hash is the run identity (issue #2293).
+  event recorder whose head identifies the surviving journal state
+  (issue #2293).
 * :class:`ReplayGateway` - fixture-replay adapter around LLM + tool calls.
 * :data:`RECORD_ENV_VAR` - env-var that opts the *gateway* into recording.
 * :func:`diff_event_logs` - line-by-line first-divergence locator.
 
 The :class:`EventJournal` is the canonical run recorder: it records by
-default into ``.sdd/runs/<run_id>/journal.jsonl`` and its head hash is the
-run identity. It replaced the old orchestrator ``RunRecorder``.
+default into ``.sdd/runs/<run_id>/journal.jsonl`` and its head hash identifies
+the surviving journal state. An independent seal is required to establish the
+complete finished-journal identity. It replaced the old orchestrator
+``RunRecorder``.
 
 The :class:`ReplayGateway` is a distinct concern - it captures LLM/tool
 I/O so a run can be re-executed against recorded fixtures. It is OFF by

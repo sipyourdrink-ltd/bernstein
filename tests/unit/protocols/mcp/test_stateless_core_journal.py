@@ -53,7 +53,7 @@ class TestJournalRecording:
                 ),
             )
 
-        rows = [r for r in load_events(journal.path) if r["event"] == "mcp.stateless_call"]
+        rows = [r for r in load_events(journal.path).events if r["event"] == "mcp.stateless_call"]
         assert len(rows) == 3
         assert [r["call_index"] for r in rows] == [0, 1, 2]
         for i, row in enumerate(rows):
@@ -61,7 +61,7 @@ class TestJournalRecording:
             assert row["span_id"] == expected_span
 
         # Journal chain stays intact and byte-identical across a replay.
-        assert journal.verify().ok
+        assert journal.verify().chain_consistent
 
     def test_replay_produces_identical_journal_head(self, tmp_path) -> None:
         heads = []

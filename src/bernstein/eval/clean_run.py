@@ -21,7 +21,8 @@ artefact following the receipt-is-the-proof pattern of
   (:class:`CleanRunBoundaryError`) because the completeness claim would be
   vacuous;
 * the activity set is drawn from the run's Merkle-chained
-  :mod:`~bernstein.core.replay.journal` rows (head hash = run identity), and
+  :mod:`~bernstein.core.replay.journal` rows (the head identifies that journal
+  state), and
   the attestation records that head so an omitted or mutated contaminating
   access breaks the anchor rather than silently trimming the set. The
   attestation binds the journal head only: the audit-chain mirror carries the
@@ -932,7 +933,7 @@ def _journal_head_of(events: Sequence[Mapping[str, Any]]) -> str:
             "refusing to attest: the run journal is empty, so there is no anchored activity set",
         )
     result = verify_events([dict(e) for e in events])
-    if not result.ok:
+    if not result.chain_consistent:
         detail = "; ".join(result.errors) or "chain verification failed"
         raise CleanRunAnchorError(f"refusing to attest: the run journal does not chain ({detail})")
     return str(events[-1].get("event_hash", ""))
@@ -1236,7 +1237,7 @@ def verify_clean_run_attestation(
             attestation=attestation,
         )
     chain_result = verify_events([dict(e) for e in events])
-    if not chain_result.ok or str(events[-1].get("event_hash", "")) != attestation.journal_head:
+    if not chain_result.chain_consistent or str(events[-1].get("event_hash", "")) != attestation.journal_head:
         return CleanRunVerifyResult(
             ok=False,
             reason="activity set does not chain to the recorded journal head (unanchored)",
@@ -1282,7 +1283,7 @@ def _load_run_journal(workdir: Path, run_id: str) -> list[dict[str, Any]]:
         path = run_journal_path(workdir / ".sdd", run_id)
     except JournalPathError:
         return []
-    return load_events(path)
+    return load_events(path).events
 
 
 # ---------------------------------------------------------------------------

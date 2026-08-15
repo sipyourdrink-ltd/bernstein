@@ -1366,7 +1366,7 @@ def trace_project_cmd(run_id: str, workdir: str, no_stability: bool, as_json: bo
 
     root = Path(workdir).resolve()
     journal_path = _journal_path_for_run(root, run_id)
-    events = load_events(journal_path)
+    events = load_events(journal_path).events
     if not events:
         raise click.ClickException(
             f"no event journal for run {sanitize_log(run_id)} at {sanitize_log(str(journal_path))}",
@@ -1448,7 +1448,7 @@ def trace_verify_projection_cmd(run_id: str, workdir: str, projection_path: str 
 
     root = Path(workdir).resolve()
     try:
-        events = load_events(_journal_path_for_run(root, run_id), strict=True)
+        events = load_events(_journal_path_for_run(root, run_id), strict=True).events
     except JournalParseError as exc:
         # A verifier attests over the journal on disk, not a filtered
         # sequence: a malformed row is exactly the corruption a verifier
@@ -1851,9 +1851,10 @@ def _resolve_journal_path(run_id: str, runs_dir: Path) -> Path:
 def _replay_verify_journal(*, run_id: str, sdd_dir: str, as_json: bool) -> None:
     """Recompute the journal head and report the first divergent step.
 
-    On an intact journal, reports byte-identity. When a step diverges,
-    writes a ``divergence_report.json`` artifact listing ``(step_index,
-    expected_hash, actual_hash)`` and exits non-zero (issue #2293, AC2).
+    On an intact journal, reports chain consistency, reader coverage, and the
+    external-identity verdict. When a step diverges, writes a
+    ``divergence_report.json`` artifact listing ``(step_index, expected_hash,
+    actual_hash)`` and exits non-zero (issue #2293, AC2).
 
     Flagged provider-side mutation entries (a mutation that arrived in
     deterministic mode despite suppression being requested) fail
@@ -1869,13 +1870,24 @@ def _replay_verify_journal(*, run_id: str, sdd_dir: str, as_json: bool) -> None:
         raise SystemExit(1)
 
     result = verify_journal(journal_path)
-    if result.ok:
+    if result.chain_consistent and not result.discarded_line_indices:
         _fail_on_flagged_provider_mutations(run_id=run_id, journal_path=journal_path, as_json=as_json)
         if as_json:
-            console.print_json(json.dumps({"run_id": run_id, "verified": True, "count": result.count}))
+            console.print_json(
+                json.dumps(
+                    {
+                        "run_id": run_id,
+                        "chain_consistent": True,
+                        "coverage": result.coverage.value,
+                        "identity": result.identity.value,
+                        "count": result.count,
+                    }
+                )
+            )
         else:
             console.print(
-                f"[green]OK[/green] journal for [bold]{run_id}[/bold] is byte-identical ({result.count} steps)"
+                f"[green]CHAIN INTACT[/green] for [bold]{run_id}[/bold] ({result.count} steps); "
+                f"identity={result.identity.value}"
             )
         return
 

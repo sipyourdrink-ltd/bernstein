@@ -109,6 +109,7 @@ def artifacts_list_cmd(task: str, workdir: str, output_json: bool) -> None:
                 {
                     "content_hash": record.content_hash,
                     "journal_index": record.journal_index,
+                    "journal_identity": verdict.journal_identity if verdict is not None else "unverifiable",
                     "key": record.key,
                     "link_kind": record.link_kind,
                     "type": record.artifact_type,
@@ -127,6 +128,7 @@ def artifacts_list_cmd(task: str, workdir: str, output_json: bool) -> None:
     table.add_column("Type")
     table.add_column("Idx", justify="right")
     table.add_column("Verify")
+    table.add_column("Journal identity")
     table.add_column("Content hash", style="dim")
     for record in records:
         verdict = verdicts.get((record.key, record.version))
@@ -139,6 +141,7 @@ def artifacts_list_cmd(task: str, workdir: str, output_json: bool) -> None:
             kind,
             str(record.journal_index),
             state,
+            verdict.journal_identity if verdict is not None else "unverifiable",
             record.content_hash.split(":", 1)[-1][:16] + "...",
         )
     console.print(table)

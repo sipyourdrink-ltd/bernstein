@@ -102,7 +102,7 @@ def _build_fixture_receipt(tmp_path: Path, run_id: str = "run-1") -> RecoveryRec
             "output": {"status": "failed", "failed": 3, "suite": "unit"},
         },
         source_task_id=task.id,
-        journal_events=load_events(journal.path),
+        journal_events=load_events(journal.path).events,
         gate_report=_gate_report(),
     )
 
@@ -117,7 +117,7 @@ class TestJournalTail:
         from bernstein.core.replay.journal import load_events
 
         journal = _journal(tmp_path, "run-jt")
-        tail = journal_tail_for_task(load_events(journal.path), task_id="run-tests-fixed", limit=10)
+        tail = journal_tail_for_task(load_events(journal.path).events, task_id="run-tests-fixed", limit=10)
 
         assert [e["event"] for e in tail] == ["task_claimed", "gate_failed", "task_failed"]
         # Envelope + derived chain fields are excluded so timing never leaks.
@@ -131,7 +131,7 @@ class TestJournalTail:
         from bernstein.core.replay.journal import load_events
 
         journal = _journal(tmp_path, "run-jt2")
-        tail = journal_tail_for_task(load_events(journal.path), task_id="run-tests-fixed", limit=1)
+        tail = journal_tail_for_task(load_events(journal.path).events, task_id="run-tests-fixed", limit=1)
         assert len(tail) == 1
         assert tail[0]["event"] == "task_failed"
 
@@ -139,7 +139,7 @@ class TestJournalTail:
         from bernstein.core.replay.journal import load_events
 
         journal = _journal(tmp_path, "run-jt3")
-        assert journal_tail_for_task(load_events(journal.path), task_id="run-tests-fixed", limit=0) == ()
+        assert journal_tail_for_task(load_events(journal.path).events, task_id="run-tests-fixed", limit=0) == ()
 
 
 class TestGateFindings:

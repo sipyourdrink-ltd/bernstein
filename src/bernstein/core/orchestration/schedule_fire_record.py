@@ -264,7 +264,7 @@ def load_fire_records(sdd_dir: Path) -> list[dict[str, Any]]:
         journal_path = contained_run_journal(runs_root, run_dir.name)
         if journal_path is None:
             continue
-        for event in load_events(journal_path):
+        for event in load_events(journal_path).events:
             if event.get("event") == JOURNAL_EVENT:
                 rows.append(event)
     rows.sort(key=lambda r: (int(r.get("fire_time", 0)), str(r.get("schedule_id", ""))))

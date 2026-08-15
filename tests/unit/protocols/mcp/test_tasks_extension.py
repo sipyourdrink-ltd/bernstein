@@ -114,7 +114,7 @@ class TestHandleFromJournal:
         handle = RunHandle.from_journal(
             task_id="t1",
             run_id="run-2364",
-            events=load_events(journal.path),
+            events=load_events(journal.path).events,
             chain_head="b" * 64,
         )
         assert handle.status == TASK_WORKING
@@ -123,7 +123,7 @@ class TestHandleFromJournal:
     def test_verify_handle_detects_forged_status(self, tmp_path) -> None:
         journal = EventJournal("run-2364", tmp_path)
         journal.record("run_started")
-        events = load_events(journal.path)
+        events = load_events(journal.path).events
         good = RunHandle.from_journal(task_id="t1", run_id="run-2364", events=events, chain_head="b" * 64)
         ok, reason = verify_handle(good, events)
         assert ok, reason
@@ -235,20 +235,20 @@ class TestPollingFallbackInterop:
         first = RunHandle.from_journal(
             task_id="t1",
             run_id="run-2364",
-            events=load_events(journal.path),
+            events=load_events(journal.path).events,
             chain_head=chain.prev_chain_digest,
         )
         token = first.to_wire()["pollToken"]
 
         # Client polls: still working.
-        polled = poll_task_handle(token, events=load_events(journal.path), chain_head=chain.prev_chain_digest)
+        polled = poll_task_handle(token, events=load_events(journal.path).events, chain_head=chain.prev_chain_digest)
         assert polled.status == TASK_WORKING
         assert polled.run_id == "run-2364"
 
         # Run advances to completion; the client polls again from the token.
         journal.record("run_completed", result="done")
         chain.log(event_type="run.complete", actor="x", resource_type="r", resource_id="1", details={})
-        done = poll_task_handle(token, events=load_events(journal.path), chain_head=chain.prev_chain_digest)
+        done = poll_task_handle(token, events=load_events(journal.path).events, chain_head=chain.prev_chain_digest)
         assert done.status == TASK_COMPLETED
         # The completed handle embeds the final chain head and verifies.
         ok, reason = verify_handle_chain_head(done, chain)

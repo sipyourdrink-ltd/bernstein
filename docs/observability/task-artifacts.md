@@ -32,6 +32,12 @@ version's hash, so history is a chain, never an overwrite. Rendering always
 re-checks the stored blob hash against the journal row: a tampered blob displays
 as tampered, not as content.
 
+That proves the exact artifact bytes and their row/spine binding; it does not
+prove that the task journal has every row it ever held. Task journals do not
+currently have an external terminal-head seal, so verification outputs carry
+`journal_identity: "unverifiable"` rather than laundering chain consistency
+into a whole-journal completeness claim.
+
 ```bash
 bernstein artifact list <task>            # every version + verify state
 bernstein artifact list <task> --output-json  # the same three states as JSON

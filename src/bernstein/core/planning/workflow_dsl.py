@@ -1097,7 +1097,7 @@ class DAGExecutor:
         from bernstein.core.replay.journal import load_events
 
         failing_node_id = source_edge.source if source_edge is not None else source_task.id
-        journal_events = load_events(journal.path) if journal is not None else None
+        journal_events = load_events(journal.path).events if journal is not None else None
 
         receipt = build_receipt(
             failing_node_id=failing_node_id,

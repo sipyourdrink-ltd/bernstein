@@ -77,7 +77,7 @@ def test_board_columns_are_the_documented_five() -> None:
 def test_full_lifecycle_lands_cards_in_expected_columns(tmp_path: Path) -> None:
     """claimed -> running; gate fail -> gated; retried -> queued; completed -> needs_review; merged -> merged."""
     journal = _write_lifecycle_journal(tmp_path / ".sdd", "run-1")
-    board = project_board(load_events(journal.path))
+    board = project_board(load_events(journal.path).events)
 
     assert board["schema_version"] == BOARD_SCHEMA_VERSION
     assert set(board["columns"]) == set(BOARD_COLUMNS)
@@ -99,7 +99,7 @@ def test_verification_failure_moves_card_to_gated(tmp_path: Path) -> None:
     journal = EventJournal("run-g", tmp_path / ".sdd")
     journal.record("task_claimed", task_id="t-9", agent_id="agent-z", model=None)
     journal.record("task_verification_failed", task_id="t-9", failed_signals=["janitor"])
-    board = project_board(load_events(journal.path))
+    board = project_board(load_events(journal.path).events)
     assert _column_of(board, "t-9") == "gated"
 
 
@@ -108,7 +108,7 @@ def test_completed_without_merge_stays_in_needs_review(tmp_path: Path) -> None:
     journal = EventJournal("run-nr", tmp_path / ".sdd")
     journal.record("task_claimed", task_id="t-3", agent_id="agent-c", model="m")
     journal.record("task_completed", task_id="t-3", agent_id="agent-c", cost_usd=0.1)
-    board = project_board(load_events(journal.path))
+    board = project_board(load_events(journal.path).events)
     assert _column_of(board, "t-3") == "needs_review"
 
 
@@ -117,14 +117,14 @@ def test_unknown_event_types_are_ignored(tmp_path: Path) -> None:
     journal = EventJournal("run-u", tmp_path / ".sdd")
     journal.record("task_claimed", task_id="t-4", agent_id="a", model=None)
     journal.record("some_future_event", task_id="t-4", extra="ignored")
-    board = project_board(load_events(journal.path))
+    board = project_board(load_events(journal.path).events)
     assert _column_of(board, "t-4") == "running"
 
 
 def test_run_metadata_projected_from_run_events(tmp_path: Path) -> None:
     """run_started/run_completed populate the board's run envelope."""
     journal = _write_lifecycle_journal(tmp_path / ".sdd", "run-meta")
-    board = project_board(load_events(journal.path))
+    board = project_board(load_events(journal.path).events)
     assert board["run"]["run_id"] == "run-meta"
     assert board["run"]["git_branch"] == "main"
     assert board["run"]["git_sha"] == "abc1234"
@@ -140,8 +140,8 @@ def test_run_metadata_projected_from_run_events(tmp_path: Path) -> None:
 def test_projection_is_byte_identical_across_replays(tmp_path: Path) -> None:
     """Two folds over the same journal produce byte-identical canonical state."""
     journal = _write_lifecycle_journal(tmp_path / ".sdd", "run-det")
-    first = project_board(load_events(journal.path))
-    second = project_board(load_events(journal.path))
+    first = project_board(load_events(journal.path).events)
+    second = project_board(load_events(journal.path).events)
     assert canonical_board_bytes(first) == canonical_board_bytes(second)
     assert board_hash(first) == board_hash(second)
 
@@ -155,8 +155,8 @@ def test_projection_is_byte_identical_across_operators(tmp_path: Path) -> None:
     journal_a = _write_lifecycle_journal(tmp_path / "op-a" / ".sdd", "run-x")
     journal_b = _write_lifecycle_journal(tmp_path / "op-b" / ".sdd", "run-x")
 
-    board_a = project_board(load_events(journal_a.path))
-    board_b = project_board(load_events(journal_b.path))
+    board_a = project_board(load_events(journal_a.path).events)
+    board_b = project_board(load_events(journal_b.path).events)
 
     assert canonical_board_bytes(board_a) == canonical_board_bytes(board_b)
     assert board_hash(board_a) == board_hash(board_b)
@@ -230,12 +230,12 @@ def test_record_task_merged_appends_journal_event(tmp_path: Path) -> None:
     journal = EventJournal("run-m", tmp_path / ".sdd")
     record_task_merged(journal, task_id="t-7", agent_id="agent-m")
 
-    events = load_events(journal.path)
+    events = load_events(journal.path).events
     assert len(events) == 1
     assert events[0]["event"] == EVENT_TASK_MERGED
     assert events[0]["task_id"] == "t-7"
     assert events[0]["agent_id"] == "agent-m"
-    assert journal.verify().ok
+    assert journal.verify().chain_consistent
 
 
 def test_record_task_merged_tolerates_missing_recorder(tmp_path: Path) -> None:
@@ -278,7 +278,7 @@ def test_reap_and_cleanup_records_task_merged(tmp_path: Path, monkeypatch: Any) 
         cache_diff_lines=0,
     )
 
-    events = load_events(recorder.path)
+    events = load_events(recorder.path).events
     merged = [e for e in events if e.get("event") == EVENT_TASK_MERGED]
     assert len(merged) == 1
     assert merged[0]["task_id"] == "t-42"
@@ -319,7 +319,7 @@ def test_reap_and_cleanup_skips_merge_receipt_when_merge_skipped(tmp_path: Path,
         cache_diff_lines=0,
     )
 
-    events = load_events(recorder.path)
+    events = load_events(recorder.path).events
     assert [e for e in events if e.get("event") == EVENT_TASK_MERGED] == []
 
 
@@ -528,24 +528,24 @@ def test_record_review_decision_appends_journal_event(tmp_path: Path) -> None:
     journal = EventJournal("run-rd", tmp_path / ".sdd")
     journal.record("task_completed", task_id="t-1")
     record_review_decision(journal, task_id="t-1", decision="approve", principal="alice", scope="operator")
-    events = load_events(journal.path)
+    events = load_events(journal.path).events
     row = next(e for e in events if e.get("event") == EVENT_TASK_REVIEW_DECISION)
     assert row["task_id"] == "t-1"
     assert row["decision"] == "approve"
     assert row["principal"] == "alice"
     assert row["scope"] == "operator"
-    assert journal.verify().ok
+    assert journal.verify().chain_consistent
 
 
 def test_record_task_diff_captured_appends_event(tmp_path: Path) -> None:
     journal = EventJournal("run-dc", tmp_path / ".sdd")
     summary = diff_summary(_SAMPLE_DIFF)
     record_task_diff_captured(journal, task_id="t-1", summary=summary)
-    events = load_events(journal.path)
+    events = load_events(journal.path).events
     row = next(e for e in events if e.get("event") == EVENT_TASK_DIFF_CAPTURED)
     assert row["diff_sha256"] == summary["sha256"]
     assert row["diff_added"] == summary["added"]
-    assert journal.verify().ok
+    assert journal.verify().chain_consistent
 
 
 def test_record_helpers_tolerate_missing_recorder() -> None:
@@ -583,11 +583,11 @@ def test_reap_and_cleanup_captures_review_diff(tmp_path: Path, monkeypatch: Any)
         orch, task, session, None, janitor_passed=True, skip_merge=False, _completion_data=None, cache_diff_lines=0
     )
 
-    events = load_events(recorder.path)
+    events = load_events(recorder.path).events
     captured = [e for e in events if e.get("event") == EVENT_TASK_DIFF_CAPTURED]
     assert len(captured) == 1
     assert captured[0]["diff_sha256"] == diff_summary(_SAMPLE_DIFF)["sha256"]
     stored = read_task_diff(tmp_path / ".sdd", "run-diffseam", "t-9")
     assert stored is not None
     assert stored[0] == _SAMPLE_DIFF
-    assert recorder.verify().ok
+    assert recorder.verify().chain_consistent

@@ -336,16 +336,16 @@ def test_verdict_does_not_depend_on_unauthenticated_journal_timestamps(tmp_path:
     """
     capsule = _capsule(expiry_ts=1_700_000_000)
     journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), seal=capsule)
-    before = evaluate_conformance(load_events(journal.path), capsule)
+    before = evaluate_conformance(load_events(journal.path).events, capsule)
 
     rows = [json.loads(line) for line in journal.path.read_text(encoding="utf-8").splitlines() if line.strip()]
     for row in rows:
         row["ts"] = 1_600_000_000
     journal.path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
 
-    after = evaluate_conformance(load_events(journal.path), capsule)
+    after = evaluate_conformance(load_events(journal.path).events, capsule)
 
-    assert verify_journal(journal.path).ok, "editing ts alone does not break the journal chain"
+    assert verify_journal(journal.path).chain_consistent, "editing ts alone does not break the journal chain"
     assert before.verdict_hash == after.verdict_hash
     assert [d.to_dict() for d in before.divergences] == [d.to_dict() for d in after.divergences]
 
@@ -502,7 +502,7 @@ def _drifted_run(tmp_path: Path) -> tuple[IntentCapsule, list]:
     """Approve a capsule on the chain and drift the bound run against it."""
     capsule = _approve(tmp_path)
     journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), drift=True, seal=capsule)
-    return capsule, load_events(journal.path)
+    return capsule, load_events(journal.path).events
 
 
 def test_escalation_refuses_a_capsule_that_was_never_approved(tmp_path: Path) -> None:
@@ -515,7 +515,7 @@ def test_escalation_refuses_a_capsule_that_was_never_approved(tmp_path: Path) ->
     """
     approved = _approve(tmp_path)
     journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(approved), drift=False, seal=approved)
-    events = load_events(journal.path)
+    events = load_events(journal.path).events
     assert evaluate_conformance(events, approved).conformant, "the real run is conformant"
 
     forged = IntentCapsule(
@@ -540,7 +540,7 @@ def test_escalation_refuses_a_capsule_that_was_never_approved(tmp_path: Path) ->
 def test_escalation_refuses_a_run_id_the_chain_did_not_sign(tmp_path: Path) -> None:
     capsule, _ = _drifted_run(tmp_path)
     decoy = _journal(tmp_path, "run-decoy", capsule_h=capsule_hash(capsule), drift=True)
-    verdict = evaluate_conformance(load_events(decoy.path), capsule)
+    verdict = evaluate_conformance(load_events(decoy.path).events, capsule)
 
     with pytest.raises(IntentCapsuleError, match="run_id"):
         _escalate(tmp_path, capsule, verdict, run_id="run-decoy")
@@ -549,7 +549,7 @@ def test_escalation_refuses_a_run_id_the_chain_did_not_sign(tmp_path: Path) -> N
 def test_escalation_refuses_when_the_journal_lacks_the_capsule_anchor(tmp_path: Path) -> None:
     capsule = _approve(tmp_path)
     journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), bind=False, drift=True)
-    verdict = evaluate_conformance(load_events(journal.path), capsule)
+    verdict = evaluate_conformance(load_events(journal.path).events, capsule)
 
     with pytest.raises(IntentCapsuleError, match="capsule_bound"):
         _escalate(tmp_path, capsule, verdict)
@@ -574,7 +574,7 @@ def test_escalation_refuses_a_forged_verdict(tmp_path: Path) -> None:
 def test_escalation_refuses_a_conformant_verdict(tmp_path: Path) -> None:
     capsule = _approve(tmp_path)
     journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), drift=False, seal=capsule)
-    verdict = evaluate_conformance(load_events(journal.path), capsule)
+    verdict = evaluate_conformance(load_events(journal.path).events, capsule)
     assert verdict.conformant
 
     with pytest.raises(IntentCapsuleError, match="conformant"):
@@ -703,7 +703,7 @@ def test_escalation_accepts_a_capsule_reloaded_from_disk(tmp_path: Path) -> None
     from_disk, sidecar_run_id = read_capsule_binding(_sdd(tmp_path), _TASK_ID)
     assert from_disk is not None
     journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(from_disk), drift=True, seal=from_disk)
-    verdict = evaluate_conformance(load_events(journal.path), from_disk)
+    verdict = evaluate_conformance(load_events(journal.path).events, from_disk)
 
     receipt = _escalate(tmp_path, from_disk, verdict, run_id=sidecar_run_id or _RUN_ID)
 
@@ -720,8 +720,8 @@ def test_divergence_set_is_stable_across_journal_reloads(tmp_path: Path) -> None
     for tool in ("WebFetch", "Bash", "git_push", "WebSearch"):
         journal.record("tool.call", tool=tool)
 
-    first = evaluate_conformance(load_events(journal.path), capsule)
-    second = evaluate_conformance(load_events(journal.path), capsule)
+    first = evaluate_conformance(load_events(journal.path).events, capsule)
+    second = evaluate_conformance(load_events(journal.path).events, capsule)
 
     assert len(first.divergences) == 4
     assert first.verdict_hash == second.verdict_hash
@@ -751,7 +751,7 @@ def test_truncating_a_sealed_journal_does_not_launder_drift(tmp_path: Path) -> N
 
     after = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=_chain(tmp_path), task_id=_TASK_ID)
 
-    assert verify_journal(journal.path).ok, "a truncated prefix still verifies on its own"
+    assert verify_journal(journal.path).chain_consistent, "a truncated prefix still verifies on its own"
     assert not after.ok
     assert not after.conformant
     assert "sealed" in after.reason
@@ -939,14 +939,16 @@ def test_a_same_count_journal_rewrite_is_caught_by_the_head_alone(tmp_path: Path
     journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), drift=True, seal=capsule)
     before = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=_chain(tmp_path), task_id=_TASK_ID)
     assert not before.conformant, "the run drifted before the rewrite"
-    count_before = len(load_events(journal.path))
+    count_before = len(load_events(journal.path).events)
 
     _rechain_journal(journal.path, swap_tool="WebFetch", replacement="Read")
 
     after = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=_chain(tmp_path), task_id=_TASK_ID)
 
-    assert len(load_events(journal.path)) == count_before, "the count is preserved, so only the head can catch this"
-    assert verify_journal(journal.path).ok, "the rewritten journal verifies on its own"
+    assert len(load_events(journal.path).events) == count_before, (
+        "the count is preserved, so only the head can catch this"
+    )
+    assert verify_journal(journal.path).chain_consistent, "the rewritten journal verifies on its own"
     assert not after.ok
     assert "head" in after.reason
 
@@ -1066,7 +1068,7 @@ def test_a_live_drift_receipt_can_be_signed_before_the_run_seals(tmp_path: Path)
     """Blocking-mode drift has to be signable in the window it exists for."""
     capsule = _approve(tmp_path)
     journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), drift=True)
-    verdict = evaluate_conformance(load_events(journal.path), capsule)
+    verdict = evaluate_conformance(load_events(journal.path).events, capsule)
 
     receipt = _escalate(tmp_path, capsule, verdict)
 

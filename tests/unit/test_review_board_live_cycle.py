@@ -202,8 +202,8 @@ def test_full_review_cycle_against_live_run(tmp_path: Path, monkeypatch) -> None
     # The whole cycle stayed chained: the journal re-verifies end to end and
     # every decision row names the acting principal.
     journal_path = tmp_path / ".sdd" / "runs" / run_id / "journal.jsonl"
-    assert verify_journal(journal_path).ok
-    events = load_events(journal_path)
+    assert verify_journal(journal_path).chain_consistent
+    events = load_events(journal_path).events
     decisions = [e for e in events if e.get("event") == "task_review_decision"]
     assert [d["decision"] for d in decisions] == ["approve", "merge"]
     assert all(d["principal"] == "operator-olga" for d in decisions)
@@ -211,7 +211,7 @@ def test_full_review_cycle_against_live_run(tmp_path: Path, monkeypatch) -> None
     # Both actions are mirrored as signed audit receipts naming the principal.
     audit_events: list[dict] = []
     for log_file in sorted((tmp_path / ".sdd" / "audit").glob("*.jsonl")):
-        audit_events.extend(load_events(log_file))
+        audit_events.extend(load_events(log_file).events)
     board_actions = [e for e in audit_events if e.get("event_type") == EVENT_REVIEW_BOARD_ACTION]
     assert len(board_actions) == 2
     assert all(e["details"]["principal"] == "operator-olga" for e in board_actions)
@@ -228,7 +228,7 @@ def test_viewer_scope_cannot_drive_the_live_review_cycle(tmp_path: Path, monkeyp
     assert denied.status_code == 403
 
     # No decision row was appended: the card is still awaiting review.
-    events = load_events(tmp_path / ".sdd" / "runs" / run_id / "journal.jsonl")
+    events = load_events(tmp_path / ".sdd" / "runs" / run_id / "journal.jsonl").events
     assert [e for e in events if e.get("event") == "task_review_decision"] == []
 
 

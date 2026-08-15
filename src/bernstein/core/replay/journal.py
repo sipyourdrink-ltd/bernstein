@@ -16,9 +16,11 @@ event is::
 where ``payload_hash`` is the SHA-256 of the canonical JSON projection of
 the event payload with the wall-clock envelope (``ts`` / ``elapsed_s``)
 excluded, so two byte-identical executions produce the same chain of
-hashes regardless of timing. The head hash is the run identity: replay
-divergence surfaces as a hash mismatch at a precise step index rather
-than a silent drift.
+hashes regardless of timing. The head hash content-addresses the surviving
+journal state: replay divergence surfaces as a hash mismatch at a precise step
+index rather than a silent drift. Only comparison with an independently sealed
+head identifies that state as the complete finished journal; an unsealed clean
+prefix remains unverifiable.
 
 The journal is a drop-in for the removed ``RunRecorder``: it keeps
 ``record(event, **data)``, ``fingerprint()`` (aliased to the Merkle
@@ -43,7 +45,8 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.security.path_containment import PathContainmentError, contained_path
 
@@ -194,25 +197,84 @@ def compute_event_hash(*, prev_hash: str, event_type: str, payload_hash: str, in
 
 
 @dataclass(frozen=True, slots=True)
+class JournalLoadResult:
+    """Rows accepted by the tolerant reader and the input it discarded.
+
+    ``events`` is the ordinary replay projection. ``discarded_line_indices``
+    names every 0-based physical non-blank line that the tolerant reader could
+    not represent as a journal object. Keeping both in one result makes
+    tolerance observable without making ordinary readers strict.
+    """
+
+    events: list[dict[str, Any]]
+    discarded_line_indices: tuple[int, ...] = ()
+
+    @property
+    def discarded_count(self) -> int:
+        """Number of physical non-blank lines omitted from ``events``."""
+        return len(self.discarded_line_indices)
+
+
+class JournalCoverageStatus(StrEnum):
+    """Whether every non-blank physical line entered chain verification."""
+
+    COMPLETE = "complete"
+    PARTIAL = "partial"
+
+
+class JournalIdentityStatus(StrEnum):
+    """Relationship between a journal and an independent sealed commitment."""
+
+    VERIFIED = "verified"
+    MISMATCHED = "mismatched"
+    UNVERIFIABLE = "unverifiable"
+
+
+@dataclass(frozen=True, slots=True)
+class JournalSeal:
+    """Independent commitment to one finished journal state."""
+
+    head: str
+    event_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class JournalVerifyResult:
-    """Outcome of :meth:`EventJournal.verify`.
+    """Separate chain, reader-coverage, and sealed-identity verdicts.
 
     Attributes:
-        ok: ``True`` only when the whole chain recomputes cleanly.
-        count: Number of rows walked.
+        chain_consistent: Whether the parsed rows recompute from genesis.
+            This proves only that the surviving rows form a valid prefix; it
+            does not identify the complete journal.
+        coverage: Whether every non-blank physical line reached the chain
+            verifier.
+        identity: Whether the parsed journal matches an independent seal, is
+            known not to match it, or has no seal and is therefore
+            unverifiable.
+        count: Number of parsed rows supplied to chain verification. This is
+            intentionally not a claim about physical-file coverage.
         divergent_index: 0-based index of the first row whose stored hash
             does not match the recomputed hash (or a broken ``prev_hash``
             link), or ``None`` when the chain is intact.
         expected_hash: Recomputed hash at :attr:`divergent_index`.
         actual_hash: Stored hash at :attr:`divergent_index`.
+        head: Final head when the parsed chain is consistent; otherwise the
+            head of the verified prefix before the first divergence. Empty for
+            no parsed rows.
+        discarded_line_indices: 0-based physical lines hidden by tolerant
+            parsing.
         errors: Human-readable divergence explanations.
     """
 
-    ok: bool
+    chain_consistent: bool
+    coverage: JournalCoverageStatus
+    identity: JournalIdentityStatus
     count: int
     divergent_index: int | None = None
     expected_hash: str | None = None
     actual_hash: str | None = None
+    head: str = ""
+    discarded_line_indices: tuple[int, ...] = ()
     errors: list[str] = field(default_factory=list[str])
 
 
@@ -277,11 +339,15 @@ class EventJournal:
             ValueError: The existing chain fails verification.
         """
         journal = cls(run_id, sdd_dir)
-        events = load_events(journal.path)
+        loaded = load_events(journal.path)
+        events = loaded.events
+        if loaded.discarded_line_indices:
+            joined = ", ".join(str(index) for index in loaded.discarded_line_indices)
+            raise ValueError(f"cannot resume journal {journal.path}: reader discarded physical line(s): {joined}")
         if not events:
             return journal
         result = verify_journal(journal.path)
-        if not result.ok:
+        if not result.chain_consistent or result.coverage != JournalCoverageStatus.COMPLETE:
             msg = f"cannot resume journal {journal.path}: {'; '.join(result.errors) or 'chain verification failed'}"
             raise ValueError(msg)
         journal._index = len(events)
@@ -299,11 +365,15 @@ class EventJournal:
         return self._path
 
     def head(self) -> str:
-        """Return the current Merkle head hash (the run identity)."""
+        """Return the Merkle identifier of the journal state seen so far.
+
+        The head identifies the surviving prefix; only an independent seal
+        can establish that the prefix is the complete finished journal.
+        """
         return self._head
 
     def fingerprint(self) -> str:
-        """Return the run fingerprint - the Merkle head.
+        """Return the journal-state fingerprint - the Merkle head.
 
         Aliased to :meth:`head` so callers that used
         ``RunRecorder.fingerprint`` keep a stable API while the value is
@@ -383,14 +453,16 @@ class EventJournal:
             return 0
 
     def verify(self) -> JournalVerifyResult:
-        """Recompute the whole chain and report the first divergent step.
+        """Recompute the parsed chain and report the first divergent step.
 
         Walks every row, recomputing ``payload_hash`` and ``event_hash``
         from the on-disk payload and checking the ``prev_hash`` link. The
         first row whose recomputed hash differs from its stored hash (or
         whose ``prev_hash`` breaks the chain) is reported by index, so an
         injected non-deterministic result surfaces as a hash mismatch at a
-        precise step rather than a silent drift.
+        precise step rather than a silent drift. Reader coverage is reported
+        separately, and complete journal identity remains ``unverifiable``
+        because this convenience method has no independent seal.
         """
         return verify_journal(self._path)
 
@@ -444,7 +516,7 @@ class JournalParseError(ValueError):
     """
 
 
-def load_events(path: Path, *, strict: bool = False) -> list[dict[str, Any]]:
+def load_events(path: Path, *, strict: bool = False) -> JournalLoadResult:
     """Load all events from a journal JSONL file in append order.
 
     One scan implementation serves both reader policies, so a journal-format
@@ -459,25 +531,31 @@ def load_events(path: Path, *, strict: bool = False) -> list[dict[str, Any]]:
       journal lines, and no finding is derived from a filtered sequence.
     """
     events: list[dict[str, Any]] = []
+    discarded: list[int] = []
     if not path.exists():
-        return events
+        return JournalLoadResult(events=events)
     with path.open(encoding="utf-8") as f:
         for lineno, raw in enumerate(f):
             line = raw.strip()
             if not line:
                 continue
             try:
-                row = json.loads(line)
+                decoded: object = json.loads(line)
             except json.JSONDecodeError as exc:
                 if strict:
                     raise JournalParseError(f"unparsable line at physical line {lineno} ({exc.msg})") from exc
+                discarded.append(lineno)
                 continue
-            if strict:
-                if not isinstance(row, dict):
+            if not isinstance(decoded, dict):
+                if strict:
                     raise JournalParseError(f"non-object row at physical line {lineno}")
+                discarded.append(lineno)
+                continue
+            row = cast("dict[str, Any]", decoded)
+            if strict:
                 _validate_strict_row(row, lineno)
             events.append(row)
-    return events
+    return JournalLoadResult(events=events, discarded_line_indices=tuple(discarded))
 
 
 def _validate_strict_row(row: dict[str, Any], lineno: int) -> None:
@@ -508,17 +586,60 @@ def _validate_strict_row(row: dict[str, Any], lineno: int) -> None:
             raise JournalParseError(f"row at physical line {lineno} has a missing or empty {hash_field!r}")
 
 
-def verify_journal(path: Path) -> JournalVerifyResult:
-    """Recompute a journal's chain and locate the first divergent step.
+def verify_journal(path: Path, *, seal: JournalSeal | None = None) -> JournalVerifyResult:
+    """Verify parsed-chain consistency, reader coverage, and journal identity.
 
     Args:
         path: Path to a ``journal.jsonl`` file.
+        seal: Independent finished-journal commitment. Without one, identity
+            is ``unverifiable`` even when the parsed chain is consistent.
 
     Returns:
-        A :class:`JournalVerifyResult`. An empty or missing file is
-        reported as ``ok`` with ``count == 0``.
+        A :class:`JournalVerifyResult` whose three verdict dimensions must be
+        interpreted independently.
     """
-    return verify_events(load_events(path))
+    journal_exists = path.exists()
+    loaded = load_events(path)
+    chain = verify_events(loaded.events)
+    coverage = JournalCoverageStatus.COMPLETE if not loaded.discarded_line_indices else JournalCoverageStatus.PARTIAL
+    errors = list(chain.errors)
+    if loaded.discarded_line_indices:
+        joined = ", ".join(str(index) for index in loaded.discarded_line_indices)
+        errors.append(f"reader discarded unparsable or non-object physical line(s): {joined}")
+
+    identity = JournalIdentityStatus.UNVERIFIABLE
+    if seal is not None:
+        if (
+            journal_exists
+            and chain.chain_consistent
+            and coverage == JournalCoverageStatus.COMPLETE
+            and chain.head == seal.head
+            and chain.count == seal.event_count
+        ):
+            identity = JournalIdentityStatus.VERIFIED
+        else:
+            identity = JournalIdentityStatus.MISMATCHED
+            if not journal_exists:
+                errors.append("journal file is missing but an external seal exists")
+            if chain.count != seal.event_count:
+                errors.append(f"journal holds {chain.count} events but the seal commits to {seal.event_count}")
+            if chain.head != seal.head:
+                errors.append(
+                    f"journal head {chain.head or '(empty)'} does not match sealed head {seal.head or '(empty)'}"
+                )
+
+    return JournalVerifyResult(
+        chain_consistent=chain.chain_consistent,
+        coverage=coverage,
+        identity=identity,
+        count=chain.count,
+        divergent_index=chain.divergent_index,
+        expected_hash=chain.expected_hash,
+        actual_hash=chain.actual_hash,
+        head=chain.head,
+        discarded_line_indices=loaded.discarded_line_indices,
+        errors=errors,
+    )
 
 
 def verify_events(events: list[dict[str, Any]]) -> JournalVerifyResult:
@@ -535,11 +656,16 @@ def verify_events(events: list[dict[str, Any]]) -> JournalVerifyResult:
         events: Journal rows in append order.
 
     Returns:
-        A :class:`JournalVerifyResult`. An empty list is reported as
-        ``ok`` with ``count == 0``.
+        A result reporting a consistent empty chain with complete in-memory
+        coverage and unverifiable identity (there is no external seal here).
     """
     if not events:
-        return JournalVerifyResult(ok=True, count=0)
+        return JournalVerifyResult(
+            chain_consistent=True,
+            coverage=JournalCoverageStatus.COMPLETE,
+            identity=JournalIdentityStatus.UNVERIFIABLE,
+            count=0,
+        )
 
     prev_hash = _GENESIS_HASH
     for i, row in enumerate(events):
@@ -557,16 +683,25 @@ def verify_events(events: list[dict[str, Any]]) -> JournalVerifyResult:
         if stored_prev != prev_hash or stored_hash != expected_hash:
             reason = f"step {i}: prev_hash break" if stored_prev != prev_hash else f"step {i}: event_hash mismatch"
             return JournalVerifyResult(
-                ok=False,
+                chain_consistent=False,
+                coverage=JournalCoverageStatus.COMPLETE,
+                identity=JournalIdentityStatus.UNVERIFIABLE,
                 count=len(events),
                 divergent_index=i,
                 expected_hash=expected_hash,
                 actual_hash=stored_hash,
+                head=prev_hash,
                 errors=[reason],
             )
         prev_hash = stored_hash
 
-    return JournalVerifyResult(ok=True, count=len(events))
+    return JournalVerifyResult(
+        chain_consistent=True,
+        coverage=JournalCoverageStatus.COMPLETE,
+        identity=JournalIdentityStatus.UNVERIFIABLE,
+        count=len(events),
+        head=prev_hash,
+    )
 
 
 #: Event type recorded for a resolved dispatch knob selection (#2519). Folding
@@ -686,7 +821,7 @@ def rebuild_state(path: Path, *, from_step: int) -> dict[str, Any]:
         the replayed ``step_count``, and the ordered list of replayed
         event types.
     """
-    events = load_events(path)
+    events = load_events(path).events
     upper = max(0, min(from_step, len(events)))
     prefix = events[:upper]
 
@@ -716,8 +851,12 @@ __all__ = [
     "JOURNAL_FILENAME",
     "RETENTION_ENV_VAR",
     "EventJournal",
+    "JournalCoverageStatus",
+    "JournalIdentityStatus",
+    "JournalLoadResult",
     "JournalParseError",
     "JournalPathError",
+    "JournalSeal",
     "JournalVerifyResult",
     "compute_event_hash",
     "contained_run_journal",

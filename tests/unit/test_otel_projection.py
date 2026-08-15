@@ -54,7 +54,7 @@ def _write_journal(sdd_dir, run_id: str = "run-1") -> EventJournal:
 
 def _events(sdd_dir, run_id: str = "run-1") -> list[dict]:
     journal = _write_journal(sdd_dir, run_id)
-    return load_events(journal.path)
+    return load_events(journal.path).events
 
 
 def _signing_key() -> Ed25519PrivateKey:

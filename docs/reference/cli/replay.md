@@ -36,18 +36,18 @@ For full re-execution of the **same task** with a (potentially different) model,
     <task_id>-<timestamp>.json  # per-task traces (used by task-trace replay)
 ```
 
-- The canonical run-event journal is `journal.jsonl`, written by the always-on `EventJournal` (`core/replay/journal.py`). Each event chains as `H(prev_hash, event_type, payload_hash, monotonic_index)` and the head hash is the run identity.
+- The canonical run-event journal is `journal.jsonl`, written by the always-on `EventJournal` (`core/replay/journal.py`). Each event chains as `H(prev_hash, event_type, payload_hash, monotonic_index)` and the head hash identifies that surviving journal state. A complete finished-journal identity requires an independent head/count seal.
 - Recording is on by default; `BERNSTEIN_REPLAY_RETENTION=N` bounds how many past run journals survive on disk (oldest run directories are pruned) instead of an on/off gate.
-- At run finalization the journal head is sealed into the run's lineage spine, so the replay identity and artifact provenance share one root.
+- Capsule-governed finalization can seal the journal head and count outside the journal, so finished-journal identity and artifact provenance share an independently committed root where that seal exists.
 - Session metadata is parsed by `read_session_replay_metadata()` from `core/runtime_state.py`.
 - Task traces are loaded by `TraceStore` (`core/observability/traces.py`).
 
 ## Verifying and rebuilding from the journal
 
-- `bernstein replay <RUN_ID> --verify` recomputes the journal's Merkle chain and reports byte-identity, or the exact first divergent step index. On divergence it writes `divergence_report.json` (`step_index`, `expected_hash`, `actual_hash`) and exits non-zero. An injected non-deterministic tool result surfaces as a precise hash mismatch rather than a silent drift.
+- `bernstein replay <RUN_ID> --verify` recomputes the journal's Merkle chain, reports reader coverage and the journal-identity verdict, or names the exact first divergent step index. An unsealed intact journal reports `identity=unverifiable`, not byte-identity. On divergence it writes `divergence_report.json` (`step_index`, `expected_hash`, `actual_hash`) and exits non-zero. An injected non-deterministic tool result surfaces as a precise hash mismatch rather than a silent drift.
 - `bernstein replay <RUN_ID> --from-step N` rebuilds a deterministic state projection by walking events `[0, N)`. Two independent invocations produce byte-identical output, so the reconstruction is reproducible.
 
-The fingerprint shown after a replay is the Merkle head over the journal's event chain; identical decision streams produce identical heads, which is how you verify two runs really are the same.
+The fingerprint shown after a replay is the Merkle head over the journal's event chain; identical decision streams produce identical heads, which proves the compared journal states are the same. It does not prove either journal is complete unless that head also matches an independent seal.
 
 ---
 

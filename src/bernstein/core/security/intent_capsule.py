@@ -1147,7 +1147,7 @@ def seal_run_journal(
     where a duplicate could never be withdrawn.
 
     Raises:
-        IntentCapsuleError: If the journal is missing or its chain diverges, or
+        IntentCapsuleError: If the journal is missing, its chain diverges, reader coverage fails, or
             if a seal already exists that disagrees with the journal now on
             disk (the journal changed after it was sealed).
     """
@@ -1158,11 +1158,11 @@ def seal_run_journal(
     if not journal_path.exists():
         raise IntentCapsuleError(f"run journal for {run_id!r} is missing; nothing to seal")
     jres = verify_journal(journal_path)
-    if not jres.ok:
+    if not jres.chain_consistent or jres.discarded_line_indices:
         detail = jres.errors[0] if jres.errors else "chain break"
-        raise IntentCapsuleError(f"refusing to seal a journal whose chain diverges ({detail})")
+        raise IntentCapsuleError(f"refusing to seal a journal whose chain diverges or reader coverage fails ({detail})")
 
-    events = load_events(journal_path)
+    events = load_events(journal_path).events
     head = journal_head(events)
     count = len(events)
     ch = capsule_hash(capsule)
@@ -1202,7 +1202,7 @@ def seal_capsules_bound_to_run(*, chain: AuditChainStore, sdd_dir: Path, run_id:
         return []
 
     seen: list[str] = []
-    for event in load_events(journal_path):
+    for event in load_events(journal_path).events:
         if str(event.get("event", "")) != CAPSULE_BOUND_EVENT:
             continue
         task_id = str(event.get("task_id", ""))
@@ -1425,7 +1425,7 @@ def _resolve_chained_binding(
         ``(None, reason, run_id)`` where ``run_id`` is the authoritative value
         when it could be resolved and the caller's claim otherwise.
     """
-    from bernstein.core.replay.journal import load_events, verify_journal
+    from bernstein.core.replay.journal import JournalIdentityStatus, JournalSeal, load_events, verify_journal
     from bernstein.core.security.audit_chain import EVENT_INTENT_CAPSULE
 
     claimed = expected_run_id or sidecar_run_id
@@ -1477,11 +1477,11 @@ def _resolve_chained_binding(
     if not journal_path.exists():
         return None, f"run journal for {run_id!r} is missing; cannot recompute conformance", run_id
     jres = verify_journal(journal_path)
-    if not jres.ok:
+    if not jres.chain_consistent or jres.discarded_line_indices:
         detail = jres.errors[0] if jres.errors else "chain break"
-        return None, f"run journal chain diverges ({detail}); steps were reordered or tampered", run_id
+        return None, f"run journal chain/reader-coverage verification failed ({detail})", run_id
 
-    events = load_events(journal_path)
+    events = load_events(journal_path).events
     anchors = [
         e
         for e in events
@@ -1506,7 +1506,6 @@ def _resolve_chained_binding(
     seals = find_journal_seals(chain=chain, task_id=task_id, run_id=run_id, capsule_hash_value=recomputed)
     seal_state = SEAL_UNSEALED
     if seals:
-        actual_head = journal_head(events)
         agreed = {(str(e.details.get("journal_head", "")), e.details.get("event_count")) for e in seals}
         if len(agreed) != 1:
             return (
@@ -1518,25 +1517,13 @@ def _resolve_chained_binding(
         sealed_head, sealed_count = next(iter(agreed))
         if not isinstance(sealed_count, int) or isinstance(sealed_count, bool):
             return None, "journal seal records no usable event_count; cannot bound the journal", run_id
-        # Subsumed by the head comparison below -- the head is chained over
-        # every event, so no count change can leave it intact -- and kept only
-        # because "3 events, sealed 4" is a far clearer diagnostic than two
-        # opaque hashes. It is not independent defence, and no test can isolate
-        # it; the head check is the real guard.
-        if len(events) != sealed_count:
-            return (
-                None,
-                f"run journal holds {len(events)} events but the chain sealed {sealed_count}; "
-                f"steps were added or removed after the run",
-                run_id,
-            )
-        if actual_head != sealed_head:
-            return (
-                None,
-                f"run journal head {actual_head or '(empty)'} does not match the chain-sealed head "
-                f"{sealed_head or '(empty)'}; the journal was rewritten with the same number of events",
-                run_id,
-            )
+        sealed_result = verify_journal(
+            journal_path,
+            seal=JournalSeal(head=sealed_head, event_count=sealed_count),
+        )
+        if sealed_result.identity != JournalIdentityStatus.VERIFIED:
+            detail = "; ".join(sealed_result.errors) or "journal does not match its external seal"
+            return None, detail, run_id
         seal_state = SEAL_SEALED
 
     return _ChainedBinding(capsule=capsule, run_id=run_id, events=events, seal_state=seal_state), "", run_id

@@ -188,7 +188,7 @@ def _load_events_strict(journal_path: Path, *, run_id: str) -> list[dict[str, An
             names the 0-based physical line index.
     """
     try:
-        return load_events(journal_path, strict=True)
+        return load_events(journal_path, strict=True).events
     except JournalParseError as exc:
         raise DiagnoseError(
             f"journal for run {run_id}: {exc}; refusing to diagnose a filtered sequence -- "
@@ -258,7 +258,7 @@ def diagnose_run(journal_path: Path, predicate: SignalPredicate, *, run_id: str)
     chain = verify_journal(journal_path)
 
     if predicate.mode == SIGNAL_MODE_CHAIN:
-        if chain.ok:
+        if chain.chain_consistent and not chain.discarded_line_indices:
             return DiagnosisResult(
                 run_id=run_id,
                 journal_head=journal_head,
@@ -294,7 +294,7 @@ def diagnose_run(journal_path: Path, predicate: SignalPredicate, *, run_id: str)
         )
 
     # Content mode: the predicate is only meaningful over a verified chain.
-    if not chain.ok:
+    if not chain.chain_consistent or chain.discarded_line_indices:
         detail = chain.errors[0] if chain.errors else "chain verification failed"
         raise DiagnoseError(
             f"journal for run {run_id} fails chain verification ({detail}); "

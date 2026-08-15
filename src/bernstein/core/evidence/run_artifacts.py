@@ -498,7 +498,13 @@ class RunArtifactRecord:
 
 @dataclass(frozen=True, slots=True)
 class ArtifactVerifyResult:
-    """The verification verdict for one artifact version."""
+    """Verification verdict for one artifact version.
+
+    ``ok`` covers the exact artifact bytes plus their journal-row and lineage-
+    spine binding. ``journal_identity`` is deliberately separate: those facts
+    can verify even when no external terminal-head seal identifies the complete
+    task journal.
+    """
 
     ok: bool
     task_id: str
@@ -507,6 +513,7 @@ class ArtifactVerifyResult:
     journal_index: int
     content_hash: str = ""
     reason: str = ""
+    journal_identity: str = "unverifiable"
 
 
 # ---------------------------------------------------------------------------
@@ -608,10 +615,12 @@ def read_artifact_rows(sdd_dir: Path, task_id: str, *, verify: bool = True) -> l
         return []
     if not path.is_file():
         return []
-    if verify and not verify_journal(path).ok:
-        return []
+    if verify:
+        result = verify_journal(path)
+        if not result.chain_consistent or result.discarded_line_indices:
+            return []
     records: list[RunArtifactRecord] = []
-    for row in load_events(path):
+    for row in load_events(path).events:
         if str(row.get("event", "")) == JOURNAL_EVENT_ARTIFACT_POSTED:
             records.append(_row_to_record(row))
     return records
@@ -771,7 +780,8 @@ def verify_run_artifacts(sdd_dir: Path, task_id: str, *, hmac_key: bytes) -> lis
     if not path.is_file():
         return []
 
-    journal_ok = verify_journal(path).ok
+    journal_result = verify_journal(path)
+    journal_ok = journal_result.chain_consistent and not journal_result.discarded_line_indices
     # Read rows WITHOUT the fail-closed filter: a tampered journal must still be
     # walked so verification can report tampering rather than "no artifacts".
     rows = read_artifact_rows(sdd_dir, task_id, verify=False)
@@ -788,7 +798,7 @@ def verify_run_artifacts(sdd_dir: Path, task_id: str, *, hmac_key: bytes) -> lis
                 key="",
                 version=0,
                 journal_index=-1,
-                reason="task journal Merkle chain does not verify; artifact rows may be hidden by tampering",
+                reason="task journal Merkle chain/reader coverage does not verify; artifact rows may be hidden",
             )
         ]
 
@@ -809,6 +819,7 @@ def verify_run_artifacts(sdd_dir: Path, task_id: str, *, hmac_key: bytes) -> lis
                 journal_index=record.journal_index,
                 content_hash=record.content_hash,
                 reason=reason,
+                journal_identity=journal_result.identity.value,
             )
         )
     return results
@@ -824,7 +835,7 @@ def _verify_one_artifact(
     """Return an empty string when the artifact verifies, else the reason."""
     where = f"key={record.key!r} version={record.version} index={record.journal_index}"
     if not journal_ok:
-        return f"task journal Merkle chain does not verify ({where})"
+        return f"task journal Merkle chain/reader coverage does not verify ({where})"
     blob = store.get(record.content_hash)
     if blob is None:
         return f"stored blob missing for {where}"
@@ -887,9 +898,12 @@ def verify_all_run_artifacts(workdir: Path, *, hmac_key: bytes) -> list[Artifact
                 )
             continue
         # No identifiable artifact rows. If this is an artifact journal
-        # (``task-*``) whose Merkle chain does not verify, tampering may have
+        # (``task-*``) whose chain/reader coverage does not verify, tampering may have
         # hidden every artifact row -- fail explicitly rather than skip.
-        if run_dir.name.startswith("task-") and not verify_journal(journal_path).ok:
+        journal_result = verify_journal(journal_path)
+        if run_dir.name.startswith("task-") and (
+            not journal_result.chain_consistent or journal_result.discarded_line_indices
+        ):
             results.append(
                 ArtifactVerifyResult(
                     ok=False,
@@ -897,7 +911,8 @@ def verify_all_run_artifacts(workdir: Path, *, hmac_key: bytes) -> list[Artifact
                     key="",
                     version=0,
                     journal_index=-1,
-                    reason=f"task journal Merkle chain does not verify ({run_dir.name}); artifact rows may be hidden",
+                    reason=f"task journal Merkle chain/reader coverage does not verify ({run_dir.name}); "
+                    "artifact rows may be hidden",
                 )
             )
     return results
@@ -907,7 +922,7 @@ def _task_id_from_rows(journal_path: Path) -> str | None:
     """Return the task id from the first artifact row in a journal, if any."""
     from bernstein.core.replay.journal import load_events
 
-    for row in load_events(journal_path):
+    for row in load_events(journal_path).events:
         if str(row.get("event", "")) == JOURNAL_EVENT_ARTIFACT_POSTED:
             return str(row.get("task_id", "")) or None
     return None
@@ -934,7 +949,7 @@ def live_artifact_content_hashes(sdd_dir: Path) -> set[str]:
         journal_path = contained_run_journal(runs_root, run_dir.name)
         if journal_path is None or not journal_path.is_file():
             continue
-        for row in load_events(journal_path):
+        for row in load_events(journal_path).events:
             if str(row.get("event", "")) == JOURNAL_EVENT_ARTIFACT_POSTED:
                 content_hash = str(row.get("content_hash", ""))
                 if content_hash:

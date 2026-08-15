@@ -50,7 +50,7 @@ class TestRecordFire:
             recurrence="0 9 * * *",
         )
         run_dir = sdd_dir / "runs" / fire_run_id("sched_a", 1_700_000_000)
-        events = [e for e in load_events(run_dir / "journal.jsonl") if e.get("event") == JOURNAL_EVENT]
+        events = [e for e in load_events(run_dir / "journal.jsonl").events if e.get("event") == JOURNAL_EVENT]
         assert len(events) == 1
         row = events[0]
         assert row["schedule_id"] == "sched_a"
@@ -104,7 +104,7 @@ class TestRecordFire:
         )
         assert rec.trigger_input_hash.startswith("sha256:")
         run_dir = sdd_dir / "runs" / fire_run_id("sched_hook", 1_700_000_500)
-        row = next(e for e in load_events(run_dir / "journal.jsonl") if e.get("event") == JOURNAL_EVENT)
+        row = next(e for e in load_events(run_dir / "journal.jsonl").events if e.get("event") == JOURNAL_EVENT)
         assert row["trigger_input_hash"] == rec.trigger_input_hash
 
 

@@ -211,7 +211,7 @@ def test_ac1_journal_steps_reference_capsule_hash(tmp_path: Path) -> None:
     cap = _capsule()
     ch = capsule_hash(cap)
     journal = _build_run_journal(tmp_path, capsule_h=ch, drift=False)
-    events = load_events(journal.path)
+    events = load_events(journal.path).events
     bound = [e for e in events if e["event"] == CAPSULE_BOUND_EVENT]
     assert len(bound) == 1
     assert bound[0]["capsule_hash"] == ch
@@ -396,7 +396,7 @@ def test_ac4_drift_emits_signed_escalation_binding_capsule_and_events(tmp_path: 
     )
     ch = capsule_hash(cap)
     journal = _build_run_journal(tmp_path, capsule_h=ch, drift=True, seal=cap)
-    verdict = evaluate_conformance(load_events(journal.path), cap)
+    verdict = evaluate_conformance(load_events(journal.path).events, cap)
     assert not verdict.conformant
 
     private_pem, public_pem = load_or_create_escalation_identity(_sdd(tmp_path) / "identity")

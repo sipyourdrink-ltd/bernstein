@@ -61,7 +61,7 @@ def _attestation(tmp_path: Path, *, dirty: bool, key: bytes = _KEY):
     journal.record("file_read", path="src/mathlib.py", content_window="def add(a, b): return a + b")
     if dirty:
         journal.record("tool_call", arguments={"query": _HIDDEN_TEST_TOKEN})
-    events = load_events(journal.path)
+    events = load_events(journal.path).events
     return build_clean_run_attestation(
         task=_task(),
         journal_events=events,

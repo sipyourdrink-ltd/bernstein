@@ -204,7 +204,7 @@ def test_data_activity_journals_like_other_modalities(tmp_path: Path) -> None:
 
     journal = _journal(tmp_path)
     dispatch_activity(result, stage_id="data-0", journal=journal)
-    rows = load_events(journal.path)
+    rows = load_events(journal.path).events
     assert rows[0]["event"] == "activity.result"
     assert rows[0]["kind"] == "data"
     # The signed input/output bytes are content-addressed observations, so a
@@ -224,7 +224,7 @@ def test_ops_activity_journals_kind(tmp_path: Path) -> None:
     result = act.finish()
     journal = _journal(tmp_path)
     dispatch_activity(result, stage_id="ops-0", journal=journal)
-    rows = load_events(journal.path)
+    rows = load_events(journal.path).events
     assert rows[0]["kind"] == "ops"
 
 

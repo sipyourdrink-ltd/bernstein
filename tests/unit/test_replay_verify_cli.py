@@ -20,15 +20,16 @@ def _make_journal(sdd_dir: Path, run_id: str) -> EventJournal:
     return journal
 
 
-def test_verify_reports_byte_identity(tmp_path: Path) -> None:
-    """--verify on an unmodified journal reports byte-identity (AC2)."""
+def test_verify_reports_chain_consistency_without_overclaiming_identity(tmp_path: Path) -> None:
+    """An unsealed journal reports an intact chain and unverifiable identity."""
     sdd_dir = tmp_path / ".sdd"
     _make_journal(sdd_dir, "run-1")
 
     result = CliRunner().invoke(replay_cmd, ["run-1", "--sdd-dir", str(sdd_dir), "--verify"])
 
     assert result.exit_code == 0
-    assert "byte-identical" in result.output.lower() or "verified" in result.output.lower()
+    assert "chain intact" in result.output.lower()
+    assert "identity=unverifiable" in result.output.lower()
 
 
 def test_verify_reports_first_divergent_step(tmp_path: Path) -> None:

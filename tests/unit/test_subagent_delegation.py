@@ -141,20 +141,24 @@ def test_dag_replays_byte_identically_when_inner_result_varies(tmp_path: Path) -
     # But the anchored result content hashes differ (inner execution varied).
     assert _result_content_hashes(j1) != _result_content_hashes(j2)
     # Both chains verify.
-    assert j1.verify().ok
-    assert j2.verify().ok
+    assert j1.verify().chain_consistent
+    assert j2.verify().chain_consistent
 
 
 def _delegation_node_hashes(journal: EventJournal) -> list[str]:
     from bernstein.core.replay.journal import load_events
 
-    return [str(e["node_hash"]) for e in load_events(journal.path) if e.get("event") == "subagent.delegation"]
+    return [str(e["node_hash"]) for e in load_events(journal.path).events if e.get("event") == "subagent.delegation"]
 
 
 def _result_content_hashes(journal: EventJournal) -> list[str]:
     from bernstein.core.replay.journal import load_events
 
-    return [str(e["result_content_hash"]) for e in load_events(journal.path) if e.get("event") == "subagent.delegation"]
+    return [
+        str(e["result_content_hash"])
+        for e in load_events(journal.path).events
+        if e.get("event") == "subagent.delegation"
+    ]
 
 
 # ---------------------------------------------------------------------------

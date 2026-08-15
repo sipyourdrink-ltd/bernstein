@@ -404,7 +404,7 @@ def verify_provider_state(path: Path) -> ProviderStateVerifyResult:
     flagged: list[int] = []
     mutation_count = 0
 
-    for index, row in enumerate(load_events(path)):
+    for index, row in enumerate(load_events(path).events):
         event = str(row.get("event", ""))
         if event == PROVIDER_STATE_CAPTURE_FAILED_EVENT:
             # A capture-failed marker means a mutation may have been dropped;
@@ -442,9 +442,10 @@ def verify_provider_state(path: Path) -> ProviderStateVerifyResult:
                 f"step {index}: flagged provider-side mutation ({kind}) arrived in deterministic mode",
             )
 
+    chain_ok = chain.chain_consistent and not chain.discarded_line_indices
     return ProviderStateVerifyResult(
-        ok=chain.ok and not errors,
-        chain_ok=chain.ok,
+        ok=chain_ok and not errors,
+        chain_ok=chain_ok,
         mutation_count=mutation_count,
         flagged_indices=flagged,
         errors=errors,

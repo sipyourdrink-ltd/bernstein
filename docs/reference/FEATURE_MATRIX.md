@@ -109,8 +109,8 @@ test, and a row naming a command the CLI no longer registers fails it too.
 
 | Capability | Docs status | Maturity | Notes |
 |---|---|---|---|
-| Unified lineage spine | Full | 4 | The journal head is sealed into a single lineage root at run finalization; artifact provenance and replay identity share that root (`core/lineage/`) |
-| Always-on event journal | Full | 3 | Merkle-chained per-run `EventJournal`; the head hash is the run identity (`core/replay/journal.py`) |
+| Unified lineage spine | Full | 4 | When the finalization path emits an external journal seal, artifact provenance and finished-journal identity share that independently committed root (`core/lineage/`) |
+| Always-on event journal | Full | 3 | Merkle-chained per-run `EventJournal`; the head identifies the surviving state, while an external seal establishes complete finished-journal identity (`core/replay/journal.py`) |
 | HMAC-chained audit log | Full | 4 | Tamper-evident, daily rotation, cross-process append lock (`core/security/audit_chain.py`) |
 | [Execution WAL](../architecture/state-persistence.md) | Full | 3 | Hash-chained write-ahead log for crash recovery and determinism fingerprinting |
 | Deterministic replay + fork | Full | 3 | `replay --verify` recomputes the journal head; `fork --from-step` rebuilds state at a journal step into an isolated run (`core/replay/`) |

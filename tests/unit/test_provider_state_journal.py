@@ -105,8 +105,8 @@ class TestChainLoadBearing:
         a = _journal_with_mutation(tmp_path / "a", "run-a")
         b = _journal_with_mutation(tmp_path / "b", "run-b")
         assert a.head() == b.head()
-        assert verify_journal(a.path).ok
-        assert verify_journal(b.path).ok
+        assert verify_journal(a.path).chain_consistent
+        assert verify_journal(b.path).chain_consistent
 
     def test_editing_the_mutation_entry_breaks_chain_at_its_index(self, tmp_path: Path) -> None:
         journal = _journal_with_mutation(tmp_path, "run-edit")
@@ -118,7 +118,7 @@ class TestChainLoadBearing:
         journal.path.write_text("\n".join(rows) + "\n", encoding="utf-8")
 
         result = verify_journal(journal.path)
-        assert not result.ok
+        assert not result.chain_consistent
         assert result.divergent_index == 2
 
     def test_removing_the_mutation_entry_breaks_chain_at_its_index(self, tmp_path: Path) -> None:
@@ -128,7 +128,7 @@ class TestChainLoadBearing:
         journal.path.write_text("\n".join(rows) + "\n", encoding="utf-8")
 
         result = verify_journal(journal.path)
-        assert not result.ok
+        assert not result.chain_consistent
         assert result.divergent_index == 2
 
     def test_journal_without_mutations_verifies_unchanged(self, tmp_path: Path) -> None:
@@ -137,7 +137,7 @@ class TestChainLoadBearing:
         journal.record("run_started", run_id="run-legacy")
         journal.record("task_completed", task_id="T-1")
 
-        assert verify_journal(journal.path).ok
+        assert verify_journal(journal.path).chain_consistent
         state = verify_provider_state(journal.path)
         assert state.ok
         assert state.mutation_count == 0
@@ -158,7 +158,7 @@ class TestDeterministicPolicy:
     def test_flagged_mutation_fails_verification_closed(self, tmp_path: Path) -> None:
         journal = _journal_with_mutation(tmp_path, "run-flagged", flagged=True)
 
-        assert verify_journal(journal.path).ok  # the chain itself is intact
+        assert verify_journal(journal.path).chain_consistent  # the chain itself is intact
         state = verify_provider_state(journal.path)
         assert not state.ok
         assert state.flagged_indices == [2]
@@ -260,7 +260,7 @@ class TestCaptureFailureMarker:
         journal.record("run_started")
         record_capture_failure(journal, agent_id="agent-1", reason="OSError")
 
-        assert verify_journal(journal.path).ok  # the chain itself is intact
+        assert verify_journal(journal.path).chain_consistent  # the chain itself is intact
         state = verify_provider_state(journal.path)
         assert not state.ok
         assert state.chain_ok  # policy fails closed, not the chain
@@ -278,7 +278,7 @@ class TestCaptureFailureMarker:
         marker["reason"] = "tampered"
         rows[-1] = json.dumps(marker)
         journal.path.write_text("\n".join(rows) + "\n", encoding="utf-8")
-        assert not verify_journal(journal.path).ok
+        assert not verify_journal(journal.path).chain_consistent
 
 
 class TestDivergenceAttribution:
@@ -370,7 +370,7 @@ class TestCapabilityRecord:
         assert rows[0]["event"] == MUTATION_CAPABILITY_EVENT
         assert rows[0]["adapter"] == "claude"
         assert rows[0]["capability"] == CAPABILITY_OBSERVED
-        assert verify_journal(journal.path).ok
+        assert verify_journal(journal.path).chain_consistent
 
     def test_declared_blind_record_is_distinguishable(self, tmp_path: Path) -> None:
         journal = EventJournal(run_id="run-blind", sdd_dir=tmp_path)

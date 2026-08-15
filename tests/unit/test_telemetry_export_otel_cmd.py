@@ -219,7 +219,7 @@ def test_export_ids_match_offline_projection(project: Path, in_memory_wire: InMe
     )
     assert result.exit_code == 0, result.output
 
-    events = load_events(project / ".sdd" / "runs" / _RUN_ID / JOURNAL_FILENAME)
+    events = load_events(project / ".sdd" / "runs" / _RUN_ID / JOURNAL_FILENAME).events
     projection = project_spans(events, run_id=_RUN_ID)
     wire_ids = [format(s.context.span_id, "016x") for s in in_memory_wire.get_finished_spans()]
     assert wire_ids == [s.span_id for s in projection.spans]

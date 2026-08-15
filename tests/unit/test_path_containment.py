@@ -237,7 +237,7 @@ def test_event_journal_round_trips_ordinary_run_id(tmp_path: Path) -> None:
     assert journal.path == (tmp_path / "runs" / "run-1" / "journal.jsonl").resolve()
     assert journal.path.is_file()
     assert journal.event_count() == 1
-    assert journal.verify().ok
+    assert journal.verify().chain_consistent
 
 
 @pytest.mark.parametrize("bad_id", ["..", ".", "../escape", "sub/dir", "/etc/passwd", ""])

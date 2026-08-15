@@ -43,7 +43,8 @@ One routing edge: a wheelhouse directory literally named `run`, `receipt`,
 ### Build (`verify run RUN_ID`)
 
 Builds an Ed25519-signed `run-receipt.json` under
-`.sdd/runs/<run-id>/` binding the run's journal head (replay identity),
+`.sdd/runs/<run-id>/` binding the run's journal head (the exact journal-state
+identifier, not by itself a finished-journal completeness claim),
 lineage-spine head (artifact provenance), and — opt-in via
 `--include-audit-range --audit-since --audit-until` — a re-chained
 audit-chain slice under one signed subject, with the public key embedded as

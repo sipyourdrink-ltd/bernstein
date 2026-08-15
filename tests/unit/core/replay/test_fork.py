@@ -103,7 +103,7 @@ def test_fork_records_parent_lineage(repo: Path, tmp_path: Path) -> None:
     assert result.parent_run_id == "parent-1"
     assert result.from_step == 1
     assert result.snapshot_sha == snapshot_sha
-    child_events = load_events(sdd / "runs" / result.new_run_id / "journal.jsonl")
+    child_events = load_events(sdd / "runs" / result.new_run_id / "journal.jsonl").events
     assert child_events, "child run journal must record the fork"
     head = child_events[0]
     assert head["event"] == "fork"

@@ -126,22 +126,46 @@ sorted and fixed separators, and **excludes the wall-clock envelope** (`ts`,
 `elapsed_s`). The timing fields stay on the row for the operator timeline; they
 are skipped only in the hash.
 
-The journal **head hash is the run identity**. Because the timing envelope is
-excluded, two byte-identical executions chain to the **same** head even though
-their timestamps differ, so a recording and a faithful replay match. Any
-divergence (a different decision output, a reordered event, a changed event
-type) changes the head at the exact step it happened.
+The journal **head hash identifies the surviving journal state**. Because the
+timing envelope is excluded, two byte-identical executions chain to the
+**same** head even though their timestamps differ, so a recording and a
+faithful replay match. Any divergence (a different decision output, a reordered
+event, a changed event type) changes the head at the exact step it happened. An
+independent seal is still required to prove that this state is the complete
+finished journal.
 
-- `bernstein replay <run-id> --verify` recomputes the chain and reports
-  byte-identity, or the first divergent step index, writing a
+Journal verification reports three independent facts; do not collapse them:
+
+- **chain consistency** -- the parsed rows form a valid Merkle chain. A clean
+  prefix can satisfy this after complete trailing rows were removed.
+- **reader coverage** -- every non-blank physical line entered verification.
+  Tolerant reads still skip torn or malformed rows, but return their physical
+  line indices instead of hiding the loss. Blank lines are neither rows nor
+  discards.
+- **journal identity** -- the head and event count match an independent seal.
+  With no seal the verdict is `unverifiable`, never a pass. Clean one- or
+  multi-row truncation is intentionally undetectable without that external
+  commitment.
+
+`load_events()` returns a `JournalLoadResult`; ordinary callers consume its
+`events`, while completeness-sensitive callers must also inspect
+`discarded_line_indices`. `verify_journal()` returns a
+`JournalVerifyResult` with `chain_consistent`, `coverage`, and `identity`
+instead of the ambiguous former `ok` flag.
+
+- `bernstein replay <run-id> --verify` recomputes the chain, reports reader
+  coverage and whether journal identity is externally verifiable, or the first
+  divergent step index, writing a
   `divergence_report.json` (`step_index`, `expected_hash`, `actual_hash`) on
   divergence.
 - `bernstein replay <run-id> --from-step N` rebuilds a deterministic state
   projection over events `[0, N)`; two invocations are byte-identical.
 
-At run finalization the journal head is sealed into the run's lineage spine
-(`core/lineage/spine.py`), so the replay identity and artifact provenance share
-one root.
+Capsule-governed finalization can seal the journal head and event count outside
+the journal. Where that seal exists, finished-journal identity and artifact
+provenance can share an independently committed root; most task journals do
+not yet carry such a seal and therefore remain `unverifiable` as complete
+journals.
 
 > Note: `bernstein verify --determinism` uses a separate fingerprint over the
 > WAL decision stream (`ExecutionFingerprint` in
@@ -168,7 +192,7 @@ bernstein verify receipt /path/to/run-receipt.json [--public-key trusted.pub.pem
 
 The receipt embeds:
 
-- **`journal`** - the timing-excluded projection of every journal row (the
+- **`journal`** - the timing-excluded projection of every embedded journal row (the
   exact bytes `compute_event_hash` covers; `ts`/`elapsed_s` never enter the
   receipt) plus the head hash.
 - **`spine`** - every spine entry body **without** the keyed `hmac` tag. Spine

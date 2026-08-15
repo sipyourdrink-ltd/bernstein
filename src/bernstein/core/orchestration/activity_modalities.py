@@ -730,7 +730,7 @@ def _observations_for_stage(journal_path: Path, *, stage_id: str) -> Iterable[di
     Raises:
         KeyError: When no ``activity.result`` entry matches *stage_id*.
     """
-    for row in load_events(journal_path):
+    for row in load_events(journal_path).events:
         if row.get("event") == ACTIVITY_RESULT_EVENT and row.get("stage_id") == stage_id:
             obs = row.get("observations", [])
             return list(obs) if isinstance(obs, list) else []
@@ -836,24 +836,25 @@ def verify_run_activities(
         )
 
     chain = verify_journal(journal_path)
-    rows = [r for r in load_events(journal_path) if r.get("event") == ACTIVITY_RESULT_EVENT]
+    chain_ok = chain.chain_consistent and not chain.discarded_line_indices
+    rows = [r for r in load_events(journal_path).events if r.get("event") == ACTIVITY_RESULT_EVENT]
     if not rows:
         return ActivityVerifyResult(
             run_id=run_id,
             found=False,
             ok=False,
-            chain_ok=chain.ok,
+            chain_ok=chain_ok,
             reason="run journal holds no activity.result entries",
         )
 
-    verdicts: list[StageVerdict] = [_verify_stage(row, store=store, chain_ok=chain.ok) for row in rows]
+    verdicts: list[StageVerdict] = [_verify_stage(row, store=store, chain_ok=chain_ok) for row in rows]
 
-    ok = chain.ok and all(v.ok for v in verdicts)
+    ok = chain_ok and all(v.ok for v in verdicts)
     return ActivityVerifyResult(
         run_id=run_id,
         found=True,
         ok=ok,
-        chain_ok=chain.ok,
+        chain_ok=chain_ok,
         stages=tuple(verdicts),
     )
 

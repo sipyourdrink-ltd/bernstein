@@ -85,7 +85,7 @@ def _seed_journal(tmp_path: Path, rows: list[dict[str, object]]) -> list[dict[st
     for row in rows:
         event = str(row.pop("event"))
         journal.record(event, **row)
-    return load_events(journal.path)
+    return load_events(journal.path).events
 
 
 def _clean_rows() -> list[dict[str, object]]:

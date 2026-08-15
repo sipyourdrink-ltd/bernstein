@@ -315,7 +315,7 @@ def replay_acp_content_hashes(journal_path: Path) -> list[tuple[int, str]]:
     lists.
     """
     out: list[tuple[int, str]] = []
-    for row in load_events(journal_path):
+    for row in load_events(journal_path).events:
         if row.get("event") != ACP_EVENT_TYPE:
             continue
         seq = int(row.get("acp_seq", len(out)))
@@ -343,7 +343,7 @@ class AcpDivergence:
 
 
 def _acp_rows(journal_path: Path) -> list[dict[str, Any]]:
-    return [row for row in load_events(journal_path) if row.get("event") == ACP_EVENT_TYPE]
+    return [row for row in load_events(journal_path).events if row.get("event") == ACP_EVENT_TYPE]
 
 
 def compare_acp_journals(expected_path: Path, actual_path: Path) -> AcpDivergence | None:

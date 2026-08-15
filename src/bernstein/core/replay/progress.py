@@ -278,9 +278,10 @@ def _load_task_journal_rows(sdd_dir: Path, task_id: str) -> list[dict[str, Any]]
         return []
     # Fail-closed: a journal whose Merkle chain does not verify is not a
     # trustworthy source of checkpoint counts.
-    if not verify_journal(path).ok:
+    verification = verify_journal(path)
+    if not verification.chain_consistent or verification.discarded_line_indices:
         return []
-    return load_events(path)
+    return load_events(path).events
 
 
 def _project_ledger_phase(sdd_dir: Path, task_id: str, run_id: str) -> tuple[str, int]:
