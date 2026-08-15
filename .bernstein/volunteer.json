@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "license": "Apache-2.0",
+  "gates": [
+    ["uv", "run", "ruff", "check", "src/"],
+    ["uv", "run", "ruff", "format", "--check", "src/"],
+    ["uv", "run", "python", "scripts/run_tests.py", "-x", "--parallel", "4"]
+  ],
+  "allowed_paths": [
+    "src/**",
+    "tests/**",
+    "docs/**"
+  ],
+  "egress_allowlist": [],
+  "sandbox": "container",
+  "max_wall_clock_minutes": 60,
+  "task_label": "volunteer-ok",
+  "local_ok": false
+}

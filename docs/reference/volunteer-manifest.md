@@ -164,6 +164,37 @@ print(manifest.digest)          # the value a receipt carries as manifest_sha256
 print([str(g) for g in manifest.gates])
 ```
 
+## A worked manifest: this repository's own
+
+Bernstein is opted into its own program. The live file is
+[`.bernstein/volunteer.json`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/volunteer.json),
+and reading it alongside the field table is more useful than reading either
+alone, because two of its values are deliberately not the strictest available.
+
+**`sandbox` is `container`, not `microvm`.** A floor nobody can stand on is not
+a floor. Most donors have a container runtime and no microVM, and a manifest
+demanding `microvm` refuses those donors outright rather than degrading. The
+sandbox profile still prefers the strongest backend the donor actually has, so
+declaring `container` buys the user-namespaced variant wherever it exists and
+loses nothing on a host that could have run a microVM.
+
+**`gates` omits mypy, which this project runs on every CI job.** It runs it
+advisory — the step ends in `|| true` and cannot fail a build. Listing a command
+the project does not itself enforce would reject a submission that main would
+have accepted, for a reason no maintainer would defend at review time. The rule
+is: declare the bar you enforce, not the bar you would like to have.
+
+**`allowed_paths` stops at `src/`, `tests/` and `docs/`.** Not because the other
+trees are unimportant but because they are outside what review reliably catches:
+a patch touching `.github/workflows/` runs with the repository's secrets the
+moment it merges, and one touching `pyproject.toml` or `uv.lock` installs a
+dependency on every machine afterwards.
+
+`tests/unit/volunteer/test_bernstein_own_manifest.py` holds all three: the lint
+gates must match CI's own `run:` lines word for word, mypy must stay absent, and
+the allowed-path roots are asserted as a set, so a future pattern rooted anywhere
+else fails without anyone having to have anticipated it.
+
 ## Source
 
 `src/bernstein/core/volunteer/manifest.py`.
