@@ -70,6 +70,7 @@ from bernstein.cli.commands.events_cmd import events_group
 from bernstein.cli.commands.export_cmd import export_cmd
 from bernstein.cli.commands.fleet_cmd import fleet_group
 from bernstein.cli.commands.fork_cmd import fork_cmd
+from bernstein.cli.commands.receipt_cmd import receipt_group
 from bernstein.cli.commands.impact_cmd import (
     blast_radius_alias_group,
     dep_impact_alias_cmd,
@@ -1460,3 +1461,4 @@ from bernstein.cli.commands.api_check_cmd import api_check_cmd  # noqa: E402
 
 cli.add_command(api_check_cmd, "api-check")
 cli.add_command(ab_test_cmd, "ab-test")
+cli.add_command(receipt_group, "receipt")
