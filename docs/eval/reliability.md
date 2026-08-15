@@ -12,10 +12,10 @@ time both read as "passed" under single-run or best-of-N scoring. They are
 worlds apart operationally.
 
 Repeating a task `k` times only measures reliability when "same conditions"
-can actually be held fixed. Bernstein's scheduler is deterministic — no LLM
-in the coordination loop, and a run leaves a replayable journal — so
-coordination (task graph, tool routing, controlled seeds) can be held
-byte-identical across attempts. The only thing allowed to vary is the
+can actually be held fixed. Bernstein's scheduler is deterministic: no LLM
+in the coordination loop, and a run leaves a replayable journal.
+Coordination (task graph, tool routing, controlled seeds) can therefore be
+held byte-identical across attempts. The only thing allowed to vary is the
 genuinely stochastic element: model sampling. Under that setup an all-of-k
 metric measures model reliability, not coordination luck.
 
@@ -99,9 +99,9 @@ claims; the verifier re-derives both.
 ### Coordination projection
 
 Fixed coordination is checked on a **coordination projection** of each run
-receipt: per-attempt run identity (`run_id`) and the content-hash heads
-that commit to model output (`journal_head`, `spine_head`) are dropped,
-timing fields are dropped from every event, and model-output events
+receipt. The projection drops per-attempt run identity (`run_id`), the
+content-hash heads that commit to model output (`journal_head`,
+`spine_head`), and timing fields on every event. Model-output events
 (`model.*` kinds) keep every field **except** the declared stochastic
 payload fields (`sample` in the bench event vocabulary). Undeclared
 fields inside a model event — routing, tool selection, scheduler state —

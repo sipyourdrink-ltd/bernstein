@@ -15,7 +15,7 @@ bernstein integrations list --json         # stable JSON for CI dashboards
 
 Per-adapter copy lives in
 [`src/bernstein/adapters/use_cases.py`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/adapters/use_cases.py).
-That module is the single source of truth - this page links to it so we
+That module is the single source of truth. This page links to it so we
 do not maintain two copies of the same list.
 
 ## Selecting an adapter
@@ -121,8 +121,8 @@ documented in [capability_contract.md](./capability_contract.md).
 ## Install matrix
 
 Install commands for the wired-in agents. Bernstein auto-discovers
-installed CLI agents; mix them in the same run, and check what is
-available locally with `bernstein integrations list --installed`.
+installed CLI agents; mix them in the same run. Check what is available
+locally with `bernstein integrations list --installed`.
 
 | Agent | Install |
 |-------|---------|

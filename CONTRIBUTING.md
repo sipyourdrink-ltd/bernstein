@@ -161,7 +161,7 @@ Run locally before committing:
 uv run python scripts/check_routes_broad_except.py
 ```
 
-See [AGENTS.md](AGENTS.md) for the full doctrine, including doctrine, change classification, conflict protocol, and zero-tolerance failures.
+See [AGENTS.md](AGENTS.md) for the full doctrine, including change classification, conflict protocol, and zero-tolerance failures.
 
 ## CLI Structure
 

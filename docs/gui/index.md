@@ -14,7 +14,7 @@ Browser-based operator surface for live Bernstein runs. Mounted on the same Fast
 ## Quickstart
 
 1. `bernstein gui serve` - binds `127.0.0.1:8052` and auto-opens `http://127.0.0.1:8052/ui/` in your browser.
-2. On a plain loopback serve with auto-open, if `BERNSTEIN_AUTH_TOKEN` is unset (and auth is not disabled) the CLI mints an ephemeral bearer, exports it to the server process, and seeds your browser with it via a URL fragment the SPA scrubs after capture - no token to copy.
+2. On a plain loopback serve with auto-open, if `BERNSTEIN_AUTH_TOKEN` is unset (and auth is not disabled), the CLI mints an ephemeral bearer and exports it to the server process. It then seeds your browser with the bearer via a URL fragment the SPA scrubs after capture - no token to copy.
 3. With `--no-open`, `--dev`, or `--tunnel` nothing is auto-minted: set `BERNSTEIN_AUTH_TOKEN` yourself and paste it into the SPA's token screen (`--tunnel` has its own QR + passphrase onboarding). Non-loopback binds never auto-mint and refuse to start without configured auth.
 
 ## What it is

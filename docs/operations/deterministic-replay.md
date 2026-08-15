@@ -32,11 +32,11 @@ their LLM traffic is **not** recorded on any path. On the default
 `internal_llm_provider: none` + CLI-agent setup, a recording run therefore
 writes no `llm_calls.jsonl`.
 
-Because "cannot reach the network" must not be advertised for a path that
-cannot honour it, a **strict** replay whose target run has no recording
-(`cached_count == 0`) now raises `ReplayRecordingMissingError` and exits
-non-zero at activation, before any agent is spawned or any provider is
-contacted - rather than silently running live. To run such a path anyway with
+A path that cannot honour "cannot reach the network" must not advertise it. So
+a **strict** replay whose target run has no recording (`cached_count == 0`) now
+raises `ReplayRecordingMissingError` and exits non-zero at activation, before
+any agent is spawned or any provider is contacted - rather than silently
+running live. To run such a path anyway with
 live fall-through (non-hermetic), set `BERNSTEIN_REPLAY_ALLOW_LIVE_MISS=1`. To
 get a real recording, configure an internal LLM provider and record with
 `BERNSTEIN_DETERMINISTIC_SEED` set.
@@ -128,7 +128,7 @@ are skipped only in the hash.
 
 The journal **head hash is the run identity**. Because the timing envelope is
 excluded, two byte-identical executions chain to the **same** head even though
-their timestamps differ, so a recording and a faithful replay match, and any
+their timestamps differ, so a recording and a faithful replay match. Any
 divergence (a different decision output, a reordered event, a changed event
 type) changes the head at the exact step it happened.
 
@@ -202,7 +202,7 @@ default the verifier checks the signature against the Ed25519 key embedded in
 the receipt (trust-on-first-use). That makes a pass **integrity-only**: the
 file is internally consistent - every head recomputes from the embedded
 ranges and any post-signing mutation is caught and localized to a precise
-step - but an attacker who controls the whole file could have swapped in
+step. But an attacker who controls the whole file could have swapped in
 their own key and re-signed it, so the embedded key cannot establish *who*
 produced the receipt. For **provenance** - confirming the receipt was signed
 by a specific operator's key - pass `--public-key` with an out-of-band copy
@@ -215,9 +215,9 @@ pass cannot be misread as an authenticated one. Provenance-sensitive review
 **Automatic receipts at finalization.** When a signing key is configured via
 `BERNSTEIN_RUN_RECEIPT_SIGNING_KEY_PATH` (key file) or
 `BERNSTEIN_RUN_RECEIPT_SIGNING_ENV_VAR` (name of an env var carrying a PEM
-key; optional `BERNSTEIN_RUN_RECEIPT_SIGNING_KID` sets the JWK `kid`), the
-orchestrator writes `run-receipt.json` next to `journal.jsonl` when the run
-finalizes. With no key configured this is a documented no-op - a receipt is
+key), the orchestrator writes `run-receipt.json` next to `journal.jsonl` when
+the run finalizes. `BERNSTEIN_RUN_RECEIPT_SIGNING_KID` optionally sets the JWK
+`kid`. With no key configured this is a documented no-op - a receipt is
 only ever emitted signed, matching the audit-receipt posture.
 
 The legacy `bernstein verify` flag modes (`--wal-integrity`, `--determinism`,

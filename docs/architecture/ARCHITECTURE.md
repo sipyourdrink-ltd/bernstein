@@ -2,7 +2,7 @@
 
 ## Overview
 
-Bernstein is a deterministic orchestrator for CLI coding agents. You declare what you want, the control plane schedules it, short-lived agents execute in per-task git worktrees (artifact-mode tasks, which complete on a signed lineage receipt rather than a commit, get an isolated plain directory under `.sdd/workspaces/` instead - see [the artifact contract](../operations/artifacts.md)), and a janitor verifies the output before anything lands.
+Bernstein is a deterministic orchestrator for CLI coding agents. You declare what you want, the control plane schedules it, short-lived agents execute in per-task git worktrees, and a janitor verifies the output before anything lands. Artifact-mode tasks, which complete on a signed lineage receipt rather than a commit, get an isolated plain directory under `.sdd/workspaces/` instead - see [the artifact contract](../operations/artifacts.md).
 
 The orchestrator is **deterministic Python** - no model in the coordination loop. Every scheduling decision, every retry, every spawn is auditable code, not a model response, so the same plan replays to a byte-identical task graph.
 
@@ -59,7 +59,7 @@ Runtime state (`.sdd/runtime/`) is ephemeral - PIDs, logs, signals. Never commit
 
 ## Package structure
 
-Since v1.6, `core/` is organized into sub-packages (63 at time of writing) rather than flat files. The old flat module paths (`bernstein.core.server`, `bernstein.core.orchestrator`, `bernstein.core.spawner`, ...) no longer exist as files. They keep importing anyway: `core/__init__.py` registers a custom module finder on `sys.meta_path` whose `_REDIRECT_MAP` maps each old module name to its new sub-package location and imports the real module on demand. This keeps import paths stable while allowing each subsystem to grow independently.
+Since v1.6, `core/` is organized into sub-packages (63 at time of writing) rather than flat files. The old flat module paths (`bernstein.core.server`, `bernstein.core.orchestrator`, `bernstein.core.spawner`, ...) no longer exist as files. They keep importing anyway: `core/__init__.py` registers a custom module finder on `sys.meta_path` whose `_REDIRECT_MAP` maps each old module name to its new sub-package location and imports the real module on demand. Import paths stay stable, and each subsystem can grow independently.
 
 The table below is a selection of the most load-bearing sub-packages, not the full list:
 
@@ -228,7 +228,7 @@ The verification story from the overview is carried by two substrates: the HMAC-
 - **`core/security/audit_chain.py`** - `AuditChainStore`, a facade over the HMAC-chained `AuditLog`; it surfaces the previous event's chain digest so subsystems can embed it inside new event payloads before the next HMAC is computed, and defines the event-type constants those subsystems emit.
 - **`core/lineage/spine.py`** - `LineageSpine`, the always-on Merkle+HMAC provenance chain: every adapter artifact write routes through `LineageSpine.record` at the single write boundary in `adapters/base.py`, appending a canonical-JSON row to `.sdd/lineage/<run_id>/spine.jsonl` whose entry hash chains to the previous row and whose head hash is HMAC-tagged in `spine.head`.
 - **`core/lineage/signed_write.py`** - the supported signed-write path (`seal_write` / `SignedLineageLog`): computes the content hash, chains it to the artefact's current tip, wraps it in an operator-HMAC envelope, signs the canonical bytes with the agent's Ed25519 key, and hands the `(entry, jws)` pair to the `LineageStore`. (`core/lineage/recorder.py` survives only as a deprecated compatibility shim over this path.)
-- **`core/lineage/gate.py`** - the read-only lineage CI gate: checks that every log entry parses, verifies its detached JWS against the agent's published Agent Card, optionally re-checks the operator HMAC, and confirms every `parent_hash` anchors to another entry with no unresolved forks - it runs against a frozen log plus cards directory, no live store required.
+- **`core/lineage/gate.py`** - the read-only lineage CI gate: checks that every log entry parses, verifies its detached JWS against the agent's published Agent Card, optionally re-checks the operator HMAC, and confirms every `parent_hash` anchors to another entry with no unresolved forks. It runs against a frozen log plus cards directory, no live store required.
 
 The spine proves ordering and integrity for a whole run; a signed lineage entry adds attributable non-repudiation, verifiable offline by someone who holds no operator secret. They are different proofs, and both stay.
 
@@ -291,7 +291,7 @@ class CLIAdapter(ABC):
     def detect_tier(self) -> ApiTierInfo | None: ...  # optional, defaults to None
 ```
 
-`task_scope` and `budget_multiplier` feed per-task budget caps. `system_addendum` carries protocol-critical instructions (completion, heartbeat, signal-check): adapters that support a separate system-prompt channel (e.g. Claude Code's `--append-system-prompt`) inject it there, where it survives prompt truncation; others append it to the user prompt as a fallback, and a few adapters do not consume it at all - check the target adapter before relying on it. `multimodal_context` passes base64-encoded attachments to multimodal-capable adapters (others must raise `CapabilityRefusal` before spawning). See the docstrings in `adapters/base.py` for the full contract.
+`task_scope` and `budget_multiplier` feed per-task budget caps. `system_addendum` carries protocol-critical instructions (completion, heartbeat, signal-check). Adapters that support a separate system-prompt channel (e.g. Claude Code's `--append-system-prompt`) inject it there, where it survives prompt truncation; others append it to the user prompt as a fallback. A few adapters do not consume it at all - check the target adapter before relying on it. `multimodal_context` passes base64-encoded attachments to multimodal-capable adapters (others must raise `CapabilityRefusal` before spawning). See the docstrings in `adapters/base.py` for the full contract.
 
 The `CachingAdapter` wrapper in `adapters/caching_adapter.py` transparently deduplicates system prompt prefixes across agents, saving tokens on repeated spawns.
 

@@ -126,13 +126,13 @@ build reproducible, auditable races on.
 > shim: `LibkrunMonitor`, which boots a real guest on ordinary developer
 > hardware, and `FirecrackerMonitor`, whose boot lifecycle is still
 > unimplemented.** `FirecrackerMonitor` ships the host preflight and the
-> strict no-silent-downgrade contract; its full boot lifecycle (API socket,
+> strict no-silent-downgrade contract. Its full boot lifecycle (API socket,
 > drives, networking, `InstanceStart`, and an in-guest vsock agent for exec
-> and file-IO transport) remains a tracked follow-up requiring a KVM-capable
-> Linux host plus an operator-supplied kernel, rootfs, and guest agent, so its
-> `boot()` raises `MicroVMUnavailableError` on every host today rather than
-> pretending. The guarantees below are exercised host-independently over the
-> `FakeMonitor`.
+> and file-IO transport) remains a tracked follow-up: it needs a KVM-capable
+> Linux host plus an operator-supplied kernel, rootfs, and guest agent. Its
+> `boot()` therefore raises `MicroVMUnavailableError` on every host today
+> rather than pretending. The guarantees below are exercised
+> host-independently over the `FakeMonitor`.
 
 **Monitor shim.** The backend never talks to a hypervisor directly. It
 drives a `VMMonitor` adapter:
@@ -178,7 +178,7 @@ environment), `126` (could not execute the workload) and `127` (workload not
 found) for its own failures — and a guest command can legitimately return those
 same values. The process exit code alone is therefore ambiguous. The guest
 wrapper writes an explicit status line into a control directory that is *not*
-part of the workspace, only after the command has finished, and that file — not
+part of the workspace, only after the command has finished. That file — not
 the process exit code — decides:
 
 | Status file | Process exit | Reported as |
@@ -256,14 +256,13 @@ places there is readable by the guest, and anything the guest writes there is
 immediately visible to the host.
 
 **Content-addressed snapshots.** `snapshot()` freezes the workspace into a
-*canonicalised image* (a tar with sorted paths, zeroed mtimes/uids, real
-file-permission bits, and host-independent symlink targets - a pure
-function of the tree, so byte-identical on any host and under any process
-identity; special files are dropped from the payload but their presence is
-recorded so they cannot silently collide), streams
-it into the CAS store (`.sdd/cas`, see
+*canonicalised image*, streams it into the CAS store (`.sdd/cas`, see
 [cas-store.md](./cas-store.md)), and returns the **SHA-256 digest** as the
-snapshot id. `resume(digest)` reads the blob back with integrity
+snapshot id. The image is a tar with sorted paths, zeroed mtimes/uids, real
+file-permission bits, and host-independent symlink targets - a pure function
+of the tree, so byte-identical on any host and under any process identity.
+Special files are dropped from the payload, but their presence is recorded so
+they cannot silently collide. `resume(digest)` reads the blob back with integrity
 verification on, so a tampered snapshot fails its CAS check
 (`CASIntegrityError`) *before* it can boot. Images are full and
 self-contained, so a resume can never be confused about which base it
@@ -357,7 +356,7 @@ host-independently over the `FakeMonitor` (see
 round trip is covered by the host-gated
 `tests/integration/sandbox/test_microvm_libkrun.py` (opt in with
 `BERNSTEIN_MICROVM_LIBKRUN_INTEGRATION=1` on a host that satisfies the
-requirements above); the Firecracker path is covered by the KVM-gated
+requirements above). The Firecracker path is covered by the KVM-gated
 `tests/integration/sandbox/test_microvm_firecracker.py`. The refusal-invariant
 assertions in both files run everywhere.
 

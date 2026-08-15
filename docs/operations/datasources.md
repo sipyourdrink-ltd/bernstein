@@ -186,10 +186,10 @@ schema state the statement was written against is nowhere in the record — a
 `SELECT` that was correct in March and means something different in July looks
 identical in the log. Second, **are these bytes bound to that statement?** The
 query driver (`bernstein.core.datasources.query_driver`) closes both by
-executing one read-only statement through the `DataActivity` phase machine
-(signed inputs → one deterministic plan → signed outputs, Ed25519 throughout —
-the same machinery the data/ops activity boundary already ships; the driver
-adds no second receipt format):
+executing one read-only statement through the `DataActivity` phase machine:
+signed inputs → one deterministic plan → signed outputs, Ed25519 throughout.
+That is the same machinery the data/ops activity boundary already ships; the
+driver adds no second receipt format. Per statement:
 
 1. The statement passes the textual read-only guard **before any connection
    work** — a write is refused with a typed error and provably never reaches
@@ -199,13 +199,13 @@ adds no second receipt format):
    *before* the plan is derived, together with the query text and bound
    parameters. The snapshot digest is a content address over the normalised
    DDL in `sqlite_master` plus each table's column list — not
-   `PRAGMA schema_version`, which is a write counter: two identical schemas
-   can carry different counter values, and equal values attest nothing about
-   content. The query input uses a **type-tagged canonical encoding**: every
-   bound parameter carries its type in the signed bytes, so `1`, `"1"`,
-   `1.0`, `Decimal("1")`, `b"1"` and `True` all sign differently, and an
-   unsupported parameter type is a typed refusal — never a silent
-   stringification.
+   `PRAGMA schema_version`. That pragma is a write counter: two identical
+   schemas can carry different counter values, and equal values attest
+   nothing about content. The query input uses a **type-tagged canonical
+   encoding**: every bound parameter carries its type in the signed bytes,
+   so `1`, `"1"`, `1.0`, `Decimal("1")`, `b"1"` and `True` all sign
+   differently, and an unsupported parameter type is a typed refusal —
+   never a silent stringification.
    After execution the driver **re-snapshots the schema and compares
    digests**: if the schema moved between the signed snapshot and the
    execution, it raises `SchemaDrift` and refuses to sign a result the
