@@ -41,7 +41,7 @@ LUHN_VECTORS: list[tuple[str, bool]] = [
     ("5500005555555558", False),
     ("378282246310006", False),
     ("6011111111111118", False),
-    # Shape-alikes that are not cards: trace ids, ledger sequences.
+    # Shape lookalikes that are not cards: trace ids, ledger sequences.
     ("1234567890123456", False),
     ("0000000000000001", False),
     # All zeroes checksums to 0 -- Luhn-valid, which is exactly why a
