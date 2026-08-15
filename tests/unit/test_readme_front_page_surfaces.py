@@ -45,7 +45,7 @@ SURFACE_COMMANDS = ("bernstein live", "bernstein gui serve")
 #: Identity marks, whose correct alt text is the name of the thing they mark.
 #: Describing a logo in a sentence is worse for a screen reader, not better -
 #: the reader wants "Bernstein", not a description of the artwork.
-IDENTITY_MARKS = frozenset({"logo-light.svg", "logo-dark.svg", "banner-readme.png"})
+IDENTITY_MARKS = frozenset({"logo-light.svg", "logo-dark.svg", "banner-readme.webp"})
 
 
 @dataclass(frozen=True)
