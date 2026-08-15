@@ -25,6 +25,8 @@ import re
 from collections import Counter
 from typing import Any
 
+from bernstein.core.security.luhn import luhn_check
+
 # ---------------------------------------------------------------------------
 # PII patterns - kept in sync with memory_sanitizer._PII_RULES
 # ---------------------------------------------------------------------------
@@ -51,28 +53,6 @@ _PII_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 _REDACTED = "[REDACTED]"
 
 
-def _luhn_check(digits: str) -> bool:
-    """Validate a digit string using the Luhn algorithm.
-
-    Args:
-        digits: String of digits, separators already stripped.
-
-    Returns:
-        True when the digit string passes Luhn validation.
-    """
-    if not digits or not digits.isdigit():
-        return False
-    total = 0
-    for index, char in enumerate(reversed(digits)):
-        value = int(char)
-        if index % 2 == 1:
-            value *= 2
-            if value > 9:
-                value -= 9
-        total += value
-    return total % 10 == 0
-
-
 def _redact_card(match: re.Match[str]) -> str:
     """Redact a card-shaped match only when it actually checksums as a card.
 
@@ -80,9 +60,12 @@ def _redact_card(match: re.Match[str]) -> str:
     order numbers, and ledger sequences share the shape. Redacting those
     rewrites legitimate identifiers in persisted records, which is the same
     false-positive class the credential rules below already avoid.
+
+    No length bound of its own: the ``credit_card`` pattern matches exactly
+    sixteen digits, so the shape is already fixed by the time this runs.
     """
     digits = re.sub(r"[\s\-]", "", match.group(0))
-    return _REDACTED if _luhn_check(digits) else match.group(0)
+    return _REDACTED if luhn_check(digits) else match.group(0)
 
 
 # Patterns whose match needs validating before it is treated as PII.

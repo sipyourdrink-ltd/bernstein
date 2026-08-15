@@ -28,6 +28,8 @@ import re
 from dataclasses import dataclass
 from fnmatch import fnmatch
 
+from bernstein.core.security.luhn import luhn_check
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -225,20 +227,21 @@ def _has_mixed_case_and_digits(text: str) -> bool:
 
 
 def _looks_like_credit_card(match_text: str) -> bool:
-    """Return True if a candidate number passes a Luhn checksum."""
-    digits = [int(char) for char in match_text if char.isdigit()]
-    if len(digits) < 13 or len(digits) > 19:
+    """Return True if a candidate number passes a Luhn checksum.
+
+    Both length bounds are this call site's own: the rule matches a labelled
+    13-19 digit run, so it needs each end. Only the checksum is shared.
+
+    The forward walk this replaced doubled ``index % 2 == len(digits) % 2``,
+    which is the same rule as the shared helper's reverse walk doubling the
+    odd indices - forward index ``i`` is reverse index ``n-1-i``, and
+    ``n-1-i`` is odd exactly when ``i % 2 == n % 2``. Spelling it once removes
+    the need to re-derive that in order to compare the two.
+    """
+    digits = "".join(char for char in match_text if char.isdigit())
+    if not (13 <= len(digits) <= 19):
         return False
-    checksum = 0
-    parity = len(digits) % 2
-    for index, digit in enumerate(digits):
-        value = digit
-        if index % 2 == parity:
-            value *= 2
-            if value > 9:
-                value -= 9
-        checksum += value
-    return checksum % 10 == 0
+    return luhn_check(digits)
 
 
 def _is_allowlisted(line: str, allowlist_prefixes: list[str] | None = None) -> bool:
