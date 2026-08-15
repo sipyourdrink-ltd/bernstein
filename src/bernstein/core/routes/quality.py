@@ -375,12 +375,16 @@ def get_quality_metrics(request: Request) -> JSONResponse:
 @router.get("/quality/budget-forecast")
 def get_budget_forecast(request: Request) -> JSONResponse:
     """Return projected spend for the active planned backlog."""
+    # Imported inside the handler to match team_dashboard.py and avoid a
+    # circular import between the route modules.
+    from bernstein.core.routes.task_crud import _resolve_request_tenant_scope
+
     sdd_dir = _get_sdd_dir(request)
     store = _get_store(request)
     metrics_dir = sdd_dir / "metrics"
     payload = (
         forecast_planned_backlog(
-            store.list_tasks(),
+            store.list_tasks(tenant_id=_resolve_request_tenant_scope(request)),
             metrics_dir=metrics_dir if metrics_dir.exists() else None,
             current_spend_usd=_read_current_spend(metrics_dir),
             budget_usd=_load_budget_from_seed(sdd_dir),
