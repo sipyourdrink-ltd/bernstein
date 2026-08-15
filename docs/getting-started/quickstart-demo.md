@@ -1,10 +1,10 @@
 # Zero-config Flask TODO demo
 
-> **Preview.** This command does not yet complete a first run: all three seeded
-> tasks fail and the task server can die and restart mid-run. What it no longer
-> does is claim otherwise — the summary reports `Tasks completed 0 / 3` against
-> the seeded count and the command exits non-zero, so a wrapper or CI job can
-> tell the run apart from a good one
+> **Preview.** This command does not yet complete a first run:
+> all three seeded tasks fail, and the task server can die and restart mid-run.
+> What it no longer does is claim otherwise — the summary reports
+> `Tasks completed 0 / 3` against the seeded count and the command exits
+> non-zero, so a wrapper or CI job can tell the run apart from a good one
 > ([#3902](https://github.com/sipyourdrink-ltd/bernstein/issues/3902)). Plain
 > `bernstein demo`
 > has a separate first-run failure — a cold run can exceed the task-server

@@ -323,8 +323,8 @@ def _matrix_row_for(command: str) -> str:
         (
             "bernstein demo --flask-todo",
             _REPO_ROOT / "docs" / "getting-started" / "quickstart-demo.md",
-            "Tasks completed 0 / 0",
-            "Tasks completed 0 / 0",
+            "all three seeded tasks fail",
+            "all three seeded tasks fail",
         ),
     ],
 )
