@@ -104,6 +104,20 @@ rather than as its own attribution is exempted by hand there, with the reason.
 
 ## Fixed
 
+- A run journal whose trailing bytes are an incomplete multi-byte character no
+  longer wedges the tolerant reader (#3971). `load_events` treated undecodable
+  bytes as an error from the codec rather than as a malformed line, so one
+  class of crash produced two outcomes depending on where in the byte stream it
+  stopped: a discarded physical line index when the write stopped between two
+  characters, and a bare `UnicodeDecodeError` — carrying no line index, and
+  losing every earlier event in the file — when it stopped inside one. Bytes
+  that are not valid UTF-8 now travel the same two reader policies as
+  unparsable JSON: discarded by the tolerant reader and reported in
+  `discarded_line_indices`, raised by `strict=True` as a `JournalParseError`
+  naming the 0-based physical line. Physical line indices are unchanged for
+  every journal that read successfully before. A row whose only defect is one
+  undecodable byte is discarded rather than repaired, so no silently altered
+  event can enter the chain.
 - The CLI reference no longer names command spellings that do not resolve. It
   claimed `bernstein commit-stats`, `bernstein incident`, and `bernstein
   postmortem` were live deprecated aliases after v4.0.0 removed them, and
