@@ -7,11 +7,15 @@ so an entrypoint that creates the release with the workflow token and stops
 there ships to PyPI and to the GitHub Release and to nothing else: no GHCR
 image, no tap formula bump, no SBOM assets, in a run that ends green.
 
-``publish.yml`` gained the explicit dispatches; ``release-major-minor.yml``,
-which creates its release the same way, did not. This guard is written against
-the property rather than against the two files, so a third entrypoint cannot
-reintroduce the gap: any job that runs ``gh release create`` owes the full
-dispatch set, with input names the target workflow actually declares.
+``publish.yml`` is the only release-creating entrypoint left: it used to share
+this gap with ``release-major-minor.yml``, which created its own release
+inline the same way, until #3948 moved that workflow onto the same
+PR-through-the-merge-queue path every other release takes, deleting its
+inline release creation (and its own copy of these dispatches) entirely. This
+guard is written against the property rather than against a fixed file list,
+so a future entrypoint cannot reintroduce the gap: any job that runs
+``gh release create`` owes the full dispatch set, with input names the target
+workflow actually declares.
 """
 
 from __future__ import annotations
@@ -95,12 +99,16 @@ def _declared_dispatch_inputs(workflow_file: str) -> set[str]:
 
 
 def test_the_release_creating_entrypoints_are_the_expected_ones() -> None:
-    """Keeps the contract honest if a release entrypoint is added or renamed."""
+    """Keeps the contract honest if a release entrypoint is added or renamed.
+
+    ``release-major-minor.yml`` used to be a second creator here; #3948 moved
+    it onto the PR-through-the-merge-queue path, so ``publish.yml`` is now the
+    only job in the repo that runs ``gh release create``.
+    """
     creators = {(workflow, job_id) for workflow, job_id, _ in _release_creating_jobs()}
 
     assert creators == {
         ("publish.yml", "github-release"),
-        ("release-major-minor.yml", "release"),
     }, f"unexpected set of release-creating jobs: {sorted(creators)}"
 
 
