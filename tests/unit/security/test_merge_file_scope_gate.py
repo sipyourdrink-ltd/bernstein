@@ -161,6 +161,47 @@ def test_a_pattern_stored_before_validation_existed_matches_nothing_rather_than_
     assert "src/ok.py" in result.error
 
 
+def test_a_rename_out_of_scope_is_refused_like_a_deletion(tmp_path: Path) -> None:
+    """Moving a file into scope is still removing it from where it was.
+
+    Rename detection reports only a rename's destination, so a scope check
+    reading that list would see an in-scope path and admit a merge that
+    deletes an out-of-scope one — passing the disguised removal while
+    refusing the honest ``git rm``. Both orderings must land the same way.
+    """
+    _repo_with_agent_branch(tmp_path, "s10", {"infra/deploy.tf": "terraform\n"})
+    _mint(tmp_path, "s10", ["src/**"])
+
+    # Baseline: deleting it outright is already refused.
+    deletion = _refuse(tmp_path, "s10")
+    assert deletion is not None
+    assert "infra/deploy.tf" in deletion.error
+
+    # The same removal, disguised as a move into scope.
+    moved = tmp_path / "moved"
+    moved.mkdir()
+    _run(["git", "init", "-b", "main"], moved)
+    _run(["git", "config", "user.email", "test@example.com"], moved)
+    _run(["git", "config", "user.name", "Test User"], moved)
+    (moved / "infra").mkdir()
+    (moved / "infra" / "deploy.tf").write_text("terraform\n", encoding="utf-8")
+    _run(["git", "add", "-A"], moved)
+    _run(["git", "commit", "-m", "init"], moved)
+
+    _run(["git", "checkout", "-b", "agent/s11"], moved)
+    (moved / "src").mkdir()
+    _run(["git", "mv", "infra/deploy.tf", "src/deploy.tf"], moved)
+    _run(["git", "commit", "-m", "rename"], moved)
+    _run(["git", "checkout", "main"], moved)
+
+    _mint(moved, "s11", ["src/**"])
+
+    result = _refuse(moved, "s11")
+
+    assert result is not None, "a rename out of scope must not pass a check a deletion fails"
+    assert "infra/deploy.tf" in result.error
+
+
 def test_a_refused_merge_leaves_the_branch_intact(tmp_path: Path) -> None:
     """Containment, not destruction: an operator has to be able to look at
     what was refused."""

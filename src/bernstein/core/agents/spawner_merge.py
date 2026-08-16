@@ -103,11 +103,21 @@ def _incoming_change(worktree_root: Path, branch: str) -> tuple[list[str], str]:
     the score describes this merge rather than the branch's whole history.
     An unreadable branch yields an empty change, which the scorer treats as
     a zero-risk one; the gate below refuses only on evidence.
+
+    ``--no-renames`` on the file list, because rename detection reports only
+    a rename's *destination*. Every gate reading this list judges paths, and
+    a list that omits the path a merge removes lets ``git mv outside inside``
+    pass a check that ``git rm outside`` fails -- the disguised removal
+    admitted and the honest one refused. A rename is two paths changing, so
+    both are named. The diff body keeps rename detection: it is scored as
+    text rather than judged as paths, and inflating a pure rename into a
+    delete-plus-add there would change what a blast radius means without
+    closing anything.
     """
     from bernstein.core.git_ops import run_git
 
     spec = f"HEAD...{branch}"
-    names = run_git(["diff", "--name-only", spec], worktree_root, timeout=30)
+    names = run_git(["diff", "--name-only", "--no-renames", spec], worktree_root, timeout=30)
     if names.returncode != 0:
         return [], ""
     files = [line.strip() for line in names.stdout.splitlines() if line.strip()]
@@ -173,7 +183,13 @@ def _signed_file_scope(worktree_root: Path, session_id: str) -> list[str] | None
 
     try:
         identity = AgentIdentityStore(auth_dir).get(session_id)
-    except OSError as exc:  # an unreadable store is not a scope
+    except OSError as exc:
+        # An unreadable store is not a scope. Failing open is safe here only
+        # because the store sits on the orchestrator's side of the boundary:
+        # ``worktree_root`` is the merge target, not the agent's worktree, so
+        # the branch being merged cannot reach ``.sdd/auth`` to provoke this.
+        # A gate that read its policy from ground the attacker can write would
+        # need the opposite default.
         logger.debug("Could not read agent identities for %s: %s", _sanitise_for_log(session_id), exc)
         return None
     return None if identity is None else identity.allowed_files
