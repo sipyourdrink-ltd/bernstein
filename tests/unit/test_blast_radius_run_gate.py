@@ -15,6 +15,7 @@ throughout the period the flag did nothing.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from typing import TYPE_CHECKING, Any
@@ -223,3 +224,81 @@ def test_unusable_ceiling_refuses_rather_than_continuing(tmp_path: Path) -> None
     assert result is not None
     assert result.success is False
     assert "not-a-float" in (result.error or "")
+
+
+# ---------------------------------------------------------------------------
+# The change being scored has to be readable before a score means anything
+# ---------------------------------------------------------------------------
+
+
+def _git_diff_fails(*, timeout: bool) -> Any:
+    """Stand in for ``run_git`` so only the change read fails.
+
+    The two failures the merge path actually sees: a non-zero ``git diff``,
+    and the timeout a very large diff hits on the file-list call while
+    ``git merge`` itself still succeeds -- the case where the merge lands and
+    the ceiling was never evaluated against it.
+    """
+    from bernstein.core.git_ops import run_git as real_run_git
+
+    def _fake(args: list[str], cwd: Path, **kwargs: Any) -> Any:
+        if args[:2] == ["diff", "--name-only"]:
+            if timeout:
+                raise subprocess.TimeoutExpired(cmd=["git", *args], timeout=30)
+            return type("_Result", (), {"returncode": 128, "stdout": "", "stderr": "fatal: bad revision\n"})()
+        return real_run_git(args, cwd, **kwargs)
+
+    return _fake
+
+
+@pytest.mark.parametrize("timeout", [False, True], ids=["non-zero-exit", "timed-out"])
+def test_merge_refused_when_the_incoming_change_cannot_be_read(tmp_path: Path, timeout: bool) -> None:
+    """An unscorable change must not score as a harmless one.
+
+    An empty file list and an empty diff body are what a zero-risk change
+    looks like, so a failed read walks straight through the ceiling. The
+    merge itself does not depend on that read, so the change lands unjudged
+    while the operator's ceiling reports that it held.
+    """
+    repo = _repo_with_agent_branch(tmp_path, filename=_HARD_ONE_WAY_FILE, body=_HARD_ONE_WAY_BODY)
+    _set_ceiling_via_run_flag(0.2)
+
+    with patch("bernstein.core.git_ops.run_git", _git_diff_fails(timeout=timeout)):
+        result, merge_fn = _merge(repo)
+
+    assert merge_fn.calls == [], "the merge ran on a change the ceiling never saw"
+    assert result is not None
+    assert result.success is False
+    assert "could not be read" in (result.error or "")
+
+
+def test_an_unreadable_change_is_inert_when_no_ceiling_was_requested(tmp_path: Path) -> None:
+    """The asymmetry to preserve: no ceiling, no gate, nothing to fail closed.
+
+    Refusing here would turn every flaky ``git diff`` into a lost merge for
+    every run that never asked for a ceiling at all.
+    """
+    repo = _repo_with_agent_branch(tmp_path, filename=_REVERSIBLE_FILE, body=_REVERSIBLE_BODY)
+    os.environ.pop(ENV_MAX_BLAST_RADIUS, None)
+
+    with patch("bernstein.core.git_ops.run_git", _git_diff_fails(timeout=True)):
+        result, merge_fn = _merge(repo)
+
+    assert merge_fn.calls == [_SESSION_ID], "a run with no ceiling was gated anyway"
+    assert result is not None
+    assert result.success is True
+
+
+def test_an_unreadable_change_is_recorded_under_its_own_reason(tmp_path: Path) -> None:
+    """A ceiling that was exceeded and a change that could not be read are
+    different findings, and an operator reading the refusal journal has to be
+    able to tell which one they are looking at."""
+    repo = _repo_with_agent_branch(tmp_path, filename=_HARD_ONE_WAY_FILE, body=_HARD_ONE_WAY_BODY)
+    _set_ceiling_via_run_flag(0.2)
+
+    with patch("bernstein.core.git_ops.run_git", _git_diff_fails(timeout=False)):
+        _merge(repo)
+
+    journal = repo / ".sdd" / "runtime" / "refused_merges.jsonl"
+    reasons = [json.loads(line)["reason"] for line in journal.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert reasons == ["blast-radius-unreadable"]

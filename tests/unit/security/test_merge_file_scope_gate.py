@@ -17,6 +17,7 @@ import json
 import subprocess
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -324,3 +325,100 @@ def test_an_unreadable_scope_is_recorded_under_its_own_reason(tmp_path: Path) ->
     journal = tmp_path / ".sdd" / "runtime" / "refused_merges.jsonl"
     reasons = [json.loads(line)["reason"] for line in journal.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert reasons == ["allowed-files-unreadable"]
+
+
+# ---------------------------------------------------------------------------
+# The file list itself is evidence, and its absence is not "nothing to judge"
+# ---------------------------------------------------------------------------
+
+
+def _git_diff_fails(*, timeout: bool) -> Any:
+    """Stand in for ``run_git`` so the file-list read fails and nothing else does.
+
+    The two failures are the two the merge path actually sees: a non-zero
+    ``git diff`` (the branch is gone, the object store is damaged), and the
+    30-second timeout a very large diff hits while ``git merge`` itself still
+    succeeds. Only the file-list call is broken, so a gate that reached the
+    scope check on a half-read change would still look like it worked.
+    """
+    from bernstein.core.git_ops import run_git as real_run_git
+
+    def _fake(args: list[str], cwd: Path, **kwargs: Any) -> Any:
+        if args[:2] == ["diff", "--name-only"]:
+            if timeout:
+                raise subprocess.TimeoutExpired(cmd=["git", *args], timeout=30)
+            return type("_Result", (), {"returncode": 128, "stdout": "", "stderr": "fatal: bad revision\n"})()
+        return real_run_git(args, cwd, **kwargs)
+
+    return _fake
+
+
+@pytest.mark.parametrize("timeout", [False, True], ids=["non-zero-exit", "timed-out"])
+def test_a_file_list_that_cannot_be_read_refuses_rather_than_admitting_everything(
+    tmp_path: Path,
+    timeout: bool,
+) -> None:
+    """The fail-open direction, one level below the scope.
+
+    An empty file list reads as "no path fell outside the scope", which is
+    the same answer a genuinely empty change gives. A merge whose file list
+    timed out would land unjudged while the gate reported that it held.
+    """
+    _repo_with_agent_branch(tmp_path, "s15", {"infra/deploy.tf": "y\n"})
+    _mint(tmp_path, "s15", ["src/**"])
+
+    with patch("bernstein.core.git_ops.run_git", _git_diff_fails(timeout=timeout)):
+        result = _refuse(tmp_path, "s15")
+
+    assert result is not None, "an unreadable file list must not read as an empty one"
+    assert result.success is False
+    assert "s15" in result.error
+
+
+def test_an_unreadable_file_list_is_recorded_under_its_own_reason(tmp_path: Path) -> None:
+    """A third refusal, and a third reason.
+
+    "The scope is damaged" and "the change could not be read" are repaired
+    by different people: the first by the operator who owns the credential,
+    the second by whoever owns the repository the diff would not come out of.
+    """
+    _repo_with_agent_branch(tmp_path, "s16", {"infra/deploy.tf": "y\n"})
+    _mint(tmp_path, "s16", ["src/**"])
+
+    with patch("bernstein.core.git_ops.run_git", _git_diff_fails(timeout=False)):
+        assert _refuse(tmp_path, "s16") is not None
+
+    journal = tmp_path / ".sdd" / "runtime" / "refused_merges.jsonl"
+    reasons = [json.loads(line)["reason"] for line in journal.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert reasons == ["allowed-files-diff-unreadable"]
+
+
+def test_an_unreadable_file_list_is_inert_when_no_scope_was_set(tmp_path: Path) -> None:
+    """The asymmetry to preserve.
+
+    Only a failed read refuses, and only where a scope was declared. An
+    identity with an empty scope declared no boundary, so there is nothing
+    for an unreadable change to fall outside of - refusing there would turn
+    every flaky ``git diff`` into a lost merge for every identity minted
+    before the gate existed.
+    """
+    _repo_with_agent_branch(tmp_path, "s17", {"infra/deploy.tf": "y\n"})
+    _mint(tmp_path, "s17", [])
+
+    with patch("bernstein.core.git_ops.run_git", _git_diff_fails(timeout=True)):
+        assert _refuse(tmp_path, "s17") is None
+
+
+def test_a_genuinely_empty_change_is_still_admitted(tmp_path: Path) -> None:
+    """The other half of the distinction being drawn.
+
+    A branch that changes nothing reads back an empty file list, and that
+    list is evidence rather than the absence of it.
+    """
+    _repo_with_agent_branch(tmp_path, "s18", {"src/ok.py": "x\n"})
+    _run(["git", "checkout", "-b", "agent/s19"], tmp_path)
+    _run(["git", "checkout", "main"], tmp_path)
+    _mint(tmp_path, "s19", ["src/**"])
+
+    assert _incoming_change(tmp_path, "agent/s19") == ([], "")
+    assert _refuse(tmp_path, "s19") is None

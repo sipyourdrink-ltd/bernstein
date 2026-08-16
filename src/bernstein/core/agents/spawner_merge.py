@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -20,8 +21,6 @@ from bernstein.core.traces import AgentTrace, TraceStore, finalize_trace
 from bernstein.plugins.manager import get_plugin_manager
 
 if TYPE_CHECKING:
-    import subprocess
-
     from bernstein.core.agents.container import ContainerManager
     from bernstein.core.agents.in_process_agent import InProcessAgent
     from bernstein.core.agents.warm_pool import PoolSlot, WarmPool
@@ -96,33 +95,85 @@ def _sanitise_for_log(value: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+class IncomingChangeUnreadable(RuntimeError):
+    """The change a merge would bring in could not be computed.
+
+    Raised rather than collapsed into an empty change, because the gates
+    below judge the change by what is in it: no file outside the scope, no
+    score above the ceiling. An empty list answers both of those questions
+    with "nothing to object to", which is exactly what a genuinely empty
+    change answers -- so a read that failed would be indistinguishable from
+    a merge that brings in nothing, and would pass every gate on evidence
+    that was never gathered.
+
+    The benign case is a branch that does not exist, where the merge would
+    fail anyway and nothing lands. The one that matters is the timeout: the
+    file list is read with a 30-second budget the merge itself does not
+    share, so a large enough diff can time out here while ``git merge``
+    still succeeds.
+    """
+
+
+def _incoming_files(worktree_root: Path, branch: str) -> list[str]:
+    """Return the paths merging ``branch`` would touch.
+
+    ``--no-renames``, because rename detection reports only a rename's
+    *destination*. Every gate reading this list judges paths, and a list that
+    omits the path a merge removes lets ``git mv outside inside`` pass a
+    check that ``git rm outside`` fails -- the disguised removal admitted and
+    the honest one refused. A rename is two paths changing, so both are named.
+
+    Raises:
+        IncomingChangeUnreadable: The file list could not be read. An empty
+            list is a change that touches nothing; this is not that.
+    """
+    from bernstein.core.git_ops import run_git
+
+    spec = f"HEAD...{branch}"
+    try:
+        names = run_git(["diff", "--name-only", "--no-renames", spec], worktree_root, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        # ``run_git`` raises ``TimeoutExpired`` rather than returning non-zero,
+        # so the case this gate exists for arrives as an exception.
+        msg = f"could not be read: git diff --name-only {spec} did not complete ({exc})"
+        raise IncomingChangeUnreadable(msg) from exc
+    if names.returncode != 0:
+        detail = _sanitise_for_log(names.stderr.strip())
+        msg = f"could not be read: git diff --name-only {spec} exited {names.returncode} ({detail})"
+        raise IncomingChangeUnreadable(msg)
+    return [line.strip() for line in names.stdout.splitlines() if line.strip()]
+
+
 def _incoming_change(worktree_root: Path, branch: str) -> tuple[list[str], str]:
     """Return ``(files, diff_text)`` for what merging ``branch`` would bring in.
 
     Both are computed against the merge base with the checked-out branch, so
     the score describes this merge rather than the branch's whole history.
-    An unreadable branch yields an empty change, which the scorer treats as
-    a zero-risk one; the gate below refuses only on evidence.
 
-    ``--no-renames`` on the file list, because rename detection reports only
-    a rename's *destination*. Every gate reading this list judges paths, and
-    a list that omits the path a merge removes lets ``git mv outside inside``
-    pass a check that ``git rm outside`` fails -- the disguised removal
-    admitted and the honest one refused. A rename is two paths changing, so
-    both are named. The diff body keeps rename detection: it is scored as
-    text rather than judged as paths, and inflating a pure rename into a
-    delete-plus-add there would change what a blast radius means without
-    closing anything.
+    The file list comes from :func:`_incoming_files` and carries its
+    ``--no-renames`` reading. The diff body keeps rename detection: it is
+    scored as text rather than judged as paths, and inflating a pure rename
+    into a delete-plus-add there would change what a blast radius means
+    without closing anything.
+
+    Raises:
+        IncomingChangeUnreadable: Either read failed. Both halves are scored,
+            so a body that did not come out understates the change the same
+            way a missing file list does.
     """
     from bernstein.core.git_ops import run_git
 
+    files = _incoming_files(worktree_root, branch)
     spec = f"HEAD...{branch}"
-    names = run_git(["diff", "--name-only", "--no-renames", spec], worktree_root, timeout=30)
-    if names.returncode != 0:
-        return [], ""
-    files = [line.strip() for line in names.stdout.splitlines() if line.strip()]
-    body = run_git(["diff", spec], worktree_root, timeout=60)
-    return files, body.stdout if body.returncode == 0 else ""
+    try:
+        body = run_git(["diff", spec], worktree_root, timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        msg = f"could not be read: git diff {spec} did not complete ({exc})"
+        raise IncomingChangeUnreadable(msg) from exc
+    if body.returncode != 0:
+        msg = f"could not be read: git diff {spec} exited {body.returncode} ({_sanitise_for_log(body.stderr.strip())})"
+        raise IncomingChangeUnreadable(msg)
+    return files, body.stdout
 
 
 def _blast_radius_refusal(
@@ -133,29 +184,41 @@ def _blast_radius_refusal(
     """Refuse the merge when it exceeds the operator's blast-radius ceiling.
 
     Returns ``None`` when the merge may proceed, which includes the default
-    case where no ceiling was requested.
+    case where no ceiling was requested. The ceiling is checked first, so a
+    run that never asked for one is not gated by anything here -- including
+    by a change that could not be read.
+
+    A change that could not be read refuses. Scoring needs the change, and
+    the empty one a failed read would otherwise supply scores as the safest
+    possible merge, so an operator who set a ceiling would watch an unjudged
+    change land under it.
     """
     from bernstein.core.lifecycle.blast_radius_gate import ceiling_requested, evaluate_pre_merge
 
     if not ceiling_requested():
         return None
 
-    files, diff_text = _incoming_change(worktree_root, branch)
+    try:
+        files, diff_text = _incoming_change(worktree_root, branch)
+    except IncomingChangeUnreadable as exc:
+        return _refuse_merge(
+            session,
+            worktree_root,
+            branch,
+            reason=f"refused: the change {branch!r} would bring in {exc}",
+            code="blast-radius-unreadable",
+        )
     decision = evaluate_pre_merge(files=files, diff_text=diff_text)
     if decision is None or decision.allowed:
         return None
 
-    _record_merge_refusal(worktree_root, session.id, branch, reason="blast-radius-ceiling")
-    logger.error(
-        "Refusing to merge agent work from %s: %s",
-        _sanitise_for_log(session.id),
-        _sanitise_for_log(decision.reason),
+    return _refuse_merge(
+        session,
+        worktree_root,
+        branch,
+        reason=decision.reason,
+        code="blast-radius-ceiling",
     )
-    from bernstein.core.metric_collector import get_collector
-
-    for task_id in session.task_ids:
-        get_collector().record_merge_result(task_id, success=False)
-    return MergeResult(success=False, conflicting_files=[], error=decision.reason)
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +329,14 @@ def _file_scope_refusal(
 
     A record that is on disk and does not resolve is neither of those, and
     refuses: it is a scope someone declared, and the gate cannot see what it
-    said.
+    said. A file list that could not be read refuses for the same reason one
+    step further along: the scope is legible and the change is not, and the
+    empty list a failed read would supply says "nothing fell outside" in the
+    same words a merge that touches nothing says it.
+
+    Only the file list is read here. The diff body is what a blast radius is
+    scored from; this gate judges paths, and a body that did not come out
+    tells it nothing it needs.
 
     The refusal is containment rather than prevention. The out-of-scope write
     already happened inside the agent's own worktree; what this stops is that
@@ -290,7 +360,19 @@ def _file_scope_refusal(
     if not patterns:
         return None
 
-    files, _ = _incoming_change(worktree_root, branch)
+    try:
+        files = _incoming_files(worktree_root, branch)
+    except IncomingChangeUnreadable as exc:
+        return _refuse_merge(
+            session,
+            worktree_root,
+            branch,
+            reason=(
+                f"refused: identity {session.id!r} is scoped to {', '.join(patterns)}, "
+                f"but the file list this merge would bring in {exc}"
+            ),
+            code="allowed-files-diff-unreadable",
+        )
     outside = paths_outside_scope(files, patterns)
     if not outside:
         return None

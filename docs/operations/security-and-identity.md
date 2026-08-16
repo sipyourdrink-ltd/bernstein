@@ -471,6 +471,21 @@ under `allowed-files-unreadable` instead of `allowed-files-scope`, so
 scope" from "the scope itself needs repair". Repair it with the identity
 commands above, or revoke and re-spawn the agent.
 
+**An unreadable change refuses too.** The gate reads the file list a merge
+would bring in, and an empty list means the merge touches nothing — the same
+answer a `git diff` that failed would otherwise give. So a read that does not
+complete refuses instead of returning nothing to judge, journalled under
+`allowed-files-diff-unreadable`. The blast-radius ceiling refuses the same
+change under `blast-radius-unreadable`, for the same reason: an empty change
+scores as the safest possible one.
+
+The case worth knowing about is not the missing branch, where the merge would
+fail anyway. It is the timeout: the file list is read with a 30-second budget
+the merge itself does not share, so a large enough diff can time out here
+while `git merge` still succeeds. Both gates stay inert when nothing was
+asked of them — no ceiling set, no scope declared — so only a failed read
+inside a gate that is actually on can turn into a refusal.
+
 ## Delegation capability tokens
 
 When a run fans out, authority fans out with it. A **capability token** makes
