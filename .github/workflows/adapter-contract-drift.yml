@@ -21,6 +21,11 @@ name: Adapter contract drift
 #   * On PRs touching adapters or contracts so contract edits get
 #     validated immediately.
 #   * Manual dispatch for operator-driven re-runs.
+#   * NOT on merge_group. Only `CI gate` is required there, so this lane
+#     never gated a queue merge; it competed with ci.yml for runners on
+#     every queue entry and reshuffle. Upstream drift is a function of
+#     upstream releases, not of what a queue entry changes - the daily
+#     schedule is the right cadence for it.
 
 on:
   schedule:
@@ -30,11 +35,6 @@ on:
     # enough to justify three sweeps a day; workflow_dispatch covers an
     # immediate re-check after a known upstream release.
     - cron: "0 6 * * *"
-  # Pre-merge validation runs on the merge queue's ephemeral branch instead
-  # of on every PR push. merge_group has no paths filter, so the full adapter
-  # matrix runs pre-merge; the daily cron still surfaces upstream CLI
-  # releases independent of any merge.
-  merge_group: {}
   workflow_dispatch:
 
 concurrency:

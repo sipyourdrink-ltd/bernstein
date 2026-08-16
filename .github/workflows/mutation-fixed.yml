@@ -16,6 +16,11 @@
 #     diff coverage.
 #   - manual: workflow_dispatch with optional `module` input for ad-hoc
 #     runs against a single module key.
+#   - NOT on merge_group. The queue's only required context is `CI gate`,
+#     so this lane never gated a merge there - it only competed with
+#     ci.yml for runners on every queue entry and every queue reshuffle,
+#     which starved the check the queue actually waits for. Weekly cron
+#     and the diff-only job in ci.yml keep the coverage.
 #
 # Each module runs in its own matrix job so per-module budgets are
 # enforced separately and a slow module doesn't squeeze the others. The
@@ -38,7 +43,6 @@ on:
   # modules independent of diff coverage. The PR-comment summary job below is
   # event-gated to pull_request and simply no-ops on the queue (no PR to
   # comment on), while the matrix jobs still run and enforce the gate.
-  merge_group: {}
   schedule:
     # Weekly full audit. Independent of any PR.
     - cron: "17 4 * * 0"

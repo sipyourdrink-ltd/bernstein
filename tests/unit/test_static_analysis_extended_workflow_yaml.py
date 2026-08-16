@@ -1,41 +1,44 @@
-"""Structural assertions on ``static-analysis (extended)``.
+"""The merge queue runs required checks; these lanes are not among them.
 
-``.github/workflows/static-analysis-extended.yml`` runs the full-width
-scanner surface (Semgrep, Trivy filesystem, Trivy IaC) on the merge
-queue's ephemeral branch, so the whole suite gates a merge without
-running on every pull-request push.
+The only context the ``main`` merge queue requires is ``CI gate``. Three
+workflows nevertheless triggered on ``merge_group``:
 
-The failure this module exists to prevent
------------------------------------------
-Code Scanning attaches alerts to the ref a run was for. A merge-queue
-run's ref is ``gh-readonly-queue/main/pr-<n>-<sha>``, which GitHub
-deletes the moment the entry merges or the queue re-shuffles. These
-scanners take minutes; the upload regularly landed *after* the branch
-was gone, and the API answered::
+- ``static-analysis-extended.yml`` (Semgrep, Trivy fs, Trivy IaC)
+- ``mutation-fixed.yml`` (mutmut over the fixed critical-path modules)
+- ``adapter-contract-drift.yml`` (upstream CLI capability checks)
 
-    ref 'refs/heads/gh-readonly-queue/main/pr-4012-1c50b8e...' not found
+None of them could gate a queue merge. What they did instead was compete
+with ``ci.yml`` for the runner pool on every queue entry and every queue
+re-shuffle -- and a re-shuffle re-creates every entry's branch, so one
+dequeue near the head could fan out dozens of runs. On 2026-08-16 the
+queue sat for half an hour with ~50 runs queued against ~7 executing,
+while the check it was actually waiting for could not start.
 
-That failed the job over a report with nowhere to go while the scan
-itself had passed. Because the lane is a required context, the false
-failure ejected the pull request from the queue and jammed every entry
-behind it -- observed on #4002 and #4012 on 2026-08-16, minutes apart,
-which is what identified the cause as the ref lifetime rather than
-anything in either diff.
+static-analysis had a second failure mode on top: Code Scanning attaches
+alerts to the ref the run was for, and a merge-queue ref
+(``gh-readonly-queue/main/pr-<n>-<sha>``) is deleted the moment its entry
+merges or the queue re-shuffles. The scanners take minutes, so the SARIF
+upload regularly landed after the branch was gone and the API answered
+``ref ... not found`` -- failing the job over a report with nowhere to
+go, after the scan itself had passed (#4002, #4012, #4014, minutes
+apart, unrelated diffs).
 
-Uploading on ``push`` to ``main`` covers the alerts that matter, against
-a ref that persists.
+So: none of the three triggers on ``merge_group``. Coverage moves to
+where each lane's signal actually lives -- push-to-main for the
+scanners (alerts against a ref that persists), the weekly cron for
+mutation, the daily cron for upstream drift.
 
 Invariants exercised here:
 
-1. Every Code Scanning upload is skipped on ``merge_group``.
-2. Those uploads keep ``always()``, so a scanner that exits non-zero on
-   a push or schedule run still reports what it found.
-3. The scanner steps themselves carry no event condition. Skipping the
-   scan on the merge queue -- rather than only its reporting -- would
-   turn the gate into a formality.
-4. Every job that uploads SARIF to Code Scanning also keeps the raw
-   SARIF as a workflow artifact, so a merge-queue run's results are
-   still recoverable with no Security tab entry.
+1. None of the three workflows triggers on ``merge_group``.
+2. static-analysis still runs on push to ``main`` -- dropping the queue
+   trigger without keeping this one would silence the scanners
+   entirely.
+3. Each lane keeps the schedule its coverage argument rests on.
+4. static-analysis uploads to Code Scanning under ``always()``, so a
+   failing scanner still reports what it found.
+5. Every job that uploads SARIF also keeps the raw file as a workflow
+   artifact, under ``always()``.
 """
 
 from __future__ import annotations
@@ -46,43 +49,65 @@ from typing import Any
 import pytest
 import yaml
 
-WORKFLOW = (
-    Path(__file__).resolve().parents[2]
-    / ".github"
-    / "workflows"
-    / "static-analysis-extended.yml"
+WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
+
+STATIC_ANALYSIS = "static-analysis-extended.yml"
+NEVER_ON_MERGE_GROUP = (
+    STATIC_ANALYSIS,
+    "mutation-fixed.yml",
+    "adapter-contract-drift.yml",
 )
 
 CODE_SCANNING_ACTION = "github/codeql-action/upload-sarif"
 ARTIFACT_ACTION = "actions/upload-artifact"
 
 
-def _workflow() -> dict[str, Any]:
-    return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+def _load(name: str) -> dict[str, Any]:
+    return yaml.safe_load((WORKFLOWS / name).read_text(encoding="utf-8"))
 
 
-def _jobs() -> dict[str, Any]:
-    return _workflow()["jobs"]
+def _triggers(name: str) -> dict[str, Any]:
+    workflow = _load(name)
+    return workflow[True]  # PyYAML reads a bare `on:` key as True.
 
 
 def _steps_using(job: dict[str, Any], action: str) -> list[dict[str, Any]]:
     return [step for step in job.get("steps", []) if action in str(step.get("uses", ""))]
 
 
+@pytest.mark.parametrize("name", NEVER_ON_MERGE_GROUP)
+def test_lane_does_not_run_on_the_merge_queue(name: str) -> None:
+    """Invariant 1: non-required lanes stay out of the queue's runner pool."""
+    assert "merge_group" not in _triggers(name), (
+        f"{name} is not a required context on main, so a merge_group trigger "
+        "cannot gate anything -- it can only starve `CI gate` of runners"
+    )
+
+
+def test_static_analysis_still_covers_main() -> None:
+    """Invariant 2."""
+    triggers = _triggers(STATIC_ANALYSIS)
+
+    assert "push" in triggers
+    assert "main" in triggers["push"]["branches"]
+
+
+@pytest.mark.parametrize("name", NEVER_ON_MERGE_GROUP)
+def test_lane_keeps_its_schedule(name: str) -> None:
+    """Invariant 3: the cadence each lane's coverage argument rests on."""
+    assert "schedule" in _triggers(name), (
+        f"{name} lost its schedule; without it, dropping merge_group leaves "
+        "the lane running never"
+    )
+
+
 def _upload_steps() -> list[tuple[str, dict[str, Any]]]:
+    jobs = _load(STATIC_ANALYSIS)["jobs"]
     return [
         (name, step)
-        for name, job in _jobs().items()
+        for name, job in jobs.items()
         for step in _steps_using(job, CODE_SCANNING_ACTION)
     ]
-
-
-def test_workflow_runs_on_the_merge_queue() -> None:
-    """The premise of every other assertion here."""
-    triggers = _workflow()[True]  # PyYAML reads a bare `on:` key as True.
-
-    assert "merge_group" in triggers
-    assert "main" in triggers["push"]["branches"]
 
 
 def test_code_scanning_uploads_exist() -> None:
@@ -92,60 +117,23 @@ def test_code_scanning_uploads_exist() -> None:
 
 @pytest.mark.parametrize(
     ("job_name", "step"),
-    [(name, step) for name, step in _upload_steps()],
+    _upload_steps(),
     ids=[f"{name}:{step.get('with', {}).get('category')}" for name, step in _upload_steps()],
 )
-def test_code_scanning_upload_is_skipped_on_the_merge_queue(
+def test_upload_reports_even_when_the_scan_fails(
     job_name: str, step: dict[str, Any]
 ) -> None:
-    """Invariants 1 and 2, per upload step."""
-    condition = str(step.get("if", ""))
-
-    assert "github.event_name != 'merge_group'" in condition, (
-        f"{job_name}: uploading Code Scanning results from a merge-queue run "
-        "targets a ref GitHub deletes on merge, so the upload fails the job "
-        "after the scan already passed"
-    )
-    assert "always()" in condition, (
-        f"{job_name}: dropping always() would stop a failing scanner from "
-        "reporting what it found on push and schedule runs"
-    )
-
-
-@pytest.mark.parametrize("job_name", ["semgrep", "trivy-fs", "trivy-iac"])
-def test_scanners_themselves_are_unconditional(job_name: str) -> None:
-    """Invariant 3.
-
-    These three are the jobs with no job-level ``if:``, which is what
-    makes them run on the merge queue. The fix above is allowed to
-    silence the *reporting* on that event and nothing else.
-    """
-    job = _jobs()[job_name]
-
-    assert "if" not in job, (
-        f"{job_name} must run on every trigger including merge_group; "
-        "gating the job on the event would let a merge through unscanned"
-    )
-
-    scanner_steps = [
-        step
-        for step in job["steps"]
-        if "run" in step and "merge_group" in str(step.get("if", ""))
-    ]
-    assert scanner_steps == [], (
-        f"{job_name}: a scanner step is conditioned on the event. Only the "
-        "Code Scanning upload may be."
+    """Invariant 4."""
+    assert "always()" in str(step.get("if", "")), (
+        f"{job_name}: without always(), a scanner that exits non-zero on a "
+        "push or schedule run reports nothing"
     )
 
 
 @pytest.mark.parametrize("job_name", sorted({name for name, _ in _upload_steps()}))
 def test_raw_sarif_survives_as_an_artifact(job_name: str) -> None:
-    """Invariant 4.
-
-    With the Security tab skipped on merge-queue runs, the artifact is
-    the only way back to what a queue run actually found.
-    """
-    artifacts = _steps_using(_jobs()[job_name], ARTIFACT_ACTION)
+    """Invariant 5."""
+    artifacts = _steps_using(_load(STATIC_ANALYSIS)["jobs"][job_name], ARTIFACT_ACTION)
 
     assert artifacts, f"{job_name} uploads SARIF to Code Scanning but keeps no artifact"
     for step in artifacts:
