@@ -66,7 +66,7 @@ else:
     import fcntl  # type: ignore[no-redef]
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
 
 LINEAGE_V2_ENTRY_VERSION = 2
 
@@ -217,7 +217,7 @@ def _iter_raw_lines(path: Path) -> Iterator[bytes]:
 
 
 @contextmanager
-def _exclusive_lock(path: Path) -> Iterator[int]:
+def _exclusive_lock(path: Path) -> Generator[int, None, None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o600)
     try:

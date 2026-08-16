@@ -50,7 +50,15 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "fastapi>=0.115",
+    # Capped below 0.137: from that release ``include_router`` keeps a
+    # ``fastapi.routing._IncludedRouter`` wrapper in ``app.router.routes``
+    # instead of flattening the sub-router's routes into it. That wrapper
+    # exposes no ``path``, so the route-table introspection in
+    # ``core/security/auth_middleware.py`` resolves to an empty matcher set
+    # and the agent task-scope gate stops recognising every per-task route
+    # registered through a sub-router. Lift the cap together with the
+    # migration tracked in #4023.
+    "fastapi>=0.115,<0.137",
     # Direct floor for the Starlette ASGI layer so the resolved lockfile stays
     # above PYSEC-2026-161 even when pulled through FastAPI or MCP.
     "starlette>=1.0.1",
