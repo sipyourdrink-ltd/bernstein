@@ -1965,57 +1965,6 @@ jobs:
 
   # ─── Post-pipeline (conditional, never cancelled) ──────────────────────
 
-  autofix:
-    name: Auto-fix lint
-    runs-on: ubuntu-latest
-    needs: [lint, repo-hygiene]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'bernstein[bot]' && github.actor != 'bernstein-orchestrator[bot]'
-    continue-on-error: true
-    timeout-minutes: 15
-    permissions:
-      contents: write
-    steps:
-      - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
-        with:
-          egress-policy: audit
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-          fetch-depth: 5
-      - name: Check for autofix loop
-        id: loop_check
-        run: |
-          RECENT=$(git log --oneline -3 --format='%s' | grep -c "style: auto-fix" || true)
-          if [ "$RECENT" -ge 3 ]; then
-            echo "::warning::Autofix loop detected - last 3 commits are all auto-fix. Skipping."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-      - if: steps.loop_check.outputs.skip != 'true'
-        uses: ./.github/actions/bootstrap
-      - name: Auto-fix ruff
-        if: steps.loop_check.outputs.skip != 'true'
-        run: |
-          uv run ruff check src/ --fix --unsafe-fixes || true
-          uv run ruff format src/
-      - name: Purge tracked .sdd files
-        if: steps.loop_check.outputs.skip != 'true'
-        run: |
-          TRACKED="$(git ls-files '.sdd')"
-          if [ -n "$TRACKED" ]; then
-            echo "$TRACKED" | xargs git rm --cached --
-          fi
-      - name: Commit and push fixes
-        if: steps.loop_check.outputs.skip != 'true'
-        run: |
-          git add src/ tests/ scripts/
-          git diff --cached --quiet && echo "Nothing to fix" && exit 0
-          git config user.name "bernstein[bot]"
-          git config user.email "bernstein-bot@users.noreply.github.com"
-          git commit -m "style: auto-fix ruff lint and format"
-          git push
-
   close-ci-issues:
     name: Close resolved CI issues
     runs-on: ubuntu-latest
@@ -2079,7 +2028,6 @@ jobs:
   # ``CI gate``). The exact `gh api` invocation is in PR #1273's body.
   #
   # Excluded from `needs:`:
-  #   * `autofix`        - runs only on push to main, mutates the tree
   #   * `close-ci-issues` - post-gate issue update, must not gate merges
   #   * `typecheck`      - advisory report while repo-wide pyright is being typed
   #   * `mutmut-diff`    - advisory report until mutation score enforcement is enabled

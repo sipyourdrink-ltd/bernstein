@@ -58,15 +58,30 @@ jobs:
 
           deleted=0
 
+          # keep_days: runs created after the cutoff are never deleted.
+          # KEEP_DAYS=0 keeps nothing (cutoff = now), matching the input's
+          # documented "0 = delete all" behaviour.
+          CUTOFF=$(date -u -d "${KEEP_DAYS:-0} days ago" +%Y-%m-%dT%H:%M:%SZ)
+          echo "Deleting matching runs created before ${CUTOFF}"
+
           delete_by_status() {
             local status="$1"
             for page in $(seq 1 50); do
-              ids=$(gh api "repos/$REPO/actions/runs?status=$status&per_page=100&page=$page" --jq '.workflow_runs[].id' 2>/dev/null || true)
-              [ -z "$ids" ] && break
-              count=$(echo "$ids" | wc -l | tr -d ' ')
-              echo "Deleting $count $status runs (page $page)..."
-              echo "$ids" | xargs -P 20 -I {} gh api "repos/$REPO/actions/runs/{}" -X DELETE 2>/dev/null || true
-              deleted=$((deleted + count))
+              payload=$(gh api "repos/$REPO/actions/runs?status=$status&per_page=100&page=$page" 2>/dev/null || echo '{}')
+              page_count=$(printf '%s' "$payload" | jq '.workflow_runs | length')
+              [ "$page_count" -eq 0 ] && break
+              # Filter by age locally; a page can hold zero old-enough runs
+              # while later pages still do, so emptiness of the filtered set
+              # must not end the walk -- only an empty page does.
+              ids=$(printf '%s' "$payload" | jq -r --arg cutoff "$CUTOFF" \
+                '.workflow_runs[] | select(.created_at < $cutoff) | .id')
+              if [ -n "$ids" ]; then
+                count=$(echo "$ids" | wc -l | tr -d ' ')
+                echo "Deleting $count $status runs (page $page)..."
+                echo "$ids" | xargs -P 20 -I {} gh api "repos/$REPO/actions/runs/{}" -X DELETE 2>/dev/null || true
+                deleted=$((deleted + count))
+              fi
+              [ "$page_count" -lt 100 ] && break
             done
           }
 
@@ -90,17 +105,20 @@ jobs:
           if [ "$DELETE_ORPHANED" = "true" ]; then
             echo "=== Cleaning orphaned runs (deleted workflows) ==="
             for page in $(seq 1 100); do
-              # Get runs where the workflow name is null (deleted workflow)
-              ids=$(gh api "repos/$REPO/actions/runs?per_page=100&page=$page" \
-                --jq '[.workflow_runs[] | select(.name == null or .name == "") | .id] | .[]' 2>/dev/null || true)
-              [ -z "$ids" ] && break
-              count=$(echo "$ids" | wc -l | tr -d ' ')
-              echo "Deleting $count orphaned runs (page $page)..."
-              echo "$ids" | xargs -P 20 -I {} gh api "repos/$REPO/actions/runs/{}" -X DELETE 2>/dev/null || true
-              deleted=$((deleted + count))
-              # If we got less than 100, we're done
-              total_on_page=$(gh api "repos/$REPO/actions/runs?per_page=100&page=$page" --jq '.workflow_runs | length' 2>/dev/null || echo "0")
-              [ "$total_on_page" -lt 100 ] && break
+              payload=$(gh api "repos/$REPO/actions/runs?per_page=100&page=$page" 2>/dev/null || echo '{}')
+              page_count=$(printf '%s' "$payload" | jq '.workflow_runs | length')
+              [ "$page_count" -eq 0 ] && break
+              # Runs whose workflow was deleted (name=null), old enough
+              # to fall before the keep_days cutoff.
+              ids=$(printf '%s' "$payload" | jq -r --arg cutoff "$CUTOFF" \
+                '.workflow_runs[] | select((.name == null or .name == "") and .created_at < $cutoff) | .id')
+              if [ -n "$ids" ]; then
+                count=$(echo "$ids" | wc -l | tr -d ' ')
+                echo "Deleting $count orphaned runs (page $page)..."
+                echo "$ids" | xargs -P 20 -I {} gh api "repos/$REPO/actions/runs/{}" -X DELETE 2>/dev/null || true
+                deleted=$((deleted + count))
+              fi
+              [ "$page_count" -lt 100 ] && break
             done
           fi
 

@@ -2,7 +2,10 @@ name: PR observability summary
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    # `labeled` is in the list because the job is gated on the deep-review
+    # label, which is usually applied after the PR is already open; without
+    # it, adding the label does nothing until the next push.
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
     inputs:
       pr_number:

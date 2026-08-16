@@ -38,9 +38,13 @@ on:
       - unlabeled
       - auto_merge_enabled
 
+# Cancel superseded pull_request runs (repo-wide rule; none of these
+# checks is a branch-protection required context, so a cancelled run
+# cannot wedge a PR -- see tests/unit/test_pull_request_workflow_concurrency_yaml.py).
+# The expression keeps non-PR events (none today) outside the cancel path.
 concurrency:
   group: pr-policy-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Default-deny at workflow scope; the job re-asserts the scopes it
 # actually needs (Scorecard token-permissions).
@@ -58,6 +62,9 @@ jobs:
       contents: write
       pull-requests: read
       actions: read
+      # The andon gate reads the open/closed state of the trunk-unstable
+      # marker issue maintained by trunk-health-slo.yml.
+      issues: read
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
@@ -153,12 +160,19 @@ jobs:
         run: |
           set -euo pipefail
           # The deny-list is a repository variable (not a secret), so it is
-          # not masked by default. Register it as a masked value and pass
-          # only the env-var *name* to the script, so the phrase list is
-          # never echoed into public CI logs even if a later step prints
-          # the environment.
+          # not masked by default. Register the whole payload AND every
+          # individual phrase as masked values: masking only the concatenated
+          # payload leaves a single phrase printable in cleartext, and this
+          # job's logs are world-readable. The script itself also never
+          # prints a matched phrase (it reports a list index), so the mask
+          # is the second layer, not the only one.
           if [ -n "${PR_TEXT_HYGIENE_DENYLIST:-}" ]; then
             echo "::add-mask::${PR_TEXT_HYGIENE_DENYLIST}"
+            printf '%s' "${PR_TEXT_HYGIENE_DENYLIST}" \
+              | jq -r 'if type == "object" then .denylist[] else empty end' 2>/dev/null \
+              | while IFS= read -r phrase; do
+                  [ -n "${phrase}" ] && echo "::add-mask::${phrase}"
+                done || true
           fi
           python scripts/check_pr_text_hygiene.py \
             --title "${PR_TITLE}" \
@@ -253,21 +267,28 @@ jobs:
 
       # ─── Trunk andon gate ─────────────────────────────────────────────
 
-      - name: Check TRUNK_UNSTABLE
-        # Fails on every PR while TRUNK_UNSTABLE == 'true' unless the PR
-        # carries `hotfix-cleared`. Companion to trunk-health-slo.yml.
+      - name: Check the trunk-unstable marker
+        # Fails on every PR while an issue labeled `trunk-unstable` is open,
+        # unless the PR carries `hotfix-cleared`. Companion to
+        # trunk-health-slo.yml, which opens the marker on a red trunk and
+        # closes it on recovery. Reading fails open by design: a GitHub API
+        # outage must not hold every merge, and the write side fails loudly
+        # in its own workflow, so an inert gate cannot go unnoticed.
         env:
-          # Read-only access to repo variables suffices.
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
           set -euo pipefail
 
-          UNSTABLE=$(gh api "repos/${REPO}/actions/variables/TRUNK_UNSTABLE" \
-            --jq '.value' 2>/dev/null || echo "false")
+          OPEN_MARKERS=$(gh api "repos/${REPO}/issues?labels=trunk-unstable&state=open&per_page=10" \
+            --jq '[.[] | select(.pull_request | not)] | length' 2>/dev/null || echo 0)
+          UNSTABLE=false
+          if [ "${OPEN_MARKERS}" != "0" ]; then
+            UNSTABLE=true
+          fi
 
-          echo "TRUNK_UNSTABLE=${UNSTABLE}"
+          echo "trunk-unstable markers open: ${OPEN_MARKERS}"
 
           if [ "${UNSTABLE}" != "true" ]; then
             echo "Trunk healthy. Gate passes."
@@ -280,7 +301,7 @@ jobs:
             exit 0
           fi
 
-          echo "::error::Trunk is in an unstable state (TRUNK_UNSTABLE=true)."
+          echo "::error::Trunk is in an unstable state (a trunk-unstable marker issue is open)."
           echo "Merge held by Andon gate. Land the hotfix first (or apply the 'hotfix-cleared' label if this PR IS the hotfix)."
           exit 1
 
@@ -398,17 +419,26 @@ jobs:
           # let the push fail and the next pull_request.synchronize event
           # will re-run the job.
           set +e
-          git push origin "HEAD:${PR_HEAD_REF}"
+          push_output=$(git push origin "HEAD:${PR_HEAD_REF}" 2>&1)
           push_rc=$?
           set -e
           if [ "${push_rc}" -ne 0 ]; then
+            printf '%s\n' "${push_output}"
+            # A branch that entered the merge queue mid-run rejects every
+            # push (GH006) until it leaves the queue. The PR merges with
+            # exactly the tree it was enqueued with, so a missed autosync
+            # amend is moot; if the queue kicks the PR back out, the next
+            # synchronize event re-runs this job anyway.
+            if printf '%s' "${push_output}" | grep -qiE "GH006|merge queue"; then
+              echo "::notice::push to ${PR_HEAD_REF} rejected because the branch is locked by the merge queue; skipping autosync for this run."
             # Fail open ONLY on positive evidence the branch is gone: a merge
             # that deleted the head ref mid-run is benign. A real conflict
             # (author pushed) leaves the ref present, so the failure stays
             # red and the next synchronize event re-runs the job.
-            if git ls-remote --exit-code --heads origin "${PR_HEAD_REF}" >/dev/null 2>&1; then
+            elif git ls-remote --exit-code --heads origin "${PR_HEAD_REF}" >/dev/null 2>&1; then
               echo "::error::push to ${PR_HEAD_REF} failed and the ref still exists; leaving job red."
               exit "${push_rc}"
+            else
+              echo "::notice::push failed but ${PR_HEAD_REF} no longer exists (branch deleted / PR merged mid-run); treating as benign."
             fi
-            echo "::notice::push failed but ${PR_HEAD_REF} no longer exists (branch deleted / PR merged mid-run); treating as benign."
           fi

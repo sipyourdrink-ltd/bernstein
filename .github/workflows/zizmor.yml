@@ -10,6 +10,11 @@ name: zizmor (workflow static analysis)
 on:
   push:
     branches: [main]
+    # Same scope as the pull_request trigger: a merge that touches no
+    # workflow or action file has nothing for zizmor to re-analyze.
+    paths:
+      - ".github/workflows/**"
+      - ".github/actions/**"
   pull_request:
     paths:
       - ".github/workflows/**"
@@ -20,7 +25,10 @@ on:
 
 concurrency:
   group: zizmor-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded runs only for PRs. A push-to-main scan must never be
+  # cancelled by the next merge landing seconds later: a cancelled run shows
+  # grey, not red, so the earlier commit would silently lose its scan.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
