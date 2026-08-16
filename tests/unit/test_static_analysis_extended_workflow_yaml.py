@@ -99,18 +99,13 @@ def test_static_analysis_still_covers_main() -> None:
 def test_lane_keeps_its_schedule(name: str) -> None:
     """Invariant 3: the cadence each lane's coverage argument rests on."""
     assert "schedule" in _triggers(name), (
-        f"{name} lost its schedule; without it, dropping merge_group leaves "
-        "the lane running never"
+        f"{name} lost its schedule; without it, dropping merge_group leaves the lane running never"
     )
 
 
 def _upload_steps() -> list[tuple[str, dict[str, Any]]]:
     jobs = _load(STATIC_ANALYSIS)["jobs"]
-    return [
-        (name, step)
-        for name, job in jobs.items()
-        for step in _steps_using(job, CODE_SCANNING_ACTION)
-    ]
+    return [(name, step) for name, job in jobs.items() for step in _steps_using(job, CODE_SCANNING_ACTION)]
 
 
 def test_code_scanning_uploads_exist() -> None:
@@ -123,13 +118,10 @@ def test_code_scanning_uploads_exist() -> None:
     _upload_steps(),
     ids=[f"{name}:{step.get('with', {}).get('category')}" for name, step in _upload_steps()],
 )
-def test_upload_reports_even_when_the_scan_fails(
-    job_name: str, step: dict[str, Any]
-) -> None:
+def test_upload_reports_even_when_the_scan_fails(job_name: str, step: dict[str, Any]) -> None:
     """Invariant 4."""
     assert "always()" in str(step.get("if", "")), (
-        f"{job_name}: without always(), a scanner that exits non-zero on a "
-        "push or schedule run reports nothing"
+        f"{job_name}: without always(), a scanner that exits non-zero on a push or schedule run reports nothing"
     )
 
 
@@ -140,6 +132,4 @@ def test_raw_sarif_survives_as_an_artifact(job_name: str) -> None:
 
     assert artifacts, f"{job_name} uploads SARIF to Code Scanning but keeps no artifact"
     for step in artifacts:
-        assert "always()" in str(step.get("if", "")), (
-            f"{job_name}: the artifact is most needed when the scan failed"
-        )
+        assert "always()" in str(step.get("if", "")), f"{job_name}: the artifact is most needed when the scan failed"

@@ -114,9 +114,7 @@ def test_guarded_set_matches_the_workflow(ci_jobs: dict[str, Any]) -> None:
     guarded_in_workflow = {
         key
         for key, job in ci_jobs.items()
-        if isinstance(job, dict)
-        and "docs_only" in _condition(job)
-        and "merge_group" in _condition(job)
+        if isinstance(job, dict) and "docs_only" in _condition(job) and "merge_group" in _condition(job)
     }
     assert guarded_in_workflow == set(DOCS_ONLY_GUARDED_JOBS), (
         "the docs-only guard set changed in ci.yml without updating "
@@ -127,9 +125,7 @@ def test_guarded_set_matches_the_workflow(ci_jobs: dict[str, Any]) -> None:
 
 
 @pytest.mark.parametrize("job_key", DOCS_ONLY_GUARDED_JOBS)
-def test_guard_is_scoped_to_the_merge_group_event(
-    ci_jobs: dict[str, Any], job_key: str
-) -> None:
+def test_guard_is_scoped_to_the_merge_group_event(ci_jobs: dict[str, Any], job_key: str) -> None:
     """Property 1: docs-only pushes to main must still run everything."""
     condition = _condition(ci_jobs[job_key])
     assert "github.event_name == 'merge_group'" in condition, (
@@ -146,9 +142,7 @@ def test_guard_is_scoped_to_the_merge_group_event(
 
 
 @pytest.mark.parametrize("job_key", DOCS_ONLY_GUARDED_JOBS)
-def test_guard_declares_its_determine_changes_dependency(
-    ci_jobs: dict[str, Any], job_key: str
-) -> None:
+def test_guard_declares_its_determine_changes_dependency(ci_jobs: dict[str, Any], job_key: str) -> None:
     """Property 2: no needs edge means the guard reads an empty string."""
     assert "determine-changes" in _needs(ci_jobs[job_key]), (
         f"{job_key}: the docs-only guard reads "
@@ -174,11 +168,7 @@ def test_every_guarded_job_is_tolerated_by_the_gate(ci_jobs: dict[str, Any]) -> 
     bucket = set(re.findall(r'"([^"]+)"', match.group(1)))
 
     gate_needed = set(_needs(gate))
-    missing = [
-        key
-        for key in DOCS_ONLY_GUARDED_JOBS
-        if key in gate_needed and key not in bucket
-    ]
+    missing = [key for key in DOCS_ONLY_GUARDED_JOBS if key in gate_needed and key not in bucket]
     assert not missing, (
         f"{missing} carry the docs-only guard and are needed by CI gate, "
         "but DOCS_ONLY_SKIPPABLE does not name them. On the first "
@@ -205,9 +195,7 @@ EVENT_SHAPED_AXES = (
 
 
 @pytest.mark.parametrize(("job_key", "axis"), EVENT_SHAPED_AXES)
-def test_full_matrix_is_reserved_for_push_and_dispatch(
-    ci_jobs: dict[str, Any], job_key: str, axis: str
-) -> None:
+def test_full_matrix_is_reserved_for_push_and_dispatch(ci_jobs: dict[str, Any], job_key: str, axis: str) -> None:
     expr = str(ci_jobs[job_key]["strategy"]["matrix"][axis])
     assert "github.event_name == 'push'" in expr and "workflow_dispatch" in expr, (
         f"{job_key}.{axis}: the wide branch of this matrix must be keyed "
