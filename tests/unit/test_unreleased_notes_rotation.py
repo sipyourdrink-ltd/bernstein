@@ -36,12 +36,7 @@ _REF = re.compile(r"#(\d{3,5})")
 #
 # An exemption records a decision, so each one is written by hand and says what
 # the citation is doing. Remove the row when the entry ships.
-CONTEXT_CITATIONS: dict[str, str] = {
-    "The eval-gate verdict receipt store no longer follows a symlinked": (
-        "cites #3080 as the same containment shape and #3409/#3410 as the subsystem it "
-        "guards; the symlink fix itself is unreleased"
-    ),
-}
+CONTEXT_CITATIONS: dict[str, str] = {}
 
 
 def _refs(text: str) -> set[int]:
