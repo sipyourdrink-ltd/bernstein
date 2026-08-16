@@ -11,7 +11,7 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from bernstein.core.git_ops import MergeResult, merge_with_conflict_detection
 from bernstein.core.models import AgentBackend, AgentSession
@@ -163,13 +163,33 @@ def _blast_radius_refusal(
 # ---------------------------------------------------------------------------
 
 
-def _signed_file_scope(worktree_root: Path, session_id: str) -> list[str] | None:
+class _UnreadableScope:
+    """A scope that exists for the session but cannot be read back.
+
+    Distinct from ``None``, which is "no identity record was ever written".
+    Both leave the gate with no patterns to match against, and both have to
+    land on opposite sides of it: an absent record is the settled open
+    default, while a record someone wrote and the store cannot parse is the
+    same failure :func:`~bernstein.core.path_scope.paths_outside_scope`
+    already answers by admitting nothing. An unreadable scope must not widen
+    into "no scope", whether what is unreadable is one pattern or the whole
+    record carrying it.
+    """
+
+    __slots__ = ()
+
+
+_UNREADABLE_SCOPE: Final = _UnreadableScope()
+
+
+def _signed_file_scope(worktree_root: Path, session_id: str) -> list[str] | _UnreadableScope | None:
     """Return the ``allowed_files`` scope signed for ``session_id``.
 
     ``None`` means no scope was ever declared, which is not the same as an
     empty one: an empty list is a credential that deliberately restricts
     nothing, while ``None`` is the absence of a credential at all. Both are
     unrestricted here, but only the first is a statement someone made.
+    :data:`_UNREADABLE_SCOPE` is neither, and refuses.
 
     The store is opened only when its directory already exists. Constructing
     an :class:`AgentIdentityStore` mints a JWT secret as a side effect, and a
@@ -184,15 +204,52 @@ def _signed_file_scope(worktree_root: Path, session_id: str) -> list[str] | None
     try:
         identity = AgentIdentityStore(auth_dir).get(session_id)
     except OSError as exc:
-        # An unreadable store is not a scope. Failing open is safe here only
-        # because the store sits on the orchestrator's side of the boundary:
-        # ``worktree_root`` is the merge target, not the agent's worktree, so
-        # the branch being merged cannot reach ``.sdd/auth`` to provoke this.
-        # A gate that read its policy from ground the attacker can write would
-        # need the opposite default.
-        logger.debug("Could not read agent identities for %s: %s", _sanitise_for_log(session_id), exc)
-        return None
-    return None if identity is None else identity.allowed_files
+        logger.error("Could not read agent identities for %s: %s", _sanitise_for_log(session_id), exc)
+        return _UNREADABLE_SCOPE
+    if identity is not None:
+        return identity.allowed_files
+
+    # ``get`` answers ``None`` for a session that never had an identity and
+    # for one whose record is on disk but does not deserialise -- a file
+    # truncated by a crash mid-write, or one whose two copies of the scope
+    # disagree, is skipped by the store's shared reader exactly like a record
+    # that is not there. An unreadable directory likewise makes every record
+    # look absent. Only genuine absence is the settled open default, so the
+    # directory is read rather than the difference guessed at.
+    try:
+        present = any(entry.name == f"{session_id}.json" for entry in (auth_dir / "agent_identities").iterdir())
+    except OSError as exc:
+        logger.error("Could not list agent identities for %s: %s", _sanitise_for_log(session_id), exc)
+        return _UNREADABLE_SCOPE
+    return _UNREADABLE_SCOPE if present else None
+
+
+def _refuse_merge(
+    session: AgentSession,
+    worktree_root: Path,
+    branch: str,
+    *,
+    reason: str,
+    code: str,
+) -> MergeResult:
+    """Record, log, and score one file-scope refusal.
+
+    Shared by the gate's two refusals so a scope that is out of bounds and a
+    scope that cannot be read leave the same evidence behind: an operator
+    reconstructing either from ``refused_merges.jsonl`` should not find one
+    of them better recorded than the other.
+    """
+    _record_merge_refusal(worktree_root, session.id, branch, reason=code)
+    logger.error(
+        "Refusing to merge agent work from %s: %s",
+        _sanitise_for_log(session.id),
+        _sanitise_for_log(reason),
+    )
+    from bernstein.core.metric_collector import get_collector
+
+    for task_id in session.task_ids:
+        get_collector().record_merge_result(task_id, success=False)
+    return MergeResult(success=False, conflicting_files=[], error=reason)
 
 
 def _file_scope_refusal(
@@ -207,6 +264,10 @@ def _file_scope_refusal(
     scope is empty. Every identity minted before this gate existed carries an
     empty scope, so the gate is inert until an operator sets one.
 
+    A record that is on disk and does not resolve is neither of those, and
+    refuses: it is a scope someone declared, and the gate cannot see what it
+    said.
+
     The refusal is containment rather than prevention. The out-of-scope write
     already happened inside the agent's own worktree; what this stops is that
     change reaching the repository, and the branch is left intact so an
@@ -215,6 +276,17 @@ def _file_scope_refusal(
     from bernstein.core.path_scope import paths_outside_scope
 
     patterns = _signed_file_scope(worktree_root, session.id)
+    if isinstance(patterns, _UnreadableScope):
+        return _refuse_merge(
+            session,
+            worktree_root,
+            branch,
+            reason=(
+                f"refused: identity {session.id!r} has a signed file scope on disk that "
+                f"cannot be read back; an unreadable scope is not an absent one"
+            ),
+            code="allowed-files-unreadable",
+        )
     if not patterns:
         return None
 
@@ -223,21 +295,16 @@ def _file_scope_refusal(
     if not outside:
         return None
 
-    reason = (
-        f"refused: identity {session.id!r} is scoped to {', '.join(patterns)}, "
-        f"but the merge would bring in {', '.join(outside)}"
+    return _refuse_merge(
+        session,
+        worktree_root,
+        branch,
+        reason=(
+            f"refused: identity {session.id!r} is scoped to {', '.join(patterns)}, "
+            f"but the merge would bring in {', '.join(outside)}"
+        ),
+        code="allowed-files-scope",
     )
-    _record_merge_refusal(worktree_root, session.id, branch, reason="allowed-files-scope")
-    logger.error(
-        "Refusing to merge agent work from %s: %s",
-        _sanitise_for_log(session.id),
-        _sanitise_for_log(reason),
-    )
-    from bernstein.core.metric_collector import get_collector
-
-    for task_id in session.task_ids:
-        get_collector().record_merge_result(task_id, success=False)
-    return MergeResult(success=False, conflicting_files=[], error=reason)
 
 
 # ---------------------------------------------------------------------------

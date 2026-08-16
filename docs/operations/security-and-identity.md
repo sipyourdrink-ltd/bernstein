@@ -460,6 +460,17 @@ never become a signed scope. A pattern already on disk that cannot be
 interpreted matches nothing, and the refusal names it — an unreadable scope
 must not widen into "no scope".
 
+**A damaged record refuses; a missing one does not.** The two are not the same
+evidence. No record means no scope was ever declared for that session. A record
+that is on disk and does not load — truncated by an interrupted write, hand-
+edited so its two copies of the scope disagree, or sitting in a directory the
+orchestrator cannot list — is a scope someone declared that the gate cannot
+read, and it refuses rather than merging unbounded. The refusal is journalled
+under `allowed-files-unreadable` instead of `allowed-files-scope`, so
+`.sdd/runtime/refused_merges.jsonl` distinguishes "the agent went outside its
+scope" from "the scope itself needs repair". Repair it with the identity
+commands above, or revoke and re-spawn the agent.
+
 ## Delegation capability tokens
 
 When a run fans out, authority fans out with it. A **capability token** makes

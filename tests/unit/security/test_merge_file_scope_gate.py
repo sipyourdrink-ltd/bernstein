@@ -234,3 +234,93 @@ def test_the_scope_check_runs_against_the_same_file_list_the_refusal_reports(tmp
     assert outside, "the fixture must produce at least one out-of-scope path"
     for path in outside:
         assert path in result.error
+
+
+def _truncate_record(record: Path) -> None:
+    """A write that did not finish - a crash or a full disk mid-``_save``."""
+    record.write_text('{"id": "s12", "role": "backend"', encoding="utf-8")
+
+
+def _disagree_with_credential(record: Path) -> None:
+    """One field edited, so the record now carries two answers to "scoped to what"."""
+    stored = json.loads(record.read_text(encoding="utf-8"))
+    stored["allowed_files"] = []
+    record.write_text(json.dumps(stored), encoding="utf-8")
+
+
+def _unparseable_enum(record: Path) -> None:
+    """A value the record's own reader refuses, in a field that is not the scope."""
+    stored = json.loads(record.read_text(encoding="utf-8"))
+    stored["status"] = "not-a-real-status"
+    record.write_text(json.dumps(stored), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "corrupt",
+    [_truncate_record, _disagree_with_credential, _unparseable_enum],
+    ids=["truncated", "scope-disagrees-with-credential", "unparseable-enum"],
+)
+def test_an_identity_record_that_does_not_deserialise_refuses_rather_than_widening(
+    tmp_path: Path,
+    corrupt: Any,
+) -> None:
+    """The fail-open direction again, one level up from the pattern.
+
+    The store's shared reader answers ``None`` for a record it cannot parse
+    and for a record that is not there, and only the second is the settled
+    open default. A scope switched off by a truncated write - or by a
+    one-field edit - would leave an operator believing an agent is bounded
+    while every path merges. Refusing is recoverable; widening is silent.
+    """
+    _repo_with_agent_branch(tmp_path, "s12", {"infra/deploy.tf": "y\n"})
+    _mint(tmp_path, "s12", ["src/**"])
+    corrupt(tmp_path / ".sdd" / "auth" / "agent_identities" / "s12.json")
+
+    result = _refuse(tmp_path, "s12")
+
+    assert result is not None, "an unreadable record must not widen to 'no record'"
+    assert result.success is False
+    assert "s12" in result.error
+
+
+def test_an_unreadable_identity_directory_refuses_rather_than_widening(tmp_path: Path) -> None:
+    """A directory the gate cannot list makes every record look absent.
+
+    ``get`` reports no identity either way, so a gate that trusted it would
+    treat a store it cannot read as a store with nothing in it - the widest
+    possible reading of the least trustworthy evidence.
+    """
+    _repo_with_agent_branch(tmp_path, "s13", {"infra/deploy.tf": "y\n"})
+    _mint(tmp_path, "s13", ["src/**"])
+    identities = tmp_path / ".sdd" / "auth" / "agent_identities"
+
+    identities.chmod(0o000)
+    try:
+        if any(entry.name for entry in identities.iterdir()):  # pragma: no cover - root or a permissive fs
+            pytest.skip("filesystem does not enforce directory permissions for this user")
+    except OSError:
+        pass
+    try:
+        result = _refuse(tmp_path, "s13")
+    finally:
+        identities.chmod(0o755)
+
+    assert result is not None, "an unlistable store must not widen to 'no scope'"
+
+
+def test_an_unreadable_scope_is_recorded_under_its_own_reason(tmp_path: Path) -> None:
+    """Two different refusals, two different reasons in the refusal journal.
+
+    An operator reading ``refused_merges.jsonl`` has to be able to tell "the
+    agent went outside its scope" from "the scope itself is damaged": the
+    first is the agent's problem and the second is the operator's.
+    """
+    _repo_with_agent_branch(tmp_path, "s14", {"infra/deploy.tf": "y\n"})
+    _mint(tmp_path, "s14", ["src/**"])
+    _truncate_record(tmp_path / ".sdd" / "auth" / "agent_identities" / "s14.json")
+
+    assert _refuse(tmp_path, "s14") is not None
+
+    journal = tmp_path / ".sdd" / "runtime" / "refused_merges.jsonl"
+    reasons = [json.loads(line)["reason"] for line in journal.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert reasons == ["allowed-files-unreadable"]
