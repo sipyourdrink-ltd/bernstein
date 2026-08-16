@@ -56,7 +56,17 @@ jobs:
             echo "SOC2_EVIDENCE_ENABLED detected - running pack generator."
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "SOC2_EVIDENCE_ENABLED unset; nothing to do."
+            # A dormant lane is not a failure, so this run still concludes
+            # green - but it must not look identical to a real evidence
+            # pack. Say so where an operator actually looks: the run
+            # annotation and the step summary, not just a plain log line.
+            echo "::warning::SOC2_EVIDENCE_ENABLED is unset - this run produced no SOC 2 evidence pack. Provision the repository secret to enable the pack job."
+            {
+              echo "## SOC 2 evidence pack: dormant"
+              echo ""
+              echo "\`SOC2_EVIDENCE_ENABLED\` is unset, so the \`pack\` job did not run and no evidence was generated this run."
+              echo "Provision the \`SOC2_EVIDENCE_ENABLED\` repository secret to enable it."
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
 
   pack:
@@ -107,4 +117,9 @@ jobs:
             .sdd/evidence/soc2/*.md
             .sdd/evidence/soc2/*.json
           if-no-files-found: error
+          # 90 is GitHub's hard ceiling on artifact retention for public
+          # repositories - this is already the maximum, not a conservative
+          # default to raise. At a weekly cadence that holds ~13 packs,
+          # short of a typical 6-12 month audit window. Durable export
+          # beyond this ceiling is tracked separately: issue #3966.
           retention-days: 90

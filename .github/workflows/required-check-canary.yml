@@ -13,16 +13,20 @@ name: Required-check name canary
 # Invariants asserted:
 #   1. `.github/workflows/ci.yml` has a job whose key is `ci-gate`.
 #   2. That job's `name:` is exactly `CI gate`.
-#   3. The `test-macos` job's `name:` is a literal string (no `${{ ... }}`
-#      template) and equals `Test (macos-latest, Python 3.13)`. Required
-#      context names must resolve in every job state including `skipped`.
-#   4. Exactly two workflow files emit a check-run named `CI gate`:
+#   3. Exactly two workflow files emit a check-run named `CI gate`:
 #      `ci.yml::ci-gate` (real aggregator) and
 #      `ci-gate-stub.yml::ci-gate` (synthetic emitter for PRs whose diff
 #      is entirely paths-ignored by ci.yml). No other emitter allowed.
 #      The stub resolves its name from a guard verdict, so a quoted
 #      `CI gate` branch inside a `${{ ... }}` name counts as an emitter
 #      too - otherwise a third one could hide behind a template.
+#
+# This canary used to also lock the `test-macos` job's `name:` to a
+# literal (non-templated) string, on the assumption that branch
+# protection's required context depended on it. It does not - the
+# repository ruleset requires exactly the single `CI gate` context
+# checked above - so `test-macos` is free to template its name the same
+# way the `test` matrix job already does (e.g. to carry a shard index).
 #
 # Run modes:
 #   * pull_request -- only when a workflow file under `.github/workflows/`
@@ -66,8 +70,6 @@ jobs:
           REQUIRED_CONTEXT: "CI gate"
           BRANCH_PROTECTION_CONTEXTS_JSON: '["CI gate"]'
           REQUIRED_JOB_KEY: "ci-gate"
-          MACOS_JOB_KEY: "test-macos"
-          MACOS_JOB_NAME: "Test (macos-latest, Python 3.13)"
           STUB_WORKFLOW: ".github/workflows/ci-gate-stub.yml"
         run: |
           python3 - <<'PY'
@@ -91,8 +93,6 @@ jobs:
 
           REQUIRED_CONTEXT = os.environ["REQUIRED_CONTEXT"]
           REQUIRED_JOB_KEY = os.environ["REQUIRED_JOB_KEY"]
-          MACOS_JOB_KEY = os.environ["MACOS_JOB_KEY"]
-          MACOS_JOB_NAME = os.environ["MACOS_JOB_NAME"]
           STUB_WORKFLOW = os.environ["STUB_WORKFLOW"]
 
           CI = Path(".github/workflows/ci.yml")
@@ -136,41 +136,12 @@ jobs:
                   f"required-context drift if not {REQUIRED_CONTEXT!r}."
               )
 
-          # Invariant 3: test-macos job has a literal name.
           # NOTE: the GitHub Actions expression markers are reconstructed
           # via string concatenation so the YAML parser does not try to
           # interpret the Python literals as workflow expressions.
           TEMPLATE_OPEN = "$" "{{"
-          TEMPLATE_CLOSE = "}" "}"
-          macos_job = jobs.get(MACOS_JOB_KEY)
-          macos_name_seen = None
-          if not isinstance(macos_job, dict):
-              failures.append(
-                  f"ci.yml: job key `{MACOS_JOB_KEY}` missing."
-              )
-          else:
-              macos_name = macos_job.get("name", "")
-              macos_name_seen = macos_name
-              if not isinstance(macos_name, str):
-                  failures.append(
-                      f"ci.yml: `{MACOS_JOB_KEY}.name` is not a string"
-                  )
-              elif TEMPLATE_OPEN in macos_name or TEMPLATE_CLOSE in macos_name:
-                  failures.append(
-                      f"ci.yml: `{MACOS_JOB_KEY}.name` is templated "
-                      f"({macos_name!r}). Skip-state check runs would post "
-                      "the unresolved template, breaking any required-context "
-                      "rule keyed on the literal form."
-                  )
-              elif macos_name != MACOS_JOB_NAME:
-                  failures.append(
-                      f"ci.yml: `{MACOS_JOB_KEY}.name` is {macos_name!r}; "
-                      f"canary expects {MACOS_JOB_NAME!r}. If the rename is "
-                      "intentional, update both this canary and the operator "
-                      "runbook."
-                  )
 
-          # Invariant 4: only allow-listed workflow files emit a job
+          # Invariant 3: only allow-listed workflow files emit a job
           # named "CI gate". Two emitters are intentional: ci.yml (real
           # aggregator) and ci-gate-stub.yml (synthetic success for
           # paths-ignored-only PRs).
@@ -228,7 +199,6 @@ jobs:
           print(f"  required context : {REQUIRED_CONTEXT!r}")
           print(f"  ci-gate job key  : {REQUIRED_JOB_KEY!r}")
           print(f"  ci-gate.name     : {ci_gate_name!r}")
-          print(f"  test-macos.name  : {macos_name_seen!r}")
 
           if failures:
               print("::error::Required-check name canary FAILED")

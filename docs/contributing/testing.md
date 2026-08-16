@@ -168,11 +168,16 @@ audit integrity verifier, lineage v1 trio, seed parser) and gates
 on a per-module kill rate. The module list, per-module thresholds,
 and wall-clock budgets live in `scripts/mutmut_critical.py:MODULES`.
 
-The gate is **advisory** while thresholds calibrate (the matrix job
-sets `continue-on-error: true`). The PR comment posted by the
-workflow summarises each module's score and survivors; until the
-gate is flipped to enforcing, treat a red row as a follow-up TODO,
-not a merge blocker.
+The gate enforces per module: `continue-on-error` in the workflow's
+matrix `include` is `false` for every module that holds its threshold
+with real margin, so a regression there fails the job and, on a
+merge_group run, blocks the merge queue. `audit_log` is the one pinned
+exception - its kill rate is well below threshold and needs test
+backfill on `src/bernstein/core/security/audit.py` before it can gate
+for real (`tests/unit/test_mutation_fixed_workflow_yaml.py:ADVISORY_MODULES`
+is the source of truth for which modules are still advisory). The PR
+comment posted by the workflow summarises each module's score and
+survivors either way.
 
 Reproduce locally:
 
