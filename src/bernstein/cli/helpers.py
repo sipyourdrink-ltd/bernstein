@@ -13,8 +13,8 @@ from typing import Any
 
 import click
 import httpx
-from rich.console import Console
 
+from bernstein.cli.ui import make_console
 from bernstein.core.defaults import SDD_SERVER_PORT
 from bernstein.core.platform_compat import kill_process, kill_process_group
 from bernstein.core.process_utils import is_process_alive as _shared_is_process_alive
@@ -64,7 +64,10 @@ STATUS_COLORS: dict[str, str] = {
     "cancelled": "red",
 }
 
-console = Console()
+# Built through the factory rather than as a bare ``Console()`` so the stream
+# tolerates glyphs a legacy code page cannot encode (#3901). This is the
+# console ``run_confirm.py`` prints the demo's check marks through.
+console = make_console()
 
 
 # ---------------------------------------------------------------------------

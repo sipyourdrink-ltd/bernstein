@@ -4,6 +4,14 @@ name: "Bernstein Issue Decompose"
 # first build a read-only plan from the issue text. Repository write
 # authority is granted only after a maintainer has approved the file
 # scope with a bernstein-scope:<path> label.
+#
+# The label is this pipeline's start switch, and applying labels is
+# available to triage-role collaborators. Starting a pipeline that
+# spends API credit and pushes branches stays a maintainer decision,
+# so every privileged job also gates on the SENDER of the labeled
+# event - the account that applied the label - not only on the issue
+# author. A trusted-author issue labeled by anyone else is a silent
+# no-op.
 on:
   issues:
     types: [labeled]
@@ -42,6 +50,7 @@ jobs:
     timeout-minutes: 20
     if: >-
       github.event.label.name == 'bernstein' &&
+      github.event.sender.login == 'chernistry' &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
     permissions:
       contents: read
@@ -123,6 +132,7 @@ jobs:
     timeout-minutes: 5
     if: >-
       github.event.label.name == 'bernstein' &&
+      github.event.sender.login == 'chernistry' &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
     permissions:
       issues: write
@@ -180,6 +190,7 @@ jobs:
       - scope_gate
     if: >-
       github.event.label.name == 'bernstein' &&
+      github.event.sender.login == 'chernistry' &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association) &&
       needs.scope_gate.outputs.allowed_scope != ''
     permissions:

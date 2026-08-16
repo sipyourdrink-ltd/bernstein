@@ -8,8 +8,10 @@ degrade when stdout is not a TTY (e.g. piped output or CI).
 from __future__ import annotations
 
 import operator
+import sys
+from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import IO, Any, cast
 
 from rich.console import Console
 from rich.panel import Panel
@@ -53,7 +55,48 @@ AGENT_STATUS_COLORS: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
-def make_console(*, no_color: bool = False) -> Console:
+#: Error policies that substitute for *any* unencodable character. Anything
+#: outside this set - including ``surrogateescape``, which stdout carries by
+#: default on Windows - still raises on a glyph the code page lacks.
+_SUBSTITUTING_ERROR_POLICIES = frozenset(
+    {
+        "replace",
+        "ignore",
+        "xmlcharrefreplace",
+        "backslashreplace",
+        "namereplace",
+    }
+)
+
+
+def _tolerate_unencodable(stream: IO[str] | None) -> None:
+    """Stop *stream* raising on characters its encoding cannot represent.
+
+    The CLI prints U+2713 and similar glyphs. A Windows console on a legacy
+    code page (cp1252 by default outside the US/Western-Europe UTF-8 setups)
+    cannot encode them, and the stream's default ``errors="strict"`` turns
+    that into a ``UnicodeEncodeError`` that aborts the command mid-output
+    rather than degrading the glyph (issue #3901).
+
+    Relaxing to ``errors="replace"`` is a no-op on a UTF-8 stream, which can
+    encode everything, so this only changes behaviour where the alternative
+    is a crash.
+
+    Note that ``strict`` is not the only fatal policy. Python gives stdout
+    ``surrogateescape`` on Windows, which recovers lone surrogates and nothing
+    else, so U+2713 raises there exactly as it does under ``strict``. Only the
+    policies that substitute for any unencodable character are left alone.
+    """
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is None:
+        return
+    if (getattr(stream, "errors", None) or "strict") in _SUBSTITUTING_ERROR_POLICIES:
+        return
+    with suppress(Exception):
+        reconfigure(errors="replace")
+
+
+def make_console(*, no_color: bool = False, file: IO[str] | None = None) -> Console:
     """Create a Rich Console with optional color suppression.
 
     When *no_color* is ``True`` the console disables all colour and markup
@@ -62,15 +105,22 @@ def make_console(*, no_color: bool = False) -> Console:
     When stdout is not a TTY the console automatically falls back to
     plain-text output (``force_terminal=False``).
 
+    The target stream is made tolerant of characters its encoding cannot
+    represent, so a legacy Windows code page degrades a glyph instead of
+    aborting the command. Construct consoles through this function rather
+    than calling ``Console()`` directly, or that guarantee is lost.
+
     Args:
         no_color: If True, disable all colour output.
+        file: Stream to write to. Defaults to stdout, as Rich does.
 
     Returns:
         A configured Rich Console instance.
     """
+    _tolerate_unencodable(file if file is not None else sys.stdout)
     if no_color:
-        return Console(no_color=True, force_terminal=False)
-    return Console()
+        return Console(no_color=True, force_terminal=False, file=file)
+    return Console(file=file)
 
 
 # ---------------------------------------------------------------------------

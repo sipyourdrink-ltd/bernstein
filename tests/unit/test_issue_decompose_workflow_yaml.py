@@ -87,6 +87,24 @@ def test_decompose_job_requires_trusted_issue_author() -> None:
     assert "COLLABORATOR" in condition
 
 
+def test_starting_the_pipeline_is_a_maintainer_action_not_a_label() -> None:
+    """Applying labels is available to triage-role collaborators.
+
+    The label is this pipeline's start switch, and the pipeline spends
+    API credit and pushes branches, so every privileged job must also
+    gate on WHO applied the label (the event sender), not only on who
+    authored the issue. Otherwise any triage-role collaborator can
+    start the pipeline on their own issue.
+    """
+    for name in ("plan", "scope_gate", "decompose"):
+        condition = _job(name).get("if", "")
+        assert isinstance(condition, str)
+        assert "github.event.sender.login == 'chernistry'" in condition, (
+            f"job {name!r} runs on a labeled event without checking that a "
+            "maintainer applied the label"
+        )
+
+
 def test_untrusted_issue_path_does_not_run_agent_or_receive_llm_secret() -> None:
     job = _job("reject-untrusted-issue")
     condition = job.get("if", "")
