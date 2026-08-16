@@ -253,7 +253,7 @@ Denied paths always override allowed paths.
 | `frontend`  | `src/*`, `tests/*`, `docs/*`, `public/*`, `static/*`, `package.json` | `.github/*`, `.sdd/*`, `templates/roles/*` |
 | `qa`        | `tests/*`, `src/*`, `docs/*`, `scripts/*`                   | `.github/*`, `.sdd/*`, `templates/roles/*` |
 | `security`  | `src/*`, `tests/*`, `.github/workflows/*`, `docs/*`, `scripts/*` | `.sdd/*`, `templates/roles/*`          |
-| `devops`    | `.github/*`, `Dockerfile`, `docker-compose.yml`, `scripts/*`, `Makefile` | `.sdd/*`, `src/*`, `templates/roles/*` |
+| `devops`    | `.github/*`, `Dockerfile`, `docker-compose.yaml`, `docker-compose.yml`, `scripts/*`, `Makefile` | `.sdd/*`, `src/*`, `templates/roles/*` |
 | `docs`      | `docs/*`, `README.md`, `CHANGELOG.md`, `CONTRIBUTING.md`   | `.github/*`, `.sdd/*`, `src/*`, `tests/*`, `templates/roles/*` |
 | `manager`   | `docs/*`, `.sdd/backlog/*`, `plans/*`                       | `src/*`, `tests/*`, `.github/*`          |
 | `architect` | `src/*`, `tests/*`, `docs/*`, `scripts/*`                   | `.github/*`, `.sdd/*`, `templates/roles/*` |

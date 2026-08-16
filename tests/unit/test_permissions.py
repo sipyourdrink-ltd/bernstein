@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from bernstein.core.permissions import (
     DEFAULT_ROLE_PERMISSIONS,
     AgentPermissions,
@@ -303,6 +304,12 @@ class TestDefaultRoleMatrix:
     def test_devops_cannot_edit_src(self) -> None:
         perms = DEFAULT_ROLE_PERMISSIONS["devops"]
         assert not is_path_allowed("src/foo.py", perms)
+
+    @pytest.mark.parametrize("compose_file", ["docker-compose.yaml", "docker-compose.yml"])
+    def test_devops_can_edit_compose_file(self, compose_file: str) -> None:
+        # Both spellings are in the wild; the file at this repo root is .yaml.
+        perms = DEFAULT_ROLE_PERMISSIONS["devops"]
+        assert is_path_allowed(compose_file, perms)
 
     def test_manager_cannot_edit_src(self) -> None:
         perms = DEFAULT_ROLE_PERMISSIONS["manager"]

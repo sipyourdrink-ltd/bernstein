@@ -170,7 +170,16 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, AgentPermissions] = {
         denied_paths=(_PATTERN_SDD, _PATTERN_ROLES),
     ),
     "devops": AgentPermissions(
-        allowed_paths=(_PATTERN_GITHUB, "Dockerfile", "docker-compose.yml", _PATTERN_SCRIPTS, "Makefile"),
+        allowed_paths=(
+            _PATTERN_GITHUB,
+            "Dockerfile",
+            # Both spellings occur in the wild; listed literally rather than as a
+            # glob because fnmatch's ``*`` also crosses ``/``.
+            "docker-compose.yaml",
+            "docker-compose.yml",
+            _PATTERN_SCRIPTS,
+            "Makefile",
+        ),
         denied_paths=(_PATTERN_SDD, _PATTERN_SRC, _PATTERN_ROLES),
     ),
     "docs": AgentPermissions(
