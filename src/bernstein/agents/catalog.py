@@ -1,10 +1,15 @@
 """Agent catalog registry - loads agent definitions from external sources.
 
-Supports two catalog types:
+Supports three catalog types:
 - ``agency``: Remote Agency-format agent catalog (GitHub repo or local path).
 - ``generic``: Local directory of YAML files with a configurable field map.
+- ``plugin``: Claude Code plugin/subagent layout (see
+  :mod:`bernstein.agents.plugin_catalog`).
 
-Also provides role-based agent matching via ``CatalogRegistry.match()``.
+Configured ``generic``/``plugin`` entries reach ``CatalogRegistry.match()``
+through :meth:`CatalogRegistry.load_configured_entries`, which registers
+full ``CatalogAgent`` records - not just the lightweight role metadata
+:meth:`CatalogRegistry.discover` caches for listings.
 """
 
 from __future__ import annotations
@@ -21,7 +26,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CatalogType = Literal["agency", "generic"]
+CatalogType = Literal["agency", "generic", "plugin"]
+
+#: Source-kind vocabulary for :class:`CatalogSourceSpec`, mirroring
+#: ``core/skills/catalog/installer.py``'s plugin-source resolution.
+_SOURCE_KINDS: frozenset[str] = frozenset({"github", "git", "npm", "file", "directory"})
+_REMOTE_SOURCE_KINDS: frozenset[str] = frozenset({"github", "git", "npm"})
+_REMOTE_SOURCE_NOT_IMPLEMENTED = (
+    "catalog source kind {kind!r} is not implemented yet; use 'file' or "
+    "'directory' for now (remote agent-catalog sources are tracked in #3973)"
+)
 
 _DEFAULT_AGENCY_SOURCE = "https://github.com/msitarzewski/agency-agents"
 _CACHE_FILE = Path(".sdd/agents/catalog.json")
@@ -57,7 +71,9 @@ class CatalogAgent:
         capabilities: Declared capability keywords for task matching
             (e.g. "api-design", "authentication", "jwt").
         priority: Matching priority - lower value wins (default 100).
-        source: Origin label (e.g. "catalog", "agency").
+        source: Origin label (e.g. "catalog", "agency", "plugin").
+        model: Preferred model alias declared by the source catalog (e.g.
+            "opus"), empty when the source does not declare one.
     """
 
     name: str
@@ -69,6 +85,7 @@ class CatalogAgent:
     capabilities: list[str] = field(default_factory=list[str])
     priority: int = 100
     source: str = "catalog"
+    model: str = ""
 
 
 @dataclass(frozen=True)
@@ -77,15 +94,25 @@ class CatalogEntry:
 
     Attributes:
         name: Unique identifier for this catalog.
-        type: Provider type - ``"agency"`` or ``"generic"``.
+        type: Provider type - ``"agency"``, ``"generic"``, or ``"plugin"``
+            (the Claude Code plugin/subagent layout, issue #3972).
         enabled: Whether this catalog is active.
         priority: Load priority; higher values are checked first.
         source: Remote source URL (agency type only).
-        path: Local directory path (generic type, or agency local override).
+        path: Local directory path (generic/plugin type, or agency local
+            override). Used directly when ``source_kind`` is unset.
         format: File format for generic catalogs (e.g. ``"yaml"``).
         glob: Glob pattern for generic catalog file discovery.
         field_map: Mapping from generic YAML field names to canonical names
             (``id``, ``name``, ``role``, ``system_prompt``).
+        source_kind: Optional source-resolution kind - one of ``"github"``,
+            ``"git"``, ``"npm"``, ``"file"``, ``"directory"`` (mirrors the
+            skill catalog's :mod:`bernstein.core.skills.catalog.installer`).
+            ``None`` keeps the pre-#3972 behaviour of reading ``path``
+            directly. Only ``"file"``/``"directory"`` resolve today; the
+            remote kinds are valid configuration that raises
+            :class:`NotImplementedError` at load time (see
+            :func:`resolve_catalog_source`).
     """
 
     name: str
@@ -97,6 +124,111 @@ class CatalogEntry:
     format: str | None = None
     glob: str | None = None
     field_map: dict[str, str] = field(default_factory=dict[str, str])
+    source_kind: str | None = None
+
+
+class CatalogSourceError(ValueError):
+    """Raised when a :class:`CatalogSourceSpec` cannot be resolved to local content."""
+
+
+@dataclass(frozen=True)
+class CatalogSourceSpec:
+    """Declarative source descriptor for an agent catalog entry.
+
+    Mirrors :class:`bernstein.core.skills.catalog.manifest.SkillSourceSpec`:
+    the same ``kind`` vocabulary, resolved through
+    :func:`resolve_catalog_source` instead of the skill installer so a
+    catalog source is configuration, not code. Only ``file``/``directory``
+    resolve in this PR (see :data:`_REMOTE_SOURCE_KINDS`).
+
+    Attributes:
+        kind: One of ``"github"``, ``"git"``, ``"npm"``, ``"file"``,
+            ``"directory"``.
+        repo: ``owner/repo`` shorthand (github kind).
+        url: Git remote URL (git kind).
+        package: npm package name (npm kind).
+        path: Local filesystem path (file/directory kind).
+        tag: Release tag (github kind).
+        ref: Branch/tag/SHA (git kind).
+        version: Version constraint (npm kind).
+    """
+
+    kind: str
+    repo: str = ""
+    url: str = ""
+    package: str = ""
+    path: str = ""
+    tag: str = "latest"
+    ref: str = "HEAD"
+    version: str = "latest"
+
+
+def resolve_catalog_source(spec: CatalogSourceSpec) -> Path:
+    """Resolve *spec* to a local filesystem path.
+
+    Args:
+        spec: The source descriptor to resolve.
+
+    Returns:
+        The resolved local path: the directory itself for ``"directory"``,
+        the file itself for ``"file"``.
+
+    Raises:
+        NotImplementedError: *spec.kind* is ``"github"``, ``"git"``, or
+            ``"npm"``. Remote agent-catalog resolution (digest pinning,
+            lockfile, signature verification) is tracked in #3973; this
+            error is the loud, named stand-in until it ships.
+        CatalogSourceError: *spec.kind* is unrecognised, or the local
+            ``path`` does not exist / is not the expected file-vs-directory
+            shape.
+    """
+    if spec.kind in _REMOTE_SOURCE_KINDS:
+        raise NotImplementedError(_REMOTE_SOURCE_NOT_IMPLEMENTED.format(kind=spec.kind))
+    if spec.kind not in _SOURCE_KINDS:
+        raise CatalogSourceError(f"unknown catalog source kind: {spec.kind!r}")
+
+    if not spec.path:
+        raise CatalogSourceError(f"catalog source kind {spec.kind!r} requires 'path'")
+    resolved = Path(spec.path)
+    if spec.kind == "directory":
+        if not resolved.is_dir():
+            raise CatalogSourceError(f"catalog source directory not found: {resolved}")
+    else:  # "file"
+        if not resolved.is_file():
+            raise CatalogSourceError(f"catalog source file not found: {resolved}")
+    return resolved
+
+
+def _resolve_entry_directory(entry: CatalogEntry) -> Path:
+    """Resolve the local path *entry* reads from.
+
+    ``source_kind`` is checked first (not ``path``): a remote kind like
+    ``"github"`` legitimately has no ``path`` at all (it resolves from
+    ``source``/``repo`` instead) and must still reach
+    :func:`resolve_catalog_source` to raise its ``NotImplementedError``,
+    rather than failing earlier on a misleading "no path configured".
+
+    With no ``source_kind``, falls back to ``entry.path`` directly -
+    matching the pre-#3972 (kind-less) behaviour - except that a
+    non-existent path is now a named :class:`CatalogSourceError` instead of
+    a silent empty result further down the pipeline.
+    """
+    if entry.source_kind is not None:
+        return resolve_catalog_source(
+            CatalogSourceSpec(
+                kind=entry.source_kind,
+                path=entry.path or "",
+                repo=entry.source or "",
+                url=entry.source or "",
+                package=entry.source or "",
+            )
+        )
+    if not entry.path:
+        raise CatalogSourceError(f"catalog '{entry.name}': no path configured")
+    resolved = Path(entry.path)
+    if not resolved.exists():
+        raise CatalogSourceError(f"catalog '{entry.name}': path not found: {resolved}")
+    return resolved
 
 
 @dataclass
@@ -235,6 +367,49 @@ class CatalogRegistry:
             )
             loaded += 1
         logger.info("Loaded %d agents from agency catalog", loaded)
+        return loaded
+
+    def load_configured_entries(self) -> int:
+        """Load ``generic``/``plugin`` entries into ``loaded_agents``.
+
+        :meth:`discover` only ever populated ``_cached_roles`` (a metadata
+        cache for role listings) from ``self.entries`` - ``match()`` reads
+        exclusively from ``loaded_agents``, so a ``catalogs:`` entry from
+        ``bernstein.yaml`` could never actually change a spawned prompt
+        (issue #3972). This method closes that path: it reads each enabled
+        ``generic``/``plugin`` entry's catalog content and registers full
+        ``CatalogAgent`` records, the same way :meth:`load_from_agency`
+        already does for Agency catalogs.
+
+        ``agency``-type entries are untouched here - they already have a
+        loading path (:meth:`load_from_agency`, driven by the orchestrator's
+        Agency-cache-path loader) and widening it is out of scope for this
+        fix. A registry with no `generic`/`plugin` entries (including
+        :meth:`default`) is unaffected: this method returns ``0`` and never
+        touches ``loaded_agents``.
+
+        A single entry that fails to load (missing directory, unimplemented
+        remote source kind, unreadable content) is logged and skipped, not
+        raised - one bad catalog must not block every other configured
+        entry, mirroring :meth:`_fetch_from_providers`'s resilience.
+
+        Returns:
+            Number of agents newly registered.
+        """
+        loaded = 0
+        for entry in self.entries:
+            if not entry.enabled or entry.type not in ("generic", "plugin"):
+                continue
+            try:
+                agents = _load_agents_for_entry(entry)
+            except Exception:
+                logger.warning("Catalog '%s' failed to load into the match path", entry.name, exc_info=True)
+                continue
+            for agent in agents:
+                self.register_agent(agent)
+                loaded += 1
+        if loaded:
+            logger.info("Loaded %d agent(s) from configured catalogs into the match path", loaded)
         return loaded
 
     # -- Cache management -----------------------------------------------------
@@ -412,6 +587,12 @@ class CatalogRegistry:
 
         if entry.type == "generic" and entry.path:
             return self._load_generic_entry(entry)
+
+        if entry.type == "plugin" and entry.path:
+            agents = _load_agents_for_entry(entry)
+            return {
+                a.role: {"description": a.description, "model": a.model or "sonnet", "effort": "normal"} for a in agents
+            }
 
         # Remote agency (no local path) - not fetched at discover time
         logger.debug("Skipping remote provider '%s' (no local path configured)", entry.name)
@@ -667,8 +848,8 @@ def _parse_catalog_entry(raw: dict[str, Any]) -> CatalogEntry:
         raise ValueError(f"catalog entry missing required string 'name': {raw!r}")
 
     catalog_type = raw.get("type")
-    if catalog_type not in ("agency", "generic"):
-        raise ValueError(f"catalog '{name}': type must be 'agency' or 'generic', got {catalog_type!r}")
+    if catalog_type not in ("agency", "generic", "plugin"):
+        raise ValueError(f"catalog '{name}': type must be 'agency', 'generic', or 'plugin', got {catalog_type!r}")
 
     enabled = raw.get("enabled", True)
     if not isinstance(enabled, bool):
@@ -703,6 +884,10 @@ def _parse_catalog_entry(raw: dict[str, Any]) -> CatalogEntry:
 
     field_map_typed: dict[str, str] = {k: str(v) for k, v in field_map_checked.items()}
 
+    source_kind = raw.get("source_kind")
+    if source_kind is not None and source_kind not in _SOURCE_KINDS:
+        raise ValueError(f"catalog '{name}': source_kind must be one of {sorted(_SOURCE_KINDS)}, got {source_kind!r}")
+
     return CatalogEntry(
         name=name,
         type=catalog_type,  # type: ignore[arg-type]
@@ -713,7 +898,86 @@ def _parse_catalog_entry(raw: dict[str, Any]) -> CatalogEntry:
         format=fmt,
         glob=glob_pattern,
         field_map=field_map_typed,
+        source_kind=source_kind,
     )
+
+
+def _load_agents_for_entry(entry: CatalogEntry) -> list[CatalogAgent]:
+    """Load full ``CatalogAgent`` records for one configured entry, by type.
+
+    Dispatch target for :meth:`CatalogRegistry.load_configured_entries`.
+    Resolves *entry*'s source (honouring ``source_kind`` when set) before
+    reading its content, so an unimplemented remote kind or a missing
+    directory surfaces as an exception the caller logs and skips rather
+    than a silent empty result.
+    """
+    root = _resolve_entry_directory(entry)
+
+    if entry.type == "plugin":
+        from bernstein.agents.plugin_catalog import load_plugin_catalog as _load_plugin_catalog
+
+        result = _load_plugin_catalog(root)
+        for err in result.errors:
+            logger.warning("Catalog '%s': %s: %s", entry.name, err.path, err.reason)
+        return result.agents
+
+    if entry.type == "generic":
+        return _load_generic_skill_agents(root, entry)
+
+    return []
+
+
+def _load_generic_skill_agents(catalog_dir: Path, entry: CatalogEntry) -> list[CatalogAgent]:
+    """Promote ``SKILL.md`` files under a generic-type catalog directory to full agents.
+
+    Reuses the SKILL.md discovery convention :func:`_load_skill_md_files`
+    already established for the discovery cache (root + immediate
+    subdirectories; the containing directory name is the role) but keeps
+    the full ``SkillMD.body`` as ``system_prompt`` instead of the
+    description/model/effort-only projection that feeds ``_cached_roles``.
+
+    Plain YAML catalog files (the ``entry.glob`` path in
+    :meth:`CatalogRegistry._load_generic_entry`) carry no system-prompt
+    field in their schema, so they remain metadata-only for role discovery;
+    only SKILL.md-backed entries have enough content to become a matchable
+    ``CatalogAgent``.
+    """
+    from bernstein.core.skill_md import load_skill_md as _load_skill_md
+
+    if not catalog_dir.is_dir():
+        return []
+
+    agents: list[CatalogAgent] = []
+    for path in _discover_skill_md_candidates(catalog_dir):
+        role_from_stem = path.parent.name if path.parent != catalog_dir else path.stem.rstrip(".")
+        skill = _load_skill_md(path, role_fallback=role_from_stem or None)
+        if skill is None or not skill.body.strip():
+            continue
+        agents.append(
+            CatalogAgent(
+                name=skill.name,
+                role=role_from_stem or skill.name,
+                description=skill.description,
+                system_prompt=skill.body,
+                id=f"{entry.name}:{skill.name}",
+                priority=entry.priority,
+                source=entry.name,
+            )
+        )
+    return agents
+
+
+def _discover_skill_md_candidates(catalog_dir: Path) -> list[Path]:
+    """Find ``SKILL.md`` files directly in *catalog_dir* or its immediate subdirectories."""
+    candidates: list[Path] = []
+    for item in sorted(catalog_dir.iterdir()):
+        if item.is_file() and item.name == "SKILL.md":
+            candidates.append(item)
+        elif item.is_dir():
+            skill_file = item / "SKILL.md"
+            if skill_file.is_file():
+                candidates.append(skill_file)
+    return candidates
 
 
 def _load_skill_md_files(catalog_dir: Path) -> dict[str, dict[str, Any]]:
@@ -737,17 +1001,7 @@ def _load_skill_md_files(catalog_dir: Path) -> dict[str, dict[str, Any]]:
 
     results: dict[str, dict[str, Any]] = {}
 
-    # Scan root and immediate subdirectories.
-    candidates: list[Path] = []
-    for item in sorted(catalog_dir.iterdir()):
-        if item.is_file() and item.name == "SKILL.md":
-            candidates.append(item)
-        elif item.is_dir():
-            skill_file = item / "SKILL.md"
-            if skill_file.is_file():
-                candidates.append(skill_file)
-
-    for path in candidates:
+    for path in _discover_skill_md_candidates(catalog_dir):
         role_from_stem = path.parent.name if path.parent != catalog_dir else path.stem.rstrip(".")
         skill = _load_skill_md(path, role_fallback=role_from_stem or None)
         if skill is None:

@@ -6277,6 +6277,18 @@ if __name__ == "__main__":
         if catalog_registry is None:
             catalog_registry = _CatalogRegistry.default()
 
+        # Configured `catalogs:` entries (generic + plugin-layout) load into
+        # loaded_agents here so match() can see them. Previously only
+        # discover() consumed them, into the separate _cached_roles metadata
+        # cache that match() never reads (issue #3972). A registry built
+        # from an empty config (the .default() branch above) carries no
+        # generic/plugin entries, so this is a no-op there - the
+        # Agency-cache-path loading below is unaffected either way.
+        try:
+            catalog_registry.load_configured_entries()
+        except Exception:
+            logger.warning("Failed to load configured catalog entries into the match path", exc_info=True)
+
         agency_cache_path = _AgencyProvider.default_cache_path()
         if agency_cache_path.exists():
             try:

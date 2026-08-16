@@ -256,6 +256,7 @@ nav:
           - Plugin SDK: integrations/plugin-sdk.md
           - Agent sessions: integrations/agent-session.md
           - agents-md sync: agents-md.md
+          - Agent catalogs: operations/agent-catalogs.md
           - Skills catalog: operations/skills-catalog.md
           - Skill lint: operations/skill-lint.md
           - Skill selection rules: operations/skill-selection-rules.md

@@ -180,6 +180,7 @@ Bernstein is a deterministic orchestrator for CLI coding agents (Claude Code, Co
 | `agency_provider.py` | AgencyProvider - loads CatalogAgent instances from msitarzewski/agency-agents format |
 | `catalog.py`         | Agent catalog registry - loads agent definitions from external sources |
 | `discovery.py`       | Agent directory auto-discovery for Bernstein |
+| `plugin_catalog.py`  | Reads agent catalogs laid out as a Claude Code plugin/subagent tree |
 | `registry.py`        | Dynamic agent registry with YAML-based definitions and hot-reload support |
 
 ### `src/bernstein/cli/` - Click CLI

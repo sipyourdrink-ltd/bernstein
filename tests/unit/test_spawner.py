@@ -1772,6 +1772,81 @@ class TestSpawnForTasksWithCatalog:
 
         assert session.agent_source == "built-in"
 
+    def test_configured_generic_catalog_reaches_spawned_prompt(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """A `catalogs:` entry reaches the spawned prompt, not just the cache (issue #3972).
+
+        Before the fix, ``catalogs:`` entries only ever reached
+        ``discover()``'s ``_cached_roles`` metadata cache - never
+        ``loaded_agents`` - so ``match()`` (and therefore the spawned
+        prompt) could never see a configured catalog. This goes through the
+        full path: ``CatalogRegistry.from_config()`` (config parsing) ->
+        ``load_configured_entries()`` (the fix) -> ``match()`` (inside
+        ``spawn_for_tasks``) -> the rendered prompt. Asserted at the same
+        spawner boundary as ``test_catalog_system_prompt_injected_into_spawn_prompt``
+        above; the only difference is *how* the agent reached
+        ``loaded_agents``.
+        """
+        from bernstein.agents.catalog import CatalogRegistry
+
+        catalog_root = tmp_path / "catalog"
+        skill_dir = catalog_root / "qa"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: qa-specialist\ndescription: Writes integration tests.\n---\n\n"
+            "You are the configured QA specialist agent.\n",
+            encoding="utf-8",
+        )
+
+        catalog = CatalogRegistry.from_config([{"name": "local", "type": "generic", "path": str(catalog_root)}])
+        catalog.load_configured_entries()
+
+        adapter = mock_adapter_factory(pid=705)
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False, default_model="mock-model"
+        )
+
+        task = make_task(role="qa", description="Write integration tests")
+        spawner.spawn_for_tasks([task])
+
+        prompt = adapter.spawn.call_args.kwargs["prompt"]
+        assert "configured QA specialist agent" in prompt
+
+    def test_configured_plugin_catalog_reaches_spawned_prompt(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """Same dead-path fix as above, via the new plugin-layout catalog type (issue #3972)."""
+        from bernstein.agents.catalog import CatalogRegistry
+
+        catalog_root = tmp_path / "catalog"
+        agents_dir = catalog_root / ".claude" / "agents"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "reviewer.md").write_text(
+            "---\nname: Payments Reviewer\ndescription: Reviews payments-module diffs.\ntools: [pytest]\n---\n\n"
+            "You are the configured plugin-layout reviewer agent.\n",
+            encoding="utf-8",
+        )
+
+        catalog = CatalogRegistry.from_config([{"name": "local-plugins", "type": "plugin", "path": str(catalog_root)}])
+        catalog.load_configured_entries()
+
+        adapter = mock_adapter_factory(pid=706)
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False, default_model="mock-model"
+        )
+
+        task = make_task(role="reviewer", description="Review the payments diff")
+        spawner.spawn_for_tasks([task])
+
+        prompt = adapter.spawn.call_args.kwargs["prompt"]
+        assert "configured plugin-layout reviewer agent" in prompt
+        assert "pytest" in prompt
+
 
 # --- Regression: orchestrator call site passes templates/roles/ (issue #2155) ---
 

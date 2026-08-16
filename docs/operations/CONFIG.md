@@ -109,6 +109,25 @@ role_model_policy:
 
 When `cli: auto` is set at the top level, the orchestrator picks the best available adapter per role based on the `role_model_policy`. When a specific `cli:` is set per role, that adapter is used exclusively for that role.
 
+### `catalogs` - External agent catalog sources
+
+Point the orchestrator at local directories of agent definitions - a
+generic YAML/SKILL.md catalog, or a Claude Code plugin-layout tree
+(`.claude-plugin/marketplace.json`, `plugins/<name>/agents/*.md`,
+`.claude/agents/*.md`):
+
+```yaml
+catalogs:
+  - name: local-specialists
+    type: plugin           # "agency" | "generic" | "plugin"
+    path: ./agent-catalog   # directory root for generic/plugin types
+    priority: 60            # higher priority is preferred on role conflicts
+```
+
+Full schema, the `source_kind` field for `file`/`directory` sources, and
+how a match changes a spawned prompt: see
+[agent catalogs](agent-catalogs.md).
+
 ---
 
 ## 2) Workspace runtime defaults: `.sdd/config.yaml`
