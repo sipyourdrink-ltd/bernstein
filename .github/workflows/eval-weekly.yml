@@ -30,7 +30,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: eval-nightly-${{ github.ref }}
+  group: eval-weekly-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -99,7 +99,7 @@ jobs:
       - name: Upload smoke artefacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: eval-nightly-smoke
+          name: eval-weekly-smoke
           path: |
             .sdd/runtime/eval/**/*.jsonl
             .sdd/runtime/eval/badge.md
@@ -144,7 +144,7 @@ jobs:
       # produces a single synthetic entry tagged with the canonical run-at
       # so the leaderboard schema stays exercised end-to-end on the gated
       # path too.
-      - name: Run nightly eval driver
+      - name: Run weekly eval driver
         run: |
           uv run python -m bernstein.evals.driver \
             --out .sdd/runtime/eval \
@@ -153,7 +153,7 @@ jobs:
       - name: Upload leaderboard artefacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: eval-nightly-${{ github.run_id }}
+          name: eval-weekly-${{ github.run_id }}
           path: |
             .sdd/runtime/eval/**/*.jsonl
             .sdd/runtime/eval/badge.md

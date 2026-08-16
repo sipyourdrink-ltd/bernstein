@@ -13,7 +13,7 @@ name: soc2-evidence-weekly
 
 on:
   schedule:
-    # 03:47 UTC every Monday. Offset to avoid colliding with eval-nightly
+    # 03:47 UTC every Monday. Offset to avoid colliding with eval-weekly
     # (04:23) and cluster-e2e (03:17 nightly).
     - cron: "47 3 * * 1"
   workflow_dispatch:

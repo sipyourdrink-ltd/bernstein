@@ -28,7 +28,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/ci-topology-heal.yml | CI topology heal | push, workflow_dispatch | {"cancel-in-progress": "true", "group": "ci-topology-heal"} | 1 |
 | .github/workflows/ci-weekly-digest.yml | CI Weekly Digest | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "ci-weekly-digest"} | 1 |
 | .github/workflows/ci.yml | CI | merge_group, pull_request, push, workflow_dispatch | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) \|\| format('branch-{0}-{1}', github.ref, github.sha) }}"} | 33 |
-| .github/workflows/cifuzz-pr.yml | CIFuzz (ClusterFuzzLite) | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "cifuzz-pr-${{ github.ref }}"} | 1 |
+| .github/workflows/cifuzz-weekly.yml | CIFuzz (ClusterFuzzLite) | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "cifuzz-weekly-${{ github.ref }}"} | 1 |
 | .github/workflows/cleanup-runs.yml | Cleanup Action Runs | workflow_dispatch | {"cancel-in-progress": "false", "group": "cleanup-runs-${{ github.ref }}"} | 1 |
 | .github/workflows/cluster-e2e.yml | cluster-e2e | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "cluster-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/cluster-tunnel-e2e.yml | cluster-tunnel-e2e | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "cluster-tunnel-e2e-${{ github.ref }}"} | 1 |
@@ -40,7 +40,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/dependency-review.yml | Dependency Review | pull_request | {"cancel-in-progress": "true", "group": "dependency-review-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/docs-drift.yml | docs-drift | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "docs-drift-${{ github.ref }}"} | 2 |
 | .github/workflows/docs-observability-snapshot.yml | Observability snapshot | workflow_dispatch | {"cancel-in-progress": "false", "group": "docs-observability-snapshot"} | 1 |
-| .github/workflows/eval-weekly.yml | eval-weekly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "eval-nightly-${{ github.ref }}"} | 3 |
+| .github/workflows/eval-weekly.yml | eval-weekly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "eval-weekly-${{ github.ref }}"} | 3 |
 | .github/workflows/feature-matrix-drift.yml | Feature matrix drift | pull_request, push | {"cancel-in-progress": "true", "group": "feature-matrix-drift-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/hotfix-r-tracker.yml | Hotfix R-counter | push | {"cancel-in-progress": "false", "group": "hotfix-r-tracker-${{ github.sha }}"} | 1 |
 | .github/workflows/license-compliance.yml | License Compliance | pull_request, push | {"cancel-in-progress": "true", "group": "license-${{ github.ref }}"} | 1 |
@@ -94,7 +94,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/ci-topology-heal.yml | heal: Regenerate topology report |
 | .github/workflows/ci-weekly-digest.yml | digest: Build and publish weekly digest |
 | .github/workflows/ci.yml | actionlint: Workflow lint<br>adapter-conformance-windows: Adapter conformance + e2e (windows)<br>adapter-integration: Adapter integration (fake-CLI)<br>adapter-integration-macos: Adapter integration (fake-CLI, macOS)<br>bandit: Bandit (security)<br>beartype: Beartype (type contracts)<br>ci-gate: CI gate<br>close-ci-issues: Close resolved CI issues<br>coverage-report: Coverage report<br>dead-code: Dead code (Vulture)<br>determine-changes: Determine changes<br>diff-coverage: Diff coverage report<br>dist-size: Package size check<br>install-smoke-pipx: Install smoke - pipx (${{ matrix.os }}, Python ${{ matrix.python-version }})<br>install-smoke-rpm: Install smoke - RPM (${{ matrix.image }})<br>install-smoke-uv: Install smoke - uv tool (${{ matrix.os }})<br>integration-tests: Integration tests<br>lineage-gate: Lineage Gate<br>lint: Lint<br>mutmut-diff: Mutation report (diff-only)<br>mypy-strict-zone: mypy strict (lineage substrate)<br>pip-audit: pip-audit (deps)<br>property-tests: Property tests (Hypothesis smoke)<br>proto-drift: Proto codegen drift<br>pyright-strict-zone: Pyright strict (security + cluster)<br>repo-hygiene: Repo hygiene<br>schemathesis-smoke: Schemathesis smoke<br>semgrep: Semgrep (custom rules)<br>snapshot-tests: Snapshot tests (syrupy)<br>spelling: Spelling (typos)<br>test: Test (${{ matrix.os }}, Python ${{ matrix.python-version }}, shard ${{ matrix.shard }})<br>test-macos: Test (macos-latest, Python 3.13)<br>typecheck: Type check report |
-| .github/workflows/cifuzz-pr.yml | cifuzz: Build and run fuzzers |
+| .github/workflows/cifuzz-weekly.yml | cifuzz: Build and run fuzzers |
 | .github/workflows/cleanup-runs.yml | cleanup |
 | .github/workflows/cluster-e2e.yml | cluster-e2e: cluster-e2e (linux) |
 | .github/workflows/cluster-tunnel-e2e.yml | cluster-tunnel-e2e: cluster-tunnel-e2e (linux) |
@@ -160,7 +160,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/ci-topology-heal.yml | workflow: {"contents": "read"}<br>heal: {"contents": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/ci-weekly-digest.yml | digest: {"actions": "read", "contents": "read", "issues": "write"} | - |
 | .github/workflows/ci.yml | workflow: {"contents": "read"}<br>actionlint: {"contents": "read"}<br>adapter-conformance-windows: {"contents": "read"}<br>adapter-integration: {"contents": "read"}<br>adapter-integration-macos: {"contents": "read"}<br>bandit: {"contents": "read"}<br>beartype: {"contents": "read"}<br>ci-gate: {"contents": "read"}<br>close-ci-issues: {"contents": "read", "issues": "write"}<br>coverage-report: {"contents": "read"}<br>dead-code: {"contents": "read"}<br>determine-changes: {"contents": "read"}<br>diff-coverage: {"contents": "read"}<br>dist-size: {"contents": "read"}<br>install-smoke-pipx: {"contents": "read"}<br>install-smoke-rpm: {"contents": "read"}<br>install-smoke-uv: {"contents": "read"}<br>integration-tests: {"contents": "read"}<br>lineage-gate: {"contents": "read"}<br>lint: {"contents": "read"}<br>mutmut-diff: {"contents": "read"}<br>mypy-strict-zone: {"contents": "read"}<br>pip-audit: {"contents": "read"}<br>property-tests: {"contents": "read"}<br>proto-drift: {"contents": "read"}<br>pyright-strict-zone: {"contents": "read"}<br>repo-hygiene: {"contents": "read"}<br>schemathesis-smoke: {"contents": "read"}<br>semgrep: {"contents": "read"}<br>snapshot-tests: {"contents": "read"}<br>spelling: {"contents": "read"}<br>test: {"contents": "read"}<br>test-macos: {"contents": "read"}<br>typecheck: {"contents": "read"} | CODECOV_TOKEN, GITHUB_TOKEN |
-| .github/workflows/cifuzz-pr.yml | workflow: {"contents": "read"}<br>cifuzz: {"actions": "read", "contents": "read"} | GITHUB_TOKEN |
+| .github/workflows/cifuzz-weekly.yml | workflow: {"contents": "read"}<br>cifuzz: {"actions": "read", "contents": "read"} | GITHUB_TOKEN |
 | .github/workflows/cleanup-runs.yml | workflow: {"contents": "read"}<br>cleanup: {"actions": "write"} | GITHUB_TOKEN |
 | .github/workflows/cluster-e2e.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/cluster-tunnel-e2e.yml | workflow: {"contents": "read"} | CF_TUNNEL_HOSTNAME, CF_TUNNEL_TOKEN |
@@ -220,12 +220,12 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/bernstein-ci-fix.yml | tier3-shadow: upload tier3-shadow-${{ needs.triage.outputs.short_sha }} |
 | .github/workflows/bernstein-issues-decompose.yml | decompose: download issue-decompose-plan-${{ github.event.issue.number }}<br>plan: upload issue-decompose-plan-${{ github.event.issue.number }} |
 | .github/workflows/ci.yml | coverage-report: download -<br>coverage-report: upload coverage-report<br>diff-coverage: download coverage-report<br>dist-size: upload install-smoke-wheel<br>install-smoke-pipx: download install-smoke-wheel<br>install-smoke-uv: download install-smoke-wheel<br>test: upload coverage-data-${{ matrix.shard }} |
-| .github/workflows/cifuzz-pr.yml | cifuzz: upload cifuzz-artifacts-address |
+| .github/workflows/cifuzz-weekly.yml | cifuzz: upload cifuzz-artifacts-address |
 | .github/workflows/cluster-e2e.yml | cluster-e2e: upload cluster-e2e-logs |
 | .github/workflows/cluster-tunnel-e2e.yml | cluster-tunnel-e2e: upload cluster-tunnel-e2e-logs |
 | .github/workflows/coverage-ratchet.yml | ratchet: download coverage-report |
 | .github/workflows/docs-drift.yml | drift-check: upload docs-drift-report<br>drift-publish: download docs-drift-report |
-| .github/workflows/eval-weekly.yml | bench: upload eval-nightly-${{ github.run_id }}<br>smoke: upload eval-nightly-smoke |
+| .github/workflows/eval-weekly.yml | bench: upload eval-weekly-${{ github.run_id }}<br>smoke: upload eval-weekly-smoke |
 | .github/workflows/license-compliance.yml | license-check: upload license-report |
 | .github/workflows/mutation-fixed.yml | mutate: upload mutation-${{ matrix.module }}<br>summary: download - |
 | .github/workflows/nightly-deep-tests.yml | bandit-medium-and-high: upload nightly-bandit-results<br>mutmut-full: upload nightly-mutmut-results |

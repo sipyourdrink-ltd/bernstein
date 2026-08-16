@@ -23,7 +23,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: cifuzz-pr-${{ github.ref }}
+  group: cifuzz-weekly-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:

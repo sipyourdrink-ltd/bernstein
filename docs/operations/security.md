@@ -50,7 +50,7 @@ existing artefacts in this repository.
 | Public bug tracker | GitHub Issues. |
 | Test suite invocable with a documented command | `pytest`; `AGENTS.md` "Build & test" block. |
 | Static analysis (SAST) in CI | CodeQL (`.github/workflows/codeql.yml`); Bandit and Semgrep jobs in `.github/workflows/ci.yml`; `.github/workflows/static-analysis-extended.yml`. |
-| Dynamic analysis / fuzzing | Hypothesis property tests in `tests/`; ClusterFuzzLite at `.clusterfuzzlite/` + `.github/workflows/cifuzz-pr.yml`. |
+| Dynamic analysis / fuzzing | Hypothesis property tests in `tests/`; ClusterFuzzLite at `.clusterfuzzlite/` + `.github/workflows/cifuzz-weekly.yml`. |
 | Dependency vulnerability scanning | Dependabot, OSV via Scorecard, `.github/workflows/dependency-review.yml`. |
 | Cryptographic primitives are well-known | HMAC-SHA256, Ed25519/EdDSA, JWS detached. See module map in `CLAUDE.md` under `src/bernstein/core/security/`. |
 
@@ -76,7 +76,7 @@ ClusterFuzzLite gives OSSF Scorecard a signal it recognizes. Files:
   base-builder-python image ships Python 3.11 and bernstein requires
   3.12+, so the harness targets the underlying YAML primitive instead of
   importing the full package.
-- `.github/workflows/cifuzz-pr.yml` -- per-PR run via
+- `.github/workflows/cifuzz-weekly.yml` -- weekly batch run via
   `google/clusterfuzzlite/actions/run_fuzzers` (SHA-pinned). Job-level
   token permissions are kept read-only (Scorecard `TokenPermissionsID`);
   SARIF upload is intentionally disabled so the elevated
