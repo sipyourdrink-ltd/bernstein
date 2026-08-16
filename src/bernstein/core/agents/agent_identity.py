@@ -19,6 +19,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
 from bernstein.core.auth import create_jwt, verify_jwt
+from bernstein.core.path_scope import ScopePatternError, validate_repo_relative_pattern
 from bernstein.core.sanitize import sanitize_log
 from bernstein.core.tenanting import (
     DEFAULT_TENANT_ID,
@@ -153,6 +154,11 @@ def permissions_for_role(role: str) -> frozenset[str]:
 # former is a pre-field record; see :func:`_credential_tenant_id`.
 _TENANT_KEY_ABSENT: Final[object] = object()
 
+# The two kinds a credential may declare, kept beside the ``token_type``
+# annotation on :class:`AgentCredential` so the deserialiser and the type
+# cannot drift apart; see :func:`_credential_token_type`.
+_CREDENTIAL_TOKEN_TYPES: Final[frozenset[str]] = frozenset({"opaque", "jwt"})
+
 
 def _string_list(raw: Any, field: str) -> list[str]:
     """Return a persisted list-of-strings field, refusing any other shape.
@@ -272,6 +278,53 @@ def _credential_tenant_id(raw: Any) -> str:
     return normalize_tenant_id(raw)
 
 
+def _credential_token_type(raw: Any) -> Literal["opaque", "jwt"]:
+    """Return the token kind a persisted credential declares.
+
+    ``token_type`` selects which validation a token gets: ``_validate_jwt_claims``
+    refuses anything whose credential does not say ``"jwt"``, so authentication
+    falls through to the opaque hash comparison for every other value.  A
+    ``str()`` coercion of the stored value therefore does not merely widen a
+    type - it routes an authentication decision on a value nothing has
+    established, and the routing is by whichever comparison runs first rather
+    than by a recognised kind.
+
+    An unknown kind is refused here instead, in the same style as
+    :func:`_credential_tenant_id` beside it: the boundary where a record on
+    disk becomes an object the rest of the code trusts is where a value that
+    is not one of the two real kinds stops.
+
+    Leniency is for age, not for content: a record written before the field
+    existed carries no ``token_type`` at all and is an opaque credential,
+    which is what the dataclass default has always said.  A record that
+    carries the key with something else in it asserted a kind, and an
+    unrecognised assertion is refused rather than defaulted - defaulting it
+    would rewrite a security-relevant field on the way in and lose the fact
+    that the store holds something nothing wrote.
+
+    The ``isinstance`` check is what makes that refusal reachable for every
+    stored shape rather than most of them.  A membership test hashes its left
+    operand, and JSON persists two values that cannot be hashed: a list and
+    an object.  Without the guard those two raise ``TypeError: unhashable
+    type: 'list'`` out of the lookup itself - caught by
+    :meth:`AgentIdentityStore._read_identity` like any other refusal, so the
+    store stays readable, but naming neither the field nor the value, which
+    is the whole point of the message below.  It is also the shape
+    :func:`_credential_tenant_id` beside it already uses.
+
+    Args:
+        raw: The stored value, or ``"opaque"`` when the record has no
+            ``token_type`` key.
+
+    Raises:
+        ValueError: The record carries a ``token_type`` outside
+            ``Literal["opaque", "jwt"]``.
+    """
+    if isinstance(raw, str) and raw in _CREDENTIAL_TOKEN_TYPES:
+        return cast('Literal["opaque", "jwt"]', raw)
+    raise ValueError(f"credential token_type must be one of {sorted(_CREDENTIAL_TOKEN_TYPES)}, got {raw!r}")
+
+
 @dataclass
 class AgentCredential:
     """Bearer token for agent-to-server authentication.
@@ -326,7 +379,7 @@ class AgentCredential:
             created_at=float(d.get("created_at", 0)),
             expires_at=float(d.get("expires_at", 0)),
             revoked=bool(d.get("revoked", False)),
-            token_type=str(d.get("token_type", "opaque")),
+            token_type=_credential_token_type(d.get("token_type", "opaque")),
             algorithm=str(d.get("algorithm", "HS256")),
             jti=str(d.get("jti", "")),
             tenant_id=_credential_tenant_id(d.get("tenant_id", _TENANT_KEY_ABSENT)),
@@ -604,9 +657,13 @@ class AgentIdentityStore:
         """Create a new agent identity with a short-lived, task-scoped JWT.
 
         Each agent receives a JWT that is scoped to its assigned task IDs and
-        (optionally) a list of file glob patterns it may write.  The task server
-        enforces these scopes on every incoming request so that a compromised
-        agent cannot modify tasks outside its own scope.
+        (optionally) a list of file glob patterns its work may touch.  The task
+        server enforces ``task_ids`` on every incoming request, so a compromised
+        agent cannot modify tasks outside its own scope.  ``allowed_files`` is
+        enforced at a different place and buys a different thing: the merge
+        acceptance gate refuses to bring in a change that falls outside it
+        (#3914), which contains an out-of-scope write rather than preventing
+        it.  See ``docs/operations/security-and-identity.md``.
 
         Args:
             session_id: Unique agent session identifier.
@@ -618,10 +675,11 @@ class AgentIdentityStore:
                 task-scoped tokens or 24 h for unrestricted manager tokens.
             task_ids: Task IDs this identity is authorised to act on.  An empty
                 list means no restriction (orchestrator / manager role).
-            allowed_files: File glob patterns this identity may write to.  An
-                empty list means no restriction.  Recorded on the credential
-                and compared against the token's claim; no file-write boundary
-                consumes it (see the operations guide).
+            allowed_files: Repository-relative glob patterns this identity's
+                work may touch.  An empty list means no restriction, which is
+                what every identity minted before the gate existed carries.
+                Each pattern is validated here, so a scope that could name a
+                file outside the repository never becomes a signed one.
 
         Returns:
             Tuple of ``(AgentIdentity, raw_token)`` - the raw bearer token is
@@ -629,8 +687,9 @@ class AgentIdentityStore:
 
         Raises:
             ValueError: ``task_ids`` or ``allowed_files`` is not a list of
-                strings.  Refused before the token is signed, so a bad scope
-                cannot become a credential that fails to load.
+                strings, or an ``allowed_files`` pattern is not
+                repository-relative.  Refused before the token is signed, so a
+                bad scope cannot become a credential that fails to load.
         """
         identity_id = session_id  # 1:1 mapping with agent session
         permissions = permissions_for_role(role)
@@ -647,6 +706,18 @@ class AgentIdentityStore:
         # signed a token with no task scope at all.
         scoped_task_ids = _string_list(() if task_ids is None else task_ids, "task_ids")
         scoped_files = _string_list(() if allowed_files is None else allowed_files, "allowed_files")
+        # Shape is not enough for the file scope: the merge gate reads these as
+        # repository-relative globs, so a pattern that names a drive or walks
+        # out of the root is refused before it can be signed.  Validated only
+        # here, at declaration -- records written before this existed stay
+        # loadable, and an uninterpretable pattern simply admits nothing when
+        # the gate matches against it.
+        for index, pattern in enumerate(scoped_files):
+            try:
+                validate_repo_relative_pattern(pattern)
+            except ScopePatternError as exc:
+                msg = f"allowed_files[{index}]: {exc}"
+                raise ValueError(msg) from exc
 
         now = time.time()
         # Use shorter expiry (4 h) for task-scoped tokens to limit blast radius.

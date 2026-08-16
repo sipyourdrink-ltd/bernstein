@@ -34,12 +34,76 @@ from __future__ import annotations
 
 import re
 from functools import lru_cache
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
-__all__ = ["normalise_repo_path", "paths_outside_scope"]
+__all__ = [
+    "ScopePatternError",
+    "normalise_repo_path",
+    "paths_outside_scope",
+    "validate_repo_relative_pattern",
+]
+
+
+class ScopePatternError(ValueError):
+    """A glob that cannot mean "repository-relative" whatever it is read by.
+
+    Raised by :func:`validate_repo_relative_pattern` and carrying only the
+    reason, not the field it came from: the two callers name their own field
+    differently (``allowed_paths[2]`` in a manifest, ``allowed_files`` on a
+    credential) and each wraps this in the error type its own surface already
+    raises.
+    """
+
+
+def validate_repo_relative_pattern(pattern: str) -> str:
+    """Return ``pattern`` unchanged, or refuse it as not repository-relative.
+
+    Both surfaces that declare a scope validate through here, so a glob
+    admitted by one and refused by the other is not reachable. The refusals
+    are the forms that could name a file outside the checkout: an empty glob,
+    a NUL byte, an absolute path, a drive-qualified path, a home-directory
+    reference, and any pattern whose ``..`` segments walk out of the root.
+
+    Applied where a scope is *declared*, never where one is loaded. Records
+    written before this existed stay loadable; an uninterpretable pattern is
+    handled at match time by admitting nothing (see :func:`paths_outside_scope`),
+    which is the safe direction.
+
+    Args:
+        pattern: The glob to check, in any spelling a caller might hold it.
+
+    Returns:
+        The pattern exactly as passed, so callers can use this inline.
+
+    Raises:
+        ScopePatternError: The pattern could name something outside the root.
+    """
+    if not pattern:
+        raise ScopePatternError("empty glob")
+    if "\x00" in pattern:
+        raise ScopePatternError("contains a NUL byte")
+
+    normalised = pattern.replace("\\", "/")
+    if normalised.startswith("/"):
+        raise ScopePatternError(f"{pattern!r} is absolute; globs are relative to the repository root")
+    if len(normalised) > 1 and normalised[1] == ":":
+        raise ScopePatternError(f"{pattern!r} names a drive; globs are relative to the repository root")
+    if normalised.startswith("~"):
+        raise ScopePatternError(f"{pattern!r} refers to a home directory")
+
+    depth = 0
+    for part in PurePosixPath(normalised).parts:
+        if part == "..":
+            depth -= 1
+            if depth < 0:
+                raise ScopePatternError(f"{pattern!r} escapes the repository root")
+        elif part not in (".", ""):
+            depth += 1
+    return pattern
 
 
 def normalise_repo_path(path: str) -> str:

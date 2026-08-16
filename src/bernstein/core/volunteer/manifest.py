@@ -74,10 +74,11 @@ import hashlib
 import json
 import warnings
 from dataclasses import dataclass
-from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.path_scope import ScopePatternError
 from bernstein.core.path_scope import paths_outside_scope as _paths_outside_scope
+from bernstein.core.path_scope import validate_repo_relative_pattern as _validate_repo_relative_pattern
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -433,27 +434,16 @@ def _load_allowed_paths(raw: dict[str, Any]) -> tuple[str, ...]:
 
 
 def _validate_repo_relative(entry: str, field: str) -> str:
-    """Refuse anything that could name a file outside the checkout."""
-    if not entry:
-        raise VolunteerManifestError(field, "empty glob")
-    if "\x00" in entry:
-        raise VolunteerManifestError(field, "contains a NUL byte")
-    normalised = entry.replace("\\", "/")
-    if normalised.startswith("/"):
-        raise VolunteerManifestError(field, f"{entry!r} is absolute; globs are relative to the repository root")
-    if len(normalised) > 1 and normalised[1] == ":":
-        raise VolunteerManifestError(field, f"{entry!r} names a drive; globs are relative to the repository root")
-    if normalised.startswith("~"):
-        raise VolunteerManifestError(field, f"{entry!r} refers to a home directory")
-    depth = 0
-    for part in PurePosixPath(normalised).parts:
-        if part == "..":
-            depth -= 1
-            if depth < 0:
-                raise VolunteerManifestError(field, f"{entry!r} escapes the repository root")
-        elif part not in (".", ""):
-            depth += 1
-    return entry
+    """Refuse anything that could name a file outside the checkout.
+
+    The rules live in :func:`~bernstein.core.path_scope.validate_repo_relative_pattern`
+    because an agent credential's ``allowed_files`` declares the same kind of
+    scope (#3914); only the error type differs, so that is all this adds.
+    """
+    try:
+        return _validate_repo_relative_pattern(entry)
+    except ScopePatternError as exc:
+        raise VolunteerManifestError(field, str(exc)) from exc
 
 
 def _load_egress_allowlist(raw: dict[str, Any]) -> tuple[str, ...]:

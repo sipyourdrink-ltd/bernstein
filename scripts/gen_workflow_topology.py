@@ -9,7 +9,7 @@ import json
 import re
 import sys
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, cast
 
 import yaml
@@ -25,9 +25,30 @@ SECRET_REF_RE = re.compile(r"\bsecrets\.([A-Z0-9_]+)\b")
 
 @dataclass(frozen=True)
 class WorkflowInfo:
-    """Parsed workflow facts used by the report."""
+    """Parsed workflow facts used by the report.
 
-    path: Path
+    ``path`` is a repository-relative *locator*, not a path you can open.
+
+    That distinction is the fix for #4000. The report embeds this value in
+    five different tables, and it used to hold whatever :func:`Path` the
+    glob produced - a ``WindowsPath`` on Windows, which renders with
+    backslashes and rewrote all 204 rows of the committed report on any
+    regeneration from a Windows machine. CI is Linux, so nothing could see
+    it: ``--check`` exits 0 there whether or not the bug is present.
+
+    Normalising here rather than at the five render sites is deliberate. A
+    rule that five call sites must each remember is a rule that gets
+    forgotten once, and the sixth table is what reintroduces the bug.
+
+    ``PurePosixPath`` is doing two jobs. It renders with forward slashes on
+    every platform, and it has no ``read_text``/``open`` at all - so the
+    type makes "this is a locator, not a file handle" unforgeable rather
+    than a comment somebody has to honour. The file is read in
+    :func:`parse_workflow` before this record exists, so nothing downstream
+    ever wanted to open it.
+    """
+
+    path: PurePosixPath
     name: str
     triggers: tuple[str, ...]
     concurrency: str
@@ -37,6 +58,18 @@ class WorkflowInfo:
     secrets: tuple[str, ...]
     calls: tuple[str, ...]
     artifacts: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        """Coerce whatever path flavour arrived into a posix locator.
+
+        Belt and braces over the annotation. ``parse_workflow`` already
+        passes a ``PurePosixPath``, but the annotation alone is a promise
+        rather than a mechanism - nothing stops a future caller handing in
+        the ``WindowsPath`` straight off the glob, which is exactly how
+        this bug arrived the first time. ``object.__setattr__`` because the
+        dataclass is frozen.
+        """
+        object.__setattr__(self, "path", PurePosixPath(self.path.as_posix()))
 
 
 def _as_mapping(value: object) -> dict[str, object]:
@@ -164,7 +197,8 @@ def parse_workflow(path: Path) -> WorkflowInfo:
     workflow_permissions = _permissions("workflow", doc.get("permissions"))
 
     return WorkflowInfo(
-        path=path,
+        # Normalised at the boundary: the row builders below just render it.
+        path=PurePosixPath(path.as_posix()),
         name=str(doc.get("name", path.name)),
         triggers=_trigger_names(doc),
         concurrency=_scalar(doc.get("concurrency")),
