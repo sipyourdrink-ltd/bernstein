@@ -148,13 +148,54 @@ def _agent_credential(app: FastAPI, session_id: str, tenant_id: str, task_ids: l
     return Credential(name=session_id, token=token)
 
 
+def _release(app: FastAPI) -> None:
+    """Drop the object graph *app* owns, now that its test is over.
+
+    Dropping this file's own references to the app is not enough, and the
+    reason is worth writing down because it decides the shape of the remedy.
+    An app survives its own test whenever that test served a request through
+    a route declared ``def`` rather than ``async def`` - measured at 0d4e7db
+    over ``/observability/deps``, ``/observability/agents`` and ``/team``
+    (one app retained per case) against ``/recap`` and
+    ``/dashboard/auth/status`` (none).  Walking ``gc.get_referrers`` from one
+    of the survivors reaches the keyword arguments anyio's pytest plugin holds
+    while finalising an async-generator fixture - for ``client`` that is
+    ``{"fx": <Fixture>}`` - and then the event loop's own frames.  All of that
+    is outside this repository, so no amount of care with ``del`` here reaches
+    it, and one retained app per case is what makes this suite's cost
+    quadratic in its own length (#3927).
+
+    What this file *can* decide is how much that retained handle is holding.
+    One app is ~13,100 tracked objects, ~19,700 once it has served a request.
+    Clearing the individual handles - ``state``, ``router.routes``,
+    ``user_middleware``, ``middleware_stack``, ``dependency_overrides``,
+    ``exception_handlers`` - gives back only ~1,400 of them, because the graph
+    stays reachable through whichever handle was not on the list.  Clearing
+    the instance dict gives back all but ~120, which is the same figure as
+    never holding the app at all.  Hence the blunt instrument.  It is safe
+    because nothing may touch the app after this runs and by construction
+    nothing does: ``client`` requests ``fx``, so pytest finalises ``client``
+    first and there is no live transport left by this point.
+
+    What this does NOT do is stop the app *object* being retained - that root
+    is somebody else's - only the graph hanging off it.  A count of live
+    ``FastAPI`` instances therefore still climbs; the heap does not.
+    """
+    app.__dict__.clear()
+
+
 @pytest.fixture()
 async def fx(
     sdd_dir: Path,
     jsonl_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> Fixture:
-    """Build the real app with one task per tenant and every credential type."""
+) -> AsyncIterator[Fixture]:
+    """Build the real app with one task per tenant and every credential type.
+
+    Every test gets its own app - that is the point of the suite, and it is
+    unchanged.  What is new is that the app does not survive the test that
+    used it; see :func:`_release`.
+    """
     monkeypatch.setenv("BERNSTEIN_AUTH_ENABLED", "1")
     monkeypatch.setenv("BERNSTEIN_AUTH_JWT_SECRET", JWT_SECRET)
 
@@ -197,13 +238,20 @@ async def fx(
         "agent_unrestricted": _agent_credential(app, "agent-manager-a", TENANT_A, []),
     }
 
-    return Fixture(
-        app=app,
-        task_a_id=task_a.id,
-        task_b_id=task_b.id,
-        task_default_id=task_default.id,
-        credentials=credentials,
-    )
+    try:
+        yield Fixture(
+            app=app,
+            task_a_id=task_a.id,
+            task_b_id=task_b.id,
+            task_default_id=task_default.id,
+            credentials=credentials,
+        )
+    finally:
+        # ``finally`` rather than a bare statement after the yield: a fixture
+        # generator that is closed rather than resumed - which is what
+        # ``aclose`` does when a run is interrupted - throws ``GeneratorExit``
+        # at the yield, and only a ``finally`` runs then.
+        _release(app)
 
 
 @pytest.fixture()
