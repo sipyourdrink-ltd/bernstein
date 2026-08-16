@@ -413,3 +413,67 @@ def test_summary_names_no_baseline_outcome(tmp_path: Path) -> None:
     text = summary.read_text(encoding="utf-8")
     assert "no baseline" in text
     assert "no regressions" not in text
+
+
+# --------------------------------------------------------------------------
+# sparse cadence: snapshots weeks apart, not day-over-day (#3954)
+# --------------------------------------------------------------------------
+
+
+def test_sparse_snapshots_weeks_apart_with_no_change_is_not_a_regression(tmp_path: Path) -> None:
+    """Three snapshots spread weeks apart must not read as a regression
+    purely because of the elapsed gap - only an actual metric change does.
+    """
+    flat = _snapshot(_backend("code-scanning", "ok", [_metric("critical_alerts", 0.0, "ok")]))
+    (tmp_path / "2026-01-01.json").write_text(json.dumps(flat), encoding="utf-8")
+    (tmp_path / "2026-01-20.json").write_text(json.dumps(flat), encoding="utf-8")
+    (tmp_path / "2026-02-15.json").write_text(json.dumps(flat), encoding="utf-8")
+    out = tmp_path / "regressions.json"
+
+    code = gate.main(["--snapshots", str(tmp_path), "--out", str(out)])
+
+    assert code == 0
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["outcome"] == "clean"
+    assert payload["regressions"] == []
+    # the compared pair is the latest two (2026-01-20, 2026-02-15): 26 days
+    assert payload["gap_days"] == 26
+
+
+def test_summary_states_the_gap_between_compared_snapshots(tmp_path: Path) -> None:
+    prev = _snapshot(_backend("code-scanning", "ok", [_metric("critical_alerts", 0.0, "ok")]))
+    curr = _snapshot(_backend("code-scanning", "ok", [_metric("critical_alerts", 0.0, "ok")]))
+    (tmp_path / "2026-01-01.json").write_text(json.dumps(prev), encoding="utf-8")
+    (tmp_path / "2026-03-12.json").write_text(json.dumps(curr), encoding="utf-8")
+    summary = tmp_path / "summary.md"
+
+    code = gate.main(["--snapshots", str(tmp_path), "--summary-out", str(summary)])
+    text = summary.read_text(encoding="utf-8")
+
+    assert code == 0
+    assert "70 day(s)" in text  # 2026-01-01 -> 2026-03-12 is 70 days
+
+
+def test_one_line_output_states_the_gap(tmp_path: Path, capsys: Any) -> None:
+    flat = _snapshot(_backend("code-scanning", "ok", [_metric("critical_alerts", 0.0, "ok")]))
+    (tmp_path / "2026-01-01.json").write_text(json.dumps(flat), encoding="utf-8")
+    (tmp_path / "2026-01-08.json").write_text(json.dumps(flat), encoding="utf-8")
+    out = tmp_path / "regressions.json"
+
+    gate.main(["--snapshots", str(tmp_path), "--out", str(out)])
+    stdout = capsys.readouterr().out
+
+    assert "7-day gap" in stdout
+
+
+def test_gap_is_not_quoted_when_no_baseline_exists(tmp_path: Path, capsys: Any) -> None:
+    """A single snapshot has no gap to report - the no-baseline message wins."""
+    (tmp_path / "2026-07-14.json").write_text(json.dumps(_snapshot()), encoding="utf-8")
+    out = tmp_path / "regressions.json"
+
+    gate.main(["--snapshots", str(tmp_path), "--out", str(out)])
+    stdout = capsys.readouterr().out
+
+    assert "gap" not in stdout
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["gap_days"] is None

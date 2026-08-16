@@ -1,7 +1,13 @@
-"""Day-over-day regression gate for ``bernstein doctor observe`` snapshots.
+"""Regression gate for ``bernstein doctor observe`` snapshots.
 
-The daily workflow ``docs-observability-snapshot.yml`` appends one JSON
-snapshot per day under ``docs/_internal/observability/snapshots/<YYYY-MM-DD>.json``.
+The ``docs-observability-snapshot.yml`` workflow is manual-only
+(``workflow_dispatch``, see #2856) and appends one JSON snapshot per
+dispatch, named by date, under
+``docs/_internal/observability/snapshots/<YYYY-MM-DD>.json``. Dispatches
+are sporadic, so the two most recent snapshots this gate compares may
+be days or months apart - the gate states that gap explicitly rather
+than presenting the comparison as if it were day-over-day.
+
 Every metric row in a snapshot already carries a ``threshold_status``
 (``ok|warn|fail``) computed at probe time. Until now that verdict was
 written and never read. This gate diffs the two most recent snapshots and
@@ -12,7 +18,7 @@ turns the verdict into an actionable signal:
 * a backend that silently lost its credentials (``ok -> skipped/error``).
 
 The numeric delta is computed here from the two snapshot files rather than
-read from the row's own ``delta`` field: the daily job runs ``--no-persist``
+read from the row's own ``delta`` field: the snapshot job runs ``--no-persist``
 so that field is inert (``"new"``/``"-"``).
 
 Like its sibling ``render_trends.py`` the module is dependency-free (Python
@@ -30,8 +36,8 @@ output and in the ``--out`` JSON payload:
 * ``warn`` / ``clean`` (exit 0): a baseline was compared; only warnings,
   or nothing at all, came out of the comparison.
 * ``no-baseline`` (exit 2): fewer than two readable snapshots exist, so
-  no day-over-day comparison ran. This is an unknown state, never
-  reported as "no regressions".
+  no baseline comparison ran. This is an unknown state, never reported
+  as "no regressions".
 """
 
 from __future__ import annotations
@@ -72,7 +78,7 @@ EXIT_NO_BASELINE = 2
 
 @dataclass(frozen=True)
 class Regression:
-    """A single detected day-over-day regression."""
+    """A single detected regression between the two most recent snapshots."""
 
     backend: str
     metric: str
@@ -272,20 +278,35 @@ def resolve_outcome(baseline_present: bool, regressions: list[Regression]) -> st
     return "warn" if regressions else "clean"
 
 
-def _one_line(outcome: str, regressions: list[Regression], snapshots_found: int) -> str:
+def _gap_note(gap_days: int | None) -> str:
+    """Render the elapsed-gap suffix for the one-line summary, or ``""``."""
+
+    if gap_days is None:
+        return ""
+    return f" (comparing across a {gap_days}-day gap)"
+
+
+def _one_line(
+    outcome: str,
+    regressions: list[Regression],
+    snapshots_found: int,
+    *,
+    gap_days: int | None = None,
+) -> str:
     if outcome == "no-baseline":
         return (
             f"observability gate: no baseline to compare against "
             f"({snapshots_found} snapshot(s), need 2); comparison not performed"
         )
+    gap = _gap_note(gap_days)
     if not regressions:
-        return "observability gate: no regressions (baseline compared)"
+        return f"observability gate: no regressions (baseline compared){gap}"
     fails = sum(1 for r in regressions if r.severity == "fail")
     warns = len(regressions) - fails
-    return f"observability gate: {fails} fail, {warns} warn regression(s)"
+    return f"observability gate: {fails} fail, {warns} warn regression(s){gap}"
 
 
-_NO_BASELINE_NOTE = "note: no baseline snapshot; day-over-day comparison not performed"
+_NO_BASELINE_NOTE = "note: no baseline snapshot; comparison not performed"
 
 
 def _render_summary(
@@ -294,10 +315,16 @@ def _render_summary(
     snapshots_found: int,
     *,
     baseline_present: bool,
+    gap_days: int | None = None,
 ) -> str:
     """Render a Markdown summary block for the CI step summary."""
 
-    lines = ["## Observability regression gate", "", _one_line(outcome, regressions, snapshots_found), ""]
+    lines = [
+        "## Observability regression gate",
+        "",
+        _one_line(outcome, regressions, snapshots_found, gap_days=gap_days),
+        "",
+    ]
     if outcome == "no-baseline":
         lines += [
             "The snapshot corpus holds fewer than two readable dated files, "
@@ -306,6 +333,12 @@ def _render_summary(
         ]
     elif not baseline_present:
         lines += [_NO_BASELINE_NOTE + "; only absolute threshold failures are reported.", ""]
+    elif gap_days is not None:
+        lines += [
+            f"Comparing against the snapshot from {gap_days} day(s) earlier. Dispatches are "
+            "manual and sporadic (see #2856), so this gap is not always small.",
+            "",
+        ]
     if regressions:
         lines += ["| severity | backend | metric | prev | curr | reason |", "| --- | --- | --- | ---: | ---: | --- |"]
         for r in sorted(regressions, key=lambda x: (x.severity != "fail", x.backend, x.metric)):
@@ -339,7 +372,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    snapshots_found = len(dated_snapshots(args.snapshots))
+    dated = dated_snapshots(args.snapshots)
+    snapshots_found = len(dated)
+    gap_days = (dated[-1][0] - dated[-2][0]).days if len(dated) >= 2 else None
     prev, curr = load_two_latest(args.snapshots)
     regressions = detect_regressions(prev, curr)
     baseline_present = prev is not None and curr is not None
@@ -349,16 +384,30 @@ def main(argv: list[str] | None = None) -> int:
         "outcome": outcome,
         "baseline_present": baseline_present,
         "snapshots_found": snapshots_found,
+        "gap_days": gap_days,
         "regressions": [asdict(r) for r in regressions],
     }
+    # Only quote the gap once a real prev/curr pair was actually loaded -
+    # a dated file that failed to parse should not print a gap next to a
+    # comparison that did not happen.
+    display_gap_days = gap_days if baseline_present else None
+
     if args.out is not None:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     if args.summary_out is not None:
         with args.summary_out.open("a", encoding="utf-8") as handle:
-            handle.write(_render_summary(outcome, regressions, snapshots_found, baseline_present=baseline_present))
+            handle.write(
+                _render_summary(
+                    outcome,
+                    regressions,
+                    snapshots_found,
+                    baseline_present=baseline_present,
+                    gap_days=display_gap_days,
+                )
+            )
 
-    print(_one_line(outcome, regressions, snapshots_found))
+    print(_one_line(outcome, regressions, snapshots_found, gap_days=display_gap_days))
     if not baseline_present and outcome != "no-baseline":
         print(f"  {_NO_BASELINE_NOTE}")
     for r in regressions:
