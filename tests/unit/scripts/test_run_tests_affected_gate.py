@@ -30,6 +30,7 @@ the drift guards below pin the two facts that make each entry safe:
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from collections.abc import Generator
 from pathlib import Path
@@ -167,6 +168,15 @@ def test_exempt_suites_are_outside_the_selector_index(run_tests_module: ModuleTy
         )
 
 
+# The one job condition that cannot exclude a pull request: it only skips
+# docs-only merge-queue entries, so the suite still runs on every PR, which
+# is the fact the exemption relies on.
+_DOCS_ONLY_MERGE_GROUP_GUARD = re.compile(
+    r"\$\{\{\s*!\(github\.event_name == 'merge_group'\s*&&\s*"
+    r"needs\.determine-changes\.outputs\.docs_only == 'true'\)\s*\}\}"
+)
+
+
 def test_exempt_suites_have_an_unconditional_gated_job(run_tests_module: ModuleType) -> None:
     """Each exemption must be paid for by a required job that runs the suite."""
     jobs = _ci_jobs()
@@ -183,7 +193,11 @@ def test_exempt_suites_have_an_unconditional_gated_job(run_tests_module: ModuleT
         assert gated, f"{prefix} is only run by {owners}, none of which the CI gate depends on"
         for job_id in gated:
             job = jobs[job_id]
-            assert "if" not in job, (
-                f"{job_id} runs {prefix} but is conditional ({job['if']!r}); the exemption "
-                f"assumes the suite runs on every pull request"
+            condition = job.get("if")
+            if condition is None:
+                continue
+            assert _DOCS_ONLY_MERGE_GROUP_GUARD.fullmatch(str(condition).strip()), (
+                f"{job_id} runs {prefix} but is conditional ({condition!r}) in a way that "
+                f"can skip a pull request; the exemption assumes the suite runs on every "
+                f"pull request"
             )
