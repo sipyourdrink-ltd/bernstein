@@ -82,7 +82,11 @@ MODULES: tuple[Module, ...] = (
         threshold=0.70,
         budget_seconds=1200,
         max_candidates=80,
-        note="HMAC-chained audit log writer.",
+        note=(
+            "HMAC-chained audit log writer. Advisory in mutation-fixed.yml "
+            "(32/80 killed as of the 2026-08-16 weekly run) pending test "
+            "coverage backfill; revisit 2026-09-15."
+        ),
     ),
     Module(
         key="audit_integrity",

@@ -22,8 +22,13 @@
 # follow-up `summary` job aggregates all JSONs and (on PRs) sticks a
 # single comment with the per-module table.
 #
-# `continue-on-error: true` is set on the matrix jobs while thresholds
-# stabilise - this PR sets up the gate, humans tighten it in follow-ups.
+# `continue-on-error` is per-module (matrix `include` below), not a
+# blanket flag. Six of the seven modules hold their threshold with real
+# margin and gate for real: a kill-rate drop fails the job and, on a
+# merge_group run, blocks the merge queue. `audit_log` is the one pinned
+# exception - see its `include` entry and
+# tests/unit/test_mutation_fixed_workflow_yaml.py:ADVISORY_MODULES for
+# the kill-rate data behind it and the revisit date.
 name: Mutation (fixed critical paths)
 
 on:
@@ -59,9 +64,10 @@ jobs:
     runs-on: ubuntu-latest
     # Hard total cap; per-module budgets enforced inside the harness.
     timeout-minutes: 30
-    # Gate is advisory for the first two weeks. Once the thresholds in
-    # MODULES are calibrated, flip this to `false` (or drop the line).
-    continue-on-error: true
+    # Per-module, driven by matrix.advisory below - not a blanket flag.
+    # `false` means a kill-rate drop on this module fails the job for
+    # real (and blocks the merge queue on a merge_group run).
+    continue-on-error: ${{ matrix.advisory }}
     permissions:
       contents: read
     strategy:
@@ -75,6 +81,32 @@ jobs:
           - lineage_tips
           - lineage_merge
           - config_seed_parser
+        # Per-module advisory flag: `true` opts the module out of the run
+        # conclusion. Keep this closed and reviewed - a module doesn't
+        # get to stay advisory by default (mirrors the
+        # NO_CANCEL_EXCEPTIONS pattern in
+        # tests/unit/test_pull_request_workflow_concurrency_yaml.py).
+        # tests/unit/test_mutation_fixed_workflow_yaml.py:ADVISORY_MODULES
+        # pins the expected set.
+        include:
+          - module: claim_next
+            advisory: false
+          - module: audit_log
+            # 32/80 killed vs a 70% threshold as of the 2026-08-16 weekly
+            # run - a 30-point gap, not sampling noise. Needs test
+            # coverage backfill on src/bernstein/core/security/audit.py
+            # before this can gate for real; revisit 2026-09-15.
+            advisory: true
+          - module: audit_integrity
+            advisory: false
+          - module: lineage_gate
+            advisory: false
+          - module: lineage_tips
+            advisory: false
+          - module: lineage_merge
+            advisory: false
+          - module: config_seed_parser
+            advisory: false
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
@@ -114,14 +146,20 @@ jobs:
           mkdir -p mutation-results
           # Per-module budget is enforced inside the harness; this is a
           # belt-and-braces wall-clock cap so a hung mutation can't burn
-          # the full 30-minute job timeout.
+          # the full 30-minute job timeout. The harness's own exit code
+          # (0 pass, 1 gate failure, 2 baseline failure) is this step's
+          # exit code. It used to be swallowed by `|| echo`, so the step
+          # - and with it the job - reported success no matter what the
+          # harness found.
           timeout 1500 uv run python scripts/mutmut_critical.py \
             --only "$MATRIX_MODULE" \
             --quiet \
-            --json "mutation-results/${MATRIX_MODULE}.json" \
-            || echo "harness exited non-zero (gate failure or baseline)"
+            --json "mutation-results/${MATRIX_MODULE}.json"
       - name: Upload module result
-        if: steps.filter.outputs.skip != 'true'
+        # always(): a module below threshold now fails the previous step
+        # for real, and the artifact - the survivor list a human needs to
+        # act on it - must still reach the summary job and PR comment.
+        if: always() && steps.filter.outputs.skip != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: mutation-${{ matrix.module }}
@@ -212,7 +250,7 @@ jobs:
                 }
                 body += '\n</details>\n';
               }
-              body += '\n> Gate is **advisory** while thresholds stabilise. To kill survivors locally:\n> `uv run python scripts/mutmut_critical.py --only <module>`';
+              body += '\n> The gate enforces per module; only modules pinned advisory in `mutation-fixed.yml` can fail here without failing the job. To kill survivors locally:\n> `uv run python scripts/mutmut_critical.py --only <module>`';
             }
 
             // Always surface the table in the job summary first, so the
