@@ -466,12 +466,20 @@ class TestAgentCredentialTokenTypeDeserialization:
         assert credential.token_type == stored
         assert AgentCredential.from_dict(credential.to_dict()).token_type == stored
 
-    @pytest.mark.parametrize("stored", ["anything", "JWT", "opaque ", "", None, 1, True])
+    @pytest.mark.parametrize("stored", ["anything", "JWT", "opaque ", "", None, 1, True, [], {}])
     def test_unknown_token_type_is_refused_and_named(self, stored: object) -> None:
         """The message names the offending value, so the record is findable.
 
         A store holding one bad record is repaired by locating it; a refusal
         that only names the field leaves every credential a suspect.
+
+        The last two cases are the reason the membership test is guarded by
+        ``isinstance``: a list and an object are the only two values JSON can
+        persist that a set lookup cannot hash, so without the guard they
+        raise ``TypeError: unhashable type`` from the lookup rather than the
+        named ``ValueError``.  Both are here rather than one, because they
+        are two different unhashable shapes and a guard covering one is not
+        evidence about the other.
         """
         with pytest.raises(ValueError, match="token_type") as excinfo:
             AgentCredential.from_dict({"token_hash": "abc", "token_type": stored})

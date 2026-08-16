@@ -301,6 +301,16 @@ def _credential_token_type(raw: Any) -> Literal["opaque", "jwt"]:
     would rewrite a security-relevant field on the way in and lose the fact
     that the store holds something nothing wrote.
 
+    The ``isinstance`` check is what makes that refusal reachable for every
+    stored shape rather than most of them.  A membership test hashes its left
+    operand, and JSON persists two values that cannot be hashed: a list and
+    an object.  Without the guard those two raise ``TypeError: unhashable
+    type: 'list'`` out of the lookup itself - caught by
+    :meth:`AgentIdentityStore._read_identity` like any other refusal, so the
+    store stays readable, but naming neither the field nor the value, which
+    is the whole point of the message below.  It is also the shape
+    :func:`_credential_tenant_id` beside it already uses.
+
     Args:
         raw: The stored value, or ``"opaque"`` when the record has no
             ``token_type`` key.
@@ -309,7 +319,7 @@ def _credential_token_type(raw: Any) -> Literal["opaque", "jwt"]:
         ValueError: The record carries a ``token_type`` outside
             ``Literal["opaque", "jwt"]``.
     """
-    if raw in _CREDENTIAL_TOKEN_TYPES:
+    if isinstance(raw, str) and raw in _CREDENTIAL_TOKEN_TYPES:
         return cast('Literal["opaque", "jwt"]', raw)
     raise ValueError(f"credential token_type must be one of {sorted(_CREDENTIAL_TOKEN_TYPES)}, got {raw!r}")
 
