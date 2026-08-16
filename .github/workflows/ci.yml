@@ -1876,35 +1876,30 @@ jobs:
     #   - the PR carries the `macos-needed` label (operator opt-in for
     #     cross-platform work the path filter cannot detect).
     # Otherwise this job is skipped on the PR and ci-macos-nightly.yml
-    # provides the safety-net coverage at 06:00 UTC each day.
+    # provides the safety-net coverage at 06:00 UTC each day. The merge
+    # queue (merge_group) skips this job entirely (see the ci-gate
+    # MACOS_SKIP_EVENTS handling) - the post-merge push carries the
+    # macOS signal for a queued group.
     #
     # Coverage / JUnit / Codecov uploads are NOT mirrored here; they
     # remain ubuntu-only (matches the previous matrix gating).
     #
-    # macOS sharding decision (this PR): the ubuntu `test` job fans out
-    # across a `shard` matrix dimension, but macOS CANNOT - this job's
-    # `name:` MUST stay the literal string below (branch-protection
-    # required-context + required-check-canary.yml both pin it; a matrix
-    # `shard` dimension would template the name and break the lock). So
-    # instead of sharding macOS, we shrink its per-push workload to a
-    # single deterministic quarter of the file list (`--shard 1/MACOS
-    # _PUSH_SHARD_COUNT`). This fits the time budget without the 90-min
-    # wall the full macOS suite hit, keeps a real (deterministic, ~1/4)
-    # macOS signal on every commit that lands on main, and leaves
-    # ci-macos-nightly.yml to run the FULL macOS matrix as the safety
-    # net. On PRs the job already runs `--affected` (impacted slice), so
-    # macos_sensitive PRs still exercise exactly the touched code on macOS.
-    # The merge queue (merge_group) skips this job entirely (see the
-    # ci-gate MACOS_SKIP_EVENTS handling) - the post-merge push is what
-    # carries the macOS signal.
-    #
-    # Literal job name -- NOT templated. The branch-protection required
-    # context for macOS test runs depends on this exact string; when the
-    # job is skipped via the `if:` gate, GitHub posts the templated form
-    # verbatim, which never matches a required-context rule. The literal
-    # form keeps the name resolvable in every state (success, fail, skip).
-    # required-check-canary.yml asserts this remains literal.
-    name: Test (macos-latest, Python 3.13)
+    # Sharded across 4 parallel runners, the same shape as the ubuntu/
+    # windows `test` job above (see its header comment for the per-file
+    # startup-cost rationale). This job used to run a fixed deterministic
+    # quarter of the suite per push instead of sharding, because its
+    # `name:` was kept a literal, non-templated string on the assumption
+    # that branch protection's required context depended on it. It does
+    # not: the repository ruleset requires exactly one status check,
+    # `CI gate` (confirmed via `gh api .../rules/branches/main` ->
+    # required_status_checks.contexts == ["CI gate"]; see the PR that
+    # unlocked this). Nothing reads a per-shard job's display name, so it
+    # can template like `test`'s does. required-check-canary.yml still
+    # locks the name branch protection actually depends on
+    # (`ci-gate.name == "CI gate"`). Per-push macOS coverage now shards
+    # the full file list across all 4 cells instead of running a fixed
+    # quarter of it.
+    name: Test (macos-latest, Python 3.13, shard ${{ matrix.shard }})
     needs: [lint, determine-changes]
     if: >-
       github.event_name == 'push' ||
@@ -1915,14 +1910,14 @@ jobs:
     permissions:
       contents: read
     env:
-      # Per-push macOS runs only shard 1 of this many - a deterministic
-      # ~1/4 subset of the file list. ci-macos-nightly.yml runs the full
-      # matrix daily as the safety net.
-      MACOS_PUSH_SHARD_COUNT: "4"
+      # Single source of truth for the shard count, mirrors
+      # TEST_SHARD_COUNT in the `test` job above.
+      MACOS_SHARD_COUNT: "4"
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.13"]
+        shard: [1, 2, 3, 4]
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
@@ -1945,20 +1940,26 @@ jobs:
         env:
           BASE_REF: ${{ github.base_ref }}
           EVENT_NAME: ${{ github.event_name }}
-          MACOS_PUSH_SHARD_COUNT: ${{ env.MACOS_PUSH_SHARD_COUNT }}
+          SHARD: ${{ matrix.shard }}
+          SHARD_COUNT: ${{ env.MACOS_SHARD_COUNT }}
         run: |
-          # On PRs: run only the affected slice (impacted by the diff).
-          # On push to main: run a single deterministic quarter of the
-          # file list (`--shard 1/N`) so the macOS cell fits its time
-          # budget; ci-macos-nightly.yml runs the full matrix daily.
+          # On PRs: shard the affected slice (impacted by the diff), same
+          # as the `test` job. On push to main: shard the full file list
+          # across all 4 cells, so per-push macOS coverage is the
+          # complete suite rather than a fixed quarter of it.
           if [ "${EVENT_NAME}" = "pull_request" ] && \
              git rev-parse --verify "refs/remotes/origin/${BASE_REF}" >/dev/null 2>&1; then
-            uv run python scripts/run_tests.py --parallel 4 --affected "refs/remotes/origin/${BASE_REF}"
+            uv run python scripts/run_tests.py --parallel 4 \
+              --shard "${SHARD}/${SHARD_COUNT}" \
+              --affected "refs/remotes/origin/${BASE_REF}"
           else
             uv run python scripts/run_tests.py --parallel 4 \
-              --shard "1/${MACOS_PUSH_SHARD_COUNT}"
+              --shard "${SHARD}/${SHARD_COUNT}"
           fi
       - name: Run capability-matrix spawn-refusal integration tests
+        # Pinned to shard 1 (see the `test` job's counterpart above): one
+        # run per cell, not one per shard.
+        if: matrix.shard == 1
         run: |
           uv run pytest tests/integration/test_capability_matrix_spawn_refusal.py \
             -x -q --tb=short --timeout=120
