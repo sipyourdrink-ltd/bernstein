@@ -1,6 +1,6 @@
 """Structural and behavioral assertions for the SOC 2 evidence pack workflow.
 
-Covers ``.github/workflows/soc2-evidence-nightly.yml``:
+Covers ``.github/workflows/soc2-evidence-weekly.yml``:
 
 - the ``preflight`` gate step must never let a missing
   ``SOC2_EVIDENCE_ENABLED`` secret read as a silent success - a run with
@@ -29,7 +29,7 @@ from typing import Any, cast
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-WORKFLOW = REPO_ROOT / ".github" / "workflows" / "soc2-evidence-nightly.yml"
+WORKFLOW = REPO_ROOT / ".github" / "workflows" / "soc2-evidence-weekly.yml"
 
 
 def _load() -> dict[str, Any]:
