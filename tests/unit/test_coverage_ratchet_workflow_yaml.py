@@ -220,6 +220,31 @@ def test_self_retrigger_guard_reads_the_triggering_run(workflow: dict) -> None:
     )
 
 
+def test_privileged_checkout_is_confined_to_commits_from_this_repository(
+    workflow: dict,
+) -> None:
+    """The trigger's `branches:` filter is not a trust boundary.
+
+    This job runs with ``contents: write`` and checks out a commit named
+    by the event. ``branches: [main]`` does not confine that to our own
+    code: a fork's branch can be called ``main`` as well, and a fork PR
+    opened from it produces a CI run carrying that branch name. Only the
+    triggering run's repository distinguishes the two.
+    """
+    guard = workflow["jobs"]["ratchet"]["if"]
+
+    assert (
+        "github.event.workflow_run.head_repository.full_name == github.repository" in guard
+    ), (
+        "without a same-repository guard, a fork PR from a branch named `main` "
+        "reaches the privileged checkout below"
+    )
+    assert "github.event.workflow_run.event == 'push'" in guard, (
+        "a pull_request-triggered CI run measures the merge commit of an "
+        "unmerged branch; only a push to the default branch may be ratcheted"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # the measurement must belong to the commit being checked out
 # --------------------------------------------------------------------------- #

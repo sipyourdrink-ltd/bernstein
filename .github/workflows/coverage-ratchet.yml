@@ -68,7 +68,16 @@ name: Coverage ratchet (total)
 # Note: a `workflow_run` workflow always executes the copy of this file on
 # the default branch, so edits here take effect only once merged to main.
 
-on:
+# Safety note (zizmor dangerous-triggers, Scorecard Dangerous-Workflow).
+# This job runs privileged (`contents: write`) and checks out a commit
+# named by the event, which is the shape of a pwn request. What keeps it
+# safe is the job-level guard below, not the `branches:` filter: a fork's
+# branch can also be called `main`, so that filter alone is not a trust
+# boundary. The guard requires the triggering run to come from THIS
+# repository and from a `push` event, so the checked-out commit is
+# always one that already reached our default branch through the merge
+# queue. There is no reachable path here that builds fork-authored code.
+on:  # zizmor: ignore[dangerous-triggers]
   workflow_run:
     workflows: ["CI"]
     types: [completed]
@@ -87,10 +96,22 @@ jobs:
     name: Total coverage ratchet
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Skip the merge of a baseline-bump PR this workflow opened (avoids a
-    # self-retrigger loop on its own change). On workflow_run the commit
-    # lives under the triggering run, not the top-level event.
-    if: "!contains(github.event.workflow_run.head_commit.message, 'ratchet coverage baseline')"
+    # Two guards, and they answer different questions.
+    #
+    # The first two clauses are the trust boundary for the checkout below.
+    # `branches: [main]` in the trigger does not establish one: a fork's
+    # own branch may be named `main` too, and a fork PR's CI run carries
+    # that name. Requiring the triggering run to belong to THIS repository
+    # and to be a `push` narrows the checked-out commit to one that is
+    # already on our default branch, having passed the merge queue.
+    #
+    # The third skips the merge of a baseline-bump PR this workflow opened
+    # (avoids a self-retrigger loop on its own change). On workflow_run the
+    # commit lives under the triggering run, not the top-level event.
+    if: >-
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.event == 'push' &&
+      !contains(github.event.workflow_run.head_commit.message, 'ratchet coverage baseline')
     permissions:
       contents: write  # create the bump branch
       pull-requests: write  # open the baseline-bump PR

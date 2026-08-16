@@ -11,11 +11,14 @@ These tests exercise the pure authenticator: no HTTP, stdlib crypto only.
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from bernstein.core.protocols.a2a.server_auth import (
     A2AAuthError,
     A2AServerAuth,
+    _derive_signing_key,
 )
 
 
@@ -180,3 +183,73 @@ def test_from_env_with_no_config_authenticates_nothing(monkeypatch: pytest.Monke
     assert not auth.is_configured
     with pytest.raises(A2AAuthError):
         auth.authenticate({"x-api-key": "anything"})
+
+
+# --------------------------------------------------------------------------- #
+# signing-key derivation
+# --------------------------------------------------------------------------- #
+
+
+def test_derived_key_is_stable_across_authenticators() -> None:
+    """A restart must still validate tokens issued before it.
+
+    The derivation exists so two processes behind one config agree on the
+    signing key without persisting a secret; if this stops holding, every
+    restart silently invalidates live tokens.
+    """
+    clients = {"svc-a": "secret-a", "svc-b": "secret-b"}
+
+    first = A2AServerAuth(oauth_clients=dict(clients))
+    second = A2AServerAuth(oauth_clients=dict(clients))
+
+    assert first.signing_secret == second.signing_secret
+
+    token = first.issue_client_credentials_token(client_id="svc-a", client_secret="secret-a", now=1000.0).access_token
+    caller = second.authenticate({"Authorization": f"Bearer {token}"}, now=1001.0)
+    assert caller.caller_id == "svc-a"
+
+
+def test_a_changed_client_set_derives_a_different_key() -> None:
+    """Token validity is bound to the configured clients, not just the secret."""
+    one = A2AServerAuth(oauth_clients={"svc-a": "secret-a"})
+    two = A2AServerAuth(oauth_clients={"svc-a": "secret-a", "svc-b": "secret-b"})
+
+    assert one.signing_secret != two.signing_secret
+
+
+def test_client_secrets_are_not_recoverable_at_hardware_speed() -> None:
+    """The derived key must not be one fast hash away from the secrets.
+
+    Whoever holds the signing key can already forge tokens; what stretching
+    protects is the operator's client secrets, which are short and reused
+    elsewhere. A single SHA-256 pass over the material would let a leaked key
+    be ground back into them offline. This asserts the cheap construction is
+    not what ships.
+    """
+    material = "svc-a=secret-a"
+    cheap = hashlib.sha256(b"bernstein-a2a-oauth\x00" + material.encode("utf-8")).digest()
+
+    shipped = A2AServerAuth(oauth_clients={"svc-a": "secret-a"}).signing_secret
+
+    assert shipped != cheap
+    assert len(shipped) == 32
+
+
+def test_derivation_is_not_repaid_on_every_request() -> None:
+    """`_get_auth` builds an authenticator per request when state has none.
+
+    An un-memoised 600k-iteration KDF would therefore land on every A2A
+    request rather than on startup, so the cache is load-bearing rather than
+    an optimisation.
+    """
+    clients = {"svc-cache": "secret-cache"}
+    _derive_signing_key.cache_clear()
+
+    A2AServerAuth(oauth_clients=dict(clients))
+    after_first = _derive_signing_key.cache_info()
+    A2AServerAuth(oauth_clients=dict(clients))
+    after_second = _derive_signing_key.cache_info()
+
+    assert after_first.misses == 1
+    assert after_second.misses == 1, "a second authenticator re-ran the KDF"
+    assert after_second.hits == after_first.hits + 1
