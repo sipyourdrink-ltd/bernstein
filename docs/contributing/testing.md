@@ -174,8 +174,9 @@ with real margin, so a regression there fails the job and, on a
 merge_group run, blocks the merge queue. `audit_log` is the one pinned
 exception - its kill rate is well below threshold and needs test
 backfill on `src/bernstein/core/security/audit.py` before it can gate
-for real (`tests/unit/test_mutation_fixed_workflow_yaml.py:ADVISORY_MODULES`
-is the source of truth for which modules are still advisory). The PR
+for real (`ADVISORY_MODULES` in
+`tests/unit/test_mutation_fixed_workflow_yaml.py` is pinned to the
+workflow matrix in both directions, so the two cannot drift). The PR
 comment posted by the workflow summarises each module's score and
 survivors either way.
 
