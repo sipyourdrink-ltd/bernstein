@@ -281,7 +281,9 @@ class BernsteinApp(App[None]):
         self._split = SplitPaneState()
         # TUI-009: toast notification manager
         self._toasts = ToastManager()
-        self._notifications = NotificationHistory()
+        # Not ``_notifications``: Textual's ``App.__init__`` owns that name for
+        # its own toast queue, and shadowing it silently breaks ``self.notify``.
+        self._notification_history = NotificationHistory()
         self._recordings_dir = Path(".sdd/recordings/tui")
         self._session_recorder: SessionRecorder | None = None
         self._recording_started_at = 0.0
@@ -700,7 +702,7 @@ class BernsteinApp(App[None]):
 
     def action_acknowledge_notifications(self) -> None:
         """Mark all notification-center entries as read."""
-        self._notifications.mark_all_read()
+        self._notification_history.mark_all_read()
         self._refresh_notification_center()
 
     def _ensure_panel_visible(self, panel_id: str) -> None:
@@ -1115,7 +1117,7 @@ class BernsteinApp(App[None]):
 
     def _remember_toast(self, toast: Toast) -> None:
         """Mirror a toast into persistent notification history and refresh the UI."""
-        self._notifications.add(
+        self._notification_history.add(
             toast.message,
             level=toast.level.value,
             source=toast.source,
@@ -1127,7 +1129,8 @@ class BernsteinApp(App[None]):
     def _refresh_notification_center(self) -> None:
         """Render the latest notification history into the side panel."""
         self.query_one("#notification-center", NotificationCenterPanel).set_history(
-            self._notifications.get_history(limit=5), self._notifications.get_unread_count()
+            self._notification_history.get_history(limit=5),
+            self._notification_history.get_unread_count(),
         )
 
     @staticmethod
