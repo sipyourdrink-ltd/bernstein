@@ -34,9 +34,10 @@ name: TypeScript typecheck
 # tsconfigs, or package manifests. It does NOT emit a check named
 # ``CI gate`` -- the canary in ``tests/unit/test_required_check_canary
 # _workflow_yaml.py`` allow-lists exactly two emitters of that string
-# (ci.yml + ci-gate-stub.yml) and rejects a third. Branch protection
-# should add this workflow's per-package job names as additional
-# required contexts.
+# (ci.yml + ci-gate-stub.yml) and rejects a third. Do NOT promote this
+# workflow's job names to required branch-protection contexts while it
+# has no ``merge_group`` trigger: the merge queue would wait forever on
+# a check that never runs on its ephemeral branches.
 #
 # Each matrix cell carries its own install command because ``npm ci``
 # aborts rather than resolving a manifest when the package has no

@@ -8,6 +8,9 @@ on:
       - "tests/**"
       - "scripts/**"
       - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/codeql.yml"
+      - ".github/codeql/**"
   # Path-scoped on pull_request: CodeQL analyzes Python sources only, so
   # PRs that touch no analyzable path (docs-only, workflow-only) skip the
   # run and free a runner slot. This is safe for branch protection: the
@@ -48,7 +51,6 @@ jobs:
     permissions:
       security-events: write
       contents: read
-      pull-requests: write
       actions: read
     strategy:
       fail-fast: false

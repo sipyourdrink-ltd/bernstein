@@ -131,6 +131,7 @@ jobs:
             -o .bernstein-pr.diff
 
       - name: Review PR
+        id: run_review
         if: steps.check.outputs.skip != 'true'
         continue-on-error: true
         uses: ./
@@ -144,3 +145,21 @@ jobs:
             and post them as a PR comment. Do not push any changes.
           budget: "3.00"
           post-comment: "true"
+
+      - name: Surface a failed review
+        # continue-on-error on the step above keeps the action's own exit
+        # code from being the last word, but a review that crashed must not
+        # end as a green check: green here is read as "reviewed, found
+        # nothing" by whoever merges. Re-assert the failure with a reason.
+        if: steps.check.outputs.skip != 'true' && steps.run_review.outcome == 'failure'
+        run: |
+          {
+            echo "## Bernstein deep review did not complete"
+            echo
+            echo "The review action exited with an error after the diff was"
+            echo "fetched. **No completed review exists for this revision.**"
+            echo "Check the Review PR step log for the cause, then re-run the"
+            echo "job or re-apply the deep-review label after a push."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=Deep review errored::The review action failed before producing a verdict; this run must not be read as a clean review."
+          exit 1

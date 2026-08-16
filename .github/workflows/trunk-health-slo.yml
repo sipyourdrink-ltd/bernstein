@@ -1,10 +1,12 @@
 name: Trunk Health SLO
 
 # Compute the last-24h main-red rate (failed CI runs / total CI runs on
-# main) and toggle the repo variable TRUNK_UNSTABLE accordingly. A
-# companion gate step (the trunk andon gate in `pr-policy.yml`) keys off that
-# variable to hold merges on every PR until the trunk recovers, unless
-# the PR carries the `hotfix-cleared` label.
+# main) and toggle a marker issue labeled `trunk-unstable` accordingly. A
+# companion gate step (the trunk andon gate in `pr-policy.yml`) keys off
+# that open issue to hold merges on every PR until the trunk recovers,
+# unless the PR carries the `hotfix-cleared` label. The flag is an issue
+# rather than an Actions variable because GITHUB_TOKEN can write issues
+# but not variables, so the mechanism needs no separately provisioned PAT.
 #
 # The toggle exists so a red trunk stops new merges from piling on top
 # of an already-broken main: while the red rate is over threshold the
@@ -42,11 +44,13 @@ permissions: {}
 
 jobs:
   compute:
-    name: Compute trunk red-rate and toggle TRUNK_UNSTABLE
+    name: Compute trunk red-rate and toggle the andon marker
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       actions: read
+      # The andon flag is a marker issue (opened on red, closed on green).
+      issues: write
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
@@ -107,12 +111,9 @@ jobs:
             echo "total=${TOTAL}"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Toggle TRUNK_UNSTABLE repo variable
+      - name: Toggle the trunk-unstable marker issue
         env:
-          # Variable management needs a token with `actions:variables`
-          # scope on the repo. Falls back to GITHUB_TOKEN if no special
-          # PAT is provisioned; logs a warning when the API rejects.
-          GH_TOKEN: ${{ secrets.BOT_PAT || github.token }}
+          GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           UNSTABLE: ${{ steps.compute.outputs.unstable }}
           RED_PCT: ${{ steps.compute.outputs.red_pct }}
@@ -121,24 +122,45 @@ jobs:
         run: |
           set -euo pipefail
 
-          NEW_VALUE="${UNSTABLE}"
+          # The flag is an open issue labeled `trunk-unstable`, not a repo
+          # variable. GITHUB_TOKEN cannot write Actions variables under any
+          # `permissions:` grant, so the variable design silently depended
+          # on a PAT that was never provisioned and the gate spent its life
+          # inert. An issue is writable with the job-scoped token, visible
+          # to operators without opening a run, and any failure to write it
+          # fails this job loudly instead of being swallowed.
+          gh label create trunk-unstable \
+            --repo "${REPO}" \
+            --description "Open while the main-branch red-rate is over the SLO threshold; closed automatically on recovery" \
+            --color B60205 --force
 
-          # Idempotent upsert: try PATCH, fall back to POST on 404.
-          if gh api -X PATCH "repos/${REPO}/actions/variables/TRUNK_UNSTABLE" \
-              -f name=TRUNK_UNSTABLE \
-              -f value="${NEW_VALUE}" \
-              >/dev/null 2>&1; then
-            echo "Updated TRUNK_UNSTABLE=${NEW_VALUE}"
-          else
-            if gh api -X POST "repos/${REPO}/actions/variables" \
-                -f name=TRUNK_UNSTABLE \
-                -f value="${NEW_VALUE}" \
-                >/dev/null 2>&1; then
-              echo "Created TRUNK_UNSTABLE=${NEW_VALUE}"
+          OPEN_MARKERS=$(gh api "repos/${REPO}/issues?labels=trunk-unstable&state=open&per_page=100" \
+            --jq '[.[] | select(.pull_request | not) | .number] | join(" ")')
+
+          if [ "${UNSTABLE}" = "true" ]; then
+            if [ -z "${OPEN_MARKERS}" ]; then
+              gh api -X POST "repos/${REPO}/issues" \
+                -f title="Trunk unstable: ${RED_PCT}% of main CI runs red over the SLO window" \
+                -f body="$(printf '%s\n' \
+                  "The scheduled trunk-health check measured ${RED}/${TOTAL} failed CI runs on main (${RED_PCT}%), over the configured threshold." \
+                  "" \
+                  "While this issue is open, the andon gate in pr-policy holds merges on every PR except those labeled \`hotfix-cleared\`, so regressions stop compounding on an already-red main." \
+                  "" \
+                  "This issue closes automatically on the next scheduled check once the red-rate is back under threshold; run the Trunk Health SLO workflow manually for an immediate re-check after landing the fix.")" \
+                -f "labels[]=trunk-unstable" >/dev/null
+              echo "Opened the trunk-unstable marker issue."
             else
-              echo "::warning::Failed to set TRUNK_UNSTABLE; insufficient token scope. Provision a BOT_PAT with actions:variables to enable Andon."
-              exit 0
+              echo "Marker issue already open (#${OPEN_MARKERS}); leaving it in place."
             fi
+          elif [ -n "${OPEN_MARKERS}" ]; then
+            for issue_number in ${OPEN_MARKERS}; do
+              gh api -X POST "repos/${REPO}/issues/${issue_number}/comments" \
+                -f body="Red-rate is back under threshold (${RED_PCT}% over the last window). Closing; merges resume." >/dev/null
+              gh api -X PATCH "repos/${REPO}/issues/${issue_number}" -f state=closed >/dev/null
+            done
+            echo "Closed marker issue(s): ${OPEN_MARKERS}"
+          else
+            echo "Trunk healthy; no marker open."
           fi
 
           # Record a short status note for operator visibility. Step
@@ -151,5 +173,5 @@ jobs:
             echo "| CI runs on main (window) | ${TOTAL} |"
             echo "| failed runs | ${RED} |"
             echo "| red-rate | ${RED_PCT}% |"
-            echo "| TRUNK_UNSTABLE | ${NEW_VALUE} |"
+            echo "| trunk-unstable marker | $([ "${UNSTABLE}" = "true" ] && echo open || echo closed) |"
           } >> "${GITHUB_STEP_SUMMARY}"

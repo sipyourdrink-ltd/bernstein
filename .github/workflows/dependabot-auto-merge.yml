@@ -46,4 +46,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge --auto --merge "$PR_URL"
+        # No merge-method flag: main is behind a merge queue, so --auto
+        # enqueues and the queue applies its own configured method. An
+        # explicit --merge asks for a method the ruleset does not allow.
+        run: gh pr merge --auto "$PR_URL"

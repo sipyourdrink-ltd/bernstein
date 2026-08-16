@@ -89,8 +89,9 @@ jobs:
         # reddening the packaging gate. The no-extra path above is the hard
         # guarantee; this proves the packaged extra path when installable. The
         # Workload API fetch uses an injected factory, so no live SPIRE agent is
-        # required.
-        continue-on-error: true
+        # required. Tolerance lives in the explicit exit-0 skip below, NOT in
+        # continue-on-error: a real failure of the packaged extra path must
+        # redden the job, not vanish.
         run: |
           WHEEL=$(ls dist/*.whl | head -1)
           python -m venv .venv-extra

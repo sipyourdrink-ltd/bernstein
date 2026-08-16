@@ -40,10 +40,13 @@ on:
       - ".github/workflows/ci.yml"
       - ".github/workflows/ci-macos-nightly.yml"
 
-# Concurrency: one nightly run at a time. Cancel earlier runs if a
-# scheduled run and a manual dispatch overlap; the latest wins.
+# Concurrency: one run at a time per trigger kind. Cancel earlier runs if
+# two of the same kind overlap (the latest wins), but keep the event name
+# in the group so a push-to-main run and the scheduled nightly never share
+# a cancellation slot -- a merge touching ci.yml must not kill the
+# in-flight nightly, nor the other way round.
 concurrency:
-  group: ci-macos-nightly-${{ github.workflow }}-${{ github.ref }}
+  group: ci-macos-nightly-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -56,9 +59,6 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: read
-      # Matches the per-PR `test` job so any future JUnit publishing
-      # works without a permissions bump.
-      checks: write
     strategy:
       fail-fast: false
       matrix:
