@@ -149,6 +149,82 @@ def _blast_radius_refusal(
 
 
 # ---------------------------------------------------------------------------
+# Signed file-scope gate (issue #3914, decided in #3781)
+# ---------------------------------------------------------------------------
+
+
+def _signed_file_scope(worktree_root: Path, session_id: str) -> list[str] | None:
+    """Return the ``allowed_files`` scope signed for ``session_id``.
+
+    ``None`` means no scope was ever declared, which is not the same as an
+    empty one: an empty list is a credential that deliberately restricts
+    nothing, while ``None`` is the absence of a credential at all. Both are
+    unrestricted here, but only the first is a statement someone made.
+
+    The store is opened only when its directory already exists. Constructing
+    an :class:`AgentIdentityStore` mints a JWT secret as a side effect, and a
+    merge that reads a scope must not be the thing that creates one.
+    """
+    auth_dir = worktree_root / ".sdd" / "auth"
+    if not auth_dir.exists():
+        return None
+
+    from bernstein.core.agents.agent_identity import AgentIdentityStore
+
+    try:
+        identity = AgentIdentityStore(auth_dir).get(session_id)
+    except OSError as exc:  # an unreadable store is not a scope
+        logger.debug("Could not read agent identities for %s: %s", _sanitise_for_log(session_id), exc)
+        return None
+    return None if identity is None else identity.allowed_files
+
+
+def _file_scope_refusal(
+    session: AgentSession,
+    worktree_root: Path,
+    branch: str,
+) -> MergeResult | None:
+    """Refuse the merge when it brings in files outside the signed scope.
+
+    Returns ``None`` when the merge may proceed, which includes the two
+    default cases: a session with no identity record, and an identity whose
+    scope is empty. Every identity minted before this gate existed carries an
+    empty scope, so the gate is inert until an operator sets one.
+
+    The refusal is containment rather than prevention. The out-of-scope write
+    already happened inside the agent's own worktree; what this stops is that
+    change reaching the repository, and the branch is left intact so an
+    operator can see what was refused.
+    """
+    from bernstein.core.path_scope import paths_outside_scope
+
+    patterns = _signed_file_scope(worktree_root, session.id)
+    if not patterns:
+        return None
+
+    files, _ = _incoming_change(worktree_root, branch)
+    outside = paths_outside_scope(files, patterns)
+    if not outside:
+        return None
+
+    reason = (
+        f"refused: identity {session.id!r} is scoped to {', '.join(patterns)}, "
+        f"but the merge would bring in {', '.join(outside)}"
+    )
+    _record_merge_refusal(worktree_root, session.id, branch, reason="allowed-files-scope")
+    logger.error(
+        "Refusing to merge agent work from %s: %s",
+        _sanitise_for_log(session.id),
+        _sanitise_for_log(reason),
+    )
+    from bernstein.core.metric_collector import get_collector
+
+    for task_id in session.task_ids:
+        get_collector().record_merge_result(task_id, success=False)
+    return MergeResult(success=False, conflicting_files=[], error=reason)
+
+
+# ---------------------------------------------------------------------------
 # Merge and worktree branch merge
 # ---------------------------------------------------------------------------
 
@@ -210,6 +286,14 @@ def _run_merge_and_push(
     blast_radius_refusal = _blast_radius_refusal(session, worktree_root, f"agent/{session.id}")
     if blast_radius_refusal is not None:
         return blast_radius_refusal
+
+    # Signed file scope (#3914): an operator who scoped the agent's credential
+    # to a set of paths gets that scope enforced here, where the change is
+    # accepted into the repository. Inert for an identity with an empty scope,
+    # which is every identity minted before this gate existed.
+    file_scope_refusal = _file_scope_refusal(session, worktree_root, f"agent/{session.id}")
+    if file_scope_refusal is not None:
+        return file_scope_refusal
 
     merge_start = time.perf_counter()
     # Provenance: record the call site before invoking the merge so the
