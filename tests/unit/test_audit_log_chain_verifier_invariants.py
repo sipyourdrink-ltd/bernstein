@@ -64,6 +64,38 @@ def audit_dir(tmp_path: Path) -> Path:
     return d
 
 
+def _run_bounded(fn: Any, *, timeout: float = 5.0) -> None:
+    """Run `fn()` on a daemon thread and fail fast instead of hanging forever.
+
+    A broken re-entrancy guard can make a nested `_chain_append_lock` entry
+    attempt a *real* second `flock(LOCK_EX)` on a fresh fd for the same
+    file. flock contention is per open-file-description, not per-thread, so
+    that second call blocks the calling thread against the first
+    indefinitely - a genuine OS-level deadlock, not a Python-level one
+    `pytest.raises` or a plain call can observe. Running `fn` on a daemon
+    thread and joining with a bound turns "this mutation deadlocks" into a
+    fast, explicit test failure: the thread leaks (harmless - it is daemon
+    and the process moves on), but the test itself, and the pytest process
+    running it, does not hang.
+    """
+    outcome: dict[str, BaseException] = {}
+
+    def _target() -> None:
+        try:
+            fn()
+        except BaseException as exc:
+            outcome["error"] = exc
+
+    thread = threading.Thread(target=_target, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout)
+    assert not thread.is_alive(), (
+        f"did not return within {timeout}s - looks like a real flock self-deadlock, not a slow test"
+    )
+    if "error" in outcome:
+        raise outcome["error"]
+
+
 def _canonical_entry(**overrides: Any) -> dict[str, Any]:
     """A well-formed audit record body, canonical-serialisable as written."""
     base: dict[str, Any] = {
@@ -194,17 +226,27 @@ def test_append_lock_creates_missing_nested_audit_dir(tmp_path: Path) -> None:
 
 
 def test_append_lock_depth_counter_increments_and_decrements_exactly(audit_dir: Path) -> None:
-    """Three-level nesting counts 1, 2, 3 on the way in and 2, 1, (absent) on the way out."""
+    """Three-level nesting counts 1, 2, 3 on the way in and 2, 1, (absent) on the way out.
+
+    Run on a bounded daemon thread (see _run_bounded): a broken depth guard
+    here means a nested entry retakes a real flock and hangs the calling
+    thread forever, which must surface as a fast test failure, not a stuck
+    subprocess.
+    """
     key = _audit_dir_key(audit_dir)
-    with _chain_append_lock(audit_dir):
-        assert _APPEND_DEPTH.depths[key] == 1
+
+    def _nest() -> None:
         with _chain_append_lock(audit_dir):
-            assert _APPEND_DEPTH.depths[key] == 2
+            assert _APPEND_DEPTH.depths[key] == 1
             with _chain_append_lock(audit_dir):
-                assert _APPEND_DEPTH.depths[key] == 3
-            assert _APPEND_DEPTH.depths[key] == 2
-        assert _APPEND_DEPTH.depths[key] == 1
-    assert key not in _APPEND_DEPTH.depths, "guard must be fully unwound (key removed) at depth 0"
+                assert _APPEND_DEPTH.depths[key] == 2
+                with _chain_append_lock(audit_dir):
+                    assert _APPEND_DEPTH.depths[key] == 3
+                assert _APPEND_DEPTH.depths[key] == 2
+            assert _APPEND_DEPTH.depths[key] == 1
+        assert key not in _APPEND_DEPTH.depths, "guard must be fully unwound (key removed) at depth 0"
+
+    _run_bounded(_nest)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="flock is POSIX-only; audit.fcntl is a stub there")
@@ -214,7 +256,9 @@ def test_nested_append_lock_acquires_flock_exactly_once(audit_dir: Path, monkeyp
     A second real acquisition on a fresh fd for the same file would block
     forever against the first (flock is per open-file-description, not
     per-thread), so this is the property that keeps re-entrant append()
-    calls from self-deadlocking.
+    calls from self-deadlocking. Run on a bounded daemon thread (see
+    _run_bounded) precisely because a mutant that breaks this property
+    causes that exact deadlock for real.
     """
     import fcntl as _fcntl
 
@@ -227,10 +271,14 @@ def test_nested_append_lock_acquires_flock_exactly_once(audit_dir: Path, monkeyp
         return real_flock(fd, operation)
 
     monkeypatch.setattr(_fcntl, "flock", _spy)
-    with _chain_append_lock(audit_dir):
+
+    def _nest() -> None:
         with _chain_append_lock(audit_dir):
             with _chain_append_lock(audit_dir):
-                pass
+                with _chain_append_lock(audit_dir):
+                    pass
+
+    _run_bounded(_nest)
     assert len(calls) == 1, f"expected exactly one LOCK_EX acquisition for 3-level nesting, got {len(calls)}"
 
 
