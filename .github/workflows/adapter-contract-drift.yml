@@ -18,8 +18,7 @@ name: Adapter contract drift
 #
 # Triggers:
 #   * Once daily on schedule so upstream releases surface within 24h.
-#   * On PRs touching adapters or contracts so contract edits get
-#     validated immediately.
+#   * On merge group for pre-merge adapter contract validation.
 #   * Manual dispatch for operator-driven re-runs.
 
 on:

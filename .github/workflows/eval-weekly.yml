@@ -1,6 +1,6 @@
-name: eval-nightly
+name: eval-weekly
 
-# Weekly contamination-resistant eval against SWE-bench Pro, Terminal-Bench
+# Weekly evaluation run against SWE-bench Pro, Terminal-Bench
 # 2.0, and SWE-rebench. Wired but DOES NOT auto-run heavy benchmark suites
 # until the `EVAL_ENABLED` repository secret is set to a truthy value.
 #
