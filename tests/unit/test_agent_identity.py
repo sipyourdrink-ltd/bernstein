@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, get_args, get_type_hints
 
 import pytest
 from bernstein.core.agent_identity import (
+    _CREDENTIAL_TOKEN_TYPES,
     AgentCredential,
     AgentIdentity,
     AgentIdentityStatus,
     AgentIdentityStore,
     IdentityAuditEvent,
+    TokenType,
     _hash_token,
     permissions_for_role,
 )
@@ -506,6 +508,55 @@ class TestAgentCredentialTokenTypeDeserialization:
 
         assert store.authenticate(token) is None
         assert [found.id for found in store.list_identities()] == []
+
+
+class TestTokenTypeAllowlistIsDerivedNotRestated:
+    """The allowlist and the annotation are one source of truth, not two.
+
+    The refactor these tests guard (#4015) replaced a hand-written
+    ``frozenset`` with :func:`typing.get_args` over :data:`TokenType`. The
+    behaviour is unchanged, so the deserialisation tests above cannot tell
+    the two apart - they pass either way. What is new is the *property*, and
+    a property nothing asserts is one refactor away from being lost again.
+
+    The failure being pinned is quiet: restate the pair on the annotation,
+    add a kind there, and the type permits a value the boundary refuses.
+    Nothing raises, mypy stays green, and the disagreement only surfaces at
+    the far end of a stack trace.
+    """
+
+    def test_the_runtime_allowlist_comes_from_the_type(self) -> None:
+        """A hand-written copy would satisfy today and drift tomorrow."""
+        assert tuple(_CREDENTIAL_TOKEN_TYPES) == get_args(TokenType)
+
+    def test_the_field_annotation_denotes_the_same_type(self) -> None:
+        """The field and the allowlist must not come to permit different sets.
+
+        Worth being exact about what this catches, since ``Literal`` interns
+        its instances: a field that spells the same two values out again *is*
+        :data:`TokenType`, and this passes. That is not a gap - an identical
+        restatement denotes the same type and cannot disagree with it.
+
+        What it catches is the edit that matters. Add a kind to the field and
+        not to :data:`TokenType` and the annotations are different objects,
+        so this fails - which is the case where the type permits a value the
+        boundary refuses.
+        """
+        annotation = get_type_hints(AgentCredential)["token_type"]
+
+        assert annotation is TokenType
+
+    def test_every_declared_kind_is_admitted(self) -> None:
+        """Whatever the type permits, the boundary accepts - by construction.
+
+        Parametrising over ``get_args`` rather than a written-out list is the
+        point: a kind added to :data:`TokenType` is covered here the moment
+        it exists, without anyone remembering to extend this test.
+        """
+        for kind in get_args(TokenType):
+            credential = AgentCredential.from_dict({"token_hash": "abc", "token_type": kind})
+
+            assert credential.token_type == kind
 
 
 class TestCorruptIdentityDoesNotBreakAuthentication:

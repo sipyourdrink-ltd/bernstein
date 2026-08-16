@@ -16,7 +16,7 @@ import secrets
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Final, Literal, cast
+from typing import TYPE_CHECKING, Any, Final, Literal, cast, get_args
 
 from bernstein.core.auth import create_jwt, verify_jwt
 from bernstein.core.path_scope import ScopePatternError, validate_repo_relative_pattern
@@ -154,10 +154,19 @@ def permissions_for_role(role: str) -> frozenset[str]:
 # former is a pre-field record; see :func:`_credential_tenant_id`.
 _TENANT_KEY_ABSENT: Final[object] = object()
 
-# The two kinds a credential may declare, kept beside the ``token_type``
-# annotation on :class:`AgentCredential` so the deserialiser and the type
-# cannot drift apart; see :func:`_credential_token_type`.
-_CREDENTIAL_TOKEN_TYPES: Final[frozenset[str]] = frozenset({"opaque", "jwt"})
+#: The kinds a credential may declare.  ``opaque`` is verified against the
+#: stored token hash alone; ``jwt`` additionally has its claims checked
+#: against the identity, so which one a record says decides which validation
+#: it gets (see :func:`_credential_token_type`).
+TokenType = Literal["opaque", "jwt"]
+
+#: The runtime spelling of :data:`TokenType`, derived from it rather than
+#: restated.  A hand-written copy is one edit away from admitting less than
+#: the type permits: adding a kind means touching the annotation, which is
+#: where the type lives, and a stale allowlist then refuses a kind that
+#: type-checks clean.  Deriving it makes that unreachable rather than
+#: discouraged, which is what the comment here used to claim (#4015).
+_CREDENTIAL_TOKEN_TYPES: Final[tuple[TokenType, ...]] = get_args(TokenType)
 
 
 def _string_list(raw: Any, field: str) -> list[str]:
@@ -278,7 +287,7 @@ def _credential_tenant_id(raw: Any) -> str:
     return normalize_tenant_id(raw)
 
 
-def _credential_token_type(raw: Any) -> Literal["opaque", "jwt"]:
+def _credential_token_type(raw: Any) -> TokenType:
     """Return the token kind a persisted credential declares.
 
     ``token_type`` selects which validation a token gets: ``_validate_jwt_claims``
@@ -318,10 +327,10 @@ def _credential_token_type(raw: Any) -> Literal["opaque", "jwt"]:
 
     Raises:
         ValueError: The record carries a ``token_type`` outside
-            ``Literal["opaque", "jwt"]``.
+            :data:`TokenType`.
     """
     if isinstance(raw, str) and raw in _CREDENTIAL_TOKEN_TYPES:
-        return cast('Literal["opaque", "jwt"]', raw)
+        return cast("TokenType", raw)
     raise ValueError(f"credential token_type must be one of {sorted(_CREDENTIAL_TOKEN_TYPES)}, got {raw!r}")
 
 
@@ -337,7 +346,7 @@ class AgentCredential:
     created_at: float = field(default_factory=time.time)
     expires_at: float = 0.0  # 0 = no expiry (session-scoped)
     revoked: bool = False
-    token_type: Literal["opaque", "jwt"] = "opaque"
+    token_type: TokenType = "opaque"
     algorithm: str = "HS256"
     jti: str = ""
     tenant_id: str = "default"
