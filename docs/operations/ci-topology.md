@@ -43,6 +43,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/eval-nightly.yml | eval-nightly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "eval-nightly-${{ github.ref }}"} | 3 |
 | .github/workflows/feature-matrix-drift.yml | Feature matrix drift | pull_request, push | {"cancel-in-progress": "true", "group": "feature-matrix-drift-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/hotfix-r-tracker.yml | Hotfix R-counter | push | {"cancel-in-progress": "false", "group": "hotfix-r-tracker-${{ github.sha }}"} | 1 |
+| .github/workflows/install-smoke-rpm-nightly.yml | CI (RPM smoke nightly) | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "install-smoke-rpm-nightly-${{ github.workflow }}-${{ github.ref }}"} | 2 |
 | .github/workflows/license-compliance.yml | License Compliance | pull_request, push | {"cancel-in-progress": "true", "group": "license-${{ github.ref }}"} | 1 |
 | .github/workflows/main-sha-marker.yml | Main SHA marker | push | {"cancel-in-progress": "false", "group": "main-sha-marker-${{ github.sha }}"} | 1 |
 | .github/workflows/mutation-fixed.yml | Mutation (fixed critical paths) | merge_group, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "mutation-fixed-${{ github.workflow }}-${{ github.ref }}"} | 2 |
@@ -109,6 +110,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/eval-nightly.yml | bench: bench (full)<br>preflight: preflight (gate)<br>smoke: smoke (synthetic) |
 | .github/workflows/feature-matrix-drift.yml | matrix-rows: registered CLI commands have a matrix row |
 | .github/workflows/hotfix-r-tracker.yml | track: Detect hotfix-begets-hotfix |
+| .github/workflows/install-smoke-rpm-nightly.yml | install-smoke-rpm-nightly: Install smoke - RPM nightly (${{ matrix.image }})<br>open-failure-issue: Open / update RPM smoke nightly failure issue |
 | .github/workflows/license-compliance.yml | license-check: License check |
 | .github/workflows/main-sha-marker.yml | marker: Main SHA marker |
 | .github/workflows/mutation-fixed.yml | mutate: ${{ matrix.module }}<br>summary: Summary + PR comment |
@@ -175,6 +177,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/eval-nightly.yml | workflow: {"contents": "read"} | EVAL_ENABLED |
 | .github/workflows/feature-matrix-drift.yml | workflow: {"contents": "read"}<br>matrix-rows: {"contents": "read"} | - |
 | .github/workflows/hotfix-r-tracker.yml | track: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |
+| .github/workflows/install-smoke-rpm-nightly.yml | workflow: {"contents": "read"}<br>install-smoke-rpm-nightly: {"contents": "read"}<br>open-failure-issue: {"contents": "read", "issues": "write"} | GITHUB_TOKEN |
 | .github/workflows/license-compliance.yml | workflow: {"contents": "read"}<br>license-check: {"contents": "read"} | - |
 | .github/workflows/main-sha-marker.yml | - | - |
 | .github/workflows/mutation-fixed.yml | workflow: {"contents": "read"}<br>mutate: {"contents": "read"}<br>summary: {"contents": "read", "pull-requests": "write"} | - |

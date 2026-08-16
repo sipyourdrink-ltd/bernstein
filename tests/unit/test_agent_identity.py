@@ -443,6 +443,71 @@ class TestAgentCredentialTenantDeserialization:
         assert "session-corrupt" not in listed
 
 
+class TestAgentCredentialTokenTypeDeserialization:
+    """The persisted ``token_type`` selects which validation a token gets.
+
+    ``_validate_jwt_claims`` refuses any credential that does not say
+    ``"jwt"``, so an unrecognised kind is not inert - it routes the token to
+    the opaque hash comparison instead of being refused.  ``from_dict``
+    establishes the value as one of the two real kinds rather than coercing
+    whatever was on disk into one that some comparison will happen to accept.
+    """
+
+    def test_absent_token_type_resolves_to_opaque(self) -> None:
+        """Records written before the field existed still load."""
+        credential = AgentCredential.from_dict({"token_hash": "abc"})
+
+        assert credential.token_type == "opaque"
+
+    @pytest.mark.parametrize("stored", ["opaque", "jwt"])
+    def test_both_kinds_round_trip_unchanged(self, stored: str) -> None:
+        credential = AgentCredential.from_dict({"token_hash": "abc", "token_type": stored})
+
+        assert credential.token_type == stored
+        assert AgentCredential.from_dict(credential.to_dict()).token_type == stored
+
+    @pytest.mark.parametrize("stored", ["anything", "JWT", "opaque ", "", None, 1, True, [], {}])
+    def test_unknown_token_type_is_refused_and_named(self, stored: object) -> None:
+        """The message names the offending value, so the record is findable.
+
+        A store holding one bad record is repaired by locating it; a refusal
+        that only names the field leaves every credential a suspect.
+
+        The last two cases are the reason the membership test is guarded by
+        ``isinstance``: a list and an object are the only two values JSON can
+        persist that a set lookup cannot hash, so without the guard they
+        raise ``TypeError: unhashable type`` from the lookup rather than the
+        named ``ValueError``.  Both are here rather than one, because they
+        are two different unhashable shapes and a guard covering one is not
+        evidence about the other.
+        """
+        with pytest.raises(ValueError, match="token_type") as excinfo:
+            AgentCredential.from_dict({"token_hash": "abc", "token_type": stored})
+
+        assert repr(stored) in str(excinfo.value)
+
+    def test_unknown_token_type_does_not_authenticate(self, tmp_path: Path) -> None:
+        """The refusal reaches authentication as a miss, not as a 500.
+
+        Before this change the record loaded, ``token_type != "jwt"`` sent it
+        down the opaque branch, and the identity authenticated on its token
+        hash alone.  The refusal now travels the same path an unusable
+        ``tenant_id`` already does - through ``_load``, which skips the file.
+        """
+        import json
+
+        store = AgentIdentityStore(tmp_path)
+        identity, token = store.create_identity("session-jwt", "backend")
+        path = tmp_path / "agent_identities" / f"{identity.id}.json"
+        payload = json.loads(path.read_text())
+        assert payload["credential"]["token_type"] == "jwt"
+        payload["credential"]["token_type"] = "anything"
+        path.write_text(json.dumps(payload))
+
+        assert store.authenticate(token) is None
+        assert [found.id for found in store.list_identities()] == []
+
+
 class TestCorruptIdentityDoesNotBreakAuthentication:
     """A record that will not deserialise authenticates as nobody, not as a 500.
 

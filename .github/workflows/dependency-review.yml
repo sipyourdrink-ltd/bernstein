@@ -80,6 +80,24 @@ jobs:
           # additional grant, and the reviewer has no rule for LicenseRef-*
           # terms, so the compound fails as a whole. The package is the same
           # one already vendored at 6.x under the same terms.
+          #
+          # crosshair-tool declares "Apache-2.0 AND LicenseRef-scancode-psf-3.7.2
+          # AND MIT AND Python-2.0". Every named half is on the allow-list; the
+          # scancode LicenseRef is the PSF text the allow-list already accepts
+          # as PSF-2.0, under a version-specific identifier the reviewer has no
+          # rule for, so the compound fails as a whole. It is a dev-only
+          # dependency (concolic execution in the security test lane) and is
+          # never resolved into a wheel install.
+          #
+          # python-telegram-bot is LGPL-3.0 (its metadata also names GPL-3.0,
+          # which LGPL-3.0 incorporates by reference). It is an opt-in extra -
+          # `pip install 'bernstein[telegram]'` - so it is absent from a default
+          # install, is imported at arm's length rather than modified or
+          # statically linked, and its copyleft terms do not reach this
+          # project's own Apache-2.0 sources. Already present in the tree at
+          # 22.7 under identical terms; the bump is what made the reviewer look.
           allow-dependencies-licenses: >-
             pkg:githubactions/trufflesecurity/trufflehog,
-            pkg:pypi/protobuf
+            pkg:pypi/protobuf,
+            pkg:pypi/crosshair-tool,
+            pkg:pypi/python-telegram-bot
