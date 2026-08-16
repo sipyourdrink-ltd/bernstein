@@ -177,6 +177,16 @@ jobs:
       # macOS hosted-runner pool during burst-merge waves. The nightly
       # workflow (ci-macos-nightly.yml) provides the safety-net coverage.
       macos_sensitive: ${{ steps.classify.outputs.macos_sensitive }}
+      # rpm_relevant_changed: true when the diff touches what
+      # `install-smoke-rpm` exercises - the RPM packaging inputs, the
+      # smoke script, or the job's own definition (#3947). That job
+      # installs the newest *released* PyPI version, not this tree's
+      # source, so it cannot be regressed by an ordinary src/ or tests/
+      # change; gating it on this flag stops a defect in a past release
+      # from red-gating every unrelated PR and queue batch until the next
+      # release ships. install-smoke-rpm-nightly.yml re-runs the same
+      # check daily regardless of this flag.
+      rpm_relevant_changed: ${{ steps.classify.outputs.rpm_relevant_changed }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -276,6 +286,7 @@ jobs:
               echo "gha_workflows_changed=true"
               echo "docs_only=false"
               echo "macos_sensitive=true"
+              echo "rpm_relevant_changed=true"
             } | tee -a "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -289,6 +300,7 @@ jobs:
           gha_workflows_changed=false
           docs_only=true
           macos_sensitive=false
+          rpm_relevant_changed=false
           # Classify each changed path via grep. Using grep instead of
           # bash `case` to avoid linter warnings on overlapping patterns
           # (case-globs cannot cross slashes anyway).
@@ -351,6 +363,19 @@ jobs:
             elif printf '%s\n' "$f" | grep -Eq '^\.github/workflows/ci-macos-nightly\.yml$'; then
               macos_sensitive=true
             fi
+            # rpm_relevant_changed (#3947): the RPM packaging inputs, the
+            # smoke script, or install-smoke-rpm's own definition in this
+            # file. Anything else cannot regress what that job checks (it
+            # installs the newest *released* PyPI version, not this tree).
+            if printf '%s\n' "$f" | grep -Eq '^packaging/rpm/'; then
+              rpm_relevant_changed=true
+            fi
+            if printf '%s\n' "$f" | grep -Eq '^scripts/rpm_install_smoke\.sh$'; then
+              rpm_relevant_changed=true
+            fi
+            if printf '%s\n' "$f" | grep -Eq '^\.github/workflows/ci\.yml$'; then
+              rpm_relevant_changed=true
+            fi
           done <<< "$CHANGED"
           # If nothing changed at all (e.g. workflow_dispatch on a clean ref),
           # treat as "not docs-only" so we don't intentionally skip tests.
@@ -362,6 +387,7 @@ jobs:
           echo "gha_workflows_changed=$gha_workflows_changed" | tee -a "$GITHUB_OUTPUT"
           echo "docs_only=$docs_only"                  | tee -a "$GITHUB_OUTPUT"
           echo "macos_sensitive=$macos_sensitive"      | tee -a "$GITHUB_OUTPUT"
+          echo "rpm_relevant_changed=$rpm_relevant_changed" | tee -a "$GITHUB_OUTPUT"
 
   # ─── Fast checks (never cancelled, <2 min each) ───────────────────────
 
@@ -1010,8 +1036,16 @@ jobs:
     # the RPM packages the PyPI release, so the subject under test here is
     # the spec, the SRPM renderer, and the smoke harness in this tree - not
     # the tree's own source code.
+    #
+    # Gated on `rpm_relevant_changed` (#3947): an ordinary src/ or tests/
+    # change cannot regress the released package, so running this job for
+    # one bought nothing but the risk of a stale-release defect red-gating
+    # an unrelated PR or queue batch until the next release ships.
+    # install-smoke-rpm-nightly.yml runs the same check daily so release
+    # coverage does not depend on someone happening to touch these paths.
     name: Install smoke - RPM (${{ matrix.image }})
-    needs: [lint]
+    needs: [lint, determine-changes]
+    if: needs.determine-changes.outputs.rpm_relevant_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -2122,6 +2156,16 @@ jobs:
           # Push-only jobs are required on native main pushes but skip
           # intentionally on PR, workflow_dispatch, and merge_group runs.
           PUSH_ONLY = {"coverage-report"}
+          # install-smoke-rpm installs the newest *released* PyPI version,
+          # not this tree's source (#3947), so an ordinary src/ or tests/
+          # change cannot regress what it checks. It skips whenever the
+          # diff touches none of packaging/rpm/**, the smoke script, or its
+          # own job definition in ci.yml - unlike MACOS_GATED this has no
+          # event-shape branch, since the relevance test is identical on
+          # push, pull_request and merge_group.
+          # install-smoke-rpm-nightly.yml is the safety net that still
+          # exercises the released artifact on days nothing here changes.
+          RPM_SMOKE_SKIPPABLE = {"install-smoke-rpm"}
           # Events under which a macOS-gated skip is intentional. PRs and
           # manual dispatch already gate macOS behind macos_sensitive /
           # label. merge_group must be included too: a merge queue runs CI
@@ -2140,6 +2184,7 @@ jobs:
 
           docs_only = plan.get("docs_only") == "true"
           macos_sensitive = plan.get("macos_sensitive") == "true"
+          rpm_relevant_changed = plan.get("rpm_relevant_changed") == "true"
           # Read the PR labels via the event payload. The aggregator
           # runs inside ci.yml so the same event.pull_request.labels
           # array used by the job `if:` is available here too. The
@@ -2164,6 +2209,8 @@ jobs:
                   if name in PUSH_ONLY and event != "push":
                       continue
                   if docs_only and name in DOCS_ONLY_SKIPPABLE:
+                      continue
+                  if name in RPM_SMOKE_SKIPPABLE and not rpm_relevant_changed:
                       continue
                   # macOS-gated jobs are allowed to skip on:
                   #  - PRs when diff is not macos_sensitive AND no

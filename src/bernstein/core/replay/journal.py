@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import io
 import json
 import logging
 import os
@@ -516,6 +517,30 @@ class JournalParseError(ValueError):
     """
 
 
+def _is_decodable(line: str) -> bool:
+    """Whether *line* came back from a lossless UTF-8 decode.
+
+    ``load_events`` decodes with ``errors="surrogateescape"``, which maps each
+    undecodable byte to a lone surrogate in U+DC80..U+DCFF rather than raising.
+    Those code points cannot be encoded back to UTF-8, so a failed re-encode is
+    an exact test for "this physical line held bytes that are not UTF-8" - and
+    it is exact in the other direction too: no lossless decode can produce a
+    lone surrogate, because UTF-8 cannot carry one.
+
+    The ASCII fast path matters rather than being decoration. Every row this
+    package writes is ASCII (``json.dumps`` escapes non-ASCII by default), so
+    ``str.isascii`` - a flag lookup on CPython, not a scan - answers for the
+    whole journal in the common case and no line is encoded twice.
+    """
+    if line.isascii():
+        return True
+    try:
+        line.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def load_events(path: Path, *, strict: bool = False) -> JournalLoadResult:
     """Load all events from a journal JSONL file in append order.
 
@@ -529,15 +554,37 @@ def load_events(path: Path, *, strict: bool = False) -> JournalLoadResult:
       line index. Diagnostic readers (``bernstein audit diagnose``) use this
       so no reported index can ever count parsed rows rather than physical
       journal lines, and no finding is derived from a filtered sequence.
+
+    "Malformed" includes *undecodable*. A crash partway through an append can
+    land inside a multi-byte character as easily as between two, and a strict
+    decode would make the same class of crash produce two different outcomes
+    depending on where in the byte stream it stopped: a discarded line index
+    in one case, a bare ``UnicodeDecodeError`` out of the reader in the other.
+    Bytes that are not valid UTF-8 are therefore surfaced through the same two
+    policies as unparsable JSON - discarded by the tolerant reader, raised as
+    :class:`JournalParseError` naming the physical line by the strict one.
     """
     events: list[dict[str, Any]] = []
     discarded: list[int] = []
     if not path.exists():
         return JournalLoadResult(events=events)
-    with path.open(encoding="utf-8") as f:
+    # Binary handle, decoded through the *same* TextIOWrapper machinery as
+    # ``path.open(encoding="utf-8")``: universal-newline splitting is what
+    # defines a physical line here, and re-implementing it over bytes would
+    # silently renumber every index this function reports (a lone ``\r`` ends
+    # a line in text mode and does not in ``bytes.split(b"\n")``). Only the
+    # error policy changes. ``surrogateescape`` rather than ``replace``
+    # because it is reversible: a caller inspecting or repairing a torn tail
+    # still has the original bytes, which ``replace`` would destroy.
+    with path.open("rb") as raw_file, io.TextIOWrapper(raw_file, encoding="utf-8", errors="surrogateescape") as f:
         for lineno, raw in enumerate(f):
             line = raw.strip()
             if not line:
+                continue
+            if not _is_decodable(line):
+                if strict:
+                    raise JournalParseError(f"undecodable bytes at physical line {lineno} (not valid UTF-8)")
+                discarded.append(lineno)
                 continue
             try:
                 decoded: object = json.loads(line)
