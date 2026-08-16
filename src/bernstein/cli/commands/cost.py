@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import click
+from click.core import ParameterSource
 from rich.console import Console
 from rich.panel import Panel
 
@@ -648,10 +649,15 @@ def _cost_render_grouped(
     console.print()
 
 
+#: Where ``cost`` looks when nobody says otherwise. Named so the option below and
+#: the missing-directory check cannot drift apart (issue #3917).
+DEFAULT_METRICS_DIR = ".sdd/metrics"
+
+
 @click.group("cost", invoke_without_command=True)
 @click.option(
     "--metrics-dir",
-    default=".sdd/metrics",
+    default=DEFAULT_METRICS_DIR,
     show_default=True,
     help="Directory containing metrics JSONL files.",
 )
@@ -705,11 +711,33 @@ def cost_cmd(
 
     mdir = Path(metrics_dir)
     if not mdir.exists():
+        # A project that has never been run has no metrics directory at all; a project
+        # that has been run and produced nothing has an empty one. Both mean "no cost
+        # data here" to a reader, so a read-only report must not make an error out of
+        # one and a normal empty report out of the other (issue #3917). ``fleet
+        # bulk-cost-report`` is where that asymmetry bites: one never-run project used
+        # to turn the whole sweep's exit status red.
+        #
+        # The refusal is kept when the caller NAMED the directory, because there an
+        # absent path is far more likely to be a typo than a new project, and silently
+        # printing an empty report at a mistyped path is the signal worth keeping.
+        # This turns on the parameter's SOURCE, not its value: someone who types the
+        # default spelling has still named a path.
+        source = ctx.get_parameter_source("metrics_dir")
+        # ``source`` is None only when the callback is driven directly rather than
+        # through click's parameter handling, where there is no source to consult.
+        named = metrics_dir != DEFAULT_METRICS_DIR if source is None else source is not ParameterSource.DEFAULT
+        if named:
+            if as_json or is_json():
+                print_json({"error": f"Metrics directory not found: {mdir}"})
+            else:
+                console.print(f"[red]Metrics directory not found:[/red] {mdir}")
+            raise SystemExit(1)
         if as_json or is_json():
-            print_json({"error": f"Metrics directory not found: {mdir}"})
+            print_json({"rows": [], "totals": {}})
         else:
-            console.print(f"[red]Metrics directory not found:[/red] {mdir}")
-        raise SystemExit(1)
+            console.print("[dim]No metrics data found.[/dim]")
+        return
 
     task_records = _load_tasks_jsonl(mdir)
 
