@@ -33,9 +33,15 @@ def _mapping(value: object) -> dict[str, object]:
 
 
 @pytest.fixture(scope="module")
-def digest_run() -> str:
+def workflow_text() -> str:
+    """The raw workflow file text, including header comments."""
+    return WORKFLOW.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def digest_run(workflow_text: str) -> str:
     """The shell body of the digest build-and-publish step."""
-    parsed = cast("object", yaml.safe_load(WORKFLOW.read_text(encoding="utf-8")))
+    parsed = cast("object", yaml.safe_load(workflow_text))
     workflow = _mapping(parsed)
     jobs = _mapping(workflow.get("jobs"))
     digest = _mapping(jobs.get("digest"))
@@ -113,3 +119,39 @@ def test_digest_window_uses_exact_timestamp_cutoff(digest_run: str) -> None:
     assert "SINCE_DATE" not in digest_run, "digest window still truncates SINCE to a midnight date"
     assert "created=>=${SINCE}" in digest_run
     assert "updated:>=${SINCE}" in digest_run
+
+
+# --- item 5: the alert computation must not be dead code (issue #3952) ---------
+#
+# The `digest` job has exactly one step. A GITHUB_ENV write in that step can
+# never be read by anything -- there is no later step in this job, and
+# GITHUB_ENV does not cross job boundaries. Computing an alert file and a
+# has_signal flag just to hand them to GITHUB_ENV was therefore dead code:
+# a week whose numbers crossed the alert threshold produced the same silent
+# digest as a quiet one. Resolution: delete the computation rather than wire
+# a second consumer -- a quarter of weekly digests (12 issues, 4 of them
+# flagged "Chronically red -- assign an owner") produced zero follow-up
+# action on the already-prominent in-body recommendation, so a second
+# notification surfacing the same data was judged not worth the added
+# maintenance surface.
+
+
+def test_step_does_not_write_dead_github_env(digest_run: str) -> None:
+    # Comment prose is allowed to explain *why* (it does); only code is
+    # checked, same idiom as test_collection_commands_do_not_swallow_errors.
+    code = _code_only(digest_run)
+    assert "GITHUB_ENV" not in code, "digest step writes to GITHUB_ENV, but this job has no later step to read it"
+
+
+def test_step_does_not_request_unread_alert_file(digest_run: str) -> None:
+    code = _code_only(digest_run)
+    assert "--alert-file" not in code, "digest step still asks the script to compute an alert file"
+    assert "ALERT_FILE" not in code
+    assert "HAS_SIGNAL" not in code
+
+
+def test_header_does_not_advertise_a_firing_alert(workflow_text: str) -> None:
+    # The header previously claimed "a threshold alert fires" -- untrue, since
+    # nothing ever consumed the computed alert. The header must not restate
+    # that claim once the dead computation is gone.
+    assert "alert fires" not in workflow_text.lower(), "header still advertises a threshold alert nothing implements"
