@@ -41,6 +41,7 @@ import json
 import os
 import time
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any
 
 __all__ = [
@@ -62,6 +63,41 @@ _SIGNING_SECRET_ENV = "BERNSTEIN_A2A_OAUTH_SIGNING_SECRET"
 
 #: Client-credentials token lifetime (seconds).
 _TOKEN_TTL_SECONDS = 3600
+
+#: Domain separation for the derived signing key; doubles as the PBKDF2 salt.
+#: A fixed salt is required, not an oversight: the derivation has to land on
+#: the same key in every process behind the same config, and a random salt
+#: would have to be persisted somewhere - which is the thing this derivation
+#: exists to avoid. The salt is not the defence here; the iteration count is.
+_SIGNING_KEY_SALT = b"bernstein-a2a-oauth"
+
+#: PBKDF2 iterations for the signing-key derivation (OWASP's floor for
+#: PBKDF2-HMAC-SHA256). Operator-chosen client secrets are often short, and a
+#: single fast hash would let anyone holding the derived key grind them back
+#: out offline - client secrets that operators tend to reuse elsewhere. The
+#: cost is paid once per distinct client set, not once per request: see
+#: :func:`_derive_signing_key`.
+_SIGNING_KEY_ITERATIONS = 600_000
+
+
+@lru_cache(maxsize=16)
+def _derive_signing_key(material: str) -> bytes:
+    """Stretch *material* into a signing key, memoised per distinct input.
+
+    The memoisation is what makes an expensive KDF usable here. Both
+    ``a2a_jsonrpc._get_auth`` and ``well_known`` build an authenticator per
+    request when the app state has none, so an un-cached 600k-iteration
+    derivation would add its full cost to every A2A request rather than to
+    startup. Keyed on the material itself, so a config change derives a new
+    key instead of returning the previous one.
+    """
+    return hashlib.pbkdf2_hmac(
+        "sha256",
+        material.encode("utf-8"),
+        _SIGNING_KEY_SALT,
+        _SIGNING_KEY_ITERATIONS,
+    )
+
 
 #: Scheme ids advertised in the card. Stable so a cached card keeps resolving.
 _API_KEY_SCHEME_ID = "a2a-api-key"
@@ -178,9 +214,17 @@ class A2AServerAuth:
         validates tokens issued earlier, without persisting a secret. The
         client secrets are already private, so folding them into the key adds
         no new exposure and binds token validity to the configured clients.
+
+        Derivation goes through PBKDF2 rather than a single hash. Anyone who
+        obtains the derived key can already forge tokens, so stretching does
+        not protect this surface - it protects the *inputs*. A single SHA-256
+        pass would let a leaked signing key be ground back into the operator's
+        client secrets offline at hardware speed, and those secrets are
+        routinely the same ones used against other systems. Turning that
+        recovery from seconds into an infeasible campaign is the whole point.
         """
         material = "\x00".join(f"{cid}={sec}" for cid, sec in sorted(oauth_clients.items()))
-        return hashlib.sha256(b"bernstein-a2a-oauth\x00" + material.encode("utf-8")).digest()
+        return _derive_signing_key(material)
 
     @property
     def is_configured(self) -> bool:
