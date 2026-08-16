@@ -1,10 +1,15 @@
-"""Undecodable bytes are a discarded physical line, not an exception (#3971).
+"""Undecodable bytes are a discarded physical line, not an exception (#3971, #4016).
 
 Every fixture here is built from RAW BYTES rather than from text. A journal
 written through ``str`` cannot hold an incomplete multi-byte character at all -
 the encode would either succeed or raise before anything reached the disk - so a
 text fixture would exercise the JSON parser and never the decode path this
 module is about.
+
+#3971 covers ``load_events``; #4016 covers ``EventJournal.event_count``, the
+sibling reader of the same file, in the final section. They share this module
+because they share the fixtures: the two readers agreeing about one file *is*
+the contract, and splitting them would let the fixtures drift apart.
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from bernstein.core.replay.journal import (
+    EventJournal,
     JournalParseError,
     load_events,
 )
@@ -199,3 +205,132 @@ def test_an_escaped_lone_surrogate_is_still_a_json_question_not_a_decode_one(
 
     assert loaded.discarded_line_indices == ()
     assert loaded.events[0]["note"] == "\udcff"
+
+
+# ---------------------------------------------------------------------------
+# EventJournal.event_count (#4016) - the sibling reader of load_events.
+#
+# Same file, same crash, and until this landed a different decode policy. The
+# fixtures stay raw bytes for the reason in the module docstring above.
+# ---------------------------------------------------------------------------
+
+# A row that is valid UTF-8 and unparsable JSON: the tear stopped after a
+# newline-free prefix rather than inside a character. It is the control that
+# separates the two policies, because no decode question arises for it at all
+# and the old counter still disagreed with ``load_events`` by one.
+_UNPARSABLE_JSON = _GOOD[0][:40].replace(b"\n", b"")
+
+# A row that decodes and parses and is still not an event.
+_NON_OBJECT_ROW = b'"just a string"'
+
+
+def _journal_over(sdd_dir: Path, *chunks: bytes) -> EventJournal:
+    """An ``EventJournal`` whose file already holds ``chunks`` on disk.
+
+    The plain constructor rather than ``resume`` on purpose: ``resume`` calls
+    ``load_events`` and refuses any file with a discarded line, so it can never
+    reach ``event_count`` on the fixtures below. The reachable callers are the
+    ones handed an injected journal - ``activity.record_activity_result`` and
+    ``subagent_delegation`` - and that journal is the orchestrator's plainly
+    constructed ``_recorder``.
+    """
+    journal = EventJournal(run_id="run-count", sdd_dir=sdd_dir)
+    _write(journal.path, *chunks)
+    return journal
+
+
+def test_event_count_survives_a_tail_torn_mid_character(tmp_path: Path) -> None:
+    """THE ISSUE, ASSERTED DIRECTLY.
+
+    ``UnicodeDecodeError`` derives from ``ValueError``, so the method's own
+    ``except OSError`` never caught it and it propagated out of a counter
+    documented to answer ``0`` when it cannot read.
+    """
+    journal = _journal_over(tmp_path, *_GOOD, _TORN_MID_CHARACTER)
+
+    assert journal.event_count() == 3
+
+
+@pytest.mark.parametrize(
+    ("label", "tail"),
+    [
+        ("clean", None),
+        ("torn mid character", _TORN_MID_CHARACTER),
+        ("torn between characters", _TORN_BETWEEN_CHARACTERS),
+        ("valid utf-8, unparsable json", _UNPARSABLE_JSON),
+        ("non-object row", _NON_OBJECT_ROW),
+    ],
+)
+def test_event_count_is_len_load_events(tmp_path: Path, label: str, tail: bytes | None) -> None:
+    """THE RELATIONSHIP THE ISSUE ASKED TO HAVE ASSERTED RATHER THAN DESCRIBED.
+
+    ``event_count() == len(load_events(path).events)``, for every shape of bad
+    row and for a clean journal. The ``clean`` case is the control: it passes
+    on either policy, so a run where only it is green is a run where these
+    fixtures stopped reaching the counter.
+
+    The last two cases carry no decode question at all - they are pure ASCII -
+    and the old counter still disagreed by one on both. Fixing only the decode
+    would have left them, which is the third policy the issue warns about.
+    """
+    chunks = (*_GOOD, tail) if tail is not None else _GOOD
+    journal = _journal_over(tmp_path / label.replace(" ", "-").replace(",", ""), *chunks)
+
+    assert journal.event_count() == len(load_events(journal.path).events)
+
+
+def test_event_count_is_the_index_resume_would_continue_from(tmp_path: Path) -> None:
+    """Why *skip* and not *count*, tied to the writer rather than to taste.
+
+    ``resume`` sets its next index to ``len(events)``, so the row appended
+    after a malformed one carries that number - not a line number. A counter
+    that disagreed would make ``event_count() - 1``, which is how every caller
+    spells "the row I just wrote", name a row that is not in the journal.
+    """
+    chained = EventJournal(run_id="run-count", sdd_dir=tmp_path)
+    for index in range(3):
+        chained.record(f"step-{index}")
+
+    resumed = EventJournal.resume(run_id="run-count", sdd_dir=tmp_path)
+    resumed.record("appended-after-resume")
+    appended = load_events(resumed.path).events[-1]
+
+    assert resumed.event_count() - 1 == appended["index"]
+
+
+def test_event_count_still_answers_zero_when_the_file_cannot_be_read(
+    tmp_path: Path,
+) -> None:
+    """The ``except OSError`` is now exactly what it says.
+
+    No decode error can reach it any more, so the handler's remaining job is
+    the one it is named for. A directory standing where the journal file
+    belongs raises ``IsADirectoryError`` - an ``OSError`` - from the open.
+    """
+    journal = EventJournal(run_id="run-count", sdd_dir=tmp_path)
+    journal.path.mkdir(parents=True, exist_ok=True)
+
+    assert journal.event_count() == 0
+
+
+def test_event_count_does_not_swallow_a_non_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The handler stays NARROW, and that is the whole shape of this bug.
+
+    The defect was a ``ValueError`` subclass reaching a caller as an exception
+    because ``except OSError`` did not catch it. Widening the handler to
+    ``Exception`` would have "fixed" that by turning any future reader failure
+    into a silent ``0`` - a wrong count is worse than a raised one here,
+    because ``event_count() - 1`` would then stamp ``-1`` into a receipt.
+    Nothing about the scan being shared prevents that widening, so it is
+    pinned: a non-``OSError`` out of the reader propagates.
+    """
+    journal = EventJournal(run_id="run-count", sdd_dir=tmp_path)
+    journal.record("one")
+
+    def _boom(*_args: object, **_kwargs: object) -> object:
+        raise ValueError("reader failed for some reason that is not I/O")
+
+    monkeypatch.setattr("bernstein.core.replay.journal.load_events", _boom)
+
+    with pytest.raises(ValueError, match="not I/O"):
+        journal.event_count()

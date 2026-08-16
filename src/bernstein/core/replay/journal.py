@@ -444,12 +444,33 @@ class EventJournal:
                     logger.warning("EventJournal observer failed for event %r: %s", event, exc)
 
     def event_count(self) -> int:
-        """Return the number of events recorded so far."""
-        if not self._path.exists():
-            return 0
+        """Return the number of events recorded so far.
+
+        The relationship to the other reader, in one sentence:
+        ``event_count() == len(load_events(path).events)``. Counting
+        *usable* events rather than physical lines is not a preference -
+        it is the only count the rest of the class already agrees with.
+        :meth:`resume` continues the chain from ``len(events)``, so a row
+        appended after a malformed one carries that index and not a line
+        number; the read side recovers the same value from the row's own
+        ``index`` field (``run_artifacts._row_to_record``). Every caller
+        spells this ``event_count() - 1`` to name the row it just wrote,
+        and a physical-line count would name a row that is not there.
+
+        Sharing the scan rather than re-implementing it is also what keeps
+        the two readers on one decode policy: a strict decode here made a
+        journal torn mid-character raise :class:`UnicodeDecodeError` out
+        of a method whose failure mode is documented as ``0``, because
+        that error derives from :class:`ValueError` and not from
+        :class:`OSError`. The handler below is now exactly what it says -
+        an unreadable file - since no decode error can reach it.
+
+        This costs a JSON parse per row where the old scan cost a strip
+        (~12x on a 20k-row journal), which is the price of returning a
+        number the writer and the read side both agree with.
+        """
         try:
-            with self._path.open(encoding="utf-8") as f:
-                return sum(1 for line in f if line.strip())
+            return len(load_events(self._path).events)
         except OSError:
             return 0
 

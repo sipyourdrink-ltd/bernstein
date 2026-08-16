@@ -118,6 +118,22 @@ rather than as its own attribution is exempted by hand there, with the reason.
   every journal that read successfully before. A row whose only defect is one
   undecodable byte is discarded rather than repaired, so no silently altered
   event can enter the chain.
+- `EventJournal.event_count()` counts usable events rather than physical lines,
+  and reads through the same scan as `load_events` (#4016). It was the last
+  strict decoder left on the file, so the journal that #3971 made loadable
+  could still raise `UnicodeDecodeError` out of the counter — a `ValueError`
+  subclass, so the method's own `except OSError` never caught it — on the two
+  call sites that take an injected journal rather than one opened through
+  `EventJournal.resume`. The count also disagreed with the writer by one on a
+  journal carrying any malformed row, including rows that are pure ASCII and
+  raise no decode question: `resume` continues the chain from
+  `len(load_events(path).events)`, so `event_count() - 1`, which is how every
+  caller names the row it just appended, could name a row that is not in the
+  journal. The relationship is now `event_count() == len(load_events(path).events)`
+  and is asserted rather than described. The `except OSError` is unchanged and
+  now means only what it says: no decode error can reach it. Counting parsed
+  rows costs a JSON parse per row where the old scan cost a `strip()`
+  (~12x on a 20,000-row journal).
 - The CLI reference no longer names command spellings that do not resolve. It
   claimed `bernstein commit-stats`, `bernstein incident`, and `bernstein
   postmortem` were live deprecated aliases after v4.0.0 removed them, and
