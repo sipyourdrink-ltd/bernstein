@@ -171,6 +171,27 @@ to record the new high-water mark.
 The baseline write lives in this separate workflow (not in `ci.yml`) so
 `ci.yml`'s gate jobs never need `contents: write`.
 
+### When a fire declines to touch the open ratchet PR
+
+There is only ever one ratchet PR, on the fixed branch
+`coverage-ratchet/baseline`, so each fire updates it in place. The `guard`
+step decides whether this fire may, and it refuses for two unrelated
+reasons. Both print a `::notice::` naming which one it was, and both end
+the run green — nothing is lost by skipping, because the ratchet is
+monotonic and idempotent.
+
+| Notice | Meaning | What to do |
+|---|---|---|
+| `measured N% is not above the open ratchet PR's M%` | The measurement beats the mark on `main` but not the higher one the open PR already carries. Pushing it would move the high-water mark **down**. | Nothing. Merge the open PR when you are ready; the next rise ratchets from there. |
+| `the open ratchet PR is in the merge queue, which locks ... against pushes` | The PR is queued, so GitHub rejects every push to its branch (`GH006`) for the whole time it is in the queue. | Nothing. Once it merges, the branch is free and the next fire opens a fresh PR at whatever the high-water mark is by then. |
+
+The decision itself is `scripts/coverage_ratchet.py guard`; the workflow
+step only gathers the two inputs (the baseline on the ratchet branch, and
+the head branches currently in the merge queue) and hands them over. A
+failed read of either is loud and fails the step rather than defaulting —
+an unreadable queue treated as empty would read as "the branch is
+pushable" and put the `GH006` failure straight back.
+
 ### Which run supplies the measurement
 
 The ratchet may only bump on a measurement of the commit being ratcheted.

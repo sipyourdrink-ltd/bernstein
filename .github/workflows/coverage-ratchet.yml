@@ -240,67 +240,73 @@ jobs:
           RATCHET_BRANCH: coverage-ratchet/baseline
         run: |
           set -euo pipefail
-          # scripts/coverage_ratchet.py compares the measurement against the
-          # baseline committed on main, NOT against the one the open ratchet
-          # PR already carries. Those two diverge as soon as a ratchet PR is
-          # open: main still holds the old mark while the PR branch holds a
-          # higher one. A later push whose measurement lands between them
-          # still counts as a bump against main, and force-pushing it would
-          # rewrite the open PR with a LOWER high-water mark - the exact
-          # inverse of a monotonic ratchet, and invisible in review because
-          # the PR title changes with it.
+          # Two independent reasons this fire may not touch the open ratchet
+          # PR. This step only *gathers* them; the decision itself lives in
+          # `scripts/coverage_ratchet.py guard` so the rules are covered by
+          # unit tests rather than only by a live queue.
           #
-          # So: read the baseline on the ratchet branch and only proceed when
-          # the new measurement is strictly greater.
+          # 1. scripts/coverage_ratchet.py compares the measurement against
+          #    the baseline committed on main, NOT against the one the open
+          #    ratchet PR already carries. Those two diverge as soon as a
+          #    ratchet PR is open: main still holds the old mark while the PR
+          #    branch holds a higher one. A later push whose measurement
+          #    lands between them still counts as a bump against main, and
+          #    force-pushing it would rewrite the open PR with a LOWER
+          #    high-water mark - the exact inverse of a monotonic ratchet,
+          #    and invisible in review because the PR title changes with it.
+          #
+          # 2. A pull request sitting in the merge queue has its head branch
+          #    locked against pushes, so create-pull-request hard-fails with
+          #    `GH006 ... cannot be updated` for the entire time the ratchet
+          #    PR spends in the queue - one full CI matrix per entry, so not
+          #    a narrow race. That failure is a red mark on main that means
+          #    nothing is wrong, which is the kind that teaches people to
+          #    ignore red marks.
+          #
           # gh prints the API error body to STDOUT on failure, so an
           # emptiness test on the captured output cannot detect a missing
           # branch: a 404 body parses as JSON and then fails on the absent
           # coverage key. Branch on the exit code instead, and separate a
           # missing ref (fine: the ratchet PR merged and its branch was
           # auto-deleted) from every other API failure (loud).
+          rm -f open-baseline.json queued-branches.json
           set +e
           open_json=$(gh api "repos/${REPO}/contents/.coverage-baseline.json?ref=${RATCHET_BRANCH}" \
               -H "Accept: application/vnd.github.raw" 2>gh-err.txt)
           gh_rc=$?
           set -e
           if [ "${gh_rc}" -ne 0 ]; then
-            if grep -qE "HTTP 404|No commit found|Not Found" gh-err.txt; then
-              echo "::notice::no ${RATCHET_BRANCH} baseline (branch absent); opening a fresh ratchet PR."
+            if ! grep -qE "HTTP 404|No commit found|Not Found" gh-err.txt; then
+              echo "::error::could not read the open ratchet baseline (exit ${gh_rc}); refusing to guess."
+              cat gh-err.txt
               rm -f gh-err.txt
-              echo "proceed=true" >> "$GITHUB_OUTPUT"
-              exit 0
+              exit 1
             fi
-            echo "::error::could not read the open ratchet baseline (exit ${gh_rc}); refusing to guess."
-            cat gh-err.txt
-            rm -f gh-err.txt
-            exit 1
+            # No ratchet branch, so no open PR to overwrite and none to be
+            # queued. Leaving open-baseline.json absent is how this step
+            # tells the guard "open a fresh one".
+            echo "::notice::no ${RATCHET_BRANCH} on the remote; the guard will open a fresh ratchet PR."
+          else
+            printf '%s' "${open_json}" > open-baseline.json
           fi
           rm -f gh-err.txt
-          printf '%s' "${open_json}" > open-baseline.json
-          verdict=$(OPEN_BASELINE=open-baseline.json python3 - <<'PY'
-          import json
-          import os
-          import sys
 
-          with open(os.environ["OPEN_BASELINE"], encoding="utf-8") as fh:
-              try:
-                  open_pct = float(json.load(fh)["total_coverage_percent"])
-              except (KeyError, ValueError, TypeError) as exc:
-                  print(f"::error::open ratchet baseline is malformed: {exc!r}", file=sys.stderr)
-                  raise SystemExit(1)
-          measured = float(os.environ["MEASURED"])
-          print(f"{'true' if measured > open_pct else 'false'} {open_pct}")
-          PY
-          )
-          proceed=${verdict%% *}
-          open_pct=${verdict##* }
-          rm -f open-baseline.json
-          if [ "${proceed}" = "true" ]; then
-            echo "::notice::measured ${MEASURED}% > open ratchet PR ${open_pct}%; updating it."
-          else
-            echo "::notice::measured ${MEASURED}% is not above the open ratchet PR's ${open_pct}%; leaving it alone."
-          fi
-          echo "proceed=${proceed}" >> "$GITHUB_OUTPUT"
+          # A failed read here must stay loud. Defaulting the queue to empty
+          # would read as "the branch is pushable" and put (2) straight back.
+          gh api graphql \
+            -f query='query($owner:String!,$name:String!,$base:String!){repository(owner:$owner,name:$name){mergeQueue(branch:$base){entries(first:50){nodes{pullRequest{headRefName}}}}}}' \
+            -f owner="${REPO%%/*}" \
+            -f name="${REPO##*/}" \
+            -f base=main \
+            --jq '[.data.repository.mergeQueue.entries.nodes[]?.pullRequest.headRefName | select(. != null)]' \
+            > queued-branches.json
+
+          uv run python scripts/coverage_ratchet.py guard \
+            --measured "${MEASURED}" \
+            --open-baseline open-baseline.json \
+            --queued-branches queued-branches.json \
+            --ratchet-branch "${RATCHET_BRANCH}"
+          rm -f open-baseline.json queued-branches.json
 
       - name: Open PR with the bumped baseline
         # Only when the ratchet actually clicked (coverage rose) AND the new

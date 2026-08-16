@@ -49,6 +49,14 @@ The failures this module exists to prevent
    must not narrow to ``conclusion == success`` - ``cancel-in-progress``
    cancels most ``main`` runs, so that filter would idle the ratchet just
    as thoroughly.
+
+7. **A push at a branch the merge queue has locked.** While the ratchet PR
+   sits in the queue GitHub rejects every push to its head branch, so
+   ``create-pull-request`` hard-fails with ``GH006`` for one full CI matrix
+   per queue entry. The guard must therefore read the queue as well as the
+   branch baseline, and it must delegate the verdict to
+   ``scripts/coverage_ratchet.py guard`` so the rule is unit-tested rather
+   than re-implemented in shell.
 """
 
 from __future__ import annotations
@@ -136,7 +144,16 @@ def test_downward_guard_exists_and_reads_the_ratchet_branch(steps: list[dict]) -
     assert RATCHET_BRANCH in yaml.safe_dump(guard), (
         "the guard must read the baseline carried by the open ratchet branch, not only the one committed on main"
     )
-    assert "proceed=" in guard["run"]
+    # The step must still end in something that writes `proceed` to
+    # $GITHUB_OUTPUT, or the PR step's `if` is false forever and the ratchet
+    # silently never opens a PR. The write itself moved into the script -
+    # `test_guard_command_writes_proceed_false_to_github_output` in
+    # tests/unit/test_coverage_ratchet.py covers it - so what this asserts
+    # here is that the step actually reaches that script.
+    assert "coverage_ratchet.py guard" in guard["run"], (
+        "the guard step must emit `proceed`; without it the create-pull-request "
+        "step is gated on an output nothing ever sets"
+    )
 
 
 def test_pr_step_is_gated_on_the_downward_guard(steps: list[dict]) -> None:
@@ -284,3 +301,27 @@ def test_a_bumped_baseline_is_verified_before_the_pr_opens(steps: list[dict]) ->
     assert steps.index(verify) < steps.index(_create_pr_step(steps)), (
         "the verify step must run before create-pull-request"
     )
+
+
+def test_guard_reads_the_merge_queue_not_only_the_branch_baseline(steps: list[dict]) -> None:
+    """A queued ratchet PR locks its branch; the number alone cannot see that."""
+    run = _step_by_id(steps, "guard")["run"]
+    assert "mergeQueue" in run, (
+        "the guard must ask whether the open ratchet PR is in the merge queue - "
+        "while it is, every push to its branch is rejected with GH006 whatever "
+        "the measured percentage says"
+    )
+    assert "queued-branches.json" in run
+
+
+def test_guard_delegates_the_verdict_to_the_tested_script(steps: list[dict]) -> None:
+    """One copy of the rule, and it is the copy the unit tests drive.
+
+    An inline re-implementation in shell would drift from
+    ``scripts/coverage_ratchet.py guard`` silently: nothing runs this step
+    except a live ratchet fire on ``main``.
+    """
+    run = _step_by_id(steps, "guard")["run"]
+    assert "coverage_ratchet.py guard" in run
+    assert "--queued-branches" in run
+    assert "--open-baseline" in run

@@ -83,7 +83,10 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 # defusedxml is a drop-in for xml.etree.ElementTree that re-exports the
 # stdlib ``ParseError`` and additionally raises ``DefusedXmlException``
@@ -155,6 +158,14 @@ class Decision:
     should_bump: bool
     new_total_pct: float
     exit_code: int
+
+
+@dataclasses.dataclass(frozen=True)
+class GuardVerdict:
+    """Whether the open ratchet PR may be updated, and the reason either way."""
+
+    proceed: bool
+    notice: str
 
 
 def parse_line_rate(coverage_xml: Path) -> float:
@@ -408,6 +419,71 @@ def decide(baseline_pct: float, measured_pct: float, tolerance: float = DEFAULT_
     )
 
 
+def guard_decision(
+    measured_pct: float,
+    open_pct: float | None,
+    queued_branches: Sequence[str],
+    ratchet_branch: str,
+) -> GuardVerdict:
+    """Decide whether this fire may update the single open ratchet PR.
+
+    ``check`` compares the measurement against the baseline committed on
+    ``main``, not against the one the open ratchet PR already carries.
+    Those two diverge the moment a ratchet PR is open, so a measurement
+    landing between them still reads as a bump against ``main`` while
+    force-pushing it would move the open PR's high-water mark *down*.
+    That is the first refusal.
+
+    The second is mechanical rather than arithmetic: while the ratchet PR
+    sits in the merge queue GitHub locks its head branch, and the push
+    fails with ``GH006`` whatever the number says. Skipping costs nothing
+    - the ratchet is monotonic and idempotent, so once the queued PR
+    merges the next fire opens a fresh PR carrying the high-water mark as
+    of then.
+
+    Args:
+        measured_pct: Freshly-measured total coverage percentage.
+        open_pct: Percentage carried by the open ratchet PR, or ``None``
+            when the ratchet branch does not exist (no PR is open).
+        queued_branches: Head branches of the pull requests currently in
+            the merge queue.
+        ratchet_branch: The ratchet's own stable head branch.
+
+    Returns:
+        A :class:`GuardVerdict` carrying the decision and the single log
+        line explaining it.
+    """
+    if open_pct is None:
+        return GuardVerdict(
+            proceed=True,
+            notice=f"no {ratchet_branch} baseline (branch absent); opening a fresh ratchet PR.",
+        )
+
+    # Ordered deliberately: both refusals can hold at once, and the branch
+    # lock is the one that makes the push impossible rather than merely
+    # unwanted. Reporting it first keeps the message deterministic instead
+    # of an artifact of evaluation order.
+    if ratchet_branch in queued_branches:
+        return GuardVerdict(
+            proceed=False,
+            notice=(
+                f"the open ratchet PR is in the merge queue, which locks {ratchet_branch} "
+                f"against pushes; leaving it alone."
+            ),
+        )
+
+    if measured_pct > open_pct:
+        return GuardVerdict(
+            proceed=True,
+            notice=f"measured {measured_pct:g}% > open ratchet PR {open_pct:g}%; updating it.",
+        )
+
+    return GuardVerdict(
+        proceed=False,
+        notice=f"measured {measured_pct:g}% is not above the open ratchet PR's {open_pct:g}%; leaving it alone.",
+    )
+
+
 def next_floor(current: int, step: int = DEFAULT_FLOOR_STEP, cap: int = DEFAULT_FLOOR_CAP) -> int:
     """Compute the next diff-coverage floor for the weekly bump.
 
@@ -606,6 +682,47 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_guard(args: argparse.Namespace) -> int:
+    """Gate the ratchet-PR step on the open PR being both lower and pushable.
+
+    The workflow does the two API reads (it already holds the token) and
+    hands this command their results as files; the decision itself lives
+    here so it can be driven by tests rather than only by a live queue.
+    """
+    open_baseline = Path(args.open_baseline)
+    open_pct: float | None = None
+    if open_baseline.is_file():
+        # Present only when the ratchet branch exists and carries a baseline.
+        try:
+            open_pct = float(json.loads(open_baseline.read_text(encoding="utf-8"))["total_coverage_percent"])
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            print(f"::error::open ratchet baseline is malformed: {exc!r}", file=sys.stderr)
+            return 1
+
+    # An unreadable queue must never collapse to "empty". Empty means "the
+    # branch is pushable", and reaching that from a failed read is exactly
+    # how the push starts hard-failing on GH006 again while the log claims
+    # everything is fine.
+    try:
+        queued = json.loads(Path(args.queued_branches).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"::error::could not read the merge-queue state: {exc!r}; refusing to guess.", file=sys.stderr)
+        return 1
+    if not isinstance(queued, list) or any(not isinstance(item, str) for item in queued):
+        print("::error::merge-queue state is not a list of branch names; refusing to guess.", file=sys.stderr)
+        return 1
+
+    verdict = guard_decision(
+        measured_pct=float(args.measured),
+        open_pct=open_pct,
+        queued_branches=queued,
+        ratchet_branch=args.ratchet_branch,
+    )
+    print(f"::notice::{verdict.notice}")
+    _emit_github_output(proceed="true" if verdict.proceed else "false")
+    return 0
+
+
 def _cmd_show_floor(args: argparse.Namespace) -> int:
     baseline_path = Path(args.baseline)
     try:
@@ -667,6 +784,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="also fail when the baseline records no line_rate/head_sha",
     )
     p_verify.set_defaults(func=_cmd_verify)
+
+    p_guard = sub.add_parser("guard", help="decide whether the open ratchet PR may be updated")
+    p_guard.add_argument("--measured", required=True, help="freshly-measured total coverage percentage")
+    p_guard.add_argument(
+        "--open-baseline",
+        required=True,
+        help="baseline read off the ratchet branch; an absent file means the branch does not exist",
+    )
+    p_guard.add_argument(
+        "--queued-branches",
+        required=True,
+        help="JSON array of the head branches currently in the merge queue",
+    )
+    p_guard.add_argument("--ratchet-branch", required=True, help="the ratchet's own stable head branch")
+    p_guard.set_defaults(func=_cmd_guard)
 
     p_show = sub.add_parser("show-floor", help="print the current diff-coverage floor")
     p_show.add_argument("--baseline", default=".coverage-baseline.json", help="path to baseline JSON")

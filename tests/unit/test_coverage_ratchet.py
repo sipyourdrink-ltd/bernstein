@@ -593,3 +593,222 @@ def test_committed_baseline_carries_provenance_and_re_derives() -> None:
     assert baseline.line_rate is not None, "committed baseline has no line_rate to verify against"
     assert baseline.head_sha, "committed baseline does not name the commit it was measured on"
     ratchet.verify_baseline_consistency(baseline)
+
+
+# --------------------------------------------------------------------------- #
+# the ratchet-PR guard: is the open PR still pushable?
+# --------------------------------------------------------------------------- #
+#
+# The guard step in ``.github/workflows/coverage-ratchet.yml`` decides
+# whether this fire may update the single open ratchet PR. It refuses for
+# two unrelated reasons and they must stay distinguishable in the log:
+#
+#   * the measurement is not above the mark the open PR already carries -
+#     force-pushing it would move the high-water mark DOWN;
+#   * the open PR is sitting in the merge queue, which locks its branch
+#     against pushes, so the push cannot land whatever the number says.
+#
+# The second one used to be absent, and the create-pull-request step then
+# hard-failed on ``GH006 ... cannot be updated`` for the whole time a
+# ratchet PR spent in the queue - a red mark on main that meant nothing
+# was wrong.
+
+
+RATCHET_BRANCH = "coverage-ratchet/baseline"
+
+
+def test_a_queued_ratchet_pr_refuses_because_its_branch_is_locked() -> None:
+    """A queued PR's branch rejects pushes, so a higher number changes nothing."""
+    verdict = ratchet.guard_decision(
+        measured_pct=91.0,
+        open_pct=83.7,
+        queued_branches=[RATCHET_BRANCH],
+        ratchet_branch=RATCHET_BRANCH,
+    )
+
+    assert verdict.proceed is False
+    assert "merge queue" in verdict.notice
+
+
+def test_the_queued_refusal_is_distinguishable_from_the_downward_refusal() -> None:
+    """Two skip paths, two reasons: a shared message hides which one fired."""
+    queued = ratchet.guard_decision(
+        measured_pct=91.0,
+        open_pct=83.7,
+        queued_branches=[RATCHET_BRANCH],
+        ratchet_branch=RATCHET_BRANCH,
+    )
+    downward = ratchet.guard_decision(
+        measured_pct=83.0,
+        open_pct=83.7,
+        queued_branches=[],
+        ratchet_branch=RATCHET_BRANCH,
+    )
+
+    assert queued.proceed is downward.proceed is False
+    assert queued.notice != downward.notice
+    assert queued.notice not in downward.notice
+    assert downward.notice not in queued.notice
+
+
+def test_an_unrelated_pr_in_the_queue_does_not_block_the_ratchet() -> None:
+    """Only the ratchet's own branch being queued locks the ratchet's branch."""
+    verdict = ratchet.guard_decision(
+        measured_pct=91.0,
+        open_pct=83.7,
+        queued_branches=["fix/3928-something-else", "feat/unrelated"],
+        ratchet_branch=RATCHET_BRANCH,
+    )
+
+    assert verdict.proceed is True
+
+
+def test_an_open_but_unqueued_ratchet_pr_is_still_updated_in_place() -> None:
+    """The pre-existing behaviour: a higher mark rewrites the open PR."""
+    verdict = ratchet.guard_decision(
+        measured_pct=83.71,
+        open_pct=83.7,
+        queued_branches=[],
+        ratchet_branch=RATCHET_BRANCH,
+    )
+
+    assert verdict.proceed is True
+    assert "updating it" in verdict.notice
+
+
+def test_a_measurement_below_the_open_mark_still_refuses() -> None:
+    """The downward guard is what stops the ratchet from running backwards."""
+    verdict = ratchet.guard_decision(
+        measured_pct=83.69,
+        open_pct=83.7,
+        queued_branches=[],
+        ratchet_branch=RATCHET_BRANCH,
+    )
+
+    assert verdict.proceed is False
+    assert "not above" in verdict.notice
+
+
+def test_an_absent_ratchet_branch_opens_a_fresh_pr() -> None:
+    """No open ratchet PR: nothing to guard against, nothing to be queued."""
+    verdict = ratchet.guard_decision(
+        measured_pct=83.71,
+        open_pct=None,
+        queued_branches=[],
+        ratchet_branch=RATCHET_BRANCH,
+    )
+
+    assert verdict.proceed is True
+    assert "fresh" in verdict.notice
+
+
+def test_the_queue_lock_outranks_the_downward_reason() -> None:
+    """Both refusals apply at once; report the one that makes the push impossible.
+
+    The number can be argued about on the next fire. The branch lock cannot:
+    while the PR is queued no push lands, so that is the fact worth logging.
+    Pinning the precedence keeps the message deterministic rather than an
+    artifact of which condition happens to be evaluated first.
+    """
+    verdict = ratchet.guard_decision(
+        measured_pct=83.0,
+        open_pct=83.7,
+        queued_branches=[RATCHET_BRANCH],
+        ratchet_branch=RATCHET_BRANCH,
+    )
+
+    assert verdict.proceed is False
+    assert "merge queue" in verdict.notice
+
+
+def test_guard_command_writes_proceed_false_to_github_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End to end through the subcommand the workflow actually calls."""
+    open_baseline = tmp_path / "open-baseline.json"
+    open_baseline.write_text(json.dumps({"total_coverage_percent": 83.7}), encoding="utf-8")
+    queued = tmp_path / "queued.json"
+    queued.write_text(json.dumps([RATCHET_BRANCH]), encoding="utf-8")
+    gh_output = tmp_path / "gh-output.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(gh_output))
+
+    rc = ratchet.main(
+        [
+            "guard",
+            "--measured",
+            "91.0",
+            "--open-baseline",
+            str(open_baseline),
+            "--queued-branches",
+            str(queued),
+            "--ratchet-branch",
+            RATCHET_BRANCH,
+        ]
+    )
+
+    assert rc == 0, "a refusal is a normal outcome, not a job failure"
+    assert "proceed=false" in gh_output.read_text(encoding="utf-8")
+
+
+def test_guard_command_treats_a_missing_open_baseline_as_an_absent_branch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The workflow writes that file only when the branch actually has one."""
+    queued = tmp_path / "queued.json"
+    queued.write_text("[]", encoding="utf-8")
+    gh_output = tmp_path / "gh-output.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(gh_output))
+
+    rc = ratchet.main(
+        [
+            "guard",
+            "--measured",
+            "83.71",
+            "--open-baseline",
+            str(tmp_path / "does-not-exist.json"),
+            "--queued-branches",
+            str(queued),
+            "--ratchet-branch",
+            RATCHET_BRANCH,
+        ]
+    )
+
+    assert rc == 0
+    assert "proceed=true" in gh_output.read_text(encoding="utf-8")
+
+
+def test_an_unreadable_queue_file_refuses_instead_of_assuming_an_empty_queue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Parsing the queue as empty on error would re-open the bug it closes.
+
+    An empty queue means "the branch is pushable". Reaching that conclusion
+    from a failed read is how the guard would go back to hard-failing on
+    ``GH006`` while reporting that everything was fine.
+    """
+    open_baseline = tmp_path / "open-baseline.json"
+    open_baseline.write_text(json.dumps({"total_coverage_percent": 83.7}), encoding="utf-8")
+    queued = tmp_path / "queued.json"
+    queued.write_text("{not json", encoding="utf-8")
+    gh_output = tmp_path / "gh-output.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(gh_output))
+
+    rc = ratchet.main(
+        [
+            "guard",
+            "--measured",
+            "91.0",
+            "--open-baseline",
+            str(open_baseline),
+            "--queued-branches",
+            str(queued),
+            "--ratchet-branch",
+            RATCHET_BRANCH,
+        ]
+    )
+
+    assert rc != 0, "an unreadable queue must be loud, not silently empty"
+    assert "proceed=true" not in gh_output.read_text(encoding="utf-8") if gh_output.exists() else True
