@@ -10,23 +10,28 @@ Invariants exercised here:
 
 1. ``ci.yml`` exposes a ``ci-gate`` job whose ``name:`` is exactly
    ``CI gate``.
-2. ``ci.yml`` exposes a ``test-macos`` job whose ``name:`` is the
-   literal string ``Test (macos-latest, Python 3.13)`` (no ``${{ ... }}``
-   template, which would resolve to a different string when the job is
-   skipped via the gate condition).
-3. Exactly two files under ``.github/workflows/*.yml`` emit a check-run
+2. Exactly two files under ``.github/workflows/*.yml`` emit a check-run
    named ``CI gate``: ``ci.yml`` (real aggregator) and
    ``ci-gate-stub.yml`` (synthetic emitter for PRs whose diff is fully
    paths-ignored by ci.yml - see PR opening this allow-list). No other
    workflow may emit this check name.
-4. The canary workflow file itself exists and is wired to the
+3. The canary workflow file itself exists and is wired to the
    ``pull_request``/``schedule``/``workflow_dispatch`` triggers, with
    every action SHA-pinned and the verify step asserting the same set
    of invariants.
-5. Every context branch protection requires on a PR is also reportable on
+4. Every context branch protection requires on a PR is also reportable on
    a ``merge_group`` ref, and the diff planner that decides which jobs may
    skip classifies a queued group from the group's own base SHA - so a
    green ``CI gate`` on the queue means the whole combination was built.
+
+``ci.yml``'s ``test-macos`` job used to be pinned to a literal
+(non-templated) ``name:`` here too, on the assumption that branch
+protection's required context depended on it. It does not - the
+repository ruleset requires only the single ``CI gate`` context checked
+by invariant 1 above (verified against
+``repos/<org>/<repo>/rules/branches/main`` when that constraint was
+removed) - so ``test-macos`` may template its name the same way the
+``test`` matrix job already does.
 """
 
 from __future__ import annotations
@@ -55,8 +60,6 @@ WORKFLOWS_DIR = Path(".github/workflows")
 
 REQUIRED_CONTEXT = "CI gate"
 REQUIRED_JOB_KEY = "ci-gate"
-MACOS_JOB_KEY = "test-macos"
-MACOS_JOB_NAME = "Test (macos-latest, Python 3.13)"
 TOPOLOGY_REPORT_PATH = "docs/operations/ci-topology.md"
 TOPOLOGY_REPORT_UNIGNORE = f"!{TOPOLOGY_REPORT_PATH}"
 
@@ -114,22 +117,23 @@ def test_ci_gate_name_is_literal_required_context(ci_doc: dict[str, object]) -> 
     )
 
 
-def test_test_macos_name_is_literal(ci_doc: dict[str, object]) -> None:
+def test_test_macos_name_may_be_templated(ci_doc: dict[str, object]) -> None:
+    """`test-macos` is no longer pinned to a literal `name:`.
+
+    Branch protection's required context is `CI gate` alone (see
+    `test_ci_gate_name_is_literal_required_context` above), not this job's
+    display name, so it may template like the `test` matrix job does (e.g.
+    to carry a shard index). This test exists so a future change cannot
+    silently reintroduce the stale literal-name lock without the removal
+    being visible here too.
+    """
     jobs = ci_doc.get("jobs")
     assert isinstance(jobs, dict)
-    job = jobs.get(MACOS_JOB_KEY)
-    assert isinstance(job, dict)
+    job = jobs.get("test-macos")
+    assert isinstance(job, dict), "ci.yml must keep a `test-macos` job."
     name = job.get("name")
-    assert isinstance(name, str)
-    assert "${{" not in name and "}}" not in name, (
-        f"`{MACOS_JOB_KEY}.name` must NOT be templated. "
-        "Skip-state check runs post the unresolved template, breaking any "
-        "downstream required-context rule keyed on the literal form."
-    )
-    assert name == MACOS_JOB_NAME, (
-        f"`{MACOS_JOB_KEY}.name` is {name!r}; expected {MACOS_JOB_NAME!r}. "
-        "If the rename is intentional, update the canary expectation in the "
-        "same PR."
+    assert isinstance(name, str) and name.startswith("Test (macos-latest, Python 3.13"), (
+        f"`test-macos.name` is {name!r}; expected it to still identify the macOS Python-3.13 test leg."
     )
 
 
@@ -258,8 +262,6 @@ def test_canary_asserts_required_context_name(canary_text: str) -> None:
     """The literal expected context names must appear in the canary env block."""
     assert f'REQUIRED_CONTEXT: "{REQUIRED_CONTEXT}"' in canary_text
     assert f'REQUIRED_JOB_KEY: "{REQUIRED_JOB_KEY}"' in canary_text
-    assert f'MACOS_JOB_KEY: "{MACOS_JOB_KEY}"' in canary_text
-    assert f'MACOS_JOB_NAME: "{MACOS_JOB_NAME}"' in canary_text
 
 
 # ---------------------------------------------------------------------------

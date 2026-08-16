@@ -11,7 +11,7 @@
 # plugin (mkdocs.yml); the matching native libs (libcairo, ...) are installed
 # by `.readthedocs.yaml::build.apt_packages`.
 mkdocs>=1.6.1,<2
-mkdocs-material[imaging]>=9.7.6,<10
+mkdocs-material[imaging]>=9.7.7,<10
 mkdocs-minify-plugin>=0.8,<1
 # Cap below 1.2.3: that release added a runtime dependency on `properdocs`
 # (a third-party fork of mkdocs 1.x). We build against upstream `mkdocs`

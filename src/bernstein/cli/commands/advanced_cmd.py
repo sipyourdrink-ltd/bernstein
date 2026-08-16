@@ -2028,6 +2028,14 @@ def _replay_from_step(*, run_id: str, sdd_dir: str, from_step: int, as_json: boo
     help="Rebuild deterministic run state by walking the journal to step N.",
 )
 @click.option(
+    "--yes-i-want-to-publish",
+    "yes_i_want_to_publish",
+    is_flag=True,
+    default=False,
+    help="replay publish: confirm writing a redacted receipt outside .sdd/runtime/. "
+    "Only valid with the 'publish' verb; any other verb rejects it.",
+)
+@click.option(
     "--fork-from",
     "fork_from",
     type=int,
@@ -2064,6 +2072,7 @@ def replay_cmd(
     extra_context: str | None,
     verify: bool,
     from_step: int | None,
+    yes_i_want_to_publish: bool,
     fork_from: int | None,
     jump_to_failure: bool,
     sign_key: str | None,
@@ -2088,8 +2097,8 @@ def replay_cmd(
       bernstein replay <RUN_ID> --from-step N     # rebuild state to step N
       bernstein replay diff RUN_A RUN_B           # first-divergence finder
       bernstein replay <AGENT_ID>                 # per-step journal view (#1799)
-      bernstein replay export <AGENT_ID> -o RECEIPT   # portable receipt (#1799)
-      bernstein replay publish <AGENT_ID> -o RECEIPT  # redacted publish (#1799)
+      bernstein replay export <AGENT_ID> [OUT]                          # portable receipt (#1799)
+      bernstein replay publish <AGENT_ID> [OUT] --yes-i-want-to-publish # redacted publish (#1799)
       bernstein replay verify <RECEIPT>           # offline verifier (#1799)
       bernstein replay diff-journal A B           # per-step divergence finder
       bernstein replay debug <RUN>                # forensic single-chain walk (#2605)
@@ -2100,6 +2109,20 @@ def replay_cmd(
     # converting ``replay`` to a full :class:`click.Group` (which would
     # break the back-compat ``bernstein replay <RUN_ID>`` shape).
     args = list(run_id)
+
+    # --yes-i-want-to-publish is declared command-wide (click has no way to
+    # scope an option to one pseudo-subcommand here), so it is reachable on
+    # every verb. Honour it only for ``publish``; anywhere else it is a
+    # named error rather than a silent no-op -- the whole point of this
+    # fix is that an accepted flag must never be quietly ignored (#3976).
+    if yes_i_want_to_publish and not (args and args[0] == "publish"):
+        console.print(
+            "[red]Error:[/red] --yes-i-want-to-publish only applies to "
+            "'bernstein replay publish'; refusing rather than silently "
+            "ignoring it here."
+        )
+        raise SystemExit(2)
+
     if args and args[0] == "diff":
         _replay_diff_dispatch(args[1:], sdd_dir=sdd_dir, as_json=as_json)
         return
@@ -2116,7 +2139,12 @@ def replay_cmd(
         )
         return
     if args and args[0] in {"export", "publish", "verify", "diff-journal"}:
-        _replay_journal_dispatch(args, sdd_dir=sdd_dir, as_json=as_json)
+        _replay_journal_dispatch(
+            args,
+            sdd_dir=sdd_dir,
+            as_json=as_json,
+            yes_i_want_to_publish=yes_i_want_to_publish,
+        )
         return
 
     if len(args) != 1:
@@ -2204,6 +2232,7 @@ def _replay_journal_dispatch(
     *,
     sdd_dir: str,
     as_json: bool,
+    yes_i_want_to_publish: bool = False,
 ) -> None:
     """Dispatch the new ``export | publish | verify | diff-journal`` verbs.
 
@@ -2216,7 +2245,7 @@ def _replay_journal_dispatch(
 
     if verb == "export":
         if len(args) < 2:
-            console.print("[red]Usage:[/red] bernstein replay export <AGENT_ID> [-o OUT]")
+            console.print("[red]Usage:[/red] bernstein replay export <AGENT_ID> [OUT]")
             raise SystemExit(2)
         agent_id = args[1]
         # Output path can be passed as the third positional or default beside .sdd.
@@ -2228,20 +2257,21 @@ def _replay_journal_dispatch(
             agent_id=agent_id,
             sdd_dir=sdd_path,
             output=output,
+            as_json=as_json,
         )
         if rc != 0:
             raise SystemExit(rc)
         return
 
     if verb == "publish":
-        # Publish requires an explicit ``--yes`` style sentinel positional so
-        # operators cannot accidentally publish from a script that just adds
-        # a verb name.
+        # Publish requires the explicit --yes-i-want-to-publish confirmation
+        # (declared on the ``replay`` command and gated to this verb by the
+        # caller) so operators cannot accidentally publish from a script
+        # that just adds a verb name.
         if len(args) < 2:
-            console.print("[red]Usage:[/red] bernstein replay publish <AGENT_ID> [OUT] --opt-in")
+            console.print("[red]Usage:[/red] bernstein replay publish <AGENT_ID> [OUT] --yes-i-want-to-publish")
             raise SystemExit(2)
         agent_id = args[1]
-        opt_in = "--opt-in" in args
         positional_tail = [a for a in args[2:] if not a.startswith("--")]
         output = (
             Path(positional_tail[0])
@@ -2255,7 +2285,8 @@ def _replay_journal_dispatch(
             agent_id=agent_id,
             sdd_dir=sdd_path,
             output=output,
-            opt_in=opt_in,
+            opt_in=yes_i_want_to_publish,
+            as_json=as_json,
         )
         if rc != 0:
             raise SystemExit(rc)
@@ -2277,6 +2308,7 @@ def _replay_journal_dispatch(
             receipt_path=receipt,
             expected_head=expected_head,
             public_key_path=None,
+            as_json=as_json,
         )
         if rc != 0:
             raise SystemExit(rc)
