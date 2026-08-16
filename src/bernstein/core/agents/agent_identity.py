@@ -153,6 +153,11 @@ def permissions_for_role(role: str) -> frozenset[str]:
 # former is a pre-field record; see :func:`_credential_tenant_id`.
 _TENANT_KEY_ABSENT: Final[object] = object()
 
+# The two kinds a credential may declare, kept beside the ``token_type``
+# annotation on :class:`AgentCredential` so the deserialiser and the type
+# cannot drift apart; see :func:`_credential_token_type`.
+_CREDENTIAL_TOKEN_TYPES: Final[frozenset[str]] = frozenset({"opaque", "jwt"})
+
 
 def _string_list(raw: Any, field: str) -> list[str]:
     """Return a persisted list-of-strings field, refusing any other shape.
@@ -272,6 +277,53 @@ def _credential_tenant_id(raw: Any) -> str:
     return normalize_tenant_id(raw)
 
 
+def _credential_token_type(raw: Any) -> Literal["opaque", "jwt"]:
+    """Return the token kind a persisted credential declares.
+
+    ``token_type`` selects which validation a token gets: ``_validate_jwt_claims``
+    refuses anything whose credential does not say ``"jwt"``, so authentication
+    falls through to the opaque hash comparison for every other value.  A
+    ``str()`` coercion of the stored value therefore does not merely widen a
+    type - it routes an authentication decision on a value nothing has
+    established, and the routing is by whichever comparison runs first rather
+    than by a recognised kind.
+
+    An unknown kind is refused here instead, in the same style as
+    :func:`_credential_tenant_id` beside it: the boundary where a record on
+    disk becomes an object the rest of the code trusts is where a value that
+    is not one of the two real kinds stops.
+
+    Leniency is for age, not for content: a record written before the field
+    existed carries no ``token_type`` at all and is an opaque credential,
+    which is what the dataclass default has always said.  A record that
+    carries the key with something else in it asserted a kind, and an
+    unrecognised assertion is refused rather than defaulted - defaulting it
+    would rewrite a security-relevant field on the way in and lose the fact
+    that the store holds something nothing wrote.
+
+    The ``isinstance`` check is what makes that refusal reachable for every
+    stored shape rather than most of them.  A membership test hashes its left
+    operand, and JSON persists two values that cannot be hashed: a list and
+    an object.  Without the guard those two raise ``TypeError: unhashable
+    type: 'list'`` out of the lookup itself - caught by
+    :meth:`AgentIdentityStore._read_identity` like any other refusal, so the
+    store stays readable, but naming neither the field nor the value, which
+    is the whole point of the message below.  It is also the shape
+    :func:`_credential_tenant_id` beside it already uses.
+
+    Args:
+        raw: The stored value, or ``"opaque"`` when the record has no
+            ``token_type`` key.
+
+    Raises:
+        ValueError: The record carries a ``token_type`` outside
+            ``Literal["opaque", "jwt"]``.
+    """
+    if isinstance(raw, str) and raw in _CREDENTIAL_TOKEN_TYPES:
+        return cast('Literal["opaque", "jwt"]', raw)
+    raise ValueError(f"credential token_type must be one of {sorted(_CREDENTIAL_TOKEN_TYPES)}, got {raw!r}")
+
+
 @dataclass
 class AgentCredential:
     """Bearer token for agent-to-server authentication.
@@ -326,7 +378,7 @@ class AgentCredential:
             created_at=float(d.get("created_at", 0)),
             expires_at=float(d.get("expires_at", 0)),
             revoked=bool(d.get("revoked", False)),
-            token_type=str(d.get("token_type", "opaque")),
+            token_type=_credential_token_type(d.get("token_type", "opaque")),
             algorithm=str(d.get("algorithm", "HS256")),
             jti=str(d.get("jti", "")),
             tenant_id=_credential_tenant_id(d.get("tenant_id", _TENANT_KEY_ABSENT)),
