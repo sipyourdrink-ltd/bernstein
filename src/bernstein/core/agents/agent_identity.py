@@ -19,6 +19,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
 from bernstein.core.auth import create_jwt, verify_jwt
+from bernstein.core.path_scope import ScopePatternError, validate_repo_relative_pattern
 from bernstein.core.sanitize import sanitize_log
 from bernstein.core.tenanting import (
     DEFAULT_TENANT_ID,
@@ -656,9 +657,13 @@ class AgentIdentityStore:
         """Create a new agent identity with a short-lived, task-scoped JWT.
 
         Each agent receives a JWT that is scoped to its assigned task IDs and
-        (optionally) a list of file glob patterns it may write.  The task server
-        enforces these scopes on every incoming request so that a compromised
-        agent cannot modify tasks outside its own scope.
+        (optionally) a list of file glob patterns its work may touch.  The task
+        server enforces ``task_ids`` on every incoming request, so a compromised
+        agent cannot modify tasks outside its own scope.  ``allowed_files`` is
+        enforced at a different place and buys a different thing: the merge
+        acceptance gate refuses to bring in a change that falls outside it
+        (#3914), which contains an out-of-scope write rather than preventing
+        it.  See ``docs/operations/security-and-identity.md``.
 
         Args:
             session_id: Unique agent session identifier.
@@ -670,10 +675,11 @@ class AgentIdentityStore:
                 task-scoped tokens or 24 h for unrestricted manager tokens.
             task_ids: Task IDs this identity is authorised to act on.  An empty
                 list means no restriction (orchestrator / manager role).
-            allowed_files: File glob patterns this identity may write to.  An
-                empty list means no restriction.  Recorded on the credential
-                and compared against the token's claim; no file-write boundary
-                consumes it (see the operations guide).
+            allowed_files: Repository-relative glob patterns this identity's
+                work may touch.  An empty list means no restriction, which is
+                what every identity minted before the gate existed carries.
+                Each pattern is validated here, so a scope that could name a
+                file outside the repository never becomes a signed one.
 
         Returns:
             Tuple of ``(AgentIdentity, raw_token)`` - the raw bearer token is
@@ -681,8 +687,9 @@ class AgentIdentityStore:
 
         Raises:
             ValueError: ``task_ids`` or ``allowed_files`` is not a list of
-                strings.  Refused before the token is signed, so a bad scope
-                cannot become a credential that fails to load.
+                strings, or an ``allowed_files`` pattern is not
+                repository-relative.  Refused before the token is signed, so a
+                bad scope cannot become a credential that fails to load.
         """
         identity_id = session_id  # 1:1 mapping with agent session
         permissions = permissions_for_role(role)
@@ -699,6 +706,18 @@ class AgentIdentityStore:
         # signed a token with no task scope at all.
         scoped_task_ids = _string_list(() if task_ids is None else task_ids, "task_ids")
         scoped_files = _string_list(() if allowed_files is None else allowed_files, "allowed_files")
+        # Shape is not enough for the file scope: the merge gate reads these as
+        # repository-relative globs, so a pattern that names a drive or walks
+        # out of the root is refused before it can be signed.  Validated only
+        # here, at declaration -- records written before this existed stay
+        # loadable, and an uninterpretable pattern simply admits nothing when
+        # the gate matches against it.
+        for index, pattern in enumerate(scoped_files):
+            try:
+                validate_repo_relative_pattern(pattern)
+            except ScopePatternError as exc:
+                msg = f"allowed_files[{index}]: {exc}"
+                raise ValueError(msg) from exc
 
         now = time.time()
         # Use shorter expiry (4 h) for task-scoped tokens to limit blast radius.

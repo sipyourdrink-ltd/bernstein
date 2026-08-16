@@ -51,6 +51,69 @@ logger = logging.getLogger(__name__)
 _DEFAULT_DEBUG_LIMIT = 200
 
 
+#: Machine-readable names for every way a replay receipt verb can refuse.
+#:
+#: A caller branches on these rather than on whether parsing threw, which is
+#: the whole point of #3996: the malformed-receipt failure and the
+#: chain-does-not-verify failure both exited 1, one parseable and one not,
+#: with nothing in the exit code to tell them apart. They route to different
+#: people - "this chain does not verify" is a finding about the run, "this
+#: file is not a receipt" is a finding about the invocation.
+ReplayError = {
+    "AGENT_JOURNAL_MISSING": "agent_journal_missing",
+    "SIGNING_KEY_UNREADABLE": "signing_key_unreadable",
+    "PUBLIC_KEY_UNREADABLE": "public_key_unreadable",
+    "EXPORT_FAILED": "export_failed",
+    "PUBLISH_FAILED": "publish_failed",
+    "CONFIRMATION_REQUIRED": "confirmation_required",
+    "RECEIPT_NOT_FOUND": "receipt_not_found",
+    "RECEIPT_MALFORMED": "receipt_malformed",
+    "FLAG_NOT_APPLICABLE": "flag_not_applicable",
+}
+
+
+def _fail(
+    *,
+    as_json: bool,
+    error: str,
+    prose: str,
+    detail: str,
+    code: int,
+    include_ok: bool = False,
+) -> int:
+    """Emit a refusal on whichever channel ``--as-json`` selected.
+
+    **The invariant this exists to hold: if ``--as-json`` was accepted, every
+    exit path emits JSON.** Half-honouring a machine-readable flag is harder
+    to script against than not offering it, because the caller has no way to
+    discover the exception except in production. Route new refusals through
+    here rather than calling ``console.print`` directly, and the next exit
+    path cannot be added prose-only by accident.
+
+    ``prose`` carries Rich markup for humans; ``detail`` is the same message
+    without it, because markup in a JSON string is noise to a parser.
+
+    ``include_ok`` adds ``"ok": false``. Only ``verify`` sets it: ``ok`` is
+    already part of that surface's success contract, so a client keyed on
+    ``data["ok"]`` keeps working across both outcomes. ``export`` and
+    ``publish`` have no ``ok`` on success, and inventing one on failure alone
+    would mean a key that exists only when things go wrong.
+    """
+    from bernstein.cli.helpers import console
+
+    if as_json:
+        payload: dict[str, object] = {}
+        if include_ok:
+            payload["ok"] = False
+        payload["error"] = error
+        payload["detail"] = detail
+        console.print_json(json.dumps(payload))
+        return code
+
+    console.print(prose)
+    return code
+
+
 def _resolve_agent_dir(sdd_dir: Path, agent_id: str) -> Path:
     """Return the agent journal directory under *sdd_dir*."""
     return agent_journal_dir(sdd_dir, agent_id)
@@ -147,8 +210,13 @@ def replay_export(
 
     agent_dir = _resolve_agent_dir(sdd_dir, agent_id)
     if not agent_dir.exists():
-        console.print(f"[red]No journal for agent[/red] {agent_id}")
-        return 2
+        return _fail(
+            as_json=as_json,
+            error=ReplayError["AGENT_JOURNAL_MISSING"],
+            prose=f"[red]No journal for agent[/red] {agent_id}",
+            detail=f"no journal for agent {agent_id}",
+            code=2,
+        )
 
     signer = None
     if signer_key_path is not None:
@@ -160,8 +228,13 @@ def replay_export(
         try:
             signer = Ed25519FileKeySigner.from_path(signer_key_path)
         except LineageSignerError as exc:
-            console.print(f"[red]Cannot load signing key:[/red] {exc}")
-            return 2
+            return _fail(
+                as_json=as_json,
+                error=ReplayError["SIGNING_KEY_UNREADABLE"],
+                prose=f"[red]Cannot load signing key:[/red] {exc}",
+                detail=str(exc),
+                code=2,
+            )
 
     try:
         result = export_receipt(
@@ -171,8 +244,13 @@ def replay_export(
             signer=signer,
         )
     except ReceiptError as exc:
-        console.print(f"[red]Export failed:[/red] {exc}")
-        return 1
+        return _fail(
+            as_json=as_json,
+            error=ReplayError["EXPORT_FAILED"],
+            prose=f"[red]Export failed:[/red] {exc}",
+            detail=str(exc),
+            code=1,
+        )
 
     if as_json:
         console.print_json(
@@ -208,17 +286,29 @@ def replay_publish(
     from bernstein.cli.helpers import console
 
     if not opt_in:
-        console.print(
-            "[red]Refusing to publish:[/red] pass --yes-i-want-to-publish "
-            "to confirm. Local-only is the default; publish is the only "
-            "path that writes outside .sdd/runtime/."
+        return _fail(
+            as_json=as_json,
+            error=ReplayError["CONFIRMATION_REQUIRED"],
+            prose=(
+                "[red]Refusing to publish:[/red] pass --yes-i-want-to-publish "
+                "to confirm. Local-only is the default; publish is the only "
+                "path that writes outside .sdd/runtime/."
+            ),
+            detail=(
+                "pass --yes-i-want-to-publish to confirm; publish is the only path that writes outside .sdd/runtime/"
+            ),
+            code=2,
         )
-        return 2
 
     agent_dir = _resolve_agent_dir(sdd_dir, agent_id)
     if not agent_dir.exists():
-        console.print(f"[red]No journal for agent[/red] {agent_id}")
-        return 2
+        return _fail(
+            as_json=as_json,
+            error=ReplayError["AGENT_JOURNAL_MISSING"],
+            prose=f"[red]No journal for agent[/red] {agent_id}",
+            detail=f"no journal for agent {agent_id}",
+            code=2,
+        )
 
     signer = None
     if signer_key_path is not None:
@@ -230,8 +320,13 @@ def replay_publish(
         try:
             signer = Ed25519FileKeySigner.from_path(signer_key_path)
         except LineageSignerError as exc:
-            console.print(f"[red]Cannot load signing key:[/red] {exc}")
-            return 2
+            return _fail(
+                as_json=as_json,
+                error=ReplayError["SIGNING_KEY_UNREADABLE"],
+                prose=f"[red]Cannot load signing key:[/red] {exc}",
+                detail=str(exc),
+                code=2,
+            )
 
     try:
         result = publish_receipt(
@@ -243,8 +338,13 @@ def replay_publish(
             signer=signer,
         )
     except PublishError as exc:
-        console.print(f"[red]Publish failed:[/red] {exc}")
-        return 1
+        return _fail(
+            as_json=as_json,
+            error=ReplayError["PUBLISH_FAILED"],
+            prose=f"[red]Publish failed:[/red] {exc}",
+            detail=str(exc),
+            code=1,
+        )
 
     if as_json:
         console.print_json(
@@ -280,8 +380,14 @@ def replay_verify(
     from bernstein.cli.helpers import console
 
     if not receipt_path.exists():
-        console.print(f"[red]Receipt not found:[/red] {receipt_path}")
-        return 2
+        return _fail(
+            as_json=as_json,
+            error=ReplayError["RECEIPT_NOT_FOUND"],
+            prose=f"[red]Receipt not found:[/red] {receipt_path}",
+            detail=f"receipt not found: {receipt_path}",
+            code=2,
+            include_ok=True,
+        )
 
     verifier = None
     if public_key_path is not None:
@@ -293,8 +399,14 @@ def replay_verify(
         try:
             verifier = Ed25519PublicKeyVerifier.from_path(public_key_path)
         except LineageSignerError as exc:
-            console.print(f"[red]Cannot load public key:[/red] {exc}")
-            return 2
+            return _fail(
+                as_json=as_json,
+                error=ReplayError["PUBLIC_KEY_UNREADABLE"],
+                prose=f"[red]Cannot load public key:[/red] {exc}",
+                detail=str(exc),
+                code=2,
+                include_ok=True,
+            )
 
     try:
         result = verify_receipt(
@@ -303,8 +415,14 @@ def replay_verify(
             verifier=verifier,
         )
     except ReceiptError as exc:
-        console.print(f"[red]Receipt malformed:[/red] {exc}")
-        return 1
+        return _fail(
+            as_json=as_json,
+            error=ReplayError["RECEIPT_MALFORMED"],
+            prose=f"[red]Receipt malformed:[/red] {exc}",
+            detail=str(exc),
+            code=1,
+            include_ok=True,
+        )
 
     if as_json:
         console.print_json(
@@ -733,11 +851,90 @@ def _debug_two_run(
     return 1
 
 
+def replay_repair(
+    run_id: str,
+    sdd_dir: Path,
+    *,
+    as_json: bool = False,
+) -> int:
+    """Repair a crash-torn journal tail so a suspended task can resume.
+
+    A crash partway through appending leaves a truncated final line with
+    no trailing newline; ``EventJournal.resume`` refuses such a journal
+    (its tolerant read discarded the physical line). This truncates the
+    torn fragment and nothing else, restoring exactly the bytes the
+    surviving chain head already commits to.
+
+    The repair is explicit-only by design: an orchestrator that silently
+    truncates journals to keep going would be a worse failure than a
+    stuck task, so this surface never runs without an explicit operator
+    action (issue #3910 open decision).
+
+    Args:
+        run_id: The run whose journal to repair.
+        sdd_dir: The project ``.sdd`` directory.
+        as_json: Emit a machine-readable JSON envelope instead of prose.
+
+    Returns:
+        Exit code: 0 repaired or no-op, 2 usage/refusal errors.
+    """
+    from bernstein.cli.helpers import console
+    from bernstein.core.replay.journal import (
+        JournalPathError,
+        repair_journal_tail,
+        run_journal_path,
+    )
+
+    try:
+        journal_path = run_journal_path(sdd_dir, run_id)
+    except JournalPathError as exc:
+        console.print(f"[red]Refusing to repair:[/red] {exc}")
+        return 2
+
+    if not journal_path.exists():
+        console.print(f"[red]No journal found:[/red] {journal_path}")
+        return 2
+
+    try:
+        result = repair_journal_tail(journal_path)
+    except ValueError as exc:
+        console.print(f"[red]Repair refused:[/red] {exc}")
+        return 2
+
+    if as_json:
+        console.print_json(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "journal": str(journal_path),
+                    "repaired": result.repaired,
+                    "removed_line_indices": list(result.removed_line_indices),
+                    "event_count": result.event_count,
+                    "head": result.head,
+                },
+                default=str,
+            )
+        )
+        return 0
+
+    if not result.repaired:
+        console.print("[green]Nothing to repair:[/green] journal tail is intact.")
+        console.print(f"[dim]head={result.head or '(empty)'} events={result.event_count}[/dim]")
+        return 0
+
+    removed = ", ".join(str(index) for index in result.removed_line_indices)
+    console.print(f"[green]Repaired:[/green] truncated torn tail (physical line(s): {removed}).")
+    console.print(f"[dim]head={result.head or '(empty)'} events={result.event_count}[/dim]")
+    console.print(f"[dim]journal now resumable:[/dim] bernstein replay {run_id}")
+    return 0
+
+
 __all__ = [
     "replay_agent_view",
     "replay_debug",
     "replay_diff_journals",
     "replay_export",
     "replay_publish",
+    "replay_repair",
     "replay_verify",
 ]

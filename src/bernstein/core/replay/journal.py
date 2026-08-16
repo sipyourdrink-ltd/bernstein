@@ -240,6 +240,26 @@ class JournalSeal:
 
 
 @dataclass(frozen=True, slots=True)
+class JournalRepairResult:
+    """Outcome of :func:`repair_journal_tail`.
+
+    Attributes:
+        repaired: ``True`` when a torn trailing fragment was truncated.
+        removed_line_indices: 0-based physical lines truncated away
+            (empty when the journal was clean).
+        event_count: Number of surviving events after repair (or before
+            it for a clean journal).
+        head: Surviving chain head after repair (or before it for a
+            clean journal).
+    """
+
+    repaired: bool
+    removed_line_indices: tuple[int, ...] = ()
+    event_count: int = 0
+    head: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class JournalVerifyResult:
     """Separate chain, reader-coverage, and sealed-identity verdicts.
 
@@ -344,6 +364,12 @@ class EventJournal:
         events = loaded.events
         if loaded.discarded_line_indices:
             joined = ", ".join(str(index) for index in loaded.discarded_line_indices)
+            tail = _torn_tail_indices(journal.path)
+            if tail:
+                raise ValueError(
+                    f"cannot resume journal {journal.path}: reader discarded physical line(s): {joined}; "
+                    f"the tail is a torn write — repair it first with 'bernstein replay repair {run_id}'"
+                )
             raise ValueError(f"cannot resume journal {journal.path}: reader discarded physical line(s): {joined}")
         if not events:
             return journal
@@ -603,6 +629,152 @@ def load_events(path: Path, *, strict: bool = False) -> JournalLoadResult:
                 _validate_strict_row(row, lineno)
             events.append(row)
     return JournalLoadResult(events=events, discarded_line_indices=tuple(discarded))
+
+
+def _torn_tail_indices(path: Path) -> tuple[int, ...]:
+    """Return the trailing-fragment physical lines, or ``()`` if none.
+
+    A torn write truncates the *last* line and nothing else: the final
+    physical line is unparsable and every discarded line is at the end
+    of the file. A discard anywhere before the last non-blank line is
+    corruption (a hole in the middle of the journal), which must never
+    share the repair code path.
+
+    Returns a tuple of 0-based physical line indices that can be
+    truncated away, or ``()`` when the journal has nothing to repair.
+    """
+    loaded = load_events(path)
+    discarded = loaded.discarded_line_indices
+    if not discarded:
+        return ()
+    # The discarded lines must be a *trailing* run: the last discarded
+    # index must be the last physical line of the file, and no discarded
+    # index may be followed by a line that the tolerant reader accepted.
+    # We re-read the physical lines to answer "is this the tail" without
+    # re-parsing (the issue's "answerable without a second scan" promise
+    # is about parsing; counting lines is cheap and exact).
+    # ``errors="surrogateescape"`` matches the decode policy the tolerant
+    # reader uses. A tear in the middle of a multi-byte character is one
+    # of the two shapes this function exists to identify, and a strict
+    # decode raises UnicodeDecodeError on it -- which derives from
+    # ValueError, so ``except OSError`` would not catch it and the
+    # function would propagate instead of reporting the tail. Widening
+    # the except clause is the wrong fix: it returns "nothing to repair"
+    # for exactly the journal that needs repairing.
+    try:
+        with path.open(encoding="utf-8", errors="surrogateescape") as f:
+            physical_lines = f.readlines()
+    except OSError:
+        return ()
+    last_physical = len(physical_lines) - 1
+    if max(discarded) != last_physical:
+        return ()
+    discarded_set = set(discarded)
+    # Every line after the first discarded index must be discarded too;
+    # otherwise a readable line sits between fragments (corruption).
+    for lineno in range(min(discarded), last_physical + 1):
+        if lineno not in discarded_set:
+            return ()
+    return tuple(discarded)
+
+
+def repair_journal_tail(
+    path: Path,
+    *,
+    seal: JournalSeal | None = None,
+) -> JournalRepairResult:
+    """Truncate a crash-torn trailing fragment so the journal can resume.
+
+    A crash partway through appending leaves a truncated final line with
+    no trailing newline. ``EventJournal.resume`` refuses such a journal
+    (its tolerant read discarded the physical line), and with no repair
+    path the task would be unresumable for good. This repairs exactly
+    that one failure mode: it truncates the trailing fragment and
+    nothing else, restoring byte-for-byte the prefix the surviving chain
+    head already commits to.
+
+    The repair is conservative:
+
+    * a discard anywhere but the end of the file is corruption, not a
+      torn write, and is refused with a different message;
+    * if an external seal exists and the truncated journal would not
+      match it, the repair is refused *before* any write, so the
+      evidence survives;
+    * a journal with nothing to truncate reports a no-op.
+
+    Args:
+        path: Path to a ``journal.jsonl`` file.
+        seal: Optional independent finished-journal commitment. When
+            given, the truncated result must match it or the repair is
+            refused before writing.
+
+    Returns:
+        A :class:`JournalRepairResult` describing what was done.
+
+    Raises:
+        ValueError: The discarded lines are not a trailing fragment
+            (corruption), or the truncated result would not match
+            *seal*.
+    """
+    loaded = load_events(path)
+    discarded = loaded.discarded_line_indices
+    if not discarded:
+        events = loaded.events
+        head = str(events[-1].get("event_hash", "")) if events else ""
+        return JournalRepairResult(
+            repaired=False,
+            event_count=len(events),
+            head=head,
+        )
+
+    torn = _torn_tail_indices(path)
+    if not torn:
+        joined = ", ".join(str(index) for index in discarded)
+        raise ValueError(
+            f"refusing repair of {path}: reader discarded physical line(s) {joined} "
+            "in the middle of the journal (corruption, not a torn write); "
+            "repair truncates only a trailing fragment"
+        )
+
+    events = loaded.events
+    surviving_head = str(events[-1].get("event_hash", "")) if events else ""
+    surviving_count = len(events)
+    if seal is not None and (surviving_head != seal.head or surviving_count != seal.event_count):
+        raise ValueError(
+            f"refusing repair of {path}: truncated journal (head={surviving_head or '(empty)'}, "
+            f"events={surviving_count}) does not match the external seal "
+            f"(head={seal.head or '(empty)'}, events={seal.event_count}); "
+            "the journal is sealed and this command is not its authority"
+        )
+
+    # Truncate to just before the first discarded physical line. Every
+    # byte up to that line belongs to the surviving chain, so the prefix
+    # is restored exactly (issue: "removing it restores exactly the
+    # bytes the surviving head already commits to").
+    #
+    # os.truncate() is a single metadata operation that never rewrites
+    # the surviving bytes. Reading the prefix and writing it back would
+    # open the file with "w", zeroing it before the rewrite: a crash in
+    # that window destroys a journal whose only damage was a torn tail,
+    # which is the failure this command exists to repair. Counting the
+    # cut in bytes also avoids a decode/encode round-trip of bytes that
+    # are supposed to come through untouched.
+    raw = path.read_bytes()
+    cut = 0
+    for _ in range(min(torn)):
+        newline = raw.find(b"\n", cut)
+        if newline == -1:
+            cut = len(raw)
+            break
+        cut = newline + 1
+    os.truncate(path, cut)
+
+    return JournalRepairResult(
+        repaired=True,
+        removed_line_indices=torn,
+        event_count=surviving_count,
+        head=surviving_head,
+    )
 
 
 def _validate_strict_row(row: dict[str, Any], lineno: int) -> None:

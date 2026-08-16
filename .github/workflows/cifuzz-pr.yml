@@ -1,4 +1,4 @@
-name: CIFuzz (ClusterFuzzLite, PR)
+name: CIFuzz (ClusterFuzzLite)
 
 # OSSF Scorecard's `Fuzzing` check recognizes ClusterFuzzLite when a
 # .clusterfuzzlite/ directory and a CIFuzz workflow are both present.

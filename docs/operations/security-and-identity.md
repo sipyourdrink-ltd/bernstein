@@ -418,18 +418,58 @@ Operator repair, for a record hand-edited or written by an external tool:
 Revoking and re-spawning the agent is always a valid alternative: identities are
 per-session and cheap to reissue.
 
-### `allowed_files` is not a write boundary
+### `allowed_files` contains, it does not prevent
 
 `allowed_files` is recorded on the credential, signed into the token, and
 checked for agreement between the two on every JWT authentication — so it is
 part of what makes a token that token. It is **not** consulted when an agent
-writes a file. No write, staging, or completion path reads it; file access is
-bounded by the sandbox and by the worktree the agent is confined to, and task
-authority is bounded by `task_ids`.
+writes a file. No write, staging, or completion path reads it; individual
+writes are bounded by the sandbox and by the worktree the agent is confined
+to, and task authority is bounded by `task_ids`.
 
-Treat it as a label on the credential, not a permission. An agent whose
-credential names one file can still write any other file its sandbox allows.
-Where a real per-file boundary is needed, scope the agent's worktree.
+It **is** consulted where the agent's work is accepted into the repository.
+The merge acceptance gate compares the file list the merge would bring in
+against the signed scope, and refuses the merge when any path falls outside
+it (`core/agents/spawner_merge.py`). State the difference plainly, because it
+matters when reasoning about a compromised agent:
+
+- The out-of-scope write **still happens on disk**, inside the agent's own
+  worktree.
+- It **does not reach the repository**. The merge is refused, the refusal is
+  recorded to `.sdd/runtime/refused_merges.jsonl`, and the branch is left
+  intact so an operator can inspect what was refused.
+
+That is a containment boundary, not a prevention boundary. Where you need a
+write to be impossible rather than unmergeable, bound it with the sandbox.
+
+**The patterns.** Repository-relative globs, in the same namespace
+`git diff --name-only` prints. `**` crosses directories and a single `*` does
+not, so `src/*` admits the files directly under `src/` and `src/**` admits the
+tree. A pattern is not a prefix: `src` admits the path `src` and nothing
+beneath it.
+
+**The empty list still means no restriction.** Every credential minted before
+this gate existed carries `[]`, so the gate stays inert until an operator sets
+a scope — that is also the migration. A session with no identity record at all
+is likewise unrestricted: there is no signed scope, so there is nothing to
+enforce.
+
+Absolute paths, drive-qualified paths, home-directory references and patterns
+that walk out of the root are refused when the identity is created, so they
+never become a signed scope. A pattern already on disk that cannot be
+interpreted matches nothing, and the refusal names it — an unreadable scope
+must not widen into "no scope".
+
+**A damaged record refuses; a missing one does not.** The two are not the same
+evidence. No record means no scope was ever declared for that session. A record
+that is on disk and does not load — truncated by an interrupted write, hand-
+edited so its two copies of the scope disagree, or sitting in a directory the
+orchestrator cannot list — is a scope someone declared that the gate cannot
+read, and it refuses rather than merging unbounded. The refusal is journalled
+under `allowed-files-unreadable` instead of `allowed-files-scope`, so
+`.sdd/runtime/refused_merges.jsonl` distinguishes "the agent went outside its
+scope" from "the scope itself needs repair". Repair it with the identity
+commands above, or revoke and re-spawn the agent.
 
 ## Delegation capability tokens
 

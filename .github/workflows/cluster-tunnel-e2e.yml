@@ -14,7 +14,7 @@ name: cluster-tunnel-e2e
 # It is opt-in:
 #   * Default: NOT triggered on regular PRs (the test guards itself
 #     with CI_TUNNEL_TEST=1 and skips when the secrets are missing).
-#   * Nightly: scheduled cron run.
+#   * Weekly: scheduled cron run (Sundays).
 #   * On-demand: workflow_dispatch.
 
 on:
