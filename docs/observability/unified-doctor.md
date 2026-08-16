@@ -78,18 +78,20 @@ Two workflows ship alongside the command:
   comment on every pull request with the observe table. Triggered on
   `pull_request: [opened, synchronize, reopened]` and via
   `workflow_dispatch` for backfills.
-- `.github/workflows/docs-observability-snapshot.yml`: writes today's
-  snapshot to
+- `.github/workflows/docs-observability-snapshot.yml`: `workflow_dispatch`
+  only (manual, see #2856) - writes the dispatch-day snapshot to
   `docs/_internal/observability/snapshots/<YYYY-MM-DD>.json` and
-  re-renders `docs/observability/trends.md` with the last 30 days as
-  unicode sparklines. After the render it runs
-  `scripts/observability/gate.py`, which diffs today's snapshot against
-  yesterday's and reports regressions by reading each row's
-  `threshold_status` and computing the numeric delta from the two
-  files. It flags a status flip for the worse (`ok -> warn`,
-  `* -> fail`), a new or increased security finding, and a backend that
-  lost its credentials. Regressions are recorded in the run summary; the
-  snapshot pull request still opens regardless.
+  re-renders `docs/observability/trends.md` with the last 30 captured
+  snapshots as unicode sparklines, including a staleness line for the
+  newest one. After the render it runs `scripts/observability/gate.py`,
+  which diffs the newest snapshot against the previous one - stating
+  the elapsed gap between them, since dispatches are sporadic - and
+  reports regressions by reading each row's `threshold_status` and
+  computing the numeric delta from the two files. It flags a status
+  flip for the worse (`ok -> warn`, `* -> fail`), a new or increased
+  security finding, and a backend that lost its credentials.
+  Regressions are recorded in the run summary; the snapshot pull
+  request still opens regardless.
 
 ## Local watch mode
 
@@ -112,4 +114,4 @@ Ctrl-C stops the loop and exits 0.
 | `status: error` with HTTP 401 | token expired or missing scope | regenerate; for code-scanning ensure `security_events: read` |
 | `delta: new` on every row | first run, or `.sdd/observability/` deleted | expected; the next run computes signed deltas |
 | Sticky PR comment not posted | `pull-requests: write` permission missing | the workflow already requests it; verify the repository allows write actions in PRs |
-| Trends document is empty | no daily snapshots have been captured yet | trigger the snapshot workflow manually |
+| Trends document is empty | no snapshots have been captured yet | trigger the snapshot workflow manually |

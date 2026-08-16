@@ -35,17 +35,9 @@ jobs:
     name: "${{ inputs.bump }} release"
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    environment:
-      name: pypi
-      url: https://pypi.org/p/bernstein
     permissions:
       contents: write
-      id-token: write
-      attestations: write
-      # actions: write is required to dispatch the release follow-up workflows
-      # below. This job creates the GitHub Release with GITHUB_TOKEN, which
-      # emits no `release: published` event, so none of them start on their own.
-      actions: write
+      pull-requests: write
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
@@ -95,16 +87,18 @@ jobs:
       - name: Run tests
         run: uv run python scripts/run_tests.py -x
 
-      # Apply version bump
-      - name: Update pyproject.toml
+      # Apply version bump. scripts/bump_version.py is the single supported
+      # bump path: it rewrites pyproject.toml, refreshes uv.lock, and
+      # regenerates the distribution manifests (server.json,
+      # .plugin/plugin.json) together, so the bump PR can never desync them
+      # the way a bare `sed` on pyproject.toml alone would.
+      - name: Bump version files
         if: inputs.dry_run == false
         env:
-          OLD_VERSION: ${{ steps.bump.outputs.old }}
           NEW_VERSION: ${{ steps.bump.outputs.new }}
-        run: |
-          sed -i "s/^version = \"${OLD_VERSION}\"/version = \"${NEW_VERSION}\"/" pyproject.toml
+        run: uv run python scripts/bump_version.py "${NEW_VERSION}"
 
-      # Generate changelog section
+      # Generate changelog section for the PR body
       - name: Generate changelog
         id: changelog
         run: |
@@ -120,89 +114,69 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      # Commit, tag, build, publish
-      - name: Commit and tag
-        if: inputs.dry_run == false
-        env:
-          NEW_VERSION: ${{ steps.bump.outputs.new }}
-        run: |
-          git config user.name "bernstein[bot]"
-          git config user.email "bernstein-bot@users.noreply.github.com"
-          git add pyproject.toml
-          git commit -m "release: v${NEW_VERSION}"
-          git tag "v${NEW_VERSION}"
-          git push
-          git push origin "v${NEW_VERSION}"
-
-      - name: Build
-        run: uv build
-
-      - name: Publish to PyPI
-        if: inputs.dry_run == false
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
-        with:
-          attestations: true
-
-      - name: GitHub Release
-        if: inputs.dry_run == false
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_VERSION: ${{ steps.bump.outputs.new }}
-          OLD_VERSION: ${{ steps.bump.outputs.old }}
-          CHANGELOG: ${{ inputs.changelog }}
-          COMMITS: ${{ steps.changelog.outputs.commits }}
-        run: |
-          gh release create "v${RELEASE_VERSION}" dist/* \
-            --title "v${RELEASE_VERSION}" \
-            --notes "$(cat <<NOTES
-          ## Bernstein v${RELEASE_VERSION}
-
-          ${CHANGELOG}
-
-          ### Changes since v${OLD_VERSION}
-
-          ${COMMITS}
-
-          ---
-          Full changelog: https://github.com/${{ github.repository }}/compare/v${OLD_VERSION}...v${RELEASE_VERSION}
-          NOTES
-          )"
-
-      # publish-docker.yml, publish-homebrew.yml and sbom.yml fire on
-      # `release: published`. The release created above uses GITHUB_TOKEN,
-      # which does not emit that event (loop-prevention on token-authored
-      # events), so a major/minor release cut from here shipped to PyPI and to
-      # the GitHub Release and to nothing else: no GHCR image, no tap formula
-      # bump, no SBOM assets. publish.yml dispatches the same three explicitly
-      # for the tag path; this entrypoint owes them the same handoff.
+      # Land the bump the same way a patch release does: a PR through the
+      # merge queue, never a direct push to main. The branch ruleset has no
+      # bypass actors, so a bare `git push` to main is rejected outright --
+      # this used to be this job's next step, and it made every major/minor
+      # release attempted from this workflow fail here.
       #
-      # All three keep their native `release: published` trigger for releases
-      # created by a human or a PAT; workflow_dispatch is exempt from the
-      # loop-prevention, and each is idempotent for a repeated run on the same
-      # tag (image push, formula commit, SBOM asset upload).
-      - name: Dispatch docker publish (release event from GITHUB_TOKEN does not trigger it)
+      # BERNSTEIN_AUTOSYNC_TOKEN (a PAT) is preferred over GITHUB_TOKEN: PRs
+      # opened with GITHUB_TOKEN do not trigger pull_request workflows, so
+      # their required checks never report and auto-merge never fires. The
+      # GITHUB_TOKEN fallback still opens the PR, but an operator then has to
+      # merge it by hand.
+      - name: Open bump PR
         if: inputs.dry_run == false
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_VERSION: ${{ steps.bump.outputs.new }}
-        run: gh workflow run publish-docker.yml --ref main -f tag="v${RELEASE_VERSION}"
+        id: bump_pr
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN || secrets.GITHUB_TOKEN }}
+          branch: auto/bump-v${{ steps.bump.outputs.new }}
+          add-paths: |
+            pyproject.toml
+            uv.lock
+            server.json
+            .plugin/plugin.json
+          commit-message: "release: v${{ steps.bump.outputs.new }}"
+          committer: "bernstein[bot] <bernstein-bot@users.noreply.github.com>"
+          author: "bernstein[bot] <bernstein-bot@users.noreply.github.com>"
+          title: "release: v${{ steps.bump.outputs.new }}"
+          body: |
+            ${{ inputs.changelog }}
 
-      # publish-homebrew.yml takes the bare version (3.12.0), not the tag.
-      - name: Dispatch Homebrew formula publish (release event from GITHUB_TOKEN does not trigger it)
-        if: inputs.dry_run == false
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_VERSION: ${{ steps.bump.outputs.new }}
-        run: gh workflow run publish-homebrew.yml --ref main -f version="${RELEASE_VERSION}"
+            ### Changes since v${{ steps.bump.outputs.old }}
 
-      # sbom.yml takes the tag as its build ref and attaches both SBOMs to the
-      # release it resolves for that ref.
-      - name: Dispatch SBOM generation (release event from GITHUB_TOKEN does not trigger it)
-        if: inputs.dry_run == false
+            ${{ steps.changelog.outputs.commits }}
+
+            ---
+            Version bump via `scripts/bump_version.py`. Merging this PR through
+            the merge queue hands off to `auto-release.yml`, which tags the
+            merge commit once CI is green on `main`, and `publish.yml`, which
+            builds, publishes, and creates the GitHub Release from that tag --
+            the same chain every patch release goes through.
+
+      # Same enqueue call the merge queue expects everywhere else in this
+      # repo (docs/operations/merge-gate.md configures the queue's merge
+      # method), so this PR merges the same way ci-topology-heal.yml
+      # lands its own bot-authored PRs.
+      - name: Enable auto-merge
+        if: >-
+          inputs.dry_run == false &&
+          (steps.bump_pr.outputs.pull-request-operation == 'created' ||
+           steps.bump_pr.outputs.pull-request-operation == 'updated')
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_VERSION: ${{ steps.bump.outputs.new }}
-        run: gh workflow run sbom.yml --ref main -f ref="v${RELEASE_VERSION}"
+          GH_TOKEN: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN || secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ steps.bump_pr.outputs.pull-request-url }}
+          HAS_PAT: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          # No merge-strategy flag: the queue applies its own configured
+          # method, and passing one here conflicts with it.
+          gh pr merge --auto "$PR_URL"
+          if [ "${HAS_PAT}" != "true" ]; then
+            echo "::warning title=Bump PR needs a manual merge::BERNSTEIN_AUTOSYNC_TOKEN is unset, so ${PR_URL} was opened with GITHUB_TOKEN. Its pull_request workflows never start, so the required contexts never report and auto-merge cannot fire. Close and reopen the PR under a user account to start CI."
+            echo "- Bump PR **${PR_URL}** was opened with GITHUB_TOKEN: its required checks will never run. Close and reopen it under a user account." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Dry run summary
         if: inputs.dry_run == true
@@ -222,4 +196,6 @@ jobs:
             echo '```'
             echo "$COMMITS"
             echo '```'
+            echo ""
+            echo "No PR opened (dry run). A real run opens \`auto/bump-v${NEW_VERSION}\` against main with auto-merge armed; auto-release.yml and publish.yml take it from there."
           } >> "$GITHUB_STEP_SUMMARY"
