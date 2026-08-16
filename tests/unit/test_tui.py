@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from textual.app import App
 
 from bernstein.tui.app import BernsteinApp, _kill_agent, _kill_all_agents
 from bernstein.tui.widgets import (
@@ -195,9 +196,13 @@ class TestWidgetCreation:
 class TestTaskListRefresh:
     """Tests for stale-row cleanup in TaskListWidget."""
 
-    def test_refresh_tasks_removes_stale_rows(self) -> None:
-        widget = TaskListWidget()
-        widget.on_mount()
+    @pytest.mark.asyncio
+    async def test_refresh_tasks_removes_stale_rows(self) -> None:
+        # DataTable.add_column measures its label against `self.app.console`,
+        # so `on_mount` raises LookupError on a widget that is not mounted in
+        # a running app. Drive it through `run_test` and let Textual dispatch
+        # Mount itself, which is also what exercises the real path.
+        app: App[object] = App()
         first = TaskRow(
             task_id="t-1",
             status="open",
@@ -218,11 +223,17 @@ class TestTaskListRefresh:
             elapsed="1s",
             session_id="s2",
         )
-        widget.refresh_tasks([first, second])
-        assert {str(key.value) for key in widget.rows} == {"t-1", "t-2"}
 
-        widget.refresh_tasks([first])
-        assert [str(key.value) for key in widget.rows] == ["t-1"]
+        async with app.run_test() as pilot:
+            widget = TaskListWidget()
+            await app.mount(widget)
+            await pilot.pause()
+
+            widget.refresh_tasks([first, second])
+            assert {str(key.value) for key in widget.rows} == {"t-1", "t-2"}
+
+            widget.refresh_tasks([first])
+            assert [str(key.value) for key in widget.rows] == ["t-1"]
 
 
 class TestAppInstantiation:
