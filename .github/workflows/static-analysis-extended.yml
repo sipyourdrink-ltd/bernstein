@@ -17,6 +17,22 @@ name: static-analysis (extended)
 # upload is additionally filtered to error-level results so its style
 # findings no longer create alerts that bury real security findings.
 #
+#
+# SARIF upload skips merge_group runs. Code Scanning attaches alerts to
+# the ref the run was for, and a merge-queue run's ref
+# (`gh-readonly-queue/main/pr-<n>-<sha>`) is deleted the moment the entry
+# merges or the queue re-shuffles. The scanners here take minutes, so the
+# upload regularly lands after the branch is gone and the API answers
+# `ref ... not found` — failing the job over a report that had nowhere to
+# go, while the scan itself passed. That false failure ejects the PR from
+# the queue and jams every entry behind it.
+#
+# Nothing is lost by skipping it: alerts that matter are the ones on
+# `main`, which the push-to-main trigger above uploads against a ref that
+# persists, and every merge_group run still keeps its raw SARIF as a
+# workflow artifact. The scan still gates the merge — only the reporting
+# step is conditional.
+#
 # Ref: .sdd/backlog/open/2026-05-19-feat-ci-semgrep-trivy-pipaudit.md
 
 on:
@@ -131,7 +147,8 @@ jobs:
           python3 scripts/sarif_drop_suppressed.py \
             semgrep.sarif > semgrep.filtered.sarif
       - name: Upload SARIF to Code Scanning
-        if: always()
+        # Not on merge_group: see the SARIF-upload note in the header.
+        if: always() && github.event_name != 'merge_group'
         uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3  # v4
         with:
           sarif_file: semgrep.filtered.sarif
@@ -180,7 +197,8 @@ jobs:
           python3 scripts/sarif_drop_suppressed.py \
             trivy-fs.sarif > trivy-fs.filtered.sarif
       - name: Upload SARIF to Code Scanning
-        if: always()
+        # Not on merge_group: see the SARIF-upload note in the header.
+        if: always() && github.event_name != 'merge_group'
         uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3  # v4
         with:
           sarif_file: trivy-fs.filtered.sarif
@@ -252,7 +270,8 @@ jobs:
           python3 scripts/sarif_drop_suppressed.py \
             trivy-iac.sarif > trivy-iac.filtered.sarif
       - name: Upload SARIF to Code Scanning
-        if: always()
+        # Not on merge_group: see the SARIF-upload note in the header.
+        if: always() && github.event_name != 'merge_group'
         uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3  # v4
         with:
           sarif_file: trivy-iac.filtered.sarif
@@ -326,7 +345,8 @@ jobs:
           python3 scripts/sarif_drop_suppressed.py \
             vulture.sarif > vulture.filtered.sarif
       - name: Upload SARIF to Code Scanning
-        if: always()
+        # Not on merge_group: see the SARIF-upload note in the header.
+        if: always() && github.event_name != 'merge_group'
         uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3  # v4
         with:
           sarif_file: vulture.filtered.sarif
@@ -408,7 +428,8 @@ jobs:
           print(f"dropped {dropped} non-error refurb results from the upload")
           FILTER
       - name: Upload SARIF to Code Scanning
-        if: always()
+        # Not on merge_group: see the SARIF-upload note in the header.
+        if: always() && github.event_name != 'merge_group'
         uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3  # v4
         with:
           sarif_file: refurb.filtered.sarif
@@ -477,7 +498,8 @@ jobs:
           python3 scripts/sarif_drop_suppressed.py \
             perflint.sarif > perflint.filtered.sarif
       - name: Upload SARIF to Code Scanning
-        if: always()
+        # Not on merge_group: see the SARIF-upload note in the header.
+        if: always() && github.event_name != 'merge_group'
         uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3  # v4
         with:
           sarif_file: perflint.filtered.sarif
