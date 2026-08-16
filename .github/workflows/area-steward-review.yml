@@ -1,0 +1,74 @@
+name: Area steward review
+
+# Routes pull requests that touch an area to that area's steward for
+# review (CONTRIBUTING "Areas"). Most docs PRs come from forks, so this
+# must run on `pull_request_target`: the default `pull_request` event
+# gets a read-only token on fork PRs and cannot request reviewers.
+#
+# Safety note (zizmor dangerous-triggers): the privileged context here
+# executes nothing from the PR. The job:
+#   - has NO checkout step at all - the steward mapping lives in this
+#     file, on the trusted base ref;
+#   - never interpolates PR-controlled text into a `run:` block (author
+#     login and PR number pass through env, and the login is only ever
+#     compared for equality, never executed);
+#   - holds `pull-requests: write` and nothing else, with no secrets
+#     beyond `GITHUB_TOKEN`.
+#
+# Stewards hold triage, not write, so CODEOWNERS cannot route to them -
+# GitHub ignores code owners without write access. This workflow is the
+# routing half of the Areas clause until a steward's write grant.
+on:  # zizmor: ignore[dangerous-triggers]
+  pull_request_target:
+    types: [opened, reopened, ready_for_review]
+    paths:
+      - 'docs/**'
+
+concurrency:
+  group: area-steward-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Default-deny at workflow scope; the job re-asserts the one narrow
+# write scope it needs (Scorecard token-permissions).
+permissions: {}
+
+jobs:
+  request-steward:
+    name: Request docs steward review
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The docs area steward (issue #3935). One steward, one constant;
+      # a second area gets a second paths entry and a mapping when it
+      # actually exists.
+      STEWARD: Chirag6722
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+        with:
+          egress-policy: audit
+      - name: Request review from the area steward
+        run: |
+          set -euo pipefail
+          if [ "${PR_AUTHOR}" = "${STEWARD}" ]; then
+            echo "::notice::PR author is the docs steward; nothing to route."
+            exit 0
+          fi
+          # A failure here almost always means the steward's collaborator
+          # invitation is still pending - review requests only reach
+          # collaborators. That is a routing gap to surface, not a defect
+          # in the PR under review, so warn and stay green rather than
+          # painting a contributor's PR red for it.
+          if gh api -X POST "repos/${REPO}/pulls/${PR_NUMBER}/requested_reviewers" \
+               -f "reviewers[]=${STEWARD}" > /dev/null; then
+            echo "::notice::requested docs-steward review from ${STEWARD} on #${PR_NUMBER}."
+          else
+            echo "::warning::could not request docs-steward review from ${STEWARD}; their collaborator invitation may still be pending."
+          fi

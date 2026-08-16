@@ -44,10 +44,18 @@ week working against one is not.
 
 ### Areas
 
-Land three changes in one area and the area is yours if you want it:
-you are named in [CODEOWNERS](.github/CODEOWNERS) for it, and changes
-there come to you for review. Areas are adapters, the web dashboard,
-the terminal UI, docs, and packaging.
+Land three changes in one area and the area is yours if you want it -
+open an issue saying so. As the area's steward you get triage access,
+and every pull request touching the area is routed to you for review
+automatically (`.github/workflows/area-steward-review.yml`). Areas are
+adapters, the web dashboard, the terminal UI, docs, and packaging.
+
+Stewardship starts at triage rather than write, because write access
+on this repository reaches the release workflows and their publishing
+credentials, and that surface is kept least-privilege. After a
+stretch of established stewardship the write grant follows, and with
+it your entry in [CODEOWNERS](.github/CODEOWNERS) - GitHub only
+honors code owners who hold write.
 
 This is not ceremonial. An area with a name against it gets a second
 reader who knows it; an area with nobody against it accumulates
