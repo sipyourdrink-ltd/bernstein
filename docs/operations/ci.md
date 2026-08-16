@@ -11,6 +11,8 @@ documentation read the inline comments in `.github/workflows/ci.yml`.
 | Per-PR macOS matrix | Gated (#1468) | `.github/workflows/ci.yml` |
 | Per-PR Python matrix | 3.13 only; 3.12 on push | `.github/workflows/ci.yml` |
 | Per-PR install smoke | 1 pipx + 1 uv cell; full 6 on push | `.github/workflows/ci.yml` |
+| `install-smoke-rpm` gating | Path-gated (#3947); skips diffs it cannot regress | `.github/workflows/ci.yml` |
+| RPM smoke safety net | Daily, regardless of diff | `.github/workflows/install-smoke-rpm-nightly.yml` |
 | macOS safety net | Nightly + push-on-sensitive | `.github/workflows/ci-macos-nightly.yml` |
 | Required check | Single `CI gate` job | `.github/workflows/ci.yml` |
 | Concurrency | PR-scoped cancel, push-scoped non-cancel | `.github/workflows/ci.yml` |
@@ -175,6 +177,42 @@ remain the scheduled safety nets.
 The CI gate aggregation is unchanged: `ci-gate` still rolls up
 `needs.*.result` for every job (all remaining matrix cells included)
 and still reports on `pull_request` and `merge_group`.
+
+### install-smoke-rpm path gating
+
+`install-smoke-rpm` installs the newest *released* PyPI version, not
+this tree's source - it validates the RPM spec, the SRPM renderer, and
+the smoke harness against whatever version is currently on PyPI. An
+ordinary `src/` or `tests/` change cannot regress anything it checks,
+so before #3947 the job still ran (and could red-gate the PR) on every
+such diff. A defect in a past release turned every subsequent PR and
+merge-queue batch red until a new release shipped, for reasons
+unrelated to the change under review.
+
+The planner (`determine-changes`) now sets `rpm_relevant_changed=true`
+only when the diff touches:
+
+- `packaging/rpm/**` (the spec and any other RPM packaging input)
+- `scripts/rpm_install_smoke.sh` (the smoke harness itself)
+- `.github/workflows/ci.yml` (the job's own definition)
+
+`install-smoke-rpm` skips otherwise, and the `ci-gate` roll-up's
+`RPM_SMOKE_SKIPPABLE` tolerance treats that skip as a pass - unlike the
+macOS gate this has no event-shape branch: the same relevance test
+applies on `push`, `pull_request`, and `merge_group` alike.
+
+Dropping per-merge coverage on unrelated diffs would reopen the gap
+the job was built to close (a broken release going undetected for
+months - see the job's own header comment in `ci.yml`), so
+`install-smoke-rpm-nightly.yml` re-runs the identical check daily
+against whatever is currently on PyPI, regardless of what changed in
+the tree. A failed nightly run opens or updates a tracking issue
+labelled `ci-install-smoke-rpm-nightly`, mirroring the macOS nightly's
+failure handling.
+
+`tests/unit/test_required_check_canary_workflow_yaml.py` pins the
+gating condition and the roll-up tolerance, so re-widening the job
+back onto the every-merge path has to be a deliberate edit.
 
 ### Python 3.14
 

@@ -1,0 +1,127 @@
+name: CI (RPM smoke nightly)
+
+# Safety-net workflow for the RPM channel (#3947, alongside the
+# path-gated per-merge job in ci.yml). `install-smoke-rpm` in ci.yml now
+# runs only when a diff touches the RPM packaging inputs, the smoke
+# script, or the job's own definition - an ordinary src/ or tests/ change
+# cannot regress a check that installs the newest *released* PyPI
+# version, not this tree's source. That gate closes the false-red path
+# but also means a defect in a release published between two such diffs
+# would go uncaught on the merge path. This workflow re-runs the same
+# check daily regardless of what changed, so a broken release is still
+# caught within 24 hours - the gap the job was written to close in the
+# first place (a launcher that resolved itself from PyPI at run time for
+# four months because nothing installed the built RPM and ran it).
+#
+# Unlike ci-macos-nightly.yml this carries no `push` trigger: the macOS
+# nightly exists to shed *workload* from the PR path while still running
+# unconditionally on every push, but install-smoke-rpm's per-merge gate
+# already runs on every event (push, pull_request, merge_group) whenever
+# the diff is RPM-relevant, so there is no push-time gap for this
+# workflow to backfill. Its only job is the day nothing in the tree
+# changes at all.
+
+on:
+  schedule:
+    # 07:30 UTC daily - staggered half an hour past ci-macos-nightly.yml's
+    # 06:00 UTC run so the two scheduled workflows do not contend for the
+    # same off-peak runner window.
+    - cron: "30 7 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: install-smoke-rpm-nightly-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  install-smoke-rpm-nightly:
+    # Mirrors the `install-smoke-rpm` job in ci.yml (#3558, #3559): builds
+    # the binary RPM from the SRPM this tree renders, installs it in a
+    # container of the target chroot family, and asserts that
+    # `bernstein --version` reports the version the RPM metadata claims
+    # *with networking disabled*. Runs the full published-chroot matrix
+    # unconditionally - there is no PR-vs-push split here, only a nightly
+    # schedule and manual dispatch.
+    name: Install smoke - RPM nightly (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - "fedora:43"
+          - "fedora:44"
+          - "quay.io/centos/centos:stream9"
+          - "quay.io/centos/centos:stream10"
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Resolve the newest released version
+        id: version
+        # `matrix.image` reaches the shell as an environment variable
+        # rather than a template expansion - see the identical note on
+        # the per-merge job in ci.yml.
+        env:
+          SMOKE_IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          VERSION="$(curl -fsS --retry 3 https://pypi.org/pypi/bernstein/json | jq -r .info.version)"
+          if [ -z "${VERSION}" ] || [ "${VERSION}" = "null" ]; then
+            echo "::error::could not resolve the newest released version from PyPI"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "smoking bernstein ${VERSION} on ${SMOKE_IMAGE}"
+      - name: Build the RPM, install it, run it offline
+        env:
+          SMOKE_IMAGE: ${{ matrix.image }}
+          SMOKE_VERSION: ${{ steps.version.outputs.version }}
+        run: scripts/rpm_install_smoke.sh "${SMOKE_IMAGE}" "${SMOKE_VERSION}"
+
+  open-failure-issue:
+    # If the nightly fails, open a single tracking issue (or comment on
+    # the existing one) so a broken release does not sit silent - mirrors
+    # ci-macos-nightly.yml's failure handling. Only workflow_dispatch is
+    # skipped, to keep operator-driven ad-hoc runs quiet.
+    name: Open / update RPM smoke nightly failure issue
+    needs: [install-smoke-rpm-nightly]
+    if: failure() && github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+        with:
+          egress-policy: audit
+      - name: Open or update issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          TITLE="RPM smoke nightly CI failing"
+          BODY="The RPM channel safety-net workflow failed (trigger: ${EVENT_NAME}) on $(date -u +%Y-%m-%dT%H:%M:%SZ). Run: ${RUN_URL}. See #3947 for the gating policy."
+          EXISTING=$(gh issue list --label ci-install-smoke-rpm-nightly --state open \
+            --json number --jq '.[0].number' 2>/dev/null || echo "")
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY" || true
+          else
+            gh issue create \
+              --title "$TITLE" \
+              --label ci-install-smoke-rpm-nightly \
+              --body "$BODY" || true
+          fi
