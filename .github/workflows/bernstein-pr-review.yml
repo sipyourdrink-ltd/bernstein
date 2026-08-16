@@ -16,16 +16,19 @@ name: "Bernstein PR Review"
 #
 # What is fixed is the signal. A run that reviewed nothing must not look like a
 # run that reviewed and found nothing, because that green check is read as
-# evidence by whoever merges. So the two skip causes are separated:
+# evidence by whoever merges. So the two skip causes are separated - as two
+# jobs with STATIC names, because GitHub renders a skipped job's `name:`
+# expression unevaluated, and the raw ternary was showing up verbatim in the
+# checks list of every PR without the label:
 #
-#   fork PR, credential withheld  -> the job name says the review did not run,
-#                                    which is what a reviewer sees in the checks
-#                                    list at merge time; the job still succeeds,
-#                                    because reddening every external
-#                                    contribution punishes the contributor for a
-#                                    platform rule
-#   same-repo PR, secret missing  -> the job fails, because there the secret is
-#                                    genuinely absent and that is ours to fix
+#   fork PR, credential withheld  -> its own job, whose name says the review
+#                                    did not run; it succeeds, because
+#                                    reddening every external contribution
+#                                    punishes the contributor for a platform
+#                                    rule
+#   same-repo PR, secret missing  -> the review job fails, because there the
+#                                    secret is genuinely absent and that is
+#                                    ours to fix
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review, labeled]
@@ -42,20 +45,45 @@ permissions:
   contents: read
 
 jobs:
+  fork-notice:
+    name: "Review with Bernstein (did not run: fork PR, credential withheld)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    if: >
+      github.event.pull_request.head.repo.fork &&
+      contains(github.event.pull_request.labels.*.name, 'deep-review') &&
+      !github.event.pull_request.draft &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-bernstein')
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+        with:
+          egress-policy: audit
+      - name: Explain the withheld review
+        run: |
+          {
+            echo "## Bernstein deep review did not run"
+            echo
+            echo "This pull request comes from a fork. GitHub withholds repository"
+            echo "secrets from \`pull_request\` runs on fork branches, so"
+            echo "\`ANTHROPIC_API_KEY\` is empty here: no diff was fetched and no"
+            echo "review was produced."
+            echo
+            echo "**Nothing in this pull request was checked by this job.** External"
+            echo "contributions are reviewed by a maintainer by hand."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::warning title=Deep review did not run::Fork pull request - GitHub withholds ANTHROPIC_API_KEY from pull_request runs on fork branches, so no diff was read and no review was produced."
+
   review:
-    # The check name is the only surface this job controls that a reviewer sees
-    # without opening the run, so it carries the outcome a fork PR is going to
-    # get. Evaluated from the `github` context before the job starts.
-    name: >-
-      ${{ github.event.pull_request.head.repo.fork
-      && 'Review with Bernstein (did not run: fork PR, credential withheld)'
-      || 'Review with Bernstein' }}
+    name: Review with Bernstein
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
     timeout-minutes: 30
     if: >
+      !github.event.pull_request.head.repo.fork &&
       contains(github.event.pull_request.labels.*.name, 'deep-review') &&
       !github.event.pull_request.draft &&
       !contains(github.event.pull_request.labels.*.name, 'skip-bernstein')
@@ -68,8 +96,6 @@ jobs:
           egress-policy: audit
       - name: Check API key
         id: check
-        env:
-          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
         run: |
           if [ -n "$ANTHROPIC_API_KEY" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -78,25 +104,10 @@ jobs:
 
           echo "skip=true" >> "$GITHUB_OUTPUT"
 
-          if [ "$IS_FORK" = "true" ]; then
-            {
-              echo "## Bernstein deep review did not run"
-              echo
-              echo "This pull request comes from a fork. GitHub withholds repository"
-              echo "secrets from \`pull_request\` runs on fork branches, so"
-              echo "\`ANTHROPIC_API_KEY\` is empty here: no diff was fetched and no"
-              echo "review was produced."
-              echo
-              echo "**Nothing in this pull request was checked by this job.** External"
-              echo "contributions are reviewed by a maintainer by hand."
-            } >> "$GITHUB_STEP_SUMMARY"
-            echo "::warning title=Deep review did not run::Fork pull request - GitHub withholds ANTHROPIC_API_KEY from pull_request runs on fork branches, so no diff was read and no review was produced."
-            exit 0
-          fi
-
-          # Same-repository PR: the secret should have been in scope. An empty
-          # value here is a missing secret, which is ours to fix, so fail rather
-          # than report a green check nobody can distinguish from a real review.
+          # Same-repository PR (the fork case never reaches this job): the
+          # secret should have been in scope. An empty value here is a missing
+          # secret, which is ours to fix, so fail rather than report a green
+          # check nobody can distinguish from a real review.
           echo "::error title=Deep review is misconfigured::ANTHROPIC_API_KEY is unset on a same-repository pull request; the secret is absent from the repository rather than withheld by the platform."
           exit 1
 
@@ -120,6 +131,7 @@ jobs:
             -o .bernstein-pr.diff
 
       - name: Review PR
+        id: run_review
         if: steps.check.outputs.skip != 'true'
         continue-on-error: true
         uses: ./
@@ -133,3 +145,21 @@ jobs:
             and post them as a PR comment. Do not push any changes.
           budget: "3.00"
           post-comment: "true"
+
+      - name: Surface a failed review
+        # continue-on-error on the step above keeps the action's own exit
+        # code from being the last word, but a review that crashed must not
+        # end as a green check: green here is read as "reviewed, found
+        # nothing" by whoever merges. Re-assert the failure with a reason.
+        if: steps.check.outputs.skip != 'true' && steps.run_review.outcome == 'failure'
+        run: |
+          {
+            echo "## Bernstein deep review did not complete"
+            echo
+            echo "The review action exited with an error after the diff was"
+            echo "fetched. **No completed review exists for this revision.**"
+            echo "Check the Review PR step log for the cause, then re-run the"
+            echo "job or re-apply the deep-review label after a push."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=Deep review errored::The review action failed before producing a verdict; this run must not be read as a clean review."
+          exit 1

@@ -185,9 +185,16 @@ def check_pr_text(
     return findings
 
 
-def _emit_finding(surface: str, phrase: str) -> None:
-    """Print a GitHub Actions annotation for a single match."""
-    print(f"::error file={surface}::{phrase} matched in {surface}")
+def _emit_finding(surface: str, phrase_index: int) -> None:
+    """Print a GitHub Actions annotation for a single match.
+
+    The annotation names the phrase by its 1-based position in the
+    configured deny-list, never by its text: annotations and job logs on a
+    public repository are world-readable, and echoing the matched phrase
+    would publish the very string the gate exists to keep out of public
+    surfaces. Whoever maintains the deny-list resolves the index locally.
+    """
+    print(f"::error file={surface}::deny-listed phrase #{phrase_index} matched in {surface}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -245,8 +252,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"check_pr_text_hygiene: OK ({len(phrases)} phrases, {len(commit_messages)} commit messages scanned)")
         return 0
 
+    phrase_positions = {phrase: index for index, phrase in enumerate(phrases, start=1)}
     for surface, phrase in findings:
-        _emit_finding(surface, phrase)
+        _emit_finding(surface, phrase_positions[phrase])
     print(
         f"check_pr_text_hygiene: FAIL ({len(findings)} match(es) across {len({s for s, _ in findings})} surface(s))",
         file=sys.stderr,

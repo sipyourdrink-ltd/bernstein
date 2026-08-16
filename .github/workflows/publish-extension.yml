@@ -1,11 +1,17 @@
 name: Publish VS Code Extension
 
+# The extension versions independently of the core package: an extension
+# release is a pushed `ext-v*` tag. There is deliberately no `release:`
+# trigger -- core releases are created by workflows with GITHUB_TOKEN,
+# whose events never start other workflows, so that trigger could only
+# fire for hand-made releases and then only republished an unchanged
+# version. workflow_dispatch covers manual republish (e.g. after a
+# marketplace-side failure).
 on:
-  release:
-    types: [published]
   push:
     tags:
       - 'ext-v*'   # trigger: git tag ext-v0.1.0 && git push --tags
+  workflow_dispatch: {}
 
 concurrency:
   group: publish-extension-${{ github.ref }}
@@ -19,7 +25,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: write
+      # Read-only: the job packages a VSIX and publishes to external
+      # marketplaces with their own PATs; nothing writes to the repo.
+      contents: read
     env:
       VS_MARKETPLACE_TOKEN: ${{ secrets.VS_MARKETPLACE_TOKEN }}
       OPEN_VSX_TOKEN: ${{ secrets.OPEN_VSX_TOKEN }}
@@ -34,7 +42,7 @@ jobs:
           persist-credentials: false
 
       # zizmor cache-poisoning: cache is disabled (no `cache:` key); only
-      # tag- and release-triggered, which are authored by maintainers, so
+      # tag- and dispatch-triggered, which are authored by maintainers, so
       # the residual default-cache risk is acceptable here.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7 # zizmor: ignore[cache-poisoning]
         with:
@@ -83,27 +91,29 @@ jobs:
         id: vsix
         run: echo "path=$(ls packages/vscode/*.vsix)" >> "$GITHUB_OUTPUT"
 
-      # Publish to VS Code Marketplace (requires VS_MARKETPLACE_TOKEN secret)
-      # continue-on-error: version may already exist if re-running for same tag
+      # Publish to VS Code Marketplace (requires VS_MARKETPLACE_TOKEN secret).
+      # skipDuplicate tolerates exactly the re-run-same-version case; every
+      # other failure (bad token, API error, quota) reddens the job. The old
+      # blanket continue-on-error swallowed those too, so a failed publish
+      # was indistinguishable from a successful one.
       - name: Publish to VS Code Marketplace
         if: env.VS_MARKETPLACE_TOKEN != ''
-        continue-on-error: true
         uses: HaaLeo/publish-vscode-extension@ca5561daa085dee804bf9f37fe0165785a9b14db # v2
         with:
           pat: ${{ secrets.VS_MARKETPLACE_TOKEN }}
           registryUrl: https://marketplace.visualstudio.com
           extensionFile: ${{ steps.vsix.outputs.path }}
+          skipDuplicate: true
 
       # Publish to Open VSX - used by Cursor, VSCodium, Gitpod (requires OPEN_VSX_TOKEN secret)
-      # continue-on-error: version may already exist if re-running for same tag
       - name: Publish to Open VSX
         if: env.OPEN_VSX_TOKEN != ''
-        continue-on-error: true
         uses: HaaLeo/publish-vscode-extension@ca5561daa085dee804bf9f37fe0165785a9b14db # v2
         with:
           pat: ${{ secrets.OPEN_VSX_TOKEN }}
           registryUrl: https://open-vsx.org
           extensionFile: ${{ steps.vsix.outputs.path }}
+          skipDuplicate: true
 
       # VSIX is published to VS Code Marketplace and Open VSX above.
       # No GitHub Release - avoids cluttering the main release list.

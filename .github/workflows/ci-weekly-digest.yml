@@ -19,8 +19,9 @@ name: CI Weekly Digest
 #
 # Rolling, not proliferating: publishing this week's digest auto-closes the
 # prior weeks' digest issues (bot-authored, title-matched only), so exactly
-# one digest issue stays open. A threshold alert fires only when the window
-# contains a real failure.
+# one digest issue stays open. The recommended action for the window is
+# always the first line of the digest body's TL;DR -- there is no separate
+# alert channel.
 #
 # Idempotent: if a digest issue for the current ISO week already exists, the
 # workflow edits it in place rather than opening a duplicate.
@@ -110,7 +111,6 @@ jobs:
 
           # ----- classify + render (unit-tested, deterministic aggregation)
           BODY_FILE="$(mktemp)"
-          ALERT_FILE="$(mktemp)"
           SUMMARY_FILE="$(mktemp)"
           python3 scripts/ci_weekly_digest.py \
             --runs-file "${RUNS_FILE}" \
@@ -119,10 +119,8 @@ jobs:
             --since "${SINCE}" \
             --lookback-days "${LOOKBACK_DAYS}" \
             --body-file "${BODY_FILE}" \
-            --alert-file "${ALERT_FILE}" \
             > "${SUMMARY_FILE}"
 
-          HAS_SIGNAL=$(jq -r '.has_signal' "${SUMMARY_FILE}")
           REAL_FAILURES=$(jq -r '.real_failure_count' "${SUMMARY_FILE}")
           echo "Summary: $(cat "${SUMMARY_FILE}")"
 
@@ -202,7 +200,10 @@ jobs:
               || echo "::warning::failed to close issue #${n}"
           done
 
-          # ----- run summary + hand off signal state to the alert step
+          # ----- run summary. This is the job's only step, so anything the
+          # digest needs to hand off must land here (GITHUB_STEP_SUMMARY) --
+          # a GITHUB_ENV write would have no later step in this job to read
+          # it and would be dead on arrival.
           {
             echo "### CI weekly digest ${WEEK_LABEL}"
             echo ""
@@ -210,12 +211,5 @@ jobs:
             echo "- Digest issue: #${DIGEST_NUMBER}"
             echo "- Closed ${#OLD_DIGESTS[@]} prior digest(s), ${#OPEN_SKIPPED[@]} per-event issue(s)"
           } >> "${GITHUB_STEP_SUMMARY}"
-
-          {
-            echo "HAS_SIGNAL=${HAS_SIGNAL}"
-            echo "REAL_FAILURES=${REAL_FAILURES}"
-            echo "DIGEST_NUMBER=${DIGEST_NUMBER}"
-            echo "ALERT_FILE=${ALERT_FILE}"
-          } >> "${GITHUB_ENV}"
 
           echo "Digest #${DIGEST_NUMBER} published (real failures: ${REAL_FAILURES})."

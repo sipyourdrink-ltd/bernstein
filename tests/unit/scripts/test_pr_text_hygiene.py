@@ -296,7 +296,43 @@ def test_cli_dirty_run_exits_one_with_annotation(tmp_path: Path, deny_file: Path
         text=True,
     )
     assert result.returncode == 1
-    assert "::error file=title::lorem matched in title" in result.stdout
+    assert "::error file=title::deny-listed phrase #1 matched in title" in result.stdout
+
+
+def test_annotations_never_reprint_the_matched_phrase(tmp_path: Path, deny_file: Path) -> None:
+    """A finding must not echo the deny-listed phrase back into the log.
+
+    Annotations and job logs on a public repository are world-readable, so
+    printing the matched phrase would publish exactly the string the gate
+    exists to keep off public surfaces. The annotation carries the phrase's
+    list position instead; the list's maintainer resolves it locally.
+    """
+    commits = _commit_dump(tmp_path, ["chore: rename docs"])
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_PATH),
+            "--title",
+            "chore: drop lorem content",
+            "--body",
+            "adds foo support",
+            "--branch",
+            "feat/clean",
+            "--commit-messages-file",
+            str(commits),
+            "--denylist",
+            str(deny_file),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    combined = result.stdout + result.stderr
+    assert "lorem" not in combined, "matched phrase #1 leaked into the public log"
+    assert "foo" not in combined, "matched phrase #2 leaked into the public log"
+    assert "deny-listed phrase #1 matched in title" in result.stdout
+    assert "deny-listed phrase #2 matched in body" in result.stdout
 
 
 def test_load_denylist_rejects_missing_key(tmp_path: Path, hygiene_module: ModuleType) -> None:

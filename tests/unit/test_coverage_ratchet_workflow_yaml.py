@@ -233,11 +233,8 @@ def test_privileged_checkout_is_confined_to_commits_from_this_repository(
     """
     guard = workflow["jobs"]["ratchet"]["if"]
 
-    assert (
-        "github.event.workflow_run.head_repository.full_name == github.repository" in guard
-    ), (
-        "without a same-repository guard, a fork PR from a branch named `main` "
-        "reaches the privileged checkout below"
+    assert "github.event.workflow_run.head_repository.full_name == github.repository" in guard, (
+        "without a same-repository guard, a fork PR from a branch named `main` reaches the privileged checkout below"
     )
     assert "github.event.workflow_run.event == 'push'" in guard, (
         "a pull_request-triggered CI run measures the merge commit of an "

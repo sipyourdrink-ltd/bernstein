@@ -27,7 +27,6 @@ parse_runs = _MOD.parse_runs
 parse_issue_numbers = _MOD.parse_issue_numbers
 build_summary = _MOD.build_summary
 render_body = _MOD.render_body
-render_alert = _MOD.render_alert
 summary_json = _MOD.summary_json
 main = _MOD.main
 
@@ -208,13 +207,6 @@ def test_body_no_failures_message() -> None:
     assert "_No real failures in the window._" in body
 
 
-def test_alert_only_summarizes_real_signal() -> None:
-    summary = _summary([_run(conclusion="failure", name="CI")])
-    alert = render_alert(summary)
-    assert "2026-W28" in alert
-    assert "1 real failure" in alert
-
-
 # --- summary json ------------------------------------------------------------
 
 
@@ -245,7 +237,6 @@ def test_main_writes_body_and_prints_summary(tmp_path, capsys) -> None:
         encoding="utf-8",
     )
     body_file = tmp_path / "body.md"
-    alert_file = tmp_path / "alert.txt"
     rc = main(
         [
             "--runs-file",
@@ -258,25 +249,21 @@ def test_main_writes_body_and_prints_summary(tmp_path, capsys) -> None:
             "2026-07-05T00:00:00Z",
             "--body-file",
             str(body_file),
-            "--alert-file",
-            str(alert_file),
         ]
     )
     assert rc == 0
     body = body_file.read_text(encoding="utf-8")
     assert "Real CI failures on main: **1**" in body
     assert "- #2485" in body
-    assert alert_file.exists()  # has_signal -> alert written
     printed = json.loads(capsys.readouterr().out)
     assert printed["has_signal"] is True
     assert printed["real_failure_count"] == 1
 
 
-def test_main_skips_alert_file_when_no_signal(tmp_path, capsys) -> None:
+def test_main_reports_no_signal_for_a_clean_or_cancelled_only_week(tmp_path, capsys) -> None:
     runs_file = tmp_path / "runs.jsonl"
     runs_file.write_text("\n".join(_jsonl([_run(conclusion="cancelled")])), encoding="utf-8")
     body_file = tmp_path / "body.md"
-    alert_file = tmp_path / "alert.txt"
     rc = main(
         [
             "--runs-file",
@@ -287,11 +274,8 @@ def test_main_skips_alert_file_when_no_signal(tmp_path, capsys) -> None:
             "2026-07-05T00:00:00Z",
             "--body-file",
             str(body_file),
-            "--alert-file",
-            str(alert_file),
         ]
     )
     assert rc == 0
-    assert not alert_file.exists()  # no signal -> no alert
     printed = json.loads(capsys.readouterr().out)
     assert printed["has_signal"] is False

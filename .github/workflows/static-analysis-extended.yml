@@ -49,7 +49,10 @@ on:
 
 concurrency:
   group: static-analysis-extended-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded runs only for PRs. A push-to-main scan must never be
+  # cancelled by the next merge landing seconds later: a cancelled run shows
+  # grey, not red, so the earlier commit would silently lose its scan.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

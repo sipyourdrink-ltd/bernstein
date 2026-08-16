@@ -1,0 +1,45 @@
+# Dependabot configuration. Without this file only ad-hoc security PRs can
+# appear; version updates never run, which left dependabot-auto-merge.yml
+# with nothing to act on. Updates are weekly and grouped so the maintainer
+# sees one PR per ecosystem, not one per package; patch/minor groups are
+# auto-enqueued by .github/workflows/dependabot-auto-merge.yml and gated by
+# the same merge-queue CI as any other change.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    # A week's cooldown before proposing a new release: a compromised
+    # package is usually yanked within days, so not tracking the bleeding
+    # edge is itself a supply-chain control (zizmor: dependabot-cooldown).
+    cooldown:
+      default-days: 7
+    groups:
+      actions-minor-and-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+    labels:
+      - "dependencies"
+      - "ci"
+
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    cooldown:
+      default-days: 7
+    groups:
+      python-minor-and-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+    labels:
+      - "dependencies"
+    # Majors stay individual PRs for a human decision.
+    open-pull-requests-limit: 10

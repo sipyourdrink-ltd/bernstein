@@ -9,9 +9,9 @@ name: Coverage ratchet (weekly floor bump)
 # The increment is intentionally small so the floor creeps up without ever
 # becoming a wall. Cap stops it short of demanding near-total diff coverage.
 #
-# The cron trigger ships disabled-by-default. Flip ENABLE_CRON to "1" (in
-# this file, not at run time) only after a clean workflow_dispatch smoke
-# run. Until then a scheduled fire is a clean no-op.
+# The cron trigger shipped disabled-by-default pending a clean
+# workflow_dispatch smoke run; that run passed on 2026-08-16 (it bumped the
+# floor and opened its review PR end-to-end), so the schedule is live.
 
 on:
   schedule:
@@ -34,10 +34,10 @@ concurrency:
 permissions: {}
 
 env:
-  # Opt-in gate: a scheduled run is a no-op until an operator opts in
-  # via a follow-up PR that flips this to "1". The job
-  # `if:` cannot read env directly, so the gate is the first job step.
-  ENABLE_CRON: "0"
+  # Cron opt-in gate, flipped on after the 2026-08-16 smoke run. Flip back
+  # to "0" to pause scheduled ratcheting without deleting the trigger. The
+  # job `if:` cannot read env directly, so the gate is the first job step.
+  ENABLE_CRON: "1"
 
 jobs:
   bump:

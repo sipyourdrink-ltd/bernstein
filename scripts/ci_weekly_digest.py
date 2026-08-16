@@ -4,11 +4,11 @@ Consumed by ``.github/workflows/ci-weekly-digest.yml``. Reads workflow-run
 records as JSONL (``--runs-file`` or stdin) plus the rolled-up
 ``auto-release-skipped`` issue numbers, and emits:
 
-* a Markdown body (``--body-file``) for the weekly tracking issue,
-* an optional short alert text (``--alert-file``) written only when there
-  is a real signal, and
-* a compact JSON summary on stdout that the workflow parses to decide
-  whether to raise a threshold alert.
+* a Markdown body (``--body-file``) for the weekly tracking issue, whose
+  TL;DR always leads with ``recommended_action`` -- there is no separate
+  alert path gated on ``has_signal``, and
+* a compact JSON summary on stdout (including ``has_signal``) for the
+  workflow run log.
 
 Why this exists in the shape it does:
 
@@ -289,11 +289,6 @@ def render_body(summary: DigestSummary) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_alert(summary: DigestSummary) -> str:
-    head = f"CI weekly digest {summary.week_label}: {summary.real_failure_count} real failure(s) on main"
-    return f"{head}\n{summary.recommended_action}"
-
-
 def summary_json(summary: DigestSummary) -> dict[str, object]:
     top = summary.top_offender
     return {
@@ -318,7 +313,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--lookback-days", default="7")
     parser.add_argument("--chronic-threshold", type=int, default=DEFAULT_CHRONIC_THRESHOLD)
     parser.add_argument("--body-file", required=True, help="where to write the Markdown body")
-    parser.add_argument("--alert-file", help="write a short alert text here when has_signal is true")
     args = parser.parse_args(argv)
 
     if args.runs_file:
@@ -340,10 +334,6 @@ def main(argv: list[str] | None = None) -> int:
 
     with open(args.body_file, "w", encoding="utf-8") as handle:
         handle.write(render_body(summary))
-
-    if args.alert_file and summary.has_signal:
-        with open(args.alert_file, "w", encoding="utf-8") as handle:
-            handle.write(render_alert(summary))
 
     json.dump(summary_json(summary), sys.stdout, sort_keys=True)
     sys.stdout.write("\n")
