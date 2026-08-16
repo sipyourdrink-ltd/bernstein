@@ -100,8 +100,7 @@ def test_starting_the_pipeline_is_a_maintainer_action_not_a_label() -> None:
         condition = _job(name).get("if", "")
         assert isinstance(condition, str)
         assert "github.event.sender.login == 'chernistry'" in condition, (
-            f"job {name!r} runs on a labeled event without checking that a "
-            "maintainer applied the label"
+            f"job {name!r} runs on a labeled event without checking that a maintainer applied the label"
         )
 
 
