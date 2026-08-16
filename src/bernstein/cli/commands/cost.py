@@ -733,11 +733,18 @@ def cost_cmd(
             else:
                 console.print(f"[red]Metrics directory not found:[/red] {mdir}")
             raise SystemExit(1)
-        if as_json or is_json():
-            print_json({"rows": [], "totals": {}})
-        else:
-            console.print("[dim]No metrics data found.[/dim]")
-        return
+        # Otherwise fall through. An absent default directory is not by itself an
+        # answer: ``_load_archive_tasks`` reads ``.sdd/archive/tasks.jsonl``, which is
+        # a sibling of ``.sdd/metrics`` rather than a child of it, so a project whose
+        # metrics were cleaned but whose archive survived still has data to report
+        # (issue #3923). Returning "no data" here reported on one of the two sources
+        # and spoke for both.
+        #
+        # Nothing below needs the directory to exist: ``_load_jsonl`` returns ``[]``
+        # for an absent path and ``iter_metric_files`` documents the same for an
+        # absent directory. "Is there anything to report" is therefore answered in
+        # exactly one place -- the empty-result branch after the loads -- which is
+        # the only way the metrics half and the archive half cannot drift apart.
 
     task_records = _load_tasks_jsonl(mdir)
 
