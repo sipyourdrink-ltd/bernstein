@@ -2101,6 +2101,7 @@ def replay_cmd(
       bernstein replay publish <AGENT_ID> [OUT] --yes-i-want-to-publish # redacted publish (#1799)
       bernstein replay verify <RECEIPT>           # offline verifier (#1799)
       bernstein replay diff-journal A B           # per-step divergence finder
+      bernstein replay repair <RUN_ID>            # truncate a crash-torn tail (#3910)
       bernstein replay debug <RUN>                # forensic single-chain walk (#2605)
       bernstein replay debug <LEFT> <RIGHT>       # two-run time-travel path diff
       bernstein replay debug <RUN> --fork-from N  # fork-and-reproduce at step N
@@ -2116,12 +2117,25 @@ def replay_cmd(
     # named error rather than a silent no-op -- the whole point of this
     # fix is that an accepted flag must never be quietly ignored (#3976).
     if yes_i_want_to_publish and not (args and args[0] == "publish"):
-        console.print(
-            "[red]Error:[/red] --yes-i-want-to-publish only applies to "
-            "'bernstein replay publish'; refusing rather than silently "
-            "ignoring it here."
+        # Routed through _fail so this refusal is machine-readable too. It is
+        # a refusal the flag fix itself introduced (#3991), and it had no
+        # JSON form at all -- a caller passing --as-json got prose for the
+        # one error most likely to be produced by a script (#3996).
+        from bernstein.cli.commands.replay_cmd import ReplayError, _fail
+
+        raise SystemExit(
+            _fail(
+                as_json=as_json,
+                error=ReplayError["FLAG_NOT_APPLICABLE"],
+                prose=(
+                    "[red]Error:[/red] --yes-i-want-to-publish only applies to "
+                    "'bernstein replay publish'; refusing rather than silently "
+                    "ignoring it here."
+                ),
+                detail=("--yes-i-want-to-publish only applies to 'bernstein replay publish'"),
+                code=2,
+            )
         )
-        raise SystemExit(2)
 
     if args and args[0] == "diff":
         _replay_diff_dispatch(args[1:], sdd_dir=sdd_dir, as_json=as_json)
@@ -2138,7 +2152,7 @@ def replay_cmd(
             limit=limit,
         )
         return
-    if args and args[0] in {"export", "publish", "verify", "diff-journal"}:
+    if args and args[0] in {"export", "publish", "verify", "diff-journal", "repair"}:
         _replay_journal_dispatch(
             args,
             sdd_dir=sdd_dir,
@@ -2329,6 +2343,18 @@ def _replay_journal_dispatch(
             sdd_dir=sdd_path,
             as_json=as_json,
         )
+        if rc != 0:
+            raise SystemExit(rc)
+        return
+
+    if verb == "repair":
+        if len(args) != 2:
+            console.print("[red]Usage:[/red] bernstein replay repair <RUN_ID>")
+            raise SystemExit(2)
+
+        from bernstein.cli.commands.replay_cmd import replay_repair
+
+        rc = replay_repair(run_id=args[1], sdd_dir=sdd_path, as_json=as_json)
         if rc != 0:
             raise SystemExit(rc)
         return

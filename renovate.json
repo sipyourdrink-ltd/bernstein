@@ -55,6 +55,16 @@
         "typescript"
       ],
       "allowedVersions": "<7"
+    },
+    {
+      "description": "docs/requirements.txt is a compiled, hash-pinned resolution, so every package appears there as a bare '==' pin and the range that docs/requirements.in declares for it is invisible to the pip_requirements manager. mkdocs-redirects is capped below 1.2.3 in that .in file because 1.2.3 adds a runtime dependency on properdocs; bumping the compiled pin past the cap yields a hash-pinned file with that dependency missing, and 'pip install --require-hashes -r docs/requirements.txt' then fails to resolve it. No workflow installs that file, so the failure lands in the docs build rather than in CI. Lift this together with the cap in docs/requirements.in.",
+      "matchManagers": [
+        "pip_requirements"
+      ],
+      "matchPackageNames": [
+        "mkdocs-redirects"
+      ],
+      "allowedVersions": "<1.2.3"
     }
   ]
 }

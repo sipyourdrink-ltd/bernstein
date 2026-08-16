@@ -174,6 +174,37 @@ bernstein task resume T-abc123
 bernstein audit verify-suspension T-abc123
 ```
 
+## Repairing a crash-torn journal
+
+A crash partway through an append can leave the run journal with a truncated
+final line -- a JSON fragment with no trailing newline. The tolerant reader
+discards that physical line, and `EventJournal.resume` refuses the journal (its
+chain coverage is no longer complete), so the task would be unresumable for
+good. The repair path truncates exactly that fragment and nothing else:
+
+```bash
+bernstein replay repair <RUN_ID>
+```
+
+The repair is safe because the fragment is not covered by any `event_hash`:
+removing it restores exactly the bytes the surviving chain head already commits
+to, so the head before the crash equals the head after, byte for byte. It is
+also deliberately conservative:
+
+- A discard **anywhere but the end of the file** is corruption, not a torn
+  write, and the repair refuses it -- a hole in the middle of the journal must
+  never be silently truncated into a shorter "valid" journal.
+- If an external seal exists (the journal was finished and sealed) and the
+  truncated result would not match it, the repair is refused **before writing**
+  anything, so the evidence survives for inspection.
+- A journal with nothing to truncate reports a no-op.
+
+The repair is explicit-only by design: an orchestrator that silently truncates
+journals to keep going would be a worse failure than a stuck task, so nothing
+in the suspend/resume path runs this automatically. `bernstein replay repair`
+is the one place a torn journal can be made resumable again.
+
+
 ## What this buys you
 
 Runs that wait on humans stop paying for the wait: an overnight approval halt

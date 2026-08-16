@@ -165,6 +165,14 @@ Offline verifier for an exported or published receipt. Recomputes the receipt's 
 bernstein replay verify receipt.json
 ```
 
+### `bernstein replay repair <RUN_ID>`
+
+Truncate a crash-torn journal tail so a suspended task can resume. A crash partway through an append can leave the journal with a truncated final line (no trailing newline); the tolerant reader discards that line and `resume` refuses the journal. The repair removes exactly that trailing fragment -- the surviving head is unchanged byte for byte -- and reports a no-op on a clean journal. It refuses (without writing) a discard in the middle of the file (corruption, not a torn write) and a truncation that would contradict an external seal.
+
+```bash
+bernstein replay repair run-20260816-1015
+```
+
 ---
 
 ## Common use cases
