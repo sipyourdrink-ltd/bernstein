@@ -372,6 +372,31 @@ def test_ok_end_names_the_last_trustworthy_byte(audit_dir: Path) -> None:
     assert finding.length == len(garbage)
 
 
+def test_ok_end_does_not_credit_a_phantom_terminator_byte(audit_dir: Path) -> None:
+    """A verifying record with no owned trailing newline is not credited one extra byte.
+
+    The garbage-tail fixture above puts line_end nowhere near len(raw_bytes), so it
+    never exercises the '<' boundary itself - only a buffer that ends exactly at a
+    valid record's last byte (nothing after it at all, not even a newline) makes
+    line_end == len(raw_bytes) and distinguishes '<' from '<='.
+    """
+    log = AuditLog(audit_dir, key=b"k")
+    log.log("evt1", "actor", "task", "rid", {"n": 1})
+    path = sorted(audit_dir.glob("*.jsonl"))[0]
+    clean = path.read_bytes()
+    assert clean.endswith(b"\n"), "test setup: expected a clean, newline-terminated log"
+    truncated = clean[:-1]  # drop only the writer's own trailing newline
+
+    ctx = _ChainWalkContext()
+    errors: list[str] = []
+    _verify_log_bytes(truncated, path.name, _GENESIS_HMAC, b"k", errors, ctx)
+
+    assert ctx.ok_end[path.name] == len(truncated), (
+        f"a record with no owned terminator must not be credited past its own last byte "
+        f"(expected {len(truncated)}, got {ctx.ok_end[path.name]})"
+    )
+
+
 def test_ok_end_stays_at_zero_when_no_line_ever_verifies() -> None:
     """When nothing in a segment verifies, ok_end reports 0, not a phantom floor."""
     ctx = _ChainWalkContext()
