@@ -45,6 +45,13 @@ to the `Release notes` section of the `mkdocs.yml` nav. Entries that landed
 since the newest tag are collected in `docs/release-notes/unreleased.md`; cutting
 a version moves them into that version's page.
 
+**Emptying `unreleased.md` is a step of the release PR, not a follow-up.** Move
+every entry the tag ships onto the new version's page and delete it from
+`unreleased.md` in the same commit; the page may legitimately end the pass
+empty. `tests/unit/test_unreleased_notes_rotation.py` fails on any entry naming
+an issue or PR a tagged release page already documents, so a page left
+un-rotated stops the next PR rather than the next release.
+
 The script does not write the page. `bernstein`'s local release-notes lookup
 resolves the highest-versioned page in this directory, so a bump without its
 page serves the previous release as if it were current;
