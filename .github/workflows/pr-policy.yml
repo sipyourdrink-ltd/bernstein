@@ -38,14 +38,13 @@ on:
       - unlabeled
       - auto_merge_enabled
 
-# cancel-in-progress stays OFF: the trigger list includes labeled /
-# unlabeled / auto_merge_enabled, so routine label churn would cancel an
-# in-flight run mid-autosync. With it off, GitHub still keeps at most one
-# pending run per PR (a newer pending replaces the older pending), so the
-# latest state always gets evaluated -- runs just finish instead of dying.
+# Cancel superseded pull_request runs (repo-wide rule; none of these
+# checks is a branch-protection required context, so a cancelled run
+# cannot wedge a PR -- see tests/unit/test_pull_request_workflow_concurrency_yaml.py).
+# The expression keeps non-PR events (none today) outside the cancel path.
 concurrency:
   group: pr-policy-${{ github.event.pull_request.number }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Default-deny at workflow scope; the job re-asserts the scopes it
 # actually needs (Scorecard token-permissions).
