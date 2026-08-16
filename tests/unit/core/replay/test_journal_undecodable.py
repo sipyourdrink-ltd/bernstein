@@ -323,6 +323,13 @@ def test_event_count_does_not_swallow_a_non_oserror(tmp_path: Path, monkeypatch:
     because ``event_count() - 1`` would then stamp ``-1`` into a receipt.
     Nothing about the scan being shared prevents that widening, so it is
     pinned: a non-``OSError`` out of the reader propagates.
+
+    The ``invalidate_count()`` call is load-bearing and was added by #4026,
+    which gave ``event_count`` a cache. Without it this test still passed
+    while exercising nothing: ``record`` primes the cache, so the patched
+    reader was never reached and the ``pytest.raises`` below was satisfied
+    by no call at all. Forcing the scan is what keeps the handler's width
+    under test rather than its reachability.
     """
     journal = EventJournal(run_id="run-count", sdd_dir=tmp_path)
     journal.record("one")
@@ -331,6 +338,7 @@ def test_event_count_does_not_swallow_a_non_oserror(tmp_path: Path, monkeypatch:
         raise ValueError("reader failed for some reason that is not I/O")
 
     monkeypatch.setattr("bernstein.core.replay.journal.load_events", _boom)
+    journal.invalidate_count()
 
     with pytest.raises(ValueError, match="not I/O"):
         journal.event_count()
