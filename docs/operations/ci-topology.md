@@ -53,7 +53,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/post-ci-dispatcher.yml | Post-CI dispatcher | workflow_run | {"cancel-in-progress": "false", "group": "post-ci-dispatcher-${{ github.event.workflow_run.head_sha }}"} | 5 |
 | .github/workflows/pr-labels.yml | PR labels | pull_request_target | {"cancel-in-progress": "true", "group": "pr-labels-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/pr-observability-summary.yml | PR observability summary | pull_request, workflow_dispatch | {"cancel-in-progress": "true", "group": "pr-observability-${{ github.event.pull_request.number \|\| github.event.inputs.pr_number }}"} | 1 |
-| .github/workflows/pr-policy.yml | PR policy | pull_request | {"cancel-in-progress": "false", "group": "pr-policy-${{ github.event.pull_request.number }}"} | 1 |
+| .github/workflows/pr-policy.yml | PR policy | pull_request | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "pr-policy-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/publish-docker.yml | Publish Docker Image | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-docker-${{ github.ref }}"} | 1 |
 | .github/workflows/publish-extension.yml | Publish VS Code Extension | push, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-extension-${{ github.ref }}"} | 1 |
 | .github/workflows/publish-homebrew.yml | Publish Homebrew Formula | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-homebrew-${{ github.ref }}"} | 1 |
