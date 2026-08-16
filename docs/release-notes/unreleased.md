@@ -104,6 +104,12 @@ rather than as its own attribution is exempted by hand there, with the reason.
 
 ## Fixed
 
+- `GET /metrics/predictions` answers 422 instead of 500 when `budget_cap` or
+  `window_hours` is non-finite. `budget_cap=Infinity` cleared the `ge=0.0`
+  bound (`inf >= 0.0` is true), reached the handler, and was echoed into the
+  response body, where the JSON renderer refused it as non-compliant and the
+  request died as an unhandled server error. Both parameters now reject
+  infinities and `NaN` at validation.
 - The CLI reference no longer names command spellings that do not resolve. It
   claimed `bernstein commit-stats`, `bernstein incident`, and `bernstein
   postmortem` were live deprecated aliases after v4.0.0 removed them, and
