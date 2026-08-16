@@ -353,10 +353,12 @@ class EventJournal:
         # of this change hangs that call permanently.
         self._lock = threading.RLock()
         self._index = 0
-        # Cached ``(stat token, usable event count)``, or ``None`` for "not
-        # known". An absent file is never cached: :meth:`_stat_token` already
-        # recognises it in O(1). See :meth:`_stat_token`.
-        self._count_cache: tuple[_StatToken, int] | None = None
+        # Cached ``(stat token, usable event count, tail ends with newline)``,
+        # or ``None`` for "not known". An absent file is never cached:
+        # :meth:`_stat_token` already recognises it in O(1). The third field
+        # is what makes the carry-forward in :meth:`record` safe over a
+        # crash-torn tail; see there. See :meth:`_stat_token`.
+        self._count_cache: tuple[_StatToken, int, bool] | None = None
         self._head = _GENESIS_HASH
         self._start_ts: float = time.time()
         self._observer: Callable[[dict[str, Any]], None] | None = None
@@ -463,14 +465,29 @@ class EventJournal:
             # whose file does not exist yet holds 0 events, which is knowable
             # without touching the disk, so the common "construct, then append"
             # path primes the cache on its first record and never scans at all.
+            #
+            # The carry is only sound when the file ends on a line boundary.
+            # ``open("a")`` resumes at the last byte, so appending to a
+            # crash-torn fragment glues the new row onto it and produces one
+            # unusable line where the arithmetic assumed two usable ones -
+            # ``prior + 1`` would then overcount for the rest of the journal's
+            # life. That state is reachable: the plain constructor accepts a
+            # torn file (only ``resume`` refuses one), so a scan can legally
+            # prime the cache from it. The damage is not bounded by one event
+            # either - a crash that lands between a complete row and its
+            # newline leaves a file the scan reports as *undamaged*, and
+            # gluing onto it destroys the row that was already there as well
+            # as miscounting the new one. See
+            # ``test_appending_to_a_newline_less_tail_does_not_destroy_a_row``.
             prior: int | None = None
+            pre_token: _StatToken | None = None
             try:
                 pre_token = self._stat_token()
             except OSError:
                 pass  # unreadable: the count before this append is unknowable
             else:
                 cached = self._count_cache
-                if cached is not None and cached[0] == pre_token:
+                if cached is not None and cached[0] == pre_token and cached[2]:
                     prior = cached[1]
                 elif pre_token is None:
                     prior = 0
@@ -507,7 +524,7 @@ class EventJournal:
                 # already covers, and mutation-testing confirms no behaviour
                 # distinguishes the two.
                 return
-            self._count_cache = self._refreshed_count_cache(None if prior is None else prior + 1)
+            self._count_cache = self._cache_after_append(prior, pre_token, len((line + "\n").encode("utf-8")))
             self._index = index + 1
             self._head = e_hash
             # Dispatch while the append lock still establishes total order.
@@ -598,20 +615,62 @@ class EventJournal:
             return None
         return (st.st_ino, st.st_dev, st.st_size)
 
-    def _refreshed_count_cache(self, count: int | None) -> tuple[_StatToken, int] | None:
-        """Pair *count* with the file's token as it is right now.
+    def _tail_is_clean(self) -> bool:
+        """Whether the journal file ends on a line boundary.
 
-        Returns ``None`` - meaning "not known" - when *count* is ``None``
-        or the file cannot be stat-ed, so a caller can assign the result
-        unconditionally.
+        An empty or absent file is clean - there is no partial row to glue
+        onto. Costs one seek and one byte, and is only paid on the scan
+        path, never per append.
+
+        This asks the *bytes*, not the scan, and the difference is load
+        bearing. A crash that lands between a complete row and its newline
+        leaves every line parsable, so the tolerant reader discards nothing
+        and reports a perfectly healthy file - the one torn state that
+        ``discarded_line_indices`` cannot see. Deriving the boundary from
+        the scan's own damage report would therefore reintroduce the worst
+        of the three divergences it exists to close.
         """
-        if count is None:
+        try:
+            with self._path.open("rb") as handle:
+                if handle.seek(0, os.SEEK_END) == 0:
+                    return True
+                handle.seek(-1, os.SEEK_END)
+                return handle.read(1) == b"\n"
+        except OSError:
+            return False
+
+    def _cache_after_append(
+        self,
+        prior: int | None,
+        pre_token: _StatToken | None,
+        written: int,
+    ) -> tuple[_StatToken, int, bool] | None:
+        """Pair ``prior + 1`` with the file's token, if this append explains it.
+
+        Returns ``None`` - "not known" - when the count before the append was
+        unknown, or when the file after the append is not exactly the file
+        before it plus *written* bytes. That last check is what keeps a
+        foreign append landing between the write and this stat from being
+        sealed under a token it does not describe: the mismatched entry would
+        otherwise be returned in O(1) forever, because it names the current
+        file and so never expires. It is the same conservative refusal
+        :meth:`_count_locked` makes after its scan, on the write side.
+        """
+        if prior is None:
             return None
         try:
             token = self._stat_token()
         except OSError:
             return None
-        return None if token is None else (token, count)
+        if token is None:
+            return None
+        expected_size = (pre_token[2] if pre_token is not None else 0) + written
+        if token[2] != expected_size:
+            return None
+        if pre_token is not None and token[:2] != pre_token[:2]:
+            return None
+        # This writer just terminated its own row, so the tail is a boundary.
+        return (token, prior + 1, True)
 
     def _count_locked(self) -> int:
         """Count usable events, from cache when the file has not moved.
@@ -634,7 +693,8 @@ class EventJournal:
         # file sealed in under the token of another, and every later call
         # would return that stale number in O(1). Unchanged across the
         # scan means the count describes the file the token names.
-        self._count_cache = (token, count) if self._stat_token() == token else None
+        clean = self._tail_is_clean()
+        self._count_cache = (token, count, clean) if self._stat_token() == token else None
         return count
 
     def verify(self) -> JournalVerifyResult:

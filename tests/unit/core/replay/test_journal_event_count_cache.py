@@ -298,6 +298,169 @@ def test_an_append_during_the_scan_is_not_cached(tmp_path: Path, monkeypatch: py
 
 
 # --------------------------------------------------------------------------
+# Carrying the count forward across an append is only sound over a file that
+# ends on a line boundary, and only when this append is the whole difference.
+# Every case below builds the file behind ``record``'s back on purpose: each
+# one needs the bytes to disagree with the arithmetic, which a fixture built
+# through ``record`` alone can never produce.
+# --------------------------------------------------------------------------
+
+
+def test_appending_to_a_crash_torn_tail_does_not_overcount(tmp_path: Path) -> None:
+    """``open("a")`` resumes at the last byte, not at the next line.
+
+    A crash partway through an append leaves a fragment with no trailing
+    newline. The tolerant reader discards it, so a scan legitimately caches a
+    count taken over a torn file - and the next ``record`` then glues its row
+    onto that fragment, producing one unusable line where ``prior + 1``
+    assumed two usable ones. Reachable because the plain constructor accepts a
+    torn file; only ``resume`` refuses one.
+    """
+    writer = EventJournal("run", tmp_path)
+    writer.record("step", index=0)
+    writer.record("step", index=1)
+    with writer.path.open("a", encoding="utf-8") as handle:
+        handle.write('{"event": "torn", "ind')  # crash mid-append: no newline
+
+    journal = EventJournal("run", tmp_path)
+    assert journal.event_count() == _rows(journal.path) == 2, "the torn fragment is not a usable event"
+
+    journal.record("step", index=99)
+
+    assert journal.event_count() == _rows(journal.path), "the glued row must not be counted as one more event"
+
+
+def test_appending_to_a_newline_less_tail_does_not_destroy_a_row(tmp_path: Path) -> None:
+    """The torn state the scan cannot see, and the reason the boundary check
+    asks the bytes rather than ``discarded_line_indices``.
+
+    A crash can land between a complete row and its newline as easily as
+    inside one. Every line then parses, so the tolerant reader discards
+    nothing and reports an undamaged file - but the tail is still not a
+    boundary, and the next append glues onto a row that was previously
+    *usable*. That destroys the existing row as well as miscounting the new
+    one, so the cached answer runs two ahead of the truth rather than one.
+    """
+    writer = EventJournal("run", tmp_path)
+    writer.record("step", index=0)
+    writer.record("step", index=1)
+    raw = writer.path.read_bytes()
+    assert raw.endswith(b"\n")
+    writer.path.write_bytes(raw[:-1])  # crash between the row and its newline
+
+    journal = EventJournal("run", tmp_path)
+    assert not load_events(journal.path).discarded_line_indices, "the scan must see no damage here"
+    assert journal.event_count() == _rows(journal.path) == 2
+
+    journal.record("step", index=99)
+
+    assert journal.event_count() == _rows(journal.path), "gluing onto a usable row loses it; the count must follow"
+
+
+def test_a_foreign_append_during_our_own_append_is_not_sealed_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The write-side twin of ``test_an_append_during_the_scan_is_not_cached``.
+
+    ``record`` stats the file after writing, to pair the token with
+    ``prior + 1``. A second process appending in that window yields a token
+    naming a file with one more row than the count stored against it - and
+    because the entry names the file *as it now is*, it never expires.
+    """
+    journal = EventJournal("run", tmp_path)
+    journal.record("step", index=0)
+    assert journal.event_count() == 1
+
+    real = EventJournal._stat_token
+    calls: list[int] = []
+
+    def racing_stat(self: EventJournal) -> Any:
+        calls.append(1)
+        if len(calls) == 2:  # the post-write stat inside record()
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps({"event": "foreign", "index": 1}) + "\n")
+        return real(self)
+
+    monkeypatch.setattr(EventJournal, "_stat_token", racing_stat)
+    journal.record("step", index=1)
+    monkeypatch.undo()
+
+    assert journal.event_count() == _rows(journal.path)
+    assert journal.event_count() == _rows(journal.path), "and it must not be stale on the next call either"
+
+
+def test_an_atomic_replace_during_our_own_append_is_not_sealed_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Size alone does not establish that this append is the whole difference.
+
+    The write-side twin of
+    ``test_atomic_replace_of_the_same_length_is_noticed_without_help``. A
+    replacement landing in ``record``'s post-write stat window can carry
+    exactly the length the arithmetic predicts and still be a different file
+    holding a different number of usable rows - so the entry must be refused
+    on identity as well as on length.
+    """
+    journal = EventJournal("run", tmp_path)
+    journal.record("step", index=0)
+    assert journal.event_count() == 1
+
+    real = EventJournal._stat_token
+    calls: list[int] = []
+
+    def replacing_stat(self: EventJournal) -> Any:
+        calls.append(1)
+        if len(calls) == 2:  # the post-write stat inside record()
+            raw = self.path.read_bytes()
+            head = raw.split(b"\n", 1)[0] + b"\n"
+            # One usable row, padded to the *exact* predicted length with a
+            # blank line the reader skips: same size, different inode.
+            replacement = head + b" " * (len(raw) - len(head) - 1) + b"\n"
+            assert len(replacement) == len(raw)
+            other = self.path.parent / "swap.jsonl"
+            other.write_bytes(replacement)
+            other.replace(self.path)
+        return real(self)
+
+    monkeypatch.setattr(EventJournal, "_stat_token", replacing_stat)
+    journal.record("step", index=1)
+    monkeypatch.undo()
+
+    assert _rows(journal.path) == 1, "the fixture must make the file disagree with prior + 1"
+    assert journal.event_count() == _rows(journal.path)
+    assert journal.event_count() == _rows(journal.path), "and it must not be stale on the next call either"
+
+
+@pytest.mark.parametrize("preexisting_rows", [0, 3])
+def test_a_scan_of_an_intact_file_still_leaves_appends_scan_free(
+    tmp_path: Path, scans: list[Any], preexisting_rows: int
+) -> None:
+    """The boundary check must not cost the cache on a healthy file.
+
+    ``_tail_is_clean`` is the price of the carry-forward being sound; a
+    version that answered "unclean" for a file that is in fact intact - or
+    for an empty one, where there is no fragment to glue onto - would be
+    just as *correct* and would silently reinstate a scan per append on
+    every journal that already existed when it was opened. Both readings
+    are exercised: an empty file and a populated one.
+    """
+    writer = EventJournal("run", tmp_path)
+    for i in range(preexisting_rows):
+        writer.record("step", index=i)
+    writer.path.touch()  # exists even at zero rows, so the scan path is taken
+
+    journal = EventJournal("run", tmp_path)
+    assert journal.event_count() == _rows(journal.path) == preexisting_rows
+    assert len(scans) == 1, "the first read of a pre-existing file scans once"
+
+    for i in range(4):
+        journal.record("step", index=100 + i)
+        assert journal.event_count() == _rows(journal.path)
+
+    assert len(scans) == 1, "and an intact tail means no append after it ever rescans"
+
+
+# --------------------------------------------------------------------------
 # The regression this change would otherwise introduce.
 # --------------------------------------------------------------------------
 
