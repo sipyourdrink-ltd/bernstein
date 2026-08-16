@@ -192,6 +192,39 @@ class TestWidgetCreation:
         assert widget is not None
 
 
+class TestTaskListRefresh:
+    """Tests for stale-row cleanup in TaskListWidget."""
+
+    def test_refresh_tasks_removes_stale_rows(self) -> None:
+        widget = TaskListWidget()
+        widget.on_mount()
+        first = TaskRow(
+            task_id="t-1",
+            status="open",
+            role="worker",
+            title="First task",
+            priority=2,
+            model="test",
+            elapsed="1s",
+            session_id="s1",
+        )
+        second = TaskRow(
+            task_id="t-2",
+            status="open",
+            role="worker",
+            title="Second task",
+            priority=2,
+            model="test",
+            elapsed="1s",
+            session_id="s2",
+        )
+        widget.refresh_tasks([first, second])
+        assert {str(key.value) for key in widget.rows} == {"t-1", "t-2"}
+
+        widget.refresh_tasks([first])
+        assert [str(key.value) for key in widget.rows] == ["t-1"]
+
+
 class TestAppInstantiation:
     """Tests that the Textual app can be created."""
 
