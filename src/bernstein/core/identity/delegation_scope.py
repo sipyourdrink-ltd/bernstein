@@ -422,7 +422,7 @@ def _parent_index(
     index: int,
     by_hmac: dict[str, int],
     genesis: str,
-) -> int | None | str:
+) -> int | str | None:
     """Resolve a hop's parent index.
 
     Returns the parent's index, ``None`` when the hop is a chain root, or an

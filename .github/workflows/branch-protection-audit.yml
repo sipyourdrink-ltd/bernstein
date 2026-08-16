@@ -1,11 +1,25 @@
 name: Branch protection audit
 
-# Read live branch protection for `main` and compare its required status
-# checks with the in-tree required-check canary expectation. This catches
-# repository-setting drift that workflow-file tests cannot see.
+# Read the live repository ruleset that protects `main` and assert the
+# invariants operators rely on: the merge-queue rule is present, the
+# required status check matches the in-tree canary, force-pushes and
+# branch deletion stay blocked, and no bypass actor can skip the ruleset.
+# This catches repository-setting drift that workflow-file tests cannot
+# see.
+#
+# `main`'s protection is enforced entirely by a repository ruleset, not
+# classic branch protection, so this audit reads the ruleset endpoints
+# (`rules/branches/main`, `rulesets`, `rulesets/{id}`) rather than the
+# classic `branches/main/protection` endpoint. The classic endpoint has no
+# field for `merge_queue` or `bypass_actors` - it cannot represent either
+# invariant, so an audit built on it would stay green exactly when the
+# merge-queue rule is dropped or a bypass actor is added. It is not read
+# here at all, primary or secondary: every invariant it can represent is
+# already covered by the ruleset read, at the cost of one extra live call
+# instead of two.
 #
 # Required secret: BRANCH_PROTECTION_AUDIT_TOKEN
-#   The default GITHUB_TOKEN cannot read branch protection: that endpoint
+#   The default GITHUB_TOKEN cannot read repository rulesets: that surface
 #   requires an admin-scoped token, and Actions cannot be granted admin.
 #   Configure a fine-grained PAT (or GitHub App installation token) with
 #   this repository's:
@@ -36,7 +50,7 @@ jobs:
     permissions:
       contents: read
     env:
-      # Admin-scoped read is required to fetch branch protection; the
+      # Admin-scoped read is required to fetch repository rulesets; the
       # default github.token cannot do it. See the workflow header for the
       # secret's required fine-grained PAT scopes. No github.token fallback.
       GH_TOKEN: ${{ secrets.BRANCH_PROTECTION_AUDIT_TOKEN }}
@@ -58,119 +72,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Read live branch protection
-        run: |
-          set -euo pipefail
-
-          set +e
-          gh api \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "repos/${GITHUB_REPOSITORY}/branches/main/protection" \
-            > branch-protection.json \
-            2> branch-protection.err
-          gh_status=$?
-          set -e
-
-          if [ "${gh_status}" -ne 0 ]; then
-            echo "::error::Unable to read live branch protection for main with GITHUB_TOKEN."
-            echo "::error::GitHub API exit code: ${gh_status}"
-            if [ -s branch-protection.err ]; then
-              while IFS= read -r line; do
-                echo "::error::${line}"
-              done < branch-protection.err
-            fi
-            exit 1
-          fi
-
-      - name: Compare live required contexts with canary
-        run: |
-          python3 - <<'PY'
-          """Compare live required status checks with canary expectations."""
-          from __future__ import annotations
-
-          import json
-          import sys
-          from pathlib import Path
-
-          CANARY = Path(".github/workflows/required-check-canary.yml")
-          PROTECTION = Path("branch-protection.json")
-
-          def fail(message: str) -> None:
-              print(f"::error::{message}")
-              sys.exit(1)
-
-          def read_expected_contexts(path: Path) -> set[str]:
-              if not path.exists():
-                  fail(f"{path} not found")
-
-              for line in path.read_text(encoding="utf-8").splitlines():
-                  stripped = line.strip()
-                  if not stripped.startswith("BRANCH_PROTECTION_CONTEXTS_JSON:"):
-                      continue
-
-                  raw = stripped.split(":", 1)[1].strip()
-                  if raw.startswith(('"', "'")) and raw.endswith(raw[0]):
-                      raw = raw[1:-1]
-                  try:
-                      parsed = json.loads(raw)
-                  except json.JSONDecodeError as exc:
-                      fail(f"{path} has invalid BRANCH_PROTECTION_CONTEXTS_JSON: {exc}")
-                  if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
-                      fail(f"{path} BRANCH_PROTECTION_CONTEXTS_JSON must be a JSON string list")
-                  contexts = {item for item in parsed if item}
-                  if contexts:
-                      return contexts
-
-              fail(f"{path} does not define BRANCH_PROTECTION_CONTEXTS_JSON")
-              raise AssertionError("unreachable")
-
-          expected = read_expected_contexts(CANARY)
-
-          try:
-              protection = json.loads(PROTECTION.read_text(encoding="utf-8"))
-          except json.JSONDecodeError as exc:
-              fail(f"Live branch protection response is not valid JSON: {exc}")
-
-          if not isinstance(protection, dict):
-              fail("Live branch protection response is not a JSON object")
-
-          required_status_checks = protection.get("required_status_checks")
-          if not isinstance(required_status_checks, dict):
-              fail("Live branch protection for main has no required_status_checks object")
-
-          live: set[str] = set()
-
-          contexts = required_status_checks.get("contexts", [])
-          if isinstance(contexts, list):
-              live.update(context for context in contexts if isinstance(context, str))
-
-          checks = required_status_checks.get("checks", [])
-          if isinstance(checks, list):
-              for check in checks:
-                  if not isinstance(check, dict):
-                      continue
-                  context = check.get("context", check.get("name"))
-                  if isinstance(context, str):
-                      live.add(context)
-
-          if not live:
-              fail("Live branch protection for main has zero required status check contexts")
-
-          missing = sorted(expected - live)
-          extra = sorted(live - expected)
-
-          print("Branch protection audit")
-          print(f"  expected contexts: {sorted(expected)}")
-          print(f"  live contexts    : {sorted(live)}")
-
-          if missing or extra:
-              print("::error::Live branch protection required contexts differ from required-check canary")
-              if missing:
-                  print(f"::error::missing from live protection: {missing}")
-              if extra:
-                  print(f"::error::extra in live protection: {extra}")
-              sys.exit(1)
-
-          print("Live branch protection required contexts match required-check canary.")
-          PY
+      - name: Audit live branch ruleset for main
+        # scripts/check_branch_ruleset_audit.py reads rules/branches/main,
+        # rulesets, and rulesets/{id} (stdlib-only, no `uv sync` needed for
+        # this job) and asserts: merge_queue, non_fast_forward and deletion
+        # rules present; required_status_checks contexts match the
+        # required-check canary; every referenced ruleset is 'active'; no
+        # bypass actor. See the workflow header for why the classic
+        # protection endpoint is not read here.
+        run: python3 scripts/check_branch_ruleset_audit.py

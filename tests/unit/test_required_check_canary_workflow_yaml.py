@@ -10,23 +10,28 @@ Invariants exercised here:
 
 1. ``ci.yml`` exposes a ``ci-gate`` job whose ``name:`` is exactly
    ``CI gate``.
-2. ``ci.yml`` exposes a ``test-macos`` job whose ``name:`` is the
-   literal string ``Test (macos-latest, Python 3.13)`` (no ``${{ ... }}``
-   template, which would resolve to a different string when the job is
-   skipped via the gate condition).
-3. Exactly two files under ``.github/workflows/*.yml`` emit a check-run
+2. Exactly two files under ``.github/workflows/*.yml`` emit a check-run
    named ``CI gate``: ``ci.yml`` (real aggregator) and
    ``ci-gate-stub.yml`` (synthetic emitter for PRs whose diff is fully
    paths-ignored by ci.yml - see PR opening this allow-list). No other
    workflow may emit this check name.
-4. The canary workflow file itself exists and is wired to the
+3. The canary workflow file itself exists and is wired to the
    ``pull_request``/``schedule``/``workflow_dispatch`` triggers, with
    every action SHA-pinned and the verify step asserting the same set
    of invariants.
-5. Every context branch protection requires on a PR is also reportable on
+4. Every context branch protection requires on a PR is also reportable on
    a ``merge_group`` ref, and the diff planner that decides which jobs may
    skip classifies a queued group from the group's own base SHA - so a
    green ``CI gate`` on the queue means the whole combination was built.
+
+``ci.yml``'s ``test-macos`` job used to be pinned to a literal
+(non-templated) ``name:`` here too, on the assumption that branch
+protection's required context depended on it. It does not - the
+repository ruleset requires only the single ``CI gate`` context checked
+by invariant 1 above (verified against
+``repos/<org>/<repo>/rules/branches/main`` when that constraint was
+removed) - so ``test-macos`` may template its name the same way the
+``test`` matrix job already does.
 """
 
 from __future__ import annotations
@@ -55,8 +60,7 @@ WORKFLOWS_DIR = Path(".github/workflows")
 
 REQUIRED_CONTEXT = "CI gate"
 REQUIRED_JOB_KEY = "ci-gate"
-MACOS_JOB_KEY = "test-macos"
-MACOS_JOB_NAME = "Test (macos-latest, Python 3.13)"
+RPM_SMOKE_JOB_KEY = "install-smoke-rpm"
 TOPOLOGY_REPORT_PATH = "docs/operations/ci-topology.md"
 TOPOLOGY_REPORT_UNIGNORE = f"!{TOPOLOGY_REPORT_PATH}"
 
@@ -114,22 +118,48 @@ def test_ci_gate_name_is_literal_required_context(ci_doc: dict[str, object]) -> 
     )
 
 
-def test_test_macos_name_is_literal(ci_doc: dict[str, object]) -> None:
+def test_test_macos_name_may_be_templated(ci_doc: dict[str, object]) -> None:
+    """`test-macos` is no longer pinned to a literal `name:`.
+
+    Branch protection's required context is `CI gate` alone (see
+    `test_ci_gate_name_is_literal_required_context` above), not this job's
+    display name, so it may template like the `test` matrix job does (e.g.
+    to carry a shard index). This test exists so a future change cannot
+    silently reintroduce the stale literal-name lock without the removal
+    being visible here too.
+    """
     jobs = ci_doc.get("jobs")
     assert isinstance(jobs, dict)
-    job = jobs.get(MACOS_JOB_KEY)
-    assert isinstance(job, dict)
+    job = jobs.get("test-macos")
+    assert isinstance(job, dict), "ci.yml must keep a `test-macos` job."
     name = job.get("name")
-    assert isinstance(name, str)
-    assert "${{" not in name and "}}" not in name, (
-        f"`{MACOS_JOB_KEY}.name` must NOT be templated. "
-        "Skip-state check runs post the unresolved template, breaking any "
-        "downstream required-context rule keyed on the literal form."
+    assert isinstance(name, str) and name.startswith("Test (macos-latest, Python 3.13"), (
+        f"`test-macos.name` is {name!r}; expected it to still identify the macOS Python-3.13 test leg."
     )
-    assert name == MACOS_JOB_NAME, (
-        f"`{MACOS_JOB_KEY}.name` is {name!r}; expected {MACOS_JOB_NAME!r}. "
-        "If the rename is intentional, update the canary expectation in the "
-        "same PR."
+
+
+def test_install_smoke_rpm_is_gated_on_rpm_relevance(ci_doc: dict[str, object]) -> None:
+    """`install-smoke-rpm` must skip diffs it cannot regress (#3947).
+
+    The job installs the newest *released* PyPI version, not this tree's
+    source, so an ordinary src/ or tests/ change cannot exercise anything
+    it checks. Without this gate a defect in a past release red-gates
+    every subsequent PR and merge-queue batch until a new release ships.
+    """
+    jobs = ci_doc.get("jobs")
+    assert isinstance(jobs, dict)
+    job = jobs.get(RPM_SMOKE_JOB_KEY)
+    assert isinstance(job, dict), f"ci.yml must keep an `{RPM_SMOKE_JOB_KEY}` job"
+    needs = job.get("needs") or []
+    assert "determine-changes" in needs, (
+        f"`{RPM_SMOKE_JOB_KEY}` must depend on `determine-changes` to read its `rpm_relevant_changed` output."
+    )
+    condition = " ".join(str(job.get("if", "")).split())
+    assert condition == "needs.determine-changes.outputs.rpm_relevant_changed == 'true'", (
+        f"`{RPM_SMOKE_JOB_KEY}.if` is {condition!r}; expected it to gate on the planner's "
+        "rpm_relevant_changed output, otherwise the job silently rejoins the every-merge "
+        "path. If this changed intentionally, update the CI gate roll-up's "
+        "RPM_SMOKE_SKIPPABLE tolerance in the same PR."
     )
 
 
@@ -258,8 +288,6 @@ def test_canary_asserts_required_context_name(canary_text: str) -> None:
     """The literal expected context names must appear in the canary env block."""
     assert f'REQUIRED_CONTEXT: "{REQUIRED_CONTEXT}"' in canary_text
     assert f'REQUIRED_JOB_KEY: "{REQUIRED_JOB_KEY}"' in canary_text
-    assert f'MACOS_JOB_KEY: "{MACOS_JOB_KEY}"' in canary_text
-    assert f'MACOS_JOB_NAME: "{MACOS_JOB_NAME}"' in canary_text
 
 
 # ---------------------------------------------------------------------------
@@ -511,6 +539,57 @@ def test_ci_gate_rollup_passes_on_push(ci_doc: dict[str, object], tmp_path: Path
         plan={"docs_only": "false", "macos_sensitive": "false"},
     )
     assert proc.returncode == 0, f"CI gate roll-up must pass on push.\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+
+
+def test_ci_gate_rollup_tolerates_rpm_smoke_skip_when_diff_is_rpm_irrelevant(
+    ci_doc: dict[str, object], tmp_path: Path
+) -> None:
+    """A `skipped` install-smoke-rpm must not fail the gate on an ordinary diff.
+
+    Pins the RPM_SMOKE_SKIPPABLE tolerance added for #3947: the job may
+    skip whenever the planner reports the diff touched none of the RPM
+    packaging inputs, the smoke script, or the job's own definition.
+    """
+    script = _ci_gate_rollup_script(ci_doc)
+    needs = dict(_MERGE_GROUP_NEEDS)
+    needs["install-smoke-rpm"] = {"result": "skipped"}
+    proc = _run_rollup(
+        tmp_path,
+        script,
+        event="merge_group",
+        needs=needs,
+        plan={"docs_only": "false", "macos_sensitive": "false", "rpm_relevant_changed": "false"},
+    )
+    assert proc.returncode == 0, (
+        "CI gate roll-up FAILED to tolerate an install-smoke-rpm skip on an RPM-irrelevant "
+        f"diff.\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    )
+
+
+def test_ci_gate_rollup_fails_when_rpm_smoke_skips_on_an_rpm_relevant_diff(
+    ci_doc: dict[str, object], tmp_path: Path
+) -> None:
+    """The tolerance must not become a rubber stamp for a genuinely relevant diff.
+
+    If the planner reports the diff DID touch RPM packaging (or the job's
+    own definition) but install-smoke-rpm still shows `skipped`, that is
+    exactly the silent-rejoin failure mode #3947's acceptance criteria
+    guards against - the gate must still fail.
+    """
+    script = _ci_gate_rollup_script(ci_doc)
+    needs = dict(_MERGE_GROUP_NEEDS)
+    needs["install-smoke-rpm"] = {"result": "skipped"}
+    proc = _run_rollup(
+        tmp_path,
+        script,
+        event="merge_group",
+        needs=needs,
+        plan={"docs_only": "false", "macos_sensitive": "false", "rpm_relevant_changed": "true"},
+    )
+    assert proc.returncode == 1, (
+        "CI gate roll-up must FAIL when install-smoke-rpm skips while the diff is RPM-relevant "
+        f"- otherwise the job could be disabled silently.\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -842,7 +921,86 @@ def test_planner_fails_safe_when_the_group_base_is_missing(ci_doc: dict[str, obj
     assert outputs["docs_only"] == "false", (
         f"planner must not report docs_only on an unresolvable base; outputs={outputs!r}"
     )
-    for key in ("python_changed", "tests_changed", "gha_workflows_changed", "macos_sensitive"):
+    for key in (
+        "python_changed",
+        "tests_changed",
+        "gha_workflows_changed",
+        "macos_sensitive",
+        "rpm_relevant_changed",
+    ):
         assert outputs[key] == "true", (
             f"fail-safe classification must set {key}=true so no job skips; outputs={outputs!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# install-smoke-rpm path gating (#3947): the planner must flag exactly the
+# paths that job exercises, and nothing else, or it either silently rejoins
+# the every-merge path (too broad) or stops catching real spec/script
+# regressions (too narrow).
+# ---------------------------------------------------------------------------
+
+
+def _repo_with_one_change(tmp_path: Path, relpath: str) -> Path:
+    """A two-commit repo: a base commit, then one commit touching `relpath`."""
+    repo = tmp_path / "rpm-gate-repo"
+    repo.mkdir()
+    _git(repo, "init", "--initial-branch=main")
+    _commit_file(repo, "README.md", "base\n", "base commit")
+    _commit_file(repo, relpath, "changed\n", f"touch {relpath}")
+    return repo
+
+
+@requires_shell_tools
+@pytest.mark.parametrize(
+    "relpath",
+    [
+        "packaging/rpm/bernstein.spec",
+        "packaging/rpm/new-file.txt",
+        "scripts/rpm_install_smoke.sh",
+        ".github/workflows/ci.yml",
+    ],
+)
+def test_planner_flags_rpm_relevant_paths(ci_doc: dict[str, object], tmp_path: Path, relpath: str) -> None:
+    """Each path install-smoke-rpm exercises must set rpm_relevant_changed=true."""
+    repo = _repo_with_one_change(tmp_path, relpath)
+    outputs = _run_classify(repo, _classify_script(ci_doc), event="push")
+    assert outputs["rpm_relevant_changed"] == "true", (
+        f"changing {relpath} must set rpm_relevant_changed=true; outputs={outputs!r}"
+    )
+
+
+@requires_shell_tools
+def test_planner_does_not_flag_an_ordinary_source_change_as_rpm_relevant(
+    ci_doc: dict[str, object], tmp_path: Path
+) -> None:
+    """The common case: install-smoke-rpm must skip a plain src/ change.
+
+    This is the defect #3947 reports - before the fix, install-smoke-rpm ran
+    (and could red-gate the PR) on every such diff even though it cannot
+    regress a check against the previously released package.
+    """
+    repo = _repo_with_one_change(tmp_path, "src/bernstein/core/defaults.py")
+    outputs = _run_classify(repo, _classify_script(ci_doc), event="push")
+    assert outputs["rpm_relevant_changed"] == "false", (
+        f"an ordinary src/ change must not set rpm_relevant_changed; outputs={outputs!r}"
+    )
+    assert outputs["python_changed"] == "true", f"sanity check on the same diff: outputs={outputs!r}"
+
+
+@requires_shell_tools
+def test_planner_does_not_flag_an_unrelated_workflow_change_as_rpm_relevant(
+    ci_doc: dict[str, object], tmp_path: Path
+) -> None:
+    """A change to a different workflow file must not trigger the RPM job.
+
+    Only ci.yml carries install-smoke-rpm's own definition; every other
+    workflow file (including install-smoke-rpm-nightly.yml, its scheduled
+    counterpart) is irrelevant to it.
+    """
+    repo = _repo_with_one_change(tmp_path, ".github/workflows/typecheck-ts.yml")
+    outputs = _run_classify(repo, _classify_script(ci_doc), event="push")
+    assert outputs["rpm_relevant_changed"] == "false", (
+        f"an unrelated workflow file must not set rpm_relevant_changed; outputs={outputs!r}"
+    )
+    assert outputs["gha_workflows_changed"] == "true", f"sanity check on the same diff: outputs={outputs!r}"

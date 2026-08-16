@@ -4,8 +4,8 @@
 
 - **`bernstein replay <RUN_ID>`** - the original replay, optionally with task-trace re-submission.
 - **`bernstein replay diff RUN_A RUN_B`** - localise the first divergence between two recorded runs.
-- **`bernstein replay export <AGENT_ID> -o RECEIPT`** - write a portable per-step receipt.
-- **`bernstein replay publish <AGENT_ID> -o RECEIPT`** - write a redacted receipt for publishing.
+- **`bernstein replay export <AGENT_ID> [OUT]`** - write a portable per-step receipt.
+- **`bernstein replay publish <AGENT_ID> [OUT]`** - write a redacted receipt for publishing (see #3976: currently not completable).
 - **`bernstein replay verify <RECEIPT>`** - offline verifier for an exported receipt.
 - **`bernstein replay diff-journal A B`** - per-step divergence finder across two journals.
 
@@ -88,6 +88,31 @@ bernstein replay T-abc123 --model opus --extra-context "Make sure tests pass on 
 
 ---
 
+## Machine-readable output (`--as-json`)
+
+The flag is `--as-json`. Every subcommand accepts it, but **only some act on
+it**, which matters if you are scripting:
+
+| Surface | `--as-json` | Emits |
+|---|---|---|
+| `bernstein replay <AGENT_ID>` | yes | `{agent_id, head_hash, steps, entries[]}` |
+| `bernstein replay <RUN_ID> --verify` | yes | chain verdict, head hash, and the divergent step when one exists |
+| `bernstein replay diff-journal A B` | yes | `{diverged, seq, fields_changed[], left_values, right_values, reason}` |
+| `bernstein replay debug ...` | yes | head hash, step count, receipt path, whether it was signed |
+| `bernstein replay export` | **accepted, ignored** | human-readable output regardless |
+| `bernstein replay publish` | **accepted, ignored** | human-readable output regardless |
+| `bernstein replay verify <RECEIPT>` | **accepted, ignored** | human-readable output regardless |
+
+The bottom three exit normally and print prose, with no error saying the flag
+did nothing. Do not pipe them into a parser. Tracked in
+[#3976](https://github.com/sipyourdrink-ltd/bernstein/issues/3976).
+
+**The exit code is the verdict, not the payload.** On the three that ignore the
+flag it is the *only* machine-readable signal there is: `verify` exits non-zero
+on a receipt mismatch while still printing to stdout, so a caller that reads
+stdout and ignores the exit status sees a refused chain as a success. Check the
+exit code first and treat any payload as detail.
+
 ## Subcommands
 
 Beyond the base run/task replay, `bernstein replay` exposes subcommands for diffing runs and for exporting and verifying portable receipts.
@@ -104,21 +129,33 @@ bernstein replay diff 20260415-143022 20260415-150118
 
 Per-step divergence finder across two journals. Like `diff` but operates directly on two journal paths, reporting the first step index where the chains diverge.
 
-### `bernstein replay export <AGENT_ID> -o RECEIPT`
+`--as-json` emits `{diverged, seq, fields_changed[], left_values, right_values, reason}`, and the command exits `1` when `diverged` is true, so the exit code and the payload agree.
 
-Writes a portable per-step receipt for an agent's journal to the path given by `-o`. The receipt carries the step chain and its head hash so it can be verified offline by another party.
+### `bernstein replay export <AGENT_ID> [OUT]`
 
-```bash
-bernstein replay export backend-abc -o receipt.json
-```
+Writes a portable per-step receipt for an agent's journal. The receipt carries the step chain and its head hash so it can be verified offline by another party.
 
-### `bernstein replay publish <AGENT_ID> -o RECEIPT`
-
-Same as `export`, but produces a redacted receipt suitable for publishing. Sensitive fields are stripped while the head hash still anchors the visible steps.
+The destination is an optional **positional** argument, not a flag. Omit it and
+the receipt lands at `.sdd/runtime/receipts/<AGENT_ID>.tar`.
 
 ```bash
-bernstein replay publish backend-abc -o receipt.public.json
+# explicit destination
+bernstein replay export backend-abc receipt.tar
+
+# default destination: .sdd/runtime/receipts/backend-abc.tar
+bernstein replay export backend-abc
 ```
+
+### `bernstein replay publish <AGENT_ID> [OUT]`
+
+Same as `export`, but produces a redacted receipt suitable for publishing. Sensitive fields are stripped while the head hash still anchors the visible steps. The destination is positional, as for `export`.
+
+> **Currently not completable.** `publish` refuses without a confirmation flag
+> and names `--yes-i-want-to-publish`, which the CLI does not declare, so every
+> invocation exits 2. Tracked in
+> [#3976](https://github.com/sipyourdrink-ltd/bernstein/issues/3976); a working
+> example lands here with that fix. Use `export` for a local receipt in the
+> meantime -- `publish` differs only in redacting before it writes.
 
 ### `bernstein replay verify <RECEIPT>`
 

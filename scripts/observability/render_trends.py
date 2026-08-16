@@ -1,11 +1,15 @@
-"""Render ``docs/observability/trends.md`` from daily snapshot JSON files.
+"""Render ``docs/observability/trends.md`` from snapshot JSON files.
 
-The companion to :command:`bernstein doctor observe`. The daily
-workflow ``docs-observability-snapshot.yml`` writes one JSON file per
-day under ``docs/_internal/observability/snapshots/<YYYY-MM-DD>.json``
-(the raw ``--json`` payload from ``observe``). This script reads the
-last N days, picks the headline metric for every backend, and renders
-a Markdown document with ASCII sparklines.
+The companion to :command:`bernstein doctor observe`. The
+``docs-observability-snapshot.yml`` workflow is manual-only
+(``workflow_dispatch``, see #2856) and writes one JSON file per
+dispatch, named by date, under
+``docs/_internal/observability/snapshots/<YYYY-MM-DD>.json`` (the raw
+``--json`` payload from ``observe``). Dispatches are sporadic, not
+daily, so this script works off whichever snapshot dates actually
+exist rather than assuming one sample per calendar day: it reads the
+last N *captured snapshots*, picks the headline metric for every
+backend, and renders a Markdown document with ASCII sparklines.
 
 The renderer is deliberately dependency-free: it uses only the Python
 standard library plus a small unicode sparkline block alphabet. Run it
@@ -27,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 # Headline metrics by backend. The trend renderer pulls these out of
-# each daily snapshot and plots them as sparklines.
+# each captured snapshot and plots them as sparklines.
 HEADLINE_METRICS: dict[str, list[str]] = {
     "code-scanning": ["open_alerts", "critical_alerts", "high_alerts"],
 }
@@ -38,8 +42,8 @@ SPARK_BLOCKS = " ▁▂▃▄▅▆▇█"
 def _sparkline(values: list[float | None]) -> str:
     """Render a unicode-block sparkline for ``values``.
 
-    ``None`` values render as a space so missing days are visible at
-    their actual position rather than collapsed.
+    ``None`` values render as a space so a metric missing from a given
+    snapshot is visible at its actual position rather than collapsed.
     """
 
     if not values:
@@ -92,27 +96,46 @@ def _extract_metric(payload: dict[str, Any], backend: str, metric: str) -> float
     return None
 
 
-def render_markdown(snapshots: list[tuple[dt.date, dict[str, Any]]], *, days: int) -> str:
-    """Render the trends Markdown body from the loaded snapshots."""
+def render_markdown(
+    snapshots: list[tuple[dt.date, dict[str, Any]]],
+    *,
+    days: int,
+    now: dt.date | None = None,
+) -> str:
+    """Render the trends Markdown body from the loaded snapshots.
+
+    ``now`` is the reference date for the staleness line; it defaults to
+    the current UTC date and is only overridden by tests.
+    """
 
     if not snapshots:
         return (
             "# Observability trends\n\n"
-            "_No snapshots captured yet. The daily workflow "
-            "`docs-observability-snapshot.yml` populates "
+            "_No snapshots captured yet. The `docs-observability-snapshot.yml` "
+            "workflow (dispatched manually - see #2856) populates "
             "`docs/_internal/observability/snapshots/<date>.json`._\n"
         )
 
+    if now is None:
+        now = dt.datetime.now(dt.UTC).date()
+
     first = snapshots[0][0]
     last = snapshots[-1][0]
+    span_days = (last - first).days
+    staleness_days = (now - last).days
     lines = [
         "# Observability trends",
         "",
-        f"_Window: {first.isoformat()} -> {last.isoformat()} ({len(snapshots)} day(s); target {days})_",
+        f"_Window: {first.isoformat()} -> {last.isoformat()} "
+        f"({len(snapshots)} snapshot(s) captured across {span_days} day(s); target {days} snapshots)_",
         "",
-        "Sparklines are rendered with unicode block characters. Each "
-        "tick is one daily snapshot from `bernstein doctor observe "
-        "--json`. Missing days appear as blank ticks.",
+        f"_Newest snapshot: {last.isoformat()} ({staleness_days} day(s) old)_",
+        "",
+        "Sparklines are rendered with unicode block characters. Each tick is "
+        "one captured snapshot from `bernstein doctor observe --json`, in "
+        "capture order - ticks are not evenly spaced in time, since "
+        "dispatches are manual and sporadic. A metric absent from a given "
+        "snapshot renders as a blank tick.",
         "",
     ]
     for backend, metrics in HEADLINE_METRICS.items():
@@ -168,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
         "--days",
         type=int,
         default=30,
-        help="Number of trailing days to render.",
+        help="Number of trailing captured snapshots to render (not calendar days - dispatches are sporadic).",
     )
     args = parser.parse_args(argv)
 

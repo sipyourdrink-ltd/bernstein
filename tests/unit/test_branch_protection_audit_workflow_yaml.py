@@ -103,32 +103,49 @@ def test_branch_protection_audit_permissions_are_read_only() -> None:
     assert _audit_job(workflow).get("permissions") == {"contents": "read"}
 
 
-def test_branch_protection_audit_reads_main_protection_without_mutating() -> None:
+def test_branch_protection_audit_does_not_read_the_legacy_protection_endpoint() -> None:
+    """Classic protection has no field for `merge_queue` or `bypass_actors`.
+
+    An audit built on it would stay green exactly when the merge-queue
+    rule is dropped or a bypass actor is added - the regressions the
+    ruleset read exists to catch. It is retired outright, not kept as a
+    secondary probe: see the workflow header for why.
+    """
     workflow_text = _workflow_text()
-    assert "gh api" in workflow_text, "audit must read live branch protection through the GitHub API"
-    assert "repos/${GITHUB_REPOSITORY}/branches/main/protection" in workflow_text
+    assert "repos/${GITHUB_REPOSITORY}/branches/main/protection" not in workflow_text
+    assert "gh api" not in workflow_text, (
+        "the workflow delegates to the audited, unit-tested script, not inline gh api calls"
+    )
+
+
+def test_branch_protection_audit_documents_why_the_legacy_endpoint_was_retired() -> None:
+    """`branch-protection-audit.yml` line ~69 used to be the only place this
+    reasoning lived. Pin it in the header so the rationale survives even
+    if nobody reads the PR that made the change."""
+    workflow_text = _workflow_text()
+    assert "merge_queue" in workflow_text
+    assert "bypass_actors" in workflow_text
+    assert "not read here" in workflow_text or "not read" in workflow_text
+
+
+def test_branch_protection_audit_delegates_to_the_ruleset_audit_script_without_mutating() -> None:
+    workflow_text = _workflow_text()
+    assert "scripts/check_branch_ruleset_audit.py" in workflow_text
+    assert Path("scripts/check_branch_ruleset_audit.py").exists()
     assert not re.search(r"\b(?:POST|PUT|PATCH|DELETE)\b", workflow_text), "audit workflow must not mutate settings"
     assert "--method" not in workflow_text
     assert " -X " not in workflow_text
 
 
-def test_branch_protection_audit_compares_live_contexts_with_canary_expectations() -> None:
-    workflow_text = _workflow_text()
+def test_branch_protection_audit_canary_still_defines_the_required_contexts() -> None:
+    """The script reads this file directly; pin its shape here too so a
+    canary regression is caught at the workflow-suite level as well as in
+    `tests/unit/scripts/test_check_branch_ruleset_audit.py`."""
     canary_text = CANARY.read_text(encoding="utf-8")
-
     assert _canary_expected_contexts() == REQUIRED_CONTEXTS
     assert "BRANCH_PROTECTION_CONTEXTS_JSON" in canary_text
-    assert "required-check-canary.yml" in workflow_text
-    assert "BRANCH_PROTECTION_CONTEXTS_JSON" in workflow_text
-    assert "required_status_checks" in workflow_text
-    assert "contexts" in workflow_text
-    assert "checks" in workflow_text
-    assert "missing" in workflow_text
-    assert "extra" in workflow_text
 
 
-def test_branch_protection_audit_fails_when_live_protection_is_unreadable() -> None:
+def test_branch_protection_audit_step_is_not_advisory() -> None:
     workflow_text = _workflow_text()
-    assert "::error::Unable to read live branch protection for main" in workflow_text
-    assert "exit 1" in workflow_text
     assert "continue-on-error: true" not in workflow_text

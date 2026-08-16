@@ -75,16 +75,60 @@ def _mapping(value: object) -> dict[str, object]:
     return cast("dict[str, object]", value)
 
 
+#: The maintainer-applied, action-intent label that starts this pipeline.
+#: Deliberately not "bernstein" - that label is repo-documented as an
+#: origin marker ("Opened by the project's own tooling") applied at
+#: issue-creation time, not a start switch a maintainer applies later.
+#: See #3954.
+TRIGGER_LABEL = "bernstein:decompose"
+
+#: The origin-marker label. This workflow must never gate on, remove, or
+#: otherwise treat this as its trigger - conflating the two was the #3954
+#: defect.
+ORIGIN_MARKER_LABEL = "bernstein"
+
+
 def test_decompose_job_requires_trusted_issue_author() -> None:
     job = _job("decompose")
     condition = job.get("if", "")
 
     assert isinstance(condition, str)
-    assert "github.event.label.name == 'bernstein'" in condition
+    assert f"github.event.label.name == '{TRIGGER_LABEL}'" in condition
     assert "github.event.issue.author_association" in condition
     assert "OWNER" in condition
     assert "MEMBER" in condition
     assert "COLLABORATOR" in condition
+
+
+def test_every_job_gates_on_the_action_intent_label_not_the_origin_marker() -> None:
+    """Lock the #3954 fix: the trigger label and the origin marker must
+    never be the same string again, and every job's label check must
+    agree on which one is the trigger.
+    """
+    assert TRIGGER_LABEL != ORIGIN_MARKER_LABEL
+
+    jobs = _load().get("jobs", {})
+    assert isinstance(jobs, dict)
+    for name, job in jobs.items():
+        condition = job.get("if", "")
+        if not isinstance(condition, str) or "github.event.label.name" not in condition:
+            continue
+        assert f"github.event.label.name == '{TRIGGER_LABEL}'" in condition, (
+            f"job {name!r} must gate on the action-intent label {TRIGGER_LABEL!r}"
+        )
+        assert f"github.event.label.name == '{ORIGIN_MARKER_LABEL}'" not in condition, (
+            f"job {name!r} must not gate on the origin-marker label {ORIGIN_MARKER_LABEL!r}"
+        )
+
+
+def test_workflow_never_removes_the_origin_marker_label() -> None:
+    """This workflow may remove its own trigger label after pickup, but the
+    origin marker documents where the issue came from and is not this
+    workflow's state to manage.
+    """
+    raw = WORKFLOW.read_text(encoding="utf-8")
+    assert f'--remove-label "{ORIGIN_MARKER_LABEL}"' not in raw
+    assert raw.count(f'--remove-label "{TRIGGER_LABEL}"') >= 1
 
 
 def test_starting_the_pipeline_is_a_maintainer_action_not_a_label() -> None:
@@ -207,8 +251,9 @@ def test_concurrency_group_includes_the_label_that_gates_every_job() -> None:
 
     GitHub offers no label filter on an `issues` trigger, so applying N labels
     to one issue always creates N runs and every job here discards N-1 of them
-    through `github.event.label.name == 'bernstein'`. That job-level gate runs
-    after the run exists, so the discarded runs still need somewhere to go.
+    through `github.event.label.name == 'bernstein:decompose'`. That job-level
+    gate runs after the run exists, so the discarded runs still need
+    somewhere to go.
 
     If the concurrency group omits the label, all N land in one group and
     `cancel-in-progress` kills each as the next arrives: labelling an issue

@@ -1,9 +1,21 @@
 name: "Bernstein Issue Decompose"
 
-# Trigger: when a trusted-author issue is labeled with "bernstein",
-# first build a read-only plan from the issue text. Repository write
-# authority is granted only after a maintainer has approved the file
-# scope with a bernstein-scope:<path> label.
+# Trigger: when a trusted-author issue is labeled with
+# "bernstein:decompose", first build a read-only plan from the issue
+# text. Repository write authority is granted only after a maintainer
+# has approved the file scope with a bernstein-scope:<path> label.
+#
+# This is deliberately not the plain "bernstein" label. That label is
+# repo-documented as an origin marker ("Opened by the project's own
+# tooling") applied at issue-creation time by the project's own idea
+# generator, not an action a maintainer takes later to start a run -
+# every issue that has ever carried it was auto-opened, and none of
+# them show a pipeline run past the initial gate. Gating on it would
+# make issue-creation tooling and pipeline-start intent the same
+# signal, when they are not. "bernstein:decompose" is a maintainer-
+# applied, action-intent label with its own repo description; nothing
+# in this workflow reads or removes the origin-marker "bernstein"
+# label.
 #
 # The label is this pipeline's start switch, and applying labels is
 # available to triage-role collaborators. Starting a pipeline that
@@ -18,7 +30,7 @@ on:
 
 # The label name is part of the group key, not just the issue number.
 #
-# Every job below is gated on `github.event.label.name == 'bernstein'`, but
+# Every job below is gated on `github.event.label.name == 'bernstein:decompose'`, but
 # that gate is evaluated per job, after the run already exists. GitHub has no
 # label filter for `issues` triggers, so applying N labels to one issue always
 # creates N runs and N-1 of them have nothing to do.
@@ -33,8 +45,8 @@ on:
 # Including the label name gives each label its own group. Runs for other
 # labels no longer contend, so they conclude `skipped`, which is the honest
 # neutral outcome for a run whose jobs were all filtered out. Two rapid
-# `bernstein` labels still share a group and still supersede each other, which
-# is the only case the cancellation was ever for.
+# `bernstein:decompose` labels still share a group and still supersede each
+# other, which is the only case the cancellation was ever for.
 concurrency:
   group: bernstein-decompose-${{ github.event.issue.number }}-${{ github.event.label.name }}
   cancel-in-progress: true
@@ -49,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     if: >-
-      github.event.label.name == 'bernstein' &&
+      github.event.label.name == 'bernstein:decompose' &&
       github.event.sender.login == 'chernistry' &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
     permissions:
@@ -131,7 +143,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: >-
-      github.event.label.name == 'bernstein' &&
+      github.event.label.name == 'bernstein:decompose' &&
       github.event.sender.login == 'chernistry' &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
     permissions:
@@ -173,7 +185,7 @@ jobs:
 
           print(f"allowed_scope={scope}")
           PY
-            gh issue edit "$ISSUE_NUMBER" --remove-label "bernstein" 2>/dev/null || true
+            gh issue edit "$ISSUE_NUMBER" --remove-label "bernstein:decompose" 2>/dev/null || true
             gh issue comment "$ISSUE_NUMBER" \
               --body "Bernstein issue decomposition was not started because the issue does not have exactly one valid maintainer-approved \`bernstein-scope:<path>\` label."
             exit 1
@@ -189,7 +201,7 @@ jobs:
       - plan
       - scope_gate
     if: >-
-      github.event.label.name == 'bernstein' &&
+      github.event.label.name == 'bernstein:decompose' &&
       github.event.sender.login == 'chernistry' &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association) &&
       needs.scope_gate.outputs.allowed_scope != ''
@@ -338,7 +350,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh issue edit ${{ github.event.issue.number }} \
-            --remove-label "bernstein" \
+            --remove-label "bernstein:decompose" \
             --add-label "bernstein:in-progress" 2>/dev/null || true
 
   reject-untrusted-issue:
@@ -346,7 +358,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: >-
-      github.event.label.name == 'bernstein' &&
+      github.event.label.name == 'bernstein:decompose' &&
       !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
     permissions:
       issues: write
@@ -356,6 +368,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
-          gh issue edit "$ISSUE_NUMBER" --remove-label "bernstein" 2>/dev/null || true
+          gh issue edit "$ISSUE_NUMBER" --remove-label "bernstein:decompose" 2>/dev/null || true
           gh issue comment "$ISSUE_NUMBER" \
             --body "Bernstein issue decomposition was not started because the issue author is not a repository collaborator. A maintainer can run it from a trusted issue after review."

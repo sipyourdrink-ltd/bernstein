@@ -78,11 +78,12 @@ MODULES: tuple[Module, ...] = (
             "tests/unit/test_audit_chain_byteflip_regression.py",
             "tests/unit/test_audit_key.py",
             "tests/unit/test_audit_log_mutation_kill.py",
+            "tests/unit/test_audit_log_chain_verifier_invariants.py",
         ),
         threshold=0.70,
         budget_seconds=1200,
         max_candidates=80,
-        note="HMAC-chained audit log writer.",
+        note=("HMAC-chained audit log writer."),
     ),
     Module(
         key="audit_integrity",
@@ -160,6 +161,34 @@ MUTATIONS: tuple[tuple[str, str], ...] = (
     ("len(", "0 * len("),
 )
 
+#: Subset of :data:`MUTATIONS` that flips an English boolean word rather than
+#: a code operator. Excluded on pure f-string-literal lines - see
+#: :func:`_is_fstring_literal_continuation`.
+_PROSE_WORD_MUTATIONS: frozenset[tuple[str, str]] = frozenset({(" and ", " or "), (" or ", " and "), ("not ", "")})
+
+
+def _is_fstring_literal_continuation(line: str) -> bool:
+    """Whether *line* is entirely (part of) an f-string literal, no code.
+
+    A physical source line whose stripped text begins with ``f"`` or ``f'``
+    is, by Python's grammar, one piece of a string-literal token - either a
+    continuation line of a multi-line implicit concatenation (the style this
+    codebase uses for long f-string messages, one literal segment per line
+    inside the enclosing parens) or a lone literal. It cannot carry any other
+    expression or statement on the same line.
+
+    :data:`_PROSE_WORD_MUTATIONS` on such a line therefore only reword the
+    rendered text of a log line or exception message - never program logic -
+    so a mutation gate measuring verifier *behaviour* gains nothing by
+    proposing them, and every caller downstream would otherwise need to pin
+    exact message wording to kill what is really a copy-edit, not a defect.
+    Candidates on every other line (including the ``{expr}`` portions
+    embedded in an f-string, which sit on their own line only when the
+    expression itself is multi-line - rare in this codebase) are unaffected.
+    """
+    stripped = line.lstrip()
+    return stripped.startswith(('f"', "f'"))
+
 
 @dataclass
 class ModuleResult:
@@ -233,8 +262,11 @@ def _candidates(target: Path, limit: int) -> list[tuple[int, str, str, str]]:
             continue
         if line.rstrip().endswith(",") and "=" in line and "(" not in line:
             continue
+        is_fstring_line = _is_fstring_literal_continuation(line)
         for search, replace in MUTATIONS:
             if search in line and search != replace:
+                if is_fstring_line and (search, replace) in _PROSE_WORD_MUTATIONS:
+                    continue
                 out.append((i, line, search, replace))
         if len(out) >= limit:
             break
