@@ -111,6 +111,34 @@ def test_bump_pr_enables_auto_merge(release_job: dict[str, Any]) -> None:
     )
 
 
+def test_the_enqueue_passes_no_merge_strategy(release_job: dict[str, Any]) -> None:
+    """Enqueueing must not name a merge method; the queue applies its own.
+
+    A strategy flag on the enqueue call conflicts with the method the
+    merge queue is configured with, and the release bump is the worst
+    place to discover that -- the operator is waiting on a tag.
+    """
+    enqueue = [run for run in _runs(release_job) if "gh pr merge" in run]
+    assert enqueue, "expected an enqueue call for the bump PR"
+    for run in enqueue:
+        for flag in ("--squash", "--merge", "--rebase"):
+            assert flag not in run, f"the enqueue call passes {flag}; the merge queue applies its own configured method"
+
+
+def test_a_token_downgrade_is_announced(release_job: dict[str, Any]) -> None:
+    """Falling back to GITHUB_TOKEN must not look like a normal release.
+
+    A PR opened with GITHUB_TOKEN starts no ``pull_request`` workflows, so
+    its required contexts never report and the armed auto-merge can never
+    fire. The run still concludes green, which is exactly how a release
+    silently stalls; the fallback therefore has to say so.
+    """
+    runs = _runs(release_job)
+    assert any("::warning" in run and "GITHUB_TOKEN" in run for run in runs), (
+        "the GITHUB_TOKEN fallback must annotate the run: its bump PR cannot merge on its own"
+    )
+
+
 def test_no_inline_publish_reimplementation(release_job: dict[str, Any]) -> None:
     """Build/PyPI-publish/GitHub-Release steps belong to publish.yml, not here."""
     runs = _runs(release_job)

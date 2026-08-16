@@ -157,7 +157,7 @@ jobs:
 
       # Same enqueue call the merge queue expects everywhere else in this
       # repo (docs/operations/merge-gate.md configures the queue's merge
-      # method as squash), so this PR merges the same way ci-topology-heal.yml
+      # method), so this PR merges the same way ci-topology-heal.yml
       # lands its own bot-authored PRs.
       - name: Enable auto-merge
         if: >-
@@ -167,7 +167,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN || secrets.GITHUB_TOKEN }}
           PR_URL: ${{ steps.bump_pr.outputs.pull-request-url }}
-        run: gh pr merge --auto --squash "$PR_URL"
+          HAS_PAT: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          # No merge-strategy flag: the queue applies its own configured
+          # method, and passing one here conflicts with it.
+          gh pr merge --auto "$PR_URL"
+          if [ "${HAS_PAT}" != "true" ]; then
+            echo "::warning title=Bump PR needs a manual merge::BERNSTEIN_AUTOSYNC_TOKEN is unset, so ${PR_URL} was opened with GITHUB_TOKEN. Its pull_request workflows never start, so the required contexts never report and auto-merge cannot fire. Close and reopen the PR under a user account to start CI."
+            echo "- Bump PR **${PR_URL}** was opened with GITHUB_TOKEN: its required checks will never run. Close and reopen it under a user account." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Dry run summary
         if: inputs.dry_run == true
