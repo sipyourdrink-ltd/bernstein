@@ -244,6 +244,7 @@ def test_discovery_finds_the_known_pull_request_lanes() -> None:
         "coverage-ratchet.yml",
         "docs-observability-snapshot.yml",
         "nightly-drift-sweep.yml",
+        "release-major-minor.yml",
     ):
         assert expected in lanes, f"{expected} opens a pull request but discovery missed it"
 
@@ -521,6 +522,7 @@ def test_discovery_matches_exactly_the_known_pull_request_lanes() -> None:
         "coverage-ratchet.yml",
         "docs-observability-snapshot.yml",
         "nightly-drift-sweep.yml",
+        "release-major-minor.yml",
     }
 
 
