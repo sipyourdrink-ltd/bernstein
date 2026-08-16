@@ -18,6 +18,7 @@ from bernstein.core.models import Complexity, Scope, Task
 from bernstein.core.seed import SeedConfig
 from bernstein.core.server_launch import BootstrapResult
 
+from bernstein.core.orchestration import bootstrap as bootstrap_module
 from bernstein.core.orchestration.bootstrap import _post_plan_tasks, _start_watchdog
 
 
@@ -343,6 +344,117 @@ def test_bootstrap_from_goal_autowrites_seed_on_first_run(
 
     assert result.manager_task_id == "mgr-1"
     mock_autowrite.assert_called_once_with(tmp_path)
+
+
+def _capture_bernstein_error(stack: ExitStack) -> list[str]:
+    """Record the ``what`` of every BernsteinError printed inside ``stack``.
+
+    Both readiness failures build the error and call ``.print()`` on it rather
+    than raising it, so the message is only observable by intercepting the
+    print. Patching the method keeps the real dataclass - and therefore the
+    real f-string - in play.
+    """
+    printed: list[str] = []
+    stack.enter_context(
+        patch(
+            "bernstein.cli.utils.errors.BernsteinError.print",
+            lambda self: printed.append(self.what),
+        )
+    )
+    return printed
+
+
+def _patched_timeout(value: float) -> Any:
+    """Override the readiness budget bootstrap renders into its error message.
+
+    ``create=True`` is deliberate. Without it, a tree where the message has gone
+    back to a hardcoded literal fails these tests on a missing patch target - an
+    AttributeError that says nothing about the message. With it, such a tree runs
+    the assertion and fails on the message, which is what these tests are about.
+    That the name is a real import rather than a test-created one is pinned
+    separately by ``test_bootstrap_reads_the_readiness_timeout_from_server_launch``.
+    """
+    return patch.object(bootstrap_module, "_SERVER_READY_TIMEOUT_S", value, create=True)
+
+
+def _patch_startup_up_to_readiness(stack: ExitStack, invariants_module: types.ModuleType) -> None:
+    """Stub everything between entry and ``_wait_for_server``, which returns False."""
+    stack.enter_context(patch.dict(sys.modules, {"bernstein.evolution.invariants": invariants_module}))
+    stack.enter_context(patch("bernstein.core.orchestration.bootstrap.console", MagicMock()))
+    stack.enter_context(
+        patch("bernstein.core.orchestration.bootstrap.concurrent.futures.ThreadPoolExecutor", _Executor)
+    )
+    stack.enter_context(patch("bernstein.core.orchestration.bootstrap.preflight_checks"))
+    stack.enter_context(patch("bernstein.core.orchestration.bootstrap.ensure_sdd"))
+    stack.enter_context(patch("bernstein.core.orchestration.bootstrap._clean_stale_runtime"))
+    stack.enter_context(patch("bernstein.core.orchestration.bootstrap._discover_catalog"))
+    stack.enter_context(patch("bernstein.core.orchestration.bootstrap._build_codebase_index"))
+    stack.enter_context(patch("bernstein.core.orchestration.bootstrap._resolve_bind_host", return_value="127.0.0.1"))
+    stack.enter_context(patch("bernstein.core.orchestration.bootstrap._resolve_auth_token", return_value=None))
+    stack.enter_context(
+        patch("bernstein.core.orchestration.bootstrap._resolve_server_url", return_value="http://server")
+    )
+    stack.enter_context(patch("bernstein.core.orchestration.bootstrap.supervised_server", return_value=111))
+    stack.enter_context(patch("bernstein.core.orchestration.bootstrap._wait_for_server", return_value=False))
+
+
+def test_seed_readiness_error_reports_the_timeout_the_wait_actually_uses(
+    tmp_path: Path,
+    invariants_module: types.ModuleType,
+) -> None:
+    """The bootstrap_from_seed readiness message renders _SERVER_READY_TIMEOUT_S, not a literal.
+
+    ``_wait_for_server`` waits ``_SERVER_READY_TIMEOUT_S``; the error message is
+    the only budget an operator ever sees. The constant is patched to a value
+    that appears nowhere in the source so a message that merely happens to
+    contain the current default cannot pass.
+    """
+    with ExitStack() as stack:
+        printed = _capture_bernstein_error(stack)
+        _patch_startup_up_to_readiness(stack, invariants_module)
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.parse_seed", return_value=_seed()))
+        stack.enter_context(_patched_timeout(47.5))
+        with pytest.raises(SystemExit):
+            bootstrap_from_seed(tmp_path / "bernstein.yaml", tmp_path, port=8123)
+
+    assert printed == ["Task server on port 8123 did not respond within 47.5s"]
+
+
+def test_goal_readiness_error_reports_the_timeout_the_wait_actually_uses(
+    tmp_path: Path,
+    invariants_module: types.ModuleType,
+) -> None:
+    """The second call site, in _bootstrap_from_goal_impl, derives the same number.
+
+    The two sites drifted independently before: the issue that prompted this
+    found the same hardcoded ``10.0s`` in both.
+    """
+    discovery = SimpleNamespace(agents=[SimpleNamespace(name="codex", logged_in=True)])
+
+    with ExitStack() as stack:
+        printed = _capture_bernstein_error(stack)
+        _patch_startup_up_to_readiness(stack, invariants_module)
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._acquire_pid_lock"))
+        stack.enter_context(patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery))
+        stack.enter_context(patch("bernstein.core.server_launch._detect_project_type", return_value="python"))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.auto_write_bernstein_yaml"))
+        stack.enter_context(_patched_timeout(47.5))
+        with pytest.raises(SystemExit):
+            bootstrap_from_goal("Ship the parser", tmp_path, port=8123, cli="auto")
+
+    assert printed == ["Task server on port 8123 did not respond within 47.5s"]
+
+
+def test_bootstrap_reads_the_readiness_timeout_from_server_launch() -> None:
+    """bootstrap's constant is server_launch's constant.
+
+    The two tests above pin the message to whatever ``bootstrap`` holds. This
+    pins what it holds to the module whose deadline loop consumes it, so
+    re-declaring a local copy is a failure rather than a silent duplicate.
+    """
+    from bernstein.core.server.server_launch import _SERVER_READY_TIMEOUT_S as source
+
+    assert source == bootstrap_module._SERVER_READY_TIMEOUT_S
 
 
 def _plan_task() -> Task:

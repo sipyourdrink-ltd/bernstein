@@ -57,6 +57,7 @@ from bernstein.core.seed import (
     parse_seed,
 )
 from bernstein.core.server_launch import (
+    _SERVER_READY_TIMEOUT_S,
     BootstrapResult,
     _build_codebase_index,
     _clean_stale_runtime,
@@ -723,7 +724,7 @@ def bootstrap_from_seed(
         from bernstein.cli.errors import BernsteinError
 
         BernsteinError(
-            what=f"Task server on port {port} did not respond within 10.0s",
+            what=f"Task server on port {port} did not respond within {_SERVER_READY_TIMEOUT_S}s",
             why="Server process may have crashed during startup",
             fix="Check .sdd/runtime/server.log for details",
         ).print()
@@ -1459,7 +1460,7 @@ def _bootstrap_from_goal_impl(
             from bernstein.cli.errors import BernsteinError
 
             BernsteinError(
-                what=f"Task server on port {port} did not respond within 10.0s",
+                what=f"Task server on port {port} did not respond within {_SERVER_READY_TIMEOUT_S}s",
                 why="Server process may have crashed during startup",
                 fix="Check .sdd/runtime/server.log for details",
             ).print()
