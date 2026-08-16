@@ -104,6 +104,8 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [Behaviour anomaly detection](../operations/observability-overview.md) | Full | 3 | Flags agents whose runtime metrics deviate statistically from baseline (`core/observability/behavior_anomaly.py`) |
 | [Context degradation detector](../architecture/context-degradation-detector.md) | Full | 3 | Monitors quality over time, restarts when degraded |
 | Agent trust tiers | Brief | 3 | `bernstein agents trust`; tiers accrue from task outcomes in `.sdd/trust/` and map to an `AgentPermissions` profile (`core/agents/agent_trust.py`) |
+| [Volunteer project manifest](volunteer-manifest.md) | Full | 3 | A project's opt-in policy — OSI licence, acceptance gates, path scope, egress, sandbox floor — loaded and content-addressed by `core/volunteer/manifest.py`; validate one with `bernstein volunteer verify` |
+| [Volunteer sandbox profile](volunteer-sandbox.md) | Full | 3 | Deny-all-egress containment derived from the manifest and the donor's own limits; refusals are records, not log lines (`core/volunteer/sandbox_profile.py`) |
 
 ## Verifiability and provenance
 
@@ -327,6 +329,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | `bernstein compaction log` | Full | 3 | Inspect chain-anchored compaction receipts |
 | `bernstein identity keydir/decode/verify` | Full | 4 | Print the JWKS key directory and decode/verify install identity |
 | [`bernstein pool register/list/show/verify`](../operations/sandbox-pools.md) | Full | 3 | Manage lease-backed named resource pools |
+| [`bernstein volunteer verify`](volunteer-manifest.md) | Full | 3 | Validate a project's `.bernstein/volunteer.json` and print the manifest digest a receipt binds to |
 
 ---
 

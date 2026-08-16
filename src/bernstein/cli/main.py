@@ -86,6 +86,7 @@ from bernstein.cli.commands.run_names_cmd import run_lookup_cmd
 from bernstein.cli.commands.skills_cmd import skills_group
 from bernstein.cli.commands.spec_cmd import spec_group
 from bernstein.cli.commands.trackers_cmd import trackers_group
+from bernstein.cli.commands.volunteer_cmd import volunteer_group
 from bernstein.cli.compliance_cmd import compliance_group
 from bernstein.cli.config_path_cmd import config_path_cmd
 from bernstein.cli.cost import (
@@ -1462,3 +1463,4 @@ from bernstein.cli.commands.api_check_cmd import api_check_cmd  # noqa: E402
 cli.add_command(api_check_cmd, "api-check")
 cli.add_command(ab_test_cmd, "ab-test")
 cli.add_command(receipt_group, "receipt")
+cli.add_command(volunteer_group, "volunteer")

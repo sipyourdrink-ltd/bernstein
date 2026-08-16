@@ -154,6 +154,29 @@ or the host rules, because those are not expressible as a JSON Schema anyone
 would want to read — the loader is the authority on them, and the list above is
 the description of what it does.
 
+## Checking it before you commit it
+
+```bash
+bernstein volunteer verify                 # this checkout
+bernstein volunteer verify /path/to/repo   # somewhere else
+bernstein volunteer verify --json          # for a CI step
+```
+
+The command loads the file through the same loader a donor's worker uses, so a
+manifest that verifies here is one a worker will accept. On a rejection it names
+the field and exits non-zero; the field name is the one in the table above, not a
+line number, because the failure is a policy failure rather than a syntax one.
+
+It prints the digest, which is the value a submission's receipt carries as
+`manifest_sha256` — this is how a maintainer learns what their submissions will
+be checked against, without recomputing it by hand.
+
+It also prints **reachable hosts**, which is wider than the `egress_allowlist`
+you wrote. An empty allowlist reads as "no network" and is not: the sandbox
+profile adds the package registries, or the declared gates cannot install
+anything. Seeing the real set is usually the moment a maintainer decides whether
+to vendor dependencies.
+
 ## Reading it from Python
 
 ```python
