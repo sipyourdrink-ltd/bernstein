@@ -124,7 +124,7 @@ def test_an_explicitly_named_missing_dir_still_errors_even_with_an_archive(
     print a confident report about a directory the caller misspelled.
     """
     proj = _project(tmp_path, "typo", metrics=True, archived=True)
-    result = _run(proj, "--metrics-dir", str(proj / ".sdd" / "metrcis"))
+    result = _run(proj, "--metrics-dir", str(proj / ".sdd" / "no-such-metrics-dir"))
 
     assert result.exit_code == 1
     assert "Metrics directory not found" in result.output
