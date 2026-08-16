@@ -186,3 +186,29 @@ def test_bump_uses_the_supported_bump_script(release_job: dict[str, Any]) -> Non
         "release-major-minor.yml must bump the version via scripts/bump_version.py, "
         "the only path that keeps uv.lock and the distribution manifests in sync"
     )
+
+
+def test_ci_green_check_reads_check_runs_not_the_combined_status_api(
+    release_job: dict[str, Any],
+) -> None:
+    """The readiness gate must read check runs, not ``/commits/{sha}/status``.
+
+    Nothing in this repo posts a commit status; every lane reports as a check
+    run. The combined status API therefore answers ``pending`` with an empty
+    ``statuses`` array on every commit here, green tags included, so a gate
+    reading ``.state`` refuses every release. This workflow had never been
+    dispatched, so the bug shipped unnoticed.
+    """
+    steps = _steps(release_job)
+    verify = [step for step in steps if step.get("name") == "Verify CI green"]
+    assert verify, "the release job must verify CI before bumping"
+
+    run = str(verify[0].get("run", ""))
+    assert "/status" not in run, (
+        "Verify CI green reads the combined status API, which is always "
+        "'pending' in this repo; read /check-runs instead"
+    )
+    assert "check-runs" in run, "Verify CI green must query the check-runs API"
+    assert "CI gate" in run, (
+        "Verify CI green must decide on 'CI gate', the sole required context"
+    )

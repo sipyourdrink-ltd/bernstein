@@ -72,14 +72,45 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Bumping $VERSION → $NEW (${{ inputs.bump }})"
 
-      # Verify CI passed on current commit
+      # Verify CI passed on current commit.
+      #
+      # Read check runs, not the combined status API. Every lane in this repo
+      # reports as a check run and nothing posts a commit status, so
+      # /commits/{sha}/status answers `pending` with an empty `statuses` array
+      # on every commit that has ever existed here -- including green tags.
+      # This step used to read that field and would have refused every release.
+      #
+      # `CI gate` is the sole required context (docs/operations/merge-queue.md),
+      # so it is what decides. The other lanes are advisory: a cancelled one is
+      # routine (queue-branch runs get cancelled to free runners), but a lane
+      # that ran to completion and failed still means main is broken, so those
+      # are refused too.
       - name: Verify CI green
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
         run: |
-          STATUS=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/status --jq '.state')
-          if [ "$STATUS" != "success" ]; then
-            echo "::error::CI is not green (status: $STATUS). Fix CI before releasing."
+          set -euo pipefail
+          RUNS=$(gh api "repos/${{ github.repository }}/commits/${SHA}/check-runs" \
+            --paginate --jq '.check_runs[] | "\(.name)\t\(.status)\t\(.conclusion // "")"')
+
+          if [ -z "$RUNS" ]; then
+            echo "::error::No check runs on ${SHA}. CI has not reported; refusing to release."
+            exit 1
+          fi
+
+          GATE=$(printf '%s\n' "$RUNS" | awk -F'\t' '$1 == "CI gate" {print $3}' | tail -1)
+          if [ "$GATE" != "success" ]; then
+            echo "::error::CI gate is '${GATE:-missing}' on ${SHA}. Fix CI before releasing."
+            printf '%s\n' "$RUNS"
+            exit 1
+          fi
+
+          FAILED=$(printf '%s\n' "$RUNS" \
+            | awk -F'\t' '$2 == "completed" && $3 != "success" && $3 != "skipped" && $3 != "neutral" && $3 != "cancelled" {print $1 " (" $3 ")"}')
+          if [ -n "$FAILED" ]; then
+            echo "::error::Completed check runs failed on ${SHA}:"
+            printf '%s\n' "$FAILED"
             exit 1
           fi
 
