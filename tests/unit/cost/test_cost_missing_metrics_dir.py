@@ -65,7 +65,7 @@ def test_an_explicitly_named_metrics_dir_that_does_not_exist_still_says_so(
 ) -> None:
     """A typo must not read as "no data" — that is the signal the fix keeps."""
     proj = _project(tmp_path, metrics=True)
-    typo = _run(proj, "--metrics-dir", str(proj / ".sdd" / "metrcis"))
+    typo = _run(proj, "--metrics-dir", str(proj / ".sdd" / "no-such-metrics-dir"))
 
     assert typo.exit_code == 1
     assert "Metrics directory not found" in typo.output
@@ -73,7 +73,7 @@ def test_an_explicitly_named_metrics_dir_that_does_not_exist_still_says_so(
 
 def test_an_explicit_metrics_dir_typo_is_an_error_in_json_mode_too(tmp_path: Path) -> None:
     proj = _project(tmp_path, metrics=True)
-    typo = _run(proj, "--json", "--metrics-dir", str(proj / ".sdd" / "metrcis"))
+    typo = _run(proj, "--json", "--metrics-dir", str(proj / ".sdd" / "no-such-metrics-dir"))
 
     assert typo.exit_code == 1
     assert "Metrics directory not found" in json.loads(typo.output)["error"]
