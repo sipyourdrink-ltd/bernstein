@@ -68,7 +68,10 @@ def _load(name: str) -> dict[str, Any]:
 
 def _triggers(name: str) -> dict[str, Any]:
     workflow = _load(name)
-    return workflow[True]  # PyYAML reads a bare `on:` key as True.
+    # PyYAML 1.1 parses a bare `on:` key as the boolean True.
+    triggers = workflow.get(True, workflow.get("on"))
+    assert isinstance(triggers, dict), f"{name} must declare a mapping of triggers"
+    return triggers
 
 
 def _steps_using(job: dict[str, Any], action: str) -> list[dict[str, Any]]:

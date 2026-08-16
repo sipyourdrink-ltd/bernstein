@@ -150,10 +150,10 @@ def test_upload_step_still_runs_after_a_failing_harness() -> None:
 
     Without `always()`, a harness step that now legitimately fails skips
     the artifact upload that follows it, and the failing module's
-    survivor list never reaches the PR comment / job summary.
+    survivor list never leaves the runner.
     """
     condition = _upload_step().get("if", "")
     assert "always()" in str(condition), (
         "Upload module result must run with always() so a failing harness step "
-        "still uploads the module's JSON for the summary/PR comment"
+        "still uploads the module's survivor JSON as an artifact"
     )

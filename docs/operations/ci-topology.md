@@ -13,7 +13,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | --- | --- | --- | --- | --- |
 | .github/workflows/a2a-federation-e2e.yml | a2a-federation-e2e | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "a2a-federation-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/adapter-conformance-canary.yml | Adapter conformance canary | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "adapter-conformance-canary"} | 1 |
-| .github/workflows/adapter-contract-drift.yml | Adapter contract drift | merge_group, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "adapter-contract-drift-${{ github.ref }}"} | 2 |
+| .github/workflows/adapter-contract-drift.yml | Adapter contract drift | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "adapter-contract-drift-${{ github.ref }}"} | 2 |
 | .github/workflows/airgap-e2e.yml | Airgap E2E | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "airgap-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/area-steward-review.yml | Area steward review | pull_request_target | {"cancel-in-progress": "true", "group": "area-steward-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/auto-heal.yml | Auto-heal v2 | workflow_call | - | 2 |
@@ -46,7 +46,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/install-smoke-rpm-nightly.yml | CI (RPM smoke nightly) | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "install-smoke-rpm-nightly-${{ github.workflow }}-${{ github.ref }}"} | 2 |
 | .github/workflows/license-compliance.yml | License Compliance | pull_request, push | {"cancel-in-progress": "true", "group": "license-${{ github.ref }}"} | 1 |
 | .github/workflows/main-sha-marker.yml | Main SHA marker | push | {"cancel-in-progress": "false", "group": "main-sha-marker-${{ github.sha }}"} | 1 |
-| .github/workflows/mutation-fixed.yml | Mutation (fixed critical paths) | merge_group, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "mutation-fixed-${{ github.workflow }}-${{ github.ref }}"} | 2 |
+| .github/workflows/mutation-fixed.yml | Mutation (fixed critical paths) | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "mutation-fixed-${{ github.workflow }}-${{ github.ref }}"} | 1 |
 | .github/workflows/nightly-canary.yml | Nightly real-run canary | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "nightly-canary"} | 1 |
 | .github/workflows/nightly-deep-tests.yml | Nightly deep tests | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "nightly-deep-tests"} | 8 |
 | .github/workflows/nightly-drift-sweep.yml | Nightly drift sweep | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "nightly-drift-sweep"} | 1 |
@@ -68,7 +68,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/spa-bundle-freshness.yml | SPA bundle freshness | pull_request, push | {"cancel-in-progress": "true", "group": "spa-bundle-freshness-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/spiffe-extra-e2e.yml | SPIFFE Extra E2E | pull_request, push, workflow_dispatch | {"cancel-in-progress": "true", "group": "spiffe-extra-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/stale.yml | Stale cleanup | schedule | {"cancel-in-progress": "false", "group": "stale-${{ github.ref }}"} | 1 |
-| .github/workflows/static-analysis-extended.yml | static-analysis (extended) | merge_group, push, schedule, workflow_dispatch | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "static-analysis-extended-${{ github.ref }}"} | 6 |
+| .github/workflows/static-analysis-extended.yml | static-analysis (extended) | push, schedule, workflow_dispatch | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "static-analysis-extended-${{ github.ref }}"} | 6 |
 | .github/workflows/trufflehog.yml | trufflehog (secret scanning) | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "trufflehog-${{ github.ref }}"} | 1 |
 | .github/workflows/trunk-health-slo.yml | Trunk Health SLO | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "trunk-health-slo"} | 1 |
 | .github/workflows/typecheck-ts.yml | TypeScript typecheck | pull_request, push | {"cancel-in-progress": "true", "group": "typecheck-ts-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
@@ -113,7 +113,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/install-smoke-rpm-nightly.yml | install-smoke-rpm-nightly: Install smoke - RPM nightly (${{ matrix.image }})<br>open-failure-issue: Open / update RPM smoke nightly failure issue |
 | .github/workflows/license-compliance.yml | license-check: License check |
 | .github/workflows/main-sha-marker.yml | marker: Main SHA marker |
-| .github/workflows/mutation-fixed.yml | mutate: ${{ matrix.module }}<br>summary: Summary + PR comment |
+| .github/workflows/mutation-fixed.yml | mutate: ${{ matrix.module }} |
 | .github/workflows/nightly-canary.yml | canary: Real-run canary |
 | .github/workflows/nightly-deep-tests.yml | bandit-medium-and-high: Bandit (full -ll, advisory)<br>crosshair-pure-fns: CrossHair (concolic, deep)<br>hypothesis-deep: Hypothesis (deep, 1000 examples)<br>mutmut-full: Mutation (full repo, advisory)<br>pip-audit-deep: pip-audit (full closure)<br>schemathesis-deep: Schemathesis (deep, full sweep)<br>stress-leak-suite: Stress + resource-leak suite (TC-C)<br>unit-python-314: Unit tests (Python 3.14, shard ${{ matrix.shard }}) |
 | .github/workflows/nightly-drift-sweep.yml | sweep: Open drift-sweep PR if mirrors drifted |
@@ -180,7 +180,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/install-smoke-rpm-nightly.yml | workflow: {"contents": "read"}<br>install-smoke-rpm-nightly: {"contents": "read"}<br>open-failure-issue: {"contents": "read", "issues": "write"} | GITHUB_TOKEN |
 | .github/workflows/license-compliance.yml | workflow: {"contents": "read"}<br>license-check: {"contents": "read"} | - |
 | .github/workflows/main-sha-marker.yml | - | - |
-| .github/workflows/mutation-fixed.yml | workflow: {"contents": "read"}<br>mutate: {"contents": "read"}<br>summary: {"contents": "read", "pull-requests": "write"} | - |
+| .github/workflows/mutation-fixed.yml | workflow: {"contents": "read"}<br>mutate: {"contents": "read"} | - |
 | .github/workflows/nightly-canary.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/nightly-deep-tests.yml | workflow: {"contents": "read"}<br>bandit-medium-and-high: {"contents": "read"}<br>crosshair-pure-fns: {"contents": "read"}<br>hypothesis-deep: {"contents": "read"}<br>mutmut-full: {"contents": "read"}<br>pip-audit-deep: {"contents": "read"}<br>schemathesis-deep: {"contents": "read"}<br>stress-leak-suite: {"contents": "read"}<br>unit-python-314: {"contents": "read"} | - |
 | .github/workflows/nightly-drift-sweep.yml | workflow: {"contents": "read"}<br>sweep: {"contents": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
@@ -230,7 +230,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/docs-drift.yml | drift-check: upload docs-drift-report<br>drift-publish: download docs-drift-report |
 | .github/workflows/eval-nightly.yml | bench: upload eval-nightly-${{ github.run_id }}<br>smoke: upload eval-nightly-smoke |
 | .github/workflows/license-compliance.yml | license-check: upload license-report |
-| .github/workflows/mutation-fixed.yml | mutate: upload mutation-${{ matrix.module }}<br>summary: download - |
+| .github/workflows/mutation-fixed.yml | mutate: upload mutation-${{ matrix.module }} |
 | .github/workflows/nightly-deep-tests.yml | bandit-medium-and-high: upload nightly-bandit-results<br>mutmut-full: upload nightly-mutmut-results |
 | .github/workflows/pentest.yml | pentest: upload pentest-results-${{ github.run_number }} |
 | .github/workflows/publish.yml | build: upload dist<br>github-release: download dist<br>publish: download dist |

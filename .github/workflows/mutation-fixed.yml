@@ -9,11 +9,9 @@
 # (see scripts/mutmut_critical.py:MODULES).
 #
 # Trigger model:
-#   - PR: only when one of the gated source files OR the test suites that
-#     back them are touched (path-filtered to keep the gate quiet on
-#     unrelated PRs).
 #   - cron: weekly Sunday 04:17 UTC for a full audit independent of
-#     diff coverage.
+#     diff coverage. Per-PR mutation coverage of *touched* files lives in
+#     ci.yml's diff-only mutmut job, not here.
 #   - manual: workflow_dispatch with optional `module` input for ad-hoc
 #     runs against a single module key.
 #   - NOT on merge_group. The queue's only required context is `CI gate`,
@@ -23,26 +21,18 @@
 #     and the diff-only job in ci.yml keep the coverage.
 #
 # Each module runs in its own matrix job so per-module budgets are
-# enforced separately and a slow module doesn't squeeze the others. The
-# follow-up `summary` job aggregates all JSONs and (on PRs) sticks a
-# single comment with the per-module table.
+# enforced separately and a slow module doesn't squeeze the others. Each
+# module uploads its JSON as an artifact for offline reading.
 #
 # `continue-on-error` is per-module (matrix `include` below), not a
 # blanket flag. Six of the seven modules hold their threshold with real
-# margin and gate for real: a kill-rate drop fails the job and, on a
-# merge_group run, blocks the merge queue. `audit_log` is the one pinned
-# exception - see its `include` entry and
+# margin and gate for real: a kill-rate drop fails the workflow on the
+# weekly audit. `audit_log` is the one pinned exception - see its `include` entry and
 # tests/unit/test_mutation_fixed_workflow_yaml.py:ADVISORY_MODULES for
 # the kill-rate data behind it and the revisit date.
 name: Mutation (fixed critical paths)
 
 on:
-  # Pre-merge mutation gate runs on the merge queue's ephemeral branch rather
-  # than on every PR push. merge_group has no paths filter, so the full
-  # critical-path matrix runs pre-merge; the weekly cron still audits the
-  # modules independent of diff coverage. The PR-comment summary job below is
-  # event-gated to pull_request and simply no-ops on the queue (no PR to
-  # comment on), while the matrix jobs still run and enforce the gate.
   schedule:
     # Weekly full audit. Independent of any PR.
     - cron: "17 4 * * 0"
@@ -70,7 +60,7 @@ jobs:
     timeout-minutes: 30
     # Per-module, driven by matrix.advisory below - not a blanket flag.
     # `false` means a kill-rate drop on this module fails the job for
-    # real (and blocks the merge queue on a merge_group run).
+    # real on the weekly audit.
     continue-on-error: ${{ matrix.advisory }}
     permissions:
       contents: read
@@ -162,7 +152,7 @@ jobs:
       - name: Upload module result
         # always(): a module below threshold now fails the previous step
         # for real, and the artifact - the survivor list a human needs to
-        # act on it - must still reach the summary job and PR comment.
+        # act on it - must still be uploaded from the failing run.
         if: always() && steps.filter.outputs.skip != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -171,138 +161,3 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
-  summary:
-    name: Summary + PR comment
-    needs: [mutate]
-    if: always() && github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
-        with:
-          egress-policy: audit
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Download all module results
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          path: mutation-results
-          pattern: mutation-*
-          merge-multiple: true
-      - name: Comment on PR
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-            const dir = 'mutation-results';
-            const marker = '<!-- mutation-fixed -->';
-
-            let rows = [];
-            if (fs.existsSync(dir)) {
-              for (const f of fs.readdirSync(dir)) {
-                if (!f.endsWith('.json')) continue;
-                try {
-                  const parsed = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
-                  for (const r of parsed) rows.push(r);
-                } catch (e) {
-                  core.warning(`failed to parse ${f}: ${e.message}`);
-                }
-              }
-            }
-
-            const icon = (r) => {
-              if (!r.baseline_ok) return '⚠️';
-              return r.passed ? '✅' : '❌';
-            };
-
-            let body = `${marker}\n### Mutation gate (fixed critical paths)\n\n`;
-            if (rows.length === 0) {
-              body += '_No module results were produced. Check the matrix job logs._';
-            } else {
-              rows.sort((a, b) => a.module.localeCompare(b.module));
-              body += '| Module | Kill rate | Threshold | Killed/Total | Status | Notes |\n';
-              body += '|--------|-----------|-----------|--------------|--------|-------|\n';
-              for (const r of rows) {
-                const rate = r.total ? `${(100 * r.kill_rate).toFixed(1)}%` : 'n/a';
-                const thr = `${(100 * r.threshold).toFixed(0)}%`;
-                const counts = `${r.killed}/${r.total}`;
-                const notes = [];
-                if (!r.baseline_ok) notes.push('baseline tests failed');
-                if (r.budget_exceeded) notes.push('budget exceeded');
-                if (r.survivors && r.survivors.length) notes.push(`${r.survivors.length} survivors`);
-                body += `| ${r.module} | ${rate} | ${thr} | ${counts} | ${icon(r)} | ${notes.join('; ') || '-'} |\n`;
-              }
-              const failing = rows.filter(r => !r.passed);
-              if (failing.length) {
-                body += '\n<details><summary>Surviving mutations (top 20)</summary>\n\n';
-                let printed = 0;
-                for (const r of failing) {
-                  if (!r.survivors) continue;
-                  for (const s of r.survivors) {
-                    if (printed >= 20) break;
-                    body += `- \`${r.module}\`: ${s}\n`;
-                    printed += 1;
-                  }
-                  if (printed >= 20) break;
-                }
-                body += '\n</details>\n';
-              }
-              body += '\n> The gate enforces per module; only modules pinned advisory in `mutation-fixed.yml` can fail here without failing the job. To kill survivors locally:\n> `uv run python scripts/mutmut_critical.py --only <module>`';
-            }
-
-            // Always surface the table in the job summary first, so the
-            // report is never lost even when the PR comment cannot be
-            // posted (fork PRs run with a read-only GITHUB_TOKEN).
-            await core.summary.addRaw(body).write();
-
-            // Fork short-circuit: a read-only token cannot comment, so skip
-            // the API calls entirely rather than let them 403.
-            const headRepo = context.payload.pull_request
-              && context.payload.pull_request.head
-              && context.payload.pull_request.head.repo
-              && context.payload.pull_request.head.repo.full_name;
-            const baseRepo = `${context.repo.owner}/${context.repo.repo}`;
-            if (headRepo && headRepo !== baseRepo) {
-              core.notice(`Fork PR (${headRepo}); mutation report written to the job summary instead of a PR comment.`);
-              return;
-            }
-
-            try {
-              const { data: comments } = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-              });
-              const existing = comments.find(c => c.body && c.body.includes(marker));
-              if (existing) {
-                await github.rest.issues.updateComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: existing.id,
-                  body,
-                });
-              } else {
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: context.issue.number,
-                  body,
-                });
-              }
-            } catch (e) {
-              // A read-only token (e.g. dependabot same-repo PRs) 403s on
-              // the comment API. The report is already in the job summary,
-              // so downgrade to a notice rather than failing the job.
-              if (e.status === 403) {
-                core.notice('Comment API returned 403 (read-only token); mutation report is in the job summary.');
-                return;
-              }
-              throw e;
-            }

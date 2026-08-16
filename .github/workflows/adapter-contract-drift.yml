@@ -18,8 +18,6 @@ name: Adapter contract drift
 #
 # Triggers:
 #   * Once daily on schedule so upstream releases surface within 24h.
-#   * On PRs touching adapters or contracts so contract edits get
-#     validated immediately.
 #   * Manual dispatch for operator-driven re-runs.
 #   * NOT on merge_group. Only `CI gate` is required there, so this lane
 #     never gated a queue merge; it competed with ci.yml for runners on

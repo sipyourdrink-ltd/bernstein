@@ -726,6 +726,14 @@ jobs:
           }
 
   dead-code:
+    # Skips only when a merge-queue group's combined diff is docs-only
+    # (determine-changes computes it from the group's base; its failure
+    # mode is over-broad, never over-narrow). The roll-up tolerates the
+    # skip via DOCS_ONLY_SKIPPABLE. pull_request never takes this branch
+    # (paths-ignore keeps docs-only PRs out of this workflow entirely)
+    # and push runs everything, so main keeps the full suite.
+    if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
+    needs: [determine-changes]
     name: Dead code (Vulture)
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -747,6 +755,14 @@ jobs:
       - run: vulture src/ vulture_whitelist.py --min-confidence 80 --exclude "tests,docs,*/grpc_gen/*"
 
   dist-size:
+    # Skips only when a merge-queue group's combined diff is docs-only
+    # (determine-changes computes it from the group's base; its failure
+    # mode is over-broad, never over-narrow). The roll-up tolerates the
+    # skip via DOCS_ONLY_SKIPPABLE. pull_request never takes this branch
+    # (paths-ignore keeps docs-only PRs out of this workflow entirely)
+    # and push runs everything, so main keeps the full suite.
+    if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
+    needs: [determine-changes]
     name: Package size check
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -797,8 +813,15 @@ jobs:
   # and `bernstein doctor --json` to confirm the dominant install path
   # documented first in README still works end to end.
   install-smoke-pipx:
+    # Skips only when a merge-queue group's combined diff is docs-only
+    # (determine-changes computes it from the group's base; its failure
+    # mode is over-broad, never over-narrow). The roll-up tolerates the
+    # skip via DOCS_ONLY_SKIPPABLE. pull_request never takes this branch
+    # (paths-ignore keeps docs-only PRs out of this workflow entirely)
+    # and push runs everything, so main keeps the full suite.
+    if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
     name: Install smoke - pipx (${{ matrix.os }}, Python ${{ matrix.python-version }})
-    needs: [dist-size]
+    needs: [determine-changes, dist-size]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     permissions:
@@ -806,17 +829,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # PR lane installs one representative cell (ubuntu / 3.13): the
-        # packaging regression class this job catches (package-data,
-        # console_scripts, entry points) is OS- and interpreter-agnostic
-        # in practice, so one cell per PR is enough signal. The full
-        # 4-cell matrix runs on every push to main and on dispatch.
-        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest"]') }}
+        # PR and merge-queue lanes install one representative cell
+        # (ubuntu / 3.13): the packaging regression class this job
+        # catches (package-data, console_scripts, entry points) is OS-
+        # and interpreter-agnostic in practice, so one cell is enough
+        # pre-merge signal. The full 4-cell matrix runs on every push
+        # to main and on dispatch, which covers the same commits after
+        # they land without holding a queue slot on a macOS runner.
+        os: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && fromJSON('["ubuntu-latest", "macos-latest"]') || fromJSON('["ubuntu-latest"]') }}
         # Matrix tracks `requires-python = ">=3.12"` in pyproject.toml.
         # 3.11 is intentionally excluded: pipx / uv install would refuse
         # the wheel for a Python the package does not support, which
         # would just confirm the floor we already pin.
-        python-version: ${{ github.event_name == 'pull_request' && fromJSON('["3.13"]') || fromJSON('["3.12", "3.13"]') }}
+        python-version: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && fromJSON('["3.12", "3.13"]') || fromJSON('["3.13"]') }}
     steps:
       - name: Harden runner (audit mode)
         if: runner.os == 'Linux'
@@ -927,8 +952,15 @@ jobs:
     # cross-Python combinatorics; uv shares the same wheel and
     # console-scripts entry point, so the marginal coverage of a full
     # 6-cell matrix is not worth the runner spend.
+    # Skips only when a merge-queue group's combined diff is docs-only
+    # (determine-changes computes it from the group's base; its failure
+    # mode is over-broad, never over-narrow). The roll-up tolerates the
+    # skip via DOCS_ONLY_SKIPPABLE. pull_request never takes this branch
+    # (paths-ignore keeps docs-only PRs out of this workflow entirely)
+    # and push runs everything, so main keeps the full suite.
+    if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
     name: Install smoke - uv tool (${{ matrix.os }})
-    needs: [dist-size]
+    needs: [determine-changes, dist-size]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     permissions:
@@ -938,7 +970,7 @@ jobs:
       matrix:
         # PR lane: ubuntu only; both OS cells run on push to main and on
         # dispatch (see the install-smoke-pipx matrix note above).
-        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest"]') }}
+        os: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && fromJSON('["ubuntu-latest", "macos-latest"]') || fromJSON('["ubuntu-latest"]') }}
     steps:
       - name: Harden runner (audit mode)
         if: runner.os == 'Linux'
@@ -1059,7 +1091,7 @@ jobs:
         # else (`python3`), so a single cell would leave one branch of the
         # spec untested. The trailing releases of each family run on push
         # to main and on dispatch; they exercise no additional spec branch.
-        image: ${{ github.event_name == 'pull_request' && fromJSON('["fedora:43", "quay.io/centos/centos:stream9"]') || fromJSON('["fedora:43", "fedora:44", "quay.io/centos/centos:stream9", "quay.io/centos/centos:stream10"]') }}
+        image: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && fromJSON('["fedora:43", "fedora:44", "quay.io/centos/centos:stream9", "quay.io/centos/centos:stream10"]') || fromJSON('["fedora:43", "quay.io/centos/centos:stream9"]') }}
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
@@ -1097,8 +1129,15 @@ jobs:
     # examples per property) so every file finishes in well under a
     # minute. Catches hash-chain / signature / canonicalisation
     # regressions that escape unit tests' fixed inputs.
+    # Skips only when a merge-queue group's combined diff is docs-only
+    # (determine-changes computes it from the group's base; its failure
+    # mode is over-broad, never over-narrow). The roll-up tolerates the
+    # skip via DOCS_ONLY_SKIPPABLE. pull_request never takes this branch
+    # (paths-ignore keeps docs-only PRs out of this workflow entirely)
+    # and push runs everything, so main keeps the full suite.
+    if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
     name: Property tests (Hypothesis smoke)
-    needs: [lint]
+    needs: [determine-changes, lint]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -1121,8 +1160,15 @@ jobs:
     # Syrupy snapshot suite. Locks JSONL field order / shape for the
     # audit log + lineage record so silent wire-format drift is caught
     # before downstream parsers break.
+    # Skips only when a merge-queue group's combined diff is docs-only
+    # (determine-changes computes it from the group's base; its failure
+    # mode is over-broad, never over-narrow). The roll-up tolerates the
+    # skip via DOCS_ONLY_SKIPPABLE. pull_request never takes this branch
+    # (paths-ignore keeps docs-only PRs out of this workflow entirely)
+    # and push runs everything, so main keeps the full suite.
+    if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
     name: Snapshot tests (syrupy)
-    needs: [lint]
+    needs: [determine-changes, lint]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -1144,8 +1190,15 @@ jobs:
     # only the critical-surface allow-list (task CRUD, health,
     # openapi.json, metrics) with 5 examples per endpoint and the
     # `not_a_server_error` check. Heavier sweeps live in nightly.
+    # Skips only when a merge-queue group's combined diff is docs-only
+    # (determine-changes computes it from the group's base; its failure
+    # mode is over-broad, never over-narrow). The roll-up tolerates the
+    # skip via DOCS_ONLY_SKIPPABLE. pull_request never takes this branch
+    # (paths-ignore keeps docs-only PRs out of this workflow entirely)
+    # and push runs everything, so main keeps the full suite.
+    if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
     name: Schemathesis smoke
-    needs: [lint]
+    needs: [determine-changes, lint]
     runs-on: ubuntu-latest
     # Smoke profile wall-clock runs ~7m30s, which raced the previous
     # 8-minute window and got cancelled, failing the CI gate aggregator.
@@ -1172,8 +1225,15 @@ jobs:
   semgrep:
     # Project-specific Semgrep rules (.semgrep.yml). ERROR severity
     # fails PR; WARNING is advisory (annotation only).
+    # Skips only when a merge-queue group's combined diff is docs-only
+    # (determine-changes computes it from the group's base; its failure
+    # mode is over-broad, never over-narrow). The roll-up tolerates the
+    # skip via DOCS_ONLY_SKIPPABLE. pull_request never takes this branch
+    # (paths-ignore keeps docs-only PRs out of this workflow entirely)
+    # and push runs everything, so main keeps the full suite.
+    if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
     name: Semgrep (custom rules)
-    needs: [lint]
+    needs: [determine-changes, lint]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -1203,8 +1263,15 @@ jobs:
     # (urlopen with timeout, hardcoded localhost in dev). Fails PR
     # only on new HIGH-severity introductions; pre-existing HIGHs are
     # captured in `.bandit-baseline.json` and tracked as follow-ups.
+    # Skips only when a merge-queue group's combined diff is docs-only
+    # (determine-changes computes it from the group's base; its failure
+    # mode is over-broad, never over-narrow). The roll-up tolerates the
+    # skip via DOCS_ONLY_SKIPPABLE. pull_request never takes this branch
+    # (paths-ignore keeps docs-only PRs out of this workflow entirely)
+    # and push runs everything, so main keeps the full suite.
+    if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
     name: Bandit (security)
-    needs: [lint]
+    needs: [determine-changes, lint]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -1235,8 +1302,15 @@ jobs:
     # reddening on the first blip - a single read timeout used to eject
     # otherwise-healthy PRs from the merge queue. The timeout budget below
     # covers the retry attempts and their backoff.
+    # Skips only when a merge-queue group's combined diff is docs-only
+    # (determine-changes computes it from the group's base; its failure
+    # mode is over-broad, never over-narrow). The roll-up tolerates the
+    # skip via DOCS_ONLY_SKIPPABLE. pull_request never takes this branch
+    # (paths-ignore keeps docs-only PRs out of this workflow entirely)
+    # and push runs everything, so main keeps the full suite.
+    if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
     name: pip-audit (deps)
-    needs: [lint]
+    needs: [determine-changes, lint]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -1284,8 +1358,15 @@ jobs:
     # public APIs in core.security / core.agents / core.protocols.cluster
     # under @beartype and runs the unit tests for those modules so any
     # type contract violation surfaces as a test failure.
+    # Skips only when a merge-queue group's combined diff is docs-only
+    # (determine-changes computes it from the group's base; its failure
+    # mode is over-broad, never over-narrow). The roll-up tolerates the
+    # skip via DOCS_ONLY_SKIPPABLE. pull_request never takes this branch
+    # (paths-ignore keeps docs-only PRs out of this workflow entirely)
+    # and push runs everything, so main keeps the full suite.
+    if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
     name: Beartype (type contracts)
-    needs: [lint]
+    needs: [determine-changes, lint]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -1439,8 +1520,15 @@ jobs:
     # subtrees. The repo-wide pyright run stays advisory (basic mode
     # via tool.pyright); the strict zone fails PR on any new error
     # in the listed packages.
+    # Skips only when a merge-queue group's combined diff is docs-only
+    # (determine-changes computes it from the group's base; its failure
+    # mode is over-broad, never over-narrow). The roll-up tolerates the
+    # skip via DOCS_ONLY_SKIPPABLE. pull_request never takes this branch
+    # (paths-ignore keeps docs-only PRs out of this workflow entirely)
+    # and push runs everything, so main keeps the full suite.
+    if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
     name: Pyright strict (security + cluster)
-    needs: [lint]
+    needs: [determine-changes, lint]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -1465,8 +1553,15 @@ jobs:
     # substrate. Same split as the pyright job above: the repo-wide
     # `uv run mypy src` run stays advisory (pyproject.toml [tool.mypy]),
     # the gated zone fails PR on any new error in the listed packages.
+    # Skips only when a merge-queue group's combined diff is docs-only
+    # (determine-changes computes it from the group's base; its failure
+    # mode is over-broad, never over-narrow). The roll-up tolerates the
+    # skip via DOCS_ONLY_SKIPPABLE. pull_request never takes this branch
+    # (paths-ignore keeps docs-only PRs out of this workflow entirely)
+    # and push runs everything, so main keeps the full suite.
+    if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
     name: mypy strict (lineage substrate)
-    needs: [lint]
+    needs: [determine-changes, lint]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -1534,8 +1629,15 @@ jobs:
     # runner pool during burst-merge waves - see #1468. The
     # ci-macos-nightly.yml workflow runs the full macOS matrix daily as
     # the safety-net for regressions that slip past the path gate.
+    # Skips only when a merge-queue group's combined diff is docs-only
+    # (determine-changes computes it from the group's base; its failure
+    # mode is over-broad, never over-narrow). The roll-up tolerates the
+    # skip via DOCS_ONLY_SKIPPABLE. pull_request never takes this branch
+    # (paths-ignore keeps docs-only PRs out of this workflow entirely)
+    # and push runs everything, so main keeps the full suite.
+    if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
     name: Adapter integration (fake-CLI)
-    needs: [lint]
+    needs: [determine-changes, lint]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -1608,8 +1710,15 @@ jobs:
     # worktree-isolation contract (clean worktree, junction-into-parent
     # rejection, robust long-path teardown), so worktree isolation is asserted
     # on the Windows lane. Required (in the ci-gate needs list), not advisory.
+    # Skips only when a merge-queue group's combined diff is docs-only
+    # (determine-changes computes it from the group's base; its failure
+    # mode is over-broad, never over-narrow). The roll-up tolerates the
+    # skip via DOCS_ONLY_SKIPPABLE. pull_request never takes this branch
+    # (paths-ignore keeps docs-only PRs out of this workflow entirely)
+    # and push runs everything, so main keeps the full suite.
+    if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
     name: Adapter conformance + e2e (windows)
-    needs: [lint]
+    needs: [determine-changes, lint]
     runs-on: windows-latest
     timeout-minutes: 25
     permissions:
@@ -1649,8 +1758,15 @@ jobs:
     # disjoint slice) cuts each runner to ~1/4 of the files. The matrix
     # `.result` ci-gate reads is `failure` if ANY shard cell fails, so all
     # shards are still required - no shard can silently skip.
+    # Skips only when a merge-queue group's combined diff is docs-only
+    # (determine-changes computes it from the group's base; its failure
+    # mode is over-broad, never over-narrow). The roll-up tolerates the
+    # skip via DOCS_ONLY_SKIPPABLE. pull_request never takes this branch
+    # (paths-ignore keeps docs-only PRs out of this workflow entirely)
+    # and push runs everything, so main keeps the full suite.
+    if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
     name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }}, shard ${{ matrix.shard }})
-    needs: [lint]  # fast-fail: don't waste 45min if lint fails
+    needs: [determine-changes, lint]  # fast-fail: don't waste 45min if lint fails
     runs-on: ${{ matrix.os }}
     # Per-shard the unit suite is ~1/4 of the old wall time. Push-time
     # coverage is collected during the existing ubuntu/3.13 shard runs and
@@ -1677,13 +1793,16 @@ jobs:
         # the event is a push. ci-macos-nightly.yml provides a daily
         # safety-net run of the full macOS matrix.
         os: [ubuntu-latest, windows-latest]
-        # PR lane runs the primary interpreter (3.13) only; the 3.12 row
-        # runs on every push to main (and merge_group / dispatch), so
-        # each merged commit still carries the full interpreter matrix
-        # and a 3.12-only regression surfaces at most one merge later.
-        # This halves the ubuntu shard fan-out per PR push and frees
-        # runner-pool slots during burst waves.
-        python-version: ${{ github.event_name == 'pull_request' && fromJSON('["3.13"]') || fromJSON('["3.12", "3.13"]') }}
+        # Only push-to-main runs the full interpreter matrix; PR and
+        # merge-queue lanes run the primary interpreter (3.13) alone. The
+        # queue ran both rows, which doubled its ubuntu shard fan-out to
+        # buy nothing the push run does not already buy: every merged
+        # commit still gets the 3.12 row minutes later on the push event,
+        # so a 3.12-only regression surfaces at most one merge later and
+        # is answered with a revert. dispatch runs the full matrix: an
+        # operator invoking the workflow by hand is asking for coverage,
+        # not queue throughput.
+        python-version: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && fromJSON('["3.12", "3.13"]') || fromJSON('["3.13"]') }}
         # Fan the per-file suite out across 4 deterministic shards per
         # cell. Keep this list in sync with TEST_SHARD_COUNT above.
         shard: [1, 2, 3, 4]
@@ -1812,8 +1931,15 @@ jobs:
     # as the unit shards), so memory is bounded by the widest single file.
     # This runs concurrently with the `test` shards (90-minute timeout), so
     # it does not extend the critical path.
+    # Skips only when a merge-queue group's combined diff is docs-only
+    # (determine-changes computes it from the group's base; its failure
+    # mode is over-broad, never over-narrow). The roll-up tolerates the
+    # skip via DOCS_ONLY_SKIPPABLE. pull_request never takes this branch
+    # (paths-ignore keeps docs-only PRs out of this workflow entirely)
+    # and push runs everything, so main keeps the full suite.
+    if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
     name: Integration tests
-    needs: [lint]  # fast-fail: don't burn a runner if lint fails
+    needs: [determine-changes, lint]  # fast-fail: don't burn a runner if lint fails
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -2133,6 +2259,13 @@ jobs:
           # / tests / workflows touched). Mirrors paths-ignore at the top.
           DOCS_ONLY_SKIPPABLE = {
               "test",
+              # integration-tests and adapter-conformance-windows carry the
+              # same merge_group docs-only guard as the rest of this set: a
+              # queue group whose combined diff is docs-only cannot change
+              # what they exercise, and the post-merge push to main runs
+              # both un-gated.
+              "integration-tests",
+              "adapter-conformance-windows",
               "schemathesis-smoke",
               "snapshot-tests",
               "property-tests",

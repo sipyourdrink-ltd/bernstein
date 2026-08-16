@@ -10,13 +10,12 @@ name: static-analysis (extended)
 # Scanning so the Security tab is the single source of truth.
 #
 # Lane split (issue #2764): the security-signal jobs (semgrep, trivy-fs,
-# trivy-iac) run on push / merge_group / schedule. The advisory
+# trivy-iac) run on push to main and on the schedule. The advisory
 # style-and-hygiene jobs (vulture, refurb, perflint) run on the weekly
-# schedule and workflow_dispatch only, so merge-queue runs stay lean and
-# the code-scanning alert feed stays a security signal. The refurb SARIF
+# schedule and workflow_dispatch only, so the code-scanning alert feed
+# stays a security signal. The refurb SARIF
 # upload is additionally filtered to error-level results so its style
 # findings no longer create alerts that bury real security findings.
-#
 #
 # Not on merge_group, deliberately. Two independent reasons:
 #

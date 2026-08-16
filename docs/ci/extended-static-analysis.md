@@ -10,9 +10,9 @@ Workflow: `.github/workflows/static-analysis-extended.yml`.
 
 | Job          | Tool      | Lane                     | Gate           | SARIF | Where findings show |
 |--------------|-----------|--------------------------|----------------|-------|---------------------|
-| `semgrep`    | Semgrep CE| push / merge_group / cron| Fail on new    | Yes   | Security tab        |
-| `trivy-fs`   | Trivy     | push / merge_group / cron| Fail HIGH/CRIT | Yes   | Security tab        |
-| `trivy-iac`  | Trivy     | push / merge_group / cron| Fail HIGH/CRIT | Yes   | Security tab        |
+| `semgrep`    | Semgrep CE| push-to-main / cron      | Fail on new    | Yes   | Security tab        |
+| `trivy-fs`   | Trivy     | push-to-main / cron      | Fail HIGH/CRIT | Yes   | Security tab        |
+| `trivy-iac`  | Trivy     | push-to-main / cron      | Fail HIGH/CRIT | Yes   | Security tab        |
 | `vulture`    | vulture   | weekly cron only         | Advisory       | Yes   | Security tab        |
 | `refurb`     | refurb    | weekly cron only         | Advisory       | Yes (error-level only) | Security tab |
 | `perflint`   | pylint+perflint | weekly cron only   | Advisory       | Yes   | Security tab        |
@@ -20,8 +20,8 @@ Workflow: `.github/workflows/static-analysis-extended.yml`.
 All jobs run in parallel; total wall-clock is dominated by Semgrep
 (under 5 minutes for the current `src/` tree). The advisory
 style-and-hygiene jobs (vulture, refurb, perflint) run on the weekly
-schedule and `workflow_dispatch` only, so merge-queue runs stay lean
-(issue #2764).
+schedule and `workflow_dispatch` only, so the code-scanning alert feed
+stays a security signal (issue #2764).
 
 ## What each tool catches
 
@@ -41,10 +41,16 @@ the surface those tools do not cover.
 
 - `push` to `main` (path-filtered to source / config / IaC / workflow):
   security-signal jobs only.
-- `merge_group` (merge-queue ephemeral branch): security-signal jobs only.
 - Weekly cron Sunday 05:23 UTC: all jobs, including the advisory
   vulture / refurb / perflint lane.
 - `workflow_dispatch` for ad-hoc runs: all jobs.
+
+Not on `merge_group`, deliberately: the queue's only required context
+is `CI gate`, so this lane never gated a queue merge, and Code Scanning
+uploads target the run's ref - a merge-queue ref is deleted the moment
+its entry merges or the queue reshuffles, which regularly failed the
+upload after the scan itself had passed. Push-to-main runs scan the
+same commits against a ref that persists.
 
 ## Baseline policy
 

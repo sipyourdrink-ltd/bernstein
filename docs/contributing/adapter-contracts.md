@@ -9,8 +9,7 @@ wrong-shape output.
 
 The **adapter contract** captures the always-passed surface so the
 [`Adapter contract drift`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.github/workflows/adapter-contract-drift.yml)
-workflow can detect drift three times a day and on every PR that
-touches `src/bernstein/adapters/` or `tests/contract/`. Drift is a
+workflow can detect drift on a daily schedule. Drift is a
 **hard fail** - there is no batched auto-PR. The workflow opens (or
 refreshes) a tracking issue and fails CI.
 
