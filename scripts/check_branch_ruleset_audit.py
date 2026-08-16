@@ -195,11 +195,27 @@ def evaluate(
                 Violation("ruleset_detail", f"ruleset {ruleset_id} detail was not read; cannot verify bypass actors")
             )
             continue
-        bypass_actors = detail.get("bypass_actors")
-        if bypass_actors:
-            name = detail.get("name", "?")
+        name = detail.get("name", "?")
+        if "bypass_actors" not in detail:
+            # Absent and empty are different answers on the wire: the API
+            # omits the key entirely for a caller without Administration:
+            # read, and returns [] only when an admin-scoped caller sees a
+            # genuinely empty list. Treating the omission as "no bypass"
+            # lets an under-scoped BRANCH_PROTECTION_AUDIT_TOKEN skip this
+            # assertion silently while everything else keeps passing.
             violations.append(
-                Violation("bypass_actors", f"ruleset {ruleset_id} ({name}) allows bypass: {bypass_actors}")
+                Violation(
+                    "bypass_actors",
+                    f"ruleset {ruleset_id} ({name}) returned no bypass_actors key -- the API omits "
+                    "it for callers without Administration: read, so bypass is unproven, not empty",
+                )
+            )
+        elif detail["bypass_actors"]:
+            violations.append(
+                Violation(
+                    "bypass_actors",
+                    f"ruleset {ruleset_id} ({name}) allows bypass: {detail['bypass_actors']}",
+                )
             )
 
     return violations

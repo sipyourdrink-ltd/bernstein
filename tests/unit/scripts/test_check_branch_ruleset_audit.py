@@ -165,6 +165,26 @@ def test_audit_catches_an_added_bypass_actor() -> None:
     assert "OrganizationAdmin" in violations[0].detail
 
 
+def test_a_missing_bypass_actors_key_is_a_violation_not_an_empty_list() -> None:
+    """Absent and empty are different answers on the wire.
+
+    `rulesets/{id}` omits the `bypass_actors` key entirely for a caller
+    without Administration: read, and returns `[]` only when an
+    admin-scoped caller sees a genuinely empty list. An under-scoped
+    BRANCH_PROTECTION_AUDIT_TOKEN therefore produces a 200 whose shape
+    silently skips the one assertion this audit cannot afford to skip --
+    the other two calls need only repo read and keep passing. The fixture
+    mirrors the recorded non-admin response: same ruleset, no key.
+    """
+    details = _details()
+    del details[16719298]["bypass_actors"]
+    violations = evaluate(_rules(), _rulesets(), details, REQUIRED_CONTEXTS)
+    assert len(violations) == 1
+    assert violations[0].rule == "bypass_actors"
+    assert "unproven" in violations[0].detail
+    assert "Administration" in violations[0].detail
+
+
 def test_audit_catches_a_ruleset_flipped_to_evaluate() -> None:
     """A ruleset in `evaluate` mode still contributes rules to the effective
     set, so presence alone does not prove enforcement."""
