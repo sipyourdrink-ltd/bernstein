@@ -10,8 +10,8 @@ portable, offline-verifiable receipts of the chain.
 |---|---|
 | `bernstein replay <agent_id>` | Render the hash-chained step view; verify chain integrity before display |
 | `bernstein session fork <session_id> --from-step <n>` | Materialise a sibling worktree branched at parent step N; chain becomes a tree |
-| `bernstein replay export <agent_id> -o RECEIPT` | Portable, content-addressed receipt; offline-verifiable with the install public key |
-| `bernstein replay publish <agent_id> -o RECEIPT --opt-in` | Redacted receipt; only path that ever writes outside `.sdd/runtime/` |
+| `bernstein replay export <agent_id> [RECEIPT]` | Portable, content-addressed receipt; offline-verifiable with the install public key |
+| `bernstein replay publish <agent_id> [RECEIPT] --yes-i-want-to-publish` | Redacted receipt; only path that ever writes outside `.sdd/runtime/` |
 | `bernstein replay verify <RECEIPT> [--head HEX]` | Offline verifier |
 | `bernstein replay diff-journal <A> <B>` | Surface the precise field that differs between two chains |
 | `bernstein replay debug <RUN>` | Forensic single-chain walk; refuse a tampered chain and localise the divergent step; emit an offline-verifiable debug receipt |
@@ -225,7 +225,7 @@ matches what was walked.
 
 ## Publish flow (privacy redaction)
 
-`bernstein replay publish <agent_id> --opt-in` runs the configured
+`bernstein replay publish <agent_id> --yes-i-want-to-publish` runs the configured
 `RedactionPolicy` (default redacts `prompt` and `tool_result`),
 re-anchors the chain to the redacted payloads, and writes a receipt
 with the new head hash. The original local chain is untouched. The

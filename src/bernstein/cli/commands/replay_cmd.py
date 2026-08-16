@@ -140,6 +140,7 @@ def replay_export(
     output: Path,
     *,
     signer_key_path: Path | None = None,
+    as_json: bool = False,
 ) -> int:
     """Build a portable receipt and write it to *output*. Returns exit code."""
     from bernstein.cli.helpers import console
@@ -173,6 +174,20 @@ def replay_export(
         console.print(f"[red]Export failed:[/red] {exc}")
         return 1
 
+    if as_json:
+        console.print_json(
+            json.dumps(
+                {
+                    "agent_id": agent_id,
+                    "output": str(result.path),
+                    "head_hash": result.head_hash,
+                    "steps": result.steps,
+                    "signed": result.signed,
+                }
+            )
+        )
+        return 0
+
     console.print(f"[green]Exported receipt[/green] -> {result.path}")
     console.print(f"  head_hash: {result.head_hash}")
     console.print(f"  steps:     {result.steps}")
@@ -187,6 +202,7 @@ def replay_publish(
     *,
     opt_in: bool,
     signer_key_path: Path | None = None,
+    as_json: bool = False,
 ) -> int:
     """Publish a privacy-redacted receipt. Returns exit code."""
     from bernstein.cli.helpers import console
@@ -230,6 +246,21 @@ def replay_publish(
         console.print(f"[red]Publish failed:[/red] {exc}")
         return 1
 
+    if as_json:
+        console.print_json(
+            json.dumps(
+                {
+                    "agent_id": agent_id,
+                    "output": str(result.path),
+                    "original_head_hash": result.original_head_hash,
+                    "head_hash": result.head_hash,
+                    "steps": result.steps,
+                    "signed": result.signed,
+                }
+            )
+        )
+        return 0
+
     console.print(f"[green]Published redacted receipt[/green] -> {result.path}")
     console.print(f"  original_head:  {result.original_head_hash}")
     console.print(f"  redacted_head:  {result.head_hash}")
@@ -243,6 +274,7 @@ def replay_verify(
     *,
     expected_head: str | None,
     public_key_path: Path | None,
+    as_json: bool = False,
 ) -> int:
     """Verify a receipt tarball offline. Returns exit code."""
     from bernstein.cli.helpers import console
@@ -273,6 +305,20 @@ def replay_verify(
     except ReceiptError as exc:
         console.print(f"[red]Receipt malformed:[/red] {exc}")
         return 1
+
+    if as_json:
+        console.print_json(
+            json.dumps(
+                {
+                    "ok": result.ok,
+                    "head_hash": result.head_hash,
+                    "steps": result.steps,
+                    "errors": result.errors,
+                    "signed": result.signed,
+                }
+            )
+        )
+        return 0 if result.ok else 1
 
     if result.ok:
         console.print(f"[green]Receipt verified:[/green] head={result.head_hash} steps={result.steps}")
