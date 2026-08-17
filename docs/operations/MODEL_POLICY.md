@@ -98,10 +98,7 @@ router = TierAwareRouter()
 router.register_provider(ProviderConfig(...))  # ... 10 providers
 
 # Apply policy
-policy = ModelPolicy(
-    denied_providers=["openai", "cohere"],
-    prefer="anthropic"
-)
+policy = ModelPolicy(denied_providers=["openai", "cohere"], prefer="anthropic")
 router.state.model_policy = policy
 
 # Router now respects the policy
@@ -222,10 +219,7 @@ model_policy:
 from bernstein.core.routing.router import ModelPolicy, TierAwareRouter
 
 # Create policy
-policy = ModelPolicy(
-    allowed_providers=["anthropic"],
-    prefer="anthropic"
-)
+policy = ModelPolicy(allowed_providers=["anthropic"], prefer="anthropic")
 
 # Validate
 issues = policy.validate()
@@ -300,10 +294,7 @@ The router validates the policy when it initializes and logs warnings if there a
 If the preferred provider is unavailable (rate-limited, down), the router falls back to the next best allowed provider.
 
 ```python
-policy = ModelPolicy(
-    allowed_providers=["anthropic", "ollama"],
-    prefer="anthropic"
-)
+policy = ModelPolicy(allowed_providers=["anthropic", "ollama"], prefer="anthropic")
 
 # If anthropic is down → fallback to ollama
 # If ollama is also down → no provider available → error

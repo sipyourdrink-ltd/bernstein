@@ -55,10 +55,10 @@ calling `resolve_all_bindings()`, which merges the three layers above:
 # src/bernstein/tui/app.py
 from bernstein.tui.keybinding_config import resolve_all_bindings as _resolve_all_bindings
 
+
 def _build_app_bindings() -> list[BindingType]:
     bindings = [
-        Binding(e.key, e.action, e.description, show=e.show, priority=e.priority)
-        for e in _resolve_all_bindings()
+        Binding(e.key, e.action, e.description, show=e.show, priority=e.priority) for e in _resolve_all_bindings()
     ]
     ...
 ```

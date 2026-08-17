@@ -209,9 +209,7 @@ def test_ci_green_check_reads_check_runs_not_the_combined_status_api(
         "'pending' in this repo; read /check-runs instead"
     )
     assert "check-runs" in run, "Verify CI green must query the check-runs API"
-    assert "CI gate" in run, (
-        "Verify CI green must decide on 'CI gate', the sole required context"
-    )
+    assert "CI gate" in run, "Verify CI green must decide on 'CI gate', the sole required context"
 
 
 def test_the_release_job_does_not_rerun_the_suite_it_just_verified(

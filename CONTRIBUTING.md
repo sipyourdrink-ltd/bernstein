@@ -269,6 +269,7 @@ CI parsers implement the `CILogParser` protocol from `core/ci_log_parser.py`:
 ```python
 class CILogParser(Protocol):
     name: str
+
     def parse(self, raw_log: str) -> list[CIFailure]: ...
 ```
 

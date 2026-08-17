@@ -83,6 +83,7 @@ item with:
 
 ```python
 import keyring
+
 keyring.set_password("bernstein", "ANTHROPIC_API_KEY", "sk-ant-...")
 ```
 

@@ -40,8 +40,8 @@ with BernsteinClient("http://127.0.0.1:8052") as client:
 from bernstein_sdk.state_map import JiraToBernstein, BernsteinToJira
 from bernstein_sdk.models import TaskStatus
 
-status = JiraToBernstein.map("In Progress")   # → TaskStatus.IN_PROGRESS
-label  = BernsteinToJira.map(TaskStatus.DONE) # → "Done"
+status = JiraToBernstein.map("In Progress")  # → TaskStatus.IN_PROGRESS
+label = BernsteinToJira.map(TaskStatus.DONE)  # → "Done"
 ```
 
 ## Async client

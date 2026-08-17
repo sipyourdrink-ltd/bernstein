@@ -59,9 +59,9 @@ client validated against.
 
 ```python
 session = MCPClientSession(RemoteServerConfig(name="github", url="https://..."))
-await session.connect()           # discovers + digests the manifest
-await session.call_tool("create_issue", {...})   # ok: declared
-await session.call_tool("rm_minus_rf", {...})     # raises MCPCapabilityMissing
+await session.connect()  # discovers + digests the manifest
+await session.call_tool("create_issue", {...})  # ok: declared
+await session.call_tool("rm_minus_rf", {...})  # raises MCPCapabilityMissing
 ```
 
 `MCPCapabilityMissing` subclasses `MCPToolNotFoundError`, so callers that
@@ -90,6 +90,7 @@ def stream_factory(resume_from, idempotency_key):
     # resume_from is the last checkpoint token, or None on first attempt.
     return transport.open_stream(resume_from=resume_from, idem=idempotency_key)
 
+
 result = await session.call_tool_streaming("long_query", {...}, stream_factory=stream_factory)
 ```
 
@@ -108,10 +109,8 @@ partial output.
 
 ```python
 handle = StreamedToolCall(server_name="github", tool_name="long_query")
-task = asyncio.create_task(
-    session.call_tool_streaming("long_query", {...}, stream_factory=f, handle=handle)
-)
-handle.cancel()              # cooperative; partial output is preserved
+task = asyncio.create_task(session.call_tool_streaming("long_query", {...}, stream_factory=f, handle=handle))
+handle.cancel()  # cooperative; partial output is preserved
 result = await task
 assert result.metadata["cancelled"] is True
 ```
@@ -134,8 +133,8 @@ manager = MCPClientManager(cost_meter=meter, task_id="task-42")
 await manager.connect(config)
 await manager.call_tool("github", "search", {...}, cost_usd=0.02)
 
-manager.server_cost("github")   # 0.02
-manager.task_cost()             # total across all servers for task-42
+manager.server_cost("github")  # 0.02
+manager.task_cost()  # total across all servers for task-42
 ```
 
 Negative costs are clamped to zero so a misreporting server cannot corrupt

@@ -172,7 +172,7 @@ from bernstein.eval.trajectory_receipt_projection import (
 )
 
 # Operator: emit and project
-sk = Ed25519PrivateKey.generate()   # or load from key store
+sk = Ed25519PrivateKey.generate()  # or load from key store
 receipt = build_trajectory_receipt(...)
 projection = project_trajectory_receipt(receipt, signing_key=sk)
 
@@ -183,7 +183,7 @@ projection = project_trajectory_receipt(receipt, signing_key=sk)
 # Reviewer: verify with only the public key
 receipt_hash = verify_cose_projection_bytes(
     projection.cose_bytes,
-    public_key=sk.public_key(),   # from published JWK / key server
+    public_key=sk.public_key(),  # from published JWK / key server
 )
 # receipt_hash == receipt.receipt_hash → fetch receipt, run verify
 ```

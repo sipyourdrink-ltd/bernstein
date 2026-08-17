@@ -33,13 +33,14 @@ class Evidence:
     snippet: str = ""
     symbol: str = ""
 
+
 @dataclass(frozen=True)
 class NormalizedFinding:
-    bot: str                 # e.g. "coderabbit", "sourcery", "gh-advanced-security"
-    finding_id: str          # bot-local id, audit only (not part of dedup key)
-    severity: Severity       # info | low | medium | high | critical
-    category: str            # coarse class: security | perf | style | ...
-    title: str               # short title, used for fuzzy dedup + display
+    bot: str  # e.g. "coderabbit", "sourcery", "gh-advanced-security"
+    finding_id: str  # bot-local id, audit only (not part of dedup key)
+    severity: Severity  # info | low | medium | high | critical
+    category: str  # coarse class: security | perf | style | ...
+    title: str  # short title, used for fuzzy dedup + display
     evidence: Evidence
     confidence: float = 1.0  # bot self-reported, [0.0, 1.0]
 ```

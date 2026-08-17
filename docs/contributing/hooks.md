@@ -210,10 +210,14 @@ import sys
 payload = json.loads(sys.stdin.read())
 duration_ms = payload["data"].get("duration_ms", 0)
 
-print(json.dumps({
-    "decision": "annotate",
-    "data": {"billing_unit_cost": duration_ms * 0.0001},
-}))
+print(
+    json.dumps(
+        {
+            "decision": "annotate",
+            "data": {"billing_unit_cost": duration_ms * 0.0001},
+        }
+    )
+)
 ```
 
 Place this at `.bernstein/hooks/postToolUse.py`, mark it executable,

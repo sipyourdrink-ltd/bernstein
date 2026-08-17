@@ -258,8 +258,7 @@ import pytest
 
 
 @pytest.mark.allow_network  # justification: probes the real X endpoint; see #NNNN
-def test_live_thing() -> None:
-    ...
+def test_live_thing() -> None: ...
 ```
 
 The marker is registered in `pyproject.toml` (`--strict-markers` is on, so an

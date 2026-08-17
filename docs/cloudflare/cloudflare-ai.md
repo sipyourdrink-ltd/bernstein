@@ -46,10 +46,12 @@ All models listed below are free on Workers AI:
 ```python
 from bernstein.core.routing.cloudflare_ai import WorkersAIConfig, WorkersAIProvider
 
-provider = WorkersAIProvider(WorkersAIConfig(
-    account_id="abc123",
-    api_token="cf_token_...",
-))
+provider = WorkersAIProvider(
+    WorkersAIConfig(
+        account_id="abc123",
+        api_token="cf_token_...",
+    )
+)
 
 response = await provider.complete(
     "Decompose this task into 3 subtasks: Add authentication to the API",
@@ -57,10 +59,10 @@ response = await provider.complete(
 )
 
 print(response.text)
-print(response.model)          # "@cf/meta/llama-3.1-70b-instruct"
-print(response.input_tokens)   # token count from API
+print(response.model)  # "@cf/meta/llama-3.1-70b-instruct"
+print(response.input_tokens)  # token count from API
 print(response.output_tokens)
-print(response.is_free)        # True for free-tier models
+print(response.is_free)  # True for free-tier models
 ```
 
 ### Structured JSON output

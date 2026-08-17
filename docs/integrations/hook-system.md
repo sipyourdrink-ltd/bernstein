@@ -60,8 +60,8 @@ Event types are defined in `bernstein.core.config.hook_events`:
 from bernstein.core.config.hook_events import HookEvent
 
 # Available events:
-HookEvent.TASK_COMPLETED   # "task.completed"
-HookEvent.AGENT_KILLED     # "agent.killed"
+HookEvent.TASK_COMPLETED  # "task.completed"
+HookEvent.AGENT_KILLED  # "agent.killed"
 # ... see full list in hook_events.py
 ```
 
@@ -210,6 +210,7 @@ import urllib.request
 
 SLACK_WEBHOOK = "https://hooks.slack.com/services/T.../B.../..."
 
+
 def main() -> None:
     event = json.load(sys.stdin)
     data = event["data"]
@@ -239,6 +240,7 @@ def main() -> None:
     )
     urllib.request.urlopen(req)
 
+
 if __name__ == "__main__":
     main()
 ```
@@ -251,6 +253,7 @@ if __name__ == "__main__":
 
 import json
 import sys
+
 
 def main() -> int:
     event = json.load(sys.stdin)
@@ -268,6 +271,7 @@ def main() -> int:
         return 1
 
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())
@@ -289,16 +293,12 @@ For blocking hooks, verify they return the correct exit code:
 import json
 import subprocess
 
+
 def test_validate_task_blocks_missing_scope() -> None:
-    payload = json.dumps({
-        "event": "task.created",
-        "timestamp": 1712345678.0,
-        "data": {"task_id": "t1", "goal": "Short"}
-    })
-    result = subprocess.run(
-        ["python", "scripts/validate_task.py"],
-        input=payload, capture_output=True, text=True
+    payload = json.dumps(
+        {"event": "task.created", "timestamp": 1712345678.0, "data": {"task_id": "t1", "goal": "Short"}}
     )
+    result = subprocess.run(["python", "scripts/validate_task.py"], input=payload, capture_output=True, text=True)
     assert result.returncode == 1  # blocked
 ```
 

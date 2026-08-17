@@ -37,13 +37,16 @@ tasks = [
     Task(task_id="t-002", input={"diff": "..."}, expected="block"),
 ]
 
+
 def my_executor(variant, task):
     # Synthetic in tests; live adapter call in production
     return {"verdict": "approve"}
 
+
 def my_scorer(result, task):
     # Returns a float in [0.0, 1.0]
     return 1.0 if result["verdict"] == task.expected else 0.0
+
 
 comparison = run_ab(
     variants=variants,
@@ -54,6 +57,7 @@ comparison = run_ab(
 
 # Comparison serialises deterministically
 import json
+
 artefact = json.dumps(comparison.to_dict(), sort_keys=True, indent=2)
 ```
 

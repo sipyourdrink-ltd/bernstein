@@ -32,8 +32,8 @@ chunks = chunk_for_review(
     budget_tokens=4_000,
 )
 for chunk in chunks:
-    print(chunk.header)        # symbols included in this chunk
-    print(chunk.text)          # full Python source, never split mid-body
+    print(chunk.header)  # symbols included in this chunk
+    print(chunk.text)  # full Python source, never split mid-body
 ```
 
 Each `ReviewChunk` carries the symbol header (function or class names

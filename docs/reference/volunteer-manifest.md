@@ -214,7 +214,7 @@ to vendor dependencies.
 from bernstein.core.volunteer import load_manifest_from_repo
 
 manifest = load_manifest_from_repo(repo_root)
-print(manifest.digest)          # the value a receipt carries as manifest_sha256
+print(manifest.digest)  # the value a receipt carries as manifest_sha256
 print([str(g) for g in manifest.gates])
 ```
 

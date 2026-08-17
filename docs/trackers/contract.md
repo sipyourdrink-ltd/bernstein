@@ -91,8 +91,7 @@ class AcmeTracker(AbstractTrackerAdapter):
         body: str,
         *,
         idempotency_key: str | None = None,
-    ) -> CommentResult:
-        ...
+    ) -> CommentResult: ...
 
     def transition(
         self,
@@ -101,8 +100,7 @@ class AcmeTracker(AbstractTrackerAdapter):
         *,
         idempotency_key: str | None = None,
         etag: str | None = None,
-    ) -> TransitionResult:
-        ...
+    ) -> TransitionResult: ...
 ```
 
 ## Shipping the adapter as a plugin

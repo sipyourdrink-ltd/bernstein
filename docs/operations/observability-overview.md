@@ -166,9 +166,7 @@ Environment variables (`apm_integration.py:29-37`):
 Setup is one of:
 
 ```python
-from bernstein.core.observability.apm_integration import (
-    auto_configure_apm, configure_datadog
-)
+from bernstein.core.observability.apm_integration import auto_configure_apm, configure_datadog
 
 # Auto-pick whatever is available based on env vars
 auto_configure_apm()
@@ -194,9 +192,7 @@ tracer, meter, span context manager, and named presets for common
 backends (`telemetry.py:1-22`).
 
 ```python
-from bernstein.core.observability.telemetry import (
-    init_telemetry_from_preset, init_telemetry, start_span
-)
+from bernstein.core.observability.telemetry import init_telemetry_from_preset, init_telemetry, start_span
 
 # Built-in presets (telemetry.py:86-100): "jaeger", "grafana", "datadog",
 # "zipkin", "console", and more. Each preset hardcodes endpoint, protocol,

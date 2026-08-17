@@ -53,9 +53,9 @@ The toggle is read by `is_owasp_asi_enabled()` and consulted by
 ```python
 from bernstein.core.security.guardrail_pipeline import GuardrailPipeline
 
-pipeline = GuardrailPipeline.default()                  # respects env
+pipeline = GuardrailPipeline.default()  # respects env
 pipeline = GuardrailPipeline.default(enable_owasp_asi=True)  # force on
-pipeline = GuardrailPipeline.default(enable_owasp_asi=False) # force off
+pipeline = GuardrailPipeline.default(enable_owasp_asi=False)  # force off
 ```
 
 Detector load failures are caught and logged; the pipeline keeps
@@ -120,7 +120,8 @@ permission graph, audit chain) - it is not a replacement for them.
 
 ```python
 from bernstein.core.security.owasp_asi_detectors import (
-    OwaspAsiGuardrail, DEFAULT_DETECTORS,
+    OwaspAsiGuardrail,
+    DEFAULT_DETECTORS,
 )
 
 custom = OwaspAsiGuardrail(

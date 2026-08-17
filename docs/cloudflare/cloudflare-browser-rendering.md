@@ -83,10 +83,10 @@ Fetches a fully-rendered page after JavaScript has run.
 
 ```python
 page = await browser.render("https://example.com", full_html=True)
-print(page.title)           # "Example Domain"
-print(page.content[:200])   # extracted text content
-print(len(page.links))      # outbound hrefs
-print(page.html[:500])      # only present if full_html=True
+print(page.title)  # "Example Domain"
+print(page.content[:200])  # extracted text content
+print(len(page.links))  # outbound hrefs
+print(page.html[:500])  # only present if full_html=True
 ```
 
 Returns a `PageResult` with `url`, `title`, `content` (extracted

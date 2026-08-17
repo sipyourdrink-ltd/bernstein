@@ -9,7 +9,7 @@ normalized shape instead of against N different payload formats.
 ```python
 @dataclass
 class TriggerEvent:
-    source: str                       # "github", "slack", "schedule", ...
+    source: str  # "github", "slack", "schedule", ...
     timestamp: float
     raw_payload: dict[str, Any]
     repo: str = ""

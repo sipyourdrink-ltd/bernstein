@@ -84,6 +84,7 @@ callable:
 ```python
 from bernstein.core.planning.spec_quality import Rule, RuleResult
 
+
 def _check(spec_text, workspace_root):
     if "stakeholder" not in spec_text.lower():
         return RuleResult(
@@ -93,6 +94,7 @@ def _check(spec_text, workspace_root):
             hint="Add a 'Stakeholder' heading or sentence.",
         )
     return RuleResult(rule_id="stakeholder_named", passed=True)
+
 
 def factory() -> Rule:
     return Rule(

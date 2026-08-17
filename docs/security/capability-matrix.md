@@ -71,15 +71,18 @@ Programmatically:
 
 ```python
 from bernstein.core.security.capability_matrix import (
-    CapabilityRegistry, Capability,
+    CapabilityRegistry,
+    Capability,
 )
 
 registry = CapabilityRegistry.load_default()
-decision = registry.evaluate_chain([
-    "read_file",
-    "web_fetch",
-    "gh.issue_comment",
-])
+decision = registry.evaluate_chain(
+    [
+        "read_file",
+        "web_fetch",
+        "gh.issue_comment",
+    ]
+)
 assert decision.kind == "DENY-trifecta"
 print(decision.reason)
 ```

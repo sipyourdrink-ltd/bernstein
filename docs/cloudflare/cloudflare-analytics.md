@@ -64,26 +64,30 @@ from bernstein.core.cost.d1_analytics import (
     UsageEvent,
 )
 
-client = D1AnalyticsClient(D1Config(
-    account_id="abc123",
-    api_token="cf_token_...",
-    database_id="d1-uuid",
-))
+client = D1AnalyticsClient(
+    D1Config(
+        account_id="abc123",
+        api_token="cf_token_...",
+        database_id="d1-uuid",
+    )
+)
 
 # Idempotent; safe to call on every boot.
 await client.initialize_schema()
 
 # Record a single event.
-await client.record_event(UsageEvent(
-    user_id="user-42",
-    event_type="run_start",
-    timestamp=time.time(),
-    model="claude-sonnet-4-6",
-    run_id="run-001",
-    tokens_input=5000,
-    tokens_output=2000,
-    cost_usd=0.045,
-))
+await client.record_event(
+    UsageEvent(
+        user_id="user-42",
+        event_type="run_start",
+        timestamp=time.time(),
+        model="claude-sonnet-4-6",
+        run_id="run-001",
+        tokens_input=5000,
+        tokens_output=2000,
+        cost_usd=0.045,
+    )
+)
 
 # Batch insert (single transaction).
 await client.record_events_batch([event1, event2, event3])

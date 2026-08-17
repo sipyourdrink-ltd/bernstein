@@ -228,9 +228,9 @@ connection = DataSourceConnection(id="sales", driver="sqlite", dsn="/var/data/sa
 driver = build_sqlite_query_driver(sdd_dir, connection)
 
 run = driver.run("SELECT region, SUM(amount) FROM orders GROUP BY region")
-run.schema_digest      # the schema snapshot the result was derived against
-run.result_hash        # sha256 over the canonical (explicitly ordered) bytes
-run.receipt            # the signed DataOpsReceipt; verifies offline
+run.schema_digest  # the schema snapshot the result was derived against
+run.result_hash  # sha256 over the canonical (explicitly ordered) bytes
+run.receipt  # the signed DataOpsReceipt; verifies offline
 ```
 
 ### Schema drift is a typed refusal
@@ -242,11 +242,10 @@ when the live schema no longer matches — *before* executing the query:
 from bernstein.core.datasources.errors import SchemaDrift
 
 try:
-    driver.run("SELECT region, SUM(amount) FROM orders GROUP BY region",
-               expected_schema=recorded_snapshot)
+    driver.run("SELECT region, SUM(amount) FROM orders GROUP BY region", expected_schema=recorded_snapshot)
 except SchemaDrift as drift:
-    drift.changed_object_names   # e.g. ('orders',)
-    drift.drifts[0].describe()   # "changed table 'orders': added columns 'discount'"
+    drift.changed_object_names  # e.g. ('orders',)
+    drift.drifts[0].describe()  # "changed table 'orders': added columns 'discount'"
 ```
 
 The verdict names the changed objects (added / removed / changed, with

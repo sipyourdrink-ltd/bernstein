@@ -32,7 +32,7 @@ yields a `ClusterHandle`:
 def test_worker_crash_mid_task(two_node_cluster):
     handle = two_node_cluster
     task_id = handle.submit_task(role="backend", goal="...")
-    handle.kill_worker()                         # SIGKILL
+    handle.kill_worker()  # SIGKILL
     handle.wait_for_node_status("offline", timeout=15)
     handle.restart_worker()
     handle.wait_for_task_completion(task_id, timeout=60)

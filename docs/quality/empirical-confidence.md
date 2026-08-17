@@ -21,10 +21,10 @@ Return type:
 ```python
 @dataclass(frozen=True)
 class Confidence:
-    value: float | None        # mean outcome in [0,1], or None
-    samples: int               # total recorded rows
-    insufficient_data: bool    # True when samples < min_samples
-    min_samples: int           # threshold used for this query
+    value: float | None  # mean outcome in [0,1], or None
+    samples: int  # total recorded rows
+    insufficient_data: bool  # True when samples < min_samples
+    min_samples: int  # threshold used for this query
 ```
 
 ## Storage

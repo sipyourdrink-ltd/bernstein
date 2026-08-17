@@ -1125,9 +1125,9 @@ green_path = deploy.prepare_green("2.1.0")
 
 # 3. Check health
 if deploy.health_check():
-    deploy.switch_traffic()   # symlink: .sdd/ → .sdd-green/
+    deploy.switch_traffic()  # symlink: .sdd/ → .sdd-green/
 else:
-    deploy.rollback()         # stays on blue; green is discarded
+    deploy.rollback()  # stays on blue; green is discarded
 ```
 
 ### Upgrade procedure (bare metal)
@@ -1159,10 +1159,10 @@ kill $(cat .sdd-blue/runtime/server.pid)
 
 ```python
 status = deploy.status()
-print(status.active)         # "blue" or "green"
-print(status.blue_version)   # "2.0.0"
+print(status.active)  # "blue" or "green"
+print(status.blue_version)  # "2.0.0"
 print(status.green_version)  # "2.1.0"
-print(status.healthy)        # True / False
+print(status.healthy)  # True / False
 ```
 
 ---

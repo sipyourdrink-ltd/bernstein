@@ -34,9 +34,12 @@ same event types it would in production.
 
 ```python
 from custom_adapter import ClaudeMockAdapter
-adapter = ClaudeMockAdapter(canned_responses={
-    "fix the bug": "I patched src/foo.py.",
-})
+
+adapter = ClaudeMockAdapter(
+    canned_responses={
+        "fix the bug": "I patched src/foo.py.",
+    }
+)
 ```
 
 bernstein instantiates the adapter without arguments by default; pass
@@ -46,6 +49,7 @@ relying on entry-point discovery:
 ```python
 from bernstein.adapters.registry import register_adapter
 from custom_adapter import ClaudeMockAdapter
+
 register_adapter("claude_mock", ClaudeMockAdapter(canned_responses={...}))
 ```
 

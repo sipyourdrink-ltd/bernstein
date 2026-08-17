@@ -53,7 +53,7 @@ Load and verify the contract programmatically:
 from bernstein.core.planning.feature_contract import FeatureContract
 from bernstein.core.planning.spec_assertions import verify_contract
 
-contract = FeatureContract.load()              # raises on tampering
+contract = FeatureContract.load()  # raises on tampering
 extraction, results = verify_contract(apply=True)  # run checks, flip passes
 ```
 

@@ -47,6 +47,7 @@ from bernstein.core.orchestration.research_worker import (
 
 worker = ResearchWorker(store=store, budget=ResearchBudget(max_fetches=8))
 
+
 def synthesise(query, fetched):
     # The opaque, stochastic step (a model in production). It drafts claims and
     # the spans they quote; the worker binds each span to the fetched page hash.
@@ -57,10 +58,11 @@ def synthesise(query, fetched):
         ),
     ]
 
+
 run = worker.run(
     query="what changed in 3.13",
     sources=["https://example/a", "https://example/b"],
-    fetch_fn=fetch_bytes,       # retrieves the exact page bytes
+    fetch_fn=fetch_bytes,  # retrieves the exact page bytes
     synthesise=synthesise,
 )
 dispatch_activity(run.result, stage_id="research-0", journal=journal, chain=chain)

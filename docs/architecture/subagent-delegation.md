@@ -48,9 +48,9 @@ structured result into `dispatch_node()` or `delegate_plan()`:
 result = dispatch_node(
     node,
     native_result={"files_changed": ["app.py"]},
-    journal=run_journal,          # optional
-    chain=audit_chain_store,      # optional
-    ledger=spend_ledger,          # optional
+    journal=run_journal,  # optional
+    chain=audit_chain_store,  # optional
+    ledger=spend_ledger,  # optional
     undiscounted_cost_usd=0.02,
     input_tokens=1200,
     output_tokens=340,

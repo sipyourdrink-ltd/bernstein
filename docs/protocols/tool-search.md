@@ -50,7 +50,8 @@ To inspect the search engine directly:
 
 ```python
 from bernstein.core.protocols.mcp.mcp_tool_search import (
-    ToolCatalog, ToolSearchEngine,
+    ToolCatalog,
+    ToolSearchEngine,
 )
 
 catalog = ToolCatalog.from_registered_servers()
