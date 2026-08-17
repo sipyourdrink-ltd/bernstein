@@ -454,9 +454,19 @@ def verify_result_bundle(
     # is missing outright.
     prev_digest_checked = False
     chain = bundle_dict.get("chain", {})
-    if "anchor" not in chain or "length" not in chain:
+    if not isinstance(chain, dict):
+        # ``.get("chain", {})`` defends against the key being absent, not against
+        # it holding the wrong type, and the two tests below it change meaning
+        # rather than fail: ``in`` is substring on a str and element-of on a
+        # list, and ``.get`` exists on neither. The type has to be settled
+        # before the content is read at all.
+        errors.append(FieldError("chain", f"expected an object, got {type(chain).__name__}"))
+    elif "anchor" not in chain or "length" not in chain:
         errors.append(FieldError("chain", "missing anchor or length"))
-    elif not isinstance(chain.get("length"), int) or chain["length"] < 1:
+    elif not isinstance(chain.get("length"), int) or isinstance(chain["length"], bool) or chain["length"] < 1:
+        # bool is an int subclass, so ``true`` satisfied both the isinstance and
+        # the ``>= 1`` comparison. Same rejection ``_load_version`` makes in
+        # bernstein.core.volunteer.manifest, for the same reason.
         errors.append(FieldError("chain.length", f"invalid length {chain.get('length')!r}"))
     elif expected_prev_digest is not None:
         prev_digest_checked = True
