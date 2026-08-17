@@ -44,13 +44,28 @@ def receipt_group() -> None:
     help="Pin the worker key: verify against this Ed25519 public key (PEM).",
 )
 @click.option("--prev-digest", default=None, help="Expected predecessor bundle digest (chain continuity).")
+@click.option(
+    "--expected-manifest-digest",
+    default=None,
+    help="Expected volunteer-manifest digest: ties the run to a declared policy, not one the worker chose.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
-def verify_cmd(bundle_path: Path, pubkey_path: Path | None, prev_digest: str | None, as_json: bool) -> None:
+def verify_cmd(
+    bundle_path: Path,
+    pubkey_path: Path | None,
+    prev_digest: str | None,
+    expected_manifest_digest: str | None,
+    as_json: bool,
+) -> None:
     """Verify a result receipt bundle offline.
 
     Exits non-zero on any failure -- a bad signature, a tampered patch or gate
-    log, an inconsistent digest, or a broken chain link -- naming the exact
-    field that diverged.
+    log, an inconsistent digest, a broken chain link, or a manifest digest that
+    is not the one you expected -- naming the exact field that diverged.
+
+    Without ``--expected-manifest-digest`` the bundle's ``manifest_sha256`` is
+    carried but never compared, and the command says so rather than letting a
+    bare ``✓`` read as a policy check.
     """
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -80,7 +95,12 @@ def verify_cmd(bundle_path: Path, pubkey_path: Path | None, prev_digest: str | N
             _fail(f"bundle carries no usable worker public key: {exc}")
             return
 
-    result = verify_result_bundle(envelope, public_key, expected_prev_digest=prev_digest)
+    result = verify_result_bundle(
+        envelope,
+        public_key,
+        expected_prev_digest=prev_digest,
+        expected_manifest_sha256=expected_manifest_digest,
+    )
 
     if as_json:
         click.echo(
@@ -90,6 +110,7 @@ def verify_cmd(bundle_path: Path, pubkey_path: Path | None, prev_digest: str | N
                     "keyid": result.keyid,
                     "digest": result.digest,
                     "pinned_key": pinned,
+                    "manifest_digest_checked": result.manifest_digest_checked,
                     "errors": [{"field": e.field, "message": e.message} for e in result.errors],
                 },
                 indent=2,
@@ -101,8 +122,17 @@ def verify_cmd(bundle_path: Path, pubkey_path: Path | None, prev_digest: str | N
             click.echo(f"✓ bundle verifies against {trust}")
             click.echo(f"  keyid:  {result.keyid}")
             click.echo(f"  digest: {result.digest}")
+            if result.manifest_digest_checked:
+                click.echo(f"  manifest: checked against {expected_manifest_digest}")
+            else:
+                click.echo("  manifest: carried, NOT checked")
             if not pinned:
                 click.echo("  note: provenance requires pinning the worker key with --pubkey", err=True)
+            if not result.manifest_digest_checked:
+                click.echo(
+                    "  note: the run is not tied to a declared policy without --expected-manifest-digest",
+                    err=True,
+                )
         else:
             click.echo("✗ bundle verification failed:", err=True)
             for e in result.errors:
@@ -122,13 +152,27 @@ def verify_cmd(bundle_path: Path, pubkey_path: Path | None, prev_digest: str | N
     help="Worker Ed25519 private key (PEM) to sign the bundle.",
 )
 @click.option("-o", "--output", "output_path", required=True, type=click.Path(dir_okay=False, path_type=Path))
-def create_cmd(spec_path: Path, signing_key_path: Path, output_path: Path) -> None:
+@click.option(
+    "--manifest-repo",
+    "manifest_repo",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Repository root whose .bernstein/volunteer.json supplies manifest_sha256, overriding the spec.",
+)
+def create_cmd(spec_path: Path, signing_key_path: Path, output_path: Path, manifest_repo: Path | None) -> None:
     """Build and sign a result receipt bundle from a JSON spec.
 
     The spec provides task, patch, gates, manifest hash, adapter/model ids,
     sandbox profile and selection receipt, timestamp, and the chain link
     (``anchor`` + ``length``). The worker identity is derived from the signing
     key, so it cannot disagree with the signature.
+
+    ``--manifest-repo`` does the same for the manifest digest: the value is
+    read out of the project's declared manifest at its canonical path rather
+    than taken from the spec, so ``manifest_sha256`` stops being a string the
+    submitter typed. It takes a repository root, not a manifest file, because a
+    loose JSON file the submitter points at is the same unvalidated value in a
+    new costume. Without the flag the command behaves exactly as before.
     """
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -140,14 +184,24 @@ def create_cmd(spec_path: Path, signing_key_path: Path, output_path: Path) -> No
         ResultBundle,
         TaskRef,
         build_result_bundle,
+        bundle_with_manifest_digest,
         write_bundle,
     )
+    from bernstein.core.volunteer.manifest import VolunteerManifestError, load_manifest_from_repo
 
     key = serialization.load_pem_private_key(signing_key_path.read_bytes(), password=None)
     if not isinstance(key, Ed25519PrivateKey):
         _fail("signing key is not an Ed25519 private key")
         return
     pub = key.public_key()
+
+    manifest = None
+    if manifest_repo is not None:
+        try:
+            manifest = load_manifest_from_repo(manifest_repo)
+        except (FileNotFoundError, VolunteerManifestError) as exc:
+            _fail(f"could not load manifest from {manifest_repo}: {exc}")
+            return
 
     try:
         spec = json.loads(spec_path.read_text(encoding="utf-8"))
@@ -159,7 +213,9 @@ def create_cmd(spec_path: Path, signing_key_path: Path, output_path: Path) -> No
             gates=tuple(
                 GateResult(command=g["command"], exit_code=g["exit_code"], log=g["log"]) for g in spec.get("gates", [])
             ),
-            manifest_sha256=spec["manifest_sha256"],
+            # Read from the spec only when no manifest was supplied; the helper
+            # below discards this value outright when one was.
+            manifest_sha256=spec["manifest_sha256"] if manifest is None else "",
             adapter_id=spec["adapter_id"],
             model_id=spec["model_id"],
             sandbox_profile=spec["sandbox_profile"],
@@ -173,7 +229,12 @@ def create_cmd(spec_path: Path, signing_key_path: Path, output_path: Path) -> No
         _fail(f"invalid spec: {exc}")
         return
 
+    if manifest is not None:
+        bundle = bundle_with_manifest_digest(bundle, manifest)
+
     envelope = build_result_bundle(bundle, signing_key=key)
     write_bundle(envelope, output_path)
     click.echo(f"✓ wrote signed bundle to {output_path}")
     click.echo(f"  digest: {bundle.digest}")
+    if manifest is not None:
+        click.echo(f"  manifest: {bundle.manifest_sha256} (derived from {manifest_repo})")

@@ -31,7 +31,12 @@ envelope dataclasses so the wire format matches the rest of the audit surface.
 3. the patch hashes to its attested value;
 4. every gate log hashes to its attested digest;
 5. the chain link is well formed (and matches an expected predecessor when the
-   caller walks a sequence).
+   caller walks a sequence);
+6. the manifest digest matches the one the caller expects, when it names one --
+   the only step that ties the run to the project's declared policy rather than
+   to a policy the worker chose (#3911). The verdict records whether that
+   comparison happened, because a field carried unchecked is not a field
+   verified.
 
 Tampering with any byte of the patch or any gate log fails verification with a
 field-level error, per the issue's acceptance criteria. HMAC audit-chain
@@ -43,6 +48,7 @@ does not require it.
 from __future__ import annotations
 
 import base64
+import dataclasses
 import hashlib
 import json
 from dataclasses import dataclass, field
@@ -69,6 +75,8 @@ if TYPE_CHECKING:
         Ed25519PrivateKey,
         Ed25519PublicKey,
     )
+
+    from bernstein.core.volunteer.manifest import VolunteerManifest
 
 #: Predicate type for a result receipt bundle. Distinct from the audit
 #: predicate so a verifier cannot confuse the two envelope kinds.
@@ -223,6 +231,24 @@ class ResultBundle:
 # --------------------------------------------------------------------------- #
 
 
+def bundle_with_manifest_digest(bundle: ResultBundle, manifest: VolunteerManifest) -> ResultBundle:
+    """Return *bundle* carrying the real digest of *manifest*.
+
+    Whatever the caller put in ``manifest_sha256`` is discarded rather than
+    trusted, which is the only way the field can stop being an opaque string
+    the submitter chose. ``manifest.digest`` is the single producer of that
+    value (:mod:`bernstein.core.volunteer.manifest`), so a bundle built through
+    this helper and a verifier holding the same manifest agree by construction.
+
+    This is hygiene, not enforcement: a worker who points the helper at a
+    manifest they wrote still gets a bundle that is internally consistent. The
+    tie to the *project's* declared policy is made at verification time, by a
+    caller passing ``expected_manifest_sha256`` to
+    :func:`verify_result_bundle`. See that function's note.
+    """
+    return dataclasses.replace(bundle, manifest_sha256=manifest.digest)
+
+
 def build_result_bundle(
     bundle: ResultBundle,
     *,
@@ -286,13 +312,21 @@ class FieldError:
 
 @dataclass(frozen=True, slots=True)
 class BundleVerification:
-    """Outcome of :func:`verify_result_bundle`."""
+    """Outcome of :func:`verify_result_bundle`.
+
+    ``manifest_digest_checked`` is the difference between "the manifest digest
+    matched what I expected" and "nobody asked". Without it a caller reading
+    ``ok is True`` cannot tell the two apart -- the bundle carries the field
+    either way, and an unchecked field reported as verified is the whole defect
+    #3911 closes.
+    """
 
     ok: bool
     keyid: str = ""
     digest: str = ""
     bundle: dict[str, Any] = field(default_factory=dict)
     errors: tuple[FieldError, ...] = ()
+    manifest_digest_checked: bool = False
 
 
 def verify_result_bundle(
@@ -300,6 +334,7 @@ def verify_result_bundle(
     public_key: Ed25519PublicKey,
     *,
     expected_prev_digest: str | None = None,
+    expected_manifest_sha256: str | None = None,
 ) -> BundleVerification:
     """Offline, side-effect-free verification of a result receipt bundle.
 
@@ -312,10 +347,19 @@ def verify_result_bundle(
     4. the patch hashes to its attested ``patch_sha256``;
     5. every gate log hashes to its attested ``log_sha256``;
     6. the chain link is well formed, and matches ``expected_prev_digest`` when
-       the caller is walking a sequence.
+       the caller is walking a sequence;
+    7. the manifest digest matches ``expected_manifest_sha256`` when the caller
+       supplies one.
 
     A single wrong byte in the patch or any gate log yields a field-level error
     naming exactly what diverged.
+
+    Step 7 is what ties a run to a policy. Everything above it says the bundle
+    was not altered and that the worker signed it; none of it says *which rules
+    the run obeyed*, because the worker chose ``manifest_sha256`` too. Passing
+    ``expected_manifest_sha256`` -- the digest of the manifest the project
+    declared -- is the only step that answers that, so the result records
+    whether it happened rather than leaving a caller to infer it from ``ok``.
     """
     errors: list[FieldError] = []
 
@@ -396,12 +440,29 @@ def verify_result_bundle(
             )
         )
 
+    # (7) the manifest the run declares itself bound to. Only compared when the
+    # caller names the manifest it expects: a bundle is self-consistent about
+    # this field no matter what it holds, so "carried" is not "checked".
+    if expected_manifest_sha256 is not None:
+        carried = bundle_dict.get("manifest_sha256")
+        if carried != expected_manifest_sha256:
+            errors.append(
+                FieldError(
+                    "manifest_sha256",
+                    f"bundle attests manifest {carried}, expected {expected_manifest_sha256}",
+                )
+            )
+
     return BundleVerification(
         ok=not errors,
         keyid=env_v.keyid,
         digest=attested_digest,
         bundle=bundle_dict,
         errors=tuple(errors),
+        # Set here rather than at the top of the function on purpose: the
+        # signature failure above returns early, and a check that never ran
+        # must not be reported as one that passed.
+        manifest_digest_checked=expected_manifest_sha256 is not None,
     )
 
 

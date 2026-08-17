@@ -13,8 +13,12 @@ criteria call for.
 from __future__ import annotations
 
 import base64
+import builtins
 import json
+import socket
+from typing import Any
 
+import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from bernstein.core.security.audit_dsse import export_public_key_pem, keyid_from_public_key
@@ -25,16 +29,43 @@ from bernstein.core.security.result_receipt_bundle import (
     ResultBundle,
     TaskRef,
     build_result_bundle,
+    bundle_with_manifest_digest,
     parse_bundle,
     verify_result_bundle,
 )
+from bernstein.core.volunteer.manifest import VolunteerManifest, load_manifest
+
+#: A valid manifest document, mirroring tests/unit/volunteer/test_volunteer_manifest.py.
+#: Real, because a digest over a made-up policy proves nothing about the field
+#: this file exists to check (#3911).
+_VALID_MANIFEST: dict[str, Any] = {
+    "version": 1,
+    "license": "Apache-2.0",
+    "gates": [["uv", "run", "pytest", "-q"], ["uv", "run", "ruff", "check", "."]],
+    "allowed_paths": ["src/**", "tests/**"],
+    "egress_allowlist": ["pypi.org"],
+    "sandbox": "microvm",
+    "max_wall_clock_minutes": 30,
+    "task_label": "volunteer-ok",
+    "local_ok": True,
+}
+
+
+def _manifest(**overrides: Any) -> VolunteerManifest:
+    """A real, validated manifest -- never a hand-written hex string."""
+    return load_manifest(json.dumps({**_VALID_MANIFEST, **overrides}))
 
 
 def _key(seed_byte: int = 7) -> Ed25519PrivateKey:
     return Ed25519PrivateKey.from_private_bytes(bytes([seed_byte]) * 32)
 
 
-def _bundle(key: Ed25519PrivateKey, *, patch: str = "diff --git a/x b/x\n+hello\n") -> ResultBundle:
+def _bundle(
+    key: Ed25519PrivateKey,
+    *,
+    patch: str = "diff --git a/x b/x\n+hello\n",
+    manifest_sha256: str | None = None,
+) -> ResultBundle:
     pub = key.public_key()
     return ResultBundle(
         task=TaskRef(repo="sipyourdrink-ltd/bernstein", commit_sha="abc123def456", issue_number=3870),
@@ -43,7 +74,7 @@ def _bundle(key: Ed25519PrivateKey, *, patch: str = "diff --git a/x b/x\n+hello\
             GateResult(command="pytest -q", exit_code=0, log="42 passed in 3.1s\n"),
             GateResult(command="ruff check", exit_code=0, log="All checks passed!\n"),
         ),
-        manifest_sha256="0" * 64,
+        manifest_sha256=_manifest().digest if manifest_sha256 is None else manifest_sha256,
         adapter_id="adapter.default.v3",
         model_id="claude-x",
         sandbox_profile="restricted-net-off",
@@ -171,7 +202,7 @@ def test_chain_continuity():
         task=first.task,
         patch="diff --git a/y b/y\n+two\n",
         gates=first.gates,
-        manifest_sha256="1" * 64,
+        manifest_sha256=_manifest(max_wall_clock_minutes=45).digest,
         adapter_id=first.adapter_id,
         model_id=first.model_id,
         sandbox_profile=first.sandbox_profile,
@@ -205,3 +236,112 @@ def test_parse_roundtrip():
     reparsed = parse_bundle(json.loads(env.to_json()))
     v = verify_result_bundle(reparsed, key.public_key())
     assert v.ok
+
+
+# ---------------------------------------------------------------------------
+# #3911: the manifest digest is derived, and its check is visible in the verdict
+#
+# Every manifest below is a real, validated VolunteerManifest whose ``.digest``
+# is computed by the one producer. Two hand-written hex strings would pass all
+# of these while proving nothing -- that is the exact shape of proof the
+# ``"0" * 64`` fixtures were.
+# ---------------------------------------------------------------------------
+
+
+def test_a_bundle_built_from_one_manifest_fails_against_anothers_digest():
+    key = _key()
+    manifest_a = _manifest()
+    manifest_b = _manifest(max_wall_clock_minutes=45)
+    assert manifest_a.digest != manifest_b.digest, "the two fixtures must be genuinely different policies"
+
+    env = build_result_bundle(bundle_with_manifest_digest(_bundle(key), manifest_a), signing_key=key)
+
+    good = verify_result_bundle(env, key.public_key(), expected_manifest_sha256=manifest_a.digest)
+    assert good.ok, good.errors
+
+    bad = verify_result_bundle(env, key.public_key(), expected_manifest_sha256=manifest_b.digest)
+    assert not bad.ok
+    assert [e.field for e in bad.errors] == ["manifest_sha256"]
+    # the failure names its reference, so the verdict alone says what was expected
+    assert manifest_b.digest in bad.errors[0].message
+
+
+def test_a_verdict_distinguishes_checked_from_merely_carried():
+    """An unchecked field reported as verified is the whole bug, restated."""
+    key = _key()
+    manifest = _manifest()
+    env = build_result_bundle(bundle_with_manifest_digest(_bundle(key), manifest), signing_key=key)
+
+    unchecked = verify_result_bundle(env, key.public_key())
+    checked = verify_result_bundle(env, key.public_key(), expected_manifest_sha256=manifest.digest)
+
+    # Both succeed -- not supplying the digest is not a failure, it is a
+    # narrower question -- so ``ok`` cannot be what tells them apart.
+    assert unchecked.ok and checked.ok
+    assert unchecked.errors == () and checked.errors == ()
+    assert unchecked.manifest_digest_checked is False
+    assert checked.manifest_digest_checked is True
+    assert unchecked != checked, "the two verdicts must not be indistinguishable objects"
+
+
+def test_a_failed_signature_does_not_report_the_manifest_digest_as_checked():
+    """The early return happens before the comparison, so it never ran.
+
+    Not in #3911's matrix, and it is the state where the obvious
+    implementation -- recording ``expected is not None`` at the top of the
+    function -- reports a check that provably did not happen, on the one
+    verdict a caller is most likely to be reading carefully.
+    """
+    key = _key()
+    manifest = _manifest()
+    env = build_result_bundle(bundle_with_manifest_digest(_bundle(key), manifest), signing_key=key)
+
+    wrong_key = _key(9).public_key()
+    v = verify_result_bundle(env, wrong_key, expected_manifest_sha256=manifest.digest)
+
+    assert not v.ok
+    assert [e.field for e in v.errors] == ["envelope"]
+    assert v.manifest_digest_checked is False
+
+
+def test_the_builder_derives_the_digest_rather_than_trusting_its_caller():
+    key = _key()
+    manifest = _manifest()
+    fake = "wrong" + "0" * 59
+
+    derived = bundle_with_manifest_digest(_bundle(key, manifest_sha256=fake), manifest)
+
+    assert derived.manifest_sha256 == manifest.digest
+    assert fake not in derived.canonical_bytes().decode("utf-8"), "the caller's value must not survive anywhere"
+
+
+def test_reordering_manifest_keys_does_not_change_the_bundles_digest():
+    """Canonicalisation is manifest.py's job; this pins that the bundle inherits it."""
+    key = _key()
+    forward = load_manifest(json.dumps(dict(sorted(_VALID_MANIFEST.items()))))
+    reversed_ = load_manifest(json.dumps(dict(sorted(_VALID_MANIFEST.items(), reverse=True))))
+    assert forward.digest == reversed_.digest
+
+    a = bundle_with_manifest_digest(_bundle(key), forward)
+    b = bundle_with_manifest_digest(_bundle(key), reversed_)
+    assert a.manifest_sha256 == b.manifest_sha256
+    assert a.canonical_bytes() == b.canonical_bytes()
+
+
+def test_verification_opens_no_files_and_no_sockets(monkeypatch: pytest.MonkeyPatch):
+    """The new comparison is string equality, not a late read of the manifest."""
+    key = _key()
+    manifest = _manifest()
+    env = build_result_bundle(bundle_with_manifest_digest(_bundle(key), manifest), signing_key=key)
+
+    def _no_open(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError(f"verification opened a file: {args!r}")
+
+    def _no_connect(self: Any, *args: Any, **kwargs: Any) -> Any:
+        raise AssertionError(f"verification opened a socket: {args!r}")
+
+    monkeypatch.setattr(builtins, "open", _no_open)
+    monkeypatch.setattr(socket.socket, "connect", _no_connect)
+
+    v = verify_result_bundle(env, key.public_key(), expected_manifest_sha256=manifest.digest)
+    assert v.ok and v.manifest_digest_checked
