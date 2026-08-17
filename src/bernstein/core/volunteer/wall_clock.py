@@ -57,7 +57,11 @@ class WallClockOutcome:
         exit_code: The process's exit status, or ``None`` if it was killed
             before reporting one.
         elapsed_seconds: Wall time actually consumed.
-        limit_seconds: The ceiling in force.
+        limit_seconds: The ceiling in force.  A duration rather than a count,
+            so fractional: a caller spending one budget across several commands
+            has a remainder to pass on, and rounding it down at every hand-off
+            loses most of a short budget while rounding it up hands out time
+            the budget does not have.
         escalated_to_sigkill: Whether SIGTERM was ignored and SIGKILL followed.
             Worth recording separately: a command that needs SIGKILL is either
             wedged in uninterruptible state or trapping signals, and both are
@@ -67,7 +71,7 @@ class WallClockOutcome:
     killed: bool
     exit_code: int | None
     elapsed_seconds: float
-    limit_seconds: int
+    limit_seconds: float
     escalated_to_sigkill: bool
 
     @property
@@ -89,7 +93,7 @@ class WallClockOutcome:
 def run_under_wall_clock(
     argv: Sequence[str],
     *,
-    limit_seconds: int,
+    limit_seconds: float,
     cwd: Path | str | None = None,
     env: Mapping[str, str] | None = None,
     grace_seconds: float = TERM_GRACE_SECONDS,

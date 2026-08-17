@@ -60,6 +60,25 @@ def test_a_hanging_gate_is_killed_at_the_cap() -> None:
     assert time.monotonic() - started < 20
 
 
+def test_a_fractional_ceiling_is_honoured_rather_than_rounded() -> None:
+    """A caller spending one budget across several commands has a remainder.
+
+    Rounding it down at every hand-off loses most of a short budget to the
+    rounding; rounding it up hands out time the budget does not have.  So the
+    ceiling is a duration, and a sub-second one has to actually fire -- an
+    implementation that truncated to whole seconds would turn 0.5 into 0 or 1
+    and this test would notice either way.
+    """
+    started = time.monotonic()
+
+    outcome, _, _ = run_under_wall_clock(_python("import time; time.sleep(60)"), limit_seconds=0.5, grace_seconds=0.5)
+
+    assert outcome.killed is True
+    assert outcome.limit_seconds == 0.5
+    assert outcome.elapsed_seconds >= 0.5
+    assert time.monotonic() - started < 20
+
+
 def test_the_kill_is_recorded_with_the_limit_that_fired() -> None:
     """A killed run produces a refusal, and a refusal has to say why.
 

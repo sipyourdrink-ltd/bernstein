@@ -120,6 +120,25 @@ class MockAgentAdapter(CLIAdapter):
         return "mock"
 
     @staticmethod
+    def agent_script_source() -> str:
+        """The mock agent's program text, for callers that own their own spawn.
+
+        :meth:`spawn` builds the environment and starts the process itself,
+        which is right for the orchestrator and wrong for a caller whose whole
+        job is owning those two things - the volunteer runner has to start the
+        process under its own wall-clock cap with an environment derived from a
+        sandbox profile, so it needs the program rather than a running process.
+
+        Exposed rather than duplicated so a zero-key volunteer run exercises
+        the same agent the rest of the suite does instead of a lookalike that
+        can drift away from it.
+
+        Returns:
+            Python source for the mock agent worker.
+        """
+        return MockAgentAdapter._build_mock_script()
+
+    @staticmethod
     def _build_mock_script() -> str:
         """Build a Python script that simulates agent bug-fix work.
 
