@@ -912,6 +912,7 @@ markers = [
     "integration: end-to-end / subprocess-driven integration tests; selectable via -m integration in CI",
     "stress: resource-leak / memory-growth / deadlock stress tests (TC-C); gated off by default CI, run nightly via `-m stress`",
     "allow_network: opt out of the autouse unit no-network guard (rare; a genuine integration test belongs in tests/integration/ instead)",
+    "protocol: protocol compatibility tests; applied to every item under tests/protocol/ by that directory's conftest, and run by the publish workflow's release gate",
 ]
 # Visible warnings without converting to errors; individual tests or runs
 # can tighten via `pytest -W error::DeprecationWarning`.
