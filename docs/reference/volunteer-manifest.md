@@ -103,6 +103,34 @@ An empty `allowed_paths` admits everything — that is what a project which neve
 declared one carries, and it is the reason the list defaults to empty rather
 than to a starter set someone would have to widen.
 
+## A glob match is not the whole check
+
+The matcher compares path *spellings*. That is exactly right for a matcher and
+not enough on its own: `docs/../src/secrets.py` is a spelling `docs/**` matches,
+and `src/plugins/x.py` matches `src/**` whether or not `src/plugins` is a
+symlink pointing out of the checkout.
+
+So a patch is judged in three steps, and the globs are the last one:
+
+1. every path the patch names must be a usable repository-relative path — no
+   `..` component, no absolute path, no drive letter, no NUL byte;
+2. it must still resolve inside the worktree once symlinks are followed;
+3. only then are the globs consulted.
+
+A refusal says which step tripped and which paths tripped it, so "outside
+`allowed_paths`" always means the globs, and never a traversal wearing their
+clothes.
+
+Three kinds of change print no hunk at all, and each is a way to touch a file
+without editing it: a content-preserving rename or copy, a mode change
+(`chmod +x`), and a binary file. All three are read out of the patch and
+checked like any other path.
+
+Matching is case-sensitive on every platform. On macOS `SRC/mod.py` and
+`src/mod.py` open the same file; on Linux they are two files. A scope written
+for one must not admit the other, so the case variant is refused — the answer
+that is correct on both.
+
 ## Gates are argv, never shell strings
 
 A gate is an argument vector — `["uv", "run", "pytest", "-q"]`, not
@@ -120,6 +148,44 @@ use instead. Two reasons, in order of weight:
 A project whose gate is a pipeline puts the pipeline in a script and names the
 script. The script is then part of the repository — reviewable, and hashed with
 everything else.
+
+## What a gate run produces
+
+The gates are re-run against the patch before anything is submitted, in the
+order the manifest lists them, sharing one wall-clock budget rather than getting
+one each — otherwise a manifest could multiply a donor's ceiling by declaring
+more gates. The first failure stops the run: the gates after it cannot change
+the outcome, and the machine is not ours.
+
+Each gate's environment is built from the [sandbox
+profile](volunteer-sandbox.md), never inherited from the donor's shell. A gate
+is a command chosen by a repository the donor does not control.
+
+The run then ends one of two ways, and there is no third:
+
+- **a signed receipt bundle**, carrying this manifest's digest as
+  `manifest_sha256`, the sandbox profile's digest, the patch, and every gate's
+  command, exit code, and log;
+- **a refusal record**, carrying a stable reason code and no bundle at all.
+
+There is deliberately no bundle marked failed. A signed bundle is a claim that
+the work is acceptable, and one that says otherwise in a boolean field is a
+misreading away from being treated as a pass.
+
+| Reason code | What happened |
+|---|---|
+| `patch_path_not_repo_relative` | A patch path is absolute, drive-qualified, or carries a `..` component |
+| `patch_path_escapes_workspace` | A patch path resolves outside the worktree once symlinks are followed |
+| `patch_outside_allowed_paths` | A patch path is well-formed and contained, and no glob admits it |
+| `patch_names_no_path` | The patch is not empty but names no file this build can read |
+| `profile_manifest_mismatch` | The sandbox profile was derived from a different manifest |
+| `gate_failed` | A gate finished on time with a non-zero exit status |
+| `gate_wall_clock_exceeded` | A gate was killed by the wall clock |
+| `gate_budget_exhausted` | The budget ran out before a declared gate could start |
+| `gate_not_executable` | A gate's program could not be run on this machine at all |
+
+Codes are append-only. A donor fleet counts refusals by code, and renaming one
+silently resets whatever was counting it.
 
 ## Validation rules
 

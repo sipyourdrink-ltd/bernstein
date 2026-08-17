@@ -91,6 +91,12 @@ from bernstein.core.autoheal.lineage_writer import (
     render_canonical_bytes,
     render_payload,
 )
+
+# Re-exported: the cordon's blast-radius question is the same one the
+# volunteer program's ``allowed_paths`` enforcement asks, so the answer lives
+# in one module rather than once per boundary. Imported here under its
+# original name so existing Tier-3 callers are unaffected.
+from bernstein.core.diff_paths import extract_paths_from_unified_diff
 from bernstein.core.observability import decision_log as dl
 
 if TYPE_CHECKING:
@@ -450,77 +456,6 @@ def evaluate_cordon(paths: Sequence[str]) -> tuple[bool, tuple[str, ...]]:
             continue
         rejected.append(path)
     return (not rejected, tuple(rejected))
-
-
-def extract_paths_from_unified_diff(diff: str) -> tuple[str, ...]:
-    """Pull every touched path out of a unified-diff blob.
-
-    Tier-3 receives a unified diff from the injected hook. We walk the
-    file-pair headers and collect every path the diff intends to touch
-    so the cordon check sees the full blast radius:
-
-    * For an addition / in-place modification, the ``+++ b/<path>``
-      header carries the new-side path.
-    * For a pure deletion, the new-side header is ``+++ /dev/null`` and
-      the old-side path is announced on the preceding ``--- a/<path>``;
-      collecting only the new side would let a Tier-3 patch delete an
-      arbitrary out-of-cordon file unchallenged.
-    * For a rename, the new-side header is ``+++ b/<new>`` but the
-      old-side ``--- a/<old>`` is a separate path that must also pass
-      the cordon, or a cordoned file could be renamed out of the
-      cordon (and a follow-up patch would then bypass the check).
-
-    Headers are processed as (old, new) pairs so the deletion / rename
-    semantics are visible. The order of returned paths preserves the
-    diff's own ordering (old before new within each pair) so the
-    decision-log entry can quote the offending paths verbatim.
-    """
-    paths: list[str] = []
-    pending_old: str | None = None
-    for line in diff.splitlines():
-        if line.startswith("--- "):
-            rest = line[len("--- ") :].strip()
-            if rest.startswith("a/"):
-                pending_old = rest[len("a/") :]
-            elif rest and rest != "/dev/null":
-                # Defensive: malformed old-side header still surfaces
-                # so the cordon trips rather than silently dropping the
-                # path on the floor.
-                pending_old = rest
-            else:
-                pending_old = None
-            continue
-        if line.startswith("+++ "):
-            rest = line[len("+++ ") :].strip()
-            new_path: str | None
-            if rest.startswith("b/"):
-                new_path = rest[len("b/") :]
-            elif rest == "/dev/null":
-                new_path = None
-            elif rest:
-                # Defensive: malformed new-side header still surfaces.
-                new_path = rest
-            else:
-                new_path = None
-
-            if new_path is None:
-                # Pure deletion: the new side is /dev/null. The old
-                # path must still pass the cordon, otherwise a Tier-3
-                # patch can delete arbitrary files outside the cordon.
-                if pending_old is not None:
-                    paths.append(pending_old)
-            elif pending_old is not None and pending_old != new_path:
-                # Rename: both sides must pass the cordon so a
-                # cordoned file cannot be moved out of the cordon (and
-                # a follow-up patch then bypasses the check).
-                paths.extend((pending_old, new_path))
-            else:
-                # Addition or in-place modification: the old and new
-                # paths agree (or the old side is absent), so a single
-                # entry is enough.
-                paths.append(new_path)
-            pending_old = None
-    return tuple(paths)
 
 
 # ---------------------------------------------------------------------------
