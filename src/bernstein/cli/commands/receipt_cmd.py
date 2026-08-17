@@ -65,7 +65,9 @@ def verify_cmd(
 
     Without ``--expected-manifest-digest`` the bundle's ``manifest_sha256`` is
     carried but never compared, and the command says so rather than letting a
-    bare ``✓`` read as a policy check.
+    bare ``✓`` read as a policy check. ``--prev-digest`` gets the same
+    treatment: continuity with a predecessor is reported as answered or not
+    asked, so a caller walking a sequence never has to infer it from ``ok``.
     """
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -111,6 +113,7 @@ def verify_cmd(
                     "digest": result.digest,
                     "pinned_key": pinned,
                     "manifest_digest_checked": result.manifest_digest_checked,
+                    "prev_digest_checked": result.prev_digest_checked,
                     "errors": [{"field": e.field, "message": e.message} for e in result.errors],
                 },
                 indent=2,
@@ -126,6 +129,10 @@ def verify_cmd(
                 click.echo(f"  manifest: checked against {expected_manifest_digest}")
             else:
                 click.echo("  manifest: carried, NOT checked")
+            if result.prev_digest_checked:
+                click.echo(f"  chain: checked against {prev_digest}")
+            else:
+                click.echo("  chain: carried, NOT checked")
             if not pinned:
                 click.echo("  note: provenance requires pinning the worker key with --pubkey", err=True)
             if not result.manifest_digest_checked:

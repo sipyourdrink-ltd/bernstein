@@ -141,6 +141,82 @@ def test_verify_says_which_of_the_two_happened(workspace: Path):
     assert json.loads(checked.output)["manifest_digest_checked"] is True
 
 
+def test_verify_says_whether_continuity_was_answered(workspace: Path):
+    """The chain half of the same question, at the surface an operator reads."""
+    assert _create(workspace, "bound.json", "--manifest-repo", str(workspace / "repo")).exit_code == 0
+    runner = CliRunner()
+
+    never_asked = runner.invoke(receipt_group, ["verify", str(workspace / "bound.json")])
+    walked = runner.invoke(
+        receipt_group,
+        ["verify", str(workspace / "bound.json"), "--prev-digest", "genesis"],
+    )
+
+    assert never_asked.exit_code == 0, never_asked.output
+    assert "chain: carried, NOT checked" in never_asked.output
+    assert walked.exit_code == 0, walked.output
+    assert "chain: checked against genesis" in walked.output
+
+
+def test_the_two_verdicts_are_reported_independently(workspace: Path):
+    """One flag must not move the other's bool -- they answer different questions."""
+    assert _create(workspace, "bound.json", "--manifest-repo", str(workspace / "repo")).exit_code == 0
+    runner = CliRunner()
+    bundle = str(workspace / "bound.json")
+
+    chain_only = json.loads(
+        runner.invoke(receipt_group, ["verify", bundle, "--json", "--prev-digest", "genesis"]).output
+    )
+    manifest_only = json.loads(
+        runner.invoke(
+            receipt_group, ["verify", bundle, "--json", "--expected-manifest-digest", _digest(workspace)]
+        ).output
+    )
+
+    assert chain_only["prev_digest_checked"] is True
+    assert chain_only["manifest_digest_checked"] is False
+    assert manifest_only["prev_digest_checked"] is False
+    assert manifest_only["manifest_digest_checked"] is True
+
+
+def test_json_separates_a_mismatched_anchor_from_one_never_compared(workspace: Path):
+    """The state the human output cannot show, and the reason for the JSON key.
+
+    Both runs pass ``--prev-digest``, so a flag echoed back would read ``true``
+    for both, and both exit non-zero. Only the first one compared anything: a
+    malformed chain link short-circuits the comparison inside step 6 without
+    failing on the caller's behalf, so on the second the caller asked and the
+    anchor was never looked at. The success branch cannot show this state --
+    a malformed chain fails ``ok`` on its own -- which is why the JSON key
+    carries more than the human line does.
+    """
+    assert _create(workspace, "wellformed.json").exit_code == 0
+    spec = json.loads((workspace / "spec.json").read_text(encoding="utf-8"))
+    spec["chain"] = {"anchor": "genesis", "length": 0}
+    (workspace / "spec.json").write_text(json.dumps(spec), encoding="utf-8")
+    assert _create(workspace, "malformed.json").exit_code == 0
+    runner = CliRunner()
+
+    compared_and_diverged = json.loads(
+        runner.invoke(
+            receipt_group, ["verify", str(workspace / "wellformed.json"), "--json", "--prev-digest", "not-genesis"]
+        ).output
+    )
+    never_compared = json.loads(
+        runner.invoke(
+            receipt_group, ["verify", str(workspace / "malformed.json"), "--json", "--prev-digest", "genesis"]
+        ).output
+    )
+
+    assert compared_and_diverged["ok"] is False
+    assert compared_and_diverged["prev_digest_checked"] is True
+    assert [e["field"] for e in compared_and_diverged["errors"]] == ["chain.anchor"]
+
+    assert never_compared["ok"] is False
+    assert never_compared["prev_digest_checked"] is False, "a skipped comparison must not report as answered"
+    assert [e["field"] for e in never_compared["errors"]] == ["chain.length"]
+
+
 def test_a_repo_without_a_manifest_fails_before_anything_is_signed(workspace: Path):
     (workspace / "empty").mkdir()
     result = _create(workspace, "never.json", "--manifest-repo", str(workspace / "empty"))
