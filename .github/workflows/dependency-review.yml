@@ -96,8 +96,18 @@ jobs:
           # statically linked, and its copyleft terms do not reach this
           # project's own Apache-2.0 sources. Already present in the tree at
           # 22.7 under identical terms; the bump is what made the reviewer look.
+          # numpy ships BSD-3-Clause, which is on the allow-list above, but
+          # from 2.5.2 its published metadata declares the compound expression
+          # "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0" - the project's
+          # own terms plus the terms of the code it vendors. Every named half is
+          # permissive and Apache-2.0 compatible, and three of the five are
+          # already on the allow-list, but the reviewer matches the expression
+          # as one string rather than per term, so the compound fails as a
+          # whole. Same package, same upstream terms as 2.5.1; the metadata got
+          # more precise, not more restrictive.
           allow-dependencies-licenses: >-
             pkg:githubactions/trufflesecurity/trufflehog,
             pkg:pypi/protobuf,
             pkg:pypi/crosshair-tool,
+            pkg:pypi/numpy,
             pkg:pypi/python-telegram-bot
