@@ -154,8 +154,20 @@ def _shape(root: Path, kind: str) -> None:
     elif kind == "fifo":
         os.mkfifo(path)
     elif kind == "socket":
-        with closing(socket.socket(socket.AF_UNIX)) as sock:
-            sock.bind(str(path))
+        # Bind from inside the directory, by bare name. `sun_path` is 104 bytes
+        # on macOS and 108 on Linux, and pytest's `tmp_path` under
+        # /var/folders/<...>/pytest-of-<user>/pytest-N/<test-name>N/ already
+        # spends most of that before ".bernstein/volunteer.json" is appended --
+        # so binding the absolute path raises "AF_UNIX path too long" on macOS
+        # while passing on CI. A relative bind is the same socket at the same
+        # place and does not depend on how deep the tmpdir happens to be.
+        previous = Path.cwd()
+        os.chdir(path.parent)
+        try:
+            with closing(socket.socket(socket.AF_UNIX)) as sock:
+                sock.bind(path.name)
+        finally:
+            os.chdir(previous)
     elif kind == "device":
         path.symlink_to("/dev/null")
     else:  # pragma: no cover - a typo in a parametrisation, not a state
