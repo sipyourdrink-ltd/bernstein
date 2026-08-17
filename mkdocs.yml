@@ -512,6 +512,7 @@ nav:
           - SPIFFE workload identity: reference/spiffe-workload-identity.md
           - Volunteer project manifest: reference/volunteer-manifest.md
           - Volunteer sandbox profile: reference/volunteer-sandbox.md
+          - Volunteer issue text: reference/volunteer-issue-text.md
           - MCP catalog: reference/mcp-catalog.md
           - MCP tool tiers: mcp/tool_tiers.md
       - Compatibility & limits:

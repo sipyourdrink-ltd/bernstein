@@ -18,6 +18,12 @@ anyone's word for either.
 
 from __future__ import annotations
 
+from bernstein.core.volunteer.issue_sanitize import (
+    ISSUE_TEXT_FENCE_LABEL,
+    normalize_untrusted_text,
+    sanitize_issue_text,
+    strip_html_comments,
+)
 from bernstein.core.volunteer.manifest import (
     OSI_APPROVED_LICENSES,
     SUPPORTED_SCHEMA_VERSIONS,
@@ -53,6 +59,7 @@ from bernstein.core.volunteer.wall_clock import (
 
 __all__ = [
     "BACKEND_PREFERENCE",
+    "ISSUE_TEXT_FENCE_LABEL",
     "OSI_APPROVED_LICENSES",
     "PACKAGE_REGISTRY_HOSTS",
     "SANDBOX_ENV_ALLOWLIST",
@@ -75,7 +82,10 @@ __all__ = [
     "load_manifest",
     "load_manifest_from_repo",
     "manifest_digest",
+    "normalize_untrusted_text",
     "profile_matches",
     "run_under_wall_clock",
     "sandbox_env",
+    "sanitize_issue_text",
+    "strip_html_comments",
 ]
