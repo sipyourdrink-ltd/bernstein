@@ -70,8 +70,10 @@ along with everything else.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
+import stat
 import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -335,16 +337,68 @@ def load_manifest(source: str | bytes) -> VolunteerManifest:
     )
 
 
+def _not_a_regular_file(mode: int) -> str:
+    """Name the shape found at the manifest path, for the refusal message."""
+    if stat.S_ISDIR(mode):
+        return "a directory"
+    if stat.S_ISFIFO(mode):
+        return "a fifo"
+    if stat.S_ISSOCK(mode):
+        return "a socket"
+    if stat.S_ISBLK(mode) or stat.S_ISCHR(mode):
+        return "a device file"
+    return "of an unrecognised type"
+
+
 def load_manifest_from_repo(repo_root: Path) -> VolunteerManifest:
     """Load ``.bernstein/volunteer.json`` from a checked-out repository.
 
+    "The project has not opted in" is a claim about the *project*, so it is
+    made only when nothing exists at the path at all.  Every other filesystem
+    state -- a symlink loop, a directory, an unreadable file, a
+    ``.bernstein`` that is itself a regular file -- is a manifest that exists
+    and could not be read, and raises :class:`OSError` instead, which is what
+    lets a caller tell the two apart (#4064).
+
+    :meth:`Path.is_file` could not make that distinction.  It swallows every
+    errno in ``pathlib._IGNORED_ERRNOS`` -- ``ENOENT``, ``ENOTDIR``, ``EBADF``,
+    ``ELOOP`` -- and answers ``False`` for anything that is not a regular file,
+    so five states arrived at one message asserting something false about the
+    project.  That is worse than a traceback: exit 1 and a well-formed
+    ``"the project has not opted in"`` sends a maintainer whose file is a
+    broken symlink off to add a file they already have.
+
+    The synthesised errors carry ``EINVAL`` deliberately.  ``ENOENT`` is the
+    errno that describes a dangling symlink, but ``OSError(ENOENT, ...)``
+    *constructs a* :class:`FileNotFoundError` -- the errno-to-subclass map runs
+    in ``OSError.__new__`` -- which would reintroduce this bug through the fix
+    for it.
+
     Raises:
-        FileNotFoundError: The project has not opted in.
-        VolunteerManifestError: The manifest exists but does not validate.
+        FileNotFoundError: Nothing exists at the path; the project has not
+            opted in.
+        OSError: Something exists at the path and is not a readable regular
+            file.
+        VolunteerManifestError: The manifest was read but does not validate.
     """
     path = repo_root / VOLUNTEER_MANIFEST_PATH
-    if not path.is_file():
-        raise FileNotFoundError(f"{path} does not exist; the project has not opted in to volunteer work")
+    absent = f"{path} does not exist; the project has not opted in to volunteer work"
+    try:
+        mode = path.stat().st_mode
+    except FileNotFoundError as exc:
+        # ENOENT from stat() is ambiguous: either nothing is at the path, or a
+        # symlink is and its target is gone.  lstat separates them, and only
+        # the first is a project that never opted in.  An lstat that fails for
+        # any other reason propagates, because that is not an absence either.
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            raise FileNotFoundError(absent) from exc
+        raise OSError(errno.EINVAL, "the symbolic link has no target", str(path)) from exc
+    if not stat.S_ISREG(mode):
+        # Refused before the open() rather than after: a fifo at this path
+        # would otherwise block the read until someone wrote to it.
+        raise OSError(errno.EINVAL, f"it is {_not_a_regular_file(mode)}, not a regular file", str(path))
     return load_manifest(path.read_bytes())
 
 

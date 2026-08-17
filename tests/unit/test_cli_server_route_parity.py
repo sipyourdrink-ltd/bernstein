@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from bernstein.core.routes.route_table import iter_route_paths
 from bernstein.core.server import create_app
 
 _CLI_ROOT = Path(__file__).resolve().parents[2] / "src" / "bernstein" / "cli"
@@ -87,7 +88,7 @@ def _collect_cli_server_paths() -> dict[str, list[str]]:
 def _registered_route_shapes() -> set[str]:
     """Return the normalised shape of every route the task server mounts."""
     app = create_app()
-    return {_normalise(route.path) for route in app.routes if hasattr(route, "path")}
+    return {_normalise(path) for path, _route in iter_route_paths(app)}
 
 
 def test_cli_calls_only_registered_server_routes() -> None:

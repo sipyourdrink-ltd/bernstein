@@ -150,6 +150,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from bernstein.core.routes.route_table import iter_route_paths, route_path_templates
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.security.tenanting import (
     DEFAULT_TENANT_ID,
@@ -1207,13 +1208,14 @@ def _compile_task_id_route_pattern(template: str) -> re.Pattern[str] | None:
 
 
 def _route_templates(app: Any) -> list[str]:
-    """Return the app's registered path templates, sorted."""
-    templates: set[str] = set()
-    for route in getattr(getattr(app, "router", None), "routes", ()) or ():
-        template = getattr(route, "path", "")
-        if template:
-            templates.add(template)
-    return sorted(templates)
+    """Return the app's registered path templates, sorted.
+
+    The walk descends through the ``include_router`` wrappers FastAPI keeps in
+    the route table from 0.137 onward; reading ``path`` off the top level
+    alone would return nothing there and silently empty every matcher built
+    from this list (#4023).
+    """
+    return route_path_templates(app)
 
 
 def _build_task_id_route_patterns(app: Any) -> tuple[re.Pattern[str], ...]:
@@ -1247,10 +1249,7 @@ def _build_task_collection_route_patterns(app: Any) -> _CollectionRoutePatterns:
         deterministic order derived from the sorted route table.
     """
     methods_by_template: dict[str, set[str]] = {}
-    for route in getattr(getattr(app, "router", None), "routes", ()) or ():
-        template = getattr(route, "path", "")
-        if not template:
-            continue
+    for template, route in iter_route_paths(app):
         match = _TASK_COLLECTION_TEMPLATE_RE.match(template)
         if match is None or match.group("segment") not in TASK_COLLECTION_SEGMENTS:
             continue

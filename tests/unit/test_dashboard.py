@@ -24,6 +24,7 @@ from bernstein.cli.dashboard import (
 )
 from bernstein.core.defaults import DASHBOARD_STATIC_ASSETS
 from bernstein.core.routes import status_dashboard
+from bernstein.core.routes.route_table import iter_route_paths
 from bernstein.core.server import create_app
 
 if TYPE_CHECKING:
@@ -152,7 +153,7 @@ async def test_events_returns_sse_content_type(app) -> None:  # type: ignore[no-
     from bernstein.core.server import SSEBus
 
     # Verify the /events route is registered
-    routes = [r.path for r in app.routes if hasattr(r, "path")]  # type: ignore[union-attr]
+    routes = [path for path, _route in iter_route_paths(app)]
     assert "/events" in routes
 
     # Verify the SSE bus works correctly

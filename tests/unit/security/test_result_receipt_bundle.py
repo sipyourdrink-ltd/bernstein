@@ -150,7 +150,7 @@ def _sign_dict(key, bundle_dict):
             # ``.get`` rather than ``[...]``: #4050 needs to sign a bundle with
             # no chain key at all, and the predicate mirror of a missing field
             # is the same missing field. Identical for every existing caller.
-            "chain": bundle_dict.get("chain"),
+            "chain": bundle_dict.get("chain") if isinstance(bundle_dict, dict) else None,
         },
     )
     payload = rb.canonical_bytes(statement.to_dict())
@@ -538,3 +538,334 @@ def test_the_flag_defaults_false_for_every_existing_caller():
 
     assert verify_result_bundle(env, key.public_key()).prev_digest_checked is False
     assert BundleVerification(ok=True).prev_digest_checked is False
+
+
+# --------------------------------------------------------------------------- #
+# #4054: the chain-shape check must refuse rather than raise, and a boolean is
+# not a length.
+#
+# ``verify_result_bundle`` exists so that untrusted input produces a verdict
+# naming the field that diverged. Step 6 broke that in both directions:
+# ``bundle_dict.get("chain", {})`` defends against the key being absent, not
+# against it holding the wrong type, and ``isinstance(True, int)`` let the JSON
+# boolean ``true`` through as a chain length.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("chain", "type_name"),
+    [
+        ("anchor and length", "str"),
+        (["anchor", "length"], "list"),
+        (None, "NoneType"),
+        (42, "int"),
+        # The two below reach the membership test rather than the raise, because
+        # ``in`` silently means substring on a str and element-of on a list. They
+        # are refused today with "missing anchor or length" -- an accurate-looking
+        # message about the wrong problem -- so the guard has to fire on the type
+        # before the content, not merely somewhere.
+        ("", "str"),
+        ([], "list"),
+    ],
+    ids=["str", "list", "null", "int", "str-without-the-words", "empty-list"],
+)
+def test_a_non_mapping_chain_is_refused_rather_than_raised(chain: Any, type_name: str):
+    """The contract, on the boundary that has to hold it.
+
+    Reachable from ``bernstein receipt verify <bundle>`` with no ``--pubkey``:
+    a self-signed bundle clears the signature step on its own embedded key, so
+    what an operator got was a traceback where the documented behaviour is
+    ``✗`` and exit 1.
+
+    No ``pytest.raises`` here on purpose -- the assertion is that the call
+    returns, and a raise fails the test by escaping it.
+    """
+    key = _key()
+    bundle_dict = _bundle(key).to_dict()
+    bundle_dict["chain"] = chain
+
+    v = verify_result_bundle(_sign_dict(key, bundle_dict), key.public_key())
+
+    assert v.ok is False
+    assert [e.field for e in v.errors] == ["chain"]
+    assert v.errors[0].message == f"expected an object, got {type_name}"
+
+
+def test_a_non_mapping_chain_reports_the_field_that_diverged_not_a_path_that_does_not_exist():
+    """The naming decision, pinned.
+
+    A missing anchor and a ``chain`` that is a string are both errors on
+    ``chain`` and are told apart by the message, not by the field. Every field
+    name this function emits is a JSON path into the bundle -- ``patch``,
+    ``gates[0].log``, ``chain.anchor``, ``manifest_sha256`` -- and there is no
+    ``chain.anchor`` to name when ``chain`` is a string.
+    """
+    key = _key()
+    missing = _bundle(key).to_dict()
+    missing["chain"].pop("length")
+    wrong_type = _bundle(key).to_dict()
+    wrong_type["chain"] = "anchor and length"
+
+    v_missing = verify_result_bundle(_sign_dict(key, missing), key.public_key())
+    v_wrong = verify_result_bundle(_sign_dict(key, wrong_type), key.public_key())
+
+    assert [e.field for e in v_missing.errors] == [e.field for e in v_wrong.errors] == ["chain"]
+    assert v_missing.errors[0].message != v_wrong.errors[0].message
+
+
+def test_a_non_mapping_chain_leaves_both_checked_flags_where_they_were():
+    """The out-of-scope guard from #4054, on the new arm.
+
+    The comparison is skipped, so continuity was asked and never answered; the
+    manifest check happens below and is unaffected by the shape of ``chain``.
+    """
+    key = _key()
+    manifest = _manifest()
+    bundle_dict = bundle_with_manifest_digest(_bundle(key), manifest).to_dict()
+    bundle_dict["chain"] = ["anchor", "length"]
+
+    v = verify_result_bundle(
+        _sign_dict(key, bundle_dict),
+        key.public_key(),
+        expected_prev_digest="whatever",
+        expected_manifest_sha256=manifest.digest,
+    )
+
+    assert v.ok is False
+    assert v.prev_digest_checked is False
+    assert v.manifest_digest_checked is True
+
+
+@pytest.mark.parametrize("length", [True, False], ids=["true", "false"])
+def test_a_boolean_chain_length_is_not_a_length(length: bool):
+    """``isinstance(True, int)`` is True and ``True >= 1``, so ``true`` verified.
+
+    ``false`` was already refused by the ``< 1`` comparison, which is why only
+    ``true`` was the hole -- both are asserted so a future rewrite of the guard
+    cannot fix one by losing the other. Same idiom as ``_load_version`` in
+    ``bernstein.core.volunteer.manifest``, which rejects a bool version.
+    """
+    key = _key()
+    bundle_dict = _bundle(key).to_dict()
+    bundle_dict["chain"]["length"] = length
+
+    v = verify_result_bundle(_sign_dict(key, bundle_dict), key.public_key())
+
+    assert v.ok is False
+    assert [e.field for e in v.errors] == ["chain.length"]
+
+
+def test_a_real_integer_length_still_verifies():
+    """The control: the guard must refuse two shapes and nothing else."""
+    key = _key()
+    first = _bundle(key)
+    third = _successor(key, first, anchor=first.digest, length=3)
+
+    v = verify_result_bundle(
+        build_result_bundle(third, signing_key=key),
+        key.public_key(),
+        expected_prev_digest=first.digest,
+    )
+
+    assert v.ok is True, [str(e) for e in v.errors]
+    assert v.prev_digest_checked is True
+
+
+# --------------------------------------------------------------------------- #
+# #4057: wrong-typed fields must refuse with field-level errors rather than
+# raising exceptions.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("mutate_fn", "expected_field", "expected_msg"),
+    [
+        (lambda p, b: ("bundle", "a string"), "bundle", "expected an object, got str"),
+        (lambda p, b: ("bundle", [1, 2]), "bundle", "expected an object, got list"),
+        (lambda p, b: ("bundle", None), "bundle", "expected an object, got NoneType"),
+        (lambda p, b: ("gates", "not a list"), "gates", "expected a list, got str"),
+        (lambda p, b: ("gates", ["a string"]), "gates[0]", "expected an object, got str"),
+        (lambda p, b: ("worker", "not a dict"), "worker", "expected an object, got str"),
+        (lambda p, b: ("patch", 123), "patch", "expected a string, got int"),
+    ],
+    ids=[
+        "bundle-is-str",
+        "bundle-is-list",
+        "bundle-is-null",
+        "gates-is-str",
+        "gates-holds-str",
+        "worker-is-str",
+        "patch-is-int",
+    ],
+)
+def test_wrong_typed_fields_are_refused_rather_than_raised(mutate_fn: Any, expected_field: str, expected_msg: str):
+    """Refuse wrong-typed fields with field-level errors rather than raising exceptions.
+
+    No pytest.raises in this test: the assertion is that verify_result_bundle
+    returns ok=False with the expected field error.
+    """
+    key = _key()
+    bundle_dict = _bundle(key).to_dict()
+    field_to_mutate, new_val = mutate_fn(None, bundle_dict)
+
+    if field_to_mutate == "bundle":
+        env = _sign_dict(key, new_val)
+    else:
+        bundle_dict[field_to_mutate] = new_val
+        env = _sign_dict(key, bundle_dict)
+
+    v = verify_result_bundle(env, key.public_key())
+
+    assert v.ok is False
+    matched_errors = [e for e in v.errors if e.field == expected_field]
+    assert matched_errors, f"expected field error for {expected_field}, got {v.errors}"
+    assert matched_errors[0].message == expected_msg
+
+
+def test_absent_bundle_keeps_three_error_behavior():
+    """bundle absent keeps its current three-error behaviour: subject.digest.sha256, patch, chain."""
+    import base64 as b64
+
+    from bernstein.core.security import audit_dsse as ad
+    from bernstein.core.security import result_receipt_bundle as rb
+
+    key = _key()
+    statement = ad.Statement(
+        subjects=[ad.Subject(name="t.json", digest={"sha256": "0" * 64})],
+        predicate_type=rb.RESULT_RECEIPT_PREDICATE_TYPE,
+        predicate={
+            "schema_version": rb.BUNDLE_SCHEMA_VERSION,
+            "bundle_kind": "result-receipt",
+        },
+    )
+    payload = rb.canonical_bytes(statement.to_dict())
+    sig = key.sign(ad.pae(ad.DSSE_PAYLOAD_TYPE, payload))
+    env = ad.Envelope(
+        payload_type=ad.DSSE_PAYLOAD_TYPE,
+        payload_b64=b64.b64encode(payload).decode(),
+        signatures=[ad.Signature(keyid=ad.keyid_from_public_key(key.public_key()), sig=b64.b64encode(sig).decode())],
+    )
+
+    v = verify_result_bundle(env, key.public_key())
+
+    assert v.ok is False
+    assert [e.field for e in v.errors] == ["subject.digest.sha256", "patch", "chain"]
+
+
+def test_wrong_typed_fields_leave_checked_flags_where_they_were():
+    """Neither manifest_digest_checked nor prev_digest_checked moves as a side effect."""
+    key = _key()
+    manifest = _manifest()
+    first = _bundle(key)
+    successor = _successor(key, first, anchor=first.digest)
+    bundle_dict = bundle_with_manifest_digest(successor, manifest).to_dict()
+    bundle_dict["worker"] = "not a dict"
+
+    v = verify_result_bundle(
+        _sign_dict(key, bundle_dict),
+        key.public_key(),
+        expected_prev_digest=first.digest,
+        expected_manifest_sha256=manifest.digest,
+    )
+
+    assert v.ok is False
+    assert any(e.field == "worker" for e in v.errors)
+    assert v.prev_digest_checked is True
+    assert v.manifest_digest_checked is True
+
+    v_unasked = verify_result_bundle(
+        _sign_dict(key, bundle_dict),
+        key.public_key(),
+    )
+    assert v_unasked.prev_digest_checked is False
+    assert v_unasked.manifest_digest_checked is False
+
+
+# --------------------------------------------------------------------------- #
+# #4072: a wrong-typed predicate must refuse with a FieldError on "predicate"
+# rather than raising an exception.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("predicate_val", "expected_msg"),
+    [
+        ("x", "expected an object, got str"),
+        (["x"], "expected an object, got list"),
+        (None, "expected an object, got NoneType"),
+        (7, "expected an object, got int"),
+        (True, "expected an object, got bool"),
+        (1.5, "expected an object, got float"),
+        ([], "expected an object, got list"),
+    ],
+    ids=[
+        "predicate-is-str",
+        "predicate-is-list-str",
+        "predicate-is-null",
+        "predicate-is-int",
+        "predicate-is-bool",
+        "predicate-is-float",
+        "predicate-is-empty-list",
+    ],
+)
+def test_wrong_typed_predicate_is_refused_rather_than_raised(predicate_val: Any, expected_msg: str):
+    """Refuse wrong-typed predicate with field-level error rather than raising exception.
+
+    No pytest.raises in this test: the assertion is that verify_result_bundle
+    returns ok=False with FieldError("predicate", ...).
+    """
+    import base64 as b64
+
+    from bernstein.core.security import audit_dsse as ad
+    from bernstein.core.security import result_receipt_bundle as rb
+
+    key = _key()
+    statement = ad.Statement(
+        subjects=[ad.Subject(name="t.json", digest={"sha256": "0" * 64})],
+        predicate_type=rb.RESULT_RECEIPT_PREDICATE_TYPE,
+        predicate=predicate_val,
+    )
+    statement_dict = statement.to_dict()
+    payload = rb.canonical_bytes(statement_dict)
+    sig = key.sign(ad.pae(ad.DSSE_PAYLOAD_TYPE, payload))
+    env = ad.Envelope(
+        payload_type=ad.DSSE_PAYLOAD_TYPE,
+        payload_b64=b64.b64encode(payload).decode(),
+        signatures=[ad.Signature(keyid=ad.keyid_from_public_key(key.public_key()), sig=b64.b64encode(sig).decode())],
+    )
+
+    v = verify_result_bundle(env, key.public_key())
+
+    assert v.ok is False
+    matched_errors = [e for e in v.errors if e.field == "predicate"]
+    assert matched_errors, f"expected field error for predicate, got {v.errors}"
+    assert matched_errors[0].message == expected_msg
+
+
+def test_absent_predicate_keeps_three_error_behavior():
+    """predicate absent keeps its current three-error behaviour: subject.digest.sha256, patch, chain."""
+    import base64 as b64
+
+    from bernstein.core.security import audit_dsse as ad
+    from bernstein.core.security import result_receipt_bundle as rb
+
+    key = _key()
+    statement = ad.Statement(
+        subjects=[ad.Subject(name="t.json", digest={"sha256": "0" * 64})],
+        predicate_type=rb.RESULT_RECEIPT_PREDICATE_TYPE,
+        predicate={},
+    )
+    statement_dict = statement.to_dict()
+    statement_dict.pop("predicate", None)
+    payload = rb.canonical_bytes(statement_dict)
+    sig = key.sign(ad.pae(ad.DSSE_PAYLOAD_TYPE, payload))
+    env = ad.Envelope(
+        payload_type=ad.DSSE_PAYLOAD_TYPE,
+        payload_b64=b64.b64encode(payload).decode(),
+        signatures=[ad.Signature(keyid=ad.keyid_from_public_key(key.public_key()), sig=b64.b64encode(sig).decode())],
+    )
+
+    v = verify_result_bundle(env, key.public_key())
+
+    assert v.ok is False
+    assert [e.field for e in v.errors] == ["subject.digest.sha256", "patch", "chain"]

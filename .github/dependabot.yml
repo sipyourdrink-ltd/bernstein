@@ -41,5 +41,15 @@ updates:
         update-types: ["minor", "patch"]
     labels:
       - "dependencies"
+    ignore:
+      # mkdocs-redirects 1.2.3 swapped its `mkdocs` dependency for
+      # `properdocs`, a third-party fork of mkdocs 1.x. The docs build targets
+      # upstream mkdocs, so the cap in docs/requirements.in is a decision
+      # rather than a stale pin - a grouped version update lifted it once
+      # already, which is how the fork nearly arrived as a transitive
+      # dependency of the docs toolchain. Revisit by editing the cap, not by
+      # letting a bump edit it.
+      - dependency-name: "mkdocs-redirects"
+        versions: [">=1.2.3"]
     # Majors stay individual PRs for a human decision.
     open-pull-requests-limit: 10

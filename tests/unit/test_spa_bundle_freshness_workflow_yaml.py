@@ -17,9 +17,10 @@ that make it work are pinned here rather than left to review:
   every ``pull_request`` workflow;
 * no job is named ``CI gate``, which the required-check canary allow-lists
   to exactly two workflows;
-* it has no ``merge_group`` trigger, so it must not be a required context -
-  one that cannot report on a queued ref wedges the merge queue. If the
-  trigger is ever added, this test is the place that says so.
+* it triggers on ``merge_group`` with no filter, so it reports on a queued
+  ref and branch protection can require it. Being required is a separate,
+  later, maintainer-only change; this file pins the half that has to come
+  first, because the reverse order wedges the queue.
 """
 
 from __future__ import annotations
@@ -153,13 +154,41 @@ def test_no_job_emits_the_required_check_name() -> None:
     assert "CI gate" not in names, f"{WORKFLOW.name} would post a third `CI gate` check"
 
 
-def test_workflow_is_not_merge_queue_safe_yet() -> None:
-    """No ``merge_group`` trigger, so it must not be made a required context.
+def test_merge_group_trigger_present() -> None:
+    """The gate must report on a queued ref before it can be required.
 
-    If a ``merge_group`` trigger is added, drop this test and add the job to
-    the merge-queue coverage assertions instead.
+    Until #4028 this file asserted the opposite - that no ``merge_group``
+    trigger existed - and its docstring said to replace it with this once
+    the trigger was added. #4010 is why: the lane went red on the pull
+    request, ``CI gate`` stayed green, and the queue merged it because an
+    advisory lane gates nothing.
+
+    Adding the trigger does not make the check required; that is a branch
+    protection change, and it is deliberately the later half. This assertion
+    pins the earlier half, which is the half that has to exist first.
     """
-    assert "merge_group" not in _on(), (
-        "a merge_group trigger means this job can be required - update "
-        "docs/operations/merge-queue.md and the coverage test alongside it"
+    assert "merge_group" in _on(), (
+        "without a `merge_group` trigger this lane cannot report on a queued ref, so it cannot be a "
+        "required context - and while it is not required, a red bundle merges (#4010)"
+    )
+
+
+def test_merge_group_trigger_carries_no_filter() -> None:
+    """The queue runs it on every group, not only ``web/**`` ones.
+
+    Two independent reasons, and either alone is sufficient. ``paths`` and
+    ``paths-ignore`` are evaluated for ``push``, ``pull_request`` and
+    ``pull_request_target`` only - never for ``merge_group`` - so a filter
+    here is silently ignored and reads as a guarantee nobody is honouring.
+    And a queue batch stacks several pull requests, so the batch can carry
+    a ``web/**`` change even when the entry under test does not; filtering
+    on the entry's own diff would let exactly this defect back in.
+
+    Mirrors ``test_ci_merge_group_trigger_carries_no_filter``.
+    """
+    trigger = _on().get("merge_group", "__absent__")
+    assert trigger != "__absent__", "no `merge_group` trigger at all"
+    assert trigger in (None, {}), (
+        f"the `merge_group` trigger carries a filter ({trigger!r}). GitHub does not evaluate `paths` for "
+        "`merge_group`, and a batch can contain a `web/**` change the tested entry does not."
     )

@@ -26,6 +26,8 @@ from bernstein.core.auth_middleware import (
 )
 from fastapi.testclient import TestClient
 
+from bernstein.core.routes.route_table import iter_route_paths
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -68,9 +70,8 @@ def app(tmp_path: Path) -> FastAPI:
 def _mutating_task_id_routes(application: FastAPI) -> list[tuple[str, str]]:
     """Return ``(method, path_template)`` for every mutating per-task route."""
     found: set[tuple[str, str]] = set()
-    for route in application.routes:
-        template = getattr(route, "path", "")
-        if not template or not _TASK_ID_ROUTE_RE.match(template):
+    for template, route in iter_route_paths(application):
+        if not _TASK_ID_ROUTE_RE.match(template):
             continue
         for method in getattr(route, "methods", set()) or set():
             if method.upper() not in _READ_METHODS:
@@ -81,9 +82,8 @@ def _mutating_task_id_routes(application: FastAPI) -> list[tuple[str, str]]:
 def _task_collection_segments(application: FastAPI) -> set[str]:
     """Return the literal (non task-id) first segments under ``/tasks/``."""
     segments: set[str] = set()
-    for route in application.routes:
-        template = getattr(route, "path", "")
-        match = _TASK_COLLECTION_ROUTE_RE.match(template) if template else None
+    for template, _route in iter_route_paths(application):
+        match = _TASK_COLLECTION_ROUTE_RE.match(template)
         if match is not None:
             segments.add(match.group("segment"))
     return segments
@@ -92,9 +92,8 @@ def _task_collection_segments(application: FastAPI) -> set[str]:
 def _task_collection_routes(application: FastAPI) -> list[tuple[str, str]]:
     """Return ``(method, path_template)`` for every registered collection route."""
     found: set[tuple[str, str]] = set()
-    for route in application.routes:
-        template = getattr(route, "path", "")
-        if not template or _TASK_COLLECTION_ROUTE_RE.match(template) is None:
+    for template, route in iter_route_paths(application):
+        if _TASK_COLLECTION_ROUTE_RE.match(template) is None:
             continue
         for method in getattr(route, "methods", set()) or set():
             found.add((method.upper(), template))

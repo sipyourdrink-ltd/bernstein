@@ -78,7 +78,7 @@ the set of rows the agent reads from `docs-drift.md`.
    | Remediation token | How to apply |
    |-------------------|--------------|
    | `agents-md-sync` | `uv run bernstein agents-md sync` then `uv run bernstein agents-md verify`. Operates only on AGENTS.md, CLAUDE.md, CONVENTIONS.md, `.goosehints`, `.cursor/rules/*.mdc`. |
-   | `gen-agents-md` | `uv run python scripts/gen_agents_md.py --update`. Only run if the row explicitly names this token; never run for rows that name `agents-md-sync`. |
+   | `gen-agents-md` | `uv run python scripts/gen_agents_md.py --update`. Only run if the row explicitly names this token. Since #4019 the script refuses anyway when `agents-md-sync` owns AGENTS.md, so a misrouted run is a no-op rather than 74 deleted rows. |
    | `manual-prose` | Re-read the source-of-truth module(s); edit the doc by hand to reflect current public surface; do not regenerate. |
    | `manual-cmd` | Run `bernstein <cmd> --help` for each CLI surface the doc claims to document; reconcile the listed flags / subcommands by hand. |
    | `gen-benchmarks` | `uv run python scripts/generate_benchmark_docs.py`. |

@@ -391,8 +391,26 @@ def verify_result_bundle(
         )
 
     statement = env_v.statement
-    predicate = statement.get("predicate", {})
-    bundle_dict = predicate.get("bundle", {})
+    raw_predicate = statement.get("predicate", {})
+    predicate_dict = raw_predicate if isinstance(raw_predicate, dict) else {}
+    if not isinstance(raw_predicate, dict):
+        errors.append(
+            FieldError(
+                "predicate",
+                f"expected an object, got {type(raw_predicate).__name__}",
+            )
+        )
+
+    raw_bundle = predicate_dict.get("bundle", {})
+    bundle_dict = raw_bundle if isinstance(raw_bundle, dict) else {}
+    if not isinstance(raw_bundle, dict):
+        errors.append(
+            FieldError(
+                "bundle",
+                f"expected an object, got {type(raw_bundle).__name__}",
+            )
+        )
+
     subjects = statement.get("subject", [])
     attested_digest = ""
     if subjects and isinstance(subjects[0], dict):
@@ -400,7 +418,7 @@ def verify_result_bundle(
 
     # (2) internal hash consistency: the embedded bundle must reproduce the
     # subject digest byte-for-byte.
-    recomputed = _sha256_hex(canonical_bytes(bundle_dict))
+    recomputed = _sha256_hex(canonical_bytes(raw_bundle))
     if recomputed != attested_digest:
         errors.append(
             FieldError(
@@ -411,7 +429,14 @@ def verify_result_bundle(
 
     # (3) the signer is the worker the bundle names.
     worker = bundle_dict.get("worker", {})
-    if worker.get("keyid") and env_v.keyid and worker["keyid"] != env_v.keyid:
+    if not isinstance(worker, dict):
+        errors.append(
+            FieldError(
+                "worker",
+                f"expected an object, got {type(worker).__name__}",
+            )
+        )
+    elif worker.get("keyid") and env_v.keyid and worker["keyid"] != env_v.keyid:
         errors.append(
             FieldError(
                 "worker.keyid",
@@ -421,28 +446,64 @@ def verify_result_bundle(
 
     # (4) patch integrity.
     patch = bundle_dict.get("patch", "")
-    attested_patch = bundle_dict.get("patch_sha256", "")
-    actual_patch = _sha256_hex(patch.encode("utf-8"))
-    if actual_patch != attested_patch:
+    if not isinstance(patch, str):
         errors.append(
             FieldError(
                 "patch",
-                f"patch hashes to {actual_patch}, bundle attests {attested_patch}",
+                f"expected a string, got {type(patch).__name__}",
             )
         )
-
-    # (5) gate-log integrity, per gate.
-    for index, gate in enumerate(bundle_dict.get("gates", [])):
-        log = gate.get("log", "")
-        attested_log = gate.get("log_sha256", "")
-        actual_log = _sha256_hex(log.encode("utf-8"))
-        if actual_log != attested_log:
+    else:
+        attested_patch = bundle_dict.get("patch_sha256", "")
+        actual_patch = _sha256_hex(patch.encode("utf-8"))
+        if actual_patch != attested_patch:
             errors.append(
                 FieldError(
-                    f"gates[{index}].log",
-                    f"log for {gate.get('command', '?')!r} hashes to {actual_log}, bundle attests {attested_log}",
+                    "patch",
+                    f"patch hashes to {actual_patch}, bundle attests {attested_patch}",
                 )
             )
+
+    # (5) gate-log integrity, per gate.
+    gates = bundle_dict.get("gates", [])
+    if not isinstance(gates, list):
+        errors.append(
+            FieldError(
+                "gates",
+                f"expected a list, got {type(gates).__name__}",
+            )
+        )
+    else:
+        for index, gate in enumerate(gates):
+            if not isinstance(gate, dict):
+                errors.append(
+                    FieldError(
+                        f"gates[{index}]",
+                        f"expected an object, got {type(gate).__name__}",
+                    )
+                )
+            else:
+                log = gate.get("log", "")
+                if not isinstance(log, str):
+                    errors.append(
+                        FieldError(
+                            f"gates[{index}].log",
+                            f"expected a string, got {type(log).__name__}",
+                        )
+                    )
+                else:
+                    attested_log = gate.get("log_sha256", "")
+                    actual_log = _sha256_hex(log.encode("utf-8"))
+                    if actual_log != attested_log:
+                        errors.append(
+                            FieldError(
+                                f"gates[{index}].log",
+                                (
+                                    f"log for {gate.get('command', '?')!r} hashes to {actual_log}, "
+                                    f"bundle attests {attested_log}"
+                                ),
+                            )
+                        )
 
     # (6) chain link shape and, optionally, continuity with a predecessor.
     #
@@ -454,9 +515,19 @@ def verify_result_bundle(
     # is missing outright.
     prev_digest_checked = False
     chain = bundle_dict.get("chain", {})
-    if "anchor" not in chain or "length" not in chain:
+    if not isinstance(chain, dict):
+        # ``.get("chain", {})`` defends against the key being absent, not against
+        # it holding the wrong type, and the two tests below it change meaning
+        # rather than fail: ``in`` is substring on a str and element-of on a
+        # list, and ``.get`` exists on neither. The type has to be settled
+        # before the content is read at all.
+        errors.append(FieldError("chain", f"expected an object, got {type(chain).__name__}"))
+    elif "anchor" not in chain or "length" not in chain:
         errors.append(FieldError("chain", "missing anchor or length"))
-    elif not isinstance(chain.get("length"), int) or chain["length"] < 1:
+    elif not isinstance(chain.get("length"), int) or isinstance(chain["length"], bool) or chain["length"] < 1:
+        # bool is an int subclass, so ``true`` satisfied both the isinstance and
+        # the ``>= 1`` comparison. Same rejection ``_load_version`` makes in
+        # bernstein.core.volunteer.manifest, for the same reason.
         errors.append(FieldError("chain.length", f"invalid length {chain.get('length')!r}"))
     elif expected_prev_digest is not None:
         prev_digest_checked = True

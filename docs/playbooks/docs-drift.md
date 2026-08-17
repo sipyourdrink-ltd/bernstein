@@ -26,7 +26,7 @@ Drift remediation paths used by the rows below:
 | Remediation token | What it runs |
 |-------------------|--------------|
 | `agents-md-sync` | `uv run bernstein agents-md sync` then `uv run bernstein agents-md verify` |
-| `gen-agents-md` | `uv run python scripts/gen_agents_md.py --update` (legacy detailed module map; do not run if `agents-md-sync` is the active source of truth) |
+| `gen-agents-md` | `uv run python scripts/gen_agents_md.py --update` (legacy detailed module map). Self-guarding since #4019: when `agents-md-sync` is the active source of truth it prints a note and exits 0 without writing. `--force` overrides. |
 | `manual-prose` | Re-read the source-of-truth module and adjust the prose by hand; no script generates this content |
 | `manual-cmd` | The doc lists a CLI command surface; re-run `bernstein <cmd> --help` and reconcile |
 | `gen-benchmarks` | `uv run python scripts/generate_benchmark_docs.py` |

@@ -173,11 +173,18 @@ jobs:
         with:
           token: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN || secrets.GITHUB_TOKEN }}
           branch: auto/bump-v${{ steps.bump.outputs.new }}
+          # Every file `scripts/bump_version.py` touches, or the bump PR opens
+          # with some of them a release behind (#4053). The generated set is
+          # GENERATED_MANIFESTS in scripts/gen_distribution_manifests.py, and
+          # tests/unit/test_release_bump_add_paths.py fails if the two drift.
           add-paths: |
             pyproject.toml
             uv.lock
             server.json
             .plugin/plugin.json
+            plugin.json
+            mcp.json
+            CITATION.cff
           commit-message: "release: v${{ steps.bump.outputs.new }}"
           committer: "bernstein[bot] <bernstein-bot@users.noreply.github.com>"
           author: "bernstein[bot] <bernstein-bot@users.noreply.github.com>"

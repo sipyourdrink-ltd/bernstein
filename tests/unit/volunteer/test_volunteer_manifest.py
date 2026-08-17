@@ -11,9 +11,13 @@ policy differs, every downstream verification is theatre.
 
 from __future__ import annotations
 
+import errno
 import json
+import os
 import re
+import socket
 import warnings
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +30,7 @@ from bernstein.core.volunteer.manifest import (
     GateCommand,
     UnenforcedManifestFieldWarning,
     VolunteerManifestError,
+    _not_a_regular_file,
     canonical_manifest_bytes,
     load_manifest,
     load_manifest_from_repo,
@@ -117,6 +122,222 @@ def test_absent_manifest_is_not_opted_in_rather_than_invalid(tmp_path: Any) -> N
     """A project that never opted in must not read as a project that failed."""
     with pytest.raises(FileNotFoundError):
         load_manifest_from_repo(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Absent is not the same as unstattable (#4064)
+#
+# ``Path.is_file()`` answered one ``False`` for five different filesystem
+# states, so the loader told a maintainer whose manifest is a broken symlink
+# that their project had not opted in -- exit 1, well-formed, and false in the
+# field a caller routes on.  ``FileNotFoundError`` is now reserved for the one
+# state that claim is true of; everything else is an ``OSError`` the CLI
+# already renders as ``<unreadable>``.
+# ---------------------------------------------------------------------------
+
+
+def _manifest_dir(root: Path) -> Path:
+    directory = root / ".bernstein"
+    directory.mkdir(exist_ok=True)
+    return directory
+
+
+def _shape(root: Path, kind: str) -> None:
+    """Put `kind` at the manifest path, for the states a stat can end in."""
+    path = _manifest_dir(root) / "volunteer.json"
+    if kind == "symlink loop":
+        path.symlink_to("volunteer.json")
+    elif kind == "dangling symlink":
+        path.symlink_to("no-such-file.json")
+    elif kind == "directory":
+        path.mkdir()
+    elif kind == "fifo":
+        os.mkfifo(path)
+    elif kind == "socket":
+        # Bind from inside the directory, by bare name. `sun_path` is 104 bytes
+        # on macOS and 108 on Linux, and pytest's `tmp_path` under
+        # /var/folders/<...>/pytest-of-<user>/pytest-N/<test-name>N/ already
+        # spends most of that before ".bernstein/volunteer.json" is appended --
+        # so binding the absolute path raises "AF_UNIX path too long" on macOS
+        # while passing on CI. A relative bind is the same socket at the same
+        # place and does not depend on how deep the tmpdir happens to be.
+        previous = Path.cwd()
+        os.chdir(path.parent)
+        try:
+            with closing(socket.socket(socket.AF_UNIX)) as sock:
+                sock.bind(path.name)
+        finally:
+            os.chdir(previous)
+    elif kind == "device":
+        path.symlink_to("/dev/null")
+    else:  # pragma: no cover - a typo in a parametrisation, not a state
+        raise AssertionError(kind)
+
+
+@pytest.mark.parametrize(
+    "kind",
+    ["symlink loop", "dangling symlink", "directory", "fifo", "socket", "device"],
+)
+def test_something_at_the_manifest_path_is_never_reported_as_not_opted_in(tmp_path: Path, kind: str) -> None:
+    """Every state below is a manifest that exists and cannot be read.
+
+    The assertion that matters is the negative one.  ``FileNotFoundError`` is
+    an ``OSError``, so a clause catching the base class would pass a weaker
+    test while the CLI still printed "the project has not opted in" -- that
+    message is chosen by the *type*, not by the text.
+    """
+    _shape(tmp_path, kind)
+
+    with pytest.raises(OSError) as caught:
+        load_manifest_from_repo(tmp_path)
+
+    assert not isinstance(caught.value, FileNotFoundError)
+    assert "opted in" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected"),
+    [
+        ("directory", "it is a directory, not a regular file"),
+        ("fifo", "it is a fifo, not a regular file"),
+        ("socket", "it is a socket, not a regular file"),
+        ("device", "it is a device file, not a regular file"),
+        ("dangling symlink", "the symbolic link has no target"),
+    ],
+)
+def test_the_refusal_names_the_shape_that_was_found(tmp_path: Path, kind: str, expected: str) -> None:
+    """A refusal without a reason sends the reader back to guessing.
+
+    The CLI prints ``exc.strerror``, so these phrases are the whole of what a
+    maintainer sees; they have to name the shape rather than restate the path,
+    which the report already carries as its own key.
+    """
+    _shape(tmp_path, kind)
+
+    with pytest.raises(OSError) as caught:
+        load_manifest_from_repo(tmp_path)
+
+    assert caught.value.strerror == expected
+
+
+def test_a_fifo_is_refused_before_the_open_rather_than_after(tmp_path: Path) -> None:
+    """Reaching ``read_bytes()`` on a fifo blocks until somebody writes to it.
+
+    ``is_file()`` happened to prevent that by answering ``False``; the stat
+    that replaced it has to keep the property deliberately.  This test hanging
+    rather than failing is the symptom.
+    """
+    _shape(tmp_path, "fifo")
+
+    with pytest.raises(OSError, match="not a regular file"):
+        load_manifest_from_repo(tmp_path)
+
+
+def test_a_manifest_that_cannot_be_stat_ed_keeps_the_reason_from_the_kernel(tmp_path: Path) -> None:
+    """A permission failure must not be relabelled as a broken link.
+
+    The ``ENOENT`` arm exists to separate "nothing there" from "symlink with no
+    target".  Widening its ``except`` to ``OSError`` would route every stat
+    failure through it, and ``lstat`` succeeds on a mode-000 file, so the
+    refusal would come back naming a symlink that is not there.
+    """
+    path = _manifest_dir(tmp_path) / "volunteer.json"
+    path.write_text(_manifest(), encoding="utf-8")
+    path.chmod(0o000)
+    try:
+        path.read_bytes()
+    except OSError:
+        pass
+    else:  # pragma: no cover - depends on the runner's privileges
+        pytest.skip("this process can read a mode-000 file")
+    finally:
+        path.chmod(0o600)
+
+    path.chmod(0o000)
+    try:
+        with pytest.raises(PermissionError) as caught:
+            load_manifest_from_repo(tmp_path)
+    finally:
+        path.chmod(0o600)
+
+    assert caught.value.strerror == "Permission denied"
+
+
+def test_an_entry_that_disappears_mid_check_is_absent_rather_than_a_broken_link(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``stat`` and ``lstat`` are two syscalls and a file can vanish between them.
+
+    Neither call is wrong when that happens, and the answer is the honest one:
+    nothing is at the path now.  Without the second ``FileNotFoundError`` arm
+    the race would be reported as a symlink whose target is missing.
+    """
+    (tmp_path / VOLUNTEER_MANIFEST_PATH).parent.mkdir(parents=True)
+    (tmp_path / VOLUNTEER_MANIFEST_PATH).write_text(_manifest(), encoding="utf-8")
+
+    def _vanished(self: Path, *args: Any, **kwargs: Any) -> Any:
+        raise FileNotFoundError(errno.ENOENT, "No such file or directory", str(self))
+
+    monkeypatch.setattr(Path, "stat", _vanished)
+    monkeypatch.setattr(Path, "lstat", _vanished)
+
+    with pytest.raises(FileNotFoundError, match="opted in"):
+        load_manifest_from_repo(tmp_path)
+
+
+def test_only_a_missing_entry_ends_the_ambiguity_as_an_absence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The inner ``except`` is ``FileNotFoundError`` for a reason, not for symmetry.
+
+    An ``lstat`` that fails some other way has not established that the path is
+    empty, so it must propagate.  Widened to ``OSError`` this reads a failure
+    it cannot interpret as proof the project never opted in -- the same
+    substitution the whole change exists to undo, one level down.
+    """
+    (tmp_path / VOLUNTEER_MANIFEST_PATH).parent.mkdir(parents=True)
+
+    def _gone(self: Path, *args: Any, **kwargs: Any) -> Any:
+        raise FileNotFoundError(errno.ENOENT, "No such file or directory", str(self))
+
+    def _refused(self: Path, *args: Any, **kwargs: Any) -> Any:
+        raise PermissionError(errno.EACCES, "Permission denied", str(self))
+
+    monkeypatch.setattr(Path, "stat", _gone)
+    monkeypatch.setattr(Path, "lstat", _refused)
+
+    with pytest.raises(PermissionError):
+        load_manifest_from_repo(tmp_path)
+
+
+def test_a_shape_this_platform_has_no_name_for_still_gets_a_message() -> None:
+    """The fallback arm is portability, not decoration.
+
+    Linux exhausts the file types above it, so nothing a stat returns here
+    reaches this line -- but ``S_IFMT`` is not a closed set across platforms
+    (Solaris doors, BSD whiteouts), and the arm is what keeps such a mode from
+    rendering as an empty phrase inside "it is , not a regular file".  Asserted
+    against the helper directly, because the claim is about a total function
+    rather than about anything this kernel can produce.
+    """
+    assert _not_a_regular_file(0) == "of an unrecognised type"
+
+
+def test_bernstein_itself_being_a_file_is_unreadable_rather_than_absent(tmp_path: Path) -> None:
+    """``ENOTDIR`` is in ``_IGNORED_ERRNOS`` too, so ``is_file()`` hid this one.
+
+    A regular file named ``.bernstein`` is a plausible mistake and the kernel's
+    own wording says exactly what went wrong.
+    """
+    (tmp_path / ".bernstein").write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(NotADirectoryError) as caught:
+        load_manifest_from_repo(tmp_path)
+
+    assert not isinstance(caught.value, FileNotFoundError)
+    assert caught.value.strerror == "Not a directory"
 
 
 # ---------------------------------------------------------------------------

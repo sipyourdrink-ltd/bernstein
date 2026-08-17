@@ -4,6 +4,7 @@ Usage:
     uv run python scripts/gen_agents_md.py --check   # exit 1 if stale
     uv run python scripts/gen_agents_md.py --update  # rewrite module map in place
     uv run python scripts/gen_agents_md.py           # print generated section to stdout
+    ... add --force to any of them to override the supersession check below
 
 The script scans src/bernstein/ with ast to extract one-line module
 docstrings, groups them by package, then replaces the section of AGENTS.md
@@ -13,8 +14,23 @@ conventions, test patterns, gotchas, etc.) is preserved verbatim.
 
 Note: this is the *legacy detailed* module-map generator. When
 ``bernstein agents-md sync`` is the active source of truth (its verify runs
-in CI), that command owns AGENTS.md end to end - do not run ``--update``
-here, or the module map will diverge from the canonical output.
+in CI), that command owns AGENTS.md end to end and this script steps aside:
+every invocation - ``--check``, ``--update``, and the bare stdout form -
+prints a note and exits 0 rather than acting. The guard is on the script, not
+on a subset of its flags, so there is no spelling of the command that reaches
+a stale verdict or the smaller map by accident.
+
+That guard used to be advice, written down in two playbooks and nowhere the
+reader would meet it. This script called the committed file stale and printed
+a command that removed 74 rows and reddened the docs-drift gate, so following
+its own instruction broke CI (#4019). ``scripts/`` is where somebody goes to
+find out what to run before pushing, and running the ``--check`` variants
+there is the careful behaviour - it should not be the punished one.
+
+``--force`` restores the old strict behaviour for anyone who wants the
+detailed map. Retiring the script is a separate decision: its output is
+ported in ``core/knowledge/agents_md_generator.py`` and two test files still
+pin the legacy contract.
 """
 
 from __future__ import annotations
@@ -316,12 +332,65 @@ def update_agents_md(dry_run: bool = False) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Supersession
+# ---------------------------------------------------------------------------
+
+#: Printed instead of a stale verdict when ``agents-md sync`` owns AGENTS.md.
+SUPERSEDED_NOTE = (
+    "AGENTS.md is managed by `bernstein agents-md sync`, which reports it in sync.\n"
+    "This legacy generator produces a different (smaller) module map; running --update\n"
+    "here would drop the sub-package rows and fail the docs-drift gate.\n"
+    "  To regenerate:           uv run bernstein agents-md sync\n"
+    "  To use this map anyway:  uv run python scripts/gen_agents_md.py --update --force"
+)
+
+
+def agents_md_is_synced() -> bool | None:
+    """Whether ``bernstein agents-md sync`` reports AGENTS.md already in sync.
+
+    ``None`` when that cannot be determined - bernstein not importable, or its
+    internals moved. Undeterminable is deliberately NOT treated as superseded:
+    this script must keep working as a standalone generator in a checkout with
+    no installed package, and going quiet there would trade one wrong verdict
+    for another.
+
+    Only AGENTS.md is consulted. ``agents-md verify`` covers 14 files, but this
+    script writes exactly one, and a drift in ``.goosehints`` is no reason for
+    this generator to change its answer about the file it does own.
+    """
+    try:
+        from bernstein.cli.commands.agents_md_cmd import _generate_sections
+        from bernstein.core.knowledge.agents_md_bridge import render
+    except Exception:
+        return None
+    try:
+        sections, name = _generate_sections(AGENTS_MD.parent, None)
+        expected = render(sections, "canonical", repo_name=name).files.get(AGENTS_MD.name)
+        if expected is None or not AGENTS_MD.is_file():
+            return None
+        # The same normalisation ``agents-md verify`` uses: trailing whitespace
+        # and final-newline variance is not semantically a drift.
+        return AGENTS_MD.read_text(encoding="utf-8").rstrip() == expected.rstrip()
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
 
 def main() -> int:
     args = sys.argv[1:]
+
+    # This generator was superseded by ``bernstein agents-md sync``, which owns
+    # AGENTS.md and produces a LARGER map. Left alone it called the committed
+    # file stale and printed a command that removes 74 rows and reddens the
+    # docs-drift gate - a confident verdict from a tool no longer in a position
+    # to give one (#4019). It steps aside now unless --force says otherwise.
+    if "--force" not in args and agents_md_is_synced() is True:
+        print(SUPERSEDED_NOTE)
+        return 0
 
     if "--update" in args:
         update_agents_md(dry_run=False)
@@ -331,7 +400,7 @@ def main() -> int:
         changed = update_agents_md(dry_run=True)
         if changed:
             print(
-                "AGENTS.md module map is stale. Run:\n  uv run python scripts/gen_agents_md.py --update",
+                "AGENTS.md module map is stale. Run:\n  uv run python scripts/gen_agents_md.py --update --force",
                 file=sys.stderr,
             )
             return 1

@@ -106,6 +106,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | Agent trust tiers | Brief | 3 | `bernstein agents trust`; tiers accrue from task outcomes in `.sdd/trust/` and map to an `AgentPermissions` profile (`core/agents/agent_trust.py`) |
 | [Volunteer project manifest](volunteer-manifest.md) | Full | 3 | A project's opt-in policy — OSI licence, acceptance gates, path scope, egress, sandbox floor — loaded and content-addressed by `core/volunteer/manifest.py`; validate one with `bernstein volunteer verify` |
 | [Volunteer sandbox profile](volunteer-sandbox.md) | Full | 3 | Deny-all-egress containment derived from the manifest and the donor's own limits; refusals are records, not log lines (`core/volunteer/sandbox_profile.py`) |
+| [Volunteer issue text](volunteer-issue-text.md) | Full | 3 | Untrusted issue title and body normalised into one delimited block before it becomes an agent prompt — HTML comments (closed and unterminated) stripped, invisible and bidirectional characters dropped, NFKC, and a content-derived fence the text cannot forge (`core/volunteer/issue_sanitize.py`) |
 
 ## Verifiability and provenance
 

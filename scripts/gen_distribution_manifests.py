@@ -30,6 +30,7 @@ import sys
 import tomllib
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Final
 
 REPO = Path(__file__).resolve().parents[1]
 SERVER_JSON = REPO / "server.json"
@@ -39,6 +40,25 @@ ROOT_PLUGIN_JSON = REPO / "plugin.json"
 ROOT_MCP_JSON = REPO / "mcp.json"
 CITATION_CFF = REPO / "CITATION.cff"
 SKILLS_DIR = REPO / "skills"
+
+#: Every file this script writes, as repository-relative POSIX strings.
+#:
+#: The release bump regenerates these, so whatever commits the bump has to
+#: carry all of them. ``release-major-minor.yml`` used to restate a subset by
+#: hand and shipped `plugin.json` and `CITATION.cff` a release behind (#4053).
+#: A second list is a list that disagrees; this is the one both the workflow
+#: test and :func:`main` read.
+#:
+#: ``.mcp.json`` is deliberately absent: it is an INPUT, read to project
+#: ``mcp.json``. Six paths are declared above and only five are written, which
+#: is exactly the distinction a hand-kept list gets wrong.
+GENERATED_MANIFESTS: Final[tuple[str, ...]] = (
+    "server.json",
+    ".plugin/plugin.json",
+    "plugin.json",
+    "mcp.json",
+    "CITATION.cff",
+)
 
 #: Top-level ``CITATION.cff`` keys this script owns. Anchored to the start of a
 #: line so they match only at the document root: ``cff-version`` is a different
@@ -419,6 +439,20 @@ def main(argv: list[str] | None = None) -> int:
         # Schema-invalid projections must fail generation and --check alike,
         # before any drift comparison, file write, or provenance step.
         print(str(exc), file=sys.stderr)
+        return 1
+
+    # The constant is what the release workflow commits. If it and the targets
+    # it is meant to describe ever disagree, the bump silently drops whichever
+    # file fell out, which is #4053 exactly. Fail here instead.
+    written = tuple(sorted(p.relative_to(REPO).as_posix() for p in targets))
+    if written != tuple(sorted(GENERATED_MANIFESTS)):
+        print(
+            "GENERATED_MANIFESTS is stale: this script writes "
+            + ", ".join(written)
+            + " but the constant lists "
+            + ", ".join(sorted(GENERATED_MANIFESTS)),
+            file=sys.stderr,
+        )
         return 1
 
     drift: list[str] = []

@@ -18,6 +18,12 @@ anyone's word for either.
 
 from __future__ import annotations
 
+from bernstein.core.volunteer.issue_sanitize import (
+    ISSUE_TEXT_FENCE_LABEL,
+    normalize_untrusted_text,
+    sanitize_issue_text,
+    strip_html_comments,
+)
 from bernstein.core.volunteer.manifest import (
     OSI_APPROVED_LICENSES,
     SUPPORTED_SCHEMA_VERSIONS,
@@ -30,6 +36,25 @@ from bernstein.core.volunteer.manifest import (
     load_manifest,
     load_manifest_from_repo,
     manifest_digest,
+)
+from bernstein.core.volunteer.runner import (
+    ALLOWED_REPO_SCHEMES,
+    HOST_GIT_ENV_PASSTHROUGH,
+    AgentArgvBuilder,
+    AgentInvocation,
+    ClaimedTask,
+    DonorLimits,
+    IssueTextSanitizer,
+    RefusalStage,
+    TaskDiff,
+    TaskOutcome,
+    TaskRefusal,
+    WallClockBudget,
+    build_prompt,
+    host_git_env,
+    mock_agent_argv,
+    repo_url_problem,
+    run_claimed_task,
 )
 from bernstein.core.volunteer.sandbox_profile import (
     BACKEND_PREFERENCE,
@@ -45,6 +70,14 @@ from bernstein.core.volunteer.sandbox_profile import (
     profile_matches,
     sandbox_env,
 )
+from bernstein.core.volunteer.task_finish import (
+    REFUSAL_REASONS,
+    SignedResultBundle,
+    TaskProvenance,
+    VolunteerRefusal,
+    enforce_allowed_paths,
+    finish_volunteer_task,
+)
 from bernstein.core.volunteer.wall_clock import (
     TERM_GRACE_SECONDS,
     WallClockOutcome,
@@ -52,30 +85,57 @@ from bernstein.core.volunteer.wall_clock import (
 )
 
 __all__ = [
+    "ALLOWED_REPO_SCHEMES",
     "BACKEND_PREFERENCE",
+    "HOST_GIT_ENV_PASSTHROUGH",
+    "ISSUE_TEXT_FENCE_LABEL",
     "OSI_APPROVED_LICENSES",
     "PACKAGE_REGISTRY_HOSTS",
+    "REFUSAL_REASONS",
     "SANDBOX_ENV_ALLOWLIST",
     "SUPPORTED_SCHEMA_VERSIONS",
     "TERM_GRACE_SECONDS",
     "VOLUNTEER_MANIFEST_PATH",
     "VOLUNTEER_PROFILE_NAME",
+    "AgentArgvBuilder",
+    "AgentInvocation",
+    "ClaimedTask",
+    "DonorLimits",
     "GateCommand",
+    "IssueTextSanitizer",
+    "RefusalStage",
     "SandboxProfileRefusal",
+    "SignedResultBundle",
+    "TaskDiff",
+    "TaskOutcome",
+    "TaskProvenance",
+    "TaskRefusal",
     "UnenforcedManifestFieldWarning",
     "VolunteerManifest",
     "VolunteerManifestError",
+    "VolunteerRefusal",
     "VolunteerSandboxProfile",
+    "WallClockBudget",
     "WallClockOutcome",
     "backend_options",
+    "build_prompt",
     "build_volunteer_profile",
     "canonical_manifest_bytes",
     "describe_refusal",
     "effective_egress",
+    "enforce_allowed_paths",
+    "finish_volunteer_task",
+    "host_git_env",
     "load_manifest",
     "load_manifest_from_repo",
     "manifest_digest",
+    "mock_agent_argv",
+    "normalize_untrusted_text",
     "profile_matches",
+    "repo_url_problem",
+    "run_claimed_task",
     "run_under_wall_clock",
     "sandbox_env",
+    "sanitize_issue_text",
+    "strip_html_comments",
 ]
