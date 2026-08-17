@@ -41,13 +41,15 @@ config = BridgeConfig(
 )
 
 bridge = CloudflareBridge(config)
-status = await bridge.spawn(SpawnRequest(
-    agent_id="agent-001",
-    prompt="Add input validation to all API endpoints",
-    model="sonnet",
-    role="backend",
-    effort="high",
-))
+status = await bridge.spawn(
+    SpawnRequest(
+        agent_id="agent-001",
+        prompt="Add input validation to all API endpoints",
+        model="sonnet",
+        role="backend",
+        effort="high",
+    )
+)
 
 # Poll status
 current = await bridge.status("agent-001")
@@ -136,17 +138,19 @@ config = BridgeConfig(
 bridge = CloudflareWorkflowBridge(config)
 
 # Dispatch a workflow
-status = await bridge.spawn(SpawnRequest(
-    agent_id="task-42",
-    prompt="Refactor the auth module",
-    model="opus",
-    role="architect",
-))
+status = await bridge.spawn(
+    SpawnRequest(
+        agent_id="task-42",
+        prompt="Refactor the auth module",
+        model="opus",
+        role="architect",
+    )
+)
 
 # Check detailed workflow status
 wf_status = await bridge.get_workflow_status("task-42")
-print(wf_status.current_step)   # WorkflowStep.EXECUTE
-print(wf_status.retries_used)   # 0
+print(wf_status.current_step)  # WorkflowStep.EXECUTE
+print(wf_status.retries_used)  # 0
 
 # Approve a workflow waiting at the approval gate
 await bridge.approve("task-42")
@@ -182,10 +186,12 @@ Gives agents the ability to browse web pages, take screenshots, extract content,
 ```python
 from bernstein.bridges.browser_rendering import BrowserConfig, BrowserRenderingBridge
 
-browser = BrowserRenderingBridge(BrowserConfig(
-    account_id="abc123",
-    api_token="cf_token_...",
-))
+browser = BrowserRenderingBridge(
+    BrowserConfig(
+        account_id="abc123",
+        api_token="cf_token_...",
+    )
+)
 
 # Render a page and extract content
 page = await browser.render("https://example.com", screenshot=True)
@@ -254,10 +260,12 @@ Default exclude patterns:
 from pathlib import Path
 from bernstein.bridges.r2_sync import R2Config, R2WorkspaceSync
 
-sync = R2WorkspaceSync(R2Config(
-    account_id="abc123",
-    api_token="cf_token_...",
-))
+sync = R2WorkspaceSync(
+    R2Config(
+        account_id="abc123",
+        api_token="cf_token_...",
+    )
+)
 
 # Upload workspace before agent runs
 manifest = await sync.upload(

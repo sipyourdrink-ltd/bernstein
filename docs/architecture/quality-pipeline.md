@@ -136,6 +136,7 @@ from pathlib import Path
 from bernstein.core.quality.gate_plugins import GatePlugin
 from bernstein.core.quality.gate_runner import GateResult
 
+
 class NoFooGate(GatePlugin):
     @property
     def name(self) -> str:

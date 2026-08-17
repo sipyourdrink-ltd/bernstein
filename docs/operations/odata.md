@@ -137,7 +137,7 @@ connection = OdataConnection(
     entity_set="Orders",
     timestamp_property="LastChangeDateTime",
     key_properties=("OrderID",),
-    prefer_delta=True,              # probe for delta; fall back to watermark
+    prefer_delta=True,  # probe for delta; fall back to watermark
     rate_limit_min_interval_s=1.0,  # respect a documented per-API minimum
     auth=OdataAuth(kind="bearer", token_env="ERP_TOKEN"),
     name="erp_orders",
@@ -149,7 +149,7 @@ source = OdataPollSource(connection)
 # 1. Poll -> one TriggerEvent per changed order.
 result = source.poll(load_cursor(cursor_path))
 for event in result.events:
-    seed_task_from(event)         # your normal trigger -> task path
+    seed_task_from(event)  # your normal trigger -> task path
 
 # 2. Persist the advanced cursor so a restart resumes byte-identically.
 save_cursor(cursor_path, result.cursor)

@@ -82,8 +82,8 @@ config = R2Config(
     account_id="abc123",
     api_token="cf_token_...",
     bucket_name="my-custom-bucket",  # default: "bernstein-workspaces"
-    max_file_size_mb=50,             # skip files larger than this
-    exclude_patterns=(               # default exclusions
+    max_file_size_mb=50,  # skip files larger than this
+    exclude_patterns=(  # default exclusions
         ".git",
         "__pycache__",
         "node_modules",

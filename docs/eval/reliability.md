@@ -206,7 +206,7 @@ receipt = StubReliabilitySigner().sign(runner.run())
 print(f"pass^5 floor: {receipt.pass_caret_k:.2%}  pass@1: {receipt.pass_at_1:.2%}")
 
 verifier = ReliabilityVerifier(suite=suite, adapter=adapter)
-print(verifier.verify(receipt).report())     # overall: MATCH
+print(verifier.verify(receipt).report())  # overall: MATCH
 
 print(reliability_check(receipt, suite, adapter).report())  # reliability-check: PASS
 ```

@@ -57,6 +57,7 @@ registered with `HookRegistry.register_callable`) can react and raise
 ```python
 from bernstein.core.lifecycle.hooks import HookFailure, LifecycleContext, LifecycleEvent
 
+
 def abort_on_promptware(ctx: LifecycleContext) -> None:
     if ctx.data.get("promptware_abort"):
         raise HookFailure(
@@ -65,6 +66,7 @@ def abort_on_promptware(ctx: LifecycleContext) -> None:
             exit_code=1,
             stderr="promptware detected; refusing to spawn next agent",
         )
+
 
 registry.register_callable(LifecycleEvent.POST_TASK, abort_on_promptware)
 ```

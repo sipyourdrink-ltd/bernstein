@@ -62,7 +62,7 @@ from bernstein.core.lineage.artifact_uri import external_reference_content_hash
 
 content_hash = external_reference_content_hash(
     "pkg://pypi/bernstein/3.9.0",
-    digest="sha256:" + archive_sha256,      # the package archive
+    digest="sha256:" + archive_sha256,  # the package archive
 )
 ```
 
@@ -74,7 +74,7 @@ too, so the content address changes when the extraction changes:
 content_hash = external_reference_content_hash(
     "doc://example.test/lineage",
     digest="sha256:" + page_sha256,
-    extractor="html-readability@2.4.1",     # stable "id@version", passed deliberately
+    extractor="html-readability@2.4.1",  # stable "id@version", passed deliberately
 )
 ```
 

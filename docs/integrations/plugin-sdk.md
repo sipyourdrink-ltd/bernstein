@@ -56,6 +56,7 @@ A plugin is a Python class whose methods are decorated with `@hookimpl`.
 ```python
 from bernstein.plugins import hookimpl
 
+
 class MyPlugin:
     @hookimpl
     def on_task_completed(self, task_id: str, role: str, result_summary: str) -> None:
@@ -201,6 +202,7 @@ lifecycle event to stdout; useful as a starting template.
 ```python
 from bernstein.plugins import hookimpl
 
+
 class LoggingPlugin:
     """Prints all lifecycle events to stdout."""
 
@@ -281,24 +283,30 @@ class SlackNotifier:
     @hookimpl
     def on_task_failed(self, task_id: str, role: str, error: str) -> None:
         """Alert on task failure - highest-signal event for on-call."""
-        self._post({
-            "text": f":red_circle: *Task failed* `{task_id}` (role: `{role}`)\n```{error[:500]}```",
-        })
+        self._post(
+            {
+                "text": f":red_circle: *Task failed* `{task_id}` (role: `{role}`)\n```{error[:500]}```",
+            }
+        )
 
     @hookimpl
     def on_task_completed(self, task_id: str, role: str, result_summary: str) -> None:
         """Optional: notify on completion (disable if too noisy)."""
-        self._post({
-            "text": f":white_check_mark: Task `{task_id}` completed by `{role}`: {result_summary[:200]}",
-        })
+        self._post(
+            {
+                "text": f":white_check_mark: Task `{task_id}` completed by `{role}`: {result_summary[:200]}",
+            }
+        )
 
     @hookimpl
     def on_evolve_proposal(self, proposal_id: str, title: str, verdict: str) -> None:
         """Notify when an evolution proposal is accepted or rejected."""
         emoji = ":tada:" if verdict == "accepted" else ":no_entry_sign:"
-        self._post({
-            "text": f"{emoji} Evolution proposal `{proposal_id}` *{verdict}*: {title}",
-        })
+        self._post(
+            {
+                "text": f"{emoji} Evolution proposal `{proposal_id}` *{verdict}*: {title}",
+            }
+        )
 
     def _post(self, payload: dict[str, Any]) -> None:
         """Dispatch a Slack webhook call on a background daemon thread."""
@@ -310,7 +318,8 @@ class SlackNotifier:
             try:
                 data = json.dumps(payload).encode()
                 req = urllib.request.Request(
-                    url, data=data,
+                    url,
+                    data=data,
                     headers={"Content-Type": "application/json"},
                     method="POST",
                 )
@@ -373,28 +382,40 @@ class DiscordNotifier:
 
     @hookimpl
     def on_task_failed(self, task_id: str, role: str, error: str) -> None:
-        self._post(embeds=[{
-            "title": f"Task Failed: {task_id}",
-            "description": f"**Role:** `{role}`\n```{error[:800]}```",
-            "color": 0xED4245,  # Discord red
-        }])
+        self._post(
+            embeds=[
+                {
+                    "title": f"Task Failed: {task_id}",
+                    "description": f"**Role:** `{role}`\n```{error[:800]}```",
+                    "color": 0xED4245,  # Discord red
+                }
+            ]
+        )
 
     @hookimpl
     def on_task_completed(self, task_id: str, role: str, result_summary: str) -> None:
-        self._post(embeds=[{
-            "title": f"Task Completed: {task_id}",
-            "description": f"**Role:** `{role}`\n{result_summary[:400]}",
-            "color": 0x57F287,  # Discord green
-        }])
+        self._post(
+            embeds=[
+                {
+                    "title": f"Task Completed: {task_id}",
+                    "description": f"**Role:** `{role}`\n{result_summary[:400]}",
+                    "color": 0x57F287,  # Discord green
+                }
+            ]
+        )
 
     @hookimpl
     def on_evolve_proposal(self, proposal_id: str, title: str, verdict: str) -> None:
         color = 0x57F287 if verdict == "accepted" else 0xED4245
-        self._post(embeds=[{
-            "title": f"Evolution Proposal {verdict.title()}: {title}",
-            "description": f"Proposal ID: `{proposal_id}`",
-            "color": color,
-        }])
+        self._post(
+            embeds=[
+                {
+                    "title": f"Evolution Proposal {verdict.title()}: {title}",
+                    "description": f"Proposal ID: `{proposal_id}`",
+                    "color": color,
+                }
+            ]
+        )
 
     def _post(self, embeds: list[dict[str, Any]]) -> None:
         """Dispatch Discord webhook on a background daemon thread."""
@@ -407,7 +428,8 @@ class DiscordNotifier:
             try:
                 data = json.dumps(payload).encode()
                 req = urllib.request.Request(
-                    url, data=data,
+                    url,
+                    data=data,
                     headers={"Content-Type": "application/json"},
                     method="POST",
                 )
@@ -577,14 +599,20 @@ class SecurityScanGate:
         if not passed:
             log.warning(
                 "SecurityScanGate: scan failed after task %s (%s):\n%s",
-                task_id, role, output[:500],
+                task_id,
+                role,
+                output[:500],
             )
 
     def _run_scan(self) -> tuple[bool, str]:
         try:
             proc = subprocess.run(
-                self._command, shell=True, cwd=self._workdir,
-                capture_output=True, text=True, timeout=self._timeout_s,
+                self._command,
+                shell=True,
+                cwd=self._workdir,
+                capture_output=True,
+                text=True,
+                timeout=self._timeout_s,
             )
             out = (proc.stdout + proc.stderr).strip()
             if len(out) > 2000:
@@ -878,7 +906,11 @@ providers:
 
 ```python
 from bernstein.core.router import (
-    TierAwareRouter, ProviderConfig, ModelConfig, Tier, get_default_router,
+    TierAwareRouter,
+    ProviderConfig,
+    ModelConfig,
+    Tier,
+    get_default_router,
 )
 
 router = get_default_router()
@@ -937,6 +969,7 @@ starting the orchestrator.
 ```python
 from bernstein.plugins.manager import PluginManager
 from my_package.hooks import SlackNotifier
+
 
 def test_slack_notifier_on_failure(monkeypatch, capsys):
     calls = []

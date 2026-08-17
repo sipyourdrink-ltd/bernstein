@@ -130,7 +130,7 @@ To add a variable for one adapter only, edit that adapter's call site
 filtered = build_filtered_env(
     extra_keys=[
         "ANTHROPIC_API_KEY",
-        "ANTHROPIC_BEDROCK_BASE_URL",   # new
+        "ANTHROPIC_BEDROCK_BASE_URL",  # new
     ]
 )
 ```

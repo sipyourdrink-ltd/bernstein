@@ -66,9 +66,9 @@ local model:
 from bernstein.adapters.ollama import OllamaAdapter
 
 adapter = OllamaAdapter(
-    base_url="http://10.0.0.5:11434",   # Ollama on a private node
-    eu_residency=True,                   # belt-and-braces; the model
-                                         # alone already pins the guard
+    base_url="http://10.0.0.5:11434",  # Ollama on a private node
+    eu_residency=True,  # belt-and-braces; the model
+    # alone already pins the guard
 )
 ```
 

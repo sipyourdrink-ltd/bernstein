@@ -34,11 +34,8 @@ The Bernstein orchestrator is a priority queue over a dependency graph. Here's t
 ```python
 def get_ready_tasks(tasks: list[Task]) -> list[Task]:
     completed_ids = {t.id for t in tasks if t.status == "done"}
-    return [
-        t for t in tasks
-        if t.status == "open"
-        and all(dep in completed_ids for dep in t.dependencies)
-    ]
+    return [t for t in tasks if t.status == "open" and all(dep in completed_ids for dep in t.dependencies)]
+
 
 def tick(state: OrchestratorState) -> list[Task]:
     ready = get_ready_tasks(state.tasks)

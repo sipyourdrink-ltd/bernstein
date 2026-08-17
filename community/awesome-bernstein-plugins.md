@@ -348,6 +348,7 @@ A plugin is a Python class decorated with `@hookimpl`. No base class. No registr
 ```python
 from bernstein.plugins import hookimpl
 
+
 class MyPlugin:
     @hookimpl
     def on_task_completed(self, task_id: str, role: str, result_summary: str) -> None:

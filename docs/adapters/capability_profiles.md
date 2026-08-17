@@ -132,8 +132,8 @@ presented, and the axes that went unmet:
 try:
     profile = select_profile_for(TaskCapabilityRequirements(vision=True))
 except CapabilityMismatchError as exc:
-    exc.receipt.unmet          # ("vision",)
-    exc.receipt.receipt_hash   # deterministic sha256
+    exc.receipt.unmet  # ("vision",)
+    exc.receipt.receipt_hash  # deterministic sha256
 ```
 
 The receipt hash is deterministic for a given

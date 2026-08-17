@@ -189,7 +189,9 @@ critical path:
 
 ```python
 from bernstein.core.persistence.lineage import (
-    LineageReader, canonical_record_bytes, decode_signature,
+    LineageReader,
+    canonical_record_bytes,
+    decode_signature,
 )
 from bernstein.core.persistence.lineage_signer import (
     Ed25519PublicKeyVerifier,

@@ -52,7 +52,9 @@ You can emit the assertions as a real pytest file for CI:
 ```python
 from pathlib import Path
 from bernstein.core.planning.spec_assertions import (
-    load_contract, extract_assertions, assertions_to_pytest,
+    load_contract,
+    extract_assertions,
+    assertions_to_pytest,
 )
 
 contract = load_contract()

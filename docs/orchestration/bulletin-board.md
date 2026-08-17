@@ -17,7 +17,7 @@ class BulletinMessage:
     agent_id: str
     type: Literal["alert", "blocker", "finding", "status", "dependency"]
     content: str
-    timestamp: float = 0.0   # auto-filled on post() if left as 0
+    timestamp: float = 0.0  # auto-filled on post() if left as 0
     cell_id: str | None = None
 ```
 
@@ -49,7 +49,7 @@ from bernstein.core.communication.bulletin import BulletinBoard, BulletinMessage
 board = BulletinBoard()
 board.post(BulletinMessage(agent_id="qa-1", type="status", content="ran full suite, 2 failures"))
 
-recent = board.read_since(0.0)          # everything
+recent = board.read_since(0.0)  # everything
 blockers = board.read_by_type("blocker")
 cell_msgs = board.read_by_cell("cell-2")
 ```

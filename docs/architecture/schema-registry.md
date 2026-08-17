@@ -100,19 +100,23 @@ There is no CLI command for this module - it is a plain Python API.
 from bernstein.core.protocols.schema_registry import SchemaRegistry, SchemaVersion
 
 registry = SchemaRegistry()
-registry.register(SchemaVersion(
-    version=1,
-    fields={"name": "str", "priority": "int"},
-    required_fields=frozenset({"name"}),
-))
-registry.register(SchemaVersion(
-    version=2,
-    fields={"name": "str", "priority": "int", "owner": "str"},
-    required_fields=frozenset({"name", "owner"}),
-))
+registry.register(
+    SchemaVersion(
+        version=1,
+        fields={"name": "str", "priority": "int"},
+        required_fields=frozenset({"name"}),
+    )
+)
+registry.register(
+    SchemaVersion(
+        version=2,
+        fields={"name": "str", "priority": "int", "owner": "str"},
+        required_fields=frozenset({"name", "owner"}),
+    )
+)
 
 compat = registry.check_compatibility(1, 2)
-assert not compat.compatible          # "owner" is newly required in v2
+assert not compat.compatible  # "owner" is newly required in v2
 print(compat.breaking_changes)
 
 result = registry.validate_payload({"name": "fix bug"}, version=1)

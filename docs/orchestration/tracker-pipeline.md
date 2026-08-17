@@ -261,8 +261,8 @@ raw = {
 # bernstein.core.trackers.contract for the adapter contract.
 pipeline = build_pipeline_from_yaml(
     raw,
-    trackers=trackers,        # mapping name -> AbstractTrackerAdapter
-    dispatcher=dispatcher,    # supplies role execution
+    trackers=trackers,  # mapping name -> AbstractTrackerAdapter
+    dispatcher=dispatcher,  # supplies role execution
     state_root=Path(".sdd"),
     hook_registry=HookRegistry(),
 )

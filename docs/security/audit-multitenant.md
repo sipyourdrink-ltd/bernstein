@@ -299,7 +299,7 @@ trust = load_trusted_tsa_certs(Path("path/to/freetsa-bundle.pem"))
 result = verify_tenant_slice(
     Path("path/to/bundle.json"),
     key=key,
-    rfc3161_trusted_tsa_certs=trust,            # opt-in
+    rfc3161_trusted_tsa_certs=trust,  # opt-in
     head_signature_trusted_jwk={"kty": "OKP", "crv": "Ed25519", "x": "..."},
 )
 if not result.ok:

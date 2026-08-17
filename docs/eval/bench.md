@@ -232,16 +232,18 @@ print(result.report())
 
 # Project to leaderboard
 lb = Leaderboard(suite_hash=suite.suite_hash, suite_version=suite.version)
-lb.add_entry(LeaderboardEntry(
-    bundle_hash=bundle.bundle_hash(),
-    suite_hash=bundle.suite_hash,
-    suite_version=bundle.suite_version,
-    overall_score=bundle.overall_score,
-    pass_rate=bundle.pass_rate,
-    num_tasks=len(bundle.task_results),
-    submitted_at=bundle.submitted_at,
-    bundle_path="bundles/my-bundle.json",
-))
+lb.add_entry(
+    LeaderboardEntry(
+        bundle_hash=bundle.bundle_hash(),
+        suite_hash=bundle.suite_hash,
+        suite_version=bundle.suite_version,
+        overall_score=bundle.overall_score,
+        pass_rate=bundle.pass_rate,
+        num_tasks=len(bundle.task_results),
+        submitted_at=bundle.submitted_at,
+        bundle_path="bundles/my-bundle.json",
+    )
+)
 print(lb.to_markdown())
 ```
 

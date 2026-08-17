@@ -74,8 +74,8 @@ remote = [ProtocolVersion(protocol="mcp", major=1, minor=0, patch=0)]
 
 result = negotiate_version(local, remote)
 if result.success:
-    print(result.negotiated_version.version_string)   # "1.0.0"
-    print(sorted(result.degraded_capabilities))        # capabilities lost vs. local best
+    print(result.negotiated_version.version_string)  # "1.0.0"
+    print(sorted(result.degraded_capabilities))  # capabilities lost vs. local best
 ```
 
 `get_supported_versions(protocol)` returns Bernstein's own hardcoded

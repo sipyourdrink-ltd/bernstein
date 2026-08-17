@@ -99,9 +99,7 @@ dispatcher = FederationDispatcher(
     role="backend",
     audit_sink=lambda record: write_audit_record(record, Path(".sdd")),
 )
-dispatcher.comment(
-    "github_projects", "42", "linked from LIN-1", from_tracker="linear"
-)
+dispatcher.comment("github_projects", "42", "linked from LIN-1", from_tracker="linear")
 ```
 
 The dispatcher routes the comment to the correct adapter, records the

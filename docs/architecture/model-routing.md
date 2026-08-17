@@ -64,13 +64,13 @@ A task is treated as high-stakes when **any** of:
 ```python
 @dataclass
 class CascadeDecision:
-    model: str           # e.g. "sonnet"
-    effort: str          # "low" | "high" | "max"
+    model: str  # e.g. "sonnet"
+    effort: str  # "low" | "high" | "max"
     attempt_number: int  # 0 for first attempt
     is_escalated: bool
-    reason: str          # human-readable explanation
+    reason: str  # human-readable explanation
     estimated_cost_usd: float
-    chain_id: str        # opaque id; pass back to record_and_escalate()
+    chain_id: str  # opaque id; pass back to record_and_escalate()
 ```
 
 `_select_initial_model()` (`cascade_router.py`) decides:
@@ -112,9 +112,9 @@ keeps one `BanditArm` per `(role, model)` pair, recording observations
 (success/failure, cost, latency) over the run. Constants:
 
 ```python
-EPSILON = 0.1            # 10% explore, 90% exploit
-MIN_OBSERVATIONS = 5     # arms trusted only after this many samples
-QUALITY_THRESHOLD = 0.80 # min success_rate to consider an arm
+EPSILON = 0.1  # 10% explore, 90% exploit
+MIN_OBSERVATIONS = 5  # arms trusted only after this many samples
+QUALITY_THRESHOLD = 0.80  # min success_rate to consider an arm
 ```
 
 (`cost.py`.)
@@ -171,11 +171,11 @@ Aggregate stats are computed on demand by
 
 ```python
 {
-  "total_chains": 1247,
-  "total_cost_usd": 412.93,
-  "escalation_overhead_usd": 28.41,
-  "saved_vs_opus_usd": 1153.04,
-  "escalation_rate": 0.073   # 7.3% of chains escalated past tier 0
+    "total_chains": 1247,
+    "total_cost_usd": 412.93,
+    "escalation_overhead_usd": 28.41,
+    "saved_vs_opus_usd": 1153.04,
+    "escalation_rate": 0.073,  # 7.3% of chains escalated past tier 0
 }
 ```
 
@@ -216,9 +216,9 @@ would silently degrade output quality:
 
 ```python
 CAPABILITY_FLOOR: dict[Complexity, int] = {
-    Complexity.HIGH:   _STRENGTH_ORDER["high"],     # only high or very_high
+    Complexity.HIGH: _STRENGTH_ORDER["high"],  # only high or very_high
     Complexity.MEDIUM: _STRENGTH_ORDER["medium"],
-    Complexity.LOW:    _STRENGTH_ORDER["low"],
+    Complexity.LOW: _STRENGTH_ORDER["low"],
 }
 ```
 

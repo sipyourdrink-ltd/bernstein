@@ -78,7 +78,9 @@ if warm_entry is not None:
     self._warm_pool_entries[session_id] = warm_entry
     logger.info(
         "Using warm pool slot %s for session %s (role=%s)",
-        warm_entry.slot_id, session_id, role,
+        warm_entry.slot_id,
+        session_id,
+        role,
     )
 else:
     spawn_cwd = worktree_mgr.create(session_id)  # cold path

@@ -67,9 +67,10 @@ class EventEmitter:
 ```python
 import importlib.metadata
 
+
 def load_plugins() -> list[Any]:
     plugins = []
-    for ep in importlib.metadata.entry_points(group='bernstein.plugins'):
+    for ep in importlib.metadata.entry_points(group="bernstein.plugins"):
         plugin_class = ep.load()
         plugins.append(plugin_class())
     return plugins
@@ -135,6 +136,7 @@ def _safe_call(self, hook_name: str, **kwargs) -> None:
 
 ```python
 # src/bernstein/plugins/hookspecs.py
+
 
 class BernsteinSpec:
     @hookspec

@@ -173,7 +173,7 @@ from pathlib import Path
 from bernstein.eval.yaml_runner import YAMLRunner, load_spec, save_report
 
 spec = load_spec(Path("eval/specs/my-suite.yaml"))
-runner = YAMLRunner()                      # default: deterministic mock
+runner = YAMLRunner()  # default: deterministic mock
 report = runner.run(spec, base_dir=Path("eval/specs"))
 json_path, md_path = save_report(report, state_dir=Path(".sdd"))
 

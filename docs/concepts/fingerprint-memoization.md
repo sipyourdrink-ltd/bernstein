@@ -28,10 +28,12 @@ recompute and depends only on its arguments:
 ```python
 from pathlib import Path
 from bernstein.core.persistence.fingerprint import (
-    default_store, memoize_persistent,
+    default_store,
+    memoize_persistent,
 )
 
 store = default_store(Path("."))  # rooted at .sdd/runtime/memo
+
 
 @memoize_persistent(store, site="embed")
 def embed_chunk(chunk_text: str, embedder_id: str) -> list[float]:
@@ -63,6 +65,7 @@ Name the delegated code with `depends_on`:
 
 ```python
 from bernstein.core.knowledge import ast_symbol_graph
+
 
 @memoize_persistent(store, site="knowledge_graph", depends_on=(ast_symbol_graph,))
 def _extract_symbols_for_memo(*, file_sha: str, rel_path: str, abs_path: str):

@@ -333,7 +333,7 @@ coordinator = EvolutionCoordinator(
         evaluation_interval_minutes=30,
         min_tasks_for_evaluation=5,
         auto_execute_low_priority=False,
-    )
+    ),
 )
 
 coordinator.start()  # Background evaluation loop

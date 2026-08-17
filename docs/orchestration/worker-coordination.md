@@ -154,7 +154,7 @@ from bernstein.core.communication.task_mailbox import TaskMailbox, verify_agains
 from bernstein.core.security.audit_chain import AuditChainStore
 
 mailbox = TaskMailbox(runtime_dir / "mailbox.jsonl", hmac_key=key, identity_dir=identity_dir)
-ok, problems = mailbox.verify()                      # chain + signatures
+ok, problems = mailbox.verify()  # chain + signatures
 ok, problems = verify_against_chain(mailbox, chain)  # journal == chain-attested log
 ```
 
@@ -226,7 +226,7 @@ from bernstein.core.communication.signal_actions import ClearanceGateCoordinator
 coordinator = ClearanceGateCoordinator(bulletin=board, injector=injector, chain=chain)
 board.set_post_hook(
     coordinator.materialize,
-    outbox_path=Path(".sdd/runtime/signal_outbox.jsonl"),   # durable retry queue
+    outbox_path=Path(".sdd/runtime/signal_outbox.jsonl"),  # durable retry queue
 )
 # ... later, when the blocker is fixed:
 coordinator.resolve(clearance_task_id, resolver="operator:alex")

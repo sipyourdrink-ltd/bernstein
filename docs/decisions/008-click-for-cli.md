@@ -30,13 +30,13 @@ framework.**
 ```python
 import argparse
 
-parser = argparse.ArgumentParser(description='Bernstein orchestrator')
-subparsers = parser.add_subparsers(dest='command')
+parser = argparse.ArgumentParser(description="Bernstein orchestrator")
+subparsers = parser.add_subparsers(dest="command")
 
-run_parser = subparsers.add_parser('run', help='Start orchestration')
-run_parser.add_argument('plan', nargs='?', help='Plan file')
-run_parser.add_argument('--goal', help='High-level goal for planner')
-run_parser.add_argument('--max-agents', type=int, default=3)
+run_parser = subparsers.add_parser("run", help="Start orchestration")
+run_parser.add_argument("plan", nargs="?", help="Plan file")
+run_parser.add_argument("--goal", help="High-level goal for planner")
+run_parser.add_argument("--max-agents", type=int, default=3)
 ```
 
 **Pros**: Zero dependencies. Everyone knows it.
@@ -62,6 +62,7 @@ Typer builds on Click but uses Python type annotations as the command interface:
 import typer
 
 app = typer.Typer()
+
 
 @app.command()
 def run(
@@ -99,16 +100,19 @@ of Typer-specific idioms.
 ```python
 import click
 
+
 @click.group()
 @click.version_option()
 def cli() -> None:
     """Bernstein - multi-agent orchestration for CLI coding agents."""
 
+
 @cli.command()
-@click.argument('plan', required=False)
-@click.option('--goal', help='High-level goal for the planner')
-@click.option('--max-agents', default=3, show_default=True,
-              envvar='BERNSTEIN_MAX_AGENTS', help='Maximum parallel agents')
+@click.argument("plan", required=False)
+@click.option("--goal", help="High-level goal for the planner")
+@click.option(
+    "--max-agents", default=3, show_default=True, envvar="BERNSTEIN_MAX_AGENTS", help="Maximum parallel agents"
+)
 def run(plan: str | None, goal: str | None, max_agents: int) -> None:
     """Start the orchestrator. Provide a PLAN file or --goal."""
     ...
@@ -132,10 +136,11 @@ def run(plan: str | None, goal: str | None, max_agents: int) -> None:
    straightforward without sys.argv manipulation:
    ```python
    from click.testing import CliRunner
-   
+
+
    def test_run_command():
        runner = CliRunner()
-       result = runner.invoke(run, ['plans/test.yaml', '--max-agents', '2'])
+       result = runner.invoke(run, ["plans/test.yaml", "--max-agents", "2"])
        assert result.exit_code == 0
    ```
 

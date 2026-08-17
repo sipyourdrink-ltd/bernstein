@@ -39,7 +39,8 @@ Programmatic API for custom tooling:
 
 ```python
 from bernstein.core.quality.review_pipeline.abstract_diff import (
-    summarize_diff, pseudo_for_function,
+    summarize_diff,
+    pseudo_for_function,
 )
 
 # summarize_diff is async and returns one IntentSummary per file

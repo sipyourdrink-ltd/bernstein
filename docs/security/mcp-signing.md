@@ -112,7 +112,8 @@ findings.
 
 ```python
 from bernstein.core.protocols.mcp.mcp_signing_policy import (
-    MCPSigningPolicy, enforce_mcp_server_load,
+    MCPSigningPolicy,
+    enforce_mcp_server_load,
 )
 
 policy = MCPSigningPolicy(

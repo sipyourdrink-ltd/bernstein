@@ -62,14 +62,14 @@ Every line is a JSON object representing one orchestrator decision.
 ```python
 @dataclass(frozen=True)
 class WALEntry:
-    seq: int                # 0-based monotonic sequence
-    prev_hash: str          # SHA-256 of previous entry; first is GENESIS_HASH
-    entry_hash: str         # SHA-256 over (seq, prev_hash, timestamp, ...)
-    timestamp: float        # Unix seconds
-    decision_type: str      # e.g. "task_spawn_intent", "task_spawn_confirmed"
+    seq: int  # 0-based monotonic sequence
+    prev_hash: str  # SHA-256 of previous entry; first is GENESIS_HASH
+    entry_hash: str  # SHA-256 over (seq, prev_hash, timestamp, ...)
+    timestamp: float  # Unix seconds
+    decision_type: str  # e.g. "task_spawn_intent", "task_spawn_confirmed"
     inputs: dict[str, Any]  # what we decided on
     output: dict[str, Any]  # the resulting action's primary key(s)
-    actor: str              # which orchestrator component wrote it
+    actor: str  # which orchestrator component wrote it
     committed: bool = True  # False = pre-execution intent
 ```
 
