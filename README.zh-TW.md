@@ -53,7 +53,7 @@ Bernstein 是面向 CLI 編碼代理（Claude Code、Codex、Gemini CLI 以及 4
 完整清單見[能力頁面](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)；[功能矩陣](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)是詳盡的索引。
 
 ### 30 秒安裝
-<!-- l10n: en="install in 30 seconds" hash="sha256:da2e6aa3f938" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

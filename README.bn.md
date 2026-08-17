@@ -53,7 +53,7 @@ Bernstein হলো CLI কোডিং এজেন্টের (Claude Code, C
 পুরো তালিকা আছে [ক্যাপাবিলিটি পাতায়](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [ফিচার ম্যাট্রিক্স](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) হলো সম্পূর্ণ সূচি।
 
 ### 30 সেকেন্ডে ইনস্টল
-<!-- l10n: en="install in 30 seconds" hash="sha256:da2e6aa3f938" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
