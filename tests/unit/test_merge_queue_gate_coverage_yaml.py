@@ -67,6 +67,13 @@ QUEUE_REPORTING_WEB_LANES = {
         "went red behind eleven queue entries. #4028 added the merge_group trigger so that "
         "`shipped bundle matches the lockfile` can be made a required context."
     ),
+    "typecheck-ts.yml": (
+        "`tsc --noEmit` over the TypeScript packages, `web/` among them. #4010's shape one "
+        "directory over: ci.yml paths-ignores the TypeScript trees, `CI gate` is the only "
+        "required context, so a type error under `web/` merges green. #4073 added the "
+        "merge_group trigger. It publishes one context per matrix cell, and the matrix is "
+        "derived from the tree, so all four names are enumerated in the runbook."
+    ),
 }
 
 #: Lanes that can run on a `web/**` change and stay advisory on purpose.
@@ -77,11 +84,6 @@ QUEUE_REPORTING_WEB_LANES = {
 #: an acceptable state. A deferral that has to be typed here, next to the
 #: assertion it suppresses, is one somebody can find and re-decide.
 ADVISORY_BY_DECISION = {
-    "typecheck-ts.yml": (
-        "`tsc --noEmit` over the TypeScript packages, `web/` among them. Same shape as the "
-        "bundle gate and not fixed by #4028, whose scope is one lane; raised on that thread "
-        "rather than folded in silently."
-    ),
     "pr-policy.yml": (
         "Consolidated per-PR policy lane (text hygiene, main-red guard, andon gate, "
         "pre-merge autosync). Its own header already records that none of these is a "
@@ -397,6 +399,213 @@ def test_queue_reporting_web_lanes_can_actually_be_required() -> None:
             f"{name}'s `merge_group` trigger carries a filter ({trigger!r}). `paths` is not evaluated for "
             f"`merge_group` at all, so a filter there is either ignored or a mistake - and a queue batch "
             f"stacks several pull requests, so the batch can carry a `web/**` change the tested entry does not."
+        )
+
+
+#: ``${{ matrix.<key> }}``, tolerating the whitespace GitHub allows.
+_MATRIX_REF = re.compile(r"\$\{\{\s*matrix\.([A-Za-z_][A-Za-z0-9_-]*)\s*\}\}")
+
+
+def _render(template: str, cell: Mapping[str, Any]) -> str:
+    """Substitute one matrix cell into a job name, leaving misses in place."""
+    return _MATRIX_REF.sub(lambda match: str(cell.get(match.group(1), match.group(0))), template)
+
+
+def _published_contexts(doc: Mapping[str, Any]) -> set[str]:
+    """Every check-run name a workflow can publish, as a maintainer must type it.
+
+    Branch protection and the queue ruleset match a context by its exact
+    rendered string, so a matrixed job is not one context - it is one per
+    cell. ``typecheck-ts.yml`` publishes four.
+
+    Total by construction: a name this cannot finish rendering is returned
+    with its ``${{ ... }}`` still in it rather than dropped or raised on.
+    A context nobody can type cannot be required, so leaving the marker in
+    hands the caller something that fails loudly, where discarding it would
+    silently shrink the set the runbook is checked against. Only the
+    ``include`` form is expanded, so converting a lane to a bare-key
+    product matrix fails the same visible way.
+    """
+    jobs = doc.get("jobs")
+    if not isinstance(jobs, dict):
+        return set()
+    names: set[str] = set()
+    for key, job in jobs.items():
+        if not isinstance(job, dict):
+            continue
+        template = job.get("name") or key
+        cells = ((job.get("strategy") or {}).get("matrix") or {}).get("include")
+        if not isinstance(cells, list) or not cells:
+            names.add(template)
+            continue
+        for cell in cells:
+            if not isinstance(cell, Mapping):
+                names.add(template)
+                continue
+            names.add(_render(template, cell))
+    return names
+
+
+#: Heading of the runbook section listing lanes that report on the queue.
+NOT_REQUIRED_YET_HEADING = "### Reports on the queue but is not required yet"
+#: A row of that section's table: context, then ``workflow.yml`` :: ``job``.
+_RUNBOOK_ROW = re.compile(r"^\|\s*`([^`]+)`\s*\|\s*`([^`]+\.yml)`\s*::\s*`[^`]+`\s*\|", re.MULTILINE)
+
+
+def _runbook_contexts(text: str, workflow: str) -> set[str]:
+    """Contexts the runbook's not-required-yet table attributes to a workflow.
+
+    Scoped to that one section: the coverage table above it has a
+    different column count and a different meaning, and matching rows
+    anywhere in the file would fold the two together.
+    """
+    _, _, rest = text.partition(NOT_REQUIRED_YET_HEADING)
+    section = rest.partition("\n### ")[0]
+    return {context for context, emitter in _RUNBOOK_ROW.findall(section) if emitter == workflow}
+
+
+@pytest.mark.parametrize(
+    ("doc", "expected"),
+    [
+        # No `name:` - GitHub falls back to the job key.
+        ({"jobs": {"rebuild": {}}}, {"rebuild"}),
+        (
+            {"jobs": {"rebuild": {"name": "shipped bundle matches the lockfile"}}},
+            {"shipped bundle matches the lockfile"},
+        ),
+        # One cell per context, which is the whole point.
+        (
+            {
+                "jobs": {
+                    "t": {
+                        "name": "typecheck (${{ matrix.package }})",
+                        "strategy": {"matrix": {"include": [{"package": "web"}, {"package": "sdk/typescript"}]}},
+                    }
+                }
+            },
+            {"typecheck (sdk/typescript)", "typecheck (web)"},
+        ),
+        # GitHub tolerates the whitespace; so must the renderer.
+        (
+            {"jobs": {"t": {"name": "x ${{matrix.p}}", "strategy": {"matrix": {"include": [{"p": "1"}]}}}}},
+            {"x 1"},
+        ),
+        # A cell that does not carry the key leaves the marker in, rather
+        # than rendering an empty string that reads like a real context.
+        (
+            {"jobs": {"t": {"name": "x ${{ matrix.p }}", "strategy": {"matrix": {"include": [{"other": "1"}]}}}}},
+            {"x ${{ matrix.p }}"},
+        ),
+        # A bare-key product matrix is not expanded, and says so loudly.
+        (
+            {"jobs": {"t": {"name": "x ${{ matrix.p }}", "strategy": {"matrix": {"p": ["1", "2"]}}}}},
+            {"x ${{ matrix.p }}"},
+        ),
+        # Two cells that render alike collapse: it is one context.
+        (
+            {"jobs": {"t": {"name": "fixed", "strategy": {"matrix": {"include": [{"p": "1"}, {"p": "2"}]}}}}},
+            {"fixed"},
+        ),
+        # Shapes that must not raise.
+        ({}, set()),
+        ({"jobs": None}, set()),
+        ({"jobs": {"t": "not-a-mapping"}}, set()),
+        ({"jobs": {"t": {"name": "n", "strategy": {"matrix": {"include": []}}}}}, {"n"}),
+        ({"jobs": {"t": {"name": "n", "strategy": {"matrix": {"include": ["str"]}}}}}, {"n"}),
+    ],
+)
+def test_published_contexts_renders_one_name_per_cell(doc: dict[str, Any], expected: set[str]) -> None:
+    assert _published_contexts(doc) == expected
+
+
+_RUNBOOK_SAMPLE = f"""\
+| `CI gate` | `ci.yml` :: `ci-gate` | Yes |
+
+{NOT_REQUIRED_YET_HEADING}
+
+| Context | Emitting workflow | Runs on `merge_group`? | Required? |
+|---------|-------------------|------------------------|-----------|
+| `a one` | `w.yml` :: `j` | Yes - `merge_group: {{}}` | **No** |
+| `a two` | `w.yml` :: `j` | Yes - `merge_group: {{}}` | **No** |
+| `b one` | `other.yml` :: `k` | Yes - `merge_group: {{}}` | **No** |
+| `d one` | `typecheck.yml` :: `j` | Yes - `merge_group: {{}}` | **No** |
+
+Prose in the middle of the section, which is not a row. An example of the
+row shape, indented into a block, is documentation and not a claim:
+
+    | `e one` | `w.yml` :: `j` | Yes | **No** |
+
+### Some later section
+
+| `c one` | `w.yml` :: `j` | Yes | **No** |
+"""
+
+
+@pytest.mark.parametrize(
+    ("text", "workflow", "expected"),
+    [
+        (_RUNBOOK_SAMPLE, "w.yml", {"a one", "a two"}),
+        (_RUNBOOK_SAMPLE, "other.yml", {"b one"}),
+        # `check.yml` is a suffix of `typecheck.yml`: the emitter has to
+        # match the whole filename, or one lane inherits another's rows.
+        (_RUNBOOK_SAMPLE, "check.yml", set()),
+        (_RUNBOOK_SAMPLE, "typecheck.yml", {"d one"}),
+        # Named nowhere in the section.
+        (_RUNBOOK_SAMPLE, "absent.yml", set()),
+        # The heading is missing, so the section is empty - not the whole file.
+        ("| `a one` | `w.yml` :: `j` | Yes | **No** |", "w.yml", set()),
+        ("", "w.yml", set()),
+    ],
+)
+def test_runbook_contexts_reads_only_its_own_section(text: str, workflow: str, expected: set[str]) -> None:
+    assert _runbook_contexts(text, workflow) == expected
+
+
+def test_runbook_contexts_stops_at_the_next_heading() -> None:
+    """A row under a later heading is a different claim and must not count.
+
+    The parametrised cases above would still pass if the partition on the
+    next ``###`` were dropped, because `c one` is not in any expectation
+    for another reason. This one fails if it is dropped.
+    """
+    assert "c one" not in _runbook_contexts(_RUNBOOK_SAMPLE, "w.yml")
+
+
+def test_queue_reporting_lane_contexts_are_named_in_the_runbook() -> None:
+    """The runbook must name every context, or the flip is half-done.
+
+    ``QUEUE_REPORTING_WEB_LANES`` promises a maintainer can safely require
+    a lane. That promise is only usable if they know what to type, and for
+    a matrixed lane the answer is one context per cell. ``typecheck-ts``'s
+    matrix is derived from the tree by
+    ``tests/unit/test_typecheck_ts_workflow_yaml.py``, so it is not a
+    constant: adding a TypeScript package adds an unrequired context - a
+    hole - and removing one strips a required context of its emitter,
+    which is a wedge. Both are silent. Pinning the names to the runbook is
+    what makes them loud.
+    """
+    runbook = RUNBOOK.read_text(encoding="utf-8")
+    assert NOT_REQUIRED_YET_HEADING in runbook, (
+        f"{RUNBOOK} no longer has a {NOT_REQUIRED_YET_HEADING!r} section, so this assertion is reading an "
+        f"empty table and checking nothing. Move the section back or repoint the heading."
+    )
+    for name in QUEUE_REPORTING_WEB_LANES:
+        published = set(_published_contexts(_load(WORKFLOWS / name)))
+        assert published, f"{name} declares no jobs, so it publishes no context to require"
+        unrendered = sorted(context for context in published if "${{" in context)
+        assert not unrendered, (
+            f"{name} publishes job names that still contain an expression after matrix expansion: "
+            f"{unrendered}. Branch protection matches a context by its literal rendered string, so a name "
+            f"nobody can type cannot be required - and this lane is listed as requirable."
+        )
+        documented = _runbook_contexts(runbook, name)
+        assert documented == published, (
+            f"{RUNBOOK}'s not-required-yet table and {name} disagree about what it publishes. Missing from "
+            f"the runbook: {sorted(published - documented)} - contexts nobody will know to require, which "
+            f"is the hole #4010 and #4073 are both made of. Listed but no longer emitted: "
+            f"{sorted(documented - published)} - if one of those has already been required, the queue is "
+            f"waiting on a check with no emitter, which is a wedge. Requiring a matrixed lane means "
+            f"listing every cell, and its matrix is derived from the tree rather than fixed."
         )
 
 

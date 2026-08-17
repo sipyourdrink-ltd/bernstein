@@ -71,7 +71,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/static-analysis-extended.yml | static-analysis (extended) | push, schedule, workflow_dispatch | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "static-analysis-extended-${{ github.ref }}"} | 6 |
 | .github/workflows/trufflehog.yml | trufflehog (secret scanning) | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "trufflehog-${{ github.ref }}"} | 1 |
 | .github/workflows/trunk-health-slo.yml | Trunk Health SLO | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "trunk-health-slo"} | 1 |
-| .github/workflows/typecheck-ts.yml | TypeScript typecheck | pull_request, push | {"cancel-in-progress": "true", "group": "typecheck-ts-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
+| .github/workflows/typecheck-ts.yml | TypeScript typecheck | merge_group, pull_request, push | {"cancel-in-progress": "true", "group": "typecheck-ts-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/zizmor.yml | zizmor (workflow static analysis) | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "zizmor-${{ github.ref }}"} | 1 |
 
 ## Check Emitters

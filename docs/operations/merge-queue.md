@@ -91,6 +91,22 @@ required-context coverage by
 | Context | Emitting workflow | Runs on `merge_group`? | Required? |
 |---------|-------------------|------------------------|-----------|
 | `shipped bundle matches the lockfile` | `spa-bundle-freshness.yml` :: `rebuild` | Yes - `merge_group: {}` | **No - see below** |
+| `typecheck (sdk/typescript)` | `typecheck-ts.yml` :: `typecheck` | Yes - `merge_group: {}` | **No - see below** |
+| `typecheck (packages/vscode)` | `typecheck-ts.yml` :: `typecheck` | Yes - `merge_group: {}` | **No - see below** |
+| `typecheck (web)` | `typecheck-ts.yml` :: `typecheck` | Yes - `merge_group: {}` | **No - see below** |
+| `typecheck (templates/cloudflare-mcp-server)` | `typecheck-ts.yml` :: `typecheck` | Yes - `merge_group: {}` | **No - see below** |
+
+`typecheck-ts` occupies four rows because it publishes four contexts: its
+job is `typecheck (${{ matrix.package }})` and branch protection matches a
+context by its exact rendered string, so requiring "the typecheck lane"
+means listing every cell. The matrix is **derived from the tree** -
+`test_every_typescript_package_is_in_the_matrix` fails if a package that
+declares a `typescript` dependency is missing from it - so this list is not
+a constant. Adding a TypeScript package adds a context nobody required (a
+hole); deleting or renaming one strips a required context of its emitter (a
+wedge). Neither reports as a red check anywhere, so
+`test_queue_reporting_lane_contexts_are_named_in_the_runbook` fails when the
+matrix and this table stop agreeing.
 
 #4010 merged with this lane red. `CI gate` was green, `CI gate` is the only
 required context, so branch protection was satisfied and the queue took the
@@ -114,6 +130,32 @@ Do them in that order, and only while the queue is drained: editing required
 contexts invalidates every in-flight entry, so each one restarts a full-suite
 run. Until both are done the lane is exactly as advisory as it was before -
 the trigger alone changes nothing about whether a red bundle can merge.
+
+#4073 puts `typecheck-ts` in the same state for the same reason, and the two
+flips are the same two flips - with all four contexts from the table above,
+not one. Two things are worth doing before throwing that switch, neither of
+which applies to the bundle gate:
+
+- **Wait for the lane to have reported on a real queued ref at least once.**
+  Nothing here has ever run on a `merge_group` event, and a context that
+  turns out not to arrive wedges the queue rather than blocking the pull
+  request.
+- **Require all four cells or none.** Requiring a subset leaves the
+  unrequired packages in exactly the state #4073 describes, while costing
+  the full four-slot run anyway.
+
+Cost, measured over the 14 most recent runs (56 cells) before #4073, with
+queue wait separated from execution: **execution 16s min, 28s median, 45s
+max per cell**; the cells run in parallel, so a run finishes in a **38s
+median, 45s max**, at **four concurrent slots**. Queue wait is a median of
+3s but reaches **933s**, and that is the number to distrust in the run list:
+the 16-minute run `31953555527` was 933s of waiting for a runner wrapped
+around a 43s job. #4020's rule - a lane that cannot gate a merge should not
+compete for runners with the one that can - is not in tension with either
+trigger for long, because both lanes are on their way to being required,
+which is the case that rule excludes. `typecheck-ts` is nonetheless four
+times the runner cost of the bundle gate, and that is the honest reason to
+finish its flip rather than leave the trigger sitting there indefinitely.
 
 The general rule this came from is locked by
 `test_no_web_triggerable_lane_is_advisory_only`: a lane that can fail on a
