@@ -538,3 +538,79 @@ def test_the_flag_defaults_false_for_every_existing_caller():
 
     assert verify_result_bundle(env, key.public_key()).prev_digest_checked is False
     assert BundleVerification(ok=True).prev_digest_checked is False
+
+
+# ---------------------------------------------------------------------------
+# #4054: the chain-shape check returns a verdict for every chain a bundle
+# might carry, and a boolean is not a chain length.
+#
+# A self-signed bundle reaches step 6 with a signature that verifies (trust on
+# first use), so every test here signs its hand-edited bundle with the worker's
+# own key -- exactly the position the CLI operator is in.
+# ---------------------------------------------------------------------------
+
+
+def test_a_non_mapping_chain_is_a_field_level_verdict_not_a_traceback():
+    """The four inputs from the issue, each of which used to raise.
+
+    ``bundle_dict.get("chain", {})`` defends against the key being absent, not
+    against it holding the wrong type -- and the first arm's membership test
+    does not defend either: ``in`` on a string is substring matching, so a
+    chain that literally says ``"anchor and length"`` passes the missing-keys
+    arm and dies at ``.get``. None of these may raise; the contract is a
+    verdict. No try/except here on purpose: a raise must fail the test, not be
+    absorbed by it.
+    """
+    key = _key()
+    pub = key.public_key()
+    first = _bundle(key)
+
+    for label, bad_chain in (
+        ("str with both key names as substrings", "anchor and length"),
+        ("list of the key names", ["anchor", "length"]),
+        ("null", None),
+        ("int", 42),
+    ):
+        bundle_dict = _successor(key, first, anchor=first.digest).to_dict()
+        bundle_dict["chain"] = bad_chain
+        v = verify_result_bundle(_sign_dict(key, bundle_dict), pub, expected_prev_digest=first.digest)
+
+        assert not v.ok, label
+        assert [e.field for e in v.errors] == ["chain"], label
+        # asked, and the anchor was still never looked at -- same state as any
+        # other malformed link, not a new one
+        assert v.prev_digest_checked is False, label
+
+
+def test_a_boolean_chain_length_is_not_a_length():
+    """``isinstance(True, int)`` is True and ``True >= 1``, so ``length: true``
+    used to pass the shape check and the bundle verified ``ok=True``.
+
+    The same rejection ``_load_version`` in ``volunteer/manifest.py`` already
+    makes one module over: bool is an int subclass, so an int slot has to
+    exclude it explicitly.
+    """
+    key = _key()
+    pub = key.public_key()
+    first = _bundle(key)
+
+    bundle_dict = _successor(key, first, anchor=first.digest).to_dict()
+    bundle_dict["chain"]["length"] = True
+    v = verify_result_bundle(_sign_dict(key, bundle_dict), pub, expected_prev_digest=first.digest)
+
+    assert not v.ok
+    assert [e.field for e in v.errors] == ["chain.length"]
+    assert v.prev_digest_checked is False
+
+
+def test_an_int_chain_length_still_verifies():
+    """The fix must not narrow the accepted shape: any int >= 1 stays a length."""
+    key = _key()
+    pub = key.public_key()
+    first = _bundle(key)
+
+    bundle_dict = _successor(key, first, anchor=first.digest, length=3).to_dict()
+    v = verify_result_bundle(_sign_dict(key, bundle_dict), pub, expected_prev_digest=first.digest)
+
+    assert v.ok, v.errors
+    assert v.prev_digest_checked is True

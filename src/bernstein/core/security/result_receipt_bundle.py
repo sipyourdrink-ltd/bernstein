@@ -454,9 +454,18 @@ def verify_result_bundle(
     # is missing outright.
     prev_digest_checked = False
     chain = bundle_dict.get("chain", {})
-    if "anchor" not in chain or "length" not in chain:
+    # The mapping check has to precede the membership test: ``in`` on a str is
+    # substring matching -- ``"anchor and length"`` passes the arm below and
+    # dies at ``.get`` -- and on a non-iterable it raises outright. A wrong
+    # type reports the same field as a missing link: absent, null, and
+    # non-mapping are all "this chain cannot be walked", one name, one fix.
+    if not isinstance(chain, dict):
+        errors.append(FieldError("chain", f"expected a mapping, got {type(chain).__name__}"))
+    elif "anchor" not in chain or "length" not in chain:
         errors.append(FieldError("chain", "missing anchor or length"))
-    elif not isinstance(chain.get("length"), int) or chain["length"] < 1:
+    # bool is an int subclass; ``true`` is not a chain length -- the same call
+    # ``_load_version`` makes about a schema version one module over.
+    elif not isinstance(chain.get("length"), int) or isinstance(chain["length"], bool) or chain["length"] < 1:
         errors.append(FieldError("chain.length", f"invalid length {chain.get('length')!r}"))
     elif expected_prev_digest is not None:
         prev_digest_checked = True
