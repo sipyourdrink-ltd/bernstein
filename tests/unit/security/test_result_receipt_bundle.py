@@ -150,7 +150,7 @@ def _sign_dict(key, bundle_dict):
             # ``.get`` rather than ``[...]``: #4050 needs to sign a bundle with
             # no chain key at all, and the predicate mirror of a missing field
             # is the same missing field. Identical for every existing caller.
-            "chain": bundle_dict.get("chain"),
+            "chain": bundle_dict.get("chain") if isinstance(bundle_dict, dict) else None,
         },
     )
     payload = rb.canonical_bytes(statement.to_dict())
@@ -669,3 +669,113 @@ def test_a_real_integer_length_still_verifies():
 
     assert v.ok is True, [str(e) for e in v.errors]
     assert v.prev_digest_checked is True
+
+
+# --------------------------------------------------------------------------- #
+# #4057: wrong-typed fields must refuse with field-level errors rather than
+# raising exceptions.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("mutate_fn", "expected_field", "expected_msg"),
+    [
+        (lambda p, b: ("bundle", "a string"), "bundle", "expected an object, got str"),
+        (lambda p, b: ("bundle", [1, 2]), "bundle", "expected an object, got list"),
+        (lambda p, b: ("bundle", None), "bundle", "expected an object, got NoneType"),
+        (lambda p, b: ("gates", "not a list"), "gates", "expected a list, got str"),
+        (lambda p, b: ("gates", ["a string"]), "gates[0]", "expected an object, got str"),
+        (lambda p, b: ("worker", "not a dict"), "worker", "expected an object, got str"),
+        (lambda p, b: ("patch", 123), "patch", "expected a string, got int"),
+    ],
+    ids=[
+        "bundle-is-str",
+        "bundle-is-list",
+        "bundle-is-null",
+        "gates-is-str",
+        "gates-holds-str",
+        "worker-is-str",
+        "patch-is-int",
+    ],
+)
+def test_wrong_typed_fields_are_refused_rather_than_raised(mutate_fn: Any, expected_field: str, expected_msg: str):
+    """Refuse wrong-typed fields with field-level errors rather than raising exceptions.
+
+    No pytest.raises in this test: the assertion is that verify_result_bundle
+    returns ok=False with the expected field error.
+    """
+    key = _key()
+    bundle_dict = _bundle(key).to_dict()
+    field_to_mutate, new_val = mutate_fn(None, bundle_dict)
+
+    if field_to_mutate == "bundle":
+        env = _sign_dict(key, new_val)
+    else:
+        bundle_dict[field_to_mutate] = new_val
+        env = _sign_dict(key, bundle_dict)
+
+    v = verify_result_bundle(env, key.public_key())
+
+    assert v.ok is False
+    matched_errors = [e for e in v.errors if e.field == expected_field]
+    assert matched_errors, f"expected field error for {expected_field}, got {v.errors}"
+    assert matched_errors[0].message == expected_msg
+
+
+def test_absent_bundle_keeps_three_error_behavior():
+    """bundle absent keeps its current three-error behaviour: subject.digest.sha256, patch, chain."""
+    import base64 as b64
+
+    from bernstein.core.security import audit_dsse as ad
+    from bernstein.core.security import result_receipt_bundle as rb
+
+    key = _key()
+    statement = ad.Statement(
+        subjects=[ad.Subject(name="t.json", digest={"sha256": "0" * 64})],
+        predicate_type=rb.RESULT_RECEIPT_PREDICATE_TYPE,
+        predicate={
+            "schema_version": rb.BUNDLE_SCHEMA_VERSION,
+            "bundle_kind": "result-receipt",
+        },
+    )
+    payload = rb.canonical_bytes(statement.to_dict())
+    sig = key.sign(ad.pae(ad.DSSE_PAYLOAD_TYPE, payload))
+    env = ad.Envelope(
+        payload_type=ad.DSSE_PAYLOAD_TYPE,
+        payload_b64=b64.b64encode(payload).decode(),
+        signatures=[ad.Signature(keyid=ad.keyid_from_public_key(key.public_key()), sig=b64.b64encode(sig).decode())],
+    )
+
+    v = verify_result_bundle(env, key.public_key())
+
+    assert v.ok is False
+    assert [e.field for e in v.errors] == ["subject.digest.sha256", "patch", "chain"]
+
+
+def test_wrong_typed_fields_leave_checked_flags_where_they_were():
+    """Neither manifest_digest_checked nor prev_digest_checked moves as a side effect."""
+    key = _key()
+    manifest = _manifest()
+    first = _bundle(key)
+    successor = _successor(key, first, anchor=first.digest)
+    bundle_dict = bundle_with_manifest_digest(successor, manifest).to_dict()
+    bundle_dict["worker"] = "not a dict"
+
+    v = verify_result_bundle(
+        _sign_dict(key, bundle_dict),
+        key.public_key(),
+        expected_prev_digest=first.digest,
+        expected_manifest_sha256=manifest.digest,
+    )
+
+    assert v.ok is False
+    assert any(e.field == "worker" for e in v.errors)
+    assert v.prev_digest_checked is True
+    assert v.manifest_digest_checked is True
+
+    v_unasked = verify_result_bundle(
+        _sign_dict(key, bundle_dict),
+        key.public_key(),
+    )
+    assert v_unasked.prev_digest_checked is False
+    assert v_unasked.manifest_digest_checked is False
