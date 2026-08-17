@@ -164,7 +164,10 @@ def verify_cmd(
     "manifest_repo",
     type=click.Path(exists=True, file_okay=False, path_type=Path),
     default=None,
-    help="Repository root whose .bernstein/volunteer.json supplies manifest_sha256, overriding the spec.",
+    help=(
+        "Repository root whose .bernstein/volunteer.json supplies manifest_sha256, overriding the spec. "
+        "With this flag the spec may omit manifest_sha256 entirely; without it the field is still required."
+    ),
 )
 def create_cmd(spec_path: Path, signing_key_path: Path, output_path: Path, manifest_repo: Path | None) -> None:
     """Build and sign a result receipt bundle from a JSON spec.
@@ -206,7 +209,12 @@ def create_cmd(spec_path: Path, signing_key_path: Path, output_path: Path, manif
     if manifest_repo is not None:
         try:
             manifest = load_manifest_from_repo(manifest_repo)
-        except (FileNotFoundError, VolunteerManifestError) as exc:
+        # OSError rather than FileNotFoundError: load_manifest_from_repo guards
+        # with is_file() and then reads, so a manifest that exists but cannot be
+        # read -- a permission bit, or a path that changes shape between the two
+        # calls -- raises a sibling of FileNotFoundError. Both are a manifest we
+        # could not load, and both deserve the refusal rather than a traceback.
+        except (OSError, VolunteerManifestError) as exc:
             _fail(f"could not load manifest from {manifest_repo}: {exc}")
             return
 

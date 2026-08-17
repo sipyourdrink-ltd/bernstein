@@ -217,6 +217,51 @@ def test_json_separates_a_mismatched_anchor_from_one_never_compared(workspace: P
     assert [e["field"] for e in never_compared["errors"]] == ["chain.length"]
 
 
+def test_a_manifest_that_cannot_be_read_refuses_instead_of_raising(workspace: Path, monkeypatch: pytest.MonkeyPatch):
+    """load_manifest_from_repo guards with is_file() and then reads.
+
+    Between those two calls the file can stop being readable -- a permission
+    bit, a path that turns into a directory -- and what comes out is an OSError
+    that is not FileNotFoundError. That is still a manifest the command could
+    not load, so it gets the same clean refusal rather than escaping as a
+    traceback.
+    """
+    import bernstein.core.volunteer.manifest as manifest_mod
+
+    def unreadable(_repo_root: Path):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(manifest_mod, "load_manifest_from_repo", unreadable)
+
+    result = _create(workspace, "never.json", "--manifest-repo", str(workspace / "repo"))
+
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit), result.output
+    assert "could not load manifest" in result.output
+    assert not (workspace / "never.json").exists()
+
+
+def test_manifest_repo_lets_the_spec_omit_the_digest(workspace: Path):
+    """The contract widening the flag's help text now names.
+
+    ResultBundle does no field validation, so the "" placeholder reaches
+    bundle_with_manifest_digest and is replaced before signing -- but only when
+    a manifest was supplied. Without the flag the field is still required.
+    """
+    spec = json.loads((workspace / "spec.json").read_text(encoding="utf-8"))
+    del spec["manifest_sha256"]
+    (workspace / "spec.json").write_text(json.dumps(spec), encoding="utf-8")
+
+    bound = _create(workspace, "bound.json", "--manifest-repo", str(workspace / "repo"))
+    assert bound.exit_code == 0, bound.output
+    assert _digest(workspace) in bound.output
+
+    loose = _create(workspace, "loose.json")
+    assert loose.exit_code == 1
+    assert "invalid spec" in loose.output
+    assert not (workspace / "loose.json").exists()
+
+
 def test_a_repo_without_a_manifest_fails_before_anything_is_signed(workspace: Path):
     (workspace / "empty").mkdir()
     result = _create(workspace, "never.json", "--manifest-repo", str(workspace / "empty"))
