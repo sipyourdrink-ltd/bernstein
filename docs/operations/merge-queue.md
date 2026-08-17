@@ -86,6 +86,42 @@ queue for every diff the filter excludes. It is locked by
 required-context coverage by
 `tests/unit/test_merge_queue_gate_coverage_yaml.py`.
 
+### Reports on the queue but is not required yet
+
+| Context | Emitting workflow | Runs on `merge_group`? | Required? |
+|---------|-------------------|------------------------|-----------|
+| `shipped bundle matches the lockfile` | `spa-bundle-freshness.yml` :: `rebuild` | Yes - `merge_group: {}` | **No - see below** |
+
+#4010 merged with this lane red. `CI gate` was green, `CI gate` is the only
+required context, so branch protection was satisfied and the queue took the
+entry; `main` went red and the repair landed at the back of an eleven-entry
+queue. The lane could only ever annotate the damage, never prevent it.
+
+#4028 added the trigger, which is the half that has to come first. The lane
+now reports on a queued ref, so the remaining step is safe to take and is
+**two flips, both maintainer-only**:
+
+1. Branch protection on `main`: add `shipped bundle matches the lockfile` to
+   the required-status-checks list. This is what stops the pull request
+   entering the queue.
+2. The merge-queue ruleset: add the same context to
+   `required_status_checks`, in the live ruleset (the `gh api PUT` payload
+   above) **and** in its checked-in mirror
+   `docs/operations/merge-queue-ruleset.json`, which
+   `tests/unit/test_merge_queue_gate_coverage_yaml.py` reads.
+
+Do them in that order, and only while the queue is drained: editing required
+contexts invalidates every in-flight entry, so each one restarts a full-suite
+run. Until both are done the lane is exactly as advisory as it was before -
+the trigger alone changes nothing about whether a red bundle can merge.
+
+The general rule this came from is locked by
+`test_no_web_triggerable_lane_is_advisory_only`: a lane that can fail on a
+`web/**` change is either part of the required gate, on its way to being
+required, or a written-down deferral. The state that produced #4010 - a lane
+whose reason for staying advisory lived in a comment, with nothing failing
+when that reason expired - is the one that is no longer reachable.
+
 ### What the group's CI actually tests
 
 Reporting `CI gate` on the group is necessary but not sufficient: the gate

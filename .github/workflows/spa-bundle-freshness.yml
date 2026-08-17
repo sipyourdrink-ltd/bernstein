@@ -30,12 +30,35 @@ name: SPA bundle freshness
 # allow-lists exactly two emitters of that string and rejects a third. See
 # docs/operations/ci.md.
 #
-# It also has no ``merge_group`` trigger, so it must not be made a required
-# context as it stands - a required context that cannot report on a queued
-# ref wedges the merge queue (see docs/operations/merge-queue.md). Add the
-# trigger first if branch protection is ever meant to require it.
+# Merge queue
+# -----------
+# This lane reports on a queued ref, so branch protection *can* require it.
+# It is not required yet: that is a repository-settings change, and the
+# ordering matters in one direction only. A required context that cannot
+# report on a queued ref wedges the queue - every entry waits forever for a
+# check that never arrives (docs/operations/merge-queue.md, troubleshooting
+# row 1). Trigger first, requirement second, never the reverse. Until the
+# switch is thrown this lane still only annotates; #4010 is the bill for
+# that state, and #4028 has the two flips that end it.
+#
+# The ``merge_group`` trigger carries no ``paths`` filter, deliberately.
+# GitHub evaluates ``paths`` / ``paths-ignore`` for ``push``,
+# ``pull_request`` and ``pull_request_target`` only, so a filter here would
+# be silently ignored; and a queue batch stacks several pull requests, so
+# the batch can contain a ``web/**`` change even when the entry being tested
+# does not.
+#
+# #4020 took three lanes *out* of the queue on the rule that a lane which
+# cannot gate a merge should not compete for runners with the one that can.
+# That rule is not in tension with this trigger for long - this lane is on
+# its way to being required, which is the case #4020 excludes - and the
+# job is one slot for a median of 28s (14 recent executions: 23s min, 37s
+# max; the multi-minute figures in the run list are queue wait, not
+# execution), against the 16-job matrices and multi-minute scanners #4020
+# removed.
 
 on:
+  merge_group: {}
   pull_request:
     paths:
       - "web/**"

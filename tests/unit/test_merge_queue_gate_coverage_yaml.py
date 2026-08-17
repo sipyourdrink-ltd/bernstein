@@ -26,6 +26,7 @@ from __future__ import annotations
 import ast
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,57 @@ GATE_JOB_KEY = "ci-gate"
 # their truth value changes with `github.event_name`, so they may resolve
 # differently on a queued group than on the pull request.
 EVENT_SHAPE_MARKERS = ("github.event_name", "github.event.pull_request")
+
+# Top-level directory whose change can move the shipped SPA bundle. A
+# `pull_request` lane that can run on a change under it can also fail on
+# one, which is the property #4010 turned into a red `main`.
+WEB_ROOT = "web"
+# A `paths` entry starting with either of these matches any diff, so the
+# lane runs on a `web/**` change too.
+MATCH_ANYTHING = ("*", "**")
+
+#: Lanes that can fail on a `web/**` change and carry an unfiltered
+#: `merge_group` trigger, so branch protection *can* require them.
+#:
+#: A name here is a claim about the file, not an exemption from it:
+#: `test_queue_reporting_web_lanes_can_actually_be_required` re-reads the
+#: workflow and fails if the trigger is missing or filtered.
+QUEUE_REPORTING_WEB_LANES = {
+    "spa-bundle-freshness.yml": (
+        "The bundle gate. #4010 merged with it red because the lane was advisory, and main "
+        "went red behind eleven queue entries. #4028 added the merge_group trigger so that "
+        "`shipped bundle matches the lockfile` can be made a required context."
+    ),
+}
+
+#: Lanes that can run on a `web/**` change and stay advisory on purpose.
+#:
+#: This bucket exists because #4010's bill was for an *unwritten* deferral.
+#: The reason the bundle gate could not be required lived in a comment in
+#: its own header, and nothing failed when the comment stopped describing
+#: an acceptable state. A deferral that has to be typed here, next to the
+#: assertion it suppresses, is one somebody can find and re-decide.
+ADVISORY_BY_DECISION = {
+    "typecheck-ts.yml": (
+        "`tsc --noEmit` over the TypeScript packages, `web/` among them. Same shape as the "
+        "bundle gate and not fixed by #4028, whose scope is one lane; raised on that thread "
+        "rather than folded in silently."
+    ),
+    "pr-policy.yml": (
+        "Consolidated per-PR policy lane (text hygiene, main-red guard, andon gate, "
+        "pre-merge autosync). Its own header already records that none of these is a "
+        "required check."
+    ),
+    "trufflehog.yml": ("Secret scanning. Advisory as configured today; nothing about #4028 changed it."),
+    "pr-observability-summary.yml": (
+        "Posts a summary on the pull request behind a `deep-review` label. It reports, it "
+        "does not gate, so requiring it is not the missing piece."
+    ),
+    "dependabot-auto-merge.yml": (
+        "Automation that merges Dependabot PRs once the required checks pass. It consumes "
+        "the gate rather than being part of it."
+    ),
+}
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -121,9 +173,283 @@ def queue_required_contexts() -> tuple[str, ...]:
     raise AssertionError("enable payload declares no required_status_checks rule")
 
 
-def _triggers_on_merge_group(doc: dict[str, Any]) -> bool:
+def _triggers(doc: Mapping[Any, Any]) -> dict[str, Any]:
+    """The workflow's trigger mapping, or an empty one if it has none.
+
+    Looked up under both keys because PyYAML 1.1 parses a bare ``on:`` as
+    the boolean ``True``. Unlike ``_on`` this tolerates a workflow with no
+    triggers rather than asserting, because the callers below scan every
+    file in the directory and a malformed one is not their subject.
+    """
     on = doc.get(True, doc.get("on"))
-    return isinstance(on, dict) and "merge_group" in on
+    return on if isinstance(on, dict) else {}
+
+
+def _triggers_on_merge_group(doc: dict[str, Any]) -> bool:
+    return "merge_group" in _triggers(doc)
+
+
+def _names_web(entry: str) -> bool:
+    """Whether a ``paths`` / ``paths-ignore`` entry covers a ``web/`` change."""
+    head = str(entry).lstrip("!").split("/", 1)[0]
+    return head == WEB_ROOT or head in MATCH_ANYTHING
+
+
+def _can_run_on_a_web_change(doc: dict[str, Any]) -> bool:
+    """Whether a ``pull_request`` event over a ``web/**`` diff starts this lane.
+
+    Negated entries are skipped on both sides, which is the conservative
+    direction in each case: an excluded pattern is not read as adding
+    coverage under ``paths``, and not read as removing it under
+    ``paths-ignore``. A lane that lands in scope by mistake has to be
+    written down, which is cheap; one that escapes is the defect.
+    """
+    on = _triggers(doc)
+    if "pull_request" not in on:
+        return False
+    trigger = on.get("pull_request")
+    if not isinstance(trigger, dict):
+        # Bare ``pull_request:`` - every pull request, `web/**` included.
+        return True
+
+    paths = trigger.get("paths")
+    if isinstance(paths, list):
+        return any(_names_web(e) for e in paths if not str(e).startswith("!"))
+
+    ignored = trigger.get("paths-ignore")
+    if isinstance(ignored, list):
+        return not any(_names_web(e) for e in ignored if not str(e).startswith("!"))
+
+    return True
+
+
+def _emits_any(path: Path, doc: dict[str, Any], contexts: tuple[str, ...]) -> bool:
+    """Whether the workflow publishes one of ``contexts`` as a check run.
+
+    Unlike ``test_every_queue_required_context_has_a_merge_group_emitter``
+    this does not care which event the lane runs on: the question here is
+    whether the workflow is part of the required gate at all.
+    """
+    jobs = doc.get("jobs")
+    if not isinstance(jobs, dict):
+        return False
+    text = path.read_text(encoding="utf-8")
+    for job in jobs.values():
+        if not isinstance(job, dict):
+            continue
+        if any(job.get("name") == c or f"--name {c}" in text for c in contexts):
+            return True
+    return False
+
+
+def _web_triggerable_lanes() -> list[Path]:
+    out: list[Path] = []
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        try:
+            doc = _load(path)
+        except (AssertionError, yaml.YAMLError):
+            continue
+        if _can_run_on_a_web_change(doc):
+            out.append(path)
+    return out
+
+
+# The scan below is only as good as the predicate that feeds it, and the
+# predicate's interesting cases are not all present in the tree on any given
+# day - exactly one workflow uses `paths-ignore` under `pull_request`, and it
+# is exempt for an unrelated reason, so a bug in that branch would change
+# nothing today and everything the moment a second one appeared. These
+# assert the function's behaviour directly rather than through whatever
+# `.github/workflows` happens to contain.
+@pytest.mark.parametrize(
+    ("entry", "expected"),
+    [
+        ("web/**", True),
+        ("web/package-lock.json", True),
+        ("**", True),
+        ("*", True),
+        ("!web/**", True),  # `lstrip` first: callers decide what negation means
+        ("src/**", False),
+        ("docs/**", False),
+        # A prefix, not a path segment. `webhooks/**` is a different tree and
+        # a substring test would wrongly claim the lane guards the bundle.
+        ("webhooks/**", False),
+        ("src/bernstein/gui/static/**", False),
+    ],
+)
+def test_names_web_matches_on_a_path_segment(entry: str, expected: bool) -> None:
+    assert _names_web(entry) is expected
+
+
+@pytest.mark.parametrize(
+    ("trigger", "expected"),
+    [
+        # No `pull_request` trigger at all - not this test's subject.
+        ({"push": {"branches": ["main"]}}, False),
+        # Bare `pull_request:` - runs on every PR, `web/**` among them.
+        ({"pull_request": None}, True),
+        ({"pull_request": {"types": ["opened"]}}, True),
+        # An allow-list decides it.
+        ({"pull_request": {"paths": ["web/**"]}}, True),
+        ({"pull_request": {"paths": ["src/**", "web/**"]}}, True),
+        ({"pull_request": {"paths": ["src/**"]}}, False),
+        # A negated entry is not coverage, so this lane never sees `web/`.
+        ({"pull_request": {"paths": ["!web/**", "src/**"]}}, False),
+        # A deny-list decides it the other way round.
+        ({"pull_request": {"paths-ignore": ["docs/**"]}}, True),
+        ({"pull_request": {"paths-ignore": ["web/**"]}}, False),
+        # A negated deny-list entry re-includes, so coverage stands.
+        ({"pull_request": {"paths-ignore": ["!web/**"]}}, True),
+    ],
+)
+def test_can_run_on_a_web_change_reads_both_filter_shapes(trigger: dict[str, Any], expected: bool) -> None:
+    assert _can_run_on_a_web_change({"on": trigger}) is expected
+
+
+def test_can_run_on_a_web_change_reads_the_yaml_true_key() -> None:
+    """PyYAML 1.1 turns a bare ``on:`` into ``True``; both spellings count."""
+    assert _can_run_on_a_web_change({True: {"pull_request": {"paths": ["web/**"]}}}) is True
+    assert _can_run_on_a_web_change({}) is False
+
+
+def test_emits_any_discriminates(tmp_path: Path) -> None:
+    """The gate-emitter exemption must not wave everything through.
+
+    If this predicate ever answered ``True`` unconditionally, the scan below
+    would pass with an empty allow-list and assert nothing at all.
+    """
+    wf = tmp_path / "w.yml"
+    wf.write_text("jobs:\n  a:\n    name: CI gate\n", encoding="utf-8")
+    assert _emits_any(wf, {"jobs": {"a": {"name": "CI gate"}}}, ("CI gate",)) is True
+    assert _emits_any(wf, {"jobs": {"a": {"name": "something else"}}}, ("CI gate",)) is False
+    assert _emits_any(wf, {}, ("CI gate",)) is False
+
+
+def test_the_bundle_gate_is_not_exempt_as_a_gate_emitter(
+    queue_required_contexts: tuple[str, ...],
+) -> None:
+    """It is accounted for by the allow-list, not by publishing `CI gate`.
+
+    Pins the reason the lane is in the first dict. If it ever started
+    emitting a required context the entry would become dead weight, and
+    worse, the canary in
+    ``tests/unit/test_required_check_canary_workflow_yaml.py`` would already
+    be failing for a different reason.
+    """
+    path = WORKFLOWS / "spa-bundle-freshness.yml"
+    assert _can_run_on_a_web_change(_load(path)) is True
+    assert _emits_any(path, _load(path), queue_required_contexts) is False
+
+
+def test_no_web_triggerable_lane_is_advisory_only(
+    queue_required_contexts: tuple[str, ...],
+) -> None:
+    """Every lane that can fail on a ``web/**`` change is accounted for.
+
+    This is the assertion #4010 did not have. `SPA bundle freshness` went
+    red on that pull request, `CI gate` - the only required context - went
+    green, branch protection was satisfied, and the queue merged it. The
+    lane existed precisely to stop that and could only annotate it.
+
+    A lane in scope has to be one of three things, and the third is the
+    point: part of the required gate, on the way to being required, or a
+    deferral somebody typed out on purpose. What is no longer available is
+    the fourth state, which is where the bundle gate sat - advisory, for a
+    reason recorded only in a comment, with nothing failing when that
+    reason expired.
+    """
+    unaccounted: list[str] = []
+    for path in _web_triggerable_lanes():
+        if path.name in QUEUE_REPORTING_WEB_LANES or path.name in ADVISORY_BY_DECISION:
+            continue
+        if _emits_any(path, _load(path), queue_required_contexts):
+            continue
+        unaccounted.append(path.name)
+
+    assert not unaccounted, (
+        f"these lanes can run - and so can fail - on a `web/**` change, but they neither publish a "
+        f"required context nor appear in QUEUE_REPORTING_WEB_LANES or ADVISORY_BY_DECISION: "
+        f"{sorted(unaccounted)}. That is the #4010 shape: red lane, green gate, merged anyway. Give the "
+        f"lane a `merge_group` trigger and list it in the first dict, or record why it stays advisory in "
+        f"the second."
+    )
+
+
+def test_queue_reporting_web_lanes_can_actually_be_required() -> None:
+    """The allow-list above must not be able to lie about a file.
+
+    Listing a lane in ``QUEUE_REPORTING_WEB_LANES`` is a claim that a
+    maintainer can safely add it to branch protection. If the trigger is
+    absent, or filtered, that claim is false and flipping the switch wedges
+    the queue instead of gating the pull request - the failure mode in
+    ``docs/operations/merge-queue.md``'s troubleshooting table, row 1.
+    """
+    for name, reason in QUEUE_REPORTING_WEB_LANES.items():
+        path = WORKFLOWS / name
+        assert path.is_file(), f"QUEUE_REPORTING_WEB_LANES names {name}, which does not exist"
+        assert reason.strip(), f"{name} needs a reason, not an empty string"
+        trigger = _on(_load(path)).get("merge_group", "__absent__")
+        assert trigger != "__absent__", (
+            f"{name} is listed as requirable but declares no `merge_group` trigger. A required context "
+            f"that cannot report on a queued ref wedges the queue."
+        )
+        assert trigger in (None, {}), (
+            f"{name}'s `merge_group` trigger carries a filter ({trigger!r}). `paths` is not evaluated for "
+            f"`merge_group` at all, so a filter there is either ignored or a mistake - and a queue batch "
+            f"stacks several pull requests, so the batch can carry a `web/**` change the tested entry does not."
+        )
+
+
+def _stale_bucket_entries(bucket: Mapping[str, str], in_scope: set[str]) -> list[str]:
+    """Bucket names that no longer describe a lane the scan looks at.
+
+    Split out from the test so it can be exercised on a bucket that has
+    actually gone stale. Doing it only against the shipped constants would
+    assert nothing until the day one of them rots, which is the day the
+    assertion is supposed to have been protecting something.
+    """
+    return sorted(name for name in bucket if name not in in_scope)
+
+
+@pytest.mark.parametrize(
+    ("bucket", "in_scope", "expected"),
+    [
+        ({"a.yml": "reason"}, {"a.yml"}, []),
+        ({"a.yml": "reason"}, {"a.yml", "b.yml"}, []),
+        # The lane's trigger changed and it left the scan's scope: the entry
+        # is now suppressing an assertion about nothing.
+        ({"a.yml": "reason"}, {"b.yml"}, ["a.yml"]),
+        ({"a.yml": "reason", "b.yml": "reason"}, set(), ["a.yml", "b.yml"]),
+        ({}, {"a.yml"}, []),
+    ],
+)
+def test_stale_bucket_entries_flags_a_lane_that_left_scope(
+    bucket: dict[str, str], in_scope: set[str], expected: list[str]
+) -> None:
+    assert _stale_bucket_entries(bucket, in_scope) == expected
+
+
+def test_lane_buckets_stay_in_sync_with_the_tree() -> None:
+    """Stale entries in either bucket are silent holes, so they are errors."""
+    overlap = set(QUEUE_REPORTING_WEB_LANES) & set(ADVISORY_BY_DECISION)
+    assert not overlap, f"{sorted(overlap)} is both requirable and advisory-by-decision; pick one"
+
+    in_scope = {path.name for path in _web_triggerable_lanes()}
+    for bucket, label in (
+        (QUEUE_REPORTING_WEB_LANES, "QUEUE_REPORTING_WEB_LANES"),
+        (ADVISORY_BY_DECISION, "ADVISORY_BY_DECISION"),
+    ):
+        for name in bucket:
+            assert (WORKFLOWS / name).is_file(), f"{label} names {name}, which does not exist"
+        stale = _stale_bucket_entries(bucket, in_scope)
+        assert not stale, (
+            f"{label} names {stale}, which can no longer run on a `web/**` change. The trigger changed; "
+            f"drop the entry rather than leaving it to suppress an assertion about nothing."
+        )
+
+    for bucket in (QUEUE_REPORTING_WEB_LANES, ADVISORY_BY_DECISION):
+        for name, reason in bucket.items():
+            assert reason.strip(), f"{name} needs a reason, not an empty string"
 
 
 def test_ci_merge_group_trigger_carries_no_filter(ci_doc: dict[str, Any]) -> None:

@@ -65,7 +65,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/sbom.yml | SBOM | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "sbom-${{ github.ref }}"} | 1 |
 | .github/workflows/scorecard.yml | OSSF Scorecard | branch_protection_rule, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "scorecard-${{ github.ref }}"} | 2 |
 | .github/workflows/soc2-evidence-weekly.yml | soc2-evidence-weekly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "soc2-evidence-${{ github.ref }}"} | 2 |
-| .github/workflows/spa-bundle-freshness.yml | SPA bundle freshness | pull_request, push | {"cancel-in-progress": "true", "group": "spa-bundle-freshness-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
+| .github/workflows/spa-bundle-freshness.yml | SPA bundle freshness | merge_group, pull_request, push | {"cancel-in-progress": "true", "group": "spa-bundle-freshness-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/spiffe-extra-e2e.yml | SPIFFE Extra E2E | pull_request, push, workflow_dispatch | {"cancel-in-progress": "true", "group": "spiffe-extra-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/stale.yml | Stale cleanup | schedule | {"cancel-in-progress": "false", "group": "stale-${{ github.ref }}"} | 1 |
 | .github/workflows/static-analysis-extended.yml | static-analysis (extended) | push, schedule, workflow_dispatch | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "static-analysis-extended-${{ github.ref }}"} | 6 |
