@@ -45,6 +45,16 @@ from bernstein.core.security.permissions import AgentPermissions, get_permission
 def _init_git_repo(path: Path) -> None:
     """Initialise a minimal git repo suitable for liveness checks."""
     subprocess.run(["git", "init", "-b", "main"], cwd=path, check=True, capture_output=True)
+    # `git commit` may hand off to background maintenance, which writes
+    # `.git/objects/maintenance.lock` on its own schedule. The zero-write
+    # assertions below snapshot the tree twice and diff it, so a lock file
+    # appearing between the two reads is scored as a write by the code under
+    # test - a red macOS shard with nothing wrong in the product. Switching
+    # the housekeeping off removes the writer rather than filtering its
+    # output, so the assertions still catch a real write anywhere under
+    # `.git/`.
+    subprocess.run(["git", "config", "gc.auto", "0"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "maintenance.auto", "false"], cwd=path, check=True, capture_output=True)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=path, check=True, capture_output=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=path, check=True, capture_output=True)
     (path / "README.md").write_text("init\n")
