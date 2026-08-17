@@ -248,7 +248,7 @@ def test_parse_roundtrip():
 # ---------------------------------------------------------------------------
 
 
-def test_a_bundle_built_from_one_manifest_fails_against_anothers_digest():
+def test_a_bundle_from_one_manifest_fails_against_a_different_manifest_digest():
     key = _key()
     manifest_a = _manifest()
     manifest_b = _manifest(max_wall_clock_minutes=45)
