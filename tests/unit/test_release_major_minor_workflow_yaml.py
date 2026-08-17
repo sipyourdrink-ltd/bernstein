@@ -212,3 +212,35 @@ def test_ci_green_check_reads_check_runs_not_the_combined_status_api(
     assert "CI gate" in run, (
         "Verify CI green must decide on 'CI gate', the sole required context"
     )
+
+
+def test_the_release_job_does_not_rerun_the_suite_it_just_verified(
+    release_job: dict[str, Any],
+) -> None:
+    """No step may re-run the full suite inside this job's timeout.
+
+    The job runs unsharded on a single runner. A ``scripts/run_tests.py`` step
+    here took longer than the 60-minute ``timeout-minutes`` and was cancelled
+    mid-run, which cancels the release with it -- so the step could never pass,
+    only delay the failure to minute 60.
+
+    Nothing is lost by its absence. ``Verify CI green`` refuses to continue
+    unless the full shard matrix reported success on this exact SHA, and the
+    bump PR then clears the same required matrix again in the merge queue.
+    """
+    offenders = [run for run in _runs(release_job) if "scripts/run_tests.py" in run]
+    assert not offenders, (
+        "the release job re-runs the full suite it has already verified; it does "
+        f"not fit in timeout-minutes and cancels the release: {offenders}"
+    )
+
+
+def test_the_release_job_declares_a_timeout(release_job: dict[str, Any]) -> None:
+    """An unbounded release job hangs instead of failing, and holds a runner.
+
+    Paired with the test above: the timeout is what makes a wedged step
+    visible, so it must stay even though the step that hit it is gone.
+    """
+    assert isinstance(release_job.get("timeout-minutes"), int), (
+        "release-major-minor.yml's release job must set timeout-minutes"
+    )

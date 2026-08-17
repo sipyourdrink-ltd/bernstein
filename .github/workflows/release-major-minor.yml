@@ -114,9 +114,19 @@ jobs:
             exit 1
           fi
 
-      # Run tests as safety check
-      - name: Run tests
-        run: uv run python scripts/run_tests.py -x
+      # No test run here. The step that used to sit at this point re-ran the
+      # whole suite unsharded on this one runner, against the exact tree the
+      # `Verify CI green` step above has just proved green -- and it did not
+      # fit: at 49 minutes it was still going when the job's 60-minute timeout
+      # cancelled it, taking the release with it. A cancelled step is not a
+      # safety net, it is a release that cannot be cut.
+      #
+      # The tree is already tested twice without it. `Test` runs the full
+      # OS/Python shard matrix on `main`, and `Verify CI green` refuses to
+      # continue unless every one of those check runs reported success on this
+      # exact SHA. Then the bump PR goes through the merge queue, which runs
+      # the same required matrix again before anything lands. A third,
+      # slower, less parallel copy of the same suite adds no signal.
 
       # Apply version bump. scripts/bump_version.py is the single supported
       # bump path: it rewrites pyproject.toml, refreshes uv.lock, and
