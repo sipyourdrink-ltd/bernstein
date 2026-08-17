@@ -319,6 +319,18 @@ class BundleVerification:
     ``ok is True`` cannot tell the two apart -- the bundle carries the field
     either way, and an unchecked field reported as verified is the whole defect
     #3911 closes.
+
+    ``prev_digest_checked`` says the same thing about chain continuity, and
+    #4050 is that defect one field over: a caller who walked a sequence and a
+    caller who never asked used to get verdicts that compared equal.
+
+    The two are recorded differently on purpose, and the asymmetry is the
+    point. The manifest comparison is unconditional -- reaching the end of the
+    function means it ran -- so ``expected_manifest_sha256 is not None`` is
+    exactly true. Continuity is the last arm of an ``elif`` chain, so supplying
+    ``expected_prev_digest`` does *not* imply the anchor was ever looked at.
+    Never assert them as a single "something was checked" condition: they
+    answer different questions and are computed from different facts.
     """
 
     ok: bool
@@ -327,6 +339,7 @@ class BundleVerification:
     bundle: dict[str, Any] = field(default_factory=dict)
     errors: tuple[FieldError, ...] = ()
     manifest_digest_checked: bool = False
+    prev_digest_checked: bool = False
 
 
 def verify_result_bundle(
@@ -360,6 +373,11 @@ def verify_result_bundle(
     ``expected_manifest_sha256`` -- the digest of the manifest the project
     declared -- is the only step that answers that, so the result records
     whether it happened rather than leaving a caller to infer it from ``ok``.
+
+    Step 6 records ``prev_digest_checked`` for the same reason and by a
+    different route: a caller walking a sequence needs to know its continuity
+    question was answered, not merely asked, and a malformed chain link skips
+    the comparison without failing on the caller's behalf.
     """
     errors: list[FieldError] = []
 
@@ -427,18 +445,28 @@ def verify_result_bundle(
             )
 
     # (6) chain link shape and, optionally, continuity with a predecessor.
+    #
+    # ``prev_digest_checked`` is set inside the last arm rather than from
+    # ``expected_prev_digest is not None`` at the top, because a malformed
+    # chain link short-circuits the comparison: the caller asked, and the
+    # anchor was still never looked at. Recording the argument instead of the
+    # comparison would report continuity as confirmed on a bundle whose anchor
+    # is missing outright.
+    prev_digest_checked = False
     chain = bundle_dict.get("chain", {})
     if "anchor" not in chain or "length" not in chain:
         errors.append(FieldError("chain", "missing anchor or length"))
     elif not isinstance(chain.get("length"), int) or chain["length"] < 1:
         errors.append(FieldError("chain.length", f"invalid length {chain.get('length')!r}"))
-    elif expected_prev_digest is not None and chain.get("anchor") != expected_prev_digest:
-        errors.append(
-            FieldError(
-                "chain.anchor",
-                f"anchor {chain.get('anchor')} does not link to predecessor {expected_prev_digest}",
+    elif expected_prev_digest is not None:
+        prev_digest_checked = True
+        if chain.get("anchor") != expected_prev_digest:
+            errors.append(
+                FieldError(
+                    "chain.anchor",
+                    f"anchor {chain.get('anchor')} does not link to predecessor {expected_prev_digest}",
+                )
             )
-        )
 
     # (7) the manifest the run declares itself bound to. Only compared when the
     # caller names the manifest it expects: a bundle is self-consistent about
@@ -463,6 +491,10 @@ def verify_result_bundle(
         # signature failure above returns early, and a check that never ran
         # must not be reported as one that passed.
         manifest_digest_checked=expected_manifest_sha256 is not None,
+        # Carried out of step (6) rather than derived from the argument here:
+        # unlike the manifest comparison, this one can be skipped without
+        # returning. See BundleVerification's docstring.
+        prev_digest_checked=prev_digest_checked,
     )
 
 

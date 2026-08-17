@@ -24,6 +24,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from bernstein.core.security.audit_dsse import export_public_key_pem, keyid_from_public_key
 from bernstein.core.security.result_receipt_bundle import (
     GENESIS_ANCHOR,
+    BundleVerification,
     ChainLink,
     GateResult,
     ResultBundle,
@@ -146,7 +147,10 @@ def _sign_dict(key, bundle_dict):
             "schema_version": rb.BUNDLE_SCHEMA_VERSION,
             "bundle_kind": "result-receipt",
             "bundle": bundle_dict,
-            "chain": bundle_dict["chain"],
+            # ``.get`` rather than ``[...]``: #4050 needs to sign a bundle with
+            # no chain key at all, and the predicate mirror of a missing field
+            # is the same missing field. Identical for every existing caller.
+            "chain": bundle_dict.get("chain"),
         },
     )
     payload = rb.canonical_bytes(statement.to_dict())
@@ -345,3 +349,192 @@ def test_verification_opens_no_files_and_no_sockets(monkeypatch: pytest.MonkeyPa
 
     v = verify_result_bundle(env, key.public_key(), expected_manifest_sha256=manifest.digest)
     assert v.ok and v.manifest_digest_checked
+
+
+# ---------------------------------------------------------------------------
+# #4050: the continuity check is visible in the verdict too, and it is recorded
+# where the comparison happens rather than where the argument arrives.
+#
+# The distinction matters here in a way it did not for the manifest digest:
+# step 7 is unconditional, so reaching the end of the function means it ran,
+# while step 6 is the last arm of an elif chain that a malformed link
+# short-circuits. Every test below that pins "not checked" pins a state in
+# which the caller *did* supply a digest.
+# ---------------------------------------------------------------------------
+
+
+def _successor(key: Ed25519PrivateKey, first: ResultBundle, *, anchor: str, length: int = 2) -> ResultBundle:
+    """A second bundle in a chain, linking to ``anchor``."""
+    return ResultBundle(
+        task=first.task,
+        patch="diff --git a/y b/y\n+two\n",
+        gates=first.gates,
+        manifest_sha256=first.manifest_sha256,
+        adapter_id=first.adapter_id,
+        model_id=first.model_id,
+        sandbox_profile=first.sandbox_profile,
+        selection_receipt="sel-4050",
+        created_at="2026-08-17T00:00:00Z",
+        worker_keyid=first.worker_keyid,
+        worker_public_key_pem=first.worker_public_key_pem,
+        chain=ChainLink(anchor=anchor, length=length),
+    )
+
+
+def test_a_verified_chain_anchor_and_an_unasked_about_one_are_different_verdicts():
+    """The defect #4050 names, stated as the test that closes it."""
+    key = _key()
+    pub = key.public_key()
+    first = _bundle(key)
+    env = build_result_bundle(_successor(key, first, anchor=first.digest), signing_key=key)
+
+    unchecked = verify_result_bundle(env, pub)
+    checked = verify_result_bundle(env, pub, expected_prev_digest=first.digest)
+
+    # Both succeed, so ``ok`` cannot be what tells them apart -- not asking is a
+    # narrower question, not a failure.
+    assert unchecked.ok and checked.ok
+    assert unchecked.errors == () and checked.errors == ()
+    assert unchecked.prev_digest_checked is False
+    assert checked.prev_digest_checked is True
+    assert unchecked != checked, "the two verdicts must not be indistinguishable objects"
+
+
+def test_a_malformed_chain_link_does_not_report_continuity_as_checked():
+    """Asked, and the anchor was still never looked at.
+
+    ``prev_digest_checked = expected_prev_digest is not None`` -- correct for
+    the manifest field -- is wrong here: the comparison is the third arm of an
+    elif chain, so a bundle with no anchor at all would be reported as
+    continuity-checked by that implementation.
+    """
+    key = _key()
+    pub = key.public_key()
+    first = _bundle(key)
+
+    for label, mutate in (
+        ("anchor missing", lambda d: d["chain"].pop("anchor")),
+        ("length missing", lambda d: d["chain"].pop("length")),
+        ("chain absent", lambda d: d.pop("chain")),
+        ("length not an int", lambda d: d["chain"].__setitem__("length", "2")),
+        ("length below one", lambda d: d["chain"].__setitem__("length", 0)),
+    ):
+        bundle_dict = _successor(key, first, anchor=first.digest).to_dict()
+        mutate(bundle_dict)
+        v = verify_result_bundle(_sign_dict(key, bundle_dict), pub, expected_prev_digest=first.digest)
+
+        assert not v.ok, label
+        assert v.prev_digest_checked is False, label
+        # and the verdict says *why* it could not answer, which is what makes a
+        # plain bool sufficient: "asked but unanswerable" is this state, and it
+        # carries a chain-shaped error that "never asked" cannot.
+        assert [e.field for e in v.errors] == ["chain"] or [e.field for e in v.errors] == ["chain.length"], label
+
+
+def test_a_failed_signature_does_not_report_continuity_as_checked():
+    """The early return happens before step 6, so nothing in it ran."""
+    key = _key()
+    first = _bundle(key)
+    env = build_result_bundle(_successor(key, first, anchor=first.digest), signing_key=key)
+
+    v = verify_result_bundle(env, _key(9).public_key(), expected_prev_digest=first.digest)
+
+    assert not v.ok
+    assert [e.field for e in v.errors] == ["envelope"]
+    assert v.prev_digest_checked is False
+
+
+def test_a_broken_link_still_counts_as_checked():
+    """A comparison that ran and said no is a comparison that ran.
+
+    The flag records whether the question was answered, not whether the answer
+    was yes -- conflating the two would make ``prev_digest_checked`` a second,
+    lossier copy of ``ok``.
+    """
+    key = _key()
+    pub = key.public_key()
+    first = _bundle(key)
+    env = build_result_bundle(_successor(key, first, anchor=first.digest), signing_key=key)
+
+    v = verify_result_bundle(env, pub, expected_prev_digest="deadbeef")
+
+    assert not v.ok
+    assert [e.field for e in v.errors] == ["chain.anchor"]
+    assert v.prev_digest_checked is True
+
+
+def test_the_two_checked_flags_are_independent():
+    """All four combinations, asserted separately.
+
+    A refactor that collapses these into one "something was checked" flag has
+    to fail here. Asserting only the diagonal (both true / both false) would
+    let it through.
+    """
+    key = _key()
+    pub = key.public_key()
+    manifest = _manifest()
+    first = _bundle(key)
+    successor = _successor(key, first, anchor=first.digest)
+    env = build_result_bundle(bundle_with_manifest_digest(successor, manifest), signing_key=key)
+
+    neither = verify_result_bundle(env, pub)
+    prev_only = verify_result_bundle(env, pub, expected_prev_digest=first.digest)
+    manifest_only = verify_result_bundle(env, pub, expected_manifest_sha256=manifest.digest)
+    both = verify_result_bundle(env, pub, expected_prev_digest=first.digest, expected_manifest_sha256=manifest.digest)
+
+    assert neither.prev_digest_checked is False
+    assert neither.manifest_digest_checked is False
+
+    assert prev_only.prev_digest_checked is True
+    assert prev_only.manifest_digest_checked is False
+
+    assert manifest_only.prev_digest_checked is False
+    assert manifest_only.manifest_digest_checked is True
+
+    assert both.prev_digest_checked is True
+    assert both.manifest_digest_checked is True
+
+    # ...and the off-diagonal pair is what a single collapsed flag cannot
+    # represent: one flag has no way to hold "one of the two ran". Pin that all
+    # four verdicts are pairwise distinguishable objects. (``BundleVerification``
+    # is frozen but carries a dict, so it is unhashable -- compare pairwise
+    # rather than through a set.)
+    verdicts = [neither, prev_only, manifest_only, both]
+    for i, a in enumerate(verdicts):
+        for b in verdicts[i + 1 :]:
+            assert a != b
+
+
+def test_the_manifest_flag_is_unaffected_by_a_malformed_chain():
+    """Step 7 runs after step 6 and is not inside its elif chain.
+
+    Pins the asymmetry the docstring claims: the same malformed link that
+    suppresses ``prev_digest_checked`` must not suppress the manifest one.
+    """
+    key = _key()
+    manifest = _manifest()
+    first = _bundle(key)
+    successor = bundle_with_manifest_digest(_successor(key, first, anchor=first.digest), manifest)
+
+    bundle_dict = successor.to_dict()
+    bundle_dict["chain"].pop("anchor")
+    v = verify_result_bundle(
+        _sign_dict(key, bundle_dict),
+        key.public_key(),
+        expected_prev_digest=first.digest,
+        expected_manifest_sha256=manifest.digest,
+    )
+
+    assert not v.ok
+    assert [e.field for e in v.errors] == ["chain"]
+    assert v.prev_digest_checked is False
+    assert v.manifest_digest_checked is True
+
+
+def test_the_flag_defaults_false_for_every_existing_caller():
+    """Additive: a verdict nobody asked a continuity question of reads False."""
+    key = _key()
+    env = build_result_bundle(_bundle(key), signing_key=key)
+
+    assert verify_result_bundle(env, key.public_key()).prev_digest_checked is False
+    assert BundleVerification(ok=True).prev_digest_checked is False
