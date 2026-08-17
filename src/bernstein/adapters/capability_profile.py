@@ -1143,7 +1143,13 @@ _PROFILE_LIST: tuple[AdapterCapabilityProfile, ...] = (
         ),
         agents_md=True,
         local_models=True,
-        notes="Structured JSON output via --format json.",
+        resume=ResumeStrategy.FLAG,
+        dangerous_mode=DangerousModeStrategy.CLI_FLAG,
+        event_channel=EventChannel.STREAM_JSON,
+        notes=(
+            "--format json emits raw JSON events. -c/--continue reattaches to the last "
+            "session; --auto auto-approves permissions that are not explicitly denied."
+        ),
     ),
     AdapterCapabilityProfile(
         name="goose",
