@@ -20,6 +20,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from bernstein.core.routes._rate_limit_headers import rate_limit_exception
+from bernstein.core.routes.route_table import iter_route_paths
 from bernstein.core.server import create_app
 
 if TYPE_CHECKING:
@@ -122,7 +123,7 @@ async def test_post_sandbox_sessions_429_carries_retry_after(  # type: ignore[no
 
     # Default ``create_app`` does not mount the sandbox router; include it
     # here so this regression test hits the real 429 path.
-    if not any(getattr(r, "path", "").startswith("/sandbox") for r in app.routes):
+    if not any(path.startswith("/sandbox") for path, _ in iter_route_paths(app)):
         app.include_router(sandbox_router)
 
     # Wire a fresh SandboxManager into app.state and force its

@@ -92,9 +92,8 @@ def _task_collection_segments(application: FastAPI) -> set[str]:
 def _task_collection_routes(application: FastAPI) -> list[tuple[str, str]]:
     """Return ``(method, path_template)`` for every registered collection route."""
     found: set[tuple[str, str]] = set()
-    for route in application.routes:
-        template = getattr(route, "path", "")
-        if not template or _TASK_COLLECTION_ROUTE_RE.match(template) is None:
+    for template, route in iter_route_paths(application):
+        if _TASK_COLLECTION_ROUTE_RE.match(template) is None:
             continue
         for method in getattr(route, "methods", set()) or set():
             found.add((method.upper(), template))

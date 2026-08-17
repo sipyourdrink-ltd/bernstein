@@ -192,6 +192,7 @@ def regen_infrastructure_paths() -> bool:
     from fastapi.routing import APIRoute, APIWebSocketRoute
     from starlette.routing import WebSocketRoute
 
+    from bernstein.core.routes.route_table import iter_route_paths
     from bernstein.core.server import create_app
 
     target = REPO_ROOT / "tests" / "unit" / "test_api_v1_routing.py"
@@ -204,10 +205,9 @@ def regen_infrastructure_paths() -> bool:
         app = create_app(jsonl_path=jsonl_path)
         root_paths: set[str] = set()
         v1_relative: set[str] = set()
-        for route in app.routes:
+        for path, route in iter_route_paths(app):
             if not isinstance(route, APIRoute | APIWebSocketRoute | WebSocketRoute):
                 continue
-            path = route.path
             if path.startswith("/api/v1/"):
                 v1_relative.add(path[len("/api/v1") :])
             elif path == "/api/v1":
