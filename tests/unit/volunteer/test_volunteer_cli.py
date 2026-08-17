@@ -243,6 +243,43 @@ def test_a_manifest_behind_an_unsearchable_directory_is_a_refusal_too(tmp_path: 
 
 
 @pytest.mark.parametrize(
+    ("kind", "expected_tail"),
+    [
+        ("symlink loop", "Too many levels of symbolic links"),
+        ("directory", "it is a directory, not a regular file"),
+        ("dangling symlink", "the symbolic link has no target"),
+    ],
+)
+def test_a_manifest_that_is_not_a_readable_file_is_unreadable_not_missing(
+    tmp_path: Path,
+    kind: str,
+    expected_tail: str,
+) -> None:
+    """The states ``is_file()`` used to fold into "you have not opted in" (#4064).
+
+    Fixed in the loader rather than here, so this test asserts that no clause
+    in this command had to change: the ``OSError`` arm added for a mode-000
+    manifest already carries all three, and the ``<file>`` verdict is left
+    saying the one thing it can still prove.
+    """
+    path = tmp_path / VOLUNTEER_MANIFEST_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if kind == "symlink loop":
+        path.symlink_to("volunteer.json")
+    elif kind == "dangling symlink":
+        path.symlink_to("no-such-file.json")
+    else:
+        path.mkdir()
+
+    code, _, err = _run(tmp_path, "--json")
+
+    assert code == 1
+    payload = json.loads(err)
+    assert payload["field"] == "<unreadable>"
+    assert payload["error"] == f"the manifest exists but could not be read: {expected_tail}"
+
+
+@pytest.mark.parametrize(
     ("raised", "expected_tail"),
     [
         (OSError(errno.EIO, "Input/output error"), "Input/output error"),
