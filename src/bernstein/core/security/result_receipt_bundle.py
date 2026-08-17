@@ -391,8 +391,17 @@ def verify_result_bundle(
         )
 
     statement = env_v.statement
-    predicate = statement.get("predicate", {})
-    raw_bundle = predicate.get("bundle", {})
+    raw_predicate = statement.get("predicate", {})
+    predicate_dict = raw_predicate if isinstance(raw_predicate, dict) else {}
+    if not isinstance(raw_predicate, dict):
+        errors.append(
+            FieldError(
+                "predicate",
+                f"expected an object, got {type(raw_predicate).__name__}",
+            )
+        )
+
+    raw_bundle = predicate_dict.get("bundle", {})
     bundle_dict = raw_bundle if isinstance(raw_bundle, dict) else {}
     if not isinstance(raw_bundle, dict):
         errors.append(

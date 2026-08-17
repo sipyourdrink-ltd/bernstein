@@ -779,3 +779,93 @@ def test_wrong_typed_fields_leave_checked_flags_where_they_were():
     )
     assert v_unasked.prev_digest_checked is False
     assert v_unasked.manifest_digest_checked is False
+
+
+# --------------------------------------------------------------------------- #
+# #4072: a wrong-typed predicate must refuse with a FieldError on "predicate"
+# rather than raising an exception.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("predicate_val", "expected_msg"),
+    [
+        ("x", "expected an object, got str"),
+        (["x"], "expected an object, got list"),
+        (None, "expected an object, got NoneType"),
+        (7, "expected an object, got int"),
+        (True, "expected an object, got bool"),
+        (1.5, "expected an object, got float"),
+        ([], "expected an object, got list"),
+    ],
+    ids=[
+        "predicate-is-str",
+        "predicate-is-list-str",
+        "predicate-is-null",
+        "predicate-is-int",
+        "predicate-is-bool",
+        "predicate-is-float",
+        "predicate-is-empty-list",
+    ],
+)
+def test_wrong_typed_predicate_is_refused_rather_than_raised(predicate_val: Any, expected_msg: str):
+    """Refuse wrong-typed predicate with field-level error rather than raising exception.
+
+    No pytest.raises in this test: the assertion is that verify_result_bundle
+    returns ok=False with FieldError("predicate", ...).
+    """
+    import base64 as b64
+
+    from bernstein.core.security import audit_dsse as ad
+    from bernstein.core.security import result_receipt_bundle as rb
+
+    key = _key()
+    statement = ad.Statement(
+        subjects=[ad.Subject(name="t.json", digest={"sha256": "0" * 64})],
+        predicate_type=rb.RESULT_RECEIPT_PREDICATE_TYPE,
+        predicate=predicate_val,
+    )
+    statement_dict = statement.to_dict()
+    payload = rb.canonical_bytes(statement_dict)
+    sig = key.sign(ad.pae(ad.DSSE_PAYLOAD_TYPE, payload))
+    env = ad.Envelope(
+        payload_type=ad.DSSE_PAYLOAD_TYPE,
+        payload_b64=b64.b64encode(payload).decode(),
+        signatures=[ad.Signature(keyid=ad.keyid_from_public_key(key.public_key()), sig=b64.b64encode(sig).decode())],
+    )
+
+    v = verify_result_bundle(env, key.public_key())
+
+    assert v.ok is False
+    matched_errors = [e for e in v.errors if e.field == "predicate"]
+    assert matched_errors, f"expected field error for predicate, got {v.errors}"
+    assert matched_errors[0].message == expected_msg
+
+
+def test_absent_predicate_keeps_three_error_behavior():
+    """predicate absent keeps its current three-error behaviour: subject.digest.sha256, patch, chain."""
+    import base64 as b64
+
+    from bernstein.core.security import audit_dsse as ad
+    from bernstein.core.security import result_receipt_bundle as rb
+
+    key = _key()
+    statement = ad.Statement(
+        subjects=[ad.Subject(name="t.json", digest={"sha256": "0" * 64})],
+        predicate_type=rb.RESULT_RECEIPT_PREDICATE_TYPE,
+        predicate={},
+    )
+    statement_dict = statement.to_dict()
+    statement_dict.pop("predicate", None)
+    payload = rb.canonical_bytes(statement_dict)
+    sig = key.sign(ad.pae(ad.DSSE_PAYLOAD_TYPE, payload))
+    env = ad.Envelope(
+        payload_type=ad.DSSE_PAYLOAD_TYPE,
+        payload_b64=b64.b64encode(payload).decode(),
+        signatures=[ad.Signature(keyid=ad.keyid_from_public_key(key.public_key()), sig=b64.b64encode(sig).decode())],
+    )
+
+    v = verify_result_bundle(env, key.public_key())
+
+    assert v.ok is False
+    assert [e.field for e in v.errors] == ["subject.digest.sha256", "patch", "chain"]
