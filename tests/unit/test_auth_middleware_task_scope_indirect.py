@@ -40,6 +40,8 @@ from bernstein.core.auth_middleware import (
 from bernstein.core.models import TaskStatus
 from fastapi.testclient import TestClient
 
+from bernstein.core.routes.route_table import iter_route_paths
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -472,9 +474,8 @@ def test_cluster_steal_is_unrestricted_for_an_unscoped_token(app: FastAPI, monke
 def _per_task_route_templates(application: FastAPI) -> list[tuple[str, str]]:
     """Return ``(method, template)`` for every mutating route naming ``{task_id}``."""
     found: set[tuple[str, str]] = set()
-    for route in application.routes:
-        template = getattr(route, "path", "")
-        if not template or not _TASK_ID_TEMPLATE_RE.search(template):
+    for template, route in iter_route_paths(application):
+        if not _TASK_ID_TEMPLATE_RE.search(template):
             continue
         for method in getattr(route, "methods", set()) or set():
             if method.upper() not in _READ_METHODS:

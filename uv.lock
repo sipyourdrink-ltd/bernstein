@@ -581,7 +581,7 @@ requires-dist = [
     { name = "discord-py", marker = "extra == 'discord'", specifier = ">=2.4" },
     { name = "docker", marker = "extra == 'docker'", specifier = ">=7.1.0" },
     { name = "e2b-code-interpreter", marker = "extra == 'e2b'", specifier = ">=1.0" },
-    { name = "fastapi", specifier = ">=0.115,<0.142" },
+    { name = "fastapi", specifier = ">=0.115" },
     { name = "faster-whisper", marker = "extra == 'voice'", specifier = ">=1.0.0" },
     { name = "google-cloud-storage", marker = "extra == 'gcs'", specifier = ">=3.10.1" },
     { name = "grpcio", marker = "extra == 'grpc'", specifier = ">=1.68" },

@@ -16,6 +16,24 @@ rather than as its own attribution is exempted by hand there, with the reason.
 - One answer to "which paths does this diff touch" (`bernstein.core.diff_paths`). The Tier-3 auto-heal cordon and volunteer scope enforcement both fail open on a path an extractor misses, so the extraction moved out of `autofix/tier3.py` into a shared module alongside `path_scope`, and gained the shapes it was missing: a content-preserving rename or copy, a mode change, and a binary file each touch a file while printing no hunk at all, and were previously invisible to the cordon. Quoted non-ASCII paths are decoded rather than handed to a matcher as escape sequences, and an ambiguous `diff --git` header contributes every candidate split — the extractor over-approximates on purpose, since a spurious path costs a readable refusal and a missing one costs an unchallenged write. `bernstein.core.autofix.tier3.extract_paths_from_unified_diff` still resolves for existing callers.
 ## Security
 
+- The agent task-scope gate no longer depends on how FastAPI happens to store
+  included routers (#4023). Both matcher sets are compiled from the live
+  route table, and from FastAPI 0.137 `include_router` keeps a wrapper object
+  in that table instead of copying the sub-router's routes into it — the walk
+  saw objects with no `path`, enumerated nothing, and every matcher came back
+  empty. The gate then failed in both directions at once: per-task routes
+  registered through a sub-router (`/approvals/{task_id}/approve`, the review
+  board's per-task decision route) lost their scope check entirely, while
+  `/tasks/batch` and the other collection routes lost their exemption and were
+  gated as though `batch` were a task id. The walk now lives in
+  `core/routes/route_table.py`, descends through those wrappers, re-applies
+  each mount prefix, and recognises a wrapper by shape rather than by
+  importing a private class, so a future rename degrades to the older
+  behaviour instead of raising on import. `tests/unit/test_route_table.py`
+  asserts the real app's matcher sets are non-empty, so a framework change
+  cannot empty them again while the rest of the suite still passes. The
+  `fastapi<0.137` ceiling that #3979 added as a stopgap is removed.
+
 - Issue text from a project a donor does not control is normalised before it
   can become an agent prompt (#4031). `sanitize_issue_text` in
   `core/volunteer/issue_sanitize.py` returns the title and body as one

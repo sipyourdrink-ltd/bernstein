@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from bernstein.cli.commands.artifact_cmd import artifact_group
 from bernstein.core.lineage.spine import LineageSpine
 from bernstein.core.routes.artifacts import router as artifacts_router
+from bernstein.core.routes.route_table import iter_route_paths
 
 _KEY = b"parity-key"
 _URI = "pkg://bernstein/3.9.0"
@@ -235,7 +236,7 @@ def test_the_artifact_routes_are_mounted_on_the_real_app(tmp_path: Path) -> None
     from bernstein.core.server import create_app
 
     application = create_app(jsonl_path=tmp_path / "runtime" / "tasks.jsonl")
-    paths = {route.path for route in application.routes}  # type: ignore[attr-defined]
+    paths = {path for path, _route in iter_route_paths(application)}
     assert {"/artifacts", "/artifacts/health", "/artifacts/log"} <= paths
     # AUDIT-126: every router is mounted under the versioned surface too.
     assert {"/api/v1/artifacts", "/api/v1/artifacts/health", "/api/v1/artifacts/log"} <= paths
