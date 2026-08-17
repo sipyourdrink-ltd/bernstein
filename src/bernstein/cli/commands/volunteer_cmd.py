@@ -82,6 +82,20 @@ def verify_cmd(repo_root: Path, as_json: bool) -> None:
                 path=manifest_path,
             )
             return
+        # Must stay below the FileNotFoundError clause: that is a subclass of
+        # OSError, and above it every project without a manifest would be told
+        # its manifest is unreadable. Its own clause rather than a widening of
+        # the one above, because the two send the reader to different fixes --
+        # "you have not opted in" points a maintainer whose file is chmod 000 at
+        # adding a file they already have.
+        except OSError as exc:
+            _fail(
+                f"the manifest exists but could not be read: {exc.strerror or exc}",
+                field="<unreadable>",
+                as_json=as_json,
+                path=manifest_path,
+            )
+            return
         except VolunteerManifestError as exc:
             _fail(str(exc).split(": ", 1)[-1], field=exc.field, as_json=as_json, path=manifest_path)
             return
