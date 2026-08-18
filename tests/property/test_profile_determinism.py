@@ -16,20 +16,19 @@ registration was correct by inspection alone.
 `test_deep_profile_still_randomizes` was observed failing in CI (Linux,
 `ubuntu-latest`, twice in a row) with `get_profile("deep").derandomize`
 reading `True`, and would not reproduce locally across dozens of runs of the
-exact same command. The registration in `conftest.py` omits a `derandomize`
-kwarg for `deep`, which looks like it defers to hypothesis's own built-in
-default (`False`) -- but `settings.register_profile`'s parent-inheritance
-does not fall back to hypothesis's pristine defaults. Any kwarg left unset
-is inherited from `settings.default`, and `settings.default` resolves to
-whichever profile is *currently loaded in this process* at the exact moment
-`register_profile` runs -- not a fixed baseline. `conftest.py` registers
-`smoke` (`derandomize=True`) immediately before `deep`; if anything causes
-that module to execute while `smoke` is already the active profile (verified
-with an isolated repro: register once, `load_profile("smoke")`, register
-again -- the second pass's implicit `deep` picks up `derandomize=True`),
-`deep` silently inherits it. `conftest.py` now passes `derandomize=False`
-explicitly on the `deep` registration, closing the inheritance path
-regardless of what triggers it in CI.
+exact same command. Root-caused in #4118: the registration in `conftest.py`
+omits a `derandomize` kwarg for `deep`, which looks like it defers to
+hypothesis's own built-in default (`False`) -- but `settings.register_profile`'s
+parent-inheritance falls back to `settings.default`, and hypothesis itself
+loads a CI-specific profile as that default whenever it detects a CI
+environment (`CI=true` and friends), *before* `conftest.py` runs, with
+`derandomize=True`. Off CI, `settings.default` is hypothesis's neutral
+built-in (`derandomize=False`), which is exactly why this only ever
+surfaced in CI and never locally: `CI=true GITHUB_ACTIONS=true python -c
+"from hypothesis import settings; print(settings.default.derandomize)"`
+prints `True`; the same command with no CI env prints `False`.
+`conftest.py` now passes `derandomize=False` explicitly on the `deep`
+registration, closing the inheritance path regardless of environment.
 
 Every value these tests check is still captured once at collection time
 (module import), not re-queried via `get_profile(...)` from inside a test

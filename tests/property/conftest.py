@@ -49,16 +49,15 @@ settings.register_profile(
 
 # ``deep`` - nightly. Thoroughness over speed.
 #
-# derandomize=False is explicit, not the implicit default it looks like.
-# Any kwarg omitted from register_profile() is inherited from
-# `settings.default` as resolved at THIS registration call -- and
-# `settings.default` is not hypothesis's pristine built-in settings, it is
-# whichever profile is *currently loaded* in this process at that instant.
-# Leaving this unset silently ties "deep" to "smoke"'s derandomize=True
-# whenever something causes this module to execute with "smoke" already
-# active (CI observed exactly that: get_profile("deep").derandomize read
-# True with no other register_profile call anywhere in the repository).
-# Pinning it here removes the dependency on load order entirely.
+# derandomize=False is explicit, not the implicit default it looks like
+# (#4118). register_profile() inherits any unset kwarg from
+# `settings.default`, and hypothesis itself loads a CI-specific profile as
+# that default whenever it detects a CI environment (`CI=true` and
+# friends) -- *before* this module runs, with database=None and
+# derandomize=True. Off CI, `settings.default` is hypothesis's neutral
+# built-in (derandomize=False), which is why this only ever surfaced in
+# CI and never locally. Pinning the value here removes the dependency on
+# which environment happens to be running this file.
 settings.register_profile(
     "deep",
     max_examples=1_000,
