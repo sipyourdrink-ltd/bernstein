@@ -13,25 +13,32 @@ leaving `deep` (nightly, meant to explore fresh input space) untouched.
 These tests assert that property directly rather than trusting the
 registration was correct by inspection alone.
 
-Every value these tests check is captured once at collection time (module
-import), not re-queried via `get_profile(...)` from inside a test body --
-see the module-level constants below. This is not defensive-for-its-own-sake:
 `test_deep_profile_still_randomizes` was observed failing in CI (Linux,
-`ubuntu-latest`) with `get_profile("deep").derandomize` reading `True`, on a
-commit where `conftest.py` registers `deep` with no `derandomize` kwarg at
-all (default `False`) and nothing in this repository re-registers it
-(grepped both `tests/` and `src/`; `settings` objects are also confirmed
-immutable, so an in-place mutation of the registered object is not possible
-either). It reproduced twice in a row in CI and zero times in dozens of
-local runs of the exact same command, including the complete
-`tests/property/` suite -- environment- or timing-specific, not something
-this investigation could pin to a specific line. Rather than ship a test
-that is real but flaky pending a root cause, every value it depends on is
-captured immediately after collection, before any test's *execution* phase
-begins, which is also when every other property test file's own
-`@settings(...)` decorators already resolve their settings (decorators run
-at definition/collection time) -- this brings these three tests in line with
-that existing pattern rather than introducing a different one.
+`ubuntu-latest`, twice in a row) with `get_profile("deep").derandomize`
+reading `True`, and would not reproduce locally across dozens of runs of the
+exact same command. The registration in `conftest.py` omits a `derandomize`
+kwarg for `deep`, which looks like it defers to hypothesis's own built-in
+default (`False`) -- but `settings.register_profile`'s parent-inheritance
+does not fall back to hypothesis's pristine defaults. Any kwarg left unset
+is inherited from `settings.default`, and `settings.default` resolves to
+whichever profile is *currently loaded in this process* at the exact moment
+`register_profile` runs -- not a fixed baseline. `conftest.py` registers
+`smoke` (`derandomize=True`) immediately before `deep`; if anything causes
+that module to execute while `smoke` is already the active profile (verified
+with an isolated repro: register once, `load_profile("smoke")`, register
+again -- the second pass's implicit `deep` picks up `derandomize=True`),
+`deep` silently inherits it. `conftest.py` now passes `derandomize=False`
+explicitly on the `deep` registration, closing the inheritance path
+regardless of what triggers it in CI.
+
+Every value these tests check is still captured once at collection time
+(module import), not re-queried via `get_profile(...)` from inside a test
+body -- see the module-level constants below. This is now redundant with
+the `conftest.py` fix for `test_deep_profile_still_randomizes` specifically,
+but it costs nothing and keeps all three tests in this file resolving their
+inputs the same way (matching how every other property-test file's own
+`@settings(...)` decorators already resolve at definition/collection time,
+not from inside the running test).
 """
 
 from __future__ import annotations

@@ -48,10 +48,22 @@ settings.register_profile(
 )
 
 # ``deep`` - nightly. Thoroughness over speed.
+#
+# derandomize=False is explicit, not the implicit default it looks like.
+# Any kwarg omitted from register_profile() is inherited from
+# `settings.default` as resolved at THIS registration call -- and
+# `settings.default` is not hypothesis's pristine built-in settings, it is
+# whichever profile is *currently loaded* in this process at that instant.
+# Leaving this unset silently ties "deep" to "smoke"'s derandomize=True
+# whenever something causes this module to execute with "smoke" already
+# active (CI observed exactly that: get_profile("deep").derandomize read
+# True with no other register_profile call anywhere in the repository).
+# Pinning it here removes the dependency on load order entirely.
 settings.register_profile(
     "deep",
     max_examples=1_000,
     deadline=None,
+    derandomize=False,
     suppress_health_check=[
         HealthCheck.too_slow,
         HealthCheck.filter_too_much,
