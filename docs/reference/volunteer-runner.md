@@ -111,3 +111,35 @@ same digests.
 The worktree is left in place. The diff's provenance is that worktree, and the
 step that enforces `allowed_paths` and re-runs the project's gates verifies
 against it; deleting it here would destroy the thing that step needs.
+
+## Claim etiquette is etiquette, not a lock
+
+The PoC has no coordinator, so two donors can pick the same issue off a
+project's backlog. Passing a claim client to `run_claimed_task` adds the one
+cheap defence available without a lock: before the clone, the runner re-reads
+the issue and **refuses on the `claim_taken` stage** if it is assigned, closed,
+or carries a claim comment newer than a configurable staleness window that
+another donor wrote. Otherwise it posts a short claim comment, and on abort
+edits that same comment to a release; the completion step
+(`finish_volunteer_task`) edits it to a completion. It is entirely opt-in —
+with no claim client the runner behaves exactly as before.
+
+**This is best-effort, and races are accepted.** Two donors reading the issue
+in the same second both see it free and both claim it; nothing here prevents
+that, and at PoC scale occasional duplication is fine. What the check buys is
+that the *second* donor to arrive a minute later sees the first one's claim and
+steps aside — the difference between duplicating a task now and then and
+silently duplicating every task.
+
+Two properties make it honest without a coordinator:
+
+- **The donor's own `gh` auth.** Every read and write is a `gh` subprocess that
+  authenticates as whoever ran it — never an installed GitHub App. A donor
+  volunteering on someone else's project comments as themselves, and the runner
+  never mutates labels or state it lacks the rights to.
+- **`viewerDidAuthor`, never a stored login.** The claim is found by a marker
+  embedded in the comment body, scoped to comments the active identity authored
+  (`gh issue view --json comments` reports `viewerDidAuthor` per comment). So a
+  worker edits only its own claim — GitHub answers a cross-author edit with 403 —
+  and a restarted worker that finds its *own* fresh claim resumes rather than
+  treating itself as a competitor and locking itself out.
