@@ -126,6 +126,33 @@ recomputes the run-specific semantic projection from the embedded events. A
 self-embedded JWK establishes cryptographic self-consistency only; provenance
 requires an independently pinned JWK or public key.
 
+### Operator surface
+
+`bernstein identity attest` projects the receipt from the command line. Both
+verbs take the same signing options as `bernstein audit receipt export`, since
+building a projection signs one.
+
+```bash
+# Project without writing; print both verdicts.
+bernstein identity attest show --run <run-id> --signing-key-path key.pem
+
+# Rebuild, verify the projection, and emit the receipt.
+bernstein identity attest verify --run <run-id> --signing-key-path key.pem
+```
+
+`verify` exits non-zero and names each failing check when the recomputed range
+no longer supports the projection. It stages the receipt privately and moves
+it into the evidence directory only after semantic verification passes, so a
+failed projection is never left behind as normal evidence. `show` creates
+neither a receipt nor audit key material. Both verdicts are recomputed from the
+retained range on every invocation; neither is read from a field in the receipt,
+so a serialized claim cannot promote itself through this surface any more than
+it can through the library.
+
+These verbs sit under `identity attest` rather than extending `identity
+verify`, which checks an install-rev fingerprint token. The two answer
+different questions about different objects and only share a noun.
+
 ### Verifying with third-party tooling
 
 Because `intoto` is a plain DSSE envelope wrapping an in-toto v1 Statement, any
