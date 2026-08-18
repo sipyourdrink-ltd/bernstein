@@ -1,11 +1,20 @@
 """Determinism of the smoke-profile Schemathesis sweep (#4024).
 
 `test_task_server_schemathesis.py`'s ``test_no_unhandled_exceptions`` gates
-both the PR lane and every merge-queue batch. Before #4024's fix it drew a
-fresh Hypothesis example set on every run: the same tree could pass on one
-run and fail on the next, and a merge-queue batch that drew a pathological
-example was dequeued -- along with every entry behind it -- for a defect
-that was not actually new.
+both the PR lane and every merge-queue batch. Before #4024's fix its
+``@settings(...)`` decorator set no ``derandomize`` kwarg at all -- which,
+per #4118, does not mean "randomized" the way it looks: an unset kwarg is
+inherited from ``settings.default``, and hypothesis's own library loads a
+CI-specific profile as that default whenever it detects a CI environment
+(``derandomize=True``, before any of this repository's code runs). So in
+CI specifically -- the one place this lane actually gates anything -- the
+pre-fix behaviour was already derandomized by that inheritance, same as
+``tests/property/conftest.py``'s ``deep`` profile (#4118's other case).
+What #4024's fix actually buys is not "CI now reproduces where it didn't":
+it is a value that no longer depends on hypothesis's CI-detection heuristic
+or on running under CI at all -- a laptop run and a CI run now agree,
+which they did not before, and the result survives hypothesis changing how
+it detects CI in a future release.
 
 The fix branches ``derandomize`` on ``_PROFILE`` so only the *gating* smoke
 lane is pinned; the nightly deep lane keeps exploring fresh input space,
