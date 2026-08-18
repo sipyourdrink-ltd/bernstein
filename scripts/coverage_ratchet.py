@@ -424,22 +424,33 @@ def guard_decision(
     open_pct: float | None,
     queued_branches: Sequence[str],
     ratchet_branch: str,
+    base_pct: float | None = None,
 ) -> GuardVerdict:
-    """Decide whether this fire may update the single open ratchet PR.
+    """Decide whether this fire may open or update the ratchet PR.
 
-    ``check`` compares the measurement against the baseline committed on
-    ``main``, not against the one the open ratchet PR already carries.
-    Those two diverge the moment a ratchet PR is open, so a measurement
-    landing between them still reads as a bump against ``main`` while
-    force-pushing it would move the open PR's high-water mark *down*.
-    That is the first refusal.
+    Three refusals, for three unrelated reasons.
 
-    The second is mechanical rather than arithmetic: while the ratchet PR
-    sits in the merge queue GitHub locks its head branch, and the push
-    fails with ``GH006`` whatever the number says. Skipping costs nothing
-    - the ratchet is monotonic and idempotent, so once the queued PR
-    merges the next fire opens a fresh PR carrying the high-water mark as
-    of then.
+    The mechanical one: while the ratchet PR sits in the merge queue
+    GitHub locks its head branch, and the push fails with ``GH006``
+    whatever the number says. Skipping costs nothing - the ratchet is
+    monotonic and idempotent, so once the queued PR merges the next fire
+    opens a fresh PR carrying the high-water mark as of then.
+
+    The stale-read one: ``check`` compares the measurement against the
+    baseline committed in the tree it checked out, which is the *measured
+    commit* - deliberately, so the report and the tree agree - and that
+    commit is routinely behind ``main``. A mark already ratcheted onto
+    ``main`` since then is therefore re-read as if it were still pending,
+    and ``check`` bumps to a value ``main`` already carries. The write is
+    correct against what it read and a no-op against the base the PR is
+    opened onto, so the PR renders as a provenance-only diff: identical
+    ``line_rate`` and ``total_coverage_percent``, moved ``head_sha`` and
+    ``run_id``. That is issue #4087, and ``base_pct`` is what closes it.
+
+    The directional one: the open ratchet PR's own mark is above
+    ``main``'s for as long as it stays open, so a measurement landing
+    between the two clears ``base_pct`` and would still rewrite the open
+    PR *downward* if force-pushed.
 
     Args:
         measured_pct: Freshly-measured total coverage percentage.
@@ -448,21 +459,19 @@ def guard_decision(
         queued_branches: Head branches of the pull requests currently in
             the merge queue.
         ratchet_branch: The ratchet's own stable head branch.
+        base_pct: Percentage committed on the branch the PR is opened
+            onto (``main``). ``None`` skips the stale-read refusal, which
+            the CLI never does - it requires the file and fails loudly
+            rather than reaching this with ``None``.
 
     Returns:
         A :class:`GuardVerdict` carrying the decision and the single log
         line explaining it.
     """
-    if open_pct is None:
-        return GuardVerdict(
-            proceed=True,
-            notice=f"no {ratchet_branch} baseline (branch absent); opening a fresh ratchet PR.",
-        )
-
-    # Ordered deliberately: both refusals can hold at once, and the branch
-    # lock is the one that makes the push impossible rather than merely
-    # unwanted. Reporting it first keeps the message deterministic instead
-    # of an artifact of evaluation order.
+    # Ordered deliberately: more than one refusal can hold at once, and
+    # the branch lock is the one that makes the push impossible rather
+    # than merely unwanted. Reporting it first keeps the message
+    # deterministic instead of an artifact of evaluation order.
     if ratchet_branch in queued_branches:
         return GuardVerdict(
             proceed=False,
@@ -470,6 +479,26 @@ def guard_decision(
                 f"the open ratchet PR is in the merge queue, which locks {ratchet_branch} "
                 f"against pushes; leaving it alone."
             ),
+        )
+
+    # Before the open PR is considered at all: is there anything left to
+    # raise? This one is checked even when no ratchet branch exists,
+    # because a provenance-only diff opens a *fresh* PR just as readily as
+    # it rewrites an existing one.
+    if base_pct is not None and measured_pct <= base_pct:
+        return GuardVerdict(
+            proceed=False,
+            notice=(
+                f"measured {measured_pct:g}% is not above the {base_pct:g}% already committed on "
+                f"the base branch, so the bump is a no-op there and the PR would carry only "
+                f"provenance; leaving it alone."
+            ),
+        )
+
+    if open_pct is None:
+        return GuardVerdict(
+            proceed=True,
+            notice=f"no {ratchet_branch} baseline (branch absent); opening a fresh ratchet PR.",
         )
 
     if measured_pct > open_pct:
@@ -699,6 +728,19 @@ def _cmd_guard(args: argparse.Namespace) -> int:
             print(f"::error::open ratchet baseline is malformed: {exc!r}", file=sys.stderr)
             return 1
 
+    # Unlike the ratchet branch, the base branch always carries a baseline:
+    # it is committed in the repo. An absent or malformed file here is a
+    # broken read, not a state worth guessing at - and guessing would
+    # silently retire the stale-read refusal while the log stayed green.
+    try:
+        base_pct = float(json.loads(Path(args.base_baseline).read_text(encoding="utf-8"))["total_coverage_percent"])
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(
+            f"::error::could not read the base branch's baseline: {exc!r}; refusing to guess.",
+            file=sys.stderr,
+        )
+        return 1
+
     # An unreadable queue must never collapse to "empty". Empty means "the
     # branch is pushable", and reaching that from a failed read is exactly
     # how the push starts hard-failing on GH006 again while the log claims
@@ -717,6 +759,7 @@ def _cmd_guard(args: argparse.Namespace) -> int:
         open_pct=open_pct,
         queued_branches=queued,
         ratchet_branch=args.ratchet_branch,
+        base_pct=base_pct,
     )
     print(f"::notice::{verdict.notice}")
     _emit_github_output(proceed="true" if verdict.proceed else "false")
@@ -791,6 +834,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--open-baseline",
         required=True,
         help="baseline read off the ratchet branch; an absent file means the branch does not exist",
+    )
+    p_guard.add_argument(
+        "--base-baseline",
+        required=True,
+        help=(
+            "baseline read off the branch the PR is opened onto; required, because a bump "
+            "measured against a stale checked-out tree is a no-op against this one"
+        ),
     )
     p_guard.add_argument(
         "--queued-branches",

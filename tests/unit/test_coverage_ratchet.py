@@ -617,6 +617,13 @@ def test_committed_baseline_carries_provenance_and_re_derives() -> None:
 RATCHET_BRANCH = "coverage-ratchet/baseline"
 
 
+def _write_base_baseline(tmp_path: Path, pct: float) -> Path:
+    """The baseline committed on the branch the ratchet PR is opened onto."""
+    path = tmp_path / "base-baseline.json"
+    path.write_text(json.dumps({"total_coverage_percent": pct}), encoding="utf-8")
+    return path
+
+
 def test_a_queued_ratchet_pr_refuses_because_its_branch_is_locked() -> None:
     """A queued PR's branch rejects pushes, so a higher number changes nothing."""
     verdict = ratchet.guard_decision(
@@ -728,6 +735,7 @@ def test_guard_command_writes_proceed_false_to_github_output(
     """End to end through the subcommand the workflow actually calls."""
     open_baseline = tmp_path / "open-baseline.json"
     open_baseline.write_text(json.dumps({"total_coverage_percent": 83.7}), encoding="utf-8")
+    base_baseline = _write_base_baseline(tmp_path, 83.0)
     queued = tmp_path / "queued.json"
     queued.write_text(json.dumps([RATCHET_BRANCH]), encoding="utf-8")
     gh_output = tmp_path / "gh-output.txt"
@@ -740,6 +748,8 @@ def test_guard_command_writes_proceed_false_to_github_output(
             "91.0",
             "--open-baseline",
             str(open_baseline),
+            "--base-baseline",
+            str(base_baseline),
             "--queued-branches",
             str(queued),
             "--ratchet-branch",
@@ -756,6 +766,7 @@ def test_guard_command_treats_a_missing_open_baseline_as_an_absent_branch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The workflow writes that file only when the branch actually has one."""
+    base_baseline = _write_base_baseline(tmp_path, 83.0)
     queued = tmp_path / "queued.json"
     queued.write_text("[]", encoding="utf-8")
     gh_output = tmp_path / "gh-output.txt"
@@ -768,6 +779,8 @@ def test_guard_command_treats_a_missing_open_baseline_as_an_absent_branch(
             "83.71",
             "--open-baseline",
             str(tmp_path / "does-not-exist.json"),
+            "--base-baseline",
+            str(base_baseline),
             "--queued-branches",
             str(queued),
             "--ratchet-branch",
@@ -791,6 +804,7 @@ def test_an_unreadable_queue_file_refuses_instead_of_assuming_an_empty_queue(
     """
     open_baseline = tmp_path / "open-baseline.json"
     open_baseline.write_text(json.dumps({"total_coverage_percent": 83.7}), encoding="utf-8")
+    base_baseline = _write_base_baseline(tmp_path, 83.0)
     queued = tmp_path / "queued.json"
     queued.write_text("{not json", encoding="utf-8")
     gh_output = tmp_path / "gh-output.txt"
@@ -803,6 +817,8 @@ def test_an_unreadable_queue_file_refuses_instead_of_assuming_an_empty_queue(
             "91.0",
             "--open-baseline",
             str(open_baseline),
+            "--base-baseline",
+            str(base_baseline),
             "--queued-branches",
             str(queued),
             "--ratchet-branch",
@@ -812,3 +828,235 @@ def test_an_unreadable_queue_file_refuses_instead_of_assuming_an_empty_queue(
 
     assert rc != 0, "an unreadable queue must be loud, not silently empty"
     assert "proceed=true" not in gh_output.read_text(encoding="utf-8") if gh_output.exists() else True
+
+
+# --------------------------------------------------------------------------- #
+# the stale-read refusal: is there anything left to raise on the base branch?
+# --------------------------------------------------------------------------- #
+#
+# `check` reads the baseline out of the tree it checked out, and that tree is
+# the measured commit rather than main - deliberately, so the coverage report
+# and the tree it is attributed to are the same commit. By the time a commit's
+# CI run completes, main has often already ratcheted past the mark that commit
+# carries. `check` then re-reads a superseded mark as if it were still pending
+# and bumps to a value main already holds: correct against what it read, a
+# no-op against the branch the PR is opened onto.
+#
+# The visible artefact is a pull request whose diff moves head_sha, run_id and
+# updated_at while line_rate and total_coverage_percent stay byte-identical -
+# provenance travelling without a measurement, which is what #4087 named.
+
+
+def test_a_bump_to_a_mark_the_base_already_carries_is_refused() -> None:
+    """The whole of #4087: equal marks mean the PR would carry only provenance."""
+    verdict = ratchet.guard_decision(
+        measured_pct=83.84,
+        open_pct=None,
+        queued_branches=[],
+        ratchet_branch=RATCHET_BRANCH,
+        base_pct=83.84,
+    )
+
+    assert verdict.proceed is False
+    assert "provenance" in verdict.notice
+
+
+def test_issue_4087_is_refused_with_the_numbers_that_produced_it() -> None:
+    """PR #4085's actual arithmetic, so the regression is pinned to the artefact.
+
+    Commit ``6bb9f3ed`` carries 83.77 in its tree. Its CI run completed at
+    08:43, by which point #4082 had already ratcheted main to 83.84. `check`
+    measured 83.84 against the 83.77 it read, cleared the 0.05 tolerance by
+    0.07 and bumped - onto a base that was already at 83.84. The resulting
+    diff moved head_sha and run_id and nothing else.
+    """
+    measured_on_a_stale_tree = ratchet.decide(baseline_pct=83.77, measured_pct=83.84)
+    assert measured_on_a_stale_tree.should_bump is True, (
+        "the write path is not the defect; it bumps correctly against what it read"
+    )
+
+    verdict = ratchet.guard_decision(
+        measured_pct=83.84,
+        open_pct=None,
+        queued_branches=[],
+        ratchet_branch=RATCHET_BRANCH,
+        base_pct=83.84,
+    )
+
+    assert verdict.proceed is False, "#4085 must not open"
+
+
+def test_a_real_rise_above_the_base_still_opens_its_pr() -> None:
+    """The guard must not cost the ratchet its actual job."""
+    verdict = ratchet.guard_decision(
+        measured_pct=83.90,
+        open_pct=None,
+        queued_branches=[],
+        ratchet_branch=RATCHET_BRANCH,
+        base_pct=83.84,
+    )
+
+    assert verdict.proceed is True
+
+
+def test_the_stale_read_refusal_is_distinguishable_from_the_downward_one() -> None:
+    """Three refusals, three reasons; a shared message hides which one fired."""
+    stale = ratchet.guard_decision(
+        measured_pct=83.84,
+        open_pct=83.90,
+        queued_branches=[],
+        ratchet_branch=RATCHET_BRANCH,
+        base_pct=83.84,
+    )
+    downward = ratchet.guard_decision(
+        measured_pct=83.86,
+        open_pct=83.90,
+        queued_branches=[],
+        ratchet_branch=RATCHET_BRANCH,
+        base_pct=83.84,
+    )
+    queued = ratchet.guard_decision(
+        measured_pct=83.95,
+        open_pct=83.90,
+        queued_branches=[RATCHET_BRANCH],
+        ratchet_branch=RATCHET_BRANCH,
+        base_pct=83.84,
+    )
+
+    assert stale.proceed is downward.proceed is queued.proceed is False
+    assert len({stale.notice, downward.notice, queued.notice}) == 3
+
+
+def test_a_measurement_between_the_base_and_the_open_pr_still_refuses_downward() -> None:
+    """Clearing the base does not license rewriting the open PR downward.
+
+    The open ratchet PR's mark sits above main's for as long as it is open,
+    so this is the band where the two refusals do genuinely different work.
+    """
+    verdict = ratchet.guard_decision(
+        measured_pct=83.86,
+        open_pct=83.90,
+        queued_branches=[],
+        ratchet_branch=RATCHET_BRANCH,
+        base_pct=83.84,
+    )
+
+    assert verdict.proceed is False
+    assert "not above the open ratchet PR" in verdict.notice
+
+
+def test_the_queue_lock_outranks_the_stale_read_reason() -> None:
+    """Deterministic precedence: the impossible push is the fact worth logging."""
+    verdict = ratchet.guard_decision(
+        measured_pct=83.84,
+        open_pct=83.90,
+        queued_branches=[RATCHET_BRANCH],
+        ratchet_branch=RATCHET_BRANCH,
+        base_pct=83.84,
+    )
+
+    assert verdict.proceed is False
+    assert "merge queue" in verdict.notice
+
+
+def test_the_stale_read_refusal_applies_with_no_ratchet_branch_open() -> None:
+    """A provenance-only diff opens a FRESH PR just as readily as it rewrites one.
+
+    Checking the base only when a ratchet branch happens to exist would leave
+    #4087 reachable on every fire that follows a merged ratchet PR - which is
+    exactly the state #4085 was opened in.
+    """
+    verdict = ratchet.guard_decision(
+        measured_pct=83.84,
+        open_pct=None,
+        queued_branches=[],
+        ratchet_branch=RATCHET_BRANCH,
+        base_pct=83.84,
+    )
+
+    assert verdict.proceed is False
+    assert "fresh" not in verdict.notice
+
+
+def test_bump_floor_is_untouched_by_the_provenance_rule(tmp_path: Path) -> None:
+    """Why the rule lives in the guard and NOT in write_baseline.
+
+    The obvious formulation - refuse a payload whose measurement fields are
+    unchanged from the file on disk - would refuse the weekly floor bump,
+    whose entire job is to move `diff_coverage_floor_percent` and nothing
+    else. `write_baseline` stays honest; the guard is where the base branch
+    is actually known.
+    """
+    baseline_path = tmp_path / ".coverage-baseline.json"
+    ratchet.write_baseline(
+        baseline_path,
+        ratchet.Baseline(
+            total_coverage_percent=83.84,
+            diff_coverage_floor_percent=86,
+            updated_at="2026-08-17T08:04:51+00:00",
+            line_rate=0.8384,
+            head_sha="6902f699a30d1193a09a99129114af1b08920dfc",
+            run_id="31999416744",
+        ),
+    )
+
+    rc = ratchet.main(["bump-floor", "--baseline", str(baseline_path), "--step", "1", "--cap", "90"])
+
+    after = ratchet.read_baseline(baseline_path)
+    assert rc == 0
+    assert after.diff_coverage_floor_percent == 87
+    assert after.total_coverage_percent == 83.84
+    assert after.line_rate == 0.8384
+
+
+def test_guard_command_refuses_loudly_when_the_base_baseline_is_unreadable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The base branch always has a baseline, so a failed read is a broken read.
+
+    Treating it as absent would silently retire the refusal while the job
+    stayed green - the same failure shape the merge-queue read is guarded
+    against.
+    """
+    queued = tmp_path / "queued.json"
+    queued.write_text("[]", encoding="utf-8")
+    gh_output = tmp_path / "gh-output.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(gh_output))
+
+    rc = ratchet.main(
+        [
+            "guard",
+            "--measured",
+            "83.84",
+            "--open-baseline",
+            str(tmp_path / "does-not-exist.json"),
+            "--base-baseline",
+            str(tmp_path / "also-does-not-exist.json"),
+            "--queued-branches",
+            str(queued),
+            "--ratchet-branch",
+            RATCHET_BRANCH,
+        ]
+    )
+
+    assert rc != 0
+    assert "proceed=true" not in (gh_output.read_text(encoding="utf-8") if gh_output.exists() else "")
+
+
+def test_guard_command_cannot_be_invoked_without_a_base_baseline() -> None:
+    """Optional would mean one edited workflow line silently disables the guard."""
+    with pytest.raises(SystemExit):
+        ratchet.main(
+            [
+                "guard",
+                "--measured",
+                "83.84",
+                "--open-baseline",
+                "open.json",
+                "--queued-branches",
+                "queued.json",
+                "--ratchet-branch",
+                RATCHET_BRANCH,
+            ]
+        )

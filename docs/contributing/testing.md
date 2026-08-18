@@ -150,6 +150,13 @@ A real bug - an endpoint should never propagate an unhandled
 exception. The reproducer is printed at the bottom of the failure (a
 `curl` invocation against the mounted ASGI app).
 
+The `smoke` profile (the PR/merge-queue gate) is derandomized (#4024): the
+same commit always draws the same example set, so re-running the exact
+command above against an unchanged tree reproduces the same verdict every
+time - no seed to pass back in. The `deep` profile (nightly) is
+deliberately excluded from this and keeps exploring fresh input space on
+every run, which is where new defects should surface first.
+
 ### Snapshot diff
 If the diff is intentional (you changed an audit field on purpose),
 re-run with `--snapshot-update` and commit the updated `.ambr`. If

@@ -175,22 +175,30 @@ The baseline write lives in this separate workflow (not in `ci.yml`) so
 
 There is only ever one ratchet PR, on the fixed branch
 `coverage-ratchet/baseline`, so each fire updates it in place. The `guard`
-step decides whether this fire may, and it refuses for two unrelated
-reasons. Both print a `::notice::` naming which one it was, and both end
-the run green — nothing is lost by skipping, because the ratchet is
-monotonic and idempotent.
+step decides whether this fire may open or update it, and it refuses for
+three unrelated reasons. Each prints a `::notice::` naming which one it
+was, and all end the run green — nothing is lost by skipping, because the
+ratchet is monotonic and idempotent.
 
 | Notice | Meaning | What to do |
 |---|---|---|
+| `measured N% is not above the M% already committed on the base branch` | `check` read its baseline out of the **measured commit's** tree, and `main` has ratcheted past that mark since. The bump is real against what it read and a no-op against `main`, so the PR would carry only moved `head_sha`/`run_id`. | Nothing. This is the ordinary steady state when ratchet PRs merge promptly. |
 | `measured N% is not above the open ratchet PR's M%` | The measurement beats the mark on `main` but not the higher one the open PR already carries. Pushing it would move the high-water mark **down**. | Nothing. Merge the open PR when you are ready; the next rise ratchets from there. |
 | `the open ratchet PR is in the merge queue, which locks ... against pushes` | The PR is queued, so GitHub rejects every push to its branch (`GH006`) for the whole time it is in the queue. | Nothing. Once it merges, the branch is free and the next fire opens a fresh PR at whatever the high-water mark is by then. |
 
+The first of those is why a ratchet PR can no longer open carrying nothing
+but provenance (issue #4087). It is checked before the open PR is
+considered at all, because a provenance-only diff opens a *fresh* PR just
+as readily as it rewrites an existing one.
+
 The decision itself is `scripts/coverage_ratchet.py guard`; the workflow
-step only gathers the two inputs (the baseline on the ratchet branch, and
-the head branches currently in the merge queue) and hands them over. A
-failed read of either is loud and fails the step rather than defaulting —
-an unreadable queue treated as empty would read as "the branch is
-pushable" and put the `GH006` failure straight back.
+step only gathers the three inputs (the baseline on the ratchet branch,
+the baseline on the branch the PR is opened onto, and the head branches
+currently in the merge queue) and hands them over. A failed read of any of
+them is loud and fails the step rather than defaulting — an unreadable
+queue treated as empty would read as "the branch is pushable" and put the
+`GH006` failure straight back, and a base baseline treated as absent would
+retire the provenance-only refusal while the job stayed green.
 
 ### Which run supplies the measurement
 
