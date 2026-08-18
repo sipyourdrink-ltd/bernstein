@@ -72,11 +72,18 @@ def verify_cmd(
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+    from bernstein.core.security.audit_dsse import EnvelopeFormatError
     from bernstein.core.security.result_receipt_bundle import load_bundle, verify_result_bundle
 
+    # ``EnvelopeFormatError`` is a ``DSSEError``/``RuntimeError``, not a
+    # ``ValueError``, so it is named explicitly rather than caught by the
+    # tuple below it. Its siblings (``EnvelopeSignatureError``,
+    # ``EnvelopeTypeMismatchError``) are deliberately not caught here: the
+    # loader cannot raise them, and reporting either as "could not parse"
+    # would turn a verification refusal into a parse failure.
     try:
         envelope = load_bundle(bundle_path)
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, json.JSONDecodeError, EnvelopeFormatError) as exc:
         _fail(f"could not parse bundle: {exc}")
         return
 
