@@ -486,6 +486,7 @@ nav:
           - Task lifecycle CLI: reference/cli/task-lifecycle.md
           - Replay CLI: reference/cli/replay.md
           - Verify CLI: reference/cli/verify.md
+          - Receipt CLI: reference/receipt.md
       - Configuration & schemas:
           - Configuration: operations/CONFIG.md
           - Task format: operations/task_format.md

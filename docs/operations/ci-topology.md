@@ -61,6 +61,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/publish.yml | Publish | push, workflow_dispatch | - | 10 |
 | .github/workflows/reconcile-release.yml | Reconcile release drift | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "reconcile-release"} | 1 |
 | .github/workflows/release-major-minor.yml | Major/Minor Release | workflow_dispatch | {"cancel-in-progress": "false", "group": "release-major-minor-${{ github.ref }}"} | 1 |
+| .github/workflows/rendering-lane.yml | Rendering lane | pull_request, workflow_dispatch | {"cancel-in-progress": "true", "group": "rendering-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) \|\| format('branch-{0}-{1}', github.ref, github.sha) }}"} | 1 |
 | .github/workflows/required-check-canary.yml | Required-check name canary | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "required-check-canary-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/sbom.yml | SBOM | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "sbom-${{ github.ref }}"} | 1 |
 | .github/workflows/scorecard.yml | OSSF Scorecard | branch_protection_rule, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "scorecard-${{ github.ref }}"} | 2 |
@@ -128,6 +129,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/publish.yml | build: Build<br>github-release: Create GitHub Release<br>protocol-gate: Protocol Compatibility Gate<br>publish: Publish to PyPI<br>publish-copr: Publish RPM to Copr<br>publish-mcp-registry: Publish MCP registry listing<br>publish-npm: Publish npm wrapper<br>rpm-install-smoke: RPM install smoke (${{ matrix.image }})<br>test: Verify tests pass<br>version-check: Verify tag matches pyproject.toml |
 | .github/workflows/reconcile-release.yml | reconcile: Compare pyproject.toml vs published channels |
 | .github/workflows/release-major-minor.yml | release: ${{ inputs.bump }} release |
+| .github/workflows/rendering-lane.yml | rendering: Rendering fetcher (browser-backed) |
 | .github/workflows/required-check-canary.yml | verify: Required-check name canary |
 | .github/workflows/sbom.yml | sbom: Generate SBOM |
 | .github/workflows/scorecard.yml | analysis: Scorecard analysis<br>upload: Filter suppressions and upload to Code Scanning |
@@ -195,6 +197,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/publish.yml | build: {"contents": "read"}<br>github-release: {"actions": "write", "contents": "write"}<br>protocol-gate: {"contents": "read"}<br>publish: {"attestations": "write", "contents": "read", "id-token": "write"}<br>publish-copr: {"contents": "read"}<br>publish-mcp-registry: {"contents": "read", "id-token": "write"}<br>publish-npm: {"contents": "read"}<br>rpm-install-smoke: {"contents": "read"}<br>test: {"contents": "read"}<br>version-check: {"contents": "read"} | COPR_CONFIG, GITHUB_TOKEN, NPM_TOKEN |
 | .github/workflows/reconcile-release.yml | reconcile: {"contents": "read", "issues": "write"} | - |
 | .github/workflows/release-major-minor.yml | workflow: {"contents": "read"}<br>release: {"contents": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
+| .github/workflows/rendering-lane.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/required-check-canary.yml | verify: {"contents": "read"} | - |
 | .github/workflows/sbom.yml | workflow: {"contents": "read"}<br>sbom: {"contents": "write"} | - |
 | .github/workflows/scorecard.yml | workflow: {"contents": "read"}<br>analysis: {"actions": "read", "contents": "read", "id-token": "write", "security-events": "write"}<br>upload: {"contents": "read", "security-events": "write"} | - |

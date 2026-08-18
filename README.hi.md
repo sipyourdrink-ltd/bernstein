@@ -53,7 +53,7 @@ Bernstein, CLI कोडिंग एजेंट्स (Claude Code, Codex, Gem
 पूरी सूची [कैपेबिलिटी पेज](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) पर है; [फ़ीचर मैट्रिक्स](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) संपूर्ण अनुक्रमणिका है।
 
 ### 30 सेकंड में इंस्टॉल
-<!-- l10n: en="install in 30 seconds" hash="sha256:da2e6aa3f938" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

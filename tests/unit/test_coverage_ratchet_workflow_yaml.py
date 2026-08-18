@@ -347,3 +347,46 @@ def test_guard_delegates_the_verdict_to_the_tested_script(steps: list[dict]) -> 
     assert "coverage_ratchet.py guard" in run
     assert "--queued-branches" in run
     assert "--open-baseline" in run
+
+
+def test_guard_reads_the_baseline_on_the_branch_the_pr_targets(steps: list[dict]) -> None:
+    """#4087: the bump is measured against the checked-out tree, not the base.
+
+    The checkout step pins the *measured* commit, which is routinely behind
+    ``main`` by the time its CI run completes, so ``check`` can bump to a mark
+    ``main`` already carries. Nothing in the guard could see that until it read
+    the base branch's own baseline.
+    """
+    guard = _step_by_id(steps, "guard")
+    run = guard["run"]
+
+    assert "BASE_BRANCH" in guard.get("env", {}), (
+        "the branch the PR is opened onto must be named in env, not spelled "
+        "inline, so it cannot drift from the create-pull-request step's `base`"
+    )
+    assert "--base-baseline" in run
+    assert "base-baseline.json" in run
+
+
+def test_the_guards_base_branch_is_the_one_the_pr_is_opened_onto(
+    steps: list[dict],
+) -> None:
+    """Comparing against a branch the diff is not rendered against proves nothing."""
+    guard_base = _step_by_id(steps, "guard")["env"]["BASE_BRANCH"]
+    pr_base = _create_pr_step(steps)["with"]["base"]
+
+    assert guard_base == pr_base
+
+
+def test_the_base_baseline_read_is_not_softened(steps: list[dict]) -> None:
+    """That file is committed on the base branch, so a failed read is a defect.
+
+    The ratchet-branch read deliberately tolerates a 404 (the branch may not
+    exist). Copying that tolerance here would turn every API hiccup into a
+    silently retired guard, which is how #4087 reopens without a red mark.
+    """
+    run = _step_by_id(steps, "guard")["run"]
+    base_read = run.split("base-baseline.json")[0].rsplit("gh api", 1)[-1]
+
+    assert "||" not in base_read
+    assert "continue-on-error" not in str(_step_by_id(steps, "guard"))
