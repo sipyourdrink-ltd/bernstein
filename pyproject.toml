@@ -1038,7 +1038,16 @@ dev = [
 # environment. Declaring the conflict keeps the universal lock resolvable and
 # turns a former import-time VersionError into an install-time resolution
 # error, which is where a dependency conflict belongs.
-conflicts = [[{ extra = "grpc" }, { extra = "modal" }]]
+#
+# `otel` has the same shape as `grpc` here, not a different one:
+# opentelemetry-exporter-otlp-proto-grpc>=1.41.1 pins protobuf==7.35.1 (same
+# generated-code floor as the checked-in gRPC gencode above), which modal's
+# <7.0 cap rules out just as directly. Undeclared, this doesn't fail as a
+# known-incompatible pair - it fails as "your project's requirements are
+# unsatisfiable" from the *whole* lockfile, which is what aborted every `uv`
+# dependency-update run rather than just the two extras that actually clash
+# (#4088).
+conflicts = [[{ extra = "grpc" }, { extra = "modal" }], [{ extra = "otel" }, { extra = "modal" }]]
 
 [tool.mutmut]
 # Lineage v1 mutation testing - see scripts/mutmut_lineage.py for the
