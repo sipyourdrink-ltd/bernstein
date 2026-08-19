@@ -42,9 +42,16 @@ not from inside the running test).
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 from hypothesis import given
 from hypothesis import settings as hypothesis_settings
 from hypothesis import strategies as st
+
+_CONFTEST_PATH = Path(__file__).parent / "conftest.py"
 
 # Captured at collection time (module import), not re-queried inside the
 # test bodies below. `hypothesis.settings.get_profile(name)` reads a live
@@ -107,3 +114,57 @@ def test_two_consecutive_smoke_runs_are_identical() -> None:
     second = _generated_values_under_smoke()
     assert first, "the smoke profile generated no examples; nothing was exercised"
     assert first == second
+
+
+def _deep_derandomize_in_subprocess(*, ci: bool) -> bool:
+    """Import ``conftest.py`` fresh in a subprocess; report ``deep``'s resolved value.
+
+    A subprocess, not a monkeypatched ``CI`` env var in this process:
+    hypothesis resolves its CI-specific default profile the first time
+    ``hypothesis`` itself is imported in a process, so flipping the env var
+    afterward and re-importing ``conftest`` would not re-resolve it -- this
+    process already imported hypothesis once, driving these very tests.
+    A fresh interpreter run under a controlled environment is the only way
+    to observe what a real CI runner, or a real developer laptop, actually
+    sees.
+    """
+    env = os.environ.copy()
+    if ci:
+        env["CI"] = "true"
+        env["GITHUB_ACTIONS"] = "true"
+    else:
+        env.pop("CI", None)
+        env.pop("GITHUB_ACTIONS", None)
+    script = (
+        "import runpy; "
+        f"runpy.run_path({str(_CONFTEST_PATH)!r}, run_name='conftest'); "
+        "from hypothesis import settings; "
+        "print(settings.get_profile('deep').derandomize)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip() == "True"
+
+
+def test_deep_derandomize_is_false_under_both_ci_and_no_ci() -> None:
+    """#4118's own proof: pin the resolved value under both environments, not just the ambient one.
+
+    The defect #4118 found was invisible precisely because the environment
+    running this suite locally is the one where it looks fine:
+    ``derandomize=False`` on a developer laptop was correct while CI
+    silently read ``True`` by inheritance from hypothesis's own
+    CI-detection default -- the two environments disagreed, and nobody
+    inspects the registered value interactively in CI. A parametrize over a
+    monkeypatched ``CI`` variable would not catch this (see
+    ``_deep_derandomize_in_subprocess``'s docstring for why); a subprocess
+    per environment is what #4118 asked for and what would have caught the
+    original defect before it shipped.
+    """
+    assert _deep_derandomize_in_subprocess(ci=True) is False
+    assert _deep_derandomize_in_subprocess(ci=False) is False
