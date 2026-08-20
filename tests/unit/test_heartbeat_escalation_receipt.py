@@ -199,20 +199,18 @@ def test_auto_receipt_verifies_with_the_same_verifier(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_missing_journal_kills_and_records_verdict_with_no_receipt(tmp_path: Path) -> None:
-    """No journal -> no receipt, but the kill happens, the verdict is recorded,
-    and exactly one warning names the session."""
+def test_missing_journal_kills_and_records_verdict_with_degraded_receipt(tmp_path: Path) -> None:
+    """No journal -> degraded receipt with journal_state='missing' is recorded."""
     orch = _heartbeat_orch(tmp_path, _session())
-    with patch("bernstein.core.agents.heartbeat.logger") as log:
-        _escalate_stall_simple(orch, orch._agents["A-1"], "T-1", count=AGENT.escalation_kill_count)
+    _escalate_stall_simple(orch, orch._agents["A-1"], "T-1", count=AGENT.escalation_kill_count)
 
     assert orch._spawner.kill.called
     assert len(_chain_verdicts(tmp_path)) == 1
-    assert len(_chain_receipts(tmp_path)) == 0
-    assert _receipt_files(tmp_path) == []
-    warnings = [c for c in log.warning.call_args_list if "Could not emit escalation.receipt" in str(c.args[0])]
-    assert len(warnings) == 1
-    assert "A-1" in warnings[0].args
+    assert len(_chain_receipts(tmp_path)) == 1
+    files = _receipt_files(tmp_path)
+    assert len(files) == 1
+    ok, reason = _verify_auto_receipt(tmp_path, files[0])
+    assert ok, reason
 
 
 def test_assembly_failure_never_blocks_the_kill(tmp_path: Path) -> None:

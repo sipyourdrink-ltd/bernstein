@@ -301,3 +301,119 @@ def test_audit_chain_mirror_records_escalation(tmp_path: Path) -> None:
     assert event.details["session_id"] == receipt.session_id
     ok, errors = chain.verify()
     assert ok, errors
+
+
+# ---------------------------------------------------------------------------
+# Degraded terminal receipts on missing or empty journal (#3737)
+# ---------------------------------------------------------------------------
+
+
+def _assemble_missing_journal(
+    tmp_path: Path,
+    *,
+    stall_reason: StallReason = StallReason.HEARTBEAT_STALE,
+    window: int = DEFAULT_ESCALATION_WINDOW,
+    respawn_budget_remaining: int = 2,
+    fork_step: int | None = None,
+) -> EscalationReceipt:
+    private_pem, public_pem = load_or_create_escalation_identity(_identity_dir(tmp_path))
+    return assemble_escalation_receipt(
+        sdd_dir=_sdd(tmp_path),
+        lineage_root=_lineage_root(tmp_path),
+        hmac_key=_HMAC_KEY,
+        private_key_pem=private_pem,
+        public_key_pem=public_pem,
+        run_id=_RUN_ID,
+        worker_id=_WORKER_ID,
+        session_id=_SESSION_ID,
+        worktree_id="wt-1",
+        stall_reason=stall_reason,
+        respawn_budget_remaining=respawn_budget_remaining,
+        fork_step=fork_step,
+        window=window,
+        install_rev="abc1234567890def",
+        timestamp=1_700_000_000,
+    )
+
+
+def _assemble_empty_journal(
+    tmp_path: Path,
+    *,
+    stall_reason: StallReason = StallReason.HEARTBEAT_STALE,
+    window: int = DEFAULT_ESCALATION_WINDOW,
+    respawn_budget_remaining: int = 2,
+    fork_step: int | None = None,
+) -> EscalationReceipt:
+    journal_path = _sdd(tmp_path) / "runs" / _RUN_ID / "journal.jsonl"
+    journal_path.parent.mkdir(parents=True, exist_ok=True)
+    journal_path.touch()
+    private_pem, public_pem = load_or_create_escalation_identity(_identity_dir(tmp_path))
+    return assemble_escalation_receipt(
+        sdd_dir=_sdd(tmp_path),
+        lineage_root=_lineage_root(tmp_path),
+        hmac_key=_HMAC_KEY,
+        private_key_pem=private_pem,
+        public_key_pem=public_pem,
+        run_id=_RUN_ID,
+        worker_id=_WORKER_ID,
+        session_id=_SESSION_ID,
+        worktree_id="wt-1",
+        stall_reason=stall_reason,
+        respawn_budget_remaining=respawn_budget_remaining,
+        fork_step=fork_step,
+        window=window,
+        install_rev="abc1234567890def",
+        timestamp=1_700_000_000,
+    )
+
+
+def test_missing_journal_produces_degraded_terminal_receipt(tmp_path: Path) -> None:
+    receipt = _assemble_missing_journal(tmp_path)
+    assert receipt.journal_state == "missing"
+    assert receipt.run_id == _RUN_ID
+    assert receipt.timestamp == 1_700_000_000
+    assert receipt.recommended_action == RecommendedAction.RESPAWN
+    assert receipt.window_entry_hashes == ()
+    assert receipt.journal_head_at_stall == ""
+    assert receipt.signature
+    assert receipt.signer_public_key_pem
+    assert receipt.journal_entry_hash
+
+    loaded = read_escalation_receipt(_sdd(tmp_path), receipt.receipt_id)
+    assert loaded is not None
+    assert loaded.journal_state == "missing"
+    assert loaded.to_dict() == receipt.to_dict()
+
+    result = verify_escalation_receipt(
+        sdd_dir=_sdd(tmp_path),
+        lineage_root=_lineage_root(tmp_path),
+        hmac_key=_HMAC_KEY,
+        receipt_id=receipt.receipt_id,
+    )
+    assert result.ok, result.reason
+
+
+def test_empty_journal_produces_degraded_terminal_receipt(tmp_path: Path) -> None:
+    receipt = _assemble_empty_journal(tmp_path)
+    assert receipt.journal_state == "empty"
+    assert receipt.run_id == _RUN_ID
+    assert receipt.timestamp == 1_700_000_000
+    assert receipt.recommended_action == RecommendedAction.RESPAWN
+    assert receipt.window_entry_hashes == ()
+    assert receipt.journal_head_at_stall == ""
+    assert receipt.signature
+    assert receipt.signer_public_key_pem
+    assert receipt.journal_entry_hash
+
+    loaded = read_escalation_receipt(_sdd(tmp_path), receipt.receipt_id)
+    assert loaded is not None
+    assert loaded.journal_state == "empty"
+    assert loaded.to_dict() == receipt.to_dict()
+
+    result = verify_escalation_receipt(
+        sdd_dir=_sdd(tmp_path),
+        lineage_root=_lineage_root(tmp_path),
+        hmac_key=_HMAC_KEY,
+        receipt_id=receipt.receipt_id,
+    )
+    assert result.ok, result.reason

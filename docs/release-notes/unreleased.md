@@ -77,3 +77,6 @@ rather than as its own attribution is exempted by hand there, with the reason.
   255-byte component cap now fails as `PathTooLongError` at the check instead
   of reaching `open()` as `OSError(ENAMETOOLONG)` (the same capacity-vs-
   containment distinction #4095 recorded for the pid-file sites).
+
+- Stall escalation produces a degraded terminal receipt on a missing or empty event journal instead of raising (#3737).
+

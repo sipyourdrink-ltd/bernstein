@@ -519,11 +519,10 @@ def _emit_escalation_receipt(
 
     Best-effort by design, like ``_emit_stall_verdict``: the receipt must
     never block, delay, retry, or undo the kill that already happened. A
-    receipt that cannot be produced (missing/empty journal, no identity, a
-    chain write failure) is logged as a warning naming the session -- with
-    one exception: when the orchestrator carries no ``_run_id`` there is no
-    journal to anchor, so the skip is silent info rather than a spurious
-    warning.
+    receipt that cannot be produced (no identity, a chain write failure)
+    is logged as a warning naming the session -- with one exception: when
+    the orchestrator carries no ``_run_id`` there is no journal to anchor,
+    so the skip is silent info rather than a spurious warning.
     """
     workdir = getattr(orch, "_workdir", None)
     if not isinstance(workdir, Path):
