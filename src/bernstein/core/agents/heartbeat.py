@@ -519,11 +519,16 @@ def _emit_escalation_receipt(
 
     Best-effort by design, like ``_emit_stall_verdict``: the receipt must
     never block, delay, retry, or undo the kill that already happened. A
-    receipt that cannot be produced (missing/empty journal, no identity, a
-    chain write failure) is logged as a warning naming the session -- with
-    one exception: when the orchestrator carries no ``_run_id`` there is no
-    journal to anchor, so the skip is silent info rather than a spurious
-    warning.
+    receipt that cannot be produced (no identity, a chain write failure)
+    is logged as a warning naming the session -- with one exception: when
+    the orchestrator carries no ``_run_id`` there is no journal to anchor,
+    so the skip is silent info rather than a spurious warning.
+
+    A kill on a run whose journal is missing or empty still emits a receipt
+    (#3737): the assembled receipt carries ``journal_state`` naming the
+    absence, and the chain mirror records it, so the chain never reads as
+    "kill with no terminal receipt" -- which is indistinguishable from a run
+    that never concluded.
     """
     workdir = getattr(orch, "_workdir", None)
     if not isinstance(workdir, Path):
@@ -581,6 +586,7 @@ def _emit_escalation_receipt(
             window_size=len(receipt.window_entry_hashes),
             fork_snapshot_sha=receipt.fork_ref.snapshot_sha if receipt.fork_ref else "",
             journal_entry_hash=receipt.journal_entry_hash,
+            journal_state=receipt.journal_state,
         )
     except Exception as exc:  # the receipt must never block or undo the kill
         logger.warning(

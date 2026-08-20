@@ -352,7 +352,7 @@ def _with_receipt(response: JSONResponse, admission: TriggerAdmission | None) ->
     return JSONResponse(status_code=response.status_code, content=body)
 
 
-def _count_ci_fix_attempts(store: TaskStore, head_branch: str) -> int:
+def _count_ci_fix_attempts(store: TaskStore, head_branch: str, tenant_id: str) -> int:
     """Count active ci-fix tasks for *head_branch* to enforce the retry cap.
 
     A task is "active" (counts toward the retry budget) when it is in any
@@ -375,7 +375,7 @@ def _count_ci_fix_attempts(store: TaskStore, head_branch: str) -> int:
         TaskStatus.IN_PROGRESS,
         TaskStatus.FAILED,
     }
-    tasks = store.list_tasks()
+    tasks = store.list_tasks(tenant_id=tenant_id)
     return sum(
         1 for t in tasks if t.title.startswith("[ci-fix]") and head_branch in t.description and t.status in _ACTIVE
     )
@@ -412,7 +412,7 @@ def _handle_comment(event: Any) -> list[dict[str, Any]]:
     return [review_task] if review_task is not None else []
 
 
-def _handle_workflow_run(event: Any, store: TaskStore) -> list[dict[str, Any]] | JSONResponse:
+def _handle_workflow_run(event: Any, store: TaskStore, tenant_id: str) -> list[dict[str, Any]] | JSONResponse:
     """Map a GitHub ``workflow_run/completed`` event to task payloads.
 
     Returns a JSONResponse early when the retry cap is reached.
@@ -425,7 +425,7 @@ def _handle_workflow_run(event: Any, store: TaskStore) -> list[dict[str, Any]] |
         return []
 
     head_branch: str = run.get("head_branch", "")
-    retry_count = _count_ci_fix_attempts(store, head_branch)
+    retry_count = _count_ci_fix_attempts(store, head_branch, tenant_id)
     if retry_count >= MAX_CI_RETRIES:
         safe_branch = head_branch.replace("\n", "").replace("\r", "")[:200]
         logger.warning(
@@ -447,7 +447,7 @@ def _handle_workflow_run(event: Any, store: TaskStore) -> list[dict[str, Any]] |
     return list(workflow_run_to_task(event, retry_count=retry_count))
 
 
-def _dispatch_github_event(event: Any, store: TaskStore) -> list[dict[str, Any]] | JSONResponse:
+def _dispatch_github_event(event: Any, store: TaskStore, tenant_id: str) -> list[dict[str, Any]] | JSONResponse:
     """Route a parsed GitHub webhook event to the appropriate handler."""
     from bernstein.github_app.mapper import push_to_tasks
 
@@ -461,7 +461,7 @@ def _dispatch_github_event(event: Any, store: TaskStore) -> list[dict[str, Any]]
         case ("push", _):
             return list(push_to_tasks(event))
         case ("workflow_run", "completed"):
-            return _handle_workflow_run(event, store)
+            return _handle_workflow_run(event, store, tenant_id)
     return []
 
 
@@ -493,6 +493,7 @@ async def github_webhook(request: Request) -> JSONResponse:
     from bernstein.github_app.webhooks import parse_webhook, verify_signature
 
     store = _get_store(request)
+    tenant_id = request_tenant_id(request)
     body = await request.body()
 
     # Verify HMAC signature - secret MUST be configured.
@@ -543,7 +544,7 @@ async def github_webhook(request: Request) -> JSONResponse:
             content={"detail": "Bad webhook payload"},
         )
 
-    result = _dispatch_github_event(event, store)
+    result = _dispatch_github_event(event, store, tenant_id)
     if isinstance(result, JSONResponse):
         return result
     task_payloads = result
@@ -571,7 +572,7 @@ async def github_webhook(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
-def _count_gitlab_ci_fix_attempts(store: TaskStore, ref: str) -> int:
+def _count_gitlab_ci_fix_attempts(store: TaskStore, ref: str, tenant_id: str) -> int:
     """Count active ci-fix tasks for *ref* to enforce the retry cap.
 
     Args:
@@ -589,7 +590,7 @@ def _count_gitlab_ci_fix_attempts(store: TaskStore, ref: str) -> int:
         TaskStatus.IN_PROGRESS,
         TaskStatus.FAILED,
     }
-    tasks = store.list_tasks()
+    tasks = store.list_tasks(tenant_id=tenant_id)
     return sum(1 for t in tasks if t.title.startswith("[ci-fix]") and ref in t.description and t.status in _ACTIVE)
 
 
@@ -701,7 +702,9 @@ def _verify_gitlab_token(request: Request) -> JSONResponse | None:
     return None
 
 
-def _handle_gitlab_pipeline(data: dict[str, Any], store: TaskStore) -> list[dict[str, Any]] | JSONResponse:
+def _handle_gitlab_pipeline(
+    data: dict[str, Any], store: TaskStore, tenant_id: str
+) -> list[dict[str, Any]] | JSONResponse:
     """Handle a GitLab pipeline-failed event, enforcing the retry cap."""
     from bernstein.github_app.ci_router import MAX_CI_RETRIES
 
@@ -710,7 +713,7 @@ def _handle_gitlab_pipeline(data: dict[str, Any], store: TaskStore) -> list[dict
         return []
 
     ref = data.get("object_attributes", {}).get("ref", "")
-    retry_count = _count_gitlab_ci_fix_attempts(store, ref)
+    retry_count = _count_gitlab_ci_fix_attempts(store, ref, tenant_id)
     if retry_count >= MAX_CI_RETRIES:
         safe_ref = ref.replace("\n", "").replace("\r", "")[:200]
         logger.warning(
@@ -785,6 +788,7 @@ async def gitlab_webhook(request: Request) -> JSONResponse:
     Returns 200 on success, 401 on bad/missing token.
     """
     store = _get_store(request)
+    tenant_id = request_tenant_id(request)
     body_bytes = await request.body()
     body = body_bytes.decode("utf-8") if body_bytes else ""
 
@@ -804,7 +808,7 @@ async def gitlab_webhook(request: Request) -> JSONResponse:
 
     match event_type:
         case "pipeline":
-            result = _handle_gitlab_pipeline(data, store)
+            result = _handle_gitlab_pipeline(data, store, tenant_id)
         case "job":
             result = _handle_gitlab_job(data)
         case "merge_request":
@@ -825,7 +829,6 @@ async def gitlab_webhook(request: Request) -> JSONResponse:
         )
 
     created_ids: list[str] = []
-    tenant_id = request_tenant_id(request)
     for payload_dict in task_payloads:
         task = await store.create(TaskCreate(**payload_dict, tenant_id=tenant_id))
         created_ids.append(task.id)
