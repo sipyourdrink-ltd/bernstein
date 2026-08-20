@@ -94,6 +94,7 @@ _EXECUTED_OUTCOMES = frozenset({"passed", "failed", "error", "errors", "xfailed"
 MEMORY_HEAVY_FILES: frozenset[str] = frozenset(
     {
         "test_standalone_receipt_verifier.py",
+        "test_volunteer_sandbox_egress.py",
     }
 )
 
