@@ -1139,11 +1139,14 @@ _PROFILE_LIST: tuple[AdapterCapabilityProfile, ...] = (
             subcommands=("run",),
             model_flag="-m",
             prompt_positional=True,
-            extra_args=("--format", "json"),
+            extra_args=("--format", "json", "--auto"),
         ),
         agents_md=True,
         local_models=True,
-        notes="Structured JSON output via --format json.",
+        resume=ResumeStrategy.FLAG,
+        dangerous_mode=DangerousModeStrategy.CLI_FLAG,
+        notes="Structured JSON output via --format json. --continue re-enters the prior session; "
+        "--auto plus an explicit OPENCODE_PERMISSION policy pins tool permissions per spawn.",
     ),
     AdapterCapabilityProfile(
         name="goose",

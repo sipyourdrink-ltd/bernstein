@@ -332,18 +332,17 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein pool register/list/show/verify`](../operations/sandbox-pools.md) | Full | 3 | Manage lease-backed named resource pools |
 | [`bernstein volunteer verify`](volunteer-manifest.md) | Full | 3 | Validate a project's `.bernstein/volunteer.json` and print the manifest digest a receipt binds to |
 
----
-
 ## Cloud / Cloudflare
+> **How a row graduates:** A row graduates out of Preview when its maturity score increases to ≥ 3 (or when a first-run smoke test lands and the marker is intentionally removed).
 
 | Capability | Docs status | Maturity | Notes |
 |---|---|---|---|
-| Workers RuntimeBridge | Full | 2 | `bridges/cloudflare.py` agents on Workers + Durable Objects |
-| Workflow Bridge (durable execution) | Full | 2 | `bridges/cloudflare_workflow.py` auto-retry, approval gates |
-| Browser Rendering Bridge | Full | 2 | `bridges/browser_rendering.py` screenshots, scraping, PDFs |
-| R2 Workspace Sync | Full | 2 | `bridges/r2_sync.py` content-addressed delta sync |
-| Workers AI Provider (free LLMs) | Full | 2 | `core/routing/cloudflare_ai.py` Llama, Mistral, Gemma, Qwen |
-| D1 Analytics & Billing | Full | 2 | `core/cost/d1_analytics.py` usage metering, billing tiers |
-| MCP Remote Transport | Full | 2 | `mcp/remote_transport.py` streamable HTTP for remote MCP |
-| Cloud CLI (`bernstein cloud`) | Full | 2 | `cli/commands/cloud_cmd.py` login, run, status, cost, deploy |
-| Codex-on-Cloudflare Adapter | Brief | 1 | `adapters/codex_cloudflare.py` experimental; targets a REST API that does not yet exist and refuses fast |
+| Workers RuntimeBridge | Full | 2 | **Preview.** Hosted API (`api.bernstein.run`) is unreachable; Workers run against your own Cloudflare account. `bridges/cloudflare.py` agents on Workers + Durable Objects |
+| Workflow Bridge (durable execution) | Full | 2 | **Preview.** Hosted API (`api.bernstein.run`) is unreachable; Workflows run against your own Cloudflare account. `bridges/cloudflare_workflow.py` auto-retry, approval gates |
+| Browser Rendering Bridge | Full | 2 | **Preview.** Hosted API (`api.bernstein.run`) is unreachable. `bridges/browser_rendering.py` screenshots, scraping, PDFs |
+| R2 Workspace Sync | Full | 2 | **Preview.** Hosted API (`api.bernstein.run`) is unreachable; R2 sync runs against your own Cloudflare account. `bridges/r2_sync.py` content-addressed delta sync |
+| Workers AI Provider (free LLMs) | Full | 2 | **Preview.** Hosted API (`api.bernstein.run`) is unreachable. `core/routing/cloudflare_ai.py` Llama, Mistral, Gemma, Qwen |
+| D1 Analytics & Billing | Full | 2 | **Preview.** Hosted API (`api.bernstein.run`) is unreachable; D1 runs against your own Cloudflare account. `core/cost/d1_analytics.py` usage metering, billing tiers |
+| MCP Remote Transport | Full | 2 | **Preview.** Hosted API (`api.bernstein.run`) is unreachable. `mcp/remote_transport.py` streamable HTTP for remote MCP |
+| Cloud CLI (`bernstein cloud`) | Full | 2 | **Preview.** `bernstein cloud login/run/status/runs/cost` report the service unreachable and exit non-zero. `cli/commands/cloud_cmd.py` login, run, status, cost, deploy |
+| Codex-on-Cloudflare Adapter | Brief | 1 | **Preview.** Targets a REST API that does not yet exist and refuses fast. `adapters/codex_cloudflare.py` experimental |
