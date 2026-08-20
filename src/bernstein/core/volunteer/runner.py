@@ -466,8 +466,10 @@ def run_claimed_task(
             a refusal.  ``None`` disables claim etiquette entirely and leaves
             behaviour unchanged.
         claim_fingerprint: Human-readable worker fingerprint stamped into the
-            claim comment; defaults to the install-rev token.  Informational
-            only -- worker identity for the skip decision is ``viewerDidAuthor``.
+            claim comment.  Required whenever ``claim`` is supplied -- see
+            :func:`~bernstein.core.volunteer.claim.resolve_fingerprint`.
+            Informational only -- worker identity for the skip decision is
+            ``viewerDidAuthor``, never a match against this string.
         claim_staleness: How long another donor's claim is honoured before the
             task is treated as free again.
         now: Clock for the staleness comparison; injected for deterministic
@@ -514,9 +516,10 @@ def run_claimed_task(
     claim_comment_id: int | None = None
     if claim is not None and claim_repo is not None:
         clock = now if now is not None else _utc_now
+        moment = clock()
         state = claim.fetch_state(claim_repo, task.issue_number)
         if state is not None:
-            decision = should_skip(state, now=clock(), staleness=claim_staleness)
+            decision = should_skip(state, now=moment, staleness=claim_staleness)
             if decision.reason is not None:
                 return refuse(
                     RefusalStage.CLAIM_TAKEN,
@@ -524,7 +527,14 @@ def run_claimed_task(
                     _claim_taken_detail(decision.reason, task.issue_number),
                 )
             existing = find_own_claim(state)
-            claim_comment_id = existing.rest_id if existing is not None else None
+            # Reuse only a *live* claim of ours: still inside the staleness
+            # window and not already resolved.  Reusing a stale or resolved one
+            # would skip posting a fresh claim -- so the task looks unclaimed to
+            # every other donor while this run has it -- and if this run then
+            # aborts, the release edit below would land on that old comment and
+            # overwrite whatever completion or release it already recorded.
+            if existing is not None and not existing.resolved and moment - existing.created_at < claim_staleness:
+                claim_comment_id = existing.rest_id
         if claim_comment_id is None:
             claim_comment_id = claim.post_claim(
                 claim_repo,

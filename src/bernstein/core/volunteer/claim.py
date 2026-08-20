@@ -60,6 +60,14 @@ logger = logging.getLogger(__name__)
 #: boundaries, which is the whole point of a coordinator-free design.
 CLAIM_MARKER: str = "<!-- bernstein:volunteer:claim -->"
 
+#: Added to a claim comment's body when it is edited to a completion or a
+#: release.  ``CLAIM_MARKER`` stays untouched so the comment is still found by
+#: :func:`find_own_claim` and still renders as a claim; this second marker is
+#: what tells *another* donor reading the thread that the claim is no longer
+#: live, since GitHub does not move a comment's ``createdAt`` on an edit and a
+#: resolved comment would otherwise look exactly as fresh as an active one.
+RESOLVED_MARKER: str = "<!-- bernstein:volunteer:resolved -->"
+
 #: How long a claim comment is trusted before the task is treated as free again.
 #: Conservative on purpose: a donor whose machine died mid-task should not pin an
 #: issue for others past a working session.  Configurable per call.
@@ -78,17 +86,30 @@ GhRunner = Callable[[list[str], "str | None"], "subprocess.CompletedProcess[str]
 
 
 def _default_runner(args: list[str], stdin: str | None = None) -> subprocess.CompletedProcess[str]:
-    """Run ``gh`` with optional stdin, capturing stdout/stderr."""
-    return subprocess.run(  # nosec B603 - args constructed by caller, never a shell
-        ["gh", *args],
-        input=stdin,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=30,
-        check=False,
-    )
+    """Run ``gh`` with optional stdin, capturing stdout/stderr.
+
+    A donor box without ``gh`` on ``PATH``, or a call that times out, raises
+    ``OSError``/``TimeoutExpired`` from :func:`subprocess.run` itself, before
+    any of the module's own ``returncode != 0`` handling gets a look at it.
+    Both are caught here and turned into a synthetic non-zero result, so a
+    missing or slow ``gh`` degrades the same way a ``gh`` failure already
+    does -- never as an exception out of ``fetch_state`` before the clone
+    even starts, which is the one thing this module promises cannot happen.
+    """
+    try:
+        return subprocess.run(  # nosec B603 - args constructed by caller, never a shell
+            ["gh", *args],
+            input=stdin,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("gh invocation failed: %s", exc)
+        return subprocess.CompletedProcess(args=["gh", *args], returncode=1, stdout="", stderr=str(exc))
 
 
 class SkipReason(Enum):
@@ -122,11 +143,15 @@ class ClaimComment:
             read, just not edited).
         created_at: When the comment was posted; timezone-aware.
         viewer_did_author: Whether the active ``gh`` identity wrote it.
+        resolved: Whether the comment carries :data:`RESOLVED_MARKER`, i.e. it
+            was already edited to a completion or a release and no longer
+            represents a live claim.
     """
 
     rest_id: int | None
     created_at: datetime
     viewer_did_author: bool
+    resolved: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,16 +172,25 @@ class IssueClaimState:
 
 
 def repo_slug(repo_url: str) -> str | None:
-    """Return ``owner/name`` for ``repo_url``, or ``None`` if it has no path.
+    """Return ``owner/name`` for ``repo_url``, or ``None`` if it names no host.
 
     Accepts the URL forms a claimed task may carry (``http``, ``https``,
-    ``ssh``, ``git``); a bare ``file`` fixture path has no owner and yields
-    ``None``, which the caller reads as "no GitHub issue to claim".
+    ``ssh``, ``git``).  A URL with no host segment -- a bare local filesystem
+    path, an explicit ``file://`` URL, or an scp-style ``user@host:path``
+    remote, none of which ``urlparse`` gives a ``netloc`` -- names no GitHub
+    issue and yields ``None``, which the caller reads as "no claim etiquette
+    for this task".  Both a fixture repo and an already-mirrored clone are
+    named this way (see
+    :func:`~bernstein.core.volunteer.runner.repo_url_problem`), so this is the
+    ordinary case for a local run, not an edge case.
     """
     trimmed = repo_url.strip()
     if trimmed.endswith(".git"):
         trimmed = trimmed[:-4]
-    path = urlparse(trimmed).path.strip("/")
+    parsed = urlparse(trimmed)
+    if not parsed.netloc:
+        return None
+    path = parsed.path.strip("/")
     segments = [segment for segment in path.split("/") if segment]
     if len(segments) < 2:
         return None
@@ -168,13 +202,18 @@ def _parse_iso(value: object) -> datetime | None:
 
     ``requires-python >= 3.12`` means :func:`datetime.fromisoformat` handles the
     trailing ``Z`` natively; malformed input yields ``None`` rather than raising.
+    A naive result -- ``gh`` always emits a zone-qualified timestamp, so this is
+    a defensive branch, not an expected one -- yields ``None`` too, rather than
+    a value :func:`should_skip` would raise ``TypeError`` subtracting from an
+    aware ``now``.
     """
     if not isinstance(value, str):
         return None
     try:
-        return datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
+    return parsed if parsed.tzinfo is not None else None
 
 
 def _rest_id_from_url(url: object) -> int | None:
@@ -214,6 +253,7 @@ def _parse_state(payload: dict[str, Any]) -> IssueClaimState | None:
                     rest_id=_rest_id_from_url(comment.get("url")),
                     created_at=created_at,
                     viewer_did_author=bool(comment.get("viewerDidAuthor")),
+                    resolved=RESOLVED_MARKER in body,
                 )
             )
     return IssueClaimState(number=number, closed=closed, assigned=assigned, claims=tuple(claims))
@@ -236,9 +276,14 @@ def should_skip(state: IssueClaimState, *, now: datetime, staleness: timedelta) 
     """Whether to step aside from a task before starting it.
 
     Skip when the issue is assigned, closed, or carries a claim comment newer
-    than ``staleness`` that *someone else* authored.  A worker's own claim never
-    triggers a skip, whatever its age, so a restarted worker resumes its own
-    in-flight task instead of locking itself out.
+    than ``staleness`` that *someone else* authored and has not since been
+    resolved.  A worker's own claim never triggers a skip, whatever its age,
+    so a restarted worker resumes its own in-flight task instead of locking
+    itself out.  A claim already edited to a completion or a release --
+    :attr:`ClaimComment.resolved` -- never triggers a skip either: GitHub does
+    not move a comment's ``createdAt`` on an edit, so without this check a
+    task another donor gave up minutes ago would look freshly claimed for the
+    rest of the staleness window.
 
     Args:
         state: The issue slice, from :meth:`ClaimClient.fetch_state`.
@@ -250,7 +295,7 @@ def should_skip(state: IssueClaimState, *, now: datetime, staleness: timedelta) 
     if state.closed:
         return SkipDecision(True, SkipReason.CLOSED)
     for claim in state.claims:
-        if claim.viewer_did_author:
+        if claim.viewer_did_author or claim.resolved:
             continue
         if now - claim.created_at < staleness:
             return SkipDecision(True, SkipReason.FRESH_CLAIM)
@@ -281,32 +326,53 @@ def build_completion_body(*, fingerprint: str, pr_url: str | None = None) -> str
 
     Includes the PR link when one is known; a completion can be recorded before
     a PR exists (the gates passed and a signed bundle was produced), in which
-    case the link is simply omitted.
+    case the link is simply omitted.  Carries :data:`RESOLVED_MARKER` so another
+    donor reading the thread later sees this claim as no longer live.
     """
     tail = f": {pr_url}" if pr_url else "."
-    return f"{CLAIM_MARKER}\nCompleted via bernstein (worker fingerprint `{fingerprint}`){tail}"
+    return (
+        f"{CLAIM_MARKER}\n{RESOLVED_MARKER}\n"
+        f"Completed via bernstein (worker fingerprint `{fingerprint}`){tail}"
+    )
 
 
 def build_release_body(*, fingerprint: str, reason: str) -> str:
-    """The edit applied to the claim comment when the worker gives the task up."""
-    return f"{CLAIM_MARKER}\nReleased via bernstein (worker fingerprint `{fingerprint}`): {reason}"
+    """The edit applied to the claim comment when the worker gives the task up.
+
+    Carries :data:`RESOLVED_MARKER`, for the same reason :func:`build_completion_body`
+    does: a release has to stop looking like a live claim to the next donor who
+    reads the thread, not just to the worker that gave the task up.
+    """
+    return f"{CLAIM_MARKER}\n{RESOLVED_MARKER}\nReleased via bernstein (worker fingerprint `{fingerprint}`): {reason}"
 
 
 def resolve_fingerprint(explicit: str | None) -> str:
     """The fingerprint to stamp into a claim comment.
 
-    An explicit value wins.  Otherwise this uses the install-rev identity token
-    (:func:`bernstein.core.identity.install_rev.get_install_rev`), a fixed-width
-    token that is implemented today and returns a stable sentinel even when
-    identity emission is disabled -- so the comment text is always well-shaped.
-    The fingerprint is informational only: worker identity for the skip decision
-    is ``viewerDidAuthor``, never a match against this string.
-    """
-    if explicit:
-        return explicit
-    from bernstein.core.identity.install_rev import get_install_rev
+    Requires an explicit value.  Earlier this fell back to the install-rev
+    identity token when none was given, but that token returns the same
+    16-zero sentinel on every donor's machine unless an operator has opted
+    into identity emission (:data:`bernstein.core.identity.install_rev.IDENTITY_EMISSION_ENABLED`
+    is ``False`` by default), so every claim comment carried the identical,
+    meaningless fingerprint.  A caller with a signing key should stamp the
+    same worker keyid the signed result bundle carries
+    (:func:`bernstein.core.security.audit_dsse.keyid_from_public_key`), which
+    is real and makes the public comment matchable against the signed result;
+    :func:`~bernstein.core.volunteer.task_finish.finish_volunteer_task` does
+    this by default.  A caller with no signing key yet (claim etiquette runs
+    before an agent has produced anything to sign) must decide explicitly
+    what to stamp instead of silently getting a value that means nothing.
 
-    return get_install_rev()
+    Raises:
+        ValueError: ``explicit`` is ``None`` or empty.
+    """
+    if not explicit:
+        raise ValueError(
+            "claim_fingerprint is required: pass a real per-worker identifier "
+            "(e.g. the signing key's worker keyid) rather than leaving the "
+            "claim comment's fingerprint field meaningless"
+        )
+    return explicit
 
 
 @dataclass

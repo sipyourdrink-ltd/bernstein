@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from bernstein.core.security.audit_dsse import keyid_from_public_key
 from bernstein.core.security.result_receipt_bundle import (
     GENESIS_ANCHOR,
     ChainLink,
@@ -553,6 +554,35 @@ def test_a_gate_refusal_edits_the_claim_comment_to_a_release(tmp_path: Path) -> 
     assert len(runner.patches) == 1
     assert runner.patches[0]["url"].endswith("/issues/comments/777")
     assert "Released" in runner.patches[0]["body"]
+
+
+def test_a_completion_defaults_its_fingerprint_to_the_signing_keys_keyid(tmp_path: Path) -> None:
+    """Omitting ``claim_fingerprint`` must not silently stamp a meaningless
+    value: it now defaults to the same worker keyid the signed bundle itself
+    carries, so the public claim comment is matchable against the signed
+    result instead of being decoration."""
+    runner = _RecordingClaimRunner()
+    manifest = _manifest(allowed_paths=["src/**"], gates=[PASSING_GATE])
+    key = _key()
+
+    result = finish_volunteer_task(
+        patch=_diff_touching("src/pkg/mod.py"),
+        manifest=manifest,
+        profile=_profile(manifest),
+        workspace=_workspace(tmp_path),
+        provenance=_provenance(),
+        signing_key=key,
+        gate_env={},
+        created_at="2026-08-17T00:00:00Z",
+        claim=ClaimClient(runner=runner),
+        claim_repo="example/project",
+        claim_comment_id=555,
+    )
+
+    assert isinstance(result, SignedResultBundle)
+    expected_keyid = keyid_from_public_key(key.public_key())
+    assert expected_keyid == result.bundle.worker_keyid
+    assert f"`{expected_keyid}`" in runner.patches[0]["body"]
 
 
 def test_no_claim_client_leaves_the_finish_step_untouched(tmp_path: Path) -> None:

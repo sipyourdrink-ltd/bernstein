@@ -95,7 +95,6 @@ from bernstein.core.security.result_receipt_bundle import (
 from bernstein.core.volunteer.claim import (
     build_completion_body,
     build_release_body,
-    resolve_fingerprint,
 )
 from bernstein.core.volunteer.sandbox_profile import sandbox_env
 from bernstein.core.volunteer.wall_clock import run_under_wall_clock
@@ -357,10 +356,17 @@ def finish_volunteer_task(
     Args:
         claim: Optional claim-etiquette client (donor ``gh`` auth).
         claim_repo: ``owner/name`` of the issue's repository.
-        claim_comment_id: REST id of the claim comment to edit, from
-            :func:`run_claimed_task`.
-        claim_fingerprint: Worker fingerprint stamped into the edit; defaults to
-            the install-rev token.
+        claim_comment_id: REST id of the claim comment to edit.  Not returned by
+            ``run_claimed_task`` on its success path today --
+            :class:`~bernstein.core.volunteer.runner.TaskDiff` carries no such
+            field -- so a caller wiring this up currently has to re-read the
+            issue and call :func:`~bernstein.core.volunteer.claim.find_own_claim`
+            to recover it.
+        claim_fingerprint: Worker fingerprint stamped into the edit.  Defaults
+            to the worker keyid derived from ``signing_key`` -- the same
+            identity the signed bundle carries -- which is what makes the
+            public claim comment matchable against the signed result instead
+            of being decoration.  An explicit value overrides that default.
         pr_url: Link to the opened PR, when one exists, for the completion note.
 
     See :func:`_finish_volunteer_task` for the pipeline arguments and semantics.
@@ -377,7 +383,11 @@ def finish_volunteer_task(
         created_at=created_at,
     )
     if claim is not None and claim_repo is not None and claim_comment_id is not None:
-        fingerprint = resolve_fingerprint(claim_fingerprint)
+        # A real per-worker identifier by default, derived fresh from the
+        # signing key -- the same keyid a completion's bundle carries, so the
+        # public comment is matchable against the signed result rather than
+        # decoration.  An explicit claim_fingerprint still wins.
+        fingerprint = claim_fingerprint or keyid_from_public_key(signing_key.public_key())
         if isinstance(result, SignedResultBundle):
             body = build_completion_body(fingerprint=fingerprint, pr_url=pr_url)
         else:

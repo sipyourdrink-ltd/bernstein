@@ -22,12 +22,17 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+import pytest
+
 from bernstein.core.volunteer.claim import (
     CLAIM_MARKER,
     DEFAULT_CLAIM_STALENESS,
+    RESOLVED_MARKER,
     ClaimClient,
     build_claim_body,
     find_own_claim,
+    repo_slug,
+    resolve_fingerprint,
     should_skip,
 )
 from bernstein.core.volunteer.runner import (
@@ -68,9 +73,16 @@ def _iso(when: datetime) -> str:
     return when.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _comment(comment_id: int, *, mine: bool, age: timedelta, marker: bool = True) -> dict[str, Any]:
+def _comment(
+    comment_id: int, *, mine: bool, age: timedelta, marker: bool = True, resolved: bool = False
+) -> dict[str, Any]:
     """One issue comment as ``gh issue view --json comments`` renders it."""
-    body = f"{CLAIM_MARKER}\nVolunteering via bernstein." if marker else "just a passer-by comment"
+    if not marker:
+        body = "just a passer-by comment"
+    elif resolved:
+        body = f"{CLAIM_MARKER}\n{RESOLVED_MARKER}\nCompleted via bernstein."
+    else:
+        body = f"{CLAIM_MARKER}\nVolunteering via bernstein."
     return {
         "body": body,
         "createdAt": _iso(NOW - age),
@@ -165,6 +177,20 @@ def test_stale_claim_is_treated_as_free() -> None:
     assert decision.reason is None
 
 
+def test_resolved_other_claim_is_treated_as_free() -> None:
+    # A released or completed claim keeps CLAIM_MARKER -- it must still be
+    # found and still render as a claim -- but also carries RESOLVED_MARKER.
+    # GitHub does not move a comment's createdAt on an edit, so without
+    # checking `resolved` this comment would look exactly as fresh as an
+    # active claim for the rest of the staleness window (acceptance case 5).
+    runner = FakeRunner(
+        issue=_issue_payload(comments=[_comment(1, mine=False, age=timedelta(hours=1), resolved=True)])
+    )
+    decision = should_skip(_state(runner), now=NOW, staleness=DEFAULT_CLAIM_STALENESS)
+    assert not decision.skip
+    assert decision.reason is None
+
+
 def test_own_fresh_claim_is_not_skipped() -> None:
     # viewerDidAuthor is True: a restarted worker seeing its own fresh claim must
     # resume, not treat itself as a competitor and lock itself out.
@@ -216,6 +242,77 @@ def test_edit_targets_only_own_comment_id() -> None:
 
 
 # ---------------------------------------------------------------------------
+# repo_slug: only a URL with a host names a claimable GitHub issue
+# ---------------------------------------------------------------------------
+
+
+def test_repo_slug_rejects_urls_with_no_host() -> None:
+    # A bare local path and an explicit file:// URL are both legitimate
+    # repo_url values (a fixture repo, an already-mirrored clone -- see
+    # repo_url_problem) and neither names a GitHub owner/repo to comment on.
+    # An scp-style remote (git@host:owner/repo) gives urlparse no netloc
+    # either, so it is correct-by-omission here rather than 404ing.
+    assert repo_slug("/home/donor/src/torvalds/linux") is None
+    assert repo_slug("file:///srv/mirrors/acme/widgets") is None
+    assert repo_slug("git@github.com:owner/repo.git") is None
+
+
+def test_repo_slug_accepts_urls_with_a_host() -> None:
+    assert repo_slug("https://github.com/acme/widgets") == "acme/widgets"
+    assert repo_slug("https://github.com/acme/widgets.git") == "acme/widgets"
+    assert repo_slug("ssh://git@github.com/acme/widgets.git") == "acme/widgets"
+
+
+# ---------------------------------------------------------------------------
+# resolve_fingerprint: no silent fallback to a meaningless sentinel
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_fingerprint_requires_an_explicit_value() -> None:
+    # This used to fall back to the install-rev token, which returns the same
+    # 16-zero sentinel on every donor's machine unless an operator opted into
+    # identity emission -- so every claim comment carried an identical,
+    # meaningless fingerprint.  Silence is the wrong failure mode for that.
+    with pytest.raises(ValueError, match="claim_fingerprint"):
+        resolve_fingerprint(None)
+    with pytest.raises(ValueError, match="claim_fingerprint"):
+        resolve_fingerprint("")
+
+
+def test_resolve_fingerprint_returns_the_explicit_value() -> None:
+    assert resolve_fingerprint("wk-explicit") == "wk-explicit"
+
+
+# ---------------------------------------------------------------------------
+# Defensive branches: a donor-fleet condition, never an exception
+# ---------------------------------------------------------------------------
+
+
+def test_a_naive_timestamp_drops_the_claim_rather_than_raising() -> None:
+    # gh always emits a zone-qualified timestamp; this exercises the
+    # defensive branch for the day it does not, rather than letting a naive
+    # datetime reach `now - claim.created_at` in should_skip and raise
+    # TypeError.
+    comment = _comment(1, mine=False, age=timedelta(hours=1))
+    comment["createdAt"] = "2026-08-18T11:00:00"  # no trailing Z / UTC offset
+    runner = FakeRunner(issue=_issue_payload(comments=[comment]))
+    state = _state(runner)
+    assert state.claims == ()
+
+
+def test_a_missing_gh_binary_does_not_raise_out_of_fetch_state(monkeypatch: Any) -> None:
+    # A donor box without gh on PATH raises FileNotFoundError (an OSError
+    # subclass) from subprocess.run itself, before the module's own
+    # `returncode != 0` handling gets a look at it.  Claim etiquette must
+    # never fail a run that would otherwise succeed.
+    def _raise(*_args: Any, **_kwargs: Any) -> Any:
+        raise FileNotFoundError("gh: command not found")
+
+    monkeypatch.setattr(subprocess, "run", _raise)
+    assert ClaimClient().fetch_state(REPO, NUMBER) is None
+
+
+# ---------------------------------------------------------------------------
 # run_claimed_task wiring: short-circuit and release
 # ---------------------------------------------------------------------------
 
@@ -255,7 +352,10 @@ def test_claim_taken_short_circuits_before_clone(tmp_path: Path) -> None:
         return []
 
     outcome = run_claimed_task(
-        _task(str(tmp_path / "acme" / "widgets")),
+        # A URL with a host, not a bare local path: repo_slug names no owner
+        # for a host-less URL (test_repo_slug_rejects_urls_with_no_host), and
+        # this test's whole point is that the CLAIM_TAKEN check does engage.
+        _task(f"https://github.com/{REPO}"),
         _manifest(),
         donor=_donor(),
         workspace=tmp_path / "run",
@@ -272,20 +372,28 @@ def test_claim_taken_short_circuits_before_clone(tmp_path: Path) -> None:
     assert runner.posts == []
 
 
+#: A host that resolves (loopback) with nothing listening on the port: git
+#: fails with connection-refused immediately, no DNS and no real network
+#: involved, so the clone step fails fast and deterministically in a "fast
+#: unit test, no network" file while still giving repo_slug a real netloc.
+_UNREACHABLE_REPO_URL = f"http://127.0.0.1:1/{REPO}"
+
+
 def test_abort_releases_the_claim(tmp_path: Path) -> None:
-    # No fresh claim: the worker posts one, the clone of a non-existent local
-    # repo fails, and the abort edits the posted comment to a release -- one
+    # No fresh claim: the worker posts one, the clone fails (connection
+    # refused), and the abort edits the posted comment to a release -- one
     # post, one patch, and the patch targets the id the post returned.
     runner = FakeRunner()
 
     outcome = run_claimed_task(
-        _task(str(tmp_path / "acme" / "missing-repo")),
+        _task(_UNREACHABLE_REPO_URL),
         _manifest(),
         donor=_donor(),
         workspace=tmp_path / "run",
         agent_argv=_no_agent,
         sanitize=lambda text: text,
         claim=ClaimClient(runner=runner),
+        claim_fingerprint="wk-abort-test",
         now=lambda: NOW,
     )
 
@@ -295,3 +403,58 @@ def test_abort_releases_the_claim(tmp_path: Path) -> None:
     assert len(runner.patches) == 1
     assert runner.patches[0]["url"].endswith("/issues/comments/555")
     assert "Released" in runner.patches[0]["body"]
+
+
+def test_stale_own_claim_is_not_reused(tmp_path: Path) -> None:
+    # A worker's own claim from a previous run, more than a staleness window
+    # old, must not be reused just because it is the worker's own: reusing it
+    # skips posting a fresh claim (the task then looks unclaimed to every
+    # other donor while this run holds it), and on abort the release edit
+    # would land on that old comment and overwrite whatever it already
+    # recorded (acceptance case 5, the reuse half of it).
+    runner = FakeRunner(issue=_issue_payload(comments=[_comment(9, mine=True, age=timedelta(hours=20))]))
+
+    outcome = run_claimed_task(
+        _task(_UNREACHABLE_REPO_URL),
+        _manifest(),
+        donor=_donor(),
+        workspace=tmp_path / "run",
+        agent_argv=_no_agent,
+        sanitize=lambda text: text,
+        claim=ClaimClient(runner=runner),
+        claim_fingerprint="wk-stale-test",
+        now=lambda: NOW,
+    )
+
+    assert isinstance(outcome, TaskRefusal)
+    assert outcome.stage == RefusalStage.CLONE
+    # A fresh claim was posted (id 555) rather than reusing the 20h-old own
+    # claim (id 9), and the release on abort edits that new comment.
+    assert len(runner.posts) == 1
+    assert len(runner.patches) == 1
+    assert runner.patches[0]["url"].endswith("/issues/comments/555")
+
+
+def test_resolved_own_claim_is_not_reused_even_if_fresh(tmp_path: Path) -> None:
+    # A worker's own claim that is already a completion or a release must not
+    # be reused either, even minutes old: it is a record of a *previous*,
+    # already-finished run, and editing it again would destroy that record.
+    runner = FakeRunner(
+        issue=_issue_payload(comments=[_comment(9, mine=True, age=timedelta(minutes=5), resolved=True)])
+    )
+
+    outcome = run_claimed_task(
+        _task(_UNREACHABLE_REPO_URL),
+        _manifest(),
+        donor=_donor(),
+        workspace=tmp_path / "run",
+        agent_argv=_no_agent,
+        sanitize=lambda text: text,
+        claim=ClaimClient(runner=runner),
+        claim_fingerprint="wk-resolved-test",
+        now=lambda: NOW,
+    )
+
+    assert isinstance(outcome, TaskRefusal)
+    assert len(runner.posts) == 1
+    assert runner.patches[0]["url"].endswith("/issues/comments/555")
