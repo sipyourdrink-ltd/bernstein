@@ -61,6 +61,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.security.path_containment import (
+    PathContainmentError,
+    contained_subpath,
+)
 from bernstein.core.tasks.artifacts import (
     ArtifactKind,
     ArtifactSpecError,
@@ -217,13 +221,12 @@ def _resolve_contained_artifact_path(workdir: Path, relpath: str) -> Path:
     component swapped between this check and the read changes which contained
     bytes are read, never whether the read stays inside the workdir.
     """
-    base = workdir.resolve()
-    resolved = (base / relpath).resolve()
-    if not resolved.is_relative_to(base):
+    try:
+        return contained_subpath(workdir, relpath, label="artifact output path")
+    except PathContainmentError as exc:
         raise ArtifactCompletionError(
             f"artifact output path {relpath!r} resolves outside the task workdir; refusing to read it"
-        )
-    return resolved
+        ) from exc
 
 
 # ---------------------------------------------------------------------------

@@ -268,3 +268,58 @@ def test_a_repo_without_a_manifest_fails_before_anything_is_signed(workspace: Pa
     assert result.exit_code == 1
     assert "could not load manifest" in result.output
     assert not (workspace / "never.json").exists(), "a bundle must not be written when the manifest is unusable"
+
+
+@pytest.mark.parametrize(
+    ("name", "payload"),
+    [
+        ("not-json", b"\x00not json at all"),
+        ("json-but-not-an-envelope", b'{"not": "a bundle"}'),
+        ("envelope-missing-signatures", b'{"payload": "e30=", "payloadType": "application/vnd.in-toto+json"}'),
+    ],
+)
+def test_malformed_input_refuses_cleanly_instead_of_raising(workspace: Path, name: str, payload: bytes):
+    """#4109: ``load_bundle`` raises ``EnvelopeFormatError``, a ``RuntimeError``.
+
+    The ``except`` clause around it caught ``(OSError, ValueError,
+    json.JSONDecodeError)``, so every malformed shape escaped as an uncaught
+    traceback rather than the refusal the clause is plainly written to emit.
+    """
+    bad = workspace / f"{name}.json"
+    bad.write_bytes(payload)
+
+    result = CliRunner().invoke(receipt_group, ["verify", str(bad)])
+
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"{name}: expected a clean refusal, got {result.exception!r}"
+    )
+    assert result.exit_code == 1
+    assert "could not parse bundle" in result.output
+
+
+def test_a_signature_refusal_is_not_reported_as_a_parse_failure(workspace: Path):
+    """The sibling DSSE errors stay uncaught at the load site on purpose.
+
+    ``EnvelopeSignatureError`` means the bytes parsed and the signature did not
+    verify. Folding it into the ``could not parse bundle`` arm would report a
+    verification refusal as malformed input -- a different verdict, and the one
+    a reader of the receipt reference page would be misled by.
+    """
+    from bernstein.core.security import audit_dsse
+
+    assert issubclass(audit_dsse.EnvelopeFormatError, audit_dsse.DSSEError)
+    assert issubclass(audit_dsse.EnvelopeSignatureError, audit_dsse.DSSEError)
+    assert not issubclass(audit_dsse.EnvelopeSignatureError, audit_dsse.EnvelopeFormatError)
+
+    created = _create(workspace, "bundle.json")
+    assert created.exit_code == 0, created.output
+
+    envelope = json.loads((workspace / "bundle.json").read_text(encoding="utf-8"))
+    envelope["signatures"][0]["sig"] = "AA" * 32
+    tampered = workspace / "tampered.json"
+    tampered.write_text(json.dumps(envelope), encoding="utf-8")
+
+    result = CliRunner().invoke(receipt_group, ["verify", str(tampered)])
+
+    assert result.exit_code == 1
+    assert "could not parse bundle" not in result.output

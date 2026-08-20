@@ -1157,8 +1157,13 @@ def eval_list(state_dir: str) -> None:
     if not runs:
         console.print("[yellow]No YAML eval runs found.[/yellow]")
         return
+    # The paths go through click.echo rather than the Rich console because they
+    # are machine-consumable tokens, and Rich would corrupt them two ways: it
+    # wraps at the console width (80 whenever stdout is not a terminal, which is
+    # exactly the piped case) and it consumes a "[...]" path segment as markup.
+    # The message above is prose for a human and stays on the console.
     for path in runs:
-        console.print(f"  {path}")
+        click.echo(f"  {path}")
 
 
 @eval_group.command("diff")

@@ -521,6 +521,7 @@ nav:
           - Capabilities: reference/capabilities.md
           - Feature matrix: reference/FEATURE_MATRIX.md
           - Adapter compatibility: adapters/compatibility.md
+          - MkDocs Material coupling: reference/mkdocs-material-coupling.md
           - Known limitations: reference/KNOWN_LIMITATIONS.md
           - Glossary: reference/GLOSSARY.md
       - Release notes:

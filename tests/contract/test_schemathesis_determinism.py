@@ -1,18 +1,29 @@
 """Determinism of the smoke-profile Schemathesis sweep (#4024).
 
 `test_task_server_schemathesis.py`'s ``test_no_unhandled_exceptions`` gates
-both the PR lane and every merge-queue batch. Before #4024's fix it drew a
-fresh Hypothesis example set on every run: the same tree could pass on one
-run and fail on the next, and a merge-queue batch that drew a pathological
-example was dequeued -- along with every entry behind it -- for a defect
-that was not actually new.
+both the PR lane and every merge-queue batch. Before #4024's fix its
+``@settings(...)`` decorator set no ``derandomize`` kwarg at all -- which,
+per #4118, does not mean "randomized" the way it looks: an unset kwarg is
+inherited from ``settings.default``, and hypothesis's own library loads a
+CI-specific profile as that default whenever it detects a CI environment
+(``derandomize=True``, before any of this repository's code runs). So in
+CI specifically -- the one place this lane actually gates anything -- the
+pre-fix behaviour was already derandomized by that inheritance, same as
+``tests/property/conftest.py``'s ``deep`` profile (#4118's other case).
+What #4024's fix actually buys is not "CI now reproduces where it didn't":
+it is a value that no longer depends on hypothesis's CI-detection heuristic
+or on running under CI at all -- a laptop run and a CI run now agree,
+which they did not before, and the result survives hypothesis changing how
+it detects CI in a future release.
 
 The fix branches ``derandomize`` on ``_PROFILE`` so only the *gating* smoke
 lane is pinned; the nightly deep lane keeps exploring fresh input space,
 which is where new defects should be found. These tests assert the property
 directly rather than trusting the settings object was wired correctly by
 inspection alone -- one for each half of the branch, plus the reproducibility
-property itself.
+property itself, driven by the settings the module under test actually
+applies (not a fresh literal) so a deleted fix fails the test that claims to
+cover it rather than passing for an unrelated, upstream reason.
 
 Deliberately a sibling file, not additions to ``test_task_server_schemathesis.py``:
 that file's own docstring scopes it to "fuzz documented operations ... assert
@@ -104,9 +115,10 @@ def _generated_cases() -> list[tuple[str, str, str, str, str]]:
     """
     collected: list[tuple[str, str, str, str, str]] = []
     strategy = _smoke_case_strategy()
+    applied = _schemathesis_module.test_no_unhandled_exceptions._hypothesis_internal_use_settings
 
     @given(case=strategy)
-    @settings(max_examples=_MAX_EXAMPLES, deadline=None, derandomize=True)
+    @settings(applied)
     def _run(case: schemathesis.Case) -> None:
         collected.append(
             (
@@ -125,11 +137,23 @@ def _generated_cases() -> list[tuple[str, str, str, str, str]]:
 def test_two_consecutive_smoke_runs_generate_identical_cases() -> None:
     """The property #4024's acceptance criteria name directly.
 
-    Two independent derandomized sweeps over the same operation subset, same
-    settings, same process: the generated case sequence must match exactly,
-    not just up to reordering -- Hypothesis's own derandomize contract is
-    that replay is deterministic *and* ordered.
+    Two independent sweeps, driven by the settings the smoke lane actually
+    applies (not a fresh hardcoded ``derandomize=True`` literal, which would
+    only prove Hypothesis's own replay contract and pass even if
+    ``_DERANDOMIZE_SMOKE`` were deleted -- caught in review on #4105): the
+    generated case sequence must match exactly, not just up to reordering,
+    which is what "the same set of generated cases" means for a lane that
+    is supposed to give the same verdict on the same commit every time.
+
+    Skipped outside the smoke profile for the same reason
+    ``test_smoke_profile_sets_derandomize`` is: under ``deep``,
+    ``applied.derandomize`` is ``False`` by design (deep is the lane meant
+    to explore fresh input space), so two independent sweeps have no reason
+    to agree there -- asserting equality unconditionally would make this
+    test flake in the nightly deep job for behaving exactly as intended.
     """
+    if _PROFILE != "smoke":
+        pytest.skip(f"this process resolved SCHEMATHESIS_PROFILE={_PROFILE!r}, not 'smoke'")
     first = _generated_cases()
     second = _generated_cases()
     assert first, "the smoke path allow-list matched no operations; nothing was exercised"

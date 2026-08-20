@@ -20,10 +20,14 @@ required_subcommands:
   - "exec"
 # Codex sub-flags live under ``codex exec --help``, not ``codex --help``.
 help_command: ["codex", "exec", "--help"]
-# Deterministic session-id binding: codex exec accepts a caller-supplied
-# session id, so the adapter pins the derived id for replay isolation.
-# See docs/adapters/session_isolation.md.
-session_id_flag: "--session-id"
+# No deterministic session-id binding: ``codex exec`` exposes no flag that
+# accepts a caller-supplied session id. Its only session surface is the
+# ``resume <SESSION_ID>`` subcommand, which reattaches to a session that
+# already exists and so cannot bind one at spawn time. Declaring a flag here
+# makes ``CLIAdapter.session_id_args`` emit it into every codex spawn, and
+# codex exits immediately with ``unexpected argument '--session-id' found``
+# (issue #4135). The derived id is still recorded in orchestrator state for
+# cross-reference. See docs/adapters/session_isolation.md.
 expected_models:
   command: []
   required_present: []
