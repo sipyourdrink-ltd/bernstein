@@ -735,3 +735,124 @@ class TestFileLessonIntegration:
         updated_hash = json.loads(p.read_text().strip())["content_hash"]
 
         assert original_hash == updated_hash
+
+
+# ---------------------------------------------------------------------------
+# Integration: Convention receipt integrity & memory-audit
+# ---------------------------------------------------------------------------
+
+
+class TestConventionReceiptIntegrity:
+    """Convention receipt audit trail and tampering detection (Issue #3750)."""
+
+    def test_tampered_rule_text_fails_verify_memory_audit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Mutating rule text in store without a chain entry fails verify --memory-audit."""
+        from click.testing import CliRunner
+
+        from bernstein.cli.commands.verify_cmd import verify_cmd
+        from bernstein.core.knowledge.conventions import file_review_correction
+
+        workdir = tmp_path
+        monkeypatch.chdir(workdir)
+        sdd_dir = workdir / ".sdd"
+        sdd_dir.mkdir(parents=True)
+
+        receipt = file_review_correction(
+            sdd_dir=sdd_dir,
+            workdir=workdir,
+            rule_text="Always sanitize inputs before logging",
+            subject_path="src/bernstein/**/*.py",
+            base_commit_sha="abcdef1234567890abcdef1234567890abcdef12",
+            filing_finding_id="finding-101",
+            decided_by="reviewer-alice",
+        )
+
+        runner = CliRunner()
+        result_clean = runner.invoke(verify_cmd, ["--memory-audit"])
+        assert result_clean.exit_code == 0
+
+        # Tamper with rule text in receipt file directly without chain entry
+        receipt_file = sdd_dir / "conventions" / "receipts" / f"{receipt.receipt_id}.json"
+        data = json.loads(receipt_file.read_text(encoding="utf-8"))
+        data["rule_text"] = "TAMPERED: Never sanitize inputs"
+        receipt_file.write_text(json.dumps(data), encoding="utf-8")
+
+        # verify --memory-audit must fail and name the offending record
+        result_tampered = runner.invoke(verify_cmd, ["--memory-audit"])
+        assert result_tampered.exit_code != 0
+        assert receipt.receipt_id in result_tampered.output
+
+    def test_forged_chain_entry_fails_verify_memory_audit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Editing the receipt and hand-appending a matching log line still fails.
+
+        Scanning the audit log for a line that names the receipt is a presence
+        check, not an integrity check: an attacker who can rewrite the receipt
+        can also append the line that makes the rewrite look anchored. The
+        audit has to run the chain's own verifier, so the forged entry breaks
+        the HMAC chain and the whole audit refuses.
+        """
+        from click.testing import CliRunner
+
+        from bernstein.cli.commands.verify_cmd import verify_cmd
+        from bernstein.core.knowledge.conventions import (
+            ConventionReceipt,
+            compute_rule_text_hash,
+            file_review_correction,
+        )
+        from bernstein.core.review.receipt import load_or_create_review_identity
+        from bernstein.core.skills.catalog.signature import sign_payload
+
+        workdir = tmp_path
+        monkeypatch.chdir(workdir)
+        sdd_dir = workdir / ".sdd"
+        sdd_dir.mkdir(parents=True)
+
+        receipt = file_review_correction(
+            sdd_dir=sdd_dir,
+            workdir=workdir,
+            rule_text="Always sanitize inputs before logging",
+            subject_path="src/bernstein/**/*.py",
+            base_commit_sha="abcdef1234567890abcdef1234567890abcdef12",
+            filing_finding_id="finding-202",
+            decided_by="reviewer-alice",
+        )
+
+        runner = CliRunner()
+        assert runner.invoke(verify_cmd, ["--memory-audit"]).exit_code == 0
+
+        # Rewrite the rule and re-sign it. The Ed25519 identity lives under
+        # .sdd/identity, so anyone who can rewrite the receipt can also re-sign
+        # it -- the signature is not what makes the record hard to forge. The
+        # HMAC chain key lives outside the project, which is why the chain is
+        # the anchor that has to be verified rather than scanned.
+        forged_text = "TAMPERED: Never sanitize inputs"
+        receipt_file = sdd_dir / "conventions" / "receipts" / f"{receipt.receipt_id}.json"
+        data = json.loads(receipt_file.read_text(encoding="utf-8"))
+        data["rule_text"] = forged_text
+        data["rule_text_hash"] = compute_rule_text_hash(forged_text)
+        data["signature"] = ""
+        priv_pem, pub_pem = load_or_create_review_identity(sdd_dir / "identity")
+        data["signer_public_key_pem"] = pub_pem
+        unsigned = ConventionReceipt.from_dict(data)
+        data["signature"] = sign_payload(unsigned.to_canonical_bytes(), priv_pem)
+        receipt_file.write_text(json.dumps(data), encoding="utf-8")
+
+        # Hand-append a log line that names the receipt with the forged hash --
+        # enough to satisfy a presence check over the raw log.
+        audit_files = sorted((sdd_dir / "audit").glob("*.jsonl"))
+        assert audit_files
+        log_file = audit_files[-1]
+        lines = [ln for ln in log_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        forged = json.loads(lines[-1])
+        forged["details"] = dict(forged.get("details", {}))
+        forged["details"]["receipt_id"] = receipt.receipt_id
+        forged["details"]["rule_text_hash"] = data["rule_text_hash"]
+        with log_file.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(forged) + "\n")
+
+        result = runner.invoke(verify_cmd, ["--memory-audit"])
+        assert result.exit_code != 0

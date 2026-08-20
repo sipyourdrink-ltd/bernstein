@@ -890,13 +890,17 @@ def _print_divergence(
 
 
 def _verify_memory_provenance() -> int:
-    """Audit the lesson memory provenance chain. Returns 0 on clean, 1 on failure."""
+    """Audit the lesson memory provenance chain and convention receipts. Returns 0 on clean, 1 on failure."""
+    from bernstein.core.knowledge.conventions import verify_conventions_audit
     from bernstein.core.memory_integrity import audit_provenance, verify_chain
 
     lessons_path = SDD_DIR / "memory" / "lessons.jsonl"
+    conventions_dir = SDD_DIR / "conventions" / "receipts"
+    has_lessons = lessons_path.exists()
+    has_conventions = conventions_dir.exists() and any(conventions_dir.glob("*.json"))
     console.print()
 
-    if not lessons_path.exists():
+    if not has_lessons and not has_conventions:
         console.print(
             Panel(
                 "[dim]No lesson memory found: nothing to audit.[/dim]",
@@ -907,9 +911,14 @@ def _verify_memory_provenance() -> int:
         console.print()
         return 0
 
-    chain_result = verify_chain(lessons_path)
+    chain_result = verify_chain(lessons_path) if has_lessons else None
+    conv_result = verify_conventions_audit(SDD_DIR)
 
-    if chain_result.valid:
+    lessons_valid = chain_result.valid if chain_result is not None else True
+    conv_valid = conv_result.valid
+    all_valid = lessons_valid and conv_valid
+
+    if all_valid:
         console.print(
             Panel(
                 "[bold green]Memory Provenance: CLEAN[/bold green]",
@@ -920,7 +929,10 @@ def _verify_memory_provenance() -> int:
         table = Table(show_header=False, box=None, padding=(0, 2))
         table.add_column("Key", style="dim", no_wrap=True, min_width=20)
         table.add_column("Value")
-        table.add_row("Entries verified", str(chain_result.entries_checked))
+        if chain_result is not None:
+            table.add_row("Entries verified", str(chain_result.entries_checked))
+        if conv_result.receipts_checked > 0:
+            table.add_row("Conventions verified", str(conv_result.receipts_checked))
         table.add_row("Chain", "intact")
         table.add_row("Tampering", "none detected")
         console.print(table)
@@ -935,35 +947,42 @@ def _verify_memory_provenance() -> int:
         table = Table(show_header=False, box=None, padding=(0, 2))
         table.add_column("Key", style="dim", no_wrap=True, min_width=20)
         table.add_column("Value")
-        table.add_row("Entries checked", str(chain_result.entries_checked))
-        table.add_row("First broken at", f"line {chain_result.broken_at}" if chain_result.broken_at > 0 else "N/A")
+        if chain_result is not None:
+            table.add_row("Entries checked", str(chain_result.entries_checked))
+            table.add_row("First broken at", f"line {chain_result.broken_at}" if chain_result.broken_at > 0 else "N/A")
+        if conv_result.receipts_checked > 0:
+            table.add_row("Conventions checked", str(conv_result.receipts_checked))
         console.print(table)
         console.print()
-        for err in chain_result.errors:
+        if chain_result is not None:
+            for err in chain_result.errors:
+                console.print(f"  [red]![/red] {err}")
+        for err in conv_result.errors:
             console.print(f"  [red]![/red] {err}")
 
-    # Show provenance trail summary
-    trail = audit_provenance(lessons_path)
-    if trail:
-        tampered = [e for e in trail if not e.hash_valid]
-        mispositioned = [e for e in trail if not e.chain_position_valid]
-        console.print()
-        table2 = Table(show_header=False, box=None, padding=(0, 2))
-        table2.add_column("Key", style="dim", no_wrap=True, min_width=20)
-        table2.add_column("Value")
-        table2.add_row("Total entries", str(len(trail)))
-        table2.add_row(
-            "Hash-tampered",
-            f"[red]{len(tampered)}[/red]" if tampered else _GREEN_ZERO,
-        )
-        table2.add_row(
-            "Chain-mispositioned",
-            f"[red]{len(mispositioned)}[/red]" if mispositioned else _GREEN_ZERO,
-        )
-        console.print(table2)
+    # Show provenance trail summary if lessons exist
+    if has_lessons:
+        trail = audit_provenance(lessons_path)
+        if trail:
+            tampered = [e for e in trail if not e.hash_valid]
+            mispositioned = [e for e in trail if not e.chain_position_valid]
+            console.print()
+            table2 = Table(show_header=False, box=None, padding=(0, 2))
+            table2.add_column("Key", style="dim", no_wrap=True, min_width=20)
+            table2.add_column("Value")
+            table2.add_row("Total entries", str(len(trail)))
+            table2.add_row(
+                "Hash-tampered",
+                f"[red]{len(tampered)}[/red]" if tampered else _GREEN_ZERO,
+            )
+            table2.add_row(
+                "Chain-mispositioned",
+                f"[red]{len(mispositioned)}[/red]" if mispositioned else _GREEN_ZERO,
+            )
+            console.print(table2)
 
     console.print()
-    return 0 if chain_result.valid else 1
+    return 0 if all_valid else 1
 
 
 def _verify_formal(task_id: str) -> int:

@@ -8,24 +8,33 @@ Covers:
 - Cost attribution and trace recording.
 """
 
-from __future__ import annotations
+from pathlib import Path
 
 import pytest
 
+from bernstein.core.lineage.spine import content_hash_of
 from bernstein.core.memory.compaction import (
+    ABSENT_HASH,
     BudgetPressure,
     Tier,
     TierContext,
+    TierResult,
     compact,
     record_tier_event,
     run_legacy_compaction,
     select_tier,
+    verify_compacted_step,
+    verify_compaction_references,
 )
 from bernstein.core.memory.compaction import auto as auto_tier
 from bernstein.core.memory.compaction import micro as micro_tier
 from bernstein.core.memory.compaction import session_memory as session_tier
 from bernstein.core.memory.compaction import time_based as time_tier
 from bernstein.core.memory.compaction.tiers import TIER_COST_WEIGHT, estimate_tokens
+from bernstein.core.memory.compaction.verification import (
+    compute_referenced_content_hashes,
+    compute_source_content_hash,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -250,6 +259,8 @@ class TestTraceRecording:
         assert step.compaction_tokens_before == result.before_tokens
         assert step.compaction_tokens_after == result.after_tokens
         assert step.compaction_correlation_id == result.correlation_id
+        assert step.compaction_source_content_hash == result.source_content_hash
+        assert step.compaction_referenced_content_hashes == dict(result.referenced_content_hashes)
         assert "tier=micro" in step.detail
         assert "cost_estimate=" in step.detail
 
@@ -259,6 +270,7 @@ class TestTraceRecording:
                 session_id="s",
                 context_text=_tool_result_block("D" * 700),
                 pressure=BudgetPressure(turn_count=3, context_pct_used=0.2),
+                referenced_content_hashes={"src/test.py": "sha256:1234"},
             )
         )
         d = result.to_dict()
@@ -266,6 +278,280 @@ class TestTraceRecording:
         assert d["before_tokens"] == result.before_tokens
         assert d["after_tokens"] == result.after_tokens
         assert d["cost_estimate"] == result.cost_estimate
+        assert d["source_content_hash"] == result.source_content_hash
+        assert d["referenced_content_hashes"] == {"src/test.py": "sha256:1234"}
+
+        # Deserialise via from_dict
+        restored = TierResult.from_dict(d)
+        assert restored.tier == result.tier
+        assert restored.source_content_hash == result.source_content_hash
+        assert restored.referenced_content_hashes == result.referenced_content_hashes
+
+    def test_from_dict_handles_missing_keys_gracefully(self) -> None:
+        # Older records without the new hash keys must still load cleanly
+        legacy_dict = {
+            "tier": "micro",
+            "before_tokens": 100,
+            "after_tokens": 50,
+            "tokens_saved": 50,
+            "cost_estimate": 0.001,
+            "correlation_id": "c1",
+            "reason": "prune",
+        }
+        restored = TierResult.from_dict(legacy_dict)
+        assert restored.tier is Tier.MICRO
+        assert restored.source_content_hash == ""
+        assert restored.referenced_content_hashes == {}
+
+
+# ---------------------------------------------------------------------------
+# Source content hashing (Issue #3696)
+# ---------------------------------------------------------------------------
+
+
+class TestContentHashing:
+    @pytest.mark.parametrize(
+        ("tier_pressure", "expected_tier"),
+        [
+            (BudgetPressure(), Tier.NONE),
+            (BudgetPressure(turn_count=3, context_pct_used=0.2), Tier.MICRO),
+            (BudgetPressure(turn_count=3, context_pct_used=0.85), Tier.AUTO),
+            (BudgetPressure(turn_count=3, context_pct_used=0.2, idle_seconds=400.0), Tier.TIME_BASED),
+            (BudgetPressure(session_complete=True), Tier.SESSION_MEMORY),
+        ],
+    )
+    def test_compaction_produces_source_content_hash_matching_recomputation(
+        self, tier_pressure: BudgetPressure, expected_tier: Tier
+    ) -> None:
+        text = _tool_result_block("Hello world context pre-image content")
+        ctx = TierContext(session_id="s-hash", context_text=text, pressure=tier_pressure)
+        result = compact(ctx)
+        assert result.tier is expected_tier
+        expected_hash = content_hash_of(text.encode("utf-8"))
+        assert result.source_content_hash == expected_hash
+
+    def test_identical_preimages_produce_identical_hashes(self) -> None:
+        text = "Exact duplicate pre-compaction text for hashing test"
+        ctx1 = TierContext(
+            session_id="s1", context_text=text, pressure=BudgetPressure(turn_count=2, context_pct_used=0.1)
+        )
+        ctx2 = TierContext(
+            session_id="s2", context_text=text, pressure=BudgetPressure(turn_count=2, context_pct_used=0.1)
+        )
+        r1 = compact(ctx1)
+        r2 = compact(ctx2)
+        assert r1.source_content_hash == r2.source_content_hash
+        assert len(r1.source_content_hash) > 0
+
+    def test_one_byte_difference_produces_different_hash(self) -> None:
+        text1 = "Some context payload alpha."
+        text2 = "Some context payload alpha!"
+        ctx1 = TierContext(session_id="s1", context_text=text1)
+        ctx2 = TierContext(session_id="s2", context_text=text2)
+        r1 = micro_tier.compact(ctx1)
+        r2 = micro_tier.compact(ctx2)
+        assert r1.source_content_hash != r2.source_content_hash
+
+    def test_explicit_utf8_encoding_used(self) -> None:
+        unicode_text = "Compaction pre-image with unicode: \U0001f30d \u2705 \u00e9\u00e8"
+        ctx = TierContext(session_id="s", context_text=unicode_text)
+        result = compact(ctx)
+        expected_digest = content_hash_of(unicode_text.encode("utf-8"))
+        assert result.source_content_hash == expected_digest
+        assert compute_source_content_hash(unicode_text) == expected_digest
+
+
+# ---------------------------------------------------------------------------
+# Referenced artifact hashing (Issue #3696)
+# ---------------------------------------------------------------------------
+
+
+class TestReferencedArtifactHashing:
+    def test_referenced_files_on_disk_are_hashed(self, tmp_path: Path) -> None:
+        f1 = tmp_path / "a.py"
+        f1.write_text("print('hello')", encoding="utf-8")
+        f2 = tmp_path / "b.txt"
+        f2.write_bytes(b"binary content bytes")
+
+        ctx = TierContext(
+            session_id="s",
+            context_text=_tool_result_block("content referencing files"),
+            referenced_paths=["a.py", "b.txt"],
+            root_dir=tmp_path,
+        )
+        result = micro_tier.compact(ctx)
+        assert result.referenced_content_hashes["a.py"] == content_hash_of(f1.read_bytes())
+        assert result.referenced_content_hashes["b.txt"] == content_hash_of(f2.read_bytes())
+
+    def test_missing_referenced_file_records_absent(self, tmp_path: Path) -> None:
+        f_real = tmp_path / "real.py"
+        f_real.write_text("exists", encoding="utf-8")
+
+        ctx = TierContext(
+            session_id="s",
+            context_text=_tool_result_block("referencing missing file"),
+            referenced_paths=["real.py", "missing.py"],
+            root_dir=tmp_path,
+        )
+        result = micro_tier.compact(ctx)
+        assert result.referenced_content_hashes["real.py"] == content_hash_of(b"exists")
+        assert result.referenced_content_hashes["missing.py"] == ABSENT_HASH
+
+    def test_precomputed_referenced_hashes_preserved(self) -> None:
+        precomputed = {"cached/file.py": "sha256:fedcba9876543210"}
+        ctx = TierContext(
+            session_id="s",
+            context_text="short",
+            referenced_content_hashes=precomputed,
+        )
+        result = compact(ctx)
+        assert result.referenced_content_hashes == precomputed
+
+    def test_compute_referenced_content_hashes_direct(self, tmp_path: Path) -> None:
+        f = tmp_path / "x.txt"
+        f.write_bytes(b"content")
+        computed = compute_referenced_content_hashes(
+            ["x.txt", "missing.txt"],
+            precomputed={"pre.txt": "sha256:999"},
+            root_dir=tmp_path,
+        )
+        assert computed["x.txt"] == content_hash_of(b"content")
+        assert computed["missing.txt"] == ABSENT_HASH
+        assert computed["pre.txt"] == "sha256:999"
+
+
+# ---------------------------------------------------------------------------
+# Verification helper (Issue #3696)
+# ---------------------------------------------------------------------------
+
+
+class TestCompactionVerification:
+    def test_verify_compaction_references_empty(self) -> None:
+        v_res = verify_compaction_references({})
+        assert v_res.valid is True
+        assert v_res.checked_count == 0
+
+    def test_verification_succeeds_when_artifacts_unchanged(self, tmp_path: Path) -> None:
+        f = tmp_path / "target.py"
+        f.write_text("x = 1\n", encoding="utf-8")
+
+        ctx = TierContext(
+            session_id="s",
+            context_text=_tool_result_block("context"),
+            referenced_paths=["target.py"],
+            root_dir=tmp_path,
+        )
+        result = compact(ctx)
+        v_res = verify_compacted_step(result, root_dir=tmp_path)
+        assert v_res.valid is True
+        assert len(v_res.divergences) == 0
+        assert v_res.checked_count == 1
+        assert "all match" in v_res.report()
+
+    def test_verification_detects_post_compaction_modification(self, tmp_path: Path) -> None:
+        f = tmp_path / "target.py"
+        f.write_text("x = 1\n", encoding="utf-8")
+        original_hash = content_hash_of(b"x = 1\n")
+
+        ctx = TierContext(
+            session_id="s",
+            context_text=_tool_result_block("context"),
+            referenced_paths=["target.py"],
+            root_dir=tmp_path,
+        )
+        result = compact(ctx)
+        assert result.referenced_content_hashes["target.py"] == original_hash
+
+        # Modify file after compaction
+        f.write_text("x = 2 # modified post-compaction\n", encoding="utf-8")
+        new_hash = content_hash_of(b"x = 2 # modified post-compaction\n")
+
+        v_res = verify_compacted_step(result, root_dir=tmp_path)
+        assert v_res.valid is False
+        assert len(v_res.divergences) == 1
+        div = v_res.divergences[0]
+        assert div.path == "target.py"
+        assert div.expected_hash == original_hash
+        assert div.actual_hash == new_hash
+        assert div.is_divergent is True
+        assert "Divergence detected" in v_res.report()
+
+    def test_verification_detects_post_compaction_deletion(self, tmp_path: Path) -> None:
+        f = tmp_path / "deleted.py"
+        f.write_text("to be deleted\n", encoding="utf-8")
+        original_hash = content_hash_of(b"to be deleted\n")
+
+        ctx = TierContext(
+            session_id="s",
+            context_text=_tool_result_block("context"),
+            referenced_paths=["deleted.py"],
+            root_dir=tmp_path,
+        )
+        result = compact(ctx)
+
+        # Delete file after compaction
+        f.unlink()
+
+        v_res = verify_compacted_step(result, root_dir=tmp_path)
+        assert v_res.valid is False
+        assert len(v_res.divergences) == 1
+        assert v_res.divergences[0].expected_hash == original_hash
+        assert v_res.divergences[0].actual_hash == ABSENT_HASH
+
+    def test_verification_detects_post_compaction_creation(self, tmp_path: Path) -> None:
+        # File was missing at compaction time (recorded as "absent")
+        ctx = TierContext(
+            session_id="s",
+            context_text=_tool_result_block("context"),
+            referenced_paths=["created_later.py"],
+            root_dir=tmp_path,
+        )
+        result = compact(ctx)
+        assert result.referenced_content_hashes["created_later.py"] == ABSENT_HASH
+
+        # File is created afterwards
+        (tmp_path / "created_later.py").write_text("new content", encoding="utf-8")
+
+        v_res = verify_compacted_step(result, root_dir=tmp_path)
+        assert v_res.valid is False
+        assert len(v_res.divergences) == 1
+        assert v_res.divergences[0].expected_hash == ABSENT_HASH
+        assert v_res.divergences[0].actual_hash == content_hash_of(b"new content")
+
+    def test_verification_with_trace_step(self, tmp_path: Path) -> None:
+        from bernstein.core.observability.traces import AgentTrace
+
+        f = tmp_path / "module.py"
+        f.write_text("def run(): pass\n", encoding="utf-8")
+
+        ctx = TierContext(
+            session_id="s-trace",
+            context_text=_tool_result_block("context text"),
+            referenced_paths=["module.py"],
+            root_dir=tmp_path,
+        )
+        result = compact(ctx)
+        trace = AgentTrace(
+            trace_id="t-verify",
+            session_id="s-trace",
+            task_ids=["t1"],
+            agent_role="dev",
+            model="sonnet",
+            effort="high",
+            spawn_ts=0.0,
+        )
+        step = record_tier_event(trace, result)
+
+        # Verify directly from TraceStep
+        v_res = verify_compacted_step(step, root_dir=tmp_path)
+        assert v_res.valid is True
+        assert v_res.checked_count == 1
+
+        # Now mutate the file
+        f.write_text("def run(): fail()\n", encoding="utf-8")
+        v_res2 = verify_compacted_step(step, root_dir=tmp_path)
+        assert v_res2.valid is False
+        assert len(v_res2.divergences) == 1
 
 
 # ---------------------------------------------------------------------------
