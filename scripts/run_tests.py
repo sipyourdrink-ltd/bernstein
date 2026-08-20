@@ -89,6 +89,22 @@ _PYTEST_NO_TESTS_RE = re.compile(r"\bno tests ran\b", re.IGNORECASE)
 # ``deselected`` are deliberately absent: neither ran anything.
 _EXECUTED_OUTCOMES = frozenset({"passed", "failed", "error", "errors", "xfailed", "xpassed"})
 
+#: Files that are memory-heavy (e.g., create hermetic venvs) and must not be
+#: co-scheduled with other workers. Run sequentially to avoid CI OOM.
+MEMORY_HEAVY_FILES: frozenset[str] = frozenset(
+    {
+        "test_standalone_receipt_verifier.py",
+        "test_volunteer_sandbox_egress.py",
+    }
+)
+
+
+def split_memory_heavy(files: list[Path]) -> tuple[list[Path], list[Path]]:
+    """Split files into normal and memory-heavy lists for scheduling."""
+    heavy = [f for f in files if f.name in MEMORY_HEAVY_FILES]
+    normal = [f for f in files if f.name not in MEMORY_HEAVY_FILES]
+    return normal, heavy
+
 
 def summarize_pytest_counts(output: str) -> dict[str, int] | None:
     """Return pytest's terminal-summary counts, or ``None`` if there is none.
@@ -399,8 +415,12 @@ def run_parallel(
 
     print(f"  Workers: {workers}")
 
+    normal_files, heavy_files = split_memory_heavy(files)
+    total = len(files)
+
+    # Run normal files in parallel
     with ProcessPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(run_file, f, extra_args, coverage): f for f in files}
+        futures = {pool.submit(run_file, f, extra_args, coverage): f for f in normal_files}
         for future in as_completed(futures):
             if abort:
                 future.cancel()
@@ -436,6 +456,39 @@ def run_parallel(
                     abort = True
                     for f in futures:
                         f.cancel()
+
+    # Run memory-heavy files sequentially to avoid OOM
+    if heavy_files:
+        print("  Running memory-heavy files sequentially...")
+        for f in heavy_files:
+            if abort:
+                break
+            try:
+                fpath, code, duration, output = run_file(f, extra_args, coverage)
+            except Exception as exc:
+                done += 1
+                print(f"  ERROR [{done}/{total}] {f.name}: {exc}")
+                failed += 1
+                if fail_fast:
+                    abort = True
+                continue
+
+            retry = retry_on_thread_exhaustion(fpath, extra_args, code, output, coverage=coverage)
+            if retry is not None:
+                print(f"  RETRIED (thread exhaustion) {fpath.name}")
+                code, duration, output = retry
+
+            done += 1
+            label = f"[{done}/{total}] {f.name}"
+            outcome = _report_file_result(label, code, duration, output)
+            if outcome == OUTCOME_PASSED:
+                passed += 1
+            elif outcome == OUTCOME_NO_TESTS:
+                no_tests += 1
+            else:
+                failed += 1
+                if fail_fast:
+                    abort = True
 
     wall_time = time.monotonic() - wall_start
     print(f"\n{'=' * 60}")

@@ -31,6 +31,7 @@ from bernstein.adapters.session_id import (
     SessionIdIndex,
     derive_session_id,
 )
+from tests.unit._adapter_test_helpers import inner_cmd
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -145,9 +146,15 @@ def test_contract_blank_session_id_flag_is_none(tmp_path: Path) -> None:
     assert spec.session_id_flag is None
 
 
-def test_real_codex_contract_declares_session_id_flag() -> None:
+def test_real_codex_contract_declares_no_session_id_flag() -> None:
+    # Property (1), root cause. ``codex exec`` has no top-level flag that
+    # accepts a caller-supplied session id - the only session surface is the
+    # ``resume <SESSION_ID>`` subcommand, which reattaches to a session that
+    # already exists and so cannot bind one at spawn time. A contract that
+    # names a flag here makes ``session_id_args`` emit it into every spawn
+    # (issue #4135).
     spec = _contract.ContractSpec.load("codex")
-    assert spec.session_id_flag == "--session-id"
+    assert spec.session_id_flag is None
 
 
 def test_real_copilot_contract_declares_session_id_flag() -> None:
@@ -185,14 +192,37 @@ def test_session_id_args_empty_when_flag_absent(tmp_path: Path) -> None:
         assert adapter.session_id_args("conv-1") == []
 
 
-def test_codex_session_id_args_emits_flag_and_derived_id() -> None:
+def test_codex_session_id_args_is_empty() -> None:
+    # Property (1). No declared flag means no argv contribution; the derived
+    # id is still recorded in orchestrator state for cross-reference.
     adapter = CodexAdapter()
-    args = adapter.session_id_args("conv-1")
-    assert args[0] == "--session-id"
-    assert args[1] == str(derive_session_id("conv-1", "codex"))
+    assert adapter.session_id_args("conv-1") == []
 
 
-def test_codex_spawn_passes_deterministic_session_id(tmp_path: Path) -> None:
+def test_codex_declares_no_native_resume() -> None:
+    # Property (3). ``codex exec resume <SESSION_ID>`` is a subcommand, not a
+    # flag, and reattaching is not wired for this adapter: the contract
+    # declares resume unsupported, so no resume token is built at all.
+    from bernstein.adapters._contract import ResumeStrategy
+
+    assert CodexAdapter().strategy().resume is ResumeStrategy.UNSUPPORTED
+
+
+def test_copilot_session_id_args_unchanged_by_codex_fix() -> None:
+    # Property (2), blast radius. ``session_id_args`` is shared: copilot must
+    # keep pinning its derived id through the flag its own CLI does accept.
+    from bernstein.adapters.copilot import CopilotAdapter
+
+    adapter = CopilotAdapter()
+    assert adapter.session_id_args("conv-1") == [
+        "--session-id",
+        str(derive_session_id("conv-1", "copilot")),
+    ]
+
+
+def test_codex_spawn_argv_has_no_session_id_flag(tmp_path: Path) -> None:
+    # Property (1) at the spawn boundary. This is the exact argv codex-cli
+    # rejected with ``error: unexpected argument '--session-id' found``.
     adapter = CodexAdapter()
     proc = MagicMock(spec=subprocess.Popen)
     proc.pid = 4242
@@ -208,12 +238,33 @@ def test_codex_spawn_passes_deterministic_session_id(tmp_path: Path) -> None:
         )
 
     argv = list(popen.call_args_list[0][0][0])
-    assert "--session-id" in argv
-    derived = str(derive_session_id("qa-abc123", "codex"))
-    assert derived in argv
-    # The prompt stays last so the derived id never displaces the positional
-    # prompt argument.
+    assert "--session-id" not in argv
+    assert str(derive_session_id("qa-abc123", "codex")) not in argv
+    # The prompt stays last so codex reads it as the positional PROMPT.
     assert argv[-1] == "do work"
+
+
+def test_copilot_spawn_argv_still_pins_session_id(tmp_path: Path) -> None:
+    # Property (2) at the spawn boundary: the shared helper still emits
+    # copilot's flag/id pair after the codex contract change.
+    from bernstein.adapters.copilot import CopilotAdapter
+
+    adapter = CopilotAdapter()
+    proc = MagicMock(spec=subprocess.Popen)
+    proc.pid = 4343
+    proc.stdout = MagicMock()
+
+    with patch("bernstein.adapters.copilot.subprocess.Popen", return_value=proc) as popen:
+        adapter.spawn(
+            prompt="do work",
+            workdir=tmp_path,
+            model_config=ModelConfig(model="gpt-5.4", effort="high"),
+            session_id="copilot-4135",
+            timeout_seconds=0,
+        )
+
+    inner = inner_cmd(popen.call_args.args[0])
+    assert inner[inner.index("--session-id") + 1] == str(derive_session_id("copilot-4135", "copilot"))
 
 
 # ---------------------------------------------------------------------------

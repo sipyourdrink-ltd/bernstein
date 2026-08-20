@@ -197,6 +197,22 @@ def _is_agent_writable(rules_path: Path, workdir: Path) -> bool:
     a compromised agent.  Paths that resolve outside *workdir* (e.g. the
     orchestrator's ``.sdd/config/`` when rules live there, or an absolute
     path passed via env var) are treated as trusted.
+
+    Left off the #3802/#4035 path-containment sweep on purpose:
+    ``contained_path``/``contained_subpath`` join a caller-supplied relative
+    *segment* onto a base and refuse a result outside it; this function
+    instead classifies an already-resolved, possibly-absolute path's
+    relationship to *workdir*, where "outside" is the routine, expected
+    branch (ENV_ALWAYS_ALLOW_PATH is documented above to point anywhere) and
+    not a refusal. ``validate_relative_path`` rejects a leading ``/`` or
+    drive letter outright, so passing ``str(rules_path)`` as the shared
+    helper's candidate would raise for every legitimate outside-workdir rules
+    path before containment is even checked - the exact "no behaviour change
+    is silently introduced" case #3802's acceptance criteria call out. The
+    ``resolve()``-then-``relative_to()`` shape here already matches what the
+    helper does internally; it stays local because reusing the helper's API
+    would require the same falsify-then-recover step the helper exists to
+    avoid.
     """
     try:
         resolved_rules = rules_path.resolve()
@@ -261,6 +277,12 @@ def write_always_allow_manifest(workdir: Path, rules_path: Path) -> Path:
     """
     manifest_path = workdir / TRUSTED_MANIFEST_REL
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    # Not a #3802/#4035 conversion target: this chooses between a relative
+    # and an absolute *display string* for a manifest this function's own
+    # docstring says only the orchestrator ever calls, on a path it already
+    # trusts - there is no untrusted candidate here for contained_subpath to
+    # prove contained, and the same absolute-candidate mismatch as
+    # _is_agent_writable above applies if it were forced in anyway.
     payload = {
         "version": 1,
         "path": str(rules_path.resolve().relative_to(workdir.resolve()))

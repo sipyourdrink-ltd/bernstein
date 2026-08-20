@@ -59,3 +59,20 @@ rather than as its own attribution is exempted by hand there, with the reason.
   module imports `hashlib`, `re` and `unicodedata` and nothing else, pinned by
   an exact allowlist so it cannot quietly grow a route to a shell, the
   environment, or the network.
+
+- The last hand-rolled filename join in `core/orchestration/worker.py` now
+  goes through the shared containment helper (#4106). `_avoid_shim_line_overflow`
+  derived its stdin-overflow prompt file as `prompt_dir / f"{session}.stdin-overflow"`
+  with no check at all — the only site left in the file where a value reaching
+  the function could name a file outside the intended directory. It is now
+  `contained_path(prompt_dir, f"{session}.stdin-overflow", label="session id")`,
+  the same helper #3802's sweep has been centralising everywhere else (most
+  recently in #4095). This is defence in depth rather than a live hole: `session`
+  has already passed `_SESSION_ID_RE` in `main()` before the function is ever
+  reached, and the allowlists agree on characters, so nothing arriving through
+  the CLI is newly refused. Two behaviours are pinned by tests: a session value
+  the CLI would have rejected now raises `PathContainmentError` instead of
+  naming a file, and an over-long session that passes the regex but exceeds the
+  255-byte component cap now fails as `PathTooLongError` at the check instead
+  of reaching `open()` as `OSError(ENAMETOOLONG)` (the same capacity-vs-
+  containment distinction #4095 recorded for the pid-file sites).

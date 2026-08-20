@@ -40,6 +40,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/dependency-review.yml | Dependency Review | pull_request | {"cancel-in-progress": "true", "group": "dependency-review-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/docs-drift.yml | docs-drift | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "docs-drift-${{ github.ref }}"} | 2 |
 | .github/workflows/docs-observability-snapshot.yml | Observability snapshot | workflow_dispatch | {"cancel-in-progress": "false", "group": "docs-observability-snapshot"} | 1 |
+| .github/workflows/docs-requirements-staleness-weekly.yml | docs-requirements-staleness-weekly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "docs-requirements-staleness-${{ github.ref }}"} | 1 |
 | .github/workflows/eval-weekly.yml | eval-weekly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "eval-weekly-${{ github.ref }}"} | 3 |
 | .github/workflows/feature-matrix-drift.yml | Feature matrix drift | pull_request, push | {"cancel-in-progress": "true", "group": "feature-matrix-drift-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/hotfix-r-tracker.yml | Hotfix R-counter | push | {"cancel-in-progress": "false", "group": "hotfix-r-tracker-${{ github.sha }}"} | 1 |
@@ -108,6 +109,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/dependency-review.yml | review: Dependency review |
 | .github/workflows/docs-drift.yml | drift-check: Run drift check<br>drift-publish: Publish drift surfaces |
 | .github/workflows/docs-observability-snapshot.yml | snapshot: Capture snapshot |
+| .github/workflows/docs-requirements-staleness-weekly.yml | staleness: recompile and diff |
 | .github/workflows/eval-weekly.yml | bench: bench (full)<br>preflight: preflight (gate)<br>smoke: smoke (synthetic) |
 | .github/workflows/feature-matrix-drift.yml | matrix-rows: registered CLI commands have a matrix row |
 | .github/workflows/hotfix-r-tracker.yml | track: Detect hotfix-begets-hotfix |
@@ -176,6 +178,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/dependency-review.yml | workflow: {"contents": "read"}<br>review: {"contents": "read", "pull-requests": "write"} | - |
 | .github/workflows/docs-drift.yml | workflow: {"contents": "read"}<br>drift-check: {"contents": "read"}<br>drift-publish: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |
 | .github/workflows/docs-observability-snapshot.yml | workflow: {"contents": "read"}<br>snapshot: {"contents": "write", "pull-requests": "write", "security-events": "read"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
+| .github/workflows/docs-requirements-staleness-weekly.yml | workflow: {"contents": "read"}<br>staleness: {"contents": "read", "issues": "write"} | GITHUB_TOKEN |
 | .github/workflows/eval-weekly.yml | workflow: {"contents": "read"} | EVAL_ENABLED |
 | .github/workflows/feature-matrix-drift.yml | workflow: {"contents": "read"}<br>matrix-rows: {"contents": "read"} | - |
 | .github/workflows/hotfix-r-tracker.yml | track: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |

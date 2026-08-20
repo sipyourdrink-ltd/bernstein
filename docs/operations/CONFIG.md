@@ -109,6 +109,8 @@ role_model_policy:
 
 When `cli: auto` is set at the top level, the orchestrator picks the best available adapter per role based on the `role_model_policy`. When a specific `cli:` is set per role, that adapter is used exclusively for that role.
 
+A per-role `cli:` accepts any adapter registry name that `bernstein adapters list` reports - `ollama`, `aider`, `opencode` and the rest, not only the handful that also answer to a provider alias. The value is resolved by name; a `cli:` that names no registered adapter refuses the spawn and lists the adapters that would have worked, instead of quietly running the role on the run-level adapter.
+
 ### `catalogs` - External agent catalog sources
 
 Point the orchestrator at local directories of agent definitions - a

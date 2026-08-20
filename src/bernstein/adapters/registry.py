@@ -482,6 +482,29 @@ def _build_provider_alias_table() -> None:
     )
 
 
+def _registered_adapter_name(name: str) -> str | None:
+    """Return *name* if it is an adapter registry key, else ``None``.
+
+    The comparison is against exactly what :func:`get_adapter` accepts --
+    the live ``_ADAPTERS`` table plus the ``generic`` pseudo-adapter -- so
+    a name that resolves here is guaranteed to instantiate. Entry-point
+    adapters are discovered first; the callers of this helper have already
+    triggered discovery via :func:`_build_provider_alias_table`, but the
+    call is idempotent and keeps the helper correct in isolation.
+
+    Args:
+        name: Candidate adapter registry name, already lower-cased and
+            stripped by the caller.
+
+    Returns:
+        The registry name, or ``None`` when nothing is registered under it.
+    """
+    _load_entrypoint_adapters()
+    if name == "generic" or name in _ADAPTERS:
+        return name
+    return None
+
+
 def adapter_name_for_provider(provider_name: str | None, model: str) -> str | None:
     """Resolve an adapter registry name from a provider name and/or model string.
 
@@ -493,33 +516,55 @@ def adapter_name_for_provider(provider_name: str | None, model: str) -> str | No
 
     Resolution order:
 
-    1. **Exact match.** ``provider_name`` (case-insensitive, stripped) is
-       looked up directly against the alias table built from every
-       adapter's ``provides`` declaration. Because
+    1. **Exact alias match.** ``provider_name`` (case-insensitive,
+       stripped) is looked up directly against the alias table built from
+       every adapter's ``provides`` declaration. Because
        :func:`_register_provider_alias` refuses ambiguous aliases at
        build time, an exact hit here is guaranteed unambiguous.
-    2. **Substring fallback, longest-alias-first.** Some call sites (for
-       example the sampling-capability probe in ``spawner_core.py``, which
-       calls this with ``provider_name=None``) only have a bare model
-       string like ``"gpt-4.1"`` or ``"claude-opus-4"`` to go on. For that
-       case every registered alias is checked as a substring of
-       ``f"{provider_name} {model}"``, longest alias first. Longest-first
-       guarantees a more specific alias (``"openai_agents"``) always wins
-       over a shorter alias it textually contains (``"openai"``) without
+    2. **Exact registry-name match.** ``provides`` is optional and most
+       adapters declare none: only 7 of the ~49 selectable adapters carry
+       aliases. An operator selecting one of the other 42 by its registry
+       name -- which is what ``cli:`` accepts, and what
+       :func:`selectable_adapter_names` enumerates -- must resolve, or the
+       selection is silently dropped and the spawn lands on some other
+       adapter (issue #4134: ``cli: ollama`` spawned Claude Code and died
+       with ``command not found: claude``). A registry name is checked
+       after the alias table so an adapter registered under a second key
+       (``antigravity``) never shadows another adapter's declared alias.
+    3. **Substring fallback, longest-alias-first -- model text only.**
+       Some call sites (for example the sampling-capability probe in
+       ``spawner_core.py``) pass ``provider_name=None`` and have only a
+       bare model string like ``"gpt-4.1"`` or ``"claude-opus-4"`` to go
+       on. For that case every registered alias is checked as a substring
+       of the model string, longest alias first. Longest-first guarantees
+       a more specific alias (``"openai_agents"``) always wins over a
+       shorter alias it textually contains (``"openai"``) without
        requiring any hand-maintained ordering -- this is what forecloses
        the 042bcbd0 bug class structurally rather than only patching the
        one instance of it.
 
+       This step runs **only** when no provider name was supplied. A
+       supplied provider name is an explicit selection: either it resolves
+       by name (steps 1-2) or it does not resolve at all. Searching the
+       model text underneath it matched aliases across the provider/model
+       boundary -- ``provider='ollama'`` with ``model='qwen2.5:1.5b'``
+       resolved to the Qwen CLI off the concatenated text ``"ollama
+       qwen2.5:1.5b"`` (issue #4134), so the same misconfiguration failed
+       two different ways depending on whether the model name happened to
+       contain another adapter's alias.
+
     Returns:
-        The resolved adapter registry name, or ``None`` if nothing in the
-        alias table matches. Callers apply their own fallback (typically
-        the spawner's currently-active adapter) when ``None`` is returned.
+        The resolved adapter registry name, or ``None`` if nothing
+        matches. Callers apply their own handling (the spawn path refuses
+        an unresolvable operator ``cli:`` by name; probe call sites fall
+        back to the currently-active adapter) when ``None`` is returned.
     """
     logger.debug("registry.adapter_name_for_provider: provider_name=%r model=%r", provider_name, model)
     _build_provider_alias_table()
 
     if provider_name:
-        exact = _PROVIDER_ALIAS_TABLE.get(provider_name.strip().lower())
+        key = provider_name.strip().lower()
+        exact = _PROVIDER_ALIAS_TABLE.get(key)
         if exact is not None:
             logger.info(
                 "registry.adapter_name_for_provider: EXACT match provider_name=%r -> adapter=%r",
@@ -527,8 +572,24 @@ def adapter_name_for_provider(provider_name: str | None, model: str) -> str | No
                 exact,
             )
             return exact
+        registered = _registered_adapter_name(key)
+        if registered is not None:
+            logger.info(
+                "registry.adapter_name_for_provider: REGISTRY-NAME match provider_name=%r -> adapter=%r "
+                "(adapter declares no `provides` aliases)",
+                provider_name,
+                registered,
+            )
+            return registered
+        logger.info(
+            "registry.adapter_name_for_provider: NO MATCH for provider_name=%r (model=%r not consulted -- "
+            "an explicitly named provider resolves by name or not at all); caller must apply its own handling",
+            provider_name,
+            model,
+        )
+        return None
 
-    text = f"{provider_name or ''} {model}".lower()
+    text = model.lower()
     for alias in sorted(_PROVIDER_ALIAS_TABLE, key=len, reverse=True):
         if alias in text:
             excluded = _ALIAS_SUBSTRING_EXCLUSIONS.get(alias, ())
@@ -554,9 +615,8 @@ def adapter_name_for_provider(provider_name: str | None, model: str) -> str | No
             return adapter_name
 
     logger.info(
-        "registry.adapter_name_for_provider: NO MATCH for provider_name=%r model=%r; "
+        "registry.adapter_name_for_provider: NO MATCH for model=%r (no provider_name given); "
         "caller must apply its own fallback",
-        provider_name,
         model,
     )
     return None
