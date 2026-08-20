@@ -132,7 +132,7 @@ async def _build_scenario(
 # ---------------------------------------------------------------------------
 
 
-@settings(max_examples=40, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(derandomize=True, max_examples=40, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(scenario=dag_scenarios())
 def test_claim_next_never_offers_incomplete_dependencies(
     scenario: tuple[list[list[int]], list[bool], list[bool]],
@@ -168,7 +168,7 @@ def test_claim_next_never_offers_incomplete_dependencies(
     _run_async(_run())
 
 
-@settings(max_examples=25, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(derandomize=True, max_examples=25, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(scenario=dag_scenarios())
 def test_claim_by_id_and_batch_gate_incomplete_dependencies(
     scenario: tuple[list[list[int]], list[bool], list[bool]],

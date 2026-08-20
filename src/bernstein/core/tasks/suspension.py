@@ -89,6 +89,7 @@ if TYPE_CHECKING:
 
     from bernstein.core.persistence.work_ledger import LedgerEntry, WorkLedger
     from bernstein.core.security.audit_chain import AuditChainStore, AuditEvent
+    from bernstein.core.security.permissions import AgentPermissions
 
 logger = logging.getLogger(__name__)
 
@@ -856,6 +857,55 @@ def release_resources(
 # ---------------------------------------------------------------------------
 
 
+def resolve_task_role(sdd_dir: Path, task_id: str) -> str:
+    """Return the agent role recorded for ``task_id``, or ``""`` when unknown.
+
+    The park writes a checkpoint whose ``grant_hash`` is computed over the
+    role's permission set, and the resume re-derives that hash from
+    ``get_permissions_for_role(checkpoint.role)``. So the role is not a label:
+    it is the authority the resume is checked against, and a role that is
+    merely plausible produces a grant that binds nothing.
+
+    ``CheckpointRef`` has never carried a role, so it is read where the task
+    server persists it -- the task log under ``<sdd>/runtime/tasks.jsonl``,
+    which is the same record ``TaskStore`` replays on restart.
+
+    Returns ``""`` when the log is missing, unreadable, or holds no row for
+    ``task_id``. An absent role makes :func:`park_task` write an empty
+    ``grant_hash``, which the resume reads as "not grant-bound" -- an honest
+    absence, rather than a hash over a guessed role that would pass the
+    authority check by construction.
+
+    Args:
+        sdd_dir: Project ``.sdd`` directory.
+        task_id: The task whose role is wanted.
+
+    Returns:
+        The recorded role, or ``""`` when it cannot be determined.
+    """
+    from bernstein.core.tasks.models import TaskStoreUnavailable
+    from bernstein.core.tasks.task_store import TaskStore
+
+    try:
+        store = TaskStore(
+            jsonl_path=sdd_dir / "runtime" / "tasks.jsonl",
+            archive_path=sdd_dir / "archive" / "tasks.jsonl",
+        )
+        store.replay_jsonl()
+        task = store.get_task(task_id)
+    except (TaskStoreUnavailable, OSError, KeyError, ValueError):
+        # A task log we cannot read must not block the park: the suspension
+        # itself is still durable and auditable. It costs the checkpoint its
+        # grant binding, so it is logged rather than swallowed.
+        logger.warning(
+            "role lookup for task %s failed; parking without a grant-bound checkpoint",
+            task_id,
+            exc_info=True,
+        )
+        return ""
+    return task.role if task is not None else ""
+
+
 @dataclass(frozen=True)
 class ParkResult:
     """Anchors produced by :func:`park_task`.
@@ -889,6 +939,9 @@ def park_task(
     handles: ResourceHandles | None = None,
     ledger: WorkLedger | None = None,
     wake_condition: str = "",
+    role: str = "",
+    permissions: AgentPermissions | None = None,
+    parent_run_id: str = "",
 ) -> ParkResult:
     """Durably park ``task_id``: row, receipt, releases, then ledger.
 
@@ -917,6 +970,9 @@ def park_task(
         handles: Physical release effects; ``None`` releases only budget.
         ledger: Optional work ledger to persist the SUSPENDED transition.
         wake_condition: ``""`` or :data:`WAKE_APPROVAL`.
+        role: Agent role name at suspend time.
+        permissions: Live :class:`AgentPermissions` at suspend time.
+        parent_run_id: Run that owns the task.
 
     Returns:
         A :class:`ParkResult` with the row, receipt hash, release outcome, and
@@ -928,6 +984,7 @@ def park_task(
             path would later refuse.
     """
     from bernstein.core.cost.budget_actions import compute_released_headroom
+    from bernstein.core.persistence.agent_checkpoint import AgentCheckpoint, compute_grant_hash, save_checkpoint
     from bernstein.core.persistence.work_ledger import KIND_TASK_SUSPENDED
     from bernstein.core.security.audit_chain import record_task_suspension
 
@@ -949,6 +1006,12 @@ def park_task(
         wake_condition=wake_condition,
     )
 
+    from bernstein.core.security.permissions import get_permissions_for_role
+
+    effective_permissions = (
+        permissions if permissions is not None else (get_permissions_for_role(role) if role else None)
+    )
+
     # Receipt before effect: the suspend receipt exists on the chain before a
     # single resource is freed.
     receipt = record_task_suspension(
@@ -964,6 +1027,26 @@ def park_task(
         released_usd=released_usd,
         wake_condition=wake_condition,
     )
+
+    grant_hash = ""
+    if role and effective_permissions is not None:
+        grant_hash = compute_grant_hash(
+            role=role,
+            permissions=effective_permissions,
+            task_id=task_id,
+            parent_run_id=parent_run_id,
+            chain_head=suspend_row.event_hash,
+        )
+    checkpoint = AgentCheckpoint(
+        agent_id=task_run_id(task_id),
+        task_id=task_id,
+        worktree_path=str(worktree_path),
+        role=role,
+        grant_hash=grant_hash,
+        parent_run_id=parent_run_id,
+        chain_head_at_suspend=suspend_row.event_hash,
+    )
+    save_checkpoint(checkpoint, sdd_dir / "runtime")
 
     release = release_resources(
         chain=chain,
@@ -1579,6 +1662,7 @@ __all__ = [
     "park_task",
     "record_task_suspension_row",
     "release_resources",
+    "resolve_task_role",
     "resume_task",
     "validate_task_id",
     "verify_suspension_continuity",

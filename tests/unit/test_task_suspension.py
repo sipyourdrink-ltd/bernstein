@@ -71,6 +71,7 @@ from bernstein.core.tasks.suspension import (
     latest_suspension,
     park_task,
     release_resources,
+    resolve_task_role,
     resume_task,
     validate_task_id,
     verify_suspension_continuity,
@@ -2159,3 +2160,174 @@ def test_colon_id_escapes_containment_under_windows_semantics() -> None:
     # why a containment check alone cannot make a colon safe.
     ads = base / "file:stream.approved"
     assert ads.is_relative_to(base)
+
+
+def test_park_task_writes_agent_checkpoint_with_grant_hash(tmp_path: Path) -> None:
+    """Issue #4043: park_task must save an AgentCheckpoint with populated grant fields."""
+    from bernstein.core.persistence.agent_checkpoint import find_checkpoint_for_task, is_checkpoint_recoverable
+    from bernstein.core.security.permissions import get_permissions_for_role
+    from bernstein.core.tasks.checkpoint_retry import task_run_id
+
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt_checkpoint", {"main.py": "print('hello')\n"})
+    perms = get_permissions_for_role("backend")
+
+    park = park_task(
+        sdd_dir=tmp_path / ".sdd",
+        task_id="task_ckpt_123",
+        adapter="claude",
+        session_id="session_456",
+        worktree_path=wt,
+        envelope="subscription",
+        reserved_usd=1.0,
+        spent_usd=0.0,
+        chain=chain,
+        role="backend",
+        permissions=perms,
+        parent_run_id="run_789",
+    )
+
+    checkpoint = find_checkpoint_for_task("task_ckpt_123", tmp_path / ".sdd" / "runtime")
+    assert checkpoint is not None
+    assert checkpoint.agent_id == task_run_id("task_ckpt_123")
+    assert checkpoint.task_id == "task_ckpt_123"
+    assert checkpoint.role == "backend"
+    assert checkpoint.parent_run_id == "run_789"
+    assert checkpoint.chain_head_at_suspend == park.suspend_row.event_hash
+    assert len(checkpoint.grant_hash) == 64
+
+    _valid, refusal = is_checkpoint_recoverable(checkpoint=checkpoint)
+    # Recoverability checks grant authority first (which passes), then worktree uncommitted status
+    assert "grant mismatch" not in refusal, refusal
+
+
+# ---------------------------------------------------------------------------
+# The role a park binds its grant to. The checkpoint's grant_hash is recomputed
+# from the role at resume, so where the role comes from is the whole question:
+# a role that is merely plausible produces a grant that verifies against
+# nothing, and an unsourced one produces a grant that can never refuse.
+# ---------------------------------------------------------------------------
+
+
+def _seed_task_log(sdd_dir: Path, task_id: str, role: str) -> None:
+    """Write the task-log row the park reads a role from."""
+    runtime = sdd_dir / "runtime"
+    runtime.mkdir(parents=True, exist_ok=True)
+    row = {"id": task_id, "title": task_id, "description": "", "role": role, "status": "in_progress"}
+    (runtime / "tasks.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+
+def test_resolve_task_role_reads_the_role_from_the_persisted_task_log(tmp_path: Path) -> None:
+    """The role is sourced where the server records it, not from CheckpointRef."""
+    sdd = tmp_path / ".sdd"
+    _seed_task_log(sdd, "T-role", "qa")
+
+    assert resolve_task_role(sdd, "T-role") == "qa"
+
+
+def test_resolve_task_role_is_empty_when_nothing_records_the_task(tmp_path: Path) -> None:
+    """An unknown task yields no role rather than a guessed one."""
+    sdd = tmp_path / ".sdd"
+    _seed_task_log(sdd, "T-other", "qa")
+
+    assert resolve_task_role(sdd, "T-missing") == ""
+    assert resolve_task_role(tmp_path / "no-such-sdd", "T-missing") == ""
+
+
+def test_task_suspend_cli_binds_the_recorded_role_into_the_checkpoint_grant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A live park must write a checkpoint the resume can actually verify (#4043).
+
+    The CLI is the only production ``park_task`` caller, so a role that is
+    never sourced here leaves every real park writing an unbound checkpoint
+    while the direct-call tests above still pass.
+    """
+    from click.testing import CliRunner
+
+    from bernstein.cli.commands.task_cmd import task_group
+    from bernstein.core.persistence.agent_checkpoint import find_checkpoint_for_task, is_checkpoint_recoverable
+
+    monkeypatch.setenv("BERNSTEIN_RUN_ID", "run-live-1")
+    wt = _worktree(tmp_path, "wt_cli_role", {"a.py": "x = 1\n"})
+    _seed_task_log(tmp_path / ".sdd", "T-cli-role", "qa")
+
+    parked = CliRunner().invoke(
+        task_group, ["suspend", "T-cli-role", "--workdir", str(tmp_path), "--worktree", str(wt), "--json"]
+    )
+    assert parked.exit_code == 0, parked.output
+
+    checkpoint = find_checkpoint_for_task("T-cli-role", tmp_path / ".sdd" / "runtime")
+    assert checkpoint is not None
+    assert checkpoint.role == "qa"
+    assert checkpoint.parent_run_id == "run-live-1"
+    assert len(checkpoint.grant_hash) == 64
+
+    _valid, refusal = is_checkpoint_recoverable(checkpoint)
+    assert "grant mismatch" not in refusal, refusal
+
+
+def test_task_suspend_cli_writes_no_grant_when_no_role_is_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No recorded role means an empty grant_hash, not a hash over the unrestricted default.
+
+    ``get_permissions_for_role("")`` returns unrestricted ``AgentPermissions``,
+    which the resume re-derives identically -- so hashing it would produce a
+    checkpoint that reads as grant-bound and can never refuse. Absence has to
+    stay absence.
+    """
+    from click.testing import CliRunner
+
+    from bernstein.cli.commands.task_cmd import task_group
+    from bernstein.core.persistence.agent_checkpoint import find_checkpoint_for_task
+
+    monkeypatch.delenv("BERNSTEIN_RUN_ID", raising=False)
+    wt = _worktree(tmp_path, "wt_cli_norole", {"a.py": "x = 1\n"})
+
+    parked = CliRunner().invoke(
+        task_group, ["suspend", "T-cli-norole", "--workdir", str(tmp_path), "--worktree", str(wt), "--json"]
+    )
+    assert parked.exit_code == 0, parked.output
+
+    checkpoint = find_checkpoint_for_task("T-cli-norole", tmp_path / ".sdd" / "runtime")
+    assert checkpoint is not None
+    assert checkpoint.role == ""
+    assert checkpoint.grant_hash == ""
+
+
+def test_task_suspend_cli_role_flag_overrides_the_recorded_role(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An operator can pin the role the grant binds to when the log is stale."""
+    from click.testing import CliRunner
+
+    from bernstein.cli.commands.task_cmd import task_group
+    from bernstein.core.persistence.agent_checkpoint import find_checkpoint_for_task
+
+    monkeypatch.delenv("BERNSTEIN_RUN_ID", raising=False)
+    wt = _worktree(tmp_path, "wt_cli_override", {"a.py": "x = 1\n"})
+    _seed_task_log(tmp_path / ".sdd", "T-cli-pin", "qa")
+
+    parked = CliRunner().invoke(
+        task_group,
+        [
+            "suspend",
+            "T-cli-pin",
+            "--workdir",
+            str(tmp_path),
+            "--worktree",
+            str(wt),
+            "--role",
+            "security",
+            "--parent-run-id",
+            "run-pinned",
+            "--json",
+        ],
+    )
+    assert parked.exit_code == 0, parked.output
+
+    checkpoint = find_checkpoint_for_task("T-cli-pin", tmp_path / ".sdd" / "runtime")
+    assert checkpoint is not None
+    assert checkpoint.role == "security"
+    assert checkpoint.parent_run_id == "run-pinned"

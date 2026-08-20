@@ -777,6 +777,7 @@ def test_unseeded_runner_still_runs() -> None:
 
 
 @settings(
+    derandomize=True,
     deadline=None,
     max_examples=50,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
@@ -794,6 +795,7 @@ def test_property_rounds_run_never_exceeds_budget(rounds: int, threshold: float)
 
 
 @settings(
+    derandomize=True,
     deadline=None,
     max_examples=30,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
@@ -814,6 +816,7 @@ def test_property_threshold_invariant_score_above_stops(rounds: int, score: floa
 
 
 @settings(
+    derandomize=True,
     deadline=None,
     max_examples=30,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
@@ -851,6 +854,7 @@ def test_property_monotone_in_budget(budget: float, per_round_cost: float) -> No
 
 
 @settings(
+    derandomize=True,
     deadline=None,
     max_examples=30,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
@@ -873,6 +877,7 @@ def test_property_deterministic_with_seed(seed: int, rounds: int) -> None:
 
 
 @settings(
+    derandomize=True,
     deadline=None,
     max_examples=40,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
@@ -888,6 +893,7 @@ def test_property_detect_plateau_never_fires_on_strict_growth(scores: list[float
 
 
 @settings(
+    derandomize=True,
     deadline=None,
     max_examples=30,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
@@ -900,6 +906,7 @@ def test_property_clamp_score_in_unit_interval(score: float) -> None:
 
 
 @settings(
+    derandomize=True,
     deadline=None,
     max_examples=30,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
@@ -915,6 +922,7 @@ def test_property_clamp_rounds_in_range(rounds: int) -> None:
 
 
 @settings(
+    derandomize=True,
     deadline=None,
     max_examples=30,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
@@ -940,6 +948,7 @@ def test_property_cumulative_cost_is_nonnegative(rounds: int, cost: float) -> No
 
 
 @settings(
+    derandomize=True,
     deadline=None,
     max_examples=30,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
@@ -956,6 +965,7 @@ def test_property_per_round_lists_align(rounds: int) -> None:
 
 
 @settings(
+    derandomize=True,
     deadline=None,
     max_examples=30,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
@@ -974,6 +984,7 @@ def test_property_adversary_veto_stops_no_later_than_veto_round(veto_round: int)
 
 
 @settings(
+    derandomize=True,
     deadline=None,
     max_examples=20,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
@@ -988,6 +999,7 @@ def test_property_gate_fail_round_set_iff_gate_stop(rounds: int) -> None:
 
 
 @settings(
+    derandomize=True,
     deadline=None,
     max_examples=20,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
@@ -1014,6 +1026,7 @@ def test_property_threshold_lowered_never_increases_rounds(threshold: float, rou
 
 
 @settings(
+    derandomize=True,
     deadline=None,
     max_examples=20,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
@@ -1033,6 +1046,7 @@ def test_property_critique_round_trip(score: float, veto: bool, rationale: str) 
 
 
 @settings(
+    derandomize=True,
     deadline=None,
     max_examples=20,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
@@ -1055,6 +1069,7 @@ def test_property_seeded_run_report_stable_across_repeat(rounds: int, seed: int)
 
 
 @settings(
+    derandomize=True,
     deadline=None,
     max_examples=20,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],

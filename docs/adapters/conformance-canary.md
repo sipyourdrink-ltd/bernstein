@@ -43,6 +43,34 @@ ephemeral runner: recompute a receipt file's SHA-256 and match it
 against the `receipt_sha256` of the persisted `adapter.canary_receipt`
 entry.
 
+## The projection is re-derived, not trusted
+
+`last_green.json` and the table on this page are both written by one run,
+so checking them against each other proves they came from the same
+generator rather than that the generator was right. A stale row carried
+forward, a digest recorded for a receipt that was never produced, or an
+adapter dropped between the receipt set and the JSON all reproduce
+identically into both, and every downstream consistency check still
+passes.
+
+`verify_last_green_projection` closes that gap by re-reading the receipts
+and asking whether they produce the committed rows. The nightly workflow
+runs it as its own step (`--verify-projection`), in a fresh process,
+after `Open threshold-crossing regression issues` and before PR proposal,
+so a projection mismatch is caught while receipts are still on local disk
+without suppressing threshold-crossing regression issue creation.
+
+It checks both directions for the adapters actually in play: every
+passing receipt must have a row carrying that receipt's digest and this
+run's timestamp, and every row claiming this run's timestamp must have a
+passing receipt behind it. A row that is simply older and untouched by
+the run is out of scope, which is why `agy` sitting weeks behind the
+others, and `droid` having no row at all, are not findings.
+
+Running the check against a **downloaded** artifact bundle instead is
+bounded by the receipts artifact's 30-day retention. The in-workflow step
+has no such limit; it never touches the artifact store.
+
 ## What `last_green.json` rows must look like
 
 `load_last_green` validates each row at the JSON boundary instead of

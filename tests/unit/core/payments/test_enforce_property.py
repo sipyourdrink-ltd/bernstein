@@ -52,7 +52,7 @@ def _run_one(
         out.append(receipt)
 
 
-@settings(max_examples=25, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(max_examples=25, deadline=None, derandomize=True, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(
     amounts=st.lists(st.integers(min_value=1, max_value=40), min_size=2, max_size=8),
     max_units=st.integers(min_value=10, max_value=60),

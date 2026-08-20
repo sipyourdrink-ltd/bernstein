@@ -39,7 +39,10 @@ from bernstein.adapters.canary import (  # noqa: E402
     CANARY_MATRIX,
     LAST_GREEN_DOC_PATH,
     LAST_GREEN_JSON_PATH,
+    ReceiptSetError,
+    load_last_green,
     run_matrix,
+    verify_last_green_projection,
 )
 from bernstein.core.security.audit_chain import AuditChainStore  # noqa: E402
 
@@ -114,6 +117,35 @@ def run_nightly_canary(
     )
 
 
+def _verify_projection(out_dir: Path) -> int:
+    """Re-derive the committed projection from the receipts on disk.
+
+    Reads the receipts back off disk in a fresh process rather than reusing
+    anything ``run_matrix`` held in memory, so a fault in the projection step
+    cannot cancel itself out by being checked with its own state (#3940).
+    """
+    receipts_dir = out_dir / "receipts"
+    docs = [json.loads(path.read_text(encoding="utf-8")) for path in sorted(receipts_dir.glob("*.json"))]
+    if not docs:
+        print(f"no receipts under {receipts_dir}; nothing to verify", file=sys.stderr)
+        return 1
+
+    try:
+        mismatches = verify_last_green_projection(docs, load_last_green())
+    except ReceiptSetError as exc:
+        print(f"receipt set is not one run's worth: {exc}", file=sys.stderr)
+        return 1
+
+    if mismatches:
+        print(f"last_green.json is not a projection of the {len(docs)} receipt(s) in {receipts_dir}:", file=sys.stderr)
+        for mismatch in mismatches:
+            print(f"  {mismatch.kind}: {mismatch.adapter} - {mismatch.detail}", file=sys.stderr)
+        return 1
+
+    print(f"last_green.json verified against {len(docs)} receipt(s) in {receipts_dir}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the canary matrix; return the process exit code."""
     parser = argparse.ArgumentParser(description="Adapter conformance canary")
@@ -134,7 +166,15 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Regenerate the last-green table in docs/adapters/conformance-canary.md and the packaged last_green.json.",
     )
+    parser.add_argument(
+        "--verify-projection",
+        action="store_true",
+        help="Re-derive last_green.json from the receipts on disk and exit non-zero on a mismatch. Runs no probes.",
+    )
     args = parser.parse_args(argv)
+
+    if args.verify_projection:
+        return _verify_projection(args.out_dir)
 
     targets = CANARY_MATRIX
     if args.adapter:
