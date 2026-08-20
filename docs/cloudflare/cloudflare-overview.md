@@ -1,5 +1,7 @@
 # Cloudflare Integration Overview
 
+> **Preview:** The Cloud / Cloudflare surfaces are under active hardening. The hosted API (api.bernstein.run) does not resolve in DNS, so bernstein cloud commands report the service unreachable and exit non-zero. Rows graduate out of Preview individually as smoke coverage lands.
+
 !!! warning "Experimental; hosted API not yet available"
     Cloud execution is experimental. Workers, R2, D1, and Workers AI run
     against **your own** Cloudflare account. The hosted Bernstein Cloud API at

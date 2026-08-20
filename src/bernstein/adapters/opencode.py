@@ -3,27 +3,125 @@
 Last verified against upstream OpenCode (anomalyco/opencode) 1.18.16 on 2026-08-12.
 Install: ``curl -fsSL https://opencode.ai/install | bash`` (fastest),
 ``brew install anomalyco/tap/opencode``, or ``npm i -g opencode-ai@latest``.
+
+Permission posture is pinned by this adapter rather than inherited. OpenCode
+resolves tool permissions from the operator's own config unless something
+overrides it, so an un-pinned spawn means two operators running the same plan
+get different agent behaviour. Every spawn therefore carries an explicit
+``OPENCODE_PERMISSION`` policy derived from the adapter's declared
+:class:`~bernstein.adapters._contract.DangerousModeStrategy`, which is what
+keeps that declaration load-bearing instead of descriptive.
+
+Neither policy resolves to ``ask``: a headless run whose permission resolves
+that way waits forever (upstream ``anomalyco/opencode#36762``), and the only
+backstop would be the timeout watchdog, which reports a timeout rather than a
+blocked permission.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from bernstein.adapters._contract import DangerousModeStrategy
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
 _OPENCODE_AUTH_FILE = Path.home() / ".local" / "share" / "opencode" / "auth.json"
 
+#: Env var carrying the permission policy. Preferred over the escalating CLI
+#: flags for the *floor* because it is the only surface that can express the
+#: restricted direction too, so one mechanism pins both.
+_PERMISSION_ENV = "OPENCODE_PERMISSION"
+
+#: The CLI flag named by ``DangerousModeStrategy.CLI_FLAG`` for this adapter.
+#: Passed alongside the env policy so the escalation is visible in the spawn
+#: record rather than only in the process environment.
+_ESCALATED_PERMISSION_FLAG = "--auto"
+
+#: Tool permissions for a run that is allowed to act unattended.
+_ESCALATED_PERMISSION: dict[str, str] = {"edit": "allow", "bash": "allow", "webfetch": "allow"}
+
+#: Tool permissions for a run that is not. ``deny`` rather than ``ask`` so the
+#: run fails fast and legibly instead of blocking on a prompt nobody answers.
+_RESTRICTED_PERMISSION: dict[str, str] = {"edit": "deny", "bash": "deny", "webfetch": "deny"}
+
 
 class OpenCodeAdapter(CLIAdapter):
     """Spawn and monitor OpenCode CLI sessions."""
+
+    #: OpenCode exposes ``--continue`` to re-enter the prior session, which is
+    #: the flag behind the ``resume`` axis this adapter declares. The retry
+    #: surface derives a warm continuation from that declaration
+    #: (``checkpoint_retry_capability``), so the opt-in and the declaration
+    #: have to move together.
+    supports_session_continuation = True
+
+    def _dangerous_mode(self) -> DangerousModeStrategy:
+        """Return the declared dangerous-mode strategy for this adapter."""
+        declared = getattr(self.strategy(), "dangerous_mode", DangerousModeStrategy.UNSUPPORTED)
+        return declared if isinstance(declared, DangerousModeStrategy) else DangerousModeStrategy.UNSUPPORTED
+
+    def _permission_escalated(self) -> bool:
+        """Whether this spawn may skip interactive tool-permission prompts."""
+        return self._dangerous_mode() in (DangerousModeStrategy.CLI_FLAG, DangerousModeStrategy.ALWAYS_ON)
+
+    def _build_command(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        continuation_args: Sequence[str] = (),
+    ) -> list[str]:
+        """Build the ``opencode run`` argv for one spawn.
+
+        Args:
+            model: Model identifier passed to ``-m``.
+            prompt: The task prompt; stays positional and last.
+            continuation_args: Flags that re-enter a prior session, as
+                returned by :meth:`continuation_args`. Empty for a fresh
+                spawn, so a first run never claims to continue anything.
+
+        Returns:
+            The full argv, permission flag included when the declared
+            dangerous-mode strategy escalates.
+        """
+        cmd = ["opencode", "run", "-m", model, "--format", "json"]
+        if self._permission_escalated():
+            cmd.append(_ESCALATED_PERMISSION_FLAG)
+        cmd.extend(continuation_args)
+        cmd.append(prompt)
+        return cmd
+
+    def _permission_env(self) -> dict[str, str]:
+        """Return the explicit permission policy for the spawn environment.
+
+        Set on every spawn in both directions. Passing only the escalating
+        CLI flag would leave the restricted case resolving against the host's
+        own config, which is the behaviour this pins shut.
+        """
+        policy = _ESCALATED_PERMISSION if self._permission_escalated() else _RESTRICTED_PERMISSION
+        return {_PERMISSION_ENV: json.dumps(policy, sort_keys=True)}
+
+    def continuation_args(self, _session_id: str) -> list[str]:
+        """Return the flags that re-enter this adapter's prior session.
+
+        OpenCode's ``--continue`` re-enters the most recent session for the
+        working directory. Bernstein runs every task in its own git worktree,
+        so "most recent session here" resolves to this task's own session
+        without explicit id plumbing.
+        """
+        return ["--continue"]
 
     def spawn(
         self,
@@ -52,15 +150,7 @@ class OpenCodeAdapter(CLIAdapter):
         if mcp_config:
             logger.debug("OpenCodeAdapter ignoring runtime MCP config injection for session %s", session_id)
 
-        cmd = [
-            "opencode",
-            "run",
-            "-m",
-            model_config.model,
-            "--format",
-            "json",
-            prompt,
-        ]
+        cmd = self._build_command(model=model_config.model, prompt=prompt)
 
         pid_dir = workdir / ".sdd" / "runtime" / "pids"
         wrapped_cmd = build_worker_cmd(
@@ -87,6 +177,9 @@ class OpenCodeAdapter(CLIAdapter):
                 "GITLAB_TOKEN",
             ]
         )
+        # Applied after the allow-list so the pinned policy is what the worker
+        # sees, whatever the operator's own environment or config file holds.
+        env.update(self._permission_env())
         with log_path.open("w") as log_file:
             try:
                 proc = subprocess.Popen(
