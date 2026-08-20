@@ -22,7 +22,6 @@ import logging
 import os
 from contextlib import suppress
 from dataclasses import dataclass, field
-from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
@@ -42,6 +41,7 @@ from bernstein.mcp.approval_gate import (
     is_worker_completable,
     refusal_payload,
 )
+from bernstein.mcp.capability import package_repo_url, package_version
 from bernstein.mcp.streaming import InFlightRegistry, cancelled_envelope
 
 if TYPE_CHECKING:
@@ -56,13 +56,8 @@ logger = logging.getLogger(__name__)
 _DEFAULT_SERVER_URL = "http://127.0.0.1:8052"
 _HTTP_TIMEOUT = 5.0
 
-
-def _package_version() -> str:
-    """Return the installed Bernstein distribution version."""
-    try:
-        return version("bernstein")
-    except PackageNotFoundError:
-        return "0+unknown"
+_package_version = package_version
+_package_repo_url = package_repo_url
 
 
 # JSON-RPC error codes per spec.
@@ -506,6 +501,7 @@ def validation_scope_notice() -> str:
 _SERVER_INFO: dict[str, Any] = {
     "name": "bernstein",
     "version": _package_version(),
+    "repo_url": _package_repo_url(),
 }
 
 _CAPABILITIES: dict[str, Any] = {

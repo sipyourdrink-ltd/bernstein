@@ -39,8 +39,36 @@ def test_card_has_core_dimensions(_clean_env: None) -> None:
     card = build_capability_card()
     assert card["name"] == "bernstein"
     assert card["specRevision"] == SPEC_REVISION
-    for key in ("transports", "auth", "tools", "costMeter", "observability"):
+    for key in ("transports", "auth", "tools", "costMeter", "observability", "version", "repo_url"):
         assert key in card
+
+
+def test_card_version_matches_package_metadata(_clean_env: None) -> None:
+    from importlib.metadata import version
+
+    card = build_capability_card()
+    assert card["version"] == version("bernstein")
+
+
+def test_card_version_matches_remote_transport_server_info(_clean_env: None) -> None:
+    from bernstein.mcp.remote_transport import _SERVER_INFO
+
+    card = build_capability_card()
+    assert card["version"] == _SERVER_INFO["version"]
+
+
+def test_card_repo_url_matches_package_metadata(_clean_env: None) -> None:
+    from importlib.metadata import metadata
+
+    meta = metadata("bernstein")
+    expected_urls = [
+        url.partition(",")[2].strip()
+        for url in meta.get_all("Project-URL") or []
+        if url.partition(",")[0].strip().lower() in ("repository", "source")
+    ]
+    card = build_capability_card()
+    assert card["repo_url"] in expected_urls
+    assert card["repo_url"] != ""
 
 
 def test_card_lists_all_transports(_clean_env: None) -> None:
