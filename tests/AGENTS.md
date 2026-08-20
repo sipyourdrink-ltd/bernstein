@@ -10,7 +10,7 @@ capability contracts; plus `property/`, `snapshot/`, `golden/`,
 ```
 uv run python scripts/run_tests.py -x         # all tests, isolated per-file
 uv run python scripts/run_tests.py -k router  # filter by keyword
-uv run pytest tests/unit/test_foo.py -x -q    # single file (fast)
+uv run python scripts/run_tests.py tests/unit/test_foo.py[::test_name]  # one file/test
 ```
 
 ## Invariants

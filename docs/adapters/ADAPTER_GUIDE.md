@@ -20,7 +20,7 @@ Source of truth: `src/bernstein/adapters/registry.py`, individual adapter files.
 Every adapter can serve two roles in Bernstein:
 
 1. **As an agent** - spawned per-task to write code, run tests, commit changes
-2. **As the internal scheduler LLM** - used by the orchestrator for task decomposition, cost estimation, and plan optimization
+2. **As the internal scheduler LLM** - used by the Manager for goal decomposition into tasks, and by the quality gates for automated review (quality gates, review rubric, cross-model verification, janitor cleanup checks)
 
 Set the scheduler model in `bernstein.yaml`:
 ```yaml

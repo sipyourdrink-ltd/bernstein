@@ -100,7 +100,13 @@
     --meta-foreground:         40 9.6% 38%;
     --success:                 130 28.9% 32.5%;
     --success-foreground:      40 37.5% 96.9%;
-    --warning:                 42.6 63.3% 33.1%;
+    /* warning: was 42.6 63.3% 33.1% - the solid warning-foreground/warning
+       pairing passed WCAG AA (4.72:1), but Pill (states.tsx) renders the
+       warning variant as text-warning on a 15%-opacity warning tint
+       (bg-warning/15) composited over --card / --surface-raised, which
+       measured 4.12:1 / 3.97:1 - below 4.5:1. Dropped lightness to 29% ->
+       composited 4.98:1 / 4.78:1, solid pairing improves to 5.81:1. */
+    --warning:                 42.6 63.3% 29%;
     --warning-foreground:      40 37.5% 96.9%;
   }
 
@@ -123,7 +129,12 @@
        WCAG AA (4.5:1). Known-bug claim was incorrect; no swap needed. */
     --accent:                  175.1 38.2% 62.5%;
     --accent-foreground:       60 14.3% 4.1%;
-    --destructive:             6.5 65.9% 64.3%;
+    /* destructive: was 6.5 65.9% 64.3% - solid pairings all passed WCAG AA,
+       but the danger Pill's 15%-opacity tint (bg-destructive/15, states.tsx)
+       composited over --surface-raised measured 4.22:1 - below 4.5:1.
+       Bumped lightness to 70% -> composited 4.90:1 on --surface-raised,
+       5.41:1 on --card, solid pairings improve too. */
+    --destructive:             6.5 65.9% 70%;
     --destructive-foreground:  60 11.8% 6.7%;
     --border:                  60 8.5% 18.4%;
     --input:                   60 8.5% 18.4%;

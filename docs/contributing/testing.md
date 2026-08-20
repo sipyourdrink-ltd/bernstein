@@ -279,6 +279,10 @@ is a flake waiting to happen.
 # Full unit suite with the guard active (per-file isolated runner):
 uv run python scripts/run_tests.py --parallel 4
 
+# One file or one test, same runner:
+uv run python scripts/run_tests.py tests/unit/test_foo.py
+uv run python scripts/run_tests.py tests/unit/test_foo.py::test_bar
+
 # Or straight pytest:
 uv run pytest tests/unit/ -q --no-cov
 

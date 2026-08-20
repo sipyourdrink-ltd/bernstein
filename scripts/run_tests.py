@@ -9,6 +9,9 @@ Usage:
     python scripts/run_tests.py              # run all unit tests (parallel by default)
     python scripts/run_tests.py -x           # stop on first failure
     python scripts/run_tests.py -k adapter   # filter by keyword
+    python scripts/run_tests.py tests/unit/test_router.py    # run one file
+    python scripts/run_tests.py tests/unit/test_router.py::test_pick  # one test
+    python scripts/run_tests.py tests/integration          # run one directory
     python scripts/run_tests.py --parallel 4 # run 4 files at once
     python scripts/run_tests.py --parallel 1 # force sequential execution
     python scripts/run_tests.py --coverage   # collect coverage and emit coverage.json
@@ -181,6 +184,50 @@ def discover_test_files(test_dir: Path, keyword: str | None = None) -> list[Path
     if keyword:
         files = [f for f in files if keyword in f.stem]
     return files
+
+
+def split_test_targets(entries: list[str]) -> tuple[list[Path], list[str], list[str]]:
+    """Split positional CLI entries into explicit test targets and pytest args.
+
+    Positional entries serve two purposes that must not be conflated. An entry
+    naming an existing test file, directory, or ``file::node-id`` selects what
+    to run; anything else - flags and their values, such as the
+    ``no:cacheprovider`` in ``-p no:cacheprovider`` - is passed through to
+    every pytest subprocess unchanged.
+
+    Returns ``(targets, passthrough, missing)``. ``missing`` holds entries that
+    look like a path but do not exist: a mistyped path is a typo, not a pytest
+    argument, and silently forwarding it would turn an intended targeted run
+    into a full-suite run.
+    """
+    targets: list[Path] = []
+    passthrough: list[str] = []
+    missing: list[str] = []
+    for entry in entries:
+        if entry.startswith("-"):
+            passthrough.append(entry)
+            continue
+        head = Path(entry.split("::", 1)[0])
+        if head.is_dir():
+            targets.extend(sorted(head.rglob("test_*.py")))
+        elif head.is_file():
+            targets.append(Path(entry))
+        elif head.suffix == ".py" or "/" in entry or os.sep in entry:
+            missing.append(entry)
+        else:
+            passthrough.append(entry)
+    return targets, passthrough, missing
+
+
+def dedupe_paths(paths: list[Path]) -> list[Path]:
+    """Drop duplicate paths, preserving first-seen order."""
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for path in paths:
+        if path not in seen:
+            seen.add(path)
+            unique.append(path)
+    return unique
 
 
 def parse_shard_spec(spec: str) -> tuple[int, int]:
@@ -630,8 +677,25 @@ def main() -> None:
             "and the union of all N shards covers every file exactly once."
         ),
     )
-    parser.add_argument("extra", nargs="*", help="Extra args passed to pytest")
+    parser.add_argument(
+        "extra",
+        nargs="*",
+        metavar="TARGET_OR_PYTEST_ARG",
+        help=(
+            "Test files, directories, or file::node-id targets to run instead of "
+            "discovering --test-dir; any other value is passed through to pytest"
+        ),
+    )
     args = parser.parse_args()
+
+    targets, extra_args, missing = split_test_targets(args.extra)
+    if missing:
+        for entry in missing:
+            print(f"Test path not found: {entry}")
+        sys.exit(2)
+    if targets and args.affected is not None:
+        print("--affected selects test files itself; pass explicit test paths or --affected, not both")
+        sys.exit(2)
 
     workers: int = max(1, args.parallel)
 
@@ -664,19 +728,24 @@ def main() -> None:
         print(f"Running {len(files)} affected test files{shard_label} (each in its own process)")
         print(f"{'=' * 60}")
         if workers > 1:
-            code = run_parallel(files, args.extra, workers, args.fail_fast, args.coverage)
+            code = run_parallel(files, extra_args, workers, args.fail_fast, args.coverage)
         else:
-            code = run_sequential(files, args.extra, args.fail_fast, args.coverage)
+            code = run_sequential(files, extra_args, args.fail_fast, args.coverage)
         if args.coverage:
             _finalize_coverage()
         sys.exit(code)
 
-    test_dir = Path(args.test_dir)
-    if not test_dir.exists():
-        print(f"Test directory not found: {test_dir}")
-        sys.exit(1)
+    if targets:
+        files = dedupe_paths(targets)
+        if args.keyword:
+            files = [f for f in files if args.keyword in f.name]
+    else:
+        test_dir = Path(args.test_dir)
+        if not test_dir.exists():
+            print(f"Test directory not found: {test_dir}")
+            sys.exit(1)
+        files = discover_test_files(test_dir, args.keyword)
 
-    files = discover_test_files(test_dir, args.keyword)
     if shard is not None:
         files = shard_files(files, *shard)
     if not files:
@@ -689,9 +758,9 @@ def main() -> None:
     print(f"{'=' * 60}")
 
     if workers > 1:
-        code = run_parallel(files, args.extra, workers, args.fail_fast, args.coverage)
+        code = run_parallel(files, extra_args, workers, args.fail_fast, args.coverage)
     else:
-        code = run_sequential(files, args.extra, args.fail_fast, args.coverage)
+        code = run_sequential(files, extra_args, args.fail_fast, args.coverage)
 
     if args.coverage:
         _finalize_coverage()
