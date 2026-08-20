@@ -336,6 +336,7 @@ class RunInstrumenter:
         error: str | None = None,
         wall_ms: float | None = None,
         result: Any | None = None,
+        coverage: dict[str, Any] | Any | None = None,
     ) -> None:
         """Append one record to ``tool-calls.jsonl`` for a single tool invocation.
 
@@ -346,10 +347,21 @@ class RunInstrumenter:
         the agent. It is stringified and truncated the same way ``args`` is,
         so a huge return value (e.g. a full file body) is capped to a
         preview, never stored whole.
+
+        ``coverage`` (issue #3769) carries what the tool actually covered
+        (file count, corpus digest, completion/truncation status) for
+        absence-capable tools. It is not passed through ``_truncate_value``
+        so its digest and counts survive intact.
         """
         try:
             if wall_ms is None:
                 wall_ms = _iso_delta_ms(ts_start, ts_end)
+            cov_dict: dict[str, Any] | None = None
+            if coverage is not None:
+                if hasattr(coverage, "to_dict") and callable(coverage.to_dict):
+                    cov_dict = coverage.to_dict()
+                elif isinstance(coverage, dict):
+                    cov_dict = dict(coverage)
             record: dict[str, Any] = {
                 "call_id": call_id,
                 "ts_start": ts_start,
@@ -361,6 +373,8 @@ class RunInstrumenter:
                 "error": error,
                 "result": _truncate_value(result) if result is not None else None,
             }
+            if cov_dict is not None:
+                record["coverage"] = cov_dict
             self._append_line(self._tool_calls_path(), record, kind="tool_call", key=call_id)
         except Exception as exc:  # intentional-broad-except: instrumentation must never raise
             logger.warning("RunInstrumenter.log_tool_call failed for call_id=%s: %s", sanitize_log(call_id), exc)
