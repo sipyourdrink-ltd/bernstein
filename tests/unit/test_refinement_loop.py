@@ -777,7 +777,7 @@ def test_unseeded_runner_still_runs() -> None:
 
 
 @settings(
-    derandomize=True,
+    
     deadline=None,
     max_examples=50,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
