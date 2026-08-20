@@ -17,15 +17,14 @@ from pathlib import Path
 import pytest
 
 from bernstein.adapters.advisories import ADAPTER_MIN_SAFE_VERSIONS
-
 from bernstein.adapters.security_floor import (
-    VERSION_TOKEN_RE,
     POLICY_BLOCK,
     POLICY_WARN,
     VERDICT_PERMIT,
     VERDICT_REFUSE,
     VERDICT_UNKNOWN_VERSION,
     VERDICT_WARN_OVERRIDE,
+    VERSION_TOKEN_RE,
     AdapterSecurityFloorRefusal,
     audit_preflight_no_below_floor,
     build_preflight_receipt,
@@ -349,7 +348,7 @@ class TestVersionTokenRegex:
         match = VERSION_TOKEN_RE.search(blob)
         assert (match.group(0) if match else None) == expected
 
-    
+
 
     def test_adversarial_digit_run_stays_fast(self) -> None:
         """A digit run with no dot must not blow up the scan.

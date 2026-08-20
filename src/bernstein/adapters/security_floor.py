@@ -35,7 +35,6 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-from .base import VERSION_TOKEN_RE
 
 from bernstein.adapters.advisories import ADAPTER_MIN_SAFE_VERSIONS, AdapterAdvisory
 from bernstein.core.security.path_containment import (
@@ -43,6 +42,8 @@ from bernstein.core.security.path_containment import (
     PathTooLongError,
     contained_path,
 )
+
+from .base import VERSION_TOKEN_RE
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -205,7 +206,7 @@ def probe_installed_version(binary_path: str) -> str | None:
         logger.debug("floor: version probe failed for %s (%s)", binary_path, type(exc).__name__)
         return None
     blob = f"{proc.stdout}\n{proc.stderr}"
-    match = _VERSION_TOKEN_RE.search(blob)
+    match = VERSION_TOKEN_RE.search(blob)
     return match.group(0) if match else None
 
 
