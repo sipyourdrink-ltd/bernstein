@@ -96,20 +96,34 @@ and `visionary` roles (`SECTION_RULES["lessons"]` in
 for a short TTL so repeated spawns in the same batch do not re-read the
 file.
 
-## Limitation: nothing files lessons automatically yet
+## Convention receipts from review corrections (#3750)
 
-`file_lesson()` is fully implemented, tested, and safe to call — but no
-code path in the shipped orchestrator calls it. Nothing currently reads a
-task's outcome and writes a lesson on completion; the docstring's "agents
-file lessons when they complete tasks" describes the intended trigger, not
-current wiring. In practice, `.sdd/memory/lessons.jsonl` only gains entries
-if something outside the base orchestrator (a plugin, a custom hook, direct
-use of the Python API) calls `file_lesson()`.
+Review corrections persist as signed, commit-pinned, chain-anchored convention
+receipts (:mod:`bernstein.core.knowledge.conventions`). When a correction is
+filed in the review path via `file_review_correction()`:
 
-The read/decay/injection path described above runs unconditionally at
-every qualifying spawn regardless of whether anything has ever filed a
-lesson — it is simply a no-op (empty `## Prior Agent Lessons` block) on a
-project where nothing has populated the file.
+1. It routes through `file_lesson()`, classifying the correction with
+   `memory_type=MemoryType.FEEDBACK` so it decays appropriately.
+2. Deduplication through the lesson store ensures repeating the same correction
+   across multiple reviews increments the `version` counter (version 1 → 2 → 3)
+   rather than creating duplicate rules.
+3. The convention receipt binds the rule text hash, target subject path/glob,
+   optional subject symbol, mandatory base commit SHA, and executable assertion
+   spec, signed with the install's Ed25519 identity key.
+4. Each receipt creation, update, and retirement is recorded as a tamper-evident
+   event in the HMAC audit chain (`convention.receipt` / `convention.retired`).
+5. `bernstein verify --memory-audit` audits both lesson memory provenance and the
+   convention receipts audit chain.
+6. Rules pinning a `subject_symbol` automatically expire if the symbol no longer
+   resolves at HEAD (verified via AST analysis for Python sources).
+
+## General task-completion limitation
+
+While review corrections now automatically file lessons and convention receipts
+(#3750), general task-completion outcomes in the orchestrator do not yet file
+general lessons automatically. In practice, workflow observation lessons
+(`MemoryType.USER`) require explicit filing or custom hooks.
+
 
 ## Related, different subsystem
 

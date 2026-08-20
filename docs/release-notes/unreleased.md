@@ -77,3 +77,6 @@ rather than as its own attribution is exempted by hand there, with the reason.
   255-byte component cap now fails as `PathTooLongError` at the check instead
   of reaching `open()` as `OSError(ENAMETOOLONG)` (the same capacity-vs-
   containment distinction #4095 recorded for the pid-file sites).
+
+- Review corrections filed in review path call `file_lesson()` and persist as convention receipts (#3750). `file_review_correction` in `core/knowledge/conventions.py` routes review corrections through `file_lesson()` with deduplication, binds `{rule_text_hash, subject_path, subject_symbol, base_commit_sha, assertion_ref, filing_finding_id, decided_by}` into Ed25519-signed convention receipts anchored in the HMAC audit chain, expires rules whose `subject_symbol` no longer resolves at HEAD via AST parsing, rejects conflicting assertions on overlapping path globs at file time, and verifies receipts via `bernstein verify --memory-audit`. Docs: [`docs/concepts/lesson-persistence.md`](../concepts/lesson-persistence.md).
+

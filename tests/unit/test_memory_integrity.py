@@ -735,3 +735,51 @@ class TestFileLessonIntegration:
         updated_hash = json.loads(p.read_text().strip())["content_hash"]
 
         assert original_hash == updated_hash
+
+
+# ---------------------------------------------------------------------------
+# Integration: Convention receipt integrity & memory-audit
+# ---------------------------------------------------------------------------
+
+
+class TestConventionReceiptIntegrity:
+    """Convention receipt audit trail and tampering detection (Issue #3750)."""
+
+    def test_tampered_rule_text_fails_verify_memory_audit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Mutating rule text in store without a chain entry fails verify --memory-audit."""
+        from click.testing import CliRunner
+
+        from bernstein.cli.commands.verify_cmd import verify_cmd
+        from bernstein.core.knowledge.conventions import file_review_correction
+
+        workdir = tmp_path
+        monkeypatch.chdir(workdir)
+        sdd_dir = workdir / ".sdd"
+        sdd_dir.mkdir(parents=True)
+
+        receipt = file_review_correction(
+            sdd_dir=sdd_dir,
+            workdir=workdir,
+            rule_text="Always sanitize inputs before logging",
+            subject_path="src/bernstein/**/*.py",
+            base_commit_sha="abcdef1234567890abcdef1234567890abcdef12",
+            filing_finding_id="finding-101",
+            decided_by="reviewer-alice",
+        )
+
+        runner = CliRunner()
+        result_clean = runner.invoke(verify_cmd, ["--memory-audit"])
+        assert result_clean.exit_code == 0
+
+        # Tamper with rule text in receipt file directly without chain entry
+        receipt_file = sdd_dir / "conventions" / "receipts" / f"{receipt.receipt_id}.json"
+        data = json.loads(receipt_file.read_text(encoding="utf-8"))
+        data["rule_text"] = "TAMPERED: Never sanitize inputs"
+        receipt_file.write_text(json.dumps(data), encoding="utf-8")
+
+        # verify --memory-audit must fail and name the offending record
+        result_tampered = runner.invoke(verify_cmd, ["--memory-audit"])
+        assert result_tampered.exit_code != 0
+        assert receipt.receipt_id in result_tampered.output

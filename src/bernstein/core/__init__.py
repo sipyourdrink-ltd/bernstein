@@ -128,6 +128,7 @@ _REDIRECT_MAP: dict[str, str] = {
     "config_path_validation": "bernstein.core.config.config_path_validation",
     "config_schema": "bernstein.core.config.config_schema",
     "config_watcher": "bernstein.core.config.config_watcher",
+    "conventions": "bernstein.core.knowledge.conventions",
     "connection_pool": "bernstein.core.server.connection_pool",
     "container": "bernstein.core.agents.container",
     "context": "bernstein.core.tokens.context",

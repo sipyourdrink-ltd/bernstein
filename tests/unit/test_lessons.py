@@ -714,3 +714,232 @@ class TestMemoryTruncation:
         """Verify the constants are positive and non-empty."""
         assert _MAX_LESSON_CHARS > 0
         assert len(_TRUNCATION_WARNING) > 0
+
+
+# ---------------------------------------------------------------------------
+# Convention receipts: review corrections & audit chain (Issue #3750)
+# ---------------------------------------------------------------------------
+
+
+class TestConventionReceipts:
+    """Convention receipt lifecycle, deduplication, conflict detection, and expiration."""
+
+    def test_file_review_correction_calls_file_lesson_and_persists_receipt(self, tmp_path: Path) -> None:
+        """A review correction calls file_lesson() and persists an attested convention receipt."""
+        from bernstein.core.knowledge.conventions import file_review_correction
+
+        sdd_dir = tmp_path / ".sdd"
+        sdd_dir.mkdir(parents=True)
+        src_file = tmp_path / "src" / "api.py"
+        src_file.parent.mkdir(parents=True)
+        src_file.write_text("def handle_request(): pass\n", encoding="utf-8")
+
+        receipt = file_review_correction(
+            sdd_dir=sdd_dir,
+            workdir=tmp_path,
+            rule_text="Always validate request payloads before dispatching",
+            subject_path="src/api.py",
+            base_commit_sha="1111222233334444555566667777888899990000",
+            subject_symbol="handle_request",
+            filing_finding_id="review-pr-42",
+            decided_by="reviewer-bob",
+        )
+
+        # Assert lesson lands where file_lesson() writes
+        lessons_path = sdd_dir / "memory" / "lessons.jsonl"
+        assert lessons_path.is_file()
+        lesson_line = json.loads(lessons_path.read_text(encoding="utf-8").strip())
+        assert lesson_line["content"] == "Always validate request payloads before dispatching"
+        assert lesson_line["lesson_id"] == receipt.lesson_id
+
+        # Assert convention receipt persisted
+        receipt_file = sdd_dir / "conventions" / "receipts" / f"{receipt.receipt_id}.json"
+        assert receipt_file.is_file()
+        stored = json.loads(receipt_file.read_text(encoding="utf-8"))
+        assert stored["receipt_id"] == receipt.receipt_id
+        assert stored["version"] == 1
+        assert stored["status"] == "active"
+        assert stored["signature"] != ""
+
+    def test_file_review_correction_thrice_yields_version_three(self, tmp_path: Path) -> None:
+        """Filing the same correction three times yields one receipt at version: 3."""
+        from bernstein.core.knowledge.conventions import file_review_correction
+
+        sdd_dir = tmp_path / ".sdd"
+        sdd_dir.mkdir(parents=True)
+
+        r1 = file_review_correction(
+            sdd_dir=sdd_dir,
+            workdir=tmp_path,
+            rule_text="Sanitize log sink inputs",
+            subject_path="src/logger.py",
+            base_commit_sha="aaaa1111bbbb2222cccc3333dddd4444eeee5555",
+            decided_by="reviewer-1",
+        )
+        assert r1.version == 1
+
+        r2 = file_review_correction(
+            sdd_dir=sdd_dir,
+            workdir=tmp_path,
+            rule_text="Sanitize log sink inputs",
+            subject_path="src/logger.py",
+            base_commit_sha="aaaa1111bbbb2222cccc3333dddd4444eeee5555",
+            decided_by="reviewer-2",
+        )
+        assert r2.receipt_id == r1.receipt_id
+        assert r2.version == 2
+
+        r3 = file_review_correction(
+            sdd_dir=sdd_dir,
+            workdir=tmp_path,
+            rule_text="Sanitize log sink inputs",
+            subject_path="src/logger.py",
+            base_commit_sha="aaaa1111bbbb2222cccc3333dddd4444eeee5555",
+            decided_by="reviewer-3",
+        )
+        assert r3.receipt_id == r1.receipt_id
+        assert r3.version == 3
+
+        # Exactly one receipt file on disk
+        receipt_files = list((sdd_dir / "conventions" / "receipts").glob("*.json"))
+        assert len(receipt_files) == 1
+
+        # Lessons store also has 1 deduplicated entry
+        lessons_path = sdd_dir / "memory" / "lessons.jsonl"
+        lines = [line for line in lessons_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        assert len(lines) == 1
+        assert json.loads(lines[0])["version"] == 3
+
+    def test_conflicting_assertions_rejected_at_file_time(self, tmp_path: Path) -> None:
+        """Overlapping path with conflicting assertion is rejected naming both receipts."""
+        from bernstein.core.knowledge.conventions import file_review_correction
+
+        sdd_dir = tmp_path / ".sdd"
+        sdd_dir.mkdir(parents=True)
+
+        r1 = file_review_correction(
+            sdd_dir=sdd_dir,
+            workdir=tmp_path,
+            rule_text="Always use snake_case for handlers",
+            subject_path="src/handlers/*.py",
+            base_commit_sha="commit-1",
+            assertion_ref={"kind": "regex_in_file", "target": "src/handlers/auth.py::def handle_"},
+        )
+
+        with pytest.raises(ValueError) as exc_info:
+            file_review_correction(
+                sdd_dir=sdd_dir,
+                workdir=tmp_path,
+                rule_text="Never use snake_case for handlers",
+                subject_path="src/handlers/auth.py",
+                base_commit_sha="commit-2",
+                assertion_ref={"kind": "regex_in_file", "target": "src/handlers/auth.py::def handleAuth"},
+            )
+
+        err_msg = str(exc_info.value)
+        assert "Convention conflict" in err_msg
+        assert r1.receipt_id in err_msg
+
+    def test_symbol_expiration_removes_from_active_rules(self, tmp_path: Path) -> None:
+        """A rule whose subject_symbol is deleted reports expired and stops being active."""
+        from bernstein.core.knowledge.conventions import (
+            file_review_correction,
+            get_active_conventions,
+        )
+
+        sdd_dir = tmp_path / ".sdd"
+        sdd_dir.mkdir(parents=True)
+        py_file = tmp_path / "src" / "worker.py"
+        py_file.parent.mkdir(parents=True)
+        py_file.write_text("class OldWorker:\n    pass\n", encoding="utf-8")
+
+        r = file_review_correction(
+            sdd_dir=sdd_dir,
+            workdir=tmp_path,
+            rule_text="OldWorker must subclass BaseWorker",
+            subject_path="src/worker.py",
+            subject_symbol="OldWorker",
+            base_commit_sha="commit-worker",
+        )
+
+        # When symbol exists at HEAD, rule is active
+        active_before, _ = get_active_conventions(sdd_dir, workdir=tmp_path)
+        assert any(x.receipt_id == r.receipt_id for x in active_before)
+
+        # Delete symbol from worker.py (e.g. refactored/removed)
+        py_file.write_text("class NewWorker:\n    pass\n", encoding="utf-8")
+
+        # After symbol removal, rule is omitted from active conventions
+        active_after, _ = get_active_conventions(sdd_dir, workdir=tmp_path)
+        assert not any(x.receipt_id == r.receipt_id for x in active_after)
+
+    def test_active_ruleset_hash_deterministic(self, tmp_path: Path) -> None:
+        """Two calls with identical active conventions render identical ruleset_hash."""
+        from bernstein.core.knowledge.conventions import (
+            file_review_correction,
+            get_active_conventions,
+        )
+
+        sdd_dir = tmp_path / ".sdd"
+        sdd_dir.mkdir(parents=True)
+
+        file_review_correction(
+            sdd_dir=sdd_dir,
+            workdir=tmp_path,
+            rule_text="Rule A",
+            subject_path="src/a.py",
+            base_commit_sha="commit-a",
+        )
+        file_review_correction(
+            sdd_dir=sdd_dir,
+            workdir=tmp_path,
+            rule_text="Rule B",
+            subject_path="src/b.py",
+            base_commit_sha="commit-b",
+        )
+
+        active1, hash1 = get_active_conventions(sdd_dir)
+        _active2, hash2 = get_active_conventions(sdd_dir)
+
+        assert len(active1) == 2
+        assert hash1 == hash2
+        assert hash1.startswith("sha256:")
+
+    def test_retire_convention_receipt_records_chain_event(self, tmp_path: Path) -> None:
+        """Retiring a convention receipt updates status and appends convention.retired audit event."""
+        from bernstein.core.knowledge.conventions import (
+            file_review_correction,
+            get_active_conventions,
+            retire_convention_receipt,
+            verify_conventions_audit,
+        )
+
+        sdd_dir = tmp_path / ".sdd"
+        sdd_dir.mkdir(parents=True)
+
+        r = file_review_correction(
+            sdd_dir=sdd_dir,
+            workdir=tmp_path,
+            rule_text="Temporary convention to be retired",
+            subject_path="src/temp.py",
+            base_commit_sha="commit-temp",
+        )
+
+        active_before, _ = get_active_conventions(sdd_dir)
+        assert len(active_before) == 1
+
+        retired_r = retire_convention_receipt(
+            sdd_dir=sdd_dir,
+            receipt_id=r.receipt_id,
+            retired_by="maintainer-carol",
+            reason="Superseded by new linter rule",
+        )
+
+        assert retired_r.status == "retired"
+        active_after, _ = get_active_conventions(sdd_dir)
+        assert len(active_after) == 0
+
+        # Audit verification must pass for clean retirement
+        audit_res = verify_conventions_audit(sdd_dir)
+        assert audit_res.valid
+        assert len(audit_res.errors) == 0
