@@ -18,6 +18,18 @@ anyone's word for either.
 
 from __future__ import annotations
 
+from bernstein.core.volunteer.claim import (
+    CLAIM_MARKER,
+    DEFAULT_CLAIM_STALENESS,
+    ClaimClient,
+    ClaimComment,
+    IssueClaimState,
+    SkipDecision,
+    SkipReason,
+    find_own_claim,
+    repo_slug,
+    should_skip,
+)
 from bernstein.core.volunteer.issue_sanitize import (
     ISSUE_TEXT_FENCE_LABEL,
     normalize_untrusted_text,
@@ -87,6 +99,8 @@ from bernstein.core.volunteer.wall_clock import (
 __all__ = [
     "ALLOWED_REPO_SCHEMES",
     "BACKEND_PREFERENCE",
+    "CLAIM_MARKER",
+    "DEFAULT_CLAIM_STALENESS",
     "HOST_GIT_ENV_PASSTHROUGH",
     "ISSUE_TEXT_FENCE_LABEL",
     "OSI_APPROVED_LICENSES",
@@ -99,13 +113,18 @@ __all__ = [
     "VOLUNTEER_PROFILE_NAME",
     "AgentArgvBuilder",
     "AgentInvocation",
+    "ClaimClient",
+    "ClaimComment",
     "ClaimedTask",
     "DonorLimits",
     "GateCommand",
+    "IssueClaimState",
     "IssueTextSanitizer",
     "RefusalStage",
     "SandboxProfileRefusal",
     "SignedResultBundle",
+    "SkipDecision",
+    "SkipReason",
     "TaskDiff",
     "TaskOutcome",
     "TaskProvenance",
@@ -124,6 +143,7 @@ __all__ = [
     "describe_refusal",
     "effective_egress",
     "enforce_allowed_paths",
+    "find_own_claim",
     "finish_volunteer_task",
     "host_git_env",
     "load_manifest",
@@ -132,10 +152,12 @@ __all__ = [
     "mock_agent_argv",
     "normalize_untrusted_text",
     "profile_matches",
+    "repo_slug",
     "repo_url_problem",
     "run_claimed_task",
     "run_under_wall_clock",
     "sandbox_env",
     "sanitize_issue_text",
+    "should_skip",
     "strip_html_comments",
 ]

@@ -138,6 +138,7 @@ class AgentDiscovery:
     metrics: dict[str, AgentMetrics] = field(default_factory=dict[str, AgentMetrics])
     total_agents: int = 0
     last_full_sync: str | None = None
+    project_dir: Path | None = None
 
     # ------------------------------------------------------------------ #
     # Factory / persistence                                                #
@@ -301,16 +302,107 @@ class AgentDiscovery:
             existing_names.add(pkg_name)
             logger.info("npm discovery: found %s", pkg_name)
 
+    def discover_harness_local(self, *, enabled: bool = False) -> list[DirectoryEntry]:
+        """Opt-in discovery of harness-local agent and skill resources.
+
+        OFF by default: when *enabled* is False, makes zero filesystem reads outside
+        the project directory and returns an empty list.
+
+        Args:
+            enabled: Explicit opt-in flag. Must be True to perform discovery.
+
+        Returns:
+            List of discovered ``DirectoryEntry`` objects.
+        """
+        if not enabled:
+            return []
+
+        proj_dir = self.project_dir or Path.cwd()
+        harness_dirs = [
+            Path.home() / ".claude" / "agents",
+            Path.home() / ".claude" / "plugins",
+            proj_dir / ".claude" / "agents",
+        ]
+
+        from bernstein.agents.agency_provider import compute_catalog_digest
+        from bernstein.agents.catalog import CatalogAgent
+        from bernstein.agents.plugin_catalog import parse_agent_file
+
+        added: list[DirectoryEntry] = []
+        for hdir in harness_dirs:
+            if not hdir.exists() or not hdir.is_dir():
+                continue
+
+            agent_count = 0
+            is_refused = False
+
+            # Lockfile digest verification (#3973)
+            lock_file = hdir / "agents.lock"
+            if lock_file.is_file():
+                try:
+                    data = json.loads(lock_file.read_text(encoding="utf-8"))
+                    expected_digest = data.get("content_digest", "") if isinstance(data, dict) else ""
+                    if not expected_digest:
+                        is_refused = True
+                    else:
+                        actual_digest = compute_catalog_digest(hdir)
+                        if actual_digest != expected_digest:
+                            is_refused = True
+                except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+                    # A lockfile that is present but unusable - malformed JSON, undecodable
+                    # bytes, or an unreadable file under it - refuses the directory rather
+                    # than escaping to the caller and aborting the whole discovery sweep.
+                    is_refused = True
+
+            if is_refused:
+                logger.warning("Refusing harness-local directory %s: digest mismatch or corrupt lockfile", hdir)
+                entry = DirectoryEntry(
+                    name=f"harness:{hdir.name}",
+                    source_type="local",
+                    path=str(hdir),
+                    agents=0,
+                    last_sync=_now_iso(),
+                    enabled=False,
+                )
+                self.directories.append(entry)
+                added.append(entry)
+                continue
+
+            for md_file in hdir.glob("**/*.md"):
+                if md_file.name == "SKILL.md":
+                    continue
+                parsed = parse_agent_file(md_file)
+                if isinstance(parsed, CatalogAgent):
+                    agent_count += 1
+
+            entry = DirectoryEntry(
+                name=f"harness:{hdir.name}",
+                source_type="local",
+                path=str(hdir),
+                agents=agent_count,
+                last_sync=_now_iso(),
+                enabled=True,
+            )
+            self.directories.append(entry)
+            added.append(entry)
+
         return added
 
-    def full_sync(self, *, include_network: bool = False) -> dict[str, int]:
+    def full_sync(
+        self,
+        *,
+        include_network: bool = False,
+        include_harness_local: bool = False,
+    ) -> dict[str, int]:
         """Run all local discovery steps (and optionally network steps).
 
         Always scans the local user directory and the project local directory.
         When *include_network* is True also queries GitHub and npm.
+        When *include_harness_local* is True also performs harness-local discovery.
 
         Args:
             include_network: If ``True``, also perform GitHub and npm searches.
+            include_harness_local: If ``True``, perform opt-in harness-local discovery.
 
         Returns:
             Dict mapping source name → number of agents found.
@@ -318,6 +410,10 @@ class AgentDiscovery:
         results: dict[str, int] = {}
         results["local"] = self.discover_local()
         results["project"] = self.discover_project()
+
+        if include_harness_local:
+            harness_entries = self.discover_harness_local(enabled=True)
+            results["harness_local"] = sum(e.agents for e in harness_entries)
 
         if include_network:
             gh_entries = self.discover_github()

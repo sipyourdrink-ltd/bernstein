@@ -92,6 +92,10 @@ from bernstein.core.security.result_receipt_bundle import (
     ResultBundle,
     build_result_bundle,
 )
+from bernstein.core.volunteer.claim import (
+    build_completion_body,
+    build_release_body,
+)
 from bernstein.core.volunteer.sandbox_profile import sandbox_env
 from bernstein.core.volunteer.wall_clock import run_under_wall_clock
 
@@ -103,6 +107,7 @@ if TYPE_CHECKING:
 
     from bernstein.core.security.audit_dsse import Envelope
     from bernstein.core.security.result_receipt_bundle import ChainLink, TaskRef
+    from bernstein.core.volunteer.claim import ClaimClient
     from bernstein.core.volunteer.manifest import VolunteerManifest
     from bernstein.core.volunteer.sandbox_profile import VolunteerSandboxProfile
 
@@ -321,6 +326,77 @@ def enforce_allowed_paths(
 
 
 def finish_volunteer_task(
+    *,
+    patch: str,
+    manifest: VolunteerManifest,
+    profile: VolunteerSandboxProfile,
+    workspace: Path,
+    provenance: TaskProvenance,
+    signing_key: Ed25519PrivateKey,
+    gate_env: Mapping[str, str] | None = None,
+    gate_budget_seconds: int | None = None,
+    created_at: str | None = None,
+    claim: ClaimClient | None = None,
+    claim_repo: str | None = None,
+    claim_comment_id: int | None = None,
+    claim_fingerprint: str | None = None,
+    pr_url: str | None = None,
+) -> SignedResultBundle | VolunteerRefusal:
+    """Enforce scope and gates, sign the result, and resolve the claim comment.
+
+    Thin wrapper over :func:`_finish_volunteer_task`: it runs the scope/gate/
+    sign pipeline unchanged, then -- when a claim client and comment id are
+    supplied -- edits the claim comment posted at run start to its terminal
+    state.  A signed bundle edits it to a completion (with ``pr_url`` when a PR
+    already exists); any refusal edits it to a release, so a task this worker
+    gives up stops looking claimed to the next donor.  The edit is best-effort
+    and never changes the returned value; omitting the claim arguments leaves
+    behaviour identical to the pipeline alone.
+
+    Args:
+        claim: Optional claim-etiquette client (donor ``gh`` auth).
+        claim_repo: ``owner/name`` of the issue's repository.
+        claim_comment_id: REST id of the claim comment to edit.  Not returned by
+            ``run_claimed_task`` on its success path today --
+            :class:`~bernstein.core.volunteer.runner.TaskDiff` carries no such
+            field -- so a caller wiring this up currently has to re-read the
+            issue and call :func:`~bernstein.core.volunteer.claim.find_own_claim`
+            to recover it.
+        claim_fingerprint: Worker fingerprint stamped into the edit.  Defaults
+            to the worker keyid derived from ``signing_key`` -- the same
+            identity the signed bundle carries -- which is what makes the
+            public claim comment matchable against the signed result instead
+            of being decoration.  An explicit value overrides that default.
+        pr_url: Link to the opened PR, when one exists, for the completion note.
+
+    See :func:`_finish_volunteer_task` for the pipeline arguments and semantics.
+    """
+    result = _finish_volunteer_task(
+        patch=patch,
+        manifest=manifest,
+        profile=profile,
+        workspace=workspace,
+        provenance=provenance,
+        signing_key=signing_key,
+        gate_env=gate_env,
+        gate_budget_seconds=gate_budget_seconds,
+        created_at=created_at,
+    )
+    if claim is not None and claim_repo is not None and claim_comment_id is not None:
+        # A real per-worker identifier by default, derived fresh from the
+        # signing key -- the same keyid a completion's bundle carries, so the
+        # public comment is matchable against the signed result rather than
+        # decoration.  An explicit claim_fingerprint still wins.
+        fingerprint = claim_fingerprint or keyid_from_public_key(signing_key.public_key())
+        if isinstance(result, SignedResultBundle):
+            body = build_completion_body(fingerprint=fingerprint, pr_url=pr_url)
+        else:
+            body = build_release_body(fingerprint=fingerprint, reason=result.reason)
+        claim.edit_claim(claim_repo, claim_comment_id, body)
+    return result
+
+
+def _finish_volunteer_task(
     *,
     patch: str,
     manifest: VolunteerManifest,
