@@ -18,10 +18,12 @@ from bernstein.adapters._contract import (
     RESUME_NATIVE,
     STRATEGY_MATRIX,
     AdapterStrategy,
+    CheckpointRetryCapability,
     DangerousModeStrategy,
     EventChannel,
     OutputMode,
     ResumeStrategy,
+    checkpoint_retry_capability,
     resume_capability,
     strategy_for,
     strategy_table,
@@ -164,6 +166,41 @@ def test_stream_json_adapters_declared() -> None:
 def test_text_signal_default_for_plain_adapters() -> None:
     for name in ("aider", "droid", "opencode"):
         assert strategy_for(name).event_channel is EventChannel.TEXT_SIGNALS
+
+
+def test_opencode_declares_native_resume_and_a_dangerous_mode_flag() -> None:
+    """Both axes are backed by flags the adapter passes; the event channel is not yet."""
+    strategy = strategy_for("opencode")
+    assert strategy.resume is ResumeStrategy.FLAG
+    assert strategy.dangerous_mode is DangerousModeStrategy.CLI_FLAG
+    assert strategy.event_channel is EventChannel.TEXT_SIGNALS
+
+
+def test_opencode_resume_declaration_drives_the_retry_surface() -> None:
+    """The resume axis is derived into runtime decisions, not merely rendered.
+
+    ``checkpoint_retry_capability`` is a pure function of the resume axis, so
+    declaring ``flag`` promises the retry path a warm continuation. The adapter
+    backs that promise via ``continuation_args``; this pins the derivation so
+    the two cannot drift apart silently.
+    """
+    assert resume_capability("opencode") == RESUME_NATIVE
+    assert checkpoint_retry_capability("opencode") is CheckpointRetryCapability.RESUME
+    assert get_adapter("opencode").continuation_args("oc-1") != []
+
+
+def test_continuation_optin_matches_the_resume_declaration() -> None:
+    """An adapter declaring native resume must opt into the continuation path.
+
+    ``adapter_supports_continuation`` reads ``supports_session_continuation``
+    off the class; a declared-resume adapter that never opted in would leave
+    the retry surface believing in a warm continuation nothing implements.
+    """
+    for name in ("claude", "opencode"):
+        adapter = get_adapter(name)
+        assert strategy_for(name).resume is not ResumeStrategy.UNSUPPORTED
+        assert adapter.supports_session_continuation is True
+        assert adapter.continuation_args(f"{name}-1") != []
 
 
 def test_acp_channel_adapters_declared() -> None:

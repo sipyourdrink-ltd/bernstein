@@ -744,10 +744,14 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "muse": AdapterStrategy(dangerous_mode=DangerousModeStrategy.CLI_FLAG),
     "ollama": AdapterStrategy(),
     "open_interpreter": AdapterStrategy(),
+    # Resume and dangerous mode are backed by flags ``opencode.py`` passes:
+    # ``--continue`` and ``--auto`` plus an explicit permission policy. The
+    # event channel stays ``text-signals``: the CLI does emit NDJSON under
+    # ``--format json``, but nothing consumes it yet, and declaring a channel
+    # no parser reads would claim a surface that does not exist.
     "opencode": AdapterStrategy(
         resume=ResumeStrategy.FLAG,
         dangerous_mode=DangerousModeStrategy.CLI_FLAG,
-        event_channel=EventChannel.STREAM_JSON,
     ),
     "openhands": AdapterStrategy(),
     "pi": AdapterStrategy(),
