@@ -330,10 +330,7 @@ def build_completion_body(*, fingerprint: str, pr_url: str | None = None) -> str
     donor reading the thread later sees this claim as no longer live.
     """
     tail = f": {pr_url}" if pr_url else "."
-    return (
-        f"{CLAIM_MARKER}\n{RESOLVED_MARKER}\n"
-        f"Completed via bernstein (worker fingerprint `{fingerprint}`){tail}"
-    )
+    return f"{CLAIM_MARKER}\n{RESOLVED_MARKER}\nCompleted via bernstein (worker fingerprint `{fingerprint}`){tail}"
 
 
 def build_release_body(*, fingerprint: str, reason: str) -> str:
