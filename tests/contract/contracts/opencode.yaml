@@ -1,7 +1,12 @@
 # Contract for the OpenCode CLI (adapter: opencode).
 #
 # Always-passed surface from src/bernstein/adapters/opencode.py:
-# ``opencode run -m <model> --format json <prompt>``.
+# ``opencode run -m <model> --format json --auto <prompt>``.
+#
+# ``--auto`` is the escalating permission flag; it is dropped and the
+# OPENCODE_PERMISSION policy tightened when the adapter's declared
+# dangerous-mode strategy does not escalate. ``--continue`` is passed only on
+# a continuation retry, so it is required of the binary but not of every spawn.
 adapter: opencode
 binary: opencode
 install:
@@ -14,6 +19,8 @@ auth:
 required_flags:
   - "-m"
   - "--format"
+  - "--auto"
+  - "--continue"
 required_subcommands:
   - "run"
 # Opencode sub-flags live under ``opencode run --help``.

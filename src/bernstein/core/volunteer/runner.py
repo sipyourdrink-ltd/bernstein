@@ -107,10 +107,20 @@ import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol
 from urllib.parse import urlparse
 
 from bernstein.core.git.worktree import WorktreeError, WorktreeManager
+from bernstein.core.volunteer.claim import (
+    DEFAULT_CLAIM_STALENESS,
+    build_claim_body,
+    build_release_body,
+    find_own_claim,
+    repo_slug,
+    resolve_fingerprint,
+    should_skip,
+)
 from bernstein.core.volunteer.sandbox_profile import (
     SandboxProfileRefusal,
     build_volunteer_profile,
@@ -121,6 +131,7 @@ from bernstein.core.volunteer.wall_clock import run_under_wall_clock
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.core.volunteer.claim import ClaimClient, SkipReason
     from bernstein.core.volunteer.manifest import VolunteerManifest
     from bernstein.core.volunteer.sandbox_profile import VolunteerSandboxProfile
     from bernstein.core.volunteer.wall_clock import WallClockOutcome
@@ -178,6 +189,7 @@ class RefusalStage:
 
     SANDBOX_PROFILE = "sandbox_profile"
     REPO_URL = "repo_url"
+    CLAIM_TAKEN = "claim_taken"
     CLONE = "clone"
     WORKTREE = "worktree"
     PROMPT = "prompt"
@@ -421,6 +433,10 @@ def run_claimed_task(
     sanitize: IssueTextSanitizer,
     session_id: str | None = None,
     budget: WallClockBudget | None = None,
+    claim: ClaimClient | None = None,
+    claim_fingerprint: str | None = None,
+    claim_staleness: timedelta = DEFAULT_CLAIM_STALENESS,
+    now: Callable[[], datetime] | None = None,
 ) -> TaskOutcome:
     """Run one claimed task inside the volunteer sandbox.
 
@@ -441,6 +457,23 @@ def run_claimed_task(
         session_id: Identifier for this run; generated when omitted.
         budget: An already-running loan to continue.  Clamped to the profile's
             ceiling, so it can only tighten.
+        claim: Optional claim-etiquette client.  When supplied, the issue is
+            re-read before any clone and the task is refused
+            (:attr:`RefusalStage.CLAIM_TAKEN`) if it is assigned, closed, or
+            freshly claimed by another donor; a claim comment is posted
+            otherwise, and edited to a release if the run then aborts.  All of
+            it is best-effort: a ``gh`` failure never turns a runnable task into
+            a refusal.  ``None`` disables claim etiquette entirely and leaves
+            behaviour unchanged.
+        claim_fingerprint: Human-readable worker fingerprint stamped into the
+            claim comment.  Required whenever ``claim`` is supplied -- see
+            :func:`~bernstein.core.volunteer.claim.resolve_fingerprint`.
+            Informational only -- worker identity for the skip decision is
+            ``viewerDidAuthor``, never a match against this string.
+        claim_staleness: How long another donor's claim is honoured before the
+            task is treated as free again.
+        now: Clock for the staleness comparison; injected for deterministic
+            tests.  Defaults to :func:`datetime.now` in UTC.
 
     Returns:
         :class:`TaskDiff` when the agent produced a patch, otherwise
@@ -475,12 +508,111 @@ def run_claimed_task(
     if url_problem is not None:
         return refuse(RefusalStage.REPO_URL, "unsupported_repo_url", url_problem)
 
+    # --- claim etiquette: read the issue, skip a duplicate, post a claim ------
+    # Best-effort and coordinator-free: a gh failure yields no state and the run
+    # proceeds unclaimed rather than refusing.  Ordered after the local repo and
+    # profile checks so a task this host would reject anyway never posts a claim.
+    claim_repo = repo_slug(task.repo_url) if claim is not None else None
+    claim_comment_id: int | None = None
+    if claim is not None and claim_repo is not None:
+        clock = now if now is not None else _utc_now
+        moment = clock()
+        state = claim.fetch_state(claim_repo, task.issue_number)
+        if state is not None:
+            decision = should_skip(state, now=moment, staleness=claim_staleness)
+            if decision.reason is not None:
+                return refuse(
+                    RefusalStage.CLAIM_TAKEN,
+                    decision.reason.value,
+                    _claim_taken_detail(decision.reason, task.issue_number),
+                )
+            existing = find_own_claim(state)
+            # Reuse only a *live* claim of ours: still inside the staleness
+            # window and not already resolved.  Reusing a stale or resolved one
+            # would skip posting a fresh claim -- so the task looks unclaimed to
+            # every other donor while this run has it -- and if this run then
+            # aborts, the release edit below would land on that old comment and
+            # overwrite whatever completion or release it already recorded.
+            if existing is not None and not existing.resolved and moment - existing.created_at < claim_staleness:
+                claim_comment_id = existing.rest_id
+        if claim_comment_id is None:
+            claim_comment_id = claim.post_claim(
+                claim_repo,
+                task.issue_number,
+                build_claim_body(fingerprint=resolve_fingerprint(claim_fingerprint), window=claim_staleness),
+            )
+
     workspace.mkdir(parents=True, exist_ok=True)
     clone_path = workspace / "clone"
     git_home = workspace / "git-home"
     git_home.mkdir(parents=True, exist_ok=True)
     env = host_git_env(home=git_home)
 
+    outcome = _run_sandbox_pipeline(
+        task=task,
+        session=session,
+        sanitize=sanitize,
+        agent_argv=agent_argv,
+        run_budget=run_budget,
+        refuse=refuse,
+        clone_path=clone_path,
+        env=env,
+        profile=profile,
+        manifest_sha256=manifest_sha256,
+    )
+
+    # An abort after a claim was posted releases it; a success leaves the claim
+    # standing for finish_volunteer_task to resolve into a completion.  The edit
+    # is best-effort for the same reason the post was.
+    if (
+        claim is not None
+        and claim_repo is not None
+        and claim_comment_id is not None
+        and isinstance(outcome, TaskRefusal)
+    ):
+        claim.edit_claim(
+            claim_repo,
+            claim_comment_id,
+            build_release_body(fingerprint=resolve_fingerprint(claim_fingerprint), reason=outcome.reason),
+        )
+    return outcome
+
+
+def _utc_now() -> datetime:
+    """Default clock for claim staleness: the current UTC instant."""
+    return datetime.now(UTC)
+
+
+def _claim_taken_detail(reason: SkipReason, number: int) -> str:
+    """Human-readable detail for a :attr:`RefusalStage.CLAIM_TAKEN` refusal."""
+    explanations = {
+        "assigned": "the issue is already assigned",
+        "closed": "the issue is closed",
+        "fresh_claim": "another donor holds a fresh claim on the issue",
+    }
+    return f"issue #{number} skipped: {explanations.get(reason.value, reason.value)}"
+
+
+def _run_sandbox_pipeline(
+    *,
+    task: ClaimedTask,
+    session: str,
+    sanitize: IssueTextSanitizer,
+    agent_argv: AgentArgvBuilder,
+    run_budget: WallClockBudget,
+    refuse: _Refuser,
+    clone_path: Path,
+    env: Mapping[str, str],
+    profile: VolunteerSandboxProfile,
+    manifest_sha256: str,
+) -> TaskOutcome:
+    """Clone, isolate, spawn under the wall clock, and read the diff.
+
+    Extracted from :func:`run_claimed_task` so its many refusal paths resolve to
+    a single returned value the caller can act on (releasing a claim on abort)
+    without threading release logic through every early return.  The containment
+    reasoning lives in the module docstring; this function changes none of it.
+    """
     if run_budget.exhausted:
         return refuse(RefusalStage.CLONE, "budget_exhausted", "the run budget was spent before the clone started")
     clone_outcome, _, clone_stderr = run_under_wall_clock(
