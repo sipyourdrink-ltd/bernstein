@@ -420,9 +420,22 @@ def test_conformance_below_min_hosts_exit_2(monkeypatch, tmp_path: Path) -> None
 
 
 def _image_repo(
-    root: Path, *, oci_tag: str = "3.4.1", catalog_image: str = "ghcr.io/sipyourdrink-ltd/bernstein"
+    root: Path,
+    *,
+    oci_tag: str = "3.4.1",
+    catalog_image: str = "ghcr.io/sipyourdrink-ltd/bernstein",
+    catalog_source_project: str = "https://github.com/sipyourdrink-ltd/bernstein",
+    catalog_source_commit: str = "ec2c1306eba4f51ace107382dab495156e7f20e6",
 ) -> Path:
-    """Write a minimal server.json + docker-mcp catalog for image-verify tests."""
+    """Write a minimal server.json + docker-mcp catalog for image-verify tests.
+
+    ``source.project`` / ``source.commit`` default to values that satisfy
+    ``verify_signed_image_provenance``'s catalog-consistency check (matching
+    the ``repository.url`` written below and a valid-shaped commit SHA), the
+    same pairing ``tests/unit/test_image_provenance.py`` uses for its own
+    ``server.yaml`` fixture — so a happy-path caller here gets a catalog
+    entry that is actually consistent, not just present.
+    """
     import json
 
     (root / "server.json").write_text(
@@ -441,7 +454,11 @@ def _image_repo(
     )
     catalog = root / "packaging" / "docker-mcp"
     catalog.mkdir(parents=True)
-    (catalog / "server.yaml").write_text(f"name: bernstein\nimage: {catalog_image}\n", encoding="utf-8")
+    (catalog / "server.yaml").write_text(
+        f"name: bernstein\nimage: {catalog_image}\nsource:\n"
+        f"  project: {catalog_source_project}\n  commit: {catalog_source_commit}\n",
+        encoding="utf-8",
+    )
     return root
 
 
