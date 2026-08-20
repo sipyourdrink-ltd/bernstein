@@ -63,6 +63,18 @@ def test_approval_path_in_refuses_symlinked_approvals_dir_escape(tmp_path: Path)
         approval_path_in(approvals, "task-1", ".approved")
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink semantics")
+def test_approval_path_in_refuses_a_decision_file_symlinked_deeper(tmp_path: Path) -> None:
+    """Contained is not sufficient: decision files are direct children."""
+    approvals = tmp_path / "approvals"
+    (approvals / "sub").mkdir(parents=True)
+    (approvals / "sub" / "x").write_text("planted\n", encoding="utf-8")
+    (approvals / "task-1.approved").symlink_to(approvals / "sub" / "x")
+
+    with pytest.raises(UnsafeApprovalIdError):
+        approval_path_in(approvals, "task-1", ".approved")
+
+
 @pytest.mark.parametrize("approval_id", ["../escape", "..", "nested/child", "", "-leading"])
 def test_approval_path_in_refuses_unsafe_ids(tmp_path: Path, approval_id: str) -> None:
     """The allowlist gate still refuses, and still with the same error type."""

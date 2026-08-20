@@ -144,10 +144,17 @@ def approval_path_in(approvals_dir: Path, approval_id: str, suffix: str) -> Path
     """
     validate_approval_id(approval_id)
     try:
-        return contained_path(approvals_dir, f"{approval_id}{suffix}", label="approval id")
+        candidate = contained_path(approvals_dir, f"{approval_id}{suffix}", label="approval id")
     except PathContainmentError as exc:
         msg = f"refusing approvals path outside {approvals_dir.resolve()} for id {approval_id!r}"
         raise UnsafeApprovalIdError(msg) from exc
+    # contained_path proves a strict descendant, not a direct child: a single
+    # segment that is itself a symlink deeper into the tree passes the prefix
+    # test. Decision files are always direct children of the approvals dir.
+    if candidate.parent != Path(os.path.realpath(approvals_dir)):
+        msg = f"refusing approvals path outside {approvals_dir.resolve()} for id {approval_id!r}"
+        raise UnsafeApprovalIdError(msg)
+    return candidate
 
 
 def approval_path(workdir: Path, approval_id: str, suffix: str) -> Path:
