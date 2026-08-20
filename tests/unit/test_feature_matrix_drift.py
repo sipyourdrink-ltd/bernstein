@@ -345,3 +345,42 @@ def test_preview_fences_stay_visible(
 
     assert entry_marker in entry_text
     assert blocker in entry_text
+
+
+def test_cloudflare_section_fenced_as_preview() -> None:
+    """Cloud / Cloudflare rows at maturity <= 2 must carry the Preview marker."""
+    text = _MATRIX.read_text(encoding="utf-8")
+
+    start = text.find("## Cloud / Cloudflare")
+    assert start != -1, "Cloud / Cloudflare section not found in feature matrix"
+
+    next_section_start = text.find("\n---\n", start)
+    if next_section_start == -1:
+        section_text = text[start:]
+    else:
+        section_text = text[start:next_section_start]
+
+    checked = 0
+    for line in section_text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|") or set(stripped) <= {"|", "-", ":", " "}:
+            continue
+        cells = [cell.strip() for cell in _CELL_SPLIT.split(stripped.strip("|"))]
+        if len(cells) != 4 or cells[0] in {"Capability", "Command", "Maturity"}:
+            continue
+
+        capability, _docs, maturity, notes = cells
+        if maturity.isdigit() and int(maturity) <= 2:
+            assert "**Preview.**" in notes, (
+                f"Cloud / Cloudflare row '{capability}' has maturity {maturity} "
+                "but is missing the **Preview.** marker in its Notes."
+            )
+            checked += 1
+
+    # Prevent the test from passing silently if parsing breaks
+    assert checked >= 9, f"expected to check the Cloud / Cloudflare rows, checked {checked}"
+
+    # Assert the entry page carries the warning
+    entry_page = _REPO_ROOT / "docs" / "cloudflare" / "cloudflare-overview.md"
+    entry_text = entry_page.read_text(encoding="utf-8")
+    assert "> **Preview:**" in entry_text, "cloudflare-overview.md missing the Preview entry marker"

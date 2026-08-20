@@ -236,5 +236,5 @@ check the profile against every gate above.
 | `pydantic_ai` | `FACTORY` | `clai -m <model> --no-stream <prompt>` |
 | `droid` | `MODULE` | `droid <prompt>` |
 | `kimi` | `MODULE` | `kimi --yolo -c <prompt>` |
-| `opencode` | `MODULE` | `opencode run -m <model> --format json <prompt>` |
+| `opencode` | `MODULE` | `opencode run -m <model> --format json --auto <prompt>` |
 | `goose` | `MODULE` | `goose run --text <prompt>` |

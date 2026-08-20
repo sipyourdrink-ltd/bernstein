@@ -2,7 +2,7 @@
 #
 # Pins the observable spawn outcome for the invocation surface the
 # contract in tests/contract/contracts/opencode.yaml declares
-# (``opencode run -m <model> --format json <prompt>``): a SpawnResult
+# (``opencode run -m <model> --format json --auto <prompt>``): a SpawnResult
 # carrying the child PID and a log path under the worktree's
 # .sdd/runtime/ directory. Replayed under a mocked subprocess, so the
 # transcript covers adapter-controlled invocation only and never
