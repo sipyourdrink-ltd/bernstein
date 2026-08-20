@@ -78,6 +78,7 @@ Bernstein is a deterministic orchestrator for CLI coding agents (Claude Code, Co
 | `teams/`                    | Named team manifests - pinned bundles of roles, model policies, and response profiles |
 | `telemetry/`                | Opt-in operator observability for Bernstein |
 | `tokens/`                   | tokens sub-package |
+| `tools/`                    | Tool support, execution, and coverage helpers |
 | `tournament/`               | Tournament runs: parallel attempts selected by deterministic evaluators (#2353) |
 | `trackers/`                 | Tracker adapter subsystem |
 | `trigger_sources/`          | Trigger source adapters - normalize raw events into TriggerEvent |
