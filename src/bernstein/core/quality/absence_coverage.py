@@ -167,16 +167,18 @@ def _parse_entry_coverage(entry: LineageEntry, store: LineageStore) -> ToolCover
                     return ToolCoverageRecord.from_dict(content)
     except Exception:
         pass
-    if entry.artefact_kind == "coverage":
-        return ToolCoverageRecord(
-            file_count=0,
-            corpus_digest=entry.content_hash,
-            coverage="complete",
-            truncated=False,
-            truncation_reason=None,
-            exit_status=0,
-            exit_checked=True,
-        )
+    # No real coverage payload could be recovered for this entry: a lineage
+    # entry anchors a `content_hash` commitment (see LineageEntry / entry.py),
+    # never the payload bytes themselves, so a coverage-kind entry whose
+    # content cannot be located in the by-artefact projection or the raw log
+    # carries no verifiable claim about what was actually covered - the id
+    # dangles, or the record predates any content it could be checked
+    # against. Fabricating a "complete, zero-file, non-truncated" record here
+    # would let *any* anchored (or malformed) coverage entry read as a fully
+    # verified absence claim regardless of what it actually covered, which is
+    # exactly the self-referential/empty-record spoof this module exists to
+    # refuse. Fail closed: report no coverage record rather than an invented
+    # one.
     return None
 
 

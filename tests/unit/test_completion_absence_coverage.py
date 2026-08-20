@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from bernstein.core.lineage.coverage import anchor_coverage_record
+from bernstein.core.lineage.coverage import anchor_coverage_record, find_coverage_for_tool_call
 from bernstein.core.lineage.identity import AgentCard, generate_keypair
 from bernstein.core.lineage.signed_write import SignedLineageLog
 from bernstein.core.lineage.store import LineageStore
@@ -121,7 +121,12 @@ def test_glob_exists_absence_with_coverage_reads_verified(tmp_path: Path) -> Non
     assert passed is True
     assert "verified" in detail.lower()
 
-    # Also test anchored lineage coverage discovery
+    # A lineage-anchored coverage record commits to a content_hash, not to
+    # the payload itself (see LineageEntry / entry.py), so it stays
+    # discoverable by tool_call_id but must NOT verify from the anchor
+    # alone: there is nothing recoverable to check the absence claim
+    # against. See test_dangling_coverage_entry_does_not_spoof_verification
+    # for the direct regression.
     sdd_lineage = workdir / ".sdd" / "lineage"
     sdd_lineage.mkdir(parents=True)
     priv_pem, pub_pem = generate_keypair()
@@ -138,9 +143,54 @@ def test_glob_exists_absence_with_coverage_reads_verified(tmp_path: Path) -> Non
         private_key_pem=priv_pem,
     )
 
+    found_entry = find_coverage_for_tool_call(store, "tc-glob-1")
+    assert found_entry is not None, "anchored coverage entry must still be discoverable by tool_call_id"
+
     passed_lineage, detail_lineage = evaluate_signal(signal, workdir, lineage_store=store)
-    assert passed_lineage is True
-    assert "verified" in detail_lineage.lower()
+    assert passed_lineage is False
+    assert "unverified" in detail_lineage.lower()
+
+
+def test_dangling_coverage_entry_does_not_spoof_verification(tmp_path: Path) -> None:
+    """A coverage-kind lineage entry with no recoverable payload must fail
+    closed, not read as a "complete, zero-file" verified absence.
+
+    Regression for a spoof where any lineage entry anchored with
+    ``artefact_kind="coverage"`` - even one with garbage content, or one
+    whose payload was simply never written back to the log - verified
+    every absence claim in the project as covered, because the anchor
+    carries only a ``content_hash`` commitment and the reader fabricated a
+    passing record whenever it could not recover the real payload.
+    """
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    sdd_lineage = workdir / ".sdd" / "lineage"
+    sdd_lineage.mkdir(parents=True)
+
+    priv_pem, pub_pem = generate_keypair()
+    card = AgentCard(agent_id="agent:cov", kid="k1", public_key_pem=pub_pem)
+    store = LineageStore(sdd_lineage)
+    recorder = SignedLineageLog(store=store, operator_hmac_key=b"0" * 64)
+
+    # Anchor a coverage-kind entry whose content is not a coverage record at
+    # all (simulates a dangling / unrecoverable reference: whatever the
+    # entry once described is not readable back from the store).
+    recorder.record_write(
+        artefact_path="coverage/list_dir/tc-dangling",
+        new_content=b"not a coverage record",
+        agent_id=card.agent_id,
+        agent_card=card,
+        private_key_pem=priv_pem,
+        tool_call_id="tc-dangling",
+        span_id="0000000000000000",
+        artefact_kind="coverage",
+    )
+    assert find_coverage_for_tool_call(store, "tc-dangling") is not None
+
+    signal = CompletionSignal(type="glob_exists", value="*.missing")
+    passed, detail = evaluate_signal(signal, workdir, lineage_store=store)
+    assert passed is False
+    assert "unverified" in detail.lower()
 
 
 def test_truncated_walk_coverage_reads_unverified(tmp_path: Path) -> None:
