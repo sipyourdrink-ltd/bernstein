@@ -96,20 +96,56 @@ and `visionary` roles (`SECTION_RULES["lessons"]` in
 for a short TTL so repeated spawns in the same batch do not re-read the
 file.
 
-## Limitation: nothing files lessons automatically yet
+## Convention receipts from review corrections (#3750)
 
-`file_lesson()` is fully implemented, tested, and safe to call — but no
-code path in the shipped orchestrator calls it. Nothing currently reads a
-task's outcome and writes a lesson on completion; the docstring's "agents
-file lessons when they complete tasks" describes the intended trigger, not
-current wiring. In practice, `.sdd/memory/lessons.jsonl` only gains entries
-if something outside the base orchestrator (a plugin, a custom hook, direct
-use of the Python API) calls `file_lesson()`.
+`bernstein.core.knowledge.conventions` gives a review correction a durable,
+checkable form: a signed, commit-pinned, chain-anchored **convention receipt**
+rather than a line of free text that cannot expire, cannot be checked for
+conflicts, and cannot be shown to have been in force at a given commit.
 
-The read/decay/injection path described above runs unconditionally at
-every qualifying spawn regardless of whether anything has ever filed a
-lesson — it is simply a no-op (empty `## Prior Agent Lessons` block) on a
-project where nothing has populated the file.
+Calling `file_review_correction()`:
+
+1. Routes the correction through `file_lesson()` with
+   `memory_type=MemoryType.FEEDBACK`, so it lands in the same store and decays
+   on the same schedule as every other lesson.
+2. Deduplicates against the receipts already on file, so the same correction
+   repeated across three reviews leaves one receipt at `version: 3` rather than
+   three rules saying the same thing.
+3. Binds the rule text hash, subject path or glob, optional subject symbol,
+   mandatory base commit SHA, and the executable assertion into one record
+   signed with the install's Ed25519 identity.
+4. Appends the filing to the HMAC audit chain (`convention.receipt`). Retirement
+   and expiry append `convention.retired`; neither is a delete.
+5. Rejects a correction that contradicts one already in force, naming both
+   receipt ids, instead of accepting both and leaving a reviewer to notice.
+
+`get_active_conventions()` returns the rules in force plus a `ruleset_hash`
+computed over what each rule demands — subject, rule text hash, pinned commit,
+assertion, version, status — and never over receipt ids or filing times, so two
+installs whose active rules agree agree on the digest. A rule whose
+`subject_symbol` no longer resolves at HEAD moves to `expired` and appends the
+chain entry saying so, so an expired rule is distinguishable from one that was
+never filed.
+
+`bernstein verify --memory-audit` covers both lesson memory provenance and the
+convention receipts: it runs the audit chain's own verifier and then checks each
+receipt's signature and its anchoring entry. A receipt whose rule text was
+rewritten in the store, or whose anchor was hand-appended to the log, fails and
+is named.
+
+## Limitation: nothing files corrections automatically yet
+
+`file_review_correction()` — like `file_lesson()` before it — is implemented,
+tested, and safe to call, but no code path in the shipped orchestrator calls it.
+Filing is currently an explicit act: a plugin, a hook, or direct use of the
+Python API. Until something in the review path calls it, `.sdd/memory/lessons.jsonl`
+and `.sdd/conventions/receipts/` stay empty on a fresh install, and the
+read/decay/injection path above remains a no-op — an empty
+`## Prior Agent Lessons` block.
+
+General task-completion outcomes are a separate, broader gap: nothing reads a
+task's outcome and files a lesson on completion either.
+
 
 ## Related, different subsystem
 

@@ -15,7 +15,10 @@ import uuid
 from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 from bernstein.core.observability.log_redact import redact_sensitive_text
 
@@ -57,6 +60,8 @@ class TraceStep:
     compaction_tokens_before: int = 0
     compaction_tokens_after: int = 0
     compaction_reason: str = ""
+    compaction_source_content_hash: str = ""
+    compaction_referenced_content_hashes: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -78,6 +83,10 @@ class TraceStep:
             compaction_tokens_before=cast("int", d.get("compaction_tokens_before", 0)),
             compaction_tokens_after=cast("int", d.get("compaction_tokens_after", 0)),
             compaction_reason=d.get("compaction_reason", ""),
+            compaction_source_content_hash=d.get("compaction_source_content_hash", ""),
+            compaction_referenced_content_hashes=cast(
+                "dict[str, str]", d.get("compaction_referenced_content_hashes", {})
+            ),
         )
 
 
@@ -672,6 +681,10 @@ def record_compaction_boundary(
     tokens_before: int,
     tokens_after: int,
     reason: str,
+    *,
+    source_content_hash: str = "",
+    referenced_content_hashes: Mapping[str, str] | None = None,
+    files: list[str] | None = None,
 ) -> TraceStep:
     """Create a TraceStep marking a context compaction boundary.
 
@@ -685,20 +698,29 @@ def record_compaction_boundary(
         tokens_before: Token count before compaction.
         tokens_after: Token count after compaction.
         reason: Why compaction was triggered (e.g., ``"token_budget"``).
+        source_content_hash: Content hash of the exact pre-compaction region.
+        referenced_content_hashes: Mapping of referenced artifact paths to hashes.
+        files: Optional list of files involved. If not specified, inferred from
+            the keys of ``referenced_content_hashes``.
 
     Returns:
         The created TraceStep (caller should append to ``trace.steps``).
     """
     saved = tokens_before - tokens_after if tokens_before > tokens_after else 0
+    ref_hashes = dict(referenced_content_hashes or {})
+    step_files = list(files) if files is not None else list(ref_hashes.keys())
     step = TraceStep(
         type="compact",
         timestamp=time.time(),
         detail=(f"compaction v1: {tokens_before} -> {tokens_after} (-{saved} tokens), reason={reason}"),
+        files=step_files,
         tokens=saved,
         compaction_correlation_id=correlation_id,
         compaction_tokens_before=tokens_before,
         compaction_tokens_after=tokens_after,
         compaction_reason=reason,
+        compaction_source_content_hash=source_content_hash,
+        compaction_referenced_content_hashes=ref_hashes,
     )
     return step
 
