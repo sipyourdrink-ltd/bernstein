@@ -66,7 +66,9 @@ whatever the last person in a hurry did.
 ```bash
 uv run python scripts/run_tests.py -x        # all tests (isolated per-file, stops on first failure)
 uv run python scripts/run_tests.py -k router  # filter by keyword
-uv run pytest tests/unit/test_foo.py -x -q    # single file (fast)
+uv run python scripts/run_tests.py tests/unit/test_foo.py            # single file
+uv run python scripts/run_tests.py tests/unit/test_foo.py::test_bar  # single test
+uv run pytest tests/unit/test_foo.py -x -q    # single file, straight pytest
 ```
 
 > **WARNING: Never run `uv run pytest tests/ -x -q`** - the full suite keeps references across 2000+ tests and can leak 100+ GB RAM. The isolated runner in `scripts/run_tests.py` caps each file at ~200 MB.
