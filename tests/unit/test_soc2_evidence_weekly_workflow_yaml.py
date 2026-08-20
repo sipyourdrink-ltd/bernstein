@@ -170,3 +170,107 @@ def test_retention_is_githubs_ceiling_and_the_workflow_says_so() -> None:
     raw = WORKFLOW.read_text(encoding="utf-8")
     assert "GitHub's hard ceiling" in raw
     assert "#3966" in raw, "the workflow comment must reference the durable-export follow-up issue"
+
+
+def test_export_step_present_in_pack_job() -> None:
+    """The pack job must include a step to export the pack to a configured sink."""
+    pack = _job("pack")
+    step = _step_by_name(pack, "Export evidence pack to sink")
+    assert step is not None
+    env = step.get("env", {})
+    assert isinstance(env, dict)
+    assert "SOC2_EVIDENCE_SINK" in env
+
+
+def test_export_step_static_checks() -> None:
+    """The export step script must handle both active export and dormant warning branches."""
+    pack = _job("pack")
+    run = _step_by_name(pack, "Export evidence pack to sink").get("run", "")
+    assert isinstance(run, str)
+    assert "SOC2_EVIDENCE_SINK" in run
+    assert "export_soc2_evidence_pack" in run
+    assert "::warning::" in run
+    assert "GITHUB_STEP_SUMMARY" in run
+
+
+def test_export_step_with_sink_unset_warns_and_writes_summary(tmp_path: Path) -> None:
+    """When SOC2_EVIDENCE_SINK is unset, the step stays green but emits a warning and summary."""
+    pack = _job("pack")
+    run = _step_by_name(pack, "Export evidence pack to sink").get("run", "")
+    assert isinstance(run, str)
+
+    output_path = tmp_path / "github_output.txt"
+    summary_path = tmp_path / "github_step_summary.txt"
+    output_path.write_text("", encoding="utf-8")
+    summary_path.write_text("", encoding="utf-8")
+
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "GITHUB_OUTPUT": str(output_path),
+        "GITHUB_STEP_SUMMARY": str(summary_path),
+        "PERIOD_LABEL": "weekly",
+        "RUN_ID": "12345",
+    }
+
+    proc = subprocess.run(
+        ["bash", "-c", run],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode == 0
+    assert "::warning::" in proc.stdout
+    assert "SOC2_EVIDENCE_SINK is unset" in proc.stdout
+    summary = summary_path.read_text(encoding="utf-8")
+    assert "SOC2_EVIDENCE_SINK" in summary
+    assert "dormant" in summary.lower() or "skipped" in summary.lower()
+
+
+def test_export_step_access_control_and_retention_policy_commented() -> None:
+    """Workflow comments must declare write access, read access, and retention policy."""
+    raw = WORKFLOW.read_text(encoding="utf-8")
+    assert "Write access:" in raw
+    assert "Read access:" in raw
+    assert "Retention policy:" in raw
+
+
+def test_export_step_with_sink_set_executes_export(tmp_path: Path) -> None:
+    """When SOC2_EVIDENCE_SINK is set, the step invokes the exporter without warnings."""
+    pack = _job("pack")
+    run = _step_by_name(pack, "Export evidence pack to sink").get("run", "")
+    assert isinstance(run, str)
+
+    evidence_dir = tmp_path / ".sdd" / "evidence" / "soc2"
+    evidence_dir.mkdir(parents=True)
+    (evidence_dir / "soc2-evidence-weekly.md").write_text("# Weekly", encoding="utf-8")
+    (evidence_dir / "soc2-evidence-weekly.json").write_text("{}", encoding="utf-8")
+
+    output_path = tmp_path / "github_output.txt"
+    summary_path = tmp_path / "github_step_summary.txt"
+    output_path.write_text("", encoding="utf-8")
+    summary_path.write_text("", encoding="utf-8")
+
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "GITHUB_OUTPUT": str(output_path),
+        "GITHUB_STEP_SUMMARY": str(summary_path),
+        "PERIOD_LABEL": "weekly",
+        "RUN_ID": "12345",
+        "SOC2_EVIDENCE_SINK": "local_fs",
+    }
+
+    proc = subprocess.run(
+        ["bash", "-c", run],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode == 0
+    assert "SOC2_EVIDENCE_SINK detected" in proc.stdout
+    assert "::warning::" not in proc.stdout
+    assert summary_path.read_text(encoding="utf-8") == ""
