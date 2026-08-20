@@ -206,11 +206,28 @@ def test_missing_journal_kills_and_records_verdict_with_degraded_receipt(tmp_pat
 
     assert orch._spawner.kill.called
     assert len(_chain_verdicts(tmp_path)) == 1
-    assert len(_chain_receipts(tmp_path)) == 1
+    receipts = _chain_receipts(tmp_path)
+    assert len(receipts) == 1
     files = _receipt_files(tmp_path)
     assert len(files) == 1
     ok, reason = _verify_auto_receipt(tmp_path, files[0])
     assert ok, reason
+
+    # The chain entry itself must carry the degradation: an auditor walking the
+    # chain alone cannot otherwise tell a kill with an absent journal from one
+    # whose window reconstructs.
+    assert receipts[0].details["journal_state"] == "missing"
+
+
+def test_present_journal_receipt_leaves_the_chain_payload_unchanged(tmp_path: Path) -> None:
+    """``journal_state`` appears in the mirror only when it is not 'present'."""
+    _build_journal(tmp_path)
+    orch = _heartbeat_orch(tmp_path, _session())
+    _escalate_stall_simple(orch, orch._agents["A-1"], "T-1", count=AGENT.escalation_kill_count)
+
+    receipts = _chain_receipts(tmp_path)
+    assert len(receipts) == 1
+    assert "journal_state" not in receipts[0].details
 
 
 def test_assembly_failure_never_blocks_the_kill(tmp_path: Path) -> None:

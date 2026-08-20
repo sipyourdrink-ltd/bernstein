@@ -78,5 +78,19 @@ rather than as its own attribution is exempted by hand there, with the reason.
   of reaching `open()` as `OSError(ENAMETOOLONG)` (the same capacity-vs-
   containment distinction #4095 recorded for the pid-file sites).
 
-- Stall escalation produces a degraded terminal receipt on a missing or empty event journal instead of raising (#3737).
+- Stall escalation produces a degraded terminal receipt on a missing or empty
+  event journal instead of raising (#3737). The kill already happened in that
+  case; refusing to build the receipt left nothing in the chain to tell
+  "terminated with a recorded cause" from "never concluded". The receipt now
+  carries `journal_state` (`missing` / `empty`) in place of the reconstructed
+  window, signs and anchors on the escalation spine like any other terminal
+  receipt, and the `escalation.receipt` chain mirror records the same field, so
+  the degradation is visible from the chain alone. `EscalationError` still
+  raises for genuinely malformed input — a non-positive window, or a `fork_step`
+  no snapshot event pins. The recorded absence stays falsifiable: verifying a
+  receipt that claims `missing` against a run whose journal does hold entries
+  fails and names the contradiction, rather than letting `journal_state` become
+  a standing bypass of the window reconstruction every other receipt is held
+  to. `bernstein escalation verify` reports these as `OK (degraded)` instead of
+  claiming a window reconstructed from a journal that was never there.
 

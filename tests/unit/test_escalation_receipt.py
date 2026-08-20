@@ -417,3 +417,60 @@ def test_empty_journal_produces_degraded_terminal_receipt(tmp_path: Path) -> Non
         receipt_id=receipt.receipt_id,
     )
     assert result.ok, result.reason
+
+
+def test_degraded_receipt_verify_names_the_degradation(tmp_path: Path) -> None:
+    """A degraded receipt verifies, but never reports as a reconstructed window.
+
+    ``ok`` alone cannot be the whole answer: a caller that only reads ``ok``
+    would print "failure window reconstructs from the journal" over a receipt
+    that never had a window. The reason names the journal state instead.
+    """
+    receipt = _assemble_missing_journal(tmp_path)
+    result = verify_escalation_receipt(
+        sdd_dir=_sdd(tmp_path),
+        lineage_root=_lineage_root(tmp_path),
+        hmac_key=_HMAC_KEY,
+        receipt_id=receipt.receipt_id,
+    )
+    assert result.ok
+    assert "missing" in result.reason
+    assert "degraded" in result.reason
+
+
+def test_degraded_empty_receipt_verify_names_the_degradation(tmp_path: Path) -> None:
+    receipt = _assemble_empty_journal(tmp_path)
+    result = verify_escalation_receipt(
+        sdd_dir=_sdd(tmp_path),
+        lineage_root=_lineage_root(tmp_path),
+        hmac_key=_HMAC_KEY,
+        receipt_id=receipt.receipt_id,
+    )
+    assert result.ok
+    assert "empty" in result.reason
+    assert "degraded" in result.reason
+
+
+def test_missing_journal_receipt_fails_when_the_journal_is_there_after_all(tmp_path: Path) -> None:
+    """A recorded absence stays falsifiable.
+
+    ``journal_state='missing'`` skips the window reconstruction every other
+    receipt is held to, so the claim itself has to be checked: a journal that
+    holds entries for the run contradicts the receipt, and verification must
+    say so instead of returning clean.
+    """
+    receipt = _assemble_missing_journal(tmp_path)
+    journal = _build_journal(tmp_path, n_events=5, with_snapshot_at=None)
+    del journal
+    assert load_events(_sdd(tmp_path) / "runs" / _RUN_ID / "journal.jsonl").events
+
+    result = verify_escalation_receipt(
+        sdd_dir=_sdd(tmp_path),
+        lineage_root=_lineage_root(tmp_path),
+        hmac_key=_HMAC_KEY,
+        receipt_id=receipt.receipt_id,
+    )
+    assert not result.ok
+    assert "contradicted by the store" in result.reason
+    assert _RUN_ID in result.reason
+    assert "5 entries" in result.reason

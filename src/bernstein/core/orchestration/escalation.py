@@ -560,6 +560,20 @@ class EscalationVerifyResult:
     receipt: EscalationReceipt | None = None
 
 
+def _degraded_reason(state: str) -> str:
+    """Return the note a degraded receipt carries on an otherwise-ok verify.
+
+    A degraded receipt verifies its signature and its spine anchor like any
+    other, but there is no window to recompute -- so ``ok`` must not read the
+    same as a receipt whose window reconstructed. Callers surface this note
+    instead of claiming the window was reconstructed from the journal.
+    """
+    return (
+        f"degraded terminal receipt: the run journal was {state} when the kill was "
+        f"issued, so the failure window is recorded as absent rather than reconstructed"
+    )
+
+
 def _recompute_anchor(spine: LineageSpine, canonical: bytes) -> str | None:
     """Return the spine entry hash whose content matches ``canonical`` bytes."""
     want = content_hash_of(canonical)
@@ -590,7 +604,15 @@ def verify_escalation_receipt(
       byte-identical ``event_hash`` list the receipt recorded (AC2). A tampered
       journal entry inside the window rehashes and diverges here.
 
-    ``ok`` is True only when every recomputation matches.
+    A degraded receipt (``journal_state`` of ``'missing'`` or ``'empty'``, #3737)
+    has no window to recompute, so the last check cannot apply -- but the
+    recorded absence is still checked against the store rather than trusted: a
+    receipt claiming ``'missing'`` for a run whose journal now holds entries
+    fails, naming the contradiction. A degraded receipt that does verify returns
+    ``ok`` with a non-empty ``reason`` naming the degradation, so a caller never
+    reports it as a window that reconstructed.
+
+    ``ok`` is True only when every applicable recomputation matches.
     """
     receipt = read_escalation_receipt(sdd_dir, receipt_id)
     if receipt is None:
@@ -633,10 +655,27 @@ def verify_escalation_receipt(
             receipt=receipt,
         )
 
-    if receipt.journal_state == "missing":
-        return EscalationVerifyResult(ok=True, reason="", receipt=receipt)
-
     journal_path = _journal_path(sdd_dir, receipt.run_id)
+    if receipt.journal_state == "missing":
+        # A degraded receipt records that no journal existed when the kill was
+        # issued. That claim still has to be falsifiable: if a journal for the
+        # run now holds entries, the recorded absence is contradicted by the
+        # store and the receipt must not verify clean -- otherwise
+        # ``journal_state="missing"`` would be a standing bypass of the window
+        # reconstruction every other receipt is held to.
+        now_present = load_events(journal_path).events if journal_path.exists() else []
+        if now_present:
+            return EscalationVerifyResult(
+                ok=False,
+                reason=(
+                    f"receipt records journal_state='missing' but the run journal for "
+                    f"{receipt.run_id!r} now holds {len(now_present)} entries; the "
+                    f"recorded absence is contradicted by the store"
+                ),
+                receipt=receipt,
+            )
+        return EscalationVerifyResult(ok=True, reason=_degraded_reason("missing"), receipt=receipt)
+
     if not journal_path.exists():
         return EscalationVerifyResult(
             ok=False,
@@ -661,6 +700,8 @@ def verify_escalation_receipt(
             receipt=receipt,
         )
 
+    if receipt.journal_state != "present":
+        return EscalationVerifyResult(ok=True, reason=_degraded_reason(receipt.journal_state), receipt=receipt)
     return EscalationVerifyResult(ok=True, reason="", receipt=receipt)
 
 
