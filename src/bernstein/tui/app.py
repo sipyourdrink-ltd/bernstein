@@ -19,7 +19,7 @@ from contextlib import suppress
 import httpx
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Static
 
 from bernstein.tui.accessibility import AccessibilityConfig, detect_accessibility
@@ -306,7 +306,9 @@ class BernsteinApp(App[None]):
         yield StatusBar(id="top-bar")
         # TUI-008: Horizontal container to support split-pane layout
         with Horizontal(id="main-body"):
-            with Vertical(id="left-pane"):
+            # Scroll each pane as one ordered column. Per-widget scrollbars would
+            # make navigation ambiguous while changing the existing composition.
+            with VerticalScroll(id="left-pane"):
                 yield TaskSearchInput(id="task-search")
                 yield TaskListWidget(id="task-list")
                 yield TaskTimeline(id="task-timeline")
@@ -316,7 +318,7 @@ class BernsteinApp(App[None]):
                 yield ApprovalPanel(id="approval-panel")
                 yield ToolObserverWidget(id="tool-observer")
                 yield ActionBar(id="action-bar")
-            with Vertical(id="right-pane"):
+            with VerticalScroll(id="right-pane"):
                 yield TaskContextPanel(id="task-context")
                 yield RuntimeHealthPanel(id="runtime-health")
                 yield NotificationCenterPanel(id="notification-center")

@@ -205,7 +205,7 @@ def _avoid_shim_line_overflow(
     prompt = cmd[-1]
     prompt_dir = workdir / ".sdd" / "runtime" / "prompts"
     prompt_dir.mkdir(parents=True, exist_ok=True)
-    prompt_path = prompt_dir / f"{session}.stdin-overflow"
+    prompt_path = contained_path(prompt_dir, f"{session}.stdin-overflow", label="session id")
     prompt_path.write_text(prompt, encoding="utf-8")
 
     trimmed_cmd = cmd[:-1]  # drop the prompt; keep the bare flag

@@ -17,6 +17,11 @@
 # plugin (mkdocs.yml); the matching native libs (libcairo, ...) are installed
 # by `.readthedocs.yaml::build.apt_packages`.
 mkdocs>=1.6.1,<2
+# Material for MkDocs reaches EOL on 2026-11-05 (Issue #3990).
+# Decision matrix (documented in docs/reference/mkdocs-material-coupling.md):
+# 1. GHSA security advisory against mkdocs-material -> immediate theme migration.
+# 2. Build-chain incompatibility on required Python/mkdocs version -> forced migration.
+# 3. Calendar check at v3.19.0 milestone (2026-10-08) -> re-evaluate status.
 mkdocs-material[imaging]>=9.7.7,<10
 mkdocs-minify-plugin>=0.8,<1
 # Cap below 1.2.3: that release added a runtime dependency on `properdocs`

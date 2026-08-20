@@ -32,6 +32,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Literal
 
+from bernstein.core.security.path_containment import (
+    PathContainmentError,
+    contained_subpath,
+)
 from bernstein.core.security.url_allowlist import UrlSchemeError, ensure_http_url
 
 logger = logging.getLogger(__name__)
@@ -244,11 +248,17 @@ def _extract_archive(archive_path: Path, dest: Path) -> None:
     name = archive_path.name
     if name.endswith(".zip"):
         with zipfile.ZipFile(archive_path) as zf:
-            resolved_dest = dest.resolve()
             for info in zf.infolist():
-                target = (resolved_dest / info.filename).resolve()
-                if not target.is_relative_to(resolved_dest):
-                    raise ValueError(f"Zip entry would escape target directory: {info.filename}")
+                # contained_subpath splits on both '/' and '\\' regardless of
+                # host platform, so a hostile entry spelled with backslashes
+                # is refused here too -- the zip spec uses '/', but nothing
+                # stops a crafted archive from writing '\\' into the name,
+                # and the old single-separator check let that through inert
+                # on POSIX (a literal backslash byte, not a traversal).
+                try:
+                    target = contained_subpath(dest, info.filename, label="zip entry")
+                except PathContainmentError as exc:
+                    raise ValueError(f"Zip entry would escape target directory: {info.filename}") from exc
                 if info.is_dir():
                     target.mkdir(parents=True, exist_ok=True)
                     _apply_zip_unix_mode(target, info)

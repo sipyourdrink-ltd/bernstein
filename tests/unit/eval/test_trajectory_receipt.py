@@ -484,6 +484,33 @@ def test_trajectory_receipt_path_rejects_non_sha256(tmp_path: Path) -> None:
         trajectory_receipt_path(tmp_path, "not-a-hash")
 
 
+def test_trajectory_receipt_path_refuses_hash_that_resolves_outside_bench_dir(tmp_path: Path) -> None:
+    """A pre-planted symlink named ``<hash>.json`` must not smuggle a read/write outside bench.
+
+    The hash itself can never carry ``..`` -- ``_RECEIPT_HASH_RE`` only admits
+    hex -- so the only way this check can fire is the final path component
+    already existing as a symlink out of the bench directory before this
+    function resolves it.
+    """
+    receipt_hash = "sha256:" + "c" * 64
+    workdir = tmp_path / "workdir"
+    bench_dir = workdir.joinpath(".sdd", "eval", "bench")
+    bench_dir.mkdir(parents=True)
+    outside = tmp_path / "host-secret.json"
+    outside.write_text("not a receipt", encoding="utf-8")
+    (bench_dir / f"{receipt_hash}.json").symlink_to(outside)
+
+    with pytest.raises(ValueError, match="escapes bench directory"):
+        trajectory_receipt_path(workdir, receipt_hash)
+
+
+def test_trajectory_receipt_path_accepts_the_ordinary_case(tmp_path: Path) -> None:
+    """Positive control: an un-planted hash still resolves under bench, unaltered."""
+    receipt_hash = "sha256:" + "d" * 64
+    path = trajectory_receipt_path(tmp_path, receipt_hash)
+    assert path == tmp_path.resolve() / ".sdd" / "eval" / "bench" / f"{receipt_hash}.json"
+
+
 # ---------------------------------------------------------------------------
 # Byte integrity -- verification must hash the stored bytes, not a projection
 # ---------------------------------------------------------------------------

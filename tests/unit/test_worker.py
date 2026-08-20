@@ -18,6 +18,10 @@ from bernstein.core.orchestration.worker import (
     _avoid_shim_line_overflow,
     _resolve_launch_cmd,
 )
+from bernstein.core.security.path_containment import (
+    PathContainmentError,
+    PathTooLongError,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -265,6 +269,46 @@ class TestAvoidShimLineOverflow:
         assert result == launch_cmd
         assert prompt in result
         assert prompt_path is None
+
+    def test_overflow_prompt_refuses_escaping_session_id(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """A session value that could escape prompt_dir is refused by containment.
+
+        Defence in depth: the CLI already rejects this value via
+        ``_SESSION_ID_RE`` in ``main()``, so the branch is only reachable by
+        calling the function directly with a value that skips CLI validation
+        (the same framing the ``review_board.py`` conversion in #3858 used).
+        The prompt filename is derived from *session*, so without the
+        containment check a hostile session would name a file anywhere the
+        process can write.
+        """
+        prompt = "x" * 16_043
+        cmd = ["claude", "--model", "sonnet", "-p", prompt]
+        launch_cmd = self._windows_shim_launch_cmd(monkeypatch, cmd)
+
+        with pytest.raises(PathContainmentError):
+            _avoid_shim_line_overflow(cmd, launch_cmd, workdir=tmp_path, session="../escape")
+
+        # The uncontained join would have written here; nothing was created.
+        prompt_dir = tmp_path / ".sdd" / "runtime" / "prompts"
+        assert not (prompt_dir / ".." / "escape.stdin-overflow").exists()
+        assert not list(prompt_dir.glob("*.stdin-overflow"))
+
+    def test_overflow_prompt_refuses_overlong_session_id(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """An over-long session now fails as PathTooLongError, not ENAMETOOLONG.
+
+        ``contained_path`` caps a single component at 255 bytes. ``_SESSION_ID_RE``
+        has no length bound, so an id that passes the CLI allowlist but exceeds
+        the filesystem limit previously failed at ``open()`` with
+        ``OSError(ENAMETOOLONG)``; it now fails at the check instead (the same
+        capacity-vs-containment distinction PR #4095 pinned for the pid-file
+        sites).
+        """
+        prompt = "x" * 16_043
+        cmd = ["claude", "--model", "sonnet", "-p", prompt]
+        launch_cmd = self._windows_shim_launch_cmd(monkeypatch, cmd)
+
+        with pytest.raises(PathTooLongError):
+            _avoid_shim_line_overflow(cmd, launch_cmd, workdir=tmp_path, session="a" * 300)
 
 
 # ---------------------------------------------------------------------------

@@ -55,6 +55,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
+from bernstein.core.security.path_containment import (
+    PathContainmentError,
+    contained_subpath,
+)
 from bernstein.eval.metrics import EvalScoreComponents, TierScores
 from bernstein.eval.significance import suite_content_hash
 
@@ -472,11 +476,19 @@ def trajectory_receipt_path(workdir: Path, receipt_hash: str) -> Path:
         msg = f"receipt_hash is not a canonical sha256 digest: {receipt_hash!r}"
         raise ValueError(msg)
     base = workdir.joinpath(*_BENCH_SUBPATH)
-    candidate = base / f"{receipt_hash}.json"
-    if not candidate.resolve().is_relative_to(base.resolve()):
+    # contained_subpath, not contained_path: the canonical hash carries a
+    # ``sha256:`` prefix, and contained_path's single-segment allowlist has no
+    # ':' in it. The candidate is still one path component -- no '/' or '\\'
+    # ever reaches validate_relative_path -- so contained_subpath's weaker,
+    # multi-component-shaped check enforces the same barrier this needs: the
+    # allowlist step is a no-op given _RECEIPT_HASH_RE above, and the
+    # realpath-containment step is what actually guards a pre-planted symlink
+    # named "<hash>.json" inside the bench directory.
+    try:
+        return contained_subpath(base, f"{receipt_hash}.json", label="receipt hash")
+    except PathContainmentError as exc:
         msg = f"receipt path escapes bench directory: {receipt_hash!r}"
-        raise ValueError(msg)
-    return candidate
+        raise ValueError(msg) from exc
 
 
 # ---------------------------------------------------------------------------
