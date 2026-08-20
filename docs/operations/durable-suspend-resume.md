@@ -173,6 +173,14 @@ deliberate: the empty role resolves to the *unrestricted* permission set, which
 the resume would re-derive identically, so hashing it would produce a
 checkpoint that looks bound and can never refuse. Absence stays absence.
 
+A resume that clears that check appends one more journal row,
+`task.grant_continuation`, binding the checkpoint's own hash, its `grant_hash`,
+and both chain heads -- the suspend row's and the resume row's. It is what lets
+a verifier holding only a copy of the journal chain the two halves of the run
+together, without reading `.sdd/runtime/`. A park that wrote no grant produces
+no continuation row, and a task with no checkpoint at all produces none either;
+in both cases the verifier reads the resumed run as a new run rather than as an
+attested continuation.
 ## Commands
 
 ```bash

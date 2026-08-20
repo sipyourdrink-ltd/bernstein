@@ -937,6 +937,15 @@ EVENT_IDENTITY_SPAWN_ATTESTATION = "identity.spawn_attestation"
 #: entry.
 EVENT_CLEAN_RUN_ATTESTATION = "eval.clean_run_attestation"
 
+#: Issue #3750 -- emitted whenever a convention receipt is created or updated
+#: from a review correction. Records the receipt identity, rule text hash,
+#: target path, symbol, base commit sha, version, and status in the audit chain.
+EVENT_CONVENTION_RECEIPT = "convention.receipt"
+
+#: Issue #3750 -- emitted whenever an active convention receipt is retired.
+#: Records the receipt ID, retiring actor, rationale, and superseding receipt ID.
+EVENT_CONVENTION_RETIRED = "convention.retired"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -2289,6 +2298,98 @@ def record_review_receipt(
             "diff_hash": diff_hash,
             "verdict": verdict,
             "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
+def record_convention_receipt(
+    *,
+    chain: AuditChainStore,
+    receipt_id: str,
+    rule_text_hash: str,
+    subject_path: str,
+    subject_symbol: str,
+    base_commit_sha: str,
+    filing_finding_id: str,
+    decided_by: str,
+    version: int,
+    status: str = "active",
+    actor: str = "conventions",
+) -> AuditEvent:
+    """Append a ``convention.receipt`` event into *chain*.
+
+    Mirrors a convention receipt into the HMAC-chained audit log so an operator
+    can verify provenance, version, and integrity of conventions across reviews.
+
+    Args:
+        chain: The audit chain store.
+        receipt_id: Unique receipt identifier.
+        rule_text_hash: SHA-256 of the rule text.
+        subject_path: File path or glob the rule binds to.
+        subject_symbol: Symbol name within the subject path.
+        base_commit_sha: Commit SHA when the convention was learned.
+        filing_finding_id: Originating finding or review task ID.
+        decided_by: Actor who decided/confirmed the convention.
+        version: Version counter (incremented on dedup update).
+        status: Status string ('active', 'retired', 'expired').
+        actor: Audit event actor.
+
+    Returns:
+        The recorded :class:`AuditEvent`.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_CONVENTION_RECEIPT,
+        actor=actor,
+        resource_type="convention_receipt",
+        resource_id=receipt_id,
+        details={
+            "receipt_id": receipt_id,
+            "rule_text_hash": rule_text_hash,
+            "subject_path": subject_path,
+            "subject_symbol": subject_symbol,
+            "base_commit_sha": base_commit_sha,
+            "filing_finding_id": filing_finding_id,
+            "decided_by": decided_by,
+            "version": version,
+            "status": status,
+        },
+    )
+
+
+def record_convention_retired(
+    *,
+    chain: AuditChainStore,
+    receipt_id: str,
+    retired_by: str,
+    reason: str = "",
+    superseded_by: str = "",
+    actor: str = "conventions",
+) -> AuditEvent:
+    """Append a ``convention.retired`` event into *chain*.
+
+    Records the retirement of a convention rule as a tamper-evident chain event.
+
+    Args:
+        chain: The audit chain store.
+        receipt_id: Receipt ID being retired.
+        retired_by: Actor initiating the retirement.
+        reason: Human-readable reason for retirement.
+        superseded_by: Optional receipt ID of superseding rule.
+        actor: Audit event actor.
+
+    Returns:
+        The recorded :class:`AuditEvent`.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_CONVENTION_RETIRED,
+        actor=actor,
+        resource_type="convention_receipt",
+        resource_id=receipt_id,
+        details={
+            "receipt_id": receipt_id,
+            "retired_by": retired_by,
+            "reason": reason,
+            "superseded_by": superseded_by,
         },
     )
 
@@ -8256,6 +8357,8 @@ __all__ = [
     "EVENT_COMPACTION_SENSITIVE_GATE",
     "EVENT_COMPUTER_USE_ACTION",
     "EVENT_CONTEXT_CAPSULE",
+    "EVENT_CONVENTION_RECEIPT",
+    "EVENT_CONVENTION_RETIRED",
     "EVENT_COST_BATCH_ROUTE",
     "EVENT_COST_DISPATCH_RECEIPT",
     "EVENT_COST_PROFILE_REPORT",
@@ -8394,6 +8497,8 @@ __all__ = [
     "record_clean_run_attestation",
     "record_computer_use_action",
     "record_context_capsule",
+    "record_convention_receipt",
+    "record_convention_retired",
     "record_cost_batch_route",
     "record_cost_dispatch_receipt",
     "record_cost_profile_report",
