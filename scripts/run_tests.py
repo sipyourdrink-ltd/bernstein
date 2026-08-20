@@ -98,6 +98,7 @@ MEMORY_HEAVY_FILES: frozenset[str] = frozenset(
     }
 )
 
+
 def split_memory_heavy(files: list[Path]) -> tuple[list[Path], list[Path]]:
     """Split files into normal and memory-heavy lists for scheduling."""
     heavy = [f for f in files if f.name in MEMORY_HEAVY_FILES]

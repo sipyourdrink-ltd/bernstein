@@ -1,5 +1,7 @@
 from pathlib import Path
-from scripts.run_tests import split_memory_heavy, MEMORY_HEAVY_FILES
+
+from scripts.run_tests import split_memory_heavy
+
 
 def test_split_memory_heavy_separates_heavy_files():
     files = [
