@@ -943,3 +943,184 @@ class TestConventionReceipts:
         audit_res = verify_conventions_audit(sdd_dir)
         assert audit_res.valid
         assert len(audit_res.errors) == 0
+
+    def test_unrelated_assertions_on_one_file_are_not_a_conflict(self, tmp_path: Path) -> None:
+        """Two rules that merely touch the same file both file cleanly.
+
+        "Cannot both hold" is the conflict test, not "names the same file".
+        Rejecting two independent assertions over one file refuses legitimate
+        filings, which is worse than accepting them: the operator is told a
+        contradiction exists where none does.
+        """
+        from bernstein.core.knowledge.conventions import file_review_correction
+
+        sdd_dir = tmp_path / ".sdd"
+        sdd_dir.mkdir(parents=True)
+
+        first = file_review_correction(
+            sdd_dir=sdd_dir,
+            workdir=tmp_path,
+            rule_text="Log sinks in the auth module take sanitised values",
+            subject_path="src/handlers/auth.py",
+            base_commit_sha="commit-1",
+            assertion_ref={"kind": "regex_in_file", "target": "src/handlers/auth.py::sanitize_log"},
+        )
+        second = file_review_correction(
+            sdd_dir=sdd_dir,
+            workdir=tmp_path,
+            rule_text="The auth module keeps an explicit timeout on every outbound call",
+            subject_path="src/handlers/auth.py",
+            base_commit_sha="commit-2",
+            assertion_ref={"kind": "regex_in_file", "target": "src/handlers/auth.py::timeout="},
+        )
+
+        assert first.receipt_id != second.receipt_id
+        receipts_dir = sdd_dir / "conventions" / "receipts"
+        assert len(sorted(receipts_dir.glob("*.json"))) == 2
+
+    def test_negated_assertion_on_the_same_target_is_a_conflict(self, tmp_path: Path) -> None:
+        """Same target asserted with opposite polarity is rejected, naming both ids."""
+        from bernstein.core.knowledge.conventions import file_review_correction
+
+        sdd_dir = tmp_path / ".sdd"
+        sdd_dir.mkdir(parents=True)
+
+        first = file_review_correction(
+            sdd_dir=sdd_dir,
+            workdir=tmp_path,
+            rule_text="The auth module imports the shared sanitiser",
+            subject_path="src/handlers/auth.py",
+            base_commit_sha="commit-1",
+            assertion_ref={"kind": "import_resolves", "target": "bernstein.core.security.sanitize"},
+        )
+        with pytest.raises(ValueError) as exc_info:
+            file_review_correction(
+                sdd_dir=sdd_dir,
+                workdir=tmp_path,
+                rule_text="The auth module keeps the shared sanitiser out of its imports",
+                subject_path="src/handlers/auth.py",
+                base_commit_sha="commit-2",
+                assertion_ref={"kind": "import_resolves", "target": "!bernstein.core.security.sanitize"},
+            )
+
+        assert first.receipt_id in str(exc_info.value)
+
+    def test_ruleset_hash_ignores_receipt_identity_and_filing_time(self, tmp_path: Path) -> None:
+        """Two installs with the same rules in force agree on ruleset_hash.
+
+        Receipt ids are minted per install and filing timestamps are wall
+        clock, so folding either into the digest makes it a fingerprint of one
+        install's filing history rather than of the rules in force.
+        """
+        from bernstein.core.knowledge.conventions import (
+            ConventionReceipt,
+            compute_ruleset_hash,
+        )
+
+        base = {
+            "rule_text": "Sanitise caller-derived values before a log sink",
+            "rule_text_hash": "a" * 64,
+            "subject_path": "src/handlers/auth.py",
+            "base_commit_sha": "commit-1",
+        }
+        operator_a = ConventionReceipt(
+            receipt_id="11111111-1111-1111-1111-111111111111",
+            created_timestamp=1_700_000_000.0,
+            lesson_id="lesson-a",
+            filing_finding_id="finding-a",
+            decided_by="maintainer-a",
+            **base,
+        )
+        operator_b = ConventionReceipt(
+            receipt_id="22222222-2222-2222-2222-222222222222",
+            created_timestamp=1_800_000_000.0,
+            lesson_id="lesson-b",
+            filing_finding_id="finding-b",
+            decided_by="maintainer-b",
+            **base,
+        )
+
+        assert operator_a.to_canonical_bytes() != operator_b.to_canonical_bytes()
+        assert compute_ruleset_hash([operator_a]) == compute_ruleset_hash([operator_b])
+
+    def test_ruleset_hash_changes_when_a_rule_changes(self, tmp_path: Path) -> None:
+        """The digest still moves on anything that changes what a rule demands."""
+        from bernstein.core.knowledge.conventions import (
+            ConventionReceipt,
+            compute_ruleset_hash,
+        )
+
+        receipt = ConventionReceipt(
+            receipt_id="r-1",
+            rule_text="Sanitise caller-derived values before a log sink",
+            rule_text_hash="a" * 64,
+            subject_path="src/handlers/auth.py",
+            base_commit_sha="commit-1",
+        )
+        moved_commit = ConventionReceipt(
+            receipt_id="r-1",
+            rule_text=receipt.rule_text,
+            rule_text_hash=receipt.rule_text_hash,
+            subject_path=receipt.subject_path,
+            base_commit_sha="commit-2",
+        )
+        other_text = ConventionReceipt(
+            receipt_id="r-1",
+            rule_text="Something else entirely",
+            rule_text_hash="b" * 64,
+            subject_path=receipt.subject_path,
+            base_commit_sha=receipt.base_commit_sha,
+        )
+
+        assert compute_ruleset_hash([receipt]) != compute_ruleset_hash([moved_commit])
+        assert compute_ruleset_hash([receipt]) != compute_ruleset_hash([other_text])
+
+    def test_expired_symbol_is_recorded_in_the_chain(self, tmp_path: Path) -> None:
+        """An expired rule reports 'expired' and says so in the chain.
+
+        Dropping it from the active projection alone leaves an operator unable
+        to tell a rule that expired from a rule that was never filed -- the
+        exact ambiguity the receipt exists to close.
+        """
+        import json as _json
+
+        from bernstein.core.knowledge.conventions import (
+            file_review_correction,
+            get_active_conventions,
+            verify_conventions_audit,
+        )
+        from bernstein.core.security.audit import load_or_create_audit_key
+        from bernstein.core.security.audit_chain import (
+            EVENT_CONVENTION_RETIRED,
+            AuditChainStore,
+        )
+
+        sdd_dir = tmp_path / ".sdd"
+        sdd_dir.mkdir(parents=True)
+        py_file = tmp_path / "src" / "worker.py"
+        py_file.parent.mkdir(parents=True)
+        py_file.write_text("class OldWorker:\n    pass\n", encoding="utf-8")
+
+        r = file_review_correction(
+            sdd_dir=sdd_dir,
+            workdir=tmp_path,
+            rule_text="OldWorker must subclass BaseWorker",
+            subject_path="src/worker.py",
+            subject_symbol="OldWorker",
+            base_commit_sha="commit-worker",
+        )
+
+        py_file.write_text("class NewWorker:\n    pass\n", encoding="utf-8")
+        active_after, _ = get_active_conventions(sdd_dir, workdir=tmp_path)
+        assert not any(x.receipt_id == r.receipt_id for x in active_after)
+
+        stored = _json.loads((sdd_dir / "conventions" / "receipts" / f"{r.receipt_id}.json").read_text())
+        assert stored["status"] == "expired"
+
+        chain = AuditChainStore(sdd_dir / "audit", key=load_or_create_audit_key())
+        events = chain.query(event_type=EVENT_CONVENTION_RETIRED)
+        assert [e for e in events if e.details.get("receipt_id") == r.receipt_id]
+
+        # The expiry is a clean chain transition, not a tamper signal.
+        audit_res = verify_conventions_audit(sdd_dir)
+        assert audit_res.valid, audit_res.errors

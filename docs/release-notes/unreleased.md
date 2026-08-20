@@ -78,5 +78,25 @@ rather than as its own attribution is exempted by hand there, with the reason.
   of reaching `open()` as `OSError(ENAMETOOLONG)` (the same capacity-vs-
   containment distinction #4095 recorded for the pid-file sites).
 
-- Review corrections filed in review path call `file_lesson()` and persist as convention receipts (#3750). `file_review_correction` in `core/knowledge/conventions.py` routes review corrections through `file_lesson()` with deduplication, binds `{rule_text_hash, subject_path, subject_symbol, base_commit_sha, assertion_ref, filing_finding_id, decided_by}` into Ed25519-signed convention receipts anchored in the HMAC audit chain, expires rules whose `subject_symbol` no longer resolves at HEAD via AST parsing, rejects conflicting assertions on overlapping path globs at file time, and verifies receipts via `bernstein verify --memory-audit`. Docs: [`docs/concepts/lesson-persistence.md`](../concepts/lesson-persistence.md).
+- A review correction can now be filed as a convention receipt instead of free
+  text (#3750). `file_review_correction()` in `core/knowledge/conventions.py`
+  routes the correction through the existing `file_lesson()` store and binds
+  `{rule_text_hash, subject_path, subject_symbol, base_commit_sha,
+  assertion_ref, filing_finding_id, decided_by}` into one Ed25519-signed record
+  anchored in the HMAC audit chain. Filing the same correction three times
+  leaves one receipt at `version: 3`. A rule whose `subject_symbol` no longer
+  resolves at HEAD (checked by AST for Python sources) moves to `expired` and
+  appends the chain entry saying so, rather than quietly ceasing to apply — an
+  expired rule and a rule that was never filed have to be tellable apart. A
+  correction that contradicts one already in force is rejected at file time
+  naming both receipt ids; two rules that merely touch the same file are not a
+  contradiction and both file. `bernstein verify --memory-audit` covers the
+  receipts: it runs the audit chain's own verifier before checking anchors, so
+  a rewritten rule with a hand-appended log line behind it fails rather than
+  passing a presence check. The rule set in force carries a `ruleset_hash` over
+  what each rule demands — never over receipt ids or filing timestamps — so two
+  installs with the same rules agree on the digest. Filing is still an explicit
+  call: no orchestrator path invokes it yet, which
+  [`docs/concepts/lesson-persistence.md`](../concepts/lesson-persistence.md)
+  records as the remaining gap.
 
