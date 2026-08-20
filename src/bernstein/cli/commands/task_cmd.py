@@ -931,6 +931,8 @@ def task_complete(task_id: str, summary: str, as_json: bool) -> None:
     default=None,
     help="Compose with the approval sentinel: resume only when 'bernstein approve <task-id>' lands.",
 )
+@click.option("--role", default=None, help="Agent role to bind the checkpoint grant to (defaults to the task's role).")
+@click.option("--parent-run-id", default=None, help="Run that owns the task (defaults to $BERNSTEIN_RUN_ID).")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Print the park result as JSON.")
 def task_suspend(
     task_id: str,
@@ -942,6 +944,8 @@ def task_suspend(
     reserved_usd: float,
     spent_usd: float,
     until: str | None,
+    role: str | None,
+    parent_run_id: str | None,
     as_json: bool,
 ) -> None:
     """Durably park a running task, releasing its seat, sandbox, and budget.
@@ -957,6 +961,7 @@ def task_suspend(
       bernstein task suspend T-abc123 --reserved-usd 10 --spent-usd 2.5
       bernstein task suspend T-abc123 --until approval
     """
+    from bernstein.core.instrumentation import RUN_ID_ENV_VAR
     from bernstein.core.orchestration.approval_gate import write_pending_sentinel
     from bernstein.core.tasks.checkpoint_retry import latest_checkpoint
     from bernstein.core.tasks.models import ApprovalSpec
@@ -964,6 +969,7 @@ def task_suspend(
         WAKE_APPROVAL,
         UnsafeTaskIdError,
         park_task,
+        resolve_task_role,
         validate_task_id,
     )
 
@@ -987,6 +993,15 @@ def task_suspend(
         worktree = checkpoint.worktree_path if checkpoint and checkpoint.worktree_path else workdir
 
     wake_condition = WAKE_APPROVAL if until == "approval" else ""
+    # The checkpoint the park writes is grant-bound: its hash is recomputed
+    # from the role at resume, so the role has to come from where it is
+    # genuinely recorded. ``CheckpointRef`` never carried one -- the task log
+    # does -- and the run id is process context the CLI is handed by the
+    # orchestrator that spawned it. Either can be pinned explicitly.
+    if role is None:
+        role = resolve_task_role(sdd_dir, task_id)
+    if parent_run_id is None:
+        parent_run_id = os.environ.get(RUN_ID_ENV_VAR, "")
 
     result = park_task(
         sdd_dir=sdd_dir,
@@ -1000,6 +1015,8 @@ def task_suspend(
         chain=chain,
         ledger=ledger,
         wake_condition=wake_condition,
+        role=role,
+        parent_run_id=parent_run_id,
     )
 
     if wake_condition == WAKE_APPROVAL:

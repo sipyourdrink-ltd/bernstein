@@ -38,6 +38,8 @@ from bernstein.adapters.canary import (
     SKIP_ISSUE_THRESHOLD,
     CanaryOutcome,
     CanaryTarget,
+    LastGreenEntry,
+    ReceiptSetError,
     apply_canary_outcome,
     build_canary_receipt,
     canary_issue_body,
@@ -56,6 +58,7 @@ from bernstein.adapters.canary import (
     skip_fingerprint,
     update_last_green,
     verify_canary_receipt,
+    verify_last_green_projection,
     write_canary_receipt,
     write_last_green_doc,
 )
@@ -1186,3 +1189,120 @@ class TestDoctorAheadOfLastGreen:
 
         source = inspect.getsource(status_cmd)
         assert "_doctor_check_last_green(checks)" in source
+
+
+class TestVerifyLastGreenProjection:
+    """#3940: nothing re-verified last_green.json against the receipts it projects.
+
+    The docs table and the JSON are both written by one run, so checking them
+    against each other proves they share a generator, not that the generator
+    was right. These cover the faults that reproduce identically into both.
+    """
+
+    def _doc(self, adapter: str, *, verdict: str = "pass", generated_at: str = _GENERATED_AT) -> dict:
+        receipt = build_canary_receipt(
+            _outcome(adapter=adapter, verdict=verdict, failures=()),
+            generated_at=generated_at,
+        )
+        return {"receipt": receipt, "receipt_sha256": receipt_sha256(receipt)}
+
+    def _entry(self, doc: dict, *, recorded_at: str | None = None, digest: str | None = None) -> LastGreenEntry:
+        receipt = doc["receipt"]
+        return LastGreenEntry(
+            adapter=receipt["adapter"],
+            binary=receipt["binary"],
+            version=receipt["installed_version"],
+            receipt_sha256=digest if digest is not None else doc["receipt_sha256"],
+            recorded_at=recorded_at if recorded_at is not None else receipt["generated_at"],
+        )
+
+    def test_matching_receipt_set_and_projection_passes(self) -> None:
+        docs = [self._doc("agy"), self._doc("claude")]
+        entries = {d["receipt"]["adapter"]: self._entry(d) for d in docs}
+
+        assert verify_last_green_projection(docs, entries) == []
+
+    def test_stale_recorded_at_is_rejected_as_carried_forward(self) -> None:
+        doc = self._doc("agy")
+        entries = {"agy": self._entry(doc, recorded_at="2026-06-01T00:00:00Z")}
+
+        mismatches = verify_last_green_projection([doc], entries)
+
+        assert [m.kind for m in mismatches] == ["stale_row"]
+        assert mismatches[0].adapter == "agy"
+
+    def test_entry_missing_backing_receipt_is_rejected(self) -> None:
+        # claude's row claims this run, but only agy produced a receipt.
+        doc = self._doc("agy")
+        entries = {
+            "agy": self._entry(doc),
+            "claude": LastGreenEntry(
+                adapter="claude",
+                binary="claude",
+                version="1.0.0",
+                receipt_sha256="cd" * 32,
+                recorded_at=_GENERATED_AT,
+            ),
+        }
+
+        mismatches = verify_last_green_projection([doc], entries)
+
+        assert [m.kind for m in mismatches] == ["missing_entry"]
+        assert mismatches[0].adapter == "claude"
+
+    def test_entry_with_wrong_digest_is_rejected(self) -> None:
+        doc = self._doc("agy")
+        entries = {"agy": self._entry(doc, digest="ff" * 32)}
+
+        mismatches = verify_last_green_projection([doc], entries)
+
+        assert [m.kind for m in mismatches] == ["wrong_digest"]
+
+    def test_dropped_adapter_without_entry_is_rejected(self) -> None:
+        docs = [self._doc("agy"), self._doc("claude")]
+        entries = {"agy": self._entry(docs[0])}
+
+        mismatches = verify_last_green_projection(docs, entries)
+
+        assert [m.kind for m in mismatches] == ["dropped_adapter"]
+        assert mismatches[0].adapter == "claude"
+
+    def test_an_untouched_older_row_is_not_flagged(self) -> None:
+        # agy is five weeks behind the rest in the real file and droid has no
+        # row at all, both legitimately. A check demanding a receipt per row
+        # would be permanently red against production data.
+        doc = self._doc("claude")
+        entries = {
+            "claude": self._entry(doc),
+            "agy": LastGreenEntry(
+                adapter="agy",
+                binary="agy",
+                version="0.9.0",
+                receipt_sha256="ab" * 32,
+                recorded_at="2026-06-01T00:00:00Z",
+            ),
+        }
+
+        assert verify_last_green_projection([doc], entries) == []
+
+    def test_a_failing_receipt_does_not_require_a_row(self) -> None:
+        # Only a pass advances the projection, so a fail with no row is right.
+        docs = [self._doc("agy", verdict="fail")]
+
+        assert verify_last_green_projection(docs, {}) == []
+
+    def test_a_receipt_set_spanning_two_runs_is_refused(self) -> None:
+        # Picking one stamp (the max, say) would make every row from the other
+        # run look stale or fresh by accident: a verdict from an assumption.
+        docs = [self._doc("agy"), self._doc("claude", generated_at="2026-07-12T00:00:00Z")]
+
+        with pytest.raises(ReceiptSetError, match="spans 2 generated_at"):
+            verify_last_green_projection(docs, {})
+
+    def test_a_tampered_receipt_is_reported_not_trusted(self) -> None:
+        doc = self._doc("agy")
+        doc["receipt"]["installed_version"] = "9.9.9"
+
+        mismatches = verify_last_green_projection([doc], {})
+
+        assert [m.kind for m in mismatches] == ["unverifiable_receipt"]

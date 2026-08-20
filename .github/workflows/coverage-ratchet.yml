@@ -259,24 +259,35 @@ jobs:
           MEASURED: ${{ steps.ratchet.outputs.measured }}
           REPO: ${{ github.repository }}
           RATCHET_BRANCH: coverage-ratchet/baseline
+          # Must stay the branch the create-pull-request step passes as
+          # `base`; the guard's whole job is to compare against the tree
+          # the PR's diff will be rendered against.
+          BASE_BRANCH: main
         run: |
           set -euo pipefail
-          # Two independent reasons this fire may not touch the open ratchet
-          # PR. This step only *gathers* them; the decision itself lives in
-          # `scripts/coverage_ratchet.py guard` so the rules are covered by
-          # unit tests rather than only by a live queue.
+          # Three independent reasons this fire may not open or touch the
+          # ratchet PR. This step only *gathers* them; the decision itself
+          # lives in `scripts/coverage_ratchet.py guard` so the rules are
+          # covered by unit tests rather than only by a live queue.
           #
           # 1. scripts/coverage_ratchet.py compares the measurement against
-          #    the baseline committed on main, NOT against the one the open
-          #    ratchet PR already carries. Those two diverge as soon as a
-          #    ratchet PR is open: main still holds the old mark while the PR
-          #    branch holds a higher one. A later push whose measurement
-          #    lands between them still counts as a bump against main, and
-          #    force-pushing it would rewrite the open PR with a LOWER
+          #    the baseline committed in the tree it CHECKED OUT - which is
+          #    the measured commit (see the checkout step), not main. That
+          #    commit is routinely behind main by the time its CI run
+          #    completes, so a mark already ratcheted onto main since then
+          #    is re-read as still pending and bumped to again. The write is
+          #    correct against what it read and a no-op against main, so the
+          #    PR renders as provenance only: identical line_rate and
+          #    total_coverage_percent, moved head_sha and run_id. That is
+          #    #4087, and reading main's own baseline here is what closes it.
+          #
+          # 2. The open ratchet PR carries a mark ABOVE main's for as long
+          #    as it stays open. A later measurement landing between the two
+          #    clears (1) and would still rewrite the open PR with a LOWER
           #    high-water mark - the exact inverse of a monotonic ratchet,
           #    and invisible in review because the PR title changes with it.
           #
-          # 2. A pull request sitting in the merge queue has its head branch
+          # 3. A pull request sitting in the merge queue has its head branch
           #    locked against pushes, so create-pull-request hard-fails with
           #    `GH006 ... cannot be updated` for the entire time the ratchet
           #    PR spends in the queue - one full CI matrix per entry, so not
@@ -290,7 +301,15 @@ jobs:
           # coverage key. Branch on the exit code instead, and separate a
           # missing ref (fine: the ratchet PR merged and its branch was
           # auto-deleted) from every other API failure (loud).
-          rm -f open-baseline.json queued-branches.json
+          rm -f open-baseline.json base-baseline.json queued-branches.json
+
+          # main's own baseline: the thing the PR's diff is rendered
+          # against. This file is committed, so unlike the ratchet branch
+          # a failed read is a broken read and must stay loud - defaulting
+          # it would retire refusal (1) while the log stayed green.
+          gh api "repos/${REPO}/contents/.coverage-baseline.json?ref=${BASE_BRANCH}" \
+              -H "Accept: application/vnd.github.raw" > base-baseline.json
+
           set +e
           open_json=$(gh api "repos/${REPO}/contents/.coverage-baseline.json?ref=${RATCHET_BRANCH}" \
               -H "Accept: application/vnd.github.raw" 2>gh-err.txt)
@@ -325,9 +344,10 @@ jobs:
           uv run python scripts/coverage_ratchet.py guard \
             --measured "${MEASURED}" \
             --open-baseline open-baseline.json \
+            --base-baseline base-baseline.json \
             --queued-branches queued-branches.json \
             --ratchet-branch "${RATCHET_BRANCH}"
-          rm -f open-baseline.json queued-branches.json
+          rm -f open-baseline.json base-baseline.json queued-branches.json
 
       - name: Open PR with the bumped baseline
         # Only when the ratchet actually clicked (coverage rose) AND the new

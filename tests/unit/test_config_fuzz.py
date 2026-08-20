@@ -73,14 +73,14 @@ def malformed_yaml_text(draw: st.DrawFn) -> str:
 class TestFuzzedYAMLNoCrash:
     """Random YAML must never crash the parser -- only raise clean errors."""
 
-    @settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow])
+    @settings(derandomize=True, max_examples=50, suppress_health_check=[HealthCheck.too_slow])
     @given(data=random_yaml_dict())
     def test_random_dict_no_crash(self, data: dict[str, Any]) -> None:
         """Feeding random dicts to BernsteinConfig must raise ValidationError or succeed."""
         with contextlib.suppress(ValidationError, TypeError, ValueError):
             BernsteinConfig.model_validate(data)
 
-    @settings(max_examples=30, suppress_health_check=[HealthCheck.too_slow])
+    @settings(derandomize=True, max_examples=30, suppress_health_check=[HealthCheck.too_slow])
     @given(text=malformed_yaml_text())
     def test_malformed_yaml_text_no_crash(self, text: str) -> None:
         """Malformed YAML text must not crash yaml.safe_load or config parser."""
@@ -136,7 +136,7 @@ class TestSpecificMalformedConfigs:
 class TestEnvExpansionFuzz:
     """Fuzz the env expansion function itself."""
 
-    @settings(max_examples=40, suppress_health_check=[HealthCheck.too_slow])
+    @settings(derandomize=True, max_examples=40, suppress_health_check=[HealthCheck.too_slow])
     @given(text=st.text(min_size=0, max_size=200))
     def test_expand_no_crash(self, text: str) -> None:
         """expand_env_vars must never crash -- only raise EnvExpansionError."""

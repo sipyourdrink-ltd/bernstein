@@ -133,8 +133,28 @@ def _reset_server_mutable_state() -> Any:
     _app.state.draining = False
 
 
+# derandomize only the smoke profile (#4024): PR-time and merge-queue gates
+# must give the same verdict for the same commit, or a pathological draw
+# dequeues an otherwise-clean merge-queue batch and everything behind it
+# reruns for nothing. The nightly deep profile keeps exploring - new draws
+# belong to the lane that is allowed to be flaky, not the one that gates
+# merges, so it is deliberately excluded here.
+#
+# Hypothesis derives the derandomized seed from the test function itself,
+# so there is no seed value to log or maintain - rerunning this exact
+# command against this exact commit reproduces the same example set.
+#
+# What "the same example set" is NOT pinned to: Hypothesis itself.
+# derandomize replays *this resolved Hypothesis version's* deterministic
+# sequence, so a routine `uv lock --upgrade` that bumps hypothesis (floor
+# pinned at pyproject.toml's "hypothesis>=6.100"; currently resolves to
+# 6.151.11) can shift which cases the smoke lane draws even with this fix
+# in place. That is expected, not a regression in this fix.
+_DERANDOMIZE_SMOKE = _PROFILE == "smoke"
+
+
 @schema.parametrize()
-@settings(max_examples=_MAX_EXAMPLES, deadline=None)
+@settings(max_examples=_MAX_EXAMPLES, deadline=None, derandomize=_DERANDOMIZE_SMOKE)
 def test_no_unhandled_exceptions(case: schemathesis.Case) -> None:
     """Every documented endpoint must respond without 500-class crash.
 
@@ -142,16 +162,23 @@ def test_no_unhandled_exceptions(case: schemathesis.Case) -> None:
     transport, so each example is a sub-millisecond round-trip - fast
     enough that a focused critical-surface fuzz stays under 90 s at
     smoke settings.
+
+    Deliberately does not inspect ``response.status_code`` after the call:
+    `not_a_server_error` in `_CHECKS` raises before `call_and_validate` can
+    return one for a real 5xx, and an unhandled exception escaping the
+    handler propagates out of the call itself (this app registers no
+    catch-all exception handler - only `HTTPException`, in
+    `core/fleet/web.py`). Either way Schemathesis's own failure carries the
+    method, path, and a ready-to-run `curl` reproducer (see
+    docs/contributing/testing.md, "Schemathesis 5xx leak"); a
+    status-code check after the call is unreachable dead code, not a
+    second safety net.
     """
     if (case.method.upper(), case.path) in _STREAMING_OPERATIONS:
         pytest.skip(f"{case.method} {case.path} answers with an unbounded stream, covered by the streaming test below")
     if _PROFILE == "smoke" and not _path_in_smoke_set(case.path):
         pytest.skip(f"path {case.path} not in smoke allow-list")
-    response = case.call_and_validate(checks=_CHECKS)
-    if response.status_code >= 500:
-        pytest.fail(
-            f"5xx response from {case.method} {case.path}: status={response.status_code}, body={response.text[:200]}"
-        )
+    case.call_and_validate(checks=_CHECKS)
 
 
 # ---------------------------------------------------------------------------

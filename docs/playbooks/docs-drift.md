@@ -63,6 +63,7 @@ Drift remediation paths used by the rows below:
 | `docs/llm-citation-surface.md` | None (positioning note about how the project surfaces in LLM citations) | External citation pattern audited | `static` |
 | `docs/mentions.md` | None (hand-curated external coverage and list entries) | A listed link goes dead or moves | `static` |
 | `docs/reference/capabilities.md` | `src/bernstein/` capability surfaces; scoped claims guarded by `tests/unit/test_docs_capability_reachability.py` | Capability added / removed, scoped reachability note lands or goes stale | `manual-prose` |
+| `docs/reference/receipt.md` | `src/bernstein/cli/commands/receipt_cmd.py`, `src/bernstein/core/security/result_receipt_bundle.py`; flag surface guarded by `tests/unit/test_receipt_reference_docs_drift.py` | Flag added / removed / renamed on `bernstein receipt create` or `verify`, verdict shape changes (new field on `BundleVerification`) | `manual-cmd` |
 | `docs/routine-scenarios.md` | `src/bernstein/core/planning/routine_bridge.py`, `src/bernstein/cli/commands/routine_cmd.py`, `src/bernstein/mcp/routine_tools.py` | Routine <-> Scenario bridge surface change | `manual-prose` |
 | `docs/telemetry.md` | `src/bernstein/core/telemetry/`, `src/bernstein/cli/commands/telemetry_cmd.py` | New telemetry event, opt-out matrix change, retention policy change | `manual-prose` |
 | `docs/use-cases.md` | `src/bernstein/cli/main.py` (command list) plus operator workflow CLIs | New operator workflow command (`autofix`, `review-responder`, `dep-impact`, etc.) | `manual-prose` |

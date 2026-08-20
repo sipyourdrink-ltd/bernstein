@@ -154,6 +154,25 @@ before anything is written:
 Every one of these refusals lands before the journal is touched, so a refused
 resume leaves the task's Merkle chain byte-identical to the parked state.
 
+## The grant the park binds
+
+A park also writes an agent checkpoint under
+`.sdd/runtime/agents/<task-run-id>/checkpoint.json`, carrying the role the task
+ran under and a `grant_hash` over that role's permission set, the task id, the
+owning run, and the suspend row's hash. The resume recomputes that hash from
+the role and refuses when it no longer matches -- so a permission set narrowed
+while the task was parked stops the resume before its first side effect.
+
+The role is read from the task log (`.sdd/runtime/tasks.jsonl`), and the owning
+run from `$BERNSTEIN_RUN_ID`. `--role` and `--parent-run-id` pin either one
+explicitly.
+
+When neither the log nor the flag names a role, the checkpoint is written with
+an empty `grant_hash` and the resume treats it as not grant-bound. That is
+deliberate: the empty role resolves to the *unrestricted* permission set, which
+the resume would re-derive identically, so hashing it would produce a
+checkpoint that looks bound and can never refuse. Absence stays absence.
+
 ## Commands
 
 ```bash

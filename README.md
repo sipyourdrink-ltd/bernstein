@@ -72,7 +72,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 CI re-verifies the committed receipt on every push to main — and proves a tampered copy fails — so the published evidence cannot rot into a decorative file. `scripts/record_demo.sh` regenerates the recording, receipt, and key from a fresh real run; nothing inside the terminal is synthesised.
 
-A run in flight is watchable from either operator surface. Both read the same task API, so neither is a lagging mirror of the other.
+A run in flight is watchable from either operator surface. Both read the same task API, so neither is a lagging mirror of the other. In `bernstein live`, the left and right columns scroll independently as whole panes, so widgets below the fold remain reachable in shorter terminals.
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|

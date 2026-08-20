@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.security.path_containment import PathContainmentError, contained_path
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -203,7 +205,7 @@ def _avoid_shim_line_overflow(
     prompt = cmd[-1]
     prompt_dir = workdir / ".sdd" / "runtime" / "prompts"
     prompt_dir.mkdir(parents=True, exist_ok=True)
-    prompt_path = prompt_dir / f"{session}.stdin-overflow"
+    prompt_path = contained_path(prompt_dir, f"{session}.stdin-overflow", label="session id")
     prompt_path.write_text(prompt, encoding="utf-8")
 
     trimmed_cmd = cmd[:-1]  # drop the prompt; keep the bare flag
@@ -243,10 +245,16 @@ def _write_pid_file(
     ``on_resolved`` is invoked with the resolved target path *before* the file
     is created, so a caller can register the path with its signal handler and
     guarantee the file can never exist without a cleanup path (#2341).
+
+    The containment check no longer depends on the caller having validated
+    *session* first: ``contained_path`` applies the same allowlist
+    :data:`_SESSION_ID_RE` enforces in ``main()``, so a direct caller gets the
+    refusal too.
     """
     pid_dir.mkdir(parents=True, exist_ok=True)
-    pid_file = (pid_dir / f"{session}.json").resolve()
-    if not pid_file.is_relative_to(pid_dir.resolve()):
+    try:
+        pid_file = contained_path(pid_dir, f"{session}.json", label="session id")
+    except PathContainmentError:
         print(f"bernstein-worker: invalid session id: {session}", file=sys.stderr)
         sys.exit(1)
     if on_resolved is not None:
@@ -583,16 +591,22 @@ def main() -> None:
             stdin_file.close()
 
     # Update PID file with child PID
-    # Validate pid_file stays within pid_dir to prevent path traversal (S2083)
+    # Validate pid_file stays within pid_dir to prevent path traversal (S2083).
+    # Re-derived rather than reusing the path _write_pid_file returned: the
+    # value is the same, but the fresh realpath is the point -- it is what
+    # catches the file being swapped for a symlink out of pid-dir while the
+    # child was starting. The containment refusal is a PathContainmentError
+    # (a ValueError), which ``suppress(OSError)`` would not catch, so it is
+    # handled here to keep reaching the existing exit path.
     with contextlib.suppress(OSError):
-        resolved_pid = pid_file.resolve()
-        resolved_dir = Path(args.pid_dir).resolve()
-        if not resolved_pid.is_relative_to(resolved_dir):
+        try:
+            checked_pid_file = contained_path(args.pid_dir, f"{args.session}.json", label="session id")
+        except PathContainmentError:
             print("bernstein-worker: pid file escaped pid-dir", file=sys.stderr)
             sys.exit(1)
-        info = json.loads(pid_file.read_text(encoding="utf-8"))
+        info = json.loads(checked_pid_file.read_text(encoding="utf-8"))
         info["child_pid"] = child.pid
-        _atomic_write_json(pid_file, info)
+        _atomic_write_json(checked_pid_file, info)
 
     # 4. Start log monitor for hierarchical abort (T442)
     if args.log_path:

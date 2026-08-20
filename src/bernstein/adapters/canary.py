@@ -48,7 +48,7 @@ from bernstein.core.security.path_containment import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,8 @@ __all__ = [
     "CanaryTarget",
     "LastGreenEntry",
     "MatrixRunResult",
+    "ProjectionMismatch",
+    "ReceiptSetError",
     "apply_canary_outcome",
     "build_canary_receipt",
     "canary_issue_body",
@@ -87,6 +89,7 @@ __all__ = [
     "skip_fingerprint",
     "update_last_green",
     "verify_canary_receipt",
+    "verify_last_green_projection",
     "write_canary_receipt",
 ]
 
@@ -949,6 +952,150 @@ def save_last_green(path: Path, entries: dict[str, LastGreenEntry]) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     tmp.replace(path)
+
+
+class ReceiptSetError(ValueError):
+    """The receipt set is not one run's worth of receipts.
+
+    Raised rather than worked around: a set spanning two runs has no single
+    ``generated_at`` to compare rows against, and silently picking one (the
+    max, say) would make every row from the other run look stale or fresh by
+    accident. That is a verdict assembled from an assumption, which is the
+    thing this check exists to stop.
+    """
+
+
+@dataclass(frozen=True)
+class ProjectionMismatch:
+    """One way ``last_green.json`` fails to be a projection of a receipt set.
+
+    Attributes:
+        kind: ``stale_row`` | ``missing_entry`` | ``wrong_digest`` |
+            ``dropped_adapter`` | ``unverifiable_receipt``. Distinct per
+            failure so a caller routes on the name rather than on a boolean.
+        adapter: Adapter the mismatch is about.
+        detail: What was expected against what was found.
+    """
+
+    kind: str
+    adapter: str
+    detail: str
+
+
+def _run_generated_at(receipt_docs: Sequence[dict[str, Any]]) -> str:
+    """The one timestamp every receipt in a single run's set carries.
+
+    ``run_matrix`` builds every receipt in a run with the same
+    ``generated_at`` string and passes that identical string into
+    ``update_last_green(recorded_at=...)``, so a freshly advanced row's
+    ``recorded_at`` is byte-identical to it rather than merely close.
+    """
+    stamps = {
+        str(doc["receipt"].get("generated_at", "")) for doc in receipt_docs if isinstance(doc.get("receipt"), dict)
+    }
+    if len(stamps) != 1:
+        msg = f"receipt set spans {len(stamps)} generated_at values, expected exactly 1: {sorted(stamps)}"
+        raise ReceiptSetError(msg)
+    return stamps.pop()
+
+
+def verify_last_green_projection(
+    receipt_docs: Sequence[dict[str, Any]],
+    entries: Mapping[str, LastGreenEntry],
+) -> list[ProjectionMismatch]:
+    """Check that *entries* is the projection *receipt_docs* would produce.
+
+    The canary writes ``last_green.json`` and the docs table from one run, and
+    every downstream check compares those two against each other. That proves
+    they came from the same generator, not that the generator was right: a
+    stale row carried forward, or a digest recorded for a receipt that was
+    never produced, reproduces identically into both (#3940).
+
+    Scope is the adapters actually in play for this set, in both directions:
+
+    * every ``pass`` receipt must have an entry, carrying that receipt's digest
+      and this run's timestamp;
+    * every entry *claiming this run's timestamp* must have a ``pass`` receipt
+      backing it.
+
+    An entry that is simply older and untouched by this run is out of scope.
+    ``agy`` is five weeks behind the others today and ``droid`` has no row at
+    all, both legitimately, so a check demanding a receipt per row would be
+    permanently red against real data.
+
+    Raises:
+        ReceiptSetError: the set does not carry exactly one ``generated_at``.
+    """
+    mismatches: list[ProjectionMismatch] = []
+    verified: list[dict[str, Any]] = []
+    for doc in receipt_docs:
+        receipt = doc.get("receipt")
+        if not isinstance(receipt, dict) or not verify_canary_receipt(doc):
+            adapter = str(receipt.get("adapter", "?")) if isinstance(receipt, dict) else "?"
+            mismatches.append(
+                ProjectionMismatch(
+                    kind="unverifiable_receipt",
+                    adapter=adapter,
+                    detail="receipt does not match its own embedded receipt_sha256",
+                )
+            )
+            continue
+        verified.append(doc)
+
+    if not verified:
+        # No verified receipt means no run timestamp to compare rows against.
+        # Report what was actually found rather than raising a set-shape error
+        # over it: "these receipts do not verify" is the finding, and burying
+        # it under a second complaint about the set would misroute it.
+        return mismatches
+
+    generated_at = _run_generated_at(verified)
+    passing = {str(doc["receipt"]["adapter"]): doc for doc in verified if doc["receipt"].get("verdict") == "pass"}
+
+    for adapter, doc in sorted(passing.items()):
+        entry = entries.get(adapter)
+        if entry is None:
+            mismatches.append(
+                ProjectionMismatch(
+                    kind="dropped_adapter",
+                    adapter=adapter,
+                    detail=f"passing receipt at {generated_at} but no row in the projection",
+                )
+            )
+            continue
+        if entry.recorded_at != generated_at:
+            # The row was never advanced onto this run. Its digest still names
+            # the older receipt, so checking it here would report a second
+            # failure for one fault.
+            mismatches.append(
+                ProjectionMismatch(
+                    kind="stale_row",
+                    adapter=adapter,
+                    detail=f"row records {entry.recorded_at}, this run produced a passing receipt at {generated_at}",
+                )
+            )
+            continue
+        expected = receipt_sha256(doc["receipt"])
+        if entry.receipt_sha256 != expected:
+            mismatches.append(
+                ProjectionMismatch(
+                    kind="wrong_digest",
+                    adapter=adapter,
+                    detail=f"row records {entry.receipt_sha256}, receipt hashes to {expected}",
+                )
+            )
+
+    for adapter, entry in sorted(entries.items()):
+        if entry.recorded_at == generated_at and adapter not in passing:
+            mismatches.append(
+                ProjectionMismatch(
+                    kind="missing_entry",
+                    adapter=adapter,
+                    detail=f"row claims this run ({generated_at}) but the set has no passing receipt for it",
+                )
+            )
+
+    return mismatches
 
 
 def _parse_recorded_at(value: str) -> datetime | None:

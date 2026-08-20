@@ -127,6 +127,23 @@ class TestExtractArchive:
 
         assert not (tmp_path / "out_evil" / "pwned.txt").exists()
 
+    def test_extract_zip_rejects_backslash_traversal_entry(self, tmp_path: Path) -> None:
+        """A '..\\' entry must be refused on every host, not just Windows.
+
+        A bare ``(dest / name).resolve()`` treats a backslash as an ordinary
+        filename character on POSIX, so a zip built to attack a Windows
+        target extracted inertly-but-not-safely on POSIX before this site
+        went through the shared containment helper, which splits on both
+        separators regardless of platform.
+        """
+        archive = _make_zip(tmp_path / "plugin.zip", {"..\\out_evil\\pwned.txt": "owned"})
+        dest = tmp_path / "out"
+
+        with pytest.raises(ValueError, match="Zip entry would escape target directory"):
+            _extract_archive(archive, dest)
+
+        assert not (tmp_path / "out_evil" / "pwned.txt").exists()
+
     def test_extract_zip_preserves_unix_file_mode(self, tmp_path: Path) -> None:
         """Zip extraction preserves the Unix mode on POSIX; extracts on Windows.
 

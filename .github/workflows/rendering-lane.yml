@@ -1,0 +1,52 @@
+name: Rendering lane
+
+on:
+  pull_request:
+    paths:
+      - "src/bernstein/core/orchestration/rendering_fetcher.py"
+      - "src/bernstein/core/orchestration/activity_modalities.py"
+      - "tests/unit/test_research_worker.py"
+      - "tests/conftest.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/rendering-lane.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: rendering-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('branch-{0}-{1}', github.ref, github.sha) }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rendering:
+    name: Rendering fetcher (browser-backed)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Headless Chromium reserves a ~1.5 TB virtual address space (V8
+      # cage + ASLR; mappings do not consume RAM, but RLIMIT_AS counts
+      # them). The unit suite's 2 GB guard kills it at launch, so this
+      # lane sets its own ceiling. tests/conftest.py honours the override.
+      BERNSTEIN_MEM_GUARD_GB: "2048"
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/bootstrap
+        with:
+          python-version: "3.13"
+
+      - name: Install headless Chromium
+        run: uv run playwright install --with-deps chromium
+
+      - name: Run rendering-fetcher tests
+        # The unit shards never install the browser binary, so these
+        # assertions skip there; this lane is where they actually run.
+        run: uv run pytest tests/unit/test_research_worker.py -q --tb=short

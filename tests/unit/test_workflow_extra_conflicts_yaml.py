@@ -155,6 +155,24 @@ def test_conflict_groups_are_declared() -> None:
     assert _conflict_groups(), "pyproject declares no [tool.uv] conflicts; drop this guard"
 
 
+def test_conflicting_extras_are_declared_not_merely_unsatisfiable() -> None:
+    """``modal`` and ``otel`` both pin a protobuf major via generated code; declare it.
+
+    modal caps protobuf below 7.0; opentelemetry-exporter-otlp-proto-grpc pins
+    protobuf==7.35.1 from 1.41.1 onward (#4088) -- the same clash shape as the
+    checked-in gRPC gencode already declares against modal, just from a second
+    source. Undeclared, this doesn't fail as a known-incompatible pair: it
+    fails the *whole* lockfile as unsatisfiable, which is what aborted every
+    ``uv`` dependency-update run rather than just the two extras that clash.
+    Pinned as its own conflict group, distinct from the existing grpc x modal
+    pair, so a future extra reintroducing the same protobuf clash fails here
+    rather than three weeks later in a dependabot log nobody reads.
+    """
+    groups = _conflict_groups()
+    assert {"grpc", "modal"} in groups
+    assert {"otel", "modal"} in groups
+
+
 def test_every_all_extras_command_is_readable() -> None:
     """A command the guard cannot lex is a gap in the guard, not a pass."""
     _, unreadable = _all_extras_commands()

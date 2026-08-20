@@ -53,7 +53,7 @@ Bernstein は CLI コーディングエージェント（Claude Code、Codex、G
 全一覧は[ケーパビリティのページ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)に、網羅的な索引は[機能マトリクス](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)にある。
 
 ### 30 秒でインストール
-<!-- l10n: en="install in 30 seconds" hash="sha256:da2e6aa3f938" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

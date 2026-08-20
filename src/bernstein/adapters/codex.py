@@ -115,12 +115,13 @@ class CodexAdapter(CLIAdapter):
             "-o",
             str(output_path),
         ]
-        # Bind a deterministic session id so a replay of this run reaches
-        # the same conversation slot and parallel codex sessions in the
-        # same worktree do not collide. The orchestrator session_id is the
-        # stable conversation key available at spawn time. When the codex
-        # contract declares no session-id flag this is an empty list and
-        # the argv is unchanged.
+        # Session-id binding is contract-driven: the argv gains a flag only
+        # when the contract names one. ``codex exec`` exposes no flag that
+        # accepts a caller-supplied session id -- only a ``resume
+        # <SESSION_ID>`` subcommand, which reattaches to an existing session
+        # and cannot bind one at spawn time -- so the codex contract names no
+        # flag and this stays an empty list (issue #4135). The derived id is
+        # still recorded in orchestrator state for cross-reference.
         cmd.extend(self.session_id_args(session_id))
         cmd.append(prompt)
 

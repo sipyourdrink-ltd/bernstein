@@ -450,6 +450,43 @@ def _published_contexts(doc: Mapping[str, Any]) -> set[str]:
 NOT_REQUIRED_YET_HEADING = "### Reports on the queue but is not required yet"
 #: A row of that section's table: context, then ``workflow.yml`` :: ``job``.
 _RUNBOOK_ROW = re.compile(r"^\|\s*`([^`]+)`\s*\|\s*`([^`]+\.yml)`\s*::\s*`[^`]+`\s*\|", re.MULTILINE)
+#: An ATX heading line, capturing its level. A run of ``#`` with no space
+#: after it is not a heading - the section's own prose cites issues as
+#: ``#4010``, and those lines must not read as boundaries.
+_ATX_HEADING = re.compile(r"^(#{1,6})\s")
+
+
+def _section_body(text: str, heading: str) -> str:
+    """The body under ``heading``, up to the next heading of its level or shallower.
+
+    The boundary is derived from ``heading`` rather than written down
+    beside it. A hard-coded ``"\\n### "`` is a second statement of the
+    section's level, and the two go out of step silently: re-levelling
+    either this section or the one after it leaves the split matching
+    nothing, and reading past the boundary makes the callers *more*
+    permissive rather than failing.
+
+    Depth matters as well as equality. A ``####`` subsection belongs to
+    this section and must stay in; a ``#`` or ``##`` heading is a section
+    at least as broad, so it ends it.
+
+    Fenced blocks are deliberately not tracked. This runbook does contain
+    ``#``-prefixed lines inside shell fences, so one could be mistaken for
+    a boundary - but that truncates the section, and a truncated section
+    fails the callers loudly. Reading past the end is the silent
+    direction, and that is the one worth spending code on.
+    """
+    _, found, rest = text.partition(heading)
+    if not found:
+        return ""
+    level = len(heading) - len(heading.lstrip("#"))
+    kept: list[str] = []
+    for line in rest.splitlines(keepends=True):
+        match = _ATX_HEADING.match(line)
+        if match and len(match.group(1)) <= level:
+            break
+        kept.append(line)
+    return "".join(kept)
 
 
 def _runbook_contexts(text: str, workflow: str) -> set[str]:
@@ -459,8 +496,7 @@ def _runbook_contexts(text: str, workflow: str) -> set[str]:
     different column count and a different meaning, and matching rows
     anywhere in the file would fold the two together.
     """
-    _, _, rest = text.partition(NOT_REQUIRED_YET_HEADING)
-    section = rest.partition("\n### ")[0]
+    section = _section_body(text, NOT_REQUIRED_YET_HEADING)
     return {context for context, emitter in _RUNBOOK_ROW.findall(section) if emitter == workflow}
 
 
@@ -564,11 +600,89 @@ def test_runbook_contexts_reads_only_its_own_section(text: str, workflow: str, e
 def test_runbook_contexts_stops_at_the_next_heading() -> None:
     """A row under a later heading is a different claim and must not count.
 
-    The parametrised cases above would still pass if the partition on the
-    next ``###`` were dropped, because `c one` is not in any expectation
+    The parametrised cases above would still pass if the split on the
+    next heading were dropped, because `c one` is not in any expectation
     for another reason. This one fails if it is dropped.
     """
     assert "c one" not in _runbook_contexts(_RUNBOOK_SAMPLE, "w.yml")
+
+
+@pytest.mark.parametrize(
+    "later",
+    [
+        "# Some later section",
+        "## Some later section",
+        "### Some later section",
+        # Trailing space after the hashes, and a tab instead of a space.
+        "###  Some later section",
+        "###\tSome later section",
+    ],
+)
+def test_the_section_ends_at_any_heading_of_its_level_or_shallower(later: str) -> None:
+    """The boundary is the section's own depth, not the string ``"\\n### "``.
+
+    Re-levelling the section after this one - promoting it to ``##``, or
+    merging two ``###`` sections so the next one is ``#`` - used to leave
+    the split matching nothing at all. The section then ran to the end of
+    the file and swallowed every later row, which makes
+    ``test_queue_reporting_lane_contexts_are_named_in_the_runbook``
+    *pass* on lanes the runbook never named. Silent, and in the permissive
+    direction.
+    """
+    text = _RUNBOOK_SAMPLE.replace("### Some later section", later)
+
+    assert _runbook_contexts(text, "w.yml") == {"a one", "a two"}
+
+
+def test_a_subsection_of_the_section_is_still_the_section() -> None:
+    """``####`` under this heading is part of it and its rows still count.
+
+    This is the other half of depth-awareness, and it is where "stop at
+    the next two-to-four-hash heading" would be wrong: a deeper heading
+    is a subdivision of this section, not the end of it.
+    """
+    text = _RUNBOOK_SAMPLE.replace(
+        "### Some later section",
+        "#### A subsection\n\n| `f one` | `w.yml` :: `j` | Yes | **No** |\n\n### Some later section",
+    )
+
+    assert _runbook_contexts(text, "w.yml") == {"a one", "a two", "f one"}
+
+
+def test_an_issue_reference_at_the_start_of_a_line_is_not_a_heading() -> None:
+    """The section's own prose cites issues as ``#4010``, hash and no space.
+
+    ``#`` followed by anything other than whitespace is not an ATX
+    heading, and treating it as one would cut the section off at its
+    first citation - dropping rows that are there.
+    """
+    text = _RUNBOOK_SAMPLE.replace(
+        "Prose in the middle of the section",
+        "#4010 merged with this lane red. Prose in the middle of the section",
+    )
+
+    assert _runbook_contexts(text, "w.yml") == {"a one", "a two"}
+
+
+def test_the_boundary_change_reads_the_real_runbook_identically() -> None:
+    """Behaviour-preserving today: the same text as the hard-coded split.
+
+    The point of the change is what happens when the document is
+    re-levelled later. On the document as it stands the two must not
+    differ, or this is a rewrite wearing a resilience argument.
+
+    The one permitted difference is the blank line before the boundary:
+    ``partition("\\n### ")`` ate the newline as part of its separator and
+    a line-wise walk keeps it. Nothing reads it - ``_RUNBOOK_ROW`` is
+    anchored to ``|`` - so the comparison strips it rather than bending
+    the implementation to reproduce a quirk of the old one.
+    """
+    text = RUNBOOK.read_text(encoding="utf-8")
+    _, _, rest = text.partition(NOT_REQUIRED_YET_HEADING)
+    old = rest.partition("\n### ")[0]
+
+    assert old, "the runbook no longer splits on a '### ' heading; this comparison is vacuous"
+    assert _section_body(text, NOT_REQUIRED_YET_HEADING).rstrip("\n") == old.rstrip("\n")
 
 
 def test_queue_reporting_lane_contexts_are_named_in_the_runbook() -> None:

@@ -280,7 +280,7 @@ def test_verify_chain_is_behind_the_input_firewall() -> None:
 # ---------------------------------------------------------------------------
 
 
-@settings(max_examples=40, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@settings(derandomize=True, max_examples=40, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(data=st.data())
 def test_payloads_valid_under_the_advertised_schema_are_accepted(data: st.DataObject) -> None:
     """Anything the advertised schema permits, the validator must accept."""
@@ -297,7 +297,7 @@ def test_payloads_valid_under_the_advertised_schema_are_accepted(data: st.DataOb
             assert isinstance(result, ValidatedPayload), (tool_name, payload, result)
 
 
-@settings(max_examples=40, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@settings(derandomize=True, max_examples=40, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(bad=st.text(alphabet=st.characters(min_codepoint=33, max_codepoint=122), min_size=1, max_size=12))
 def test_payloads_the_validator_rejects_are_rejected_by_the_advertised_schema(bad: str) -> None:
     """Anything the validator refuses, the advertised schema refuses too."""

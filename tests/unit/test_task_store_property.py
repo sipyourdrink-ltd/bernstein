@@ -105,7 +105,7 @@ class _FakeCreateRequest:
 class TestNoDuplicateIDs:
     """Creating N tasks must produce N distinct IDs."""
 
-    @settings(max_examples=20, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @settings(derandomize=True, max_examples=20, suppress_health_check=[HealthCheck.function_scoped_fixture])
     @given(payloads=st.lists(task_create_kwargs(), min_size=1, max_size=10))
     def test_ids_unique(self, payloads: list[dict[str, Any]], tmp_path: Path) -> None:
         store = _make_store(tmp_path)
@@ -126,7 +126,7 @@ class TestTransitionsOnlyValid:
 
     _ALL_STATUSES = list(TaskStatus)
 
-    @settings(max_examples=50, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @settings(derandomize=True, max_examples=50, suppress_health_check=[HealthCheck.function_scoped_fixture])
     @given(
         from_idx=st.integers(min_value=0, max_value=len(list(TaskStatus)) - 1),
         to_idx=st.integers(min_value=0, max_value=len(list(TaskStatus)) - 1),
@@ -156,7 +156,7 @@ class TestTransitionsOnlyValid:
 class TestCountsConsistent:
     """After a batch of creates the store counts must match the task dict."""
 
-    @settings(max_examples=15, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @settings(derandomize=True, max_examples=15, suppress_health_check=[HealthCheck.function_scoped_fixture])
     @given(n=st.integers(min_value=0, max_value=8))
     def test_counts_match(self, n: int, tmp_path: Path) -> None:
         store = _make_store(tmp_path)
@@ -187,7 +187,7 @@ class TestStatusTransitionSequences:
         [TaskStatus.OPEN, TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED, TaskStatus.OPEN],
     ]
 
-    @settings(max_examples=20, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @settings(derandomize=True, max_examples=20, suppress_health_check=[HealthCheck.function_scoped_fixture])
     @given(seq_idx=st.integers(min_value=0, max_value=3))
     def test_valid_sequence_succeeds(self, seq_idx: int) -> None:
         seq = self._VALID_SEQUENCES[seq_idx]

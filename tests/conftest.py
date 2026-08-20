@@ -56,7 +56,29 @@ if TYPE_CHECKING:
 # Memory guard: prevent any single pytest run from eating >2 GB RAM.
 # ---------------------------------------------------------------------------
 
-_MAX_RSS_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
+
+def _memory_guard_bytes() -> int:
+    """RSS cap for a pytest run (default 2 GB).
+
+    The rendering lane (.github/workflows/rendering-lane.yml) launches a
+    headless Chromium, which reserves a ~1.5 TB *virtual* address space
+    (V8 cage + ASLR; the mappings do not consume RAM, but RLIMIT_AS counts
+    them, so the 2 GB guard kills it at launch). That lane raises the
+    ceiling up front via ``BERNSTEIN_MEM_GUARD_GB`` (2048); everything
+    else keeps the 2 GB guard. A value of 0 keeps the default guard.
+    """
+    _mem_guard_gb = os.environ.get("BERNSTEIN_MEM_GUARD_GB")
+    if _mem_guard_gb is not None:
+        try:
+            _gb = max(int(_mem_guard_gb), 0)
+        except ValueError:
+            _gb = 0
+        if _gb > 0:
+            return _gb * 1024 * 1024 * 1024
+    return 2 * 1024 * 1024 * 1024  # 2 GB
+
+
+_MAX_RSS_BYTES = _memory_guard_bytes()
 
 #: Force a full collection only once RSS has climbed past this share of the
 #: cap. ``gc.collect()`` walks the whole live heap, so collecting after every

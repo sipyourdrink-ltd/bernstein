@@ -53,7 +53,7 @@ Bernstein은 CLI 코딩 에이전트(Claude Code, Codex, Gemini CLI 외 40여 �
 전체 목록은 [기능 페이지](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)에, 전수 색인은 [기능 매트릭스](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)에 있다.
 
 ### 30초 설치
-<!-- l10n: en="install in 30 seconds" hash="sha256:da2e6aa3f938" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

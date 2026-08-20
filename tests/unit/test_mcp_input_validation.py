@@ -520,7 +520,7 @@ def _jsonish(max_leaves: int = 20) -> st.SearchStrategy[object]:
 
 
 @given(payload=_jsonish())
-@settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow], deadline=None)
+@settings(derandomize=True, max_examples=50, suppress_health_check=[HealthCheck.too_slow], deadline=None)
 def test_fuzz_unknown_tool_always_rejected(payload: object) -> None:
     result = validate_tool_call("__no_such_tool__", payload)
     assert isinstance(result, ValidationError)
@@ -528,7 +528,7 @@ def test_fuzz_unknown_tool_always_rejected(payload: object) -> None:
 
 
 @given(payload=_jsonish())
-@settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow], deadline=None)
+@settings(derandomize=True, max_examples=50, suppress_health_check=[HealthCheck.too_slow], deadline=None)
 def test_fuzz_validator_never_raises(payload: object) -> None:
     # Pyright/runtime: object is fine; validator must never raise.
     result = validate_tool_call("bernstein_run", payload)
@@ -536,7 +536,7 @@ def test_fuzz_validator_never_raises(payload: object) -> None:
 
 
 @given(goal=st.text(min_size=1, max_size=200))
-@settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow], deadline=None)
+@settings(derandomize=True, max_examples=50, suppress_health_check=[HealthCheck.too_slow], deadline=None)
 def test_fuzz_goal_text_round_trip(goal: str) -> None:
     # Strip control chars first since the deny rule is the intended behaviour.
     cleaned = "".join(c for c in goal if c in "\t\n\r" or 32 <= ord(c) <= 126)
@@ -547,7 +547,7 @@ def test_fuzz_goal_text_round_trip(goal: str) -> None:
 
 
 @given(extra_key=st.text(min_size=1, max_size=10), extra_value=st.integers())
-@settings(max_examples=30, suppress_health_check=[HealthCheck.too_slow], deadline=None)
+@settings(derandomize=True, max_examples=30, suppress_health_check=[HealthCheck.too_slow], deadline=None)
 def test_fuzz_extra_props_rejected(extra_key: str, extra_value: int) -> None:
     if extra_key in {"goal", "role", "priority", "scope", "complexity", "estimated_minutes"}:
         return
@@ -556,7 +556,7 @@ def test_fuzz_extra_props_rejected(extra_key: str, extra_value: int) -> None:
 
 
 @given(priority=st.integers())
-@settings(max_examples=30, suppress_health_check=[HealthCheck.too_slow], deadline=None)
+@settings(derandomize=True, max_examples=30, suppress_health_check=[HealthCheck.too_slow], deadline=None)
 def test_fuzz_priority_only_accepts_1_to_3(priority: int) -> None:
     result = validate_tool_call("bernstein_run", {"goal": "x", "priority": priority})
     if 1 <= priority <= 3:
@@ -566,7 +566,7 @@ def test_fuzz_priority_only_accepts_1_to_3(priority: int) -> None:
 
 
 @given(size=st.integers(min_value=0, max_value=MAX_PAYLOAD_BYTES + 100))
-@settings(max_examples=20, suppress_health_check=[HealthCheck.too_slow], deadline=None)
+@settings(derandomize=True, max_examples=20, suppress_health_check=[HealthCheck.too_slow], deadline=None)
 def test_fuzz_oversize_rejected(size: int) -> None:
     if size == 0:
         return
@@ -580,7 +580,7 @@ def test_fuzz_oversize_rejected(size: int) -> None:
 
 
 @given(depth=st.integers(min_value=0, max_value=MAX_RECURSION_DEPTH + 5))
-@settings(max_examples=20, suppress_health_check=[HealthCheck.too_slow], deadline=None)
+@settings(derandomize=True, max_examples=20, suppress_health_check=[HealthCheck.too_slow], deadline=None)
 def test_fuzz_depth_check_threshold(depth: int) -> None:
     schema = {
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -601,7 +601,7 @@ def test_fuzz_depth_check_threshold(depth: int) -> None:
 
 
 @given(control_codepoint=st.integers(min_value=0, max_value=0x9F))
-@settings(max_examples=30, suppress_health_check=[HealthCheck.too_slow], deadline=None)
+@settings(derandomize=True, max_examples=30, suppress_health_check=[HealthCheck.too_slow], deadline=None)
 def test_fuzz_control_char_codepoints(control_codepoint: int) -> None:
     ch = chr(control_codepoint)
     payload = {"goal": f"prefix{ch}suffix"}
@@ -615,14 +615,14 @@ def test_fuzz_control_char_codepoints(control_codepoint: int) -> None:
 
 
 @given(scenario_id=st.text(min_size=1, max_size=20))
-@settings(max_examples=30, suppress_health_check=[HealthCheck.too_slow], deadline=None)
+@settings(derandomize=True, max_examples=30, suppress_health_check=[HealthCheck.too_slow], deadline=None)
 def test_fuzz_scenario_id_pattern(scenario_id: str) -> None:
     result = validate_tool_call("bernstein_scenario", {"scenario_id": scenario_id})
     assert isinstance(result, (ValidatedPayload, ValidationError))
 
 
 @given(payload=st.dictionaries(st.text(min_size=1, max_size=8), _jsonish(max_leaves=5), max_size=5))
-@settings(max_examples=30, suppress_health_check=[HealthCheck.too_slow], deadline=None)
+@settings(derandomize=True, max_examples=30, suppress_health_check=[HealthCheck.too_slow], deadline=None)
 def test_fuzz_random_payload_against_health(payload: dict[str, object]) -> None:
     # bernstein_health forbids any properties at all.
     result = validate_tool_call("bernstein_health", payload)
@@ -633,21 +633,21 @@ def test_fuzz_random_payload_against_health(payload: dict[str, object]) -> None:
 
 
 @given(payload=_jsonish())
-@settings(max_examples=30, suppress_health_check=[HealthCheck.too_slow], deadline=None)
+@settings(derandomize=True, max_examples=30, suppress_health_check=[HealthCheck.too_slow], deadline=None)
 def test_fuzz_permissive_mode_never_rejects(payload: object) -> None:
     result = validate_tool_call("bernstein_run", payload, permissive=True)
     assert isinstance(result, ValidatedPayload)
 
 
 @given(payload=_jsonish())
-@settings(max_examples=30, suppress_health_check=[HealthCheck.too_slow], deadline=None)
+@settings(derandomize=True, max_examples=30, suppress_health_check=[HealthCheck.too_slow], deadline=None)
 def test_fuzz_unknown_tool_permissive_passes(payload: object) -> None:
     result = validate_tool_call("__not_a_tool__", payload, permissive=True)
     assert isinstance(result, ValidatedPayload)
 
 
 @given(note=st.text(min_size=0, max_size=200))
-@settings(max_examples=30, suppress_health_check=[HealthCheck.too_slow], deadline=None)
+@settings(derandomize=True, max_examples=30, suppress_health_check=[HealthCheck.too_slow], deadline=None)
 def test_fuzz_approve_note_text(note: str) -> None:
     cleaned = "".join(c for c in note if c in "\t\n\r" or 32 <= ord(c) <= 126)
     result = validate_tool_call(
