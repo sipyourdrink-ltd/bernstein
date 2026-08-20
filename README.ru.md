@@ -53,7 +53,7 @@ Bernstein — детерминированный оркестратор CLI-аг
 Полный список — на [странице возможностей](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [матрица возможностей](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) — исчерпывающий индекс.
 
 ### установка за 30 секунд
-<!-- l10n: en="install in 30 seconds" hash="sha256:da2e6aa3f938" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -75,7 +75,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 CI перепроверяет закоммиченную квитанцию на каждом пуше в main — и доказывает, что подделанная копия не проходит, — так что опубликованное свидетельство не сгниёт в декоративный файл. `scripts/record_demo.sh` пересобирает запись, квитанцию и ключ из свежего настоящего прогона; ничего в терминале не синтезировано.
 
-За идущим прогоном можно смотреть с любой из двух операторских поверхностей. Обе читают один и тот же task API, так что ни одна не является отстающим зеркалом другой.
+За идущим прогоном можно смотреть с любой из двух операторских поверхностей. Обе читают один и тот же task API, так что ни одна не является отстающим зеркалом другой. В `bernstein live` левая и правая колонки прокручиваются независимо, целыми панелями, так что виджеты, не поместившиеся на экран, остаются доступны в невысоких терминалах.
 
 | ![Терминальный дашборд в две колонки: слева агенты с живыми логами, справа доска задач, снизу лента активности во всю ширину и строка стоимости](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![Браузерный дашборд со списком из шестидесяти двух задач, одиннадцать выполняются, одна раскрыта до диффа рабочего дерева](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
