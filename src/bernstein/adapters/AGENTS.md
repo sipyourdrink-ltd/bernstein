@@ -17,10 +17,9 @@ invocation and streams results back; flat layout, one module per tool.
 
 ## Invariants
 
-- Every adapter has a YAML contract in `tests/contract/contracts/`
-  naming the flags and subcommands it requires from the upstream
-  binary. Capability assertions only - never snapshot `--help` text
-  (`_contract.py` docstring). Contract drift is a hard fail (exit 2).
+- Every adapter has a YAML contract in `tests/contract/contracts/` naming
+  its required flags/subcommands. Capability assertions only, never snapshot
+  `--help` text (`_contract.py` docstring); drift is a hard fail (exit 2).
 - Artifact writes go through the lineage-spine boundary in `base.py`;
   do not add adapter-local artifact write paths
   (`../core/lineage/spine.py`).
@@ -32,9 +31,10 @@ invocation and streams results back; flat layout, one module per tool.
 
 ## Testing
 
-Per-adapter unit tests are mostly flat as
-`tests/unit/test_adapter_<name>.py`, with a few under
-`tests/unit/adapters/` beside the shared subsystem tests. Both layouts
-are current, so follow the one an adapter already uses, and run one
-file at a time. Contract checks live under `tests/contract/`; live-
-binary conformance is opt-in via the `--live` pytest flag.
+Per-adapter unit tests are mostly flat as `tests/unit/test_adapter_<name>.py`,
+with a few under `tests/unit/adapters/` beside the shared subsystem tests.
+Both layouts are current; follow whichever one an adapter already uses, and
+run one file at a time. Contract checks live under `tests/contract/`;
+live-binary conformance is opt-in via the `--live` pytest flag.
+
+<!-- Reviewed 2026-08-18 against this subtree; the notes above still hold. -->

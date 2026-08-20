@@ -83,9 +83,10 @@ class TestCapabilityMap:
         assert checkpoint_retry_capability("claude") is CheckpointRetryCapability.FORK
         assert checkpoint_retry_capability("claude_routine") is CheckpointRetryCapability.FORK
         assert checkpoint_retry_capability("openai_agents") is CheckpointRetryCapability.RESUME
+        assert checkpoint_retry_capability("opencode") is CheckpointRetryCapability.RESUME
 
     def test_unsupported_resume_maps_to_none(self) -> None:
-        for name in ("aider", "qwen", "mock", "cursor", "gemini", "opencode"):
+        for name in ("aider", "qwen", "mock", "cursor", "gemini"):
             assert checkpoint_retry_capability(name) is CheckpointRetryCapability.NONE
 
     def test_unknown_adapter_defaults_to_none(self) -> None:

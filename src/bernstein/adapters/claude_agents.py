@@ -12,7 +12,17 @@ parallelism, without Bernstein needing to manage those subprocesses.
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from bernstein.agents.catalog import CatalogAgent
+
+_logger = logging.getLogger(__name__)
+
+# Tool set given to a catalog agent that declares none of its own. Matches the
+# bundled read-only ``explore`` subagent: shell access is opt-in, never a default.
+_READ_ONLY_TOOLS: tuple[str, ...] = ("Read", "Grep", "Glob")
 
 # ---------------------------------------------------------------------------
 # Subagent definitions per role
@@ -104,22 +114,47 @@ _SUBAGENTS: dict[str, dict[str, dict[str, Any]]] = {
 }
 
 
-def build_agents_json(role: str) -> dict[str, Any] | None:
+def build_agents_json(
+    role: str,
+    catalog_agents: list[CatalogAgent] | None = None,
+) -> dict[str, Any] | None:
     """Build --agents JSON for the given role.
 
     Generates subagent definitions that Claude Code's Agent tool uses when
-    the spawned agent delegates subtasks. This lets Bernstein control the
-    behaviour of Claude Code's internal subagents per role.
+    the spawned agent delegates subtasks. Merges catalog-matched agents
+    with the static per-role subagent table.
 
     Args:
         role: Agent role (e.g. "backend", "qa", "security", "docs").
+        catalog_agents: Optional list of loaded :class:`CatalogAgent` instances.
 
     Returns:
         Dict suitable for ``json.dumps()`` and passing to ``--agents``,
         or ``None`` if the role has no custom subagent definitions.
     """
-    agents = _SUBAGENTS.get(role)
-    if not agents:
+    base_agents = _SUBAGENTS.get(role, {})
+    result: dict[str, dict[str, Any]] = {name: {**defn} for name, defn in base_agents.items()}
+
+    for agent in catalog_agents or []:
+        if not (agent.role == role or role in agent.capabilities or role == "all"):
+            continue
+        if agent.name in result:
+            # The static role table wins, matching how bundled skill templates
+            # take precedence over catalog-installed ones.
+            _logger.debug("Catalog agent %s shadowed by an existing definition", agent.name)
+            continue
+        # An agent that declares no tools is the case we know least about, so
+        # it gets the read-only set the bundled ``explore`` subagent uses; a
+        # catalog opts into shell access by naming it.
+        sub_def: dict[str, Any] = {
+            "description": agent.description or f"Subagent for {agent.name}",
+            "prompt": agent.system_prompt,
+            "tools": list(agent.tools) if agent.tools else list(_READ_ONLY_TOOLS),
+        }
+        if agent.model:
+            sub_def["model"] = agent.model
+        result[agent.name] = sub_def
+
+    if not result:
         return None
-    # Return a shallow copy so callers can't mutate the module-level data.
-    return {name: {**defn} for name, defn in agents.items()}
+    return result

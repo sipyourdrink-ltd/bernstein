@@ -296,11 +296,17 @@ class TestSyncCatalog:
         assert "catalogs" in path.parts
 
     def test_sync_catalog_respects_ttl(self, tmp_path: Path) -> None:
-        """If a fresh marker file exists, sync_catalog returns (True, ...) without git."""
+        """A fresh marker short-circuits the sync only when the lockfile is also present.
+
+        The marker alone is not enough: a catalog with no ``agents.lock`` has
+        nothing for :meth:`fetch_agents` to verify against, so the TTL is
+        treated as stale and the next sync re-writes one.
+        """
         target = tmp_path / "agency"
         target.mkdir()
         # Create a git repo stub so the "pull" path would be taken
         (target / ".git").mkdir()
+        (target / "agents.lock").write_text('{"content_digest": ""}', encoding="utf-8")
         # Create a fresh marker file
         marker = tmp_path / ".agency.synced"
         marker.touch()

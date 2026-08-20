@@ -33,4 +33,4 @@ Single files only, e.g.
 `uv run pytest tests/unit/test_agents_md_cmd.py -x -q`; most commands
 have a matching `test_<name>_cmd.py` under `tests/unit/`.
 
-<!-- Reviewed 2026-08-12 against this subtree; the notes above still hold. -->
+<!-- Reviewed 2026-08-18 against this subtree; the notes above still hold. -->
