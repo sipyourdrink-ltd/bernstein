@@ -521,7 +521,7 @@ def file_review_correction(
         )
         # Record in the HMAC audit chain first, then write the projection: a
         # crash between the two leaves an entry with no receipt file (harmless,
-        # re-appliable) rather than a receipt file with no entry, which
+        # replayable) rather than a receipt file with no entry, which
         # ``--memory-audit`` cannot tell apart from a tampered record.
         record_convention_receipt(
             chain=chain,
@@ -713,7 +713,7 @@ def _close_convention_receipt(
     # Append the chain entry before writing the projection. The chain is the
     # append-only record and the receipt file is derived from it, so a crash
     # between the two must leave the recoverable ordering: an entry with no
-    # file flip is re-appliable, while a file flipped with no entry behind it
+    # file flip is replayable, while a file flipped with no entry behind it
     # is a permanent ``--memory-audit`` failure that looks exactly like tamper.
     audit_key = load_or_create_audit_key()
     chain = AuditChainStore(sdd_dir / "audit", key=audit_key)
