@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+from importlib.metadata import PackageNotFoundError, metadata, version
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.protocols.mcp.tool_tiers import (
@@ -40,11 +41,29 @@ if TYPE_CHECKING:
 #: card and the HTTP ``initialize`` response cannot drift apart.
 SPEC_REVISION: str = "2025-03-26"
 
-#: Stable server version reported in the card and server info.
-SERVER_VERSION: str = "1.0.0"
-
 #: URI under which the capability card is exposed as an MCP resource.
 CAPABILITY_RESOURCE_URI: str = "bernstein://capability"
+
+
+def package_version() -> str:
+    """Return the installed Bernstein distribution version."""
+    try:
+        return version("bernstein")
+    except PackageNotFoundError:
+        return "0+unknown"
+
+
+def package_repo_url() -> str:
+    """Return the repository URL declared in installed package metadata."""
+    try:
+        meta = metadata("bernstein")
+        for project_url in meta.get_all("Project-URL") or []:
+            name, _, url = project_url.partition(",")
+            if name.strip().lower() in ("repository", "source"):
+                return url.strip()
+    except PackageNotFoundError:
+        pass
+    return ""
 
 
 def _auth_modes() -> dict[str, Any]:
@@ -120,7 +139,8 @@ def build_capability_card(spec_revision: str | None = None) -> dict[str, Any]:
     active_tier = resolve_active_tier()
     return {
         "name": "bernstein",
-        "version": SERVER_VERSION,
+        "version": package_version(),
+        "repo_url": package_repo_url(),
         "specRevision": spec_revision or SPEC_REVISION,
         "transports": _transports(),
         "auth": _auth_modes(),

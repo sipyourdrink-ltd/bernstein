@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -149,6 +150,35 @@ def image_from_docker_catalog(server_yaml_path: Path) -> ImageReference | None:
     return None
 
 
+def source_from_docker_catalog(server_yaml_path: Path) -> dict[str, str]:
+    """Return the ``source`` mapping (``project``, ``commit``) from a Docker MCP catalog ``server.yaml``.
+
+    The catalog payload is small and shape-stable, so the ``source:`` section is
+    read without a YAML dependency.
+    """
+    try:
+        text = server_yaml_path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    source: dict[str, str] = {}
+    in_source = False
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if line.startswith("source:"):
+            in_source = True
+            continue
+        if in_source:
+            if raw and not raw[0].isspace():
+                break
+            if ":" in stripped:
+                k, v = stripped.split(":", 1)
+                source[k.strip()] = v.strip().strip("'\"")
+    return source
+
+
 def owner_from_server_json(server_json_path: Path) -> str | None:
     """Return the GitHub owner from the ``server.json`` repository URL."""
     try:
@@ -180,11 +210,15 @@ def verify_signed_image_provenance(*, repo_root: Path, version: str) -> ImagePro
       ``ghcr.io/<owner>/bernstein:<version>`` (owner taken from its own
       repository URL), and
     * ``packaging/docker-mcp/server.yaml`` names the same GHCR repository,
+    * ``packaging/docker-mcp/server.yaml`` carries a matching ``source.project``
+      repository URL and a valid pinned ``source.commit``,
 
     so the registry listing and the catalog entry resolve to the identical
     signed image the release built. The returned ``image_ref`` is the verified
     reference a host would pull.
     """
+    import re
+
     server_json = repo_root / "server.json"
     catalog_yaml = repo_root / "packaging" / "docker-mcp" / "server.yaml"
 
@@ -223,6 +257,40 @@ def verify_signed_image_provenance(*, repo_root: Path, version: str) -> ImagePro
             reason=(
                 f"docker catalog image {catalog.repo_ref!r} differs from the registry listing {expected.repo_ref!r}"
             ),
+        )
+
+    catalog_source = source_from_docker_catalog(catalog_yaml)
+    if not catalog_source.get("project"):
+        return ImageProvenanceResult(
+            ok=False,
+            image_ref=oci.full_ref,
+            reason="docker-mcp catalog server.yaml has no source.project URL",
+        )
+    server_json_data: dict[str, object] = {}
+    with suppress(OSError, json.JSONDecodeError):
+        server_json_data = json.loads(server_json.read_text(encoding="utf-8"))
+    expected_repo_url = (server_json_data.get("repository") or {}).get("url", "")
+    if expected_repo_url and catalog_source["project"] != expected_repo_url:
+        return ImageProvenanceResult(
+            ok=False,
+            image_ref=oci.full_ref,
+            reason=(
+                f"docker catalog source.project {catalog_source['project']!r} "
+                f"differs from registry listing repository {expected_repo_url!r}"
+            ),
+        )
+    commit = catalog_source.get("commit", "")
+    if not commit:
+        return ImageProvenanceResult(
+            ok=False,
+            image_ref=oci.full_ref,
+            reason="docker-mcp catalog server.yaml has no source.commit pinned",
+        )
+    if not re.match(r"^[0-9a-fA-F]{40,64}$", commit):
+        return ImageProvenanceResult(
+            ok=False,
+            image_ref=oci.full_ref,
+            reason=f"docker catalog source.commit {commit!r} is not a valid commit SHA",
         )
 
     return ImageProvenanceResult(
@@ -283,6 +351,7 @@ __all__ = [
     "oci_reference_from_server_json",
     "owner_from_server_json",
     "parse_image_reference",
+    "source_from_docker_catalog",
     "verify_attestation",
     "verify_signed_image_provenance",
 ]
