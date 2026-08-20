@@ -879,7 +879,7 @@ ignore_missing_imports = true
 # Translated README variants gated by `bernstein readme-l10n verify`
 # (issue #3425). Adding a language is a data change: append its IETF tag
 # here and add README.<tag>.md carrying l10n bindings.
-languages = ["zh-Hans", "zh-TW", "ja", "ko", "hi", "bn", "ru", "es", "pt", "de", "fr", "it", "nl", "pl", "sv", "fi"]
+languages = ["zh-Hans", "zh-TW", "ja", "ko", "hi", "bn", "ru", "es", "pt", "de", "fr", "it", "nl", "pl", "sv", "fi", "uk"]
 
 # Who keeps each translation current. `verify` names the owner when a
 # language drifts, so the report reaches someone who reads the language
@@ -904,6 +904,7 @@ languages = ["zh-Hans", "zh-TW", "ja", "ko", "hi", "bn", "ru", "es", "pt", "de",
 "pl" = "@chernistry"
 "sv" = "@chernistry"
 "fi" = "@chernistry"
+"uk" = "@chernistry"
 
 [tool.pytest.ini_options]
 minversion = "8.0"
