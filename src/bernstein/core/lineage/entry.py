@@ -42,6 +42,7 @@ ARTEFACT_KINDS: frozenset[str] = frozenset(
         "query-result",
         "external",
         "finding",
+        "coverage",
     }
 )
 
