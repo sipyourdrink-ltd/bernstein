@@ -33,6 +33,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from bernstein.core.security.path_containment import PathContainmentError, contained_path
+
 if TYPE_CHECKING:
     from bernstein.core.security.audit import AuditLog
     from bernstein.core.tasks.models import ApprovalSpec
@@ -125,6 +127,12 @@ def approval_path_in(approvals_dir: Path, approval_id: str, suffix: str) -> Path
     what catches a symlinked decision file, something the allowlist alone
     cannot see.
 
+    The second gate is :func:`contained_path`, which resolves the base the same
+    way this function used to and refuses anything that is not a strict
+    descendant of it. The refusal is re-raised as
+    :class:`UnsafeApprovalIdError` so the three call sites keep catching one
+    exception type.
+
     Args:
         approvals_dir: The approvals directory itself.
         approval_id: Task or approval identifier.
@@ -135,10 +143,16 @@ def approval_path_in(approvals_dir: Path, approval_id: str, suffix: str) -> Path
             the approvals directory.
     """
     validate_approval_id(approval_id)
-    resolved_base = approvals_dir.resolve()
-    candidate = (approvals_dir / f"{approval_id}{suffix}").resolve()
-    if candidate.parent != resolved_base or not candidate.is_relative_to(resolved_base):
-        msg = f"refusing approvals path outside {resolved_base} for id {approval_id!r}"
+    try:
+        candidate = contained_path(approvals_dir, f"{approval_id}{suffix}", label="approval id")
+    except PathContainmentError as exc:
+        msg = f"refusing approvals path outside {approvals_dir.resolve()} for id {approval_id!r}"
+        raise UnsafeApprovalIdError(msg) from exc
+    # contained_path proves a strict descendant, not a direct child: a single
+    # segment that is itself a symlink deeper into the tree passes the prefix
+    # test. Decision files are always direct children of the approvals dir.
+    if candidate.parent != Path(os.path.realpath(approvals_dir)):
+        msg = f"refusing approvals path outside {approvals_dir.resolve()} for id {approval_id!r}"
         raise UnsafeApprovalIdError(msg)
     return candidate
 

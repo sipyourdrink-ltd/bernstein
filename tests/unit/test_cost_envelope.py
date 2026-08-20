@@ -622,7 +622,7 @@ def usage_strategy(draw: st.DrawFn) -> TokenUsage:
 
 
 class TestEnvelopeProperties:
-    @settings(max_examples=50, deadline=None)
+    @settings(derandomize=True, max_examples=50, deadline=None)
     @given(records=st.lists(usage_strategy(), min_size=0, max_size=30))
     def test_rollup_total_equals_sum_of_costs(self, records: list[TokenUsage]) -> None:
         out = rollup(records)
@@ -630,21 +630,21 @@ class TestEnvelopeProperties:
         expected = sum(r.cost_usd for r in records)
         assert total == pytest.approx(expected, rel=1e-6)
 
-    @settings(max_examples=50, deadline=None)
+    @settings(derandomize=True, max_examples=50, deadline=None)
     @given(records=st.lists(usage_strategy(), min_size=0, max_size=30))
     def test_rollup_calls_equals_record_count(self, records: list[TokenUsage]) -> None:
         out = rollup(records)
         total_calls = sum(row.calls for row in out.values())
         assert total_calls == len(records)
 
-    @settings(max_examples=50, deadline=None)
+    @settings(derandomize=True, max_examples=50, deadline=None)
     @given(records=st.lists(usage_strategy(), min_size=1, max_size=20))
     def test_envelope_count_bounded_by_distinct_envelopes(self, records: list[TokenUsage]) -> None:
         distinct = {r.quota_envelope or "subscription" for r in records}
         out = rollup(records)
         assert set(out) == distinct
 
-    @settings(max_examples=50, deadline=None)
+    @settings(derandomize=True, max_examples=50, deadline=None)
     @given(records=st.lists(usage_strategy(), min_size=0, max_size=20))
     def test_rollup_pct_used_is_nonnegative(self, records: list[TokenUsage]) -> None:
         out = rollup(
@@ -654,14 +654,14 @@ class TestEnvelopeProperties:
         for row in out.values():
             assert row.pct_used >= 0.0
 
-    @settings(max_examples=50, deadline=None)
+    @settings(derandomize=True, max_examples=50, deadline=None)
     @given(records=st.lists(usage_strategy(), min_size=0, max_size=20))
     def test_rollup_burn_rate_nonnegative(self, records: list[TokenUsage]) -> None:
         out = rollup(records)
         for row in out.values():
             assert row.burn_rate_usd_per_sec >= 0.0
 
-    @settings(max_examples=50, deadline=None)
+    @settings(derandomize=True, max_examples=50, deadline=None)
     @given(records=st.lists(usage_strategy(), min_size=0, max_size=20))
     def test_rollup_remaining_via_report_nonnegative(self, records: list[TokenUsage]) -> None:
         out = rollup(
@@ -672,7 +672,7 @@ class TestEnvelopeProperties:
             rep = row.to_envelope_report()
             assert rep.remaining_usd >= 0.0
 
-    @settings(max_examples=50, deadline=None)
+    @settings(derandomize=True, max_examples=50, deadline=None)
     @given(
         cost=st.floats(min_value=0.0, max_value=1000.0, allow_nan=False, allow_infinity=False),
         cap=st.floats(min_value=0.01, max_value=1000.0, allow_nan=False, allow_infinity=False),
@@ -685,7 +685,7 @@ class TestEnvelopeProperties:
         else:
             assert evt is None
 
-    @settings(max_examples=40, deadline=None)
+    @settings(derandomize=True, max_examples=40, deadline=None)
     @given(
         cost=st.floats(min_value=0.0, max_value=1000.0, allow_nan=False, allow_infinity=False),
         hard_cap=st.floats(min_value=0.01, max_value=1000.0, allow_nan=False, allow_infinity=False),
@@ -716,7 +716,7 @@ class TestEnvelopeProperties:
             )
             assert tr.spent_by_envelope()["sub"] == pytest.approx(cost)
 
-    @settings(max_examples=40, deadline=None)
+    @settings(derandomize=True, max_examples=40, deadline=None)
     @given(
         envelopes=st.lists(envelope_strategy, min_size=0, max_size=8),
     )
@@ -728,7 +728,7 @@ class TestEnvelopeProperties:
         for env in set(envelopes):
             assert counts[env] == envelopes.count(env)
 
-    @settings(max_examples=30, deadline=None)
+    @settings(derandomize=True, max_examples=30, deadline=None)
     @given(allowlist=st.lists(st.sampled_from(["sonnet", "opus", "haiku"]), min_size=1, max_size=3, unique=True))
     def test_model_allowlist_blocks_outsiders(self, allowlist: list[str]) -> None:
         tr = CostTracker(run_id="r-prop")

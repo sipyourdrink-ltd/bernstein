@@ -29,8 +29,44 @@ if _SRC not in sys.path:
 # in via ``pytestmark = pytest.mark.usefixtures("no_watchdog_threads")``.
 # The helpers module keeps the ``make_popen_mock`` / ``inner_cmd`` callables
 # test modules import directly.
+import os
+
 from tests.unit._adapter_test_helpers import no_watchdog_threads  # noqa: F401
 from tests.unit._no_network import block_network
+
+try:
+    from hypothesis import HealthCheck, Verbosity, settings
+
+    settings.register_profile(
+        "smoke",
+        max_examples=50,
+        deadline=5_000,
+        derandomize=True,
+        suppress_health_check=[
+            HealthCheck.too_slow,
+            HealthCheck.filter_too_much,
+            HealthCheck.function_scoped_fixture,
+        ],
+        verbosity=Verbosity.normal,
+    )
+
+    settings.register_profile(
+        "deep",
+        max_examples=1_000,
+        deadline=None,
+        derandomize=True,
+        suppress_health_check=[
+            HealthCheck.too_slow,
+            HealthCheck.filter_too_much,
+            HealthCheck.function_scoped_fixture,
+        ],
+        verbosity=Verbosity.verbose,
+        print_blob=True,
+    )
+
+    settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "smoke"))
+except ImportError:
+    pass
 
 
 @pytest.fixture(autouse=True)

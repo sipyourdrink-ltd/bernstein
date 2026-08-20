@@ -308,6 +308,8 @@ hand-assembled as a request with a bearer header.
 | `--reserved-usd FLOAT` | none | Envelope headroom reserved for the task. |
 | `--spent-usd FLOAT` | none | Spend recorded against the reservation at park time. |
 | `--until approval` | off | Resume only once `bernstein approve TASK_ID` lands. |
+| `--role TEXT` | the task's recorded role | Role the checkpoint's grant is bound to. |
+| `--parent-run-id TEXT` | `$BERNSTEIN_RUN_ID` | Run that owns the task, bound into the grant. |
 | `--json` | off | Print the park result as JSON. |
 
 ##### `bernstein task resume`

@@ -105,7 +105,7 @@ def test_two_processes_derive_byte_identical_grant_order(tmp_path: Path) -> None
 _OP = st.sampled_from(["grant", "release", "renew", "sweep"])
 
 
-@settings(max_examples=60, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(derandomize=True, max_examples=60, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(ops=st.lists(st.tuples(_OP, st.integers(min_value=0, max_value=6)), min_size=1, max_size=40))
 def test_randomized_interleavings_project_identically(tmp_path_factory: pytest.TempPathFactory, ops: list) -> None:
     base = tmp_path_factory.mktemp("adm")

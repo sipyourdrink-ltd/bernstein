@@ -208,6 +208,17 @@ jobs:
           Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           done
 
+      - name: Verify last-green projects the receipts
+        # Must stay after `Run canary matrix` (and `--update-docs`) because it
+        # re-reads the receipts off disk in a fresh process and re-derives the
+        # projection against the freshly updated working tree (#3940).
+        # Placed after regression issue opening so a projection mismatch does
+        # not suppress threshold-crossing regression issue creation.
+        run: |
+          set -euo pipefail
+          uv run python scripts/adapter_canary.py --verify-projection \
+            --out-dir .sdd/runtime/adapter-canary
+
       - name: Propose last-green regeneration PR
         env:
           # A PR created with GITHUB_TOKEN does not trigger workflows: the

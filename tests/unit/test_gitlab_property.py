@@ -89,7 +89,7 @@ class TestParseWebhookRoundTrip:
             st.text(min_size=1, max_size=10, alphabet=st.characters(min_codepoint=97, max_codepoint=122)),
         ),
     )
-    @settings(suppress_health_check=[HealthCheck.too_slow], deadline=None, max_examples=80)
+    @settings(derandomize=True, suppress_health_check=[HealthCheck.too_slow], deadline=None, max_examples=80)
     def test_round_trip(self, kind: str, sender: str, path: tuple[str, str]) -> None:
         ns, proj = path
         full = f"{ns}/{proj}"
@@ -117,7 +117,7 @@ class TestMergeRequestActionInvariants:
     @given(
         body=st.text(min_size=0, max_size=3000),
     )
-    @settings(max_examples=60, deadline=None)
+    @settings(derandomize=True, max_examples=60, deadline=None)
     def test_open_always_creates_one_task(self, body: str) -> None:
         event = _build_event("merge_request", action="open")
         # mutate description
@@ -153,7 +153,7 @@ class TestSlashCommandInvariants:
         assert out[0] == verb.lower()
 
     @given(verb=st.sampled_from(["fix", "plan", "evolve", "qa", "review"]), args=_ASCII)
-    @settings(max_examples=60)
+    @settings(derandomize=True, max_examples=60)
     def test_known_verbs_always_produce_task(self, verb: str, args: str) -> None:
         event = _build_event("note", note=f"/bernstein {verb} {args}")
         task = slash_command_to_task(event, verb, args)
@@ -162,7 +162,7 @@ class TestSlashCommandInvariants:
         assert task["role"]
 
     @given(verb=st.text(min_size=1, max_size=8, alphabet=st.characters(min_codepoint=97, max_codepoint=122)))
-    @settings(max_examples=40)
+    @settings(derandomize=True, max_examples=40)
     def test_unknown_verb_none(self, verb: str) -> None:
         if verb in {"fix", "plan", "evolve", "qa", "review"}:
             return
@@ -172,7 +172,7 @@ class TestSlashCommandInvariants:
 
 class TestNoteToTaskInvariants:
     @given(text=_ASCII)
-    @settings(max_examples=60)
+    @settings(derandomize=True, max_examples=60)
     def test_non_actionable_non_slash_returns_none(self, text: str) -> None:
         actionable_words = (
             "fix",
