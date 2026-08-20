@@ -51,6 +51,7 @@ from bernstein.core.storage.sink import (
     normalise_key,
 )
 from bernstein.core.storage.sinks.local_fs import LocalFsSink
+from bernstein.core.storage.soc2_export import export_soc2_evidence_pack
 
 __all__ = [
     "ArtifactSink",
@@ -61,6 +62,7 @@ __all__ = [
     "LocalFsSink",
     "SinkError",
     "default_registry",
+    "export_soc2_evidence_pack",
     "get_sink",
     "join_keys",
     "list_sink_names",
