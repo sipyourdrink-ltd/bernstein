@@ -515,6 +515,7 @@ nav:
           - Volunteer sandbox profile: reference/volunteer-sandbox.md
           - Volunteer issue text: reference/volunteer-issue-text.md
           - Volunteer task runner: reference/volunteer-runner.md
+          - Volunteer lease store: reference/volunteer-lease-store.md
           - MCP catalog: reference/mcp-catalog.md
           - MCP tool tiers: mcp/tool_tiers.md
       - Compatibility & limits:
