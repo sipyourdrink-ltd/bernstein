@@ -91,12 +91,18 @@ def cost_ledger_key(run_id: str) -> str:
     return join_keys("cost", run_id, "ledger.jsonl")
 
 
+def soc2_evidence_key(period_label: str, run_id: str, filename: str) -> str:
+    """Key for a SOC 2 evidence pack artifact within a period and run."""
+    return join_keys("soc2", period_label, run_id, filename)
+
+
 __all__ = [
     "audit_log_key",
     "checkpoint_key",
     "cost_ledger_key",
     "metrics_dump_key",
     "rotated_audit_key",
+    "soc2_evidence_key",
     "state_key",
     "task_output_key",
     "task_progress_key",
