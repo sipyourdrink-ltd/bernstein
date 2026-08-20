@@ -29,6 +29,10 @@ from typing import TYPE_CHECKING, Protocol, TypedDict, cast
 
 import yaml
 
+from bernstein.core.security.path_containment import (
+    PathContainmentError,
+    contained_subpath,
+)
 from bernstein.core.skills.activation_log import (
     ActivationRecord,
     log_activation,
@@ -289,6 +293,24 @@ def inject_skills(
             templates_to_inject.append(candidate.template_name)
             trigger_by_template[candidate.template_name] = "auto-route"
 
+    # Catalog-installed skill packs (.bernstein/skills/<name>/). The lockfile,
+    # not a directory listing, decides which skills are installed here: workdir
+    # is the per-task worktree, so its contents are branch contents, and a file
+    # dropped under .bernstein/skills/ without an install would otherwise be
+    # rendered in front of the agent. It is also the anchor the revocation gate
+    # below iterates, so an id the lockfile never names is one that gate could
+    # never match.
+    catalog_skills_dir = workdir / ".bernstein" / "skills"
+    catalog_skill_ids = _installed_catalog_skill_ids(workdir)
+    for skill_id in catalog_skill_ids:
+        template_name = f"{skill_id}.md"
+        if template_name in trigger_by_template:
+            continue
+        if _resolve_catalog_skill(catalog_skills_dir, skill_id) is None:
+            continue
+        templates_to_inject.append(template_name)
+        trigger_by_template[template_name] = "catalog"
+
     # Kill switch: refuse to inject any skill a signed revocation covers, and
     # record a chain-anchored refusal receipt for every revoked install
     # (issue #2527). Best-effort: a bad catalog cache must never wedge a spawn.
@@ -312,7 +334,17 @@ def inject_skills(
             )
             continue
 
+        # Bundled role templates in templates/skills/ take precedence over catalog-installed skills
         source_path = skills_source_dir / template_name
+        source_name = "templates/skills"
+        if not source_path.exists():
+            skill_stem = template_name.rsplit(".", 1)[0]
+            if skill_stem in catalog_skill_ids:
+                catalog_path = _resolve_catalog_skill(catalog_skills_dir, skill_stem)
+                if catalog_path is not None:
+                    source_path = catalog_path
+                    source_name = ".bernstein/skills"
+
         if not source_path.exists():
             _logger.debug("Skill template not found: %s - skipping", source_path)
             audit_records.append(
@@ -354,7 +386,7 @@ def inject_skills(
             raw,
             skill_name=template_name,
             origin=str(source_path),
-            source_name="templates/skills",
+            source_name=source_name,
         )
 
         pre_render_digest: str = hashlib.blake2b(sanitized.encode("utf-8")).hexdigest()
@@ -440,6 +472,52 @@ def inject_skills(
     if written_relpaths:
         _exclude_injected_paths(workdir, written_relpaths)
     return audit_records
+
+
+def _installed_catalog_skill_ids(workdir: Path) -> list[str]:
+    """Return catalog-installed skill ids for *workdir*, in lockfile order.
+
+    The lockfile is the authority on what is installed, which matters because
+    *workdir* is the per-task worktree and therefore holds branch-controlled
+    files. It is also the same set :func:`_revoked_skill_ids` iterates, so
+    reading from it keeps injection and revocation talking about the same
+    skills. Best-effort, like the revocation path: any failure resolves to an
+    empty list so a spawn is never wedged by a missing or unreadable lockfile.
+    """
+    try:
+        from bernstein.core.skills.catalog.enforcement import installed_catalog_skills
+
+        return list(dict.fromkeys(skill_id for skill_id, _version in installed_catalog_skills(workdir)))
+    except Exception:
+        _logger.debug("catalog lockfile unreadable under %s", workdir, exc_info=True)
+        return []
+
+
+def _resolve_catalog_skill(catalog_skills_dir: Path, skill_id: str) -> Path | None:
+    """Return the file backing catalog skill *skill_id*, or ``None``.
+
+    Every candidate is joined through the containment barrier rather than
+    composed by hand, so an ordinary-looking child that is itself a symlink out
+    of the worktree is refused before anything reads it. The returned path is
+    the resolved one, which is the only value proven to be inside the base.
+
+    Args:
+        catalog_skills_dir: The ``.bernstein/skills`` directory to resolve under.
+        skill_id: Skill id as recorded in the catalog lockfile.
+
+    Returns:
+        The containment-checked path to the skill body, or ``None`` when no
+        candidate exists or every candidate escapes the base.
+    """
+    for candidate in (f"{skill_id}.md", f"{skill_id}/SKILL.md", f"{skill_id}/{skill_id}.md"):
+        try:
+            resolved = contained_subpath(catalog_skills_dir, candidate, label="catalog skill")
+        except PathContainmentError:
+            _logger.warning("Refusing catalog skill outside %s: %s", catalog_skills_dir, candidate)
+            continue
+        if resolved.is_file():
+            return resolved
+    return None
 
 
 def _revoked_skill_ids(workdir: Path) -> set[str]:
