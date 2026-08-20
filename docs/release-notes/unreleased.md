@@ -124,3 +124,4 @@ rather than as its own attribution is exempted by hand there, with the reason.
   call: no orchestrator path invokes it yet, which
   [`docs/concepts/lesson-persistence.md`](../concepts/lesson-persistence.md)
   records as the remaining gap.
+- Workspace merge order calculation is scoped to the caller's tenant (#4155).

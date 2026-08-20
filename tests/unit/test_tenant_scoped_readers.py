@@ -26,7 +26,12 @@ def _write_seed(tmp_path: Path) -> None:
         "  - id: team-a\n"
         "    budget: 100\n"
         "  - id: team-b\n"
-        "    budget: 250\n",
+        "    budget: 250\n"
+        "repos:\n"
+        "  - name: frontend\n"
+        "    path: ./frontend\n"
+        "  - name: backend\n"
+        "    path: ./backend\n",
         encoding="utf-8",
     )
 
@@ -46,9 +51,11 @@ async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
         yield async_client
 
 
-async def _create(app: FastAPI, title: str, tenant_id: str, **extra: object) -> None:
+async def _create(app: FastAPI, title: str, tenant_id: str, **extra: object) -> object:
     desc = extra.pop("description", "scoping fixture")
-    await app.state.store.create(TaskCreate(title=title, description=desc, tenant_id=tenant_id, **extra))
+    return await app.state.store.create(
+        TaskCreate(title=title, description=desc, tenant_id=tenant_id, **extra)
+    )
 
 
 class TestBudgetForecastTenantScope:
@@ -145,3 +152,43 @@ class TestHealthCheckTenantScope:
 
         after = await client.get("/health", headers={"X-Tenant-Id": "team-a"})
         assert after.json()["task_count"] == baseline + 1
+
+
+class TestWorkspaceMergeOrderTenantScope:
+    @pytest.mark.asyncio
+    async def test_merge_order_ignores_another_tenants_tasks(self, app: FastAPI, client: AsyncClient) -> None:
+        baseline = (await client.post("/workspace/merge-order", headers={"X-Tenant-Id": "team-a"})).json()
+        assert baseline["repos"] == ["frontend", "backend"]
+
+        b_backend = await _create(app, "team-b backend task", "team-b", repo="backend")
+        await _create(
+            app,
+            "team-b frontend task",
+            "team-b",
+            repo="frontend",
+            depends_on_repo="backend",
+            depends_on=[b_backend.id],  # type: ignore[union-attr]
+        )
+
+        after = await client.post("/workspace/merge-order", headers={"X-Tenant-Id": "team-a"})
+        assert after.status_code == 200
+        assert after.json()["repos"] == baseline["repos"]
+
+    @pytest.mark.asyncio
+    async def test_merge_order_still_uses_own_tasks(self, app: FastAPI, client: AsyncClient) -> None:
+        baseline = (await client.post("/workspace/merge-order", headers={"X-Tenant-Id": "team-a"})).json()
+        assert baseline["repos"] == ["frontend", "backend"]
+
+        a_backend = await _create(app, "team-a backend task", "team-a", repo="backend")
+        await _create(
+            app,
+            "team-a frontend task",
+            "team-a",
+            repo="frontend",
+            depends_on_repo="backend",
+            depends_on=[a_backend.id],  # type: ignore[union-attr]
+        )
+
+        after = await client.post("/workspace/merge-order", headers={"X-Tenant-Id": "team-a"})
+        assert after.status_code == 200
+        assert after.json()["repos"] == ["backend", "frontend"]
