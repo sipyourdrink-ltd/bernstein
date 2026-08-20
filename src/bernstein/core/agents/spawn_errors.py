@@ -145,6 +145,25 @@ class ModelNotConfiguredError(CategorizedSpawnError):
     retry_strategy = RetryStrategy.RETRY_AFTER_FIX
 
 
+class AdapterNotConfiguredError(CategorizedSpawnError):
+    """An explicitly configured ``cli`` does not name a resolvable adapter.
+
+    ``role_model_policy.<role>.cli`` and a task's per-step ``cli:`` field are
+    operator selections of an adapter, and neither is validated against the
+    adapter catalog at parse time (any non-empty string parses). When such a
+    selection resolves to nothing, the spawn path used to fall through to the
+    run-level adapter, so the run died later with an error naming an adapter
+    the operator never asked for (issue #4134: ``cli: ollama`` reported
+    ``command not found: claude``). Refusing here instead names the value the
+    operator actually wrote.
+
+    ``provider`` carries the unresolvable ``cli`` value so callers can report
+    it without parsing the message.
+    """
+
+    retry_strategy = RetryStrategy.RETRY_AFTER_FIX
+
+
 _SPAWN_ERROR_PATTERNS: list[tuple[type[CategorizedSpawnError], str, tuple[str, ...]]] = [
     (AdapterNotInstalledError, "Adapter binary not found", ("not found", "no such file", "command not found")),
     (WorktreeCreationError, "Worktree creation failed", ("worktree", "git worktree")),

@@ -50,6 +50,7 @@ from bernstein.core.agents.response_style import (
     resolve_response_style,
 )
 from bernstein.core.agents.spawn_errors import (
+    AdapterNotConfiguredError,
     ModelNotConfiguredError,
     RetryStrategy,
     classify_spawn_error,
@@ -216,6 +217,12 @@ def _list_subdirs_cached(path: Path) -> list[str]:
 
 
 logger = logging.getLogger(__name__)
+
+#: The ``cli:`` value meaning "auto-detect an adapter" rather than naming
+#: one. It is not a registry name, so it must never be resolved against the
+#: adapter catalog (see :meth:`AgentSpawner._resolve_configured_cli`).
+#: Mirrors the seed parser's own sentinel.
+_AUTO_CLI_SENTINEL = "auto"
 
 
 def emit_process_reap_receipt(
@@ -3328,6 +3335,67 @@ class AgentSpawner:
             record_sha256=record_sha256,
         )
 
+    def _resolve_configured_cli(self, configured_cli: object) -> str | None:
+        """Resolve an operator-written ``cli:`` to an adapter registry name.
+
+        ``role_model_policy.<role>.cli`` and a task's per-step ``cli:`` are
+        the operator naming the adapter for that spawn. Neither is checked
+        against the adapter catalog when it is parsed - the seed parser
+        accepts any non-empty string, and a plan file's ``cli:`` is not
+        validated at all - so this is the first place the selection meets
+        the registry.
+
+        A value that resolves to nothing used to fall through to
+        ``self._adapter``, the run-level adapter, and the run then died
+        somewhere downstream naming an adapter the operator never chose
+        (issue #4134 reported ``cli: ollama`` failing with ``command not
+        found: claude``). Refusing here instead names the value that was
+        actually written, next to the adapters that would have worked.
+
+        Args:
+            configured_cli: The raw ``cli`` value from the role policy or
+                the task, or ``None``. The ``"auto"`` sentinel means
+                auto-detection, not an adapter, and resolves to ``None``.
+
+        Returns:
+            The adapter registry name, or ``None`` when no CLI was chosen.
+
+        Raises:
+            AdapterNotConfiguredError: When a CLI was chosen and it names
+                neither a provider alias nor a registered adapter.
+        """
+        if not isinstance(configured_cli, str):
+            return None
+        cli_name = configured_cli.strip()
+        if not cli_name or cli_name == _AUTO_CLI_SENTINEL:
+            return None
+
+        resolved = adapter_name_for_provider(cli_name, "")
+        if resolved is not None:
+            logger.debug(
+                "_resolve_configured_cli: cli=%r -> adapter=%r",
+                cli_name,
+                resolved,
+            )
+            return resolved
+
+        from bernstein.adapters.registry import removed_adapter_message, selectable_adapter_names
+
+        guidance = removed_adapter_message(cli_name)
+        if guidance is None:
+            guidance = f"Available adapters: {', '.join(sorted(selectable_adapter_names()))}."
+        logger.error(
+            "spawn refused: configured cli=%r does not name a known adapter",
+            cli_name,
+        )
+        raise AdapterNotConfiguredError(
+            f"cli={cli_name!r} does not name a known adapter. It was configured for this "
+            f"spawn (role_model_policy.<role>.cli or a task's `cli:` field) and cannot be "
+            f"honoured, so the spawn is refused rather than run on a different adapter. "
+            f"{guidance}",
+            provider=cli_name,
+        )
+
     def _resolve_routing(
         self,
         tasks: list[Task],
@@ -3342,14 +3410,21 @@ class AgentSpawner:
         effective_role_policy: dict[str, Any] = role_policy.copy()
         if tasks[0].cli and "cli" not in effective_role_policy:
             effective_role_policy["cli"] = tasks[0].cli
+        configured_cli = self._resolve_configured_cli(effective_role_policy.get("cli"))
         use_router = _should_use_router(
             role_policy=effective_role_policy,
             adapter_name=self._adapter.name(),
             has_router=self._router is not None and bool(self._router.state.providers),
         )
         if not use_router:
-            if preferred_provider:
-                provider_name = preferred_provider
+            # An explicitly configured `cli:` carries the spawn when nothing
+            # else supplied a provider. The seed parser mirrors `cli` onto
+            # `provider` (so `preferred_provider` usually already holds it),
+            # but policies assembled anywhere else - team manifests,
+            # availability chains, a plan file's per-step `cli:` - carry only
+            # `cli`, and dropping it here left the spawn on the run-level
+            # adapter (issue #4134).
+            provider_name = preferred_provider or configured_cli
             routing_source = "operator-config" if role_policy.get("model") else "heuristic"
             # Adapter-aware heuristic (issue #2743): the batch/heuristic
             # selectors and role templates emit Claude tier names
