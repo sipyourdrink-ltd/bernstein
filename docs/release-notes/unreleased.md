@@ -25,6 +25,8 @@ rather than as its own attribution is exempted by hand there, with the reason.
 - Dashboard colour tokens record measured contrast ratios and are gated against WCAG AA thresholds dynamically from the stylesheet (#3589). Contrast ratios for all body text, metadata, semantic states, and pill variants are catalogued in [`docs/design/web-ui-inventory.md`](../design/web-ui-inventory.md) and enforced by `tests/unit/test_webui_contrast.py`.
 - PostgresTaskStore and BaseTaskStore declare parameterized limit and offset bounds on list_tasks (#4157). PostgresTaskStore.list_tasks mirrors TaskStore.list_tasks by accepting optional limit and offset integer bounds and parameterizing them into the SQL query (LIMIT $n OFFSET $n) to prevent unbounded row fetching across database-backed deployments.
 - Wire weekly SOC 2 evidence pack workflow export step to sink backend via `SOC2_EVIDENCE_SINK` secret (#4149).
+- Wave 2 of README translations adds 16 languages (`es`, `pt`, `de`, `fr`, `it`, `nl`, `pl`, `sv`, `fi`, `uk`, `tr`, `ar`, `he`, `id`, `vi`, `th`) under the hash-binding drift gate, bringing translated README coverage to 23 languages alongside the English source. Docs: [`docs/playbooks/readme-l10n.md`](../playbooks/readme-l10n.md).
+
 ## Security
 
 - The agent task-scope gate no longer depends on how FastAPI happens to store
