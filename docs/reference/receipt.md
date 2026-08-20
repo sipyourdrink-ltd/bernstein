@@ -122,8 +122,6 @@ $ bernstein receipt verify bundle.json
   digest: ede008207f77b97be83a3e4ef0f238cc6a67263d29e672d4ce2fd110ab6ff0d7
   manifest: carried, NOT checked
   chain: carried, NOT checked
-```
-```
 note: provenance requires pinning the worker key with --pubkey
 note: the run is not tied to a declared policy without --expected-manifest-digest
 ```
@@ -169,32 +167,34 @@ gate log, a broken chain link, or a manifest digest mismatch. Exit code is
 
 ### Malformed input
 
-This is the one place the current behaviour does not match what a reader of
-`verify_cmd`'s own source would expect, and it is documented here rather
-than smoothed over, per this page's own scope: `verify_cmd` catches
-`(OSError, ValueError, json.JSONDecodeError)` around bundle loading, but
-`load_bundle` raises `bernstein.core.security.audit_dsse.EnvelopeFormatError`
-for *every* shape of malformed input — invalid JSON, valid JSON missing the
-DSSE envelope fields, or a non-existent envelope shape alike — and that
-exception is a `RuntimeError` subclass, not a `ValueError`. It is never
-caught. Today, a bundle that fails to parse produces an **uncaught Python
-traceback and exit code 1**, not the clean `✗ could not parse bundle: ...`
-message the same function's `except` clause is clearly written to produce
-for that case:
+Input that is not a readable bundle at all — invalid JSON, valid JSON
+missing the DSSE envelope fields, or an envelope missing `signatures` — is
+refused before any verification is attempted:
 
 ```console
 $ bernstein receipt verify not-a-bundle.json
-Traceback (most recent call last):
-  ...
-bernstein.core.security.audit_dsse.EnvelopeFormatError: envelope at not-a-bundle.json is not valid UTF-8 JSON: Expecting value: line 1 column 1 (char 0)
+✗ could not parse bundle: envelope at not-a-bundle.json is not valid UTF-8 JSON: Expecting value: line 1 column 1 (char 0)
 ```
 
-The exit code (`1`) is correct and scriptable; the traceback is not what
-`--json` output or a clean operator-facing message should look like. Tracked
-as [#4109](https://github.com/sipyourdrink-ltd/bernstein/issues/4109) —
-catching `DSSEError` (the base `EnvelopeFormatError` and its siblings inherit
-from) alongside the existing tuple is the fix, and it changes no other
-verdict shape on this page.
+Exit code is `1`, the same as a refusal.
+
+**This is a third verdict, not a variety of "refused", and the distinction is
+deliberate.** A parse failure says *this file is not a bundle*; a refusal
+says *this is a bundle and it does not verify*. Only the second is a
+statement about the run. A caller that collapses them will report an
+operator who passed the wrong path exactly as it reports a tampered
+artefact.
+
+The code keeps the two apart rather than leaving the distinction to prose.
+`load_bundle` raises `EnvelopeFormatError` for malformed input, and
+`verify_cmd` catches that one class alongside `(OSError, ValueError,
+json.JSONDecodeError)`. It deliberately does **not** catch the
+`DSSEError` base: `EnvelopeSignatureError` and `EnvelopeTypeMismatchError`
+inherit from it too, and catching the base would report a signature refusal
+as malformed input — the exact collapse the paragraph above warns against.
+`test_a_signature_refusal_is_not_reported_as_a_parse_failure` pins that,
+so narrowing the catch to the base class later fails a test rather than
+silently merging two verdicts.
 
 ## What a receipt does *not* attest
 
