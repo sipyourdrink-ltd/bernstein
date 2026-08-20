@@ -47,9 +47,7 @@ def _registered_profiles(source: str) -> dict[str, dict[str, object]]:
         if not isinstance(name, str):
             continue
         kwargs = {
-            kw.arg: kw.value.value
-            for kw in node.keywords
-            if kw.arg is not None and isinstance(kw.value, ast.Constant)
+            kw.arg: kw.value.value for kw in node.keywords if kw.arg is not None and isinstance(kw.value, ast.Constant)
         }
         profiles[name] = kwargs
     return profiles
