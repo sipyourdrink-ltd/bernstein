@@ -56,7 +56,11 @@ def test_eval_list_empty_reports_no_runs(tmp_path: Path) -> None:
     assert "No YAML eval runs found" in result.output
 
 
-def test_eval_list_shows_run_paths_newest_first(tmp_path: Path) -> None:
+def test_eval_list_shows_run_paths_newest_first(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Pin the width so this test asserts ordering and nothing else. Left to the
+    # ambient terminal its outcome depends on how deep pytest happened to root
+    # tmp_path, which is a property of the runner rather than of the command.
+    monkeypatch.setenv("COLUMNS", "200")
     _seed_yaml_run(tmp_path, "aaa", [{"adapter": "mock", "overall_score": 0.5, "golden_pass_rate": 1.0}])
     _seed_yaml_run(tmp_path, "zzz", [{"adapter": "mock", "overall_score": 0.6, "golden_pass_rate": 1.0}])
 
@@ -68,6 +72,34 @@ def test_eval_list_shows_run_paths_newest_first(tmp_path: Path) -> None:
     assert "yaml_run_zzz.json" in result.output
     # Newest-first ordering: reverse sort puts zzz before aaa.
     assert result.output.index("yaml_run_zzz.json") < result.output.index("yaml_run_aaa.json")
+
+
+def test_eval_list_emits_paths_unwrapped_at_narrow_width(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A run path survives a narrow console intact, so the list can be piped."""
+    monkeypatch.setenv("COLUMNS", "80")
+    # Nested far enough that the rendered path clears any plausible console
+    # width regardless of where pytest rooted tmp_path.
+    state_dir = tmp_path / "a_deliberately_long_state_directory_name_to_exceed_the_default_width"
+    seeded = _seed_yaml_run(state_dir, "aaa", [{"adapter": "mock", "overall_score": 0.5, "golden_pass_rate": 1.0}])
+    assert len(str(seeded)) > 80, "fixture must exceed the width it is meant to defeat"
+
+    runner = CliRunner()
+    result = runner.invoke(eval_group, ["list", "--state-dir", str(state_dir)])
+    assert result.exit_code == 0, result.output
+    emitted = [line.strip() for line in result.output.splitlines() if line.strip()]
+    assert emitted == [str(seeded)]
+
+
+def test_eval_list_preserves_square_brackets_in_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A ``[...]`` path segment is data, not Rich markup, and must survive."""
+    monkeypatch.setenv("COLUMNS", "200")
+    state_dir = tmp_path / "[bold]"
+    seeded = _seed_yaml_run(state_dir, "aaa", [{"adapter": "mock", "overall_score": 0.5, "golden_pass_rate": 1.0}])
+
+    runner = CliRunner()
+    result = runner.invoke(eval_group, ["list", "--state-dir", str(state_dir)])
+    assert result.exit_code == 0, result.output
+    assert str(seeded) in result.output
 
 
 # ---------------------------------------------------------------------------
