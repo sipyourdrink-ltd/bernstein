@@ -245,6 +245,8 @@ class EscalationReceipt:
             populates it with ``{kind, capsule_hash, verdict_hash,
             divergent_events}`` so one receipt shape covers both stalls and
             drift.
+        journal_state: Journal availability state at receipt assembly time
+            ('present', 'missing', or 'empty').
     """
 
     run_id: str
@@ -264,6 +266,7 @@ class EscalationReceipt:
     signature: str = ""
     journal_entry_hash: str = ""
     extra_binding: dict[str, Any] | None = None
+    journal_state: str = "present"
 
     @property
     def receipt_id(self) -> str:
@@ -297,6 +300,8 @@ class EscalationReceipt:
             "install_rev": self.install_rev,
             "timestamp": self.timestamp,
         }
+        if self.journal_state != "present":
+            binding["journal_state"] = self.journal_state
         if self.extra_binding is not None:
             binding["extra_binding"] = self.extra_binding
         return binding
@@ -339,6 +344,7 @@ class EscalationReceipt:
             signature=str(row.get("signature", "")),
             journal_entry_hash=str(row.get("journal_entry_hash", "")),
             extra_binding=extra_binding,
+            journal_state=str(row.get("journal_state", "present")),
         )
 
 
@@ -415,6 +421,10 @@ def assemble_escalation_receipt(
     canonical binding with the install identity, and anchors those exact bytes
     in the escalation lineage spine.
 
+    When the run journal is absent (missing file or empty journal), a degraded
+    terminal receipt is produced carrying explicit ``journal_state``
+    (``'missing'`` or ``'empty'``) and chained on the escalation spine.
+
     Args:
         sdd_dir: The ``.sdd`` directory holding ``runs/<run_id>/journal.jsonl``.
         lineage_root: Spine root (``.sdd/lineage``).
@@ -442,18 +452,30 @@ def assemble_escalation_receipt(
         The signed, anchored :class:`EscalationReceipt`.
 
     Raises:
-        EscalationError: When the journal is missing/empty, ``window`` is
-            non-positive, or ``fork_step`` has no snapshot event (AC4).
+        EscalationError: When ``window`` is non-positive or ``fork_step``
+            has no snapshot event (AC4).
     """
+    if window <= 0:
+        raise EscalationError(f"window must be > 0 (got {window})")
+
     journal_path = _journal_path(sdd_dir, run_id)
     if not journal_path.exists():
-        raise EscalationError(f"no journal for run {run_id!r} (looked at {journal_path})")
-    events = load_events(journal_path).events
-    if not events:
-        raise EscalationError(f"run {run_id!r} journal is empty; nothing to escalate")
-
-    from_step, window_hashes = _window_entry_hashes(events, window)
-    journal_head = str(events[-1].get("event_hash", ""))
+        events: list[dict[str, Any]] = []
+        journal_state = "missing"
+        from_step = 0
+        window_hashes: tuple[str, ...] = ()
+        journal_head = ""
+    else:
+        events = load_events(journal_path).events
+        if not events:
+            journal_state = "empty"
+            from_step = 0
+            window_hashes = ()
+            journal_head = ""
+        else:
+            journal_state = "present"
+            from_step, window_hashes = _window_entry_hashes(events, window)
+            journal_head = str(events[-1].get("event_hash", ""))
 
     fork_ref = _resolve_fork_ref(events, run_id, fork_step) if fork_step is not None else None
 
@@ -479,6 +501,7 @@ def assemble_escalation_receipt(
         install_rev=install_rev,
         timestamp=timestamp,
         extra_binding=extra_binding,
+        journal_state=journal_state,
     )
     payload = unsigned.to_canonical_bytes()
     signature = sign_payload(payload, private_key_pem)
@@ -512,6 +535,7 @@ def assemble_escalation_receipt(
         signature=signature,
         journal_entry_hash=anchor,
         extra_binding=unsigned.extra_binding,
+        journal_state=unsigned.journal_state,
     )
     path = receipt_path(sdd_dir, anchored.receipt_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -534,6 +558,20 @@ class EscalationVerifyResult:
     ok: bool
     reason: str
     receipt: EscalationReceipt | None = None
+
+
+def _degraded_reason(state: str) -> str:
+    """Return the note a degraded receipt carries on an otherwise-ok verify.
+
+    A degraded receipt verifies its signature and its spine anchor like any
+    other, but there is no window to recompute -- so ``ok`` must not read the
+    same as a receipt whose window reconstructed. Callers surface this note
+    instead of claiming the window was reconstructed from the journal.
+    """
+    return (
+        f"degraded terminal receipt: the run journal was {state} when the kill was "
+        f"issued, so the failure window is recorded as absent rather than reconstructed"
+    )
 
 
 def _recompute_anchor(spine: LineageSpine, canonical: bytes) -> str | None:
@@ -566,7 +604,15 @@ def verify_escalation_receipt(
       byte-identical ``event_hash`` list the receipt recorded (AC2). A tampered
       journal entry inside the window rehashes and diverges here.
 
-    ``ok`` is True only when every recomputation matches.
+    A degraded receipt (``journal_state`` of ``'missing'`` or ``'empty'``, #3737)
+    has no window to recompute, so the last check cannot apply -- but the
+    recorded absence is still checked against the store rather than trusted: a
+    receipt claiming ``'missing'`` for a run whose journal now holds entries
+    fails, naming the contradiction. A degraded receipt that does verify returns
+    ``ok`` with a non-empty ``reason`` naming the degradation, so a caller never
+    reports it as a window that reconstructed.
+
+    ``ok`` is True only when every applicable recomputation matches.
     """
     receipt = read_escalation_receipt(sdd_dir, receipt_id)
     if receipt is None:
@@ -610,6 +656,26 @@ def verify_escalation_receipt(
         )
 
     journal_path = _journal_path(sdd_dir, receipt.run_id)
+    if receipt.journal_state == "missing":
+        # A degraded receipt records that no journal existed when the kill was
+        # issued. That claim still has to be falsifiable: if a journal for the
+        # run now holds entries, the recorded absence is contradicted by the
+        # store and the receipt must not verify clean -- otherwise
+        # ``journal_state="missing"`` would be a standing bypass of the window
+        # reconstruction every other receipt is held to.
+        now_present = load_events(journal_path).events if journal_path.exists() else []
+        if now_present:
+            return EscalationVerifyResult(
+                ok=False,
+                reason=(
+                    f"receipt records journal_state='missing' but the run journal for "
+                    f"{receipt.run_id!r} now holds {len(now_present)} entries; the "
+                    f"recorded absence is contradicted by the store"
+                ),
+                receipt=receipt,
+            )
+        return EscalationVerifyResult(ok=True, reason=_degraded_reason("missing"), receipt=receipt)
+
     if not journal_path.exists():
         return EscalationVerifyResult(
             ok=False,
@@ -634,6 +700,8 @@ def verify_escalation_receipt(
             receipt=receipt,
         )
 
+    if receipt.journal_state != "present":
+        return EscalationVerifyResult(ok=True, reason=_degraded_reason(receipt.journal_state), receipt=receipt)
     return EscalationVerifyResult(ok=True, reason="", receipt=receipt)
 
 
@@ -664,6 +732,7 @@ def project_escalation_receipt(receipt: EscalationReceipt) -> dict[str, Any]:
         "fork_snapshot_sha": receipt.fork_ref.snapshot_sha if receipt.fork_ref else "",
         "fork_step": receipt.fork_ref.fork_step if receipt.fork_ref else None,
         "journal_entry_hash": receipt.journal_entry_hash,
+        "journal_state": receipt.journal_state,
     }
 
 

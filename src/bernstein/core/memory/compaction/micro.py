@@ -22,6 +22,10 @@ from bernstein.core.memory.compaction.tiers import (
     TierResult,
     estimate_tokens,
 )
+from bernstein.core.memory.compaction.verification import (
+    compute_referenced_content_hashes,
+    compute_source_content_hash,
+)
 
 if TYPE_CHECKING:
     from bernstein.core.memory.compaction.tiers import BudgetPressure, TierContext
@@ -80,11 +84,19 @@ def compact(ctx: TierContext) -> TierResult:
     after_tokens = estimate_tokens(compacted)
     saved = max(0, before_tokens - after_tokens)
     cost_estimate = (saved / 1000.0) * ctx.cost_per_1k_tokens * COST_WEIGHT
+    source_hash = compute_source_content_hash(ctx.context_text)
+    ref_hashes = compute_referenced_content_hashes(
+        ctx.referenced_paths,
+        precomputed=ctx.referenced_content_hashes,
+        root_dir=ctx.root_dir,
+    )
     return TierResult(
         tier=Tier.MICRO,
         compacted_text=compacted,
         before_tokens=before_tokens,
         after_tokens=after_tokens,
+        source_content_hash=source_hash,
+        referenced_content_hashes=ref_hashes,
         cost_estimate=cost_estimate,
         correlation_id=f"compact-micro-{uuid.uuid4().hex[:8]}",
         reason="per-turn structural prune",

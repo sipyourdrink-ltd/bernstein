@@ -62,7 +62,6 @@ import json
 import logging
 import os
 from datetime import UTC
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
@@ -101,6 +100,7 @@ from bernstein.mcp.approval_gate import (
     is_worker_completable,
     refusal_payload,
 )
+from bernstein.mcp.capability import package_repo_url, package_version
 from bernstein.mcp.cost_meter import measure_call, wrap_envelope
 from bernstein.mcp.input_validation import (
     ValidationError,
@@ -122,13 +122,8 @@ FuncMetadata.convert_result = _patched_convert_result
 
 _DEFAULT_SERVER_URL = "http://127.0.0.1:8052"
 
-
-def _package_version() -> str:
-    """Return the installed Bernstein distribution version."""
-    try:
-        return version("bernstein")
-    except PackageNotFoundError:
-        return "0+unknown"
+_package_version = package_version
+_package_repo_url = package_repo_url
 
 
 # Advertised to MCP clients on connect and therefore the only Bernstein text

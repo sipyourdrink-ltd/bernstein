@@ -27,6 +27,10 @@ from bernstein.core.memory.compaction.tiers import (
     TierResult,
     estimate_tokens,
 )
+from bernstein.core.memory.compaction.verification import (
+    compute_referenced_content_hashes,
+    compute_source_content_hash,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -74,11 +78,19 @@ def compact(
     tier = select_tier(ctx.pressure)
     if tier is Tier.NONE:
         tokens = estimate_tokens(ctx.context_text)
+        source_hash = compute_source_content_hash(ctx.context_text)
+        ref_hashes = compute_referenced_content_hashes(
+            ctx.referenced_paths,
+            precomputed=ctx.referenced_content_hashes,
+            root_dir=ctx.root_dir,
+        )
         return TierResult(
             tier=Tier.NONE,
             compacted_text=ctx.context_text,
             before_tokens=tokens,
             after_tokens=tokens,
+            source_content_hash=source_hash,
+            referenced_content_hashes=ref_hashes,
             cost_estimate=0.0,
             correlation_id="",
             reason="no pressure: no-op",
