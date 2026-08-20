@@ -283,3 +283,101 @@ def test_claim_by_id_without_version_returns_existing_non_open_task(monkeypatch:
     task = asyncio.run(store.claim_by_id("task-1"))
 
     assert task.status is TaskStatus.CLAIMED
+
+
+def test_list_tasks_limit_and_offset_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    class _Conn:
+        def __init__(self) -> None:
+            self.queries: list[tuple[str, tuple[object, ...]]] = []
+            self.all_rows = [_task_row(id=f"task-{i}", title=f"Task {i}") for i in range(10)]
+
+        async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+            await asyncio.sleep(0)
+            self.queries.append((query, args))
+            if "FROM tasks" in query:
+                # Emulate PostgreSQL parameterized LIMIT and OFFSET
+                offset_val = 0
+                limit_val = len(self.all_rows)
+                for i, arg in enumerate(args, start=1):
+                    if f"LIMIT ${i}" in query:
+                        limit_val = int(arg)  # type: ignore[arg-type]
+                    elif f"OFFSET ${i}" in query:
+                        offset_val = int(arg)  # type: ignore[arg-type]
+                return self.all_rows[offset_val : offset_val + limit_val]
+            return []
+
+    conn = _Conn()
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+
+    # 1. Limit bound: inserting 10 rows, list_tasks(limit=3) returns exactly 3 rows
+    tasks = asyncio.run(store.list_tasks(limit=3))
+    assert len(tasks) == 3
+    assert [t.id for t in tasks] == ["task-0", "task-1", "task-2"]
+    assert "LIMIT $1" in conn.queries[-1][0]
+    assert conn.queries[-1][1] == (3,)
+
+    # 2. Offset bound: list_tasks(limit=3, offset=3) skips appropriately
+    tasks_page2 = asyncio.run(store.list_tasks(limit=3, offset=3))
+    assert len(tasks_page2) == 3
+    assert [t.id for t in tasks_page2] == ["task-3", "task-4", "task-5"]
+    assert "LIMIT $1" in conn.queries[-1][0]
+    assert "OFFSET $2" in conn.queries[-1][0]
+    assert conn.queries[-1][1] == (3, 3)
+
+    # 3. Filtering with status + cell_id + limit + offset
+    asyncio.run(store.list_tasks(status="claimed", cell_id="cell-1", limit=2, offset=4))
+    assert "WHERE status = $1 AND cell_id = $2" in conn.queries[-1][0]
+    assert "LIMIT $3" in conn.queries[-1][0]
+    assert "OFFSET $4" in conn.queries[-1][0]
+    assert conn.queries[-1][1] == ("claimed", "cell-1", 2, 4)
+
+    # 4. Status="open" with limit
+    tasks_open = asyncio.run(store.list_tasks(status="open", limit=2))
+    assert len(tasks_open) == 2
+    assert "WHERE status = $1" in conn.queries[-2][0]
+    assert "LIMIT $2" in conn.queries[-2][0]
+    assert conn.queries[-2][1] == ("open", 2)
+    assert conn.queries[-1][0] == "SELECT id FROM tasks WHERE status='done'"
+
+
+def test_read_archive_bound_keeps_passing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    class _Conn:
+        def __init__(self) -> None:
+            self.queries: list[tuple[str, tuple[object, ...]]] = []
+            self.all_rows = [
+                {
+                    "task_id": f"task-{i}",
+                    "title": f"Archived {i}",
+                    "role": "backend",
+                    "status": "done",
+                    "created_at": 100.0 + i,
+                    "completed_at": 200.0 + i,
+                    "duration_seconds": 100.0,
+                    "result_summary": "ok",
+                    "cost_usd": 0.01,
+                }
+                for i in range(10)
+            ]
+
+        async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+            await asyncio.sleep(0)
+            self.queries.append((query, args))
+            if "FROM   task_archive" in query:
+                limit = int(args[0]) if args else len(self.all_rows)  # type: ignore[arg-type]
+                desc_rows = sorted(self.all_rows, key=lambda r: float(r["completed_at"]), reverse=True)[:limit]
+                return desc_rows
+            return []
+
+    conn = _Conn()
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+
+    records = asyncio.run(store.read_archive(limit=5))
+    assert len(records) == 5
+    assert "LIMIT  $1" in conn.queries[0][0]
+    assert conn.queries[0][1] == (5,)

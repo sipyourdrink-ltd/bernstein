@@ -13,8 +13,9 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from bernstein.core.models import Task
-    from bernstein.core.server import ArchiveRecord, TaskCreate
+    from bernstein.core.server import TaskCreate
+    from bernstein.core.tasks.models import Task
+    from bernstein.core.tasks.task_store import ArchiveRecord
 
 
 @dataclass
@@ -235,6 +236,8 @@ class BaseTaskStore(ABC):
         self,
         status: str | None = None,
         cell_id: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
     ) -> list[Task]:
         """Return tasks, optionally filtered.
 
@@ -244,6 +247,12 @@ class BaseTaskStore(ABC):
         Args:
             status: If provided, only tasks with this status are returned.
             cell_id: If provided, only tasks in this cell are returned.
+            limit: If provided, return at most this many tasks after filtering.
+            offset: If provided, skip this many tasks after filtering. Combine
+                with ``limit`` for paginated iteration.
+
+        Returns:
+            List of matching tasks.
         """
 
     @abstractmethod
