@@ -366,7 +366,7 @@ class PostgresTaskStore(BaseTaskStore):
             priority=req.priority,
             scope=Scope(req.scope),
             complexity=Complexity(req.complexity),
-            estimated_minutes=req.estimated_minutes if req.estimated_minutes is not None else 30,
+            estimated_minutes=req.estimated_minutes,
             depends_on=req.depends_on,
             owned_files=req.owned_files,
             cell_id=req.cell_id,
@@ -696,9 +696,12 @@ class PostgresTaskStore(BaseTaskStore):
         Args:
             status: If provided, only tasks with this status are returned.
             cell_id: If provided, only tasks in this cell are returned.
-            limit: If provided, return at most this many tasks after filtering.
-            offset: If provided, skip this many tasks after filtering. Combine
-                with ``limit`` for paginated iteration.
+            limit: If provided, return at most this many tasks after filtering,
+                applied as SQL ``LIMIT``. If ``None`` (the default), no bound is
+                applied and every matching row is fetched — callers that need a
+                safety ceiling on large tables must pass an explicit limit.
+            offset: If provided, skip this many tasks after filtering, applied
+                as SQL ``OFFSET``. Combine with ``limit`` for paginated iteration.
 
         Returns:
             List of matching tasks.
@@ -802,16 +805,12 @@ class PostgresTaskStore(BaseTaskStore):
                 task_id=row["task_id"],
                 title=row["title"],
                 role=row["role"],
-                tenant_id=row.get("tenant_id", ""),
                 status=row["status"],
                 created_at=row["created_at"],
                 completed_at=row["completed_at"],
                 duration_seconds=row["duration_seconds"],
                 result_summary=row["result_summary"],
                 cost_usd=row["cost_usd"],
-                assigned_agent=row.get("assigned_agent"),
-                owned_files=row.get("owned_files", []),
-                claimed_by_session=row.get("claimed_by_session"),
             )
             for row in reversed(rows)
         ]

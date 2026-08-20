@@ -248,6 +248,8 @@ class BaseTaskStore(ABC):
             status: If provided, only tasks with this status are returned.
             cell_id: If provided, only tasks in this cell are returned.
             limit: If provided, return at most this many tasks after filtering.
+                If ``None`` (the default), no limit is applied — implementations
+                fetch every matching row, matching pre-pagination behaviour.
             offset: If provided, skip this many tasks after filtering. Combine
                 with ``limit`` for paginated iteration.
 
