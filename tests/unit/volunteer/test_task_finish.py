@@ -10,17 +10,21 @@ kill proves the mock.
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from bernstein.core.security.audit_dsse import keyid_from_public_key
 from bernstein.core.security.result_receipt_bundle import (
     GENESIS_ANCHOR,
     ChainLink,
     TaskRef,
     verify_result_bundle,
 )
+from bernstein.core.volunteer.claim import ClaimClient
 from bernstein.core.volunteer.manifest import VolunteerManifest, load_manifest
 from bernstein.core.volunteer.sandbox_profile import VolunteerSandboxProfile, build_volunteer_profile
 from bernstein.core.volunteer.task_finish import (
@@ -472,3 +476,129 @@ def test_a_refusal_is_a_record_rather_than_prose(tmp_path: Path) -> None:
     assert record["reason"] in REFUSAL_REASONS
     assert record["manifest_sha256"] == manifest.digest
     assert record["paths"] == ["src/pkg/mod.py"]
+
+
+# ---------------------------------------------------------------------------
+# Claim etiquette: the terminal edit to the claim comment
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _RecordingClaimRunner:
+    """A ``gh`` stub that records the edits ``finish_volunteer_task`` makes.
+
+    The finish step only ever edits an existing claim comment, so a PATCH is
+    the only call to expect; anything else is a test that drifted from the code.
+    """
+
+    patches: list[dict[str, Any]] = field(default_factory=list)
+
+    def __call__(self, args: list[str], stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+        assert args[:3] == ["api", "-X", "PATCH"], f"unexpected gh call: {args}"
+        self.patches.append({"url": args[3], "body": json.loads(stdin or "{}").get("body")})
+        return subprocess.CompletedProcess(args=["gh"], returncode=0, stdout="{}", stderr="")
+
+
+def test_a_signed_bundle_edits_the_claim_comment_to_a_completion(tmp_path: Path) -> None:
+    """A passing run resolves the claim it posted at start into a completion,
+    carrying the PR link, by editing the same comment rather than posting a new
+    one -- so the thread shows one comment per worker, not a growing log."""
+    runner = _RecordingClaimRunner()
+    manifest = _manifest(allowed_paths=["src/**"], gates=[PASSING_GATE])
+
+    result = finish_volunteer_task(
+        patch=_diff_touching("src/pkg/mod.py"),
+        manifest=manifest,
+        profile=_profile(manifest),
+        workspace=_workspace(tmp_path),
+        provenance=_provenance(),
+        signing_key=_key(),
+        gate_env={},
+        created_at="2026-08-17T00:00:00Z",
+        claim=ClaimClient(runner=runner),
+        claim_repo="example/project",
+        claim_comment_id=555,
+        claim_fingerprint="fp-abc",
+        pr_url="https://github.com/example/project/pull/9",
+    )
+
+    assert isinstance(result, SignedResultBundle)
+    assert len(runner.patches) == 1
+    assert runner.patches[0]["url"].endswith("/issues/comments/555")
+    assert "Completed" in runner.patches[0]["body"]
+    assert "pull/9" in runner.patches[0]["body"]
+
+
+def test_a_gate_refusal_edits_the_claim_comment_to_a_release(tmp_path: Path) -> None:
+    """A run that fails its gates releases the claim, so the task stops looking
+    claimed to the next donor -- the same comment, edited, never a duplicate."""
+    runner = _RecordingClaimRunner()
+    manifest = _manifest(allowed_paths=["src/**"], gates=[FAILING_GATE])
+
+    result = finish_volunteer_task(
+        patch=_diff_touching("src/pkg/mod.py"),
+        manifest=manifest,
+        profile=_profile(manifest),
+        workspace=_workspace(tmp_path),
+        provenance=_provenance(),
+        signing_key=_key(),
+        gate_env={},
+        created_at="2026-08-17T00:00:00Z",
+        claim=ClaimClient(runner=runner),
+        claim_repo="example/project",
+        claim_comment_id=777,
+    )
+
+    assert isinstance(result, VolunteerRefusal)
+    assert result.reason == REASON_GATE_FAILED
+    assert len(runner.patches) == 1
+    assert runner.patches[0]["url"].endswith("/issues/comments/777")
+    assert "Released" in runner.patches[0]["body"]
+
+
+def test_a_completion_defaults_its_fingerprint_to_the_signing_keys_keyid(tmp_path: Path) -> None:
+    """Omitting ``claim_fingerprint`` must not silently stamp a meaningless
+    value: it now defaults to the same worker keyid the signed bundle itself
+    carries, so the public claim comment is matchable against the signed
+    result instead of being decoration."""
+    runner = _RecordingClaimRunner()
+    manifest = _manifest(allowed_paths=["src/**"], gates=[PASSING_GATE])
+    key = _key()
+
+    result = finish_volunteer_task(
+        patch=_diff_touching("src/pkg/mod.py"),
+        manifest=manifest,
+        profile=_profile(manifest),
+        workspace=_workspace(tmp_path),
+        provenance=_provenance(),
+        signing_key=key,
+        gate_env={},
+        created_at="2026-08-17T00:00:00Z",
+        claim=ClaimClient(runner=runner),
+        claim_repo="example/project",
+        claim_comment_id=555,
+    )
+
+    assert isinstance(result, SignedResultBundle)
+    expected_keyid = keyid_from_public_key(key.public_key())
+    assert expected_keyid == result.bundle.worker_keyid
+    assert f"`{expected_keyid}`" in runner.patches[0]["body"]
+
+
+def test_no_claim_client_leaves_the_finish_step_untouched(tmp_path: Path) -> None:
+    """The claim arguments are entirely opt-in: omitting them is the pre-existing
+    behaviour, byte for byte."""
+    manifest = _manifest(allowed_paths=["src/**"], gates=[PASSING_GATE])
+
+    result = finish_volunteer_task(
+        patch=_diff_touching("src/pkg/mod.py"),
+        manifest=manifest,
+        profile=_profile(manifest),
+        workspace=_workspace(tmp_path),
+        provenance=_provenance(),
+        signing_key=_key(),
+        gate_env={},
+        created_at="2026-08-17T00:00:00Z",
+    )
+
+    assert isinstance(result, SignedResultBundle)
