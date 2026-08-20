@@ -183,9 +183,7 @@ def test_resolved_other_claim_is_treated_as_free() -> None:
     # GitHub does not move a comment's createdAt on an edit, so without
     # checking `resolved` this comment would look exactly as fresh as an
     # active claim for the rest of the staleness window (acceptance case 5).
-    runner = FakeRunner(
-        issue=_issue_payload(comments=[_comment(1, mine=False, age=timedelta(hours=1), resolved=True)])
-    )
+    runner = FakeRunner(issue=_issue_payload(comments=[_comment(1, mine=False, age=timedelta(hours=1), resolved=True)]))
     decision = should_skip(_state(runner), now=NOW, staleness=DEFAULT_CLAIM_STALENESS)
     assert not decision.skip
     assert decision.reason is None

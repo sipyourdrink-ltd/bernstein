@@ -92,9 +92,7 @@ def test_matching_lockfile_admits_the_directory(tmp_path: Path) -> None:
     """
     claude_agents = _harness_dir_with_agent(tmp_path)
     digest = compute_catalog_digest(claude_agents)
-    (claude_agents / "agents.lock").write_text(
-        json.dumps({"content_digest": digest}), encoding="utf-8"
-    )
+    (claude_agents / "agents.lock").write_text(json.dumps({"content_digest": digest}), encoding="utf-8")
 
     entries = _discover(tmp_path)
 
