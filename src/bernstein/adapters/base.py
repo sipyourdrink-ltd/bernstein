@@ -1232,3 +1232,4 @@ def post_write_lineage_hook(
         run_id=run_id,
         hmac_key=operator_hmac_key,
     )
+_VERSION_TOKEN_RE = re.compile(r"(?<!\d)\d++(?:\.\d++){1,3}")

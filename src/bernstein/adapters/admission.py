@@ -577,7 +577,7 @@ def _canary_verdict_for(adapter: str, installed_version: str | None, last_green_
     """
     from packaging.version import InvalidVersion, Version
 
-    from bernstein.adapters.canary import _VERSION_TOKEN_RE, load_last_green  # pyright: ignore[reportPrivateUsage]
+    from .base import _VERSION_TOKEN_RE
 
     entries = load_last_green(last_green_path)
     entry = entries.get(adapter)
