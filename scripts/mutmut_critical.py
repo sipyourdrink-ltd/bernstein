@@ -136,6 +136,21 @@ MODULES: tuple[Module, ...] = (
         max_candidates=80,
         note="bernstein.yaml seed parser + ${ENV} reference resolution.",
     ),
+    Module(
+        key="journal_verify",
+        source="src/bernstein/core/replay/journal.py",
+        tests=(
+            "tests/unit/core/replay/test_journal_identity.py",
+            "tests/unit/core/replay/test_journal_event_count_cache.py",
+            "tests/unit/core/replay/test_journal_tail_repair.py",
+            "tests/unit/core/replay/test_journal_undecodable.py",
+            "tests/unit/core/replay/test_journal_verify_mutation_kill.py",
+        ),
+        threshold=0.70,
+        budget_seconds=1800,
+        max_candidates=120,
+        note="Replay journal verifier (issue #3654): verify_journal / verify_events.",
+    ),
 )
 
 # (search, replace) pairs applied one-at-a-time per line. Mirrors the
