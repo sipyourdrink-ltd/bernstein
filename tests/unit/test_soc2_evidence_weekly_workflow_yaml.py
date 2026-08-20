@@ -182,6 +182,42 @@ def test_export_step_present_in_pack_job() -> None:
     assert "SOC2_EVIDENCE_SINK" in env
 
 
+def test_export_step_only_runs_after_pack_job_succeeds() -> None:
+    """The export step must never run against a partial or missing pack.
+
+    The sibling issue allows wiring this guarantee via either a new job
+    with an explicit ``needs:``/``if:`` dependency on ``pack``, or a new
+    step within the ``pack`` job itself - a step was chosen here. That
+    choice only delivers "runs after pack succeeds" if the export step
+    sits after pack generation/upload and nothing ahead of it opts out
+    of the default success-only step gating, so assert the structure
+    that actually provides the guarantee rather than just the step's
+    presence.
+    """
+    pack = _job("pack")
+    steps = _steps(pack)
+    names = [step.get("name") for step in steps]
+
+    export_index = names.index("Export evidence pack to sink")
+    generate_index = names.index("Generate SOC 2 evidence pack")
+    upload_index = names.index("Upload evidence pack")
+    assert generate_index < export_index, "export must run after pack generation"
+    assert upload_index < export_index, "export must run after the artifact upload"
+
+    export_step = steps[export_index]
+    assert export_step.get("if") in (None, "success()"), (
+        "the export step must rely on default success-only step gating, not an always()/failure() override"
+    )
+
+    for step in steps[:export_index]:
+        assert step.get("continue-on-error") is not True, (
+            f"{step.get('name')!r} must not swallow failures ahead of the export step"
+        )
+        assert step.get("if") != "always()", (
+            f"{step.get('name')!r} must not run unconditionally ahead of the export step"
+        )
+
+
 def test_export_step_static_checks() -> None:
     """The export step script must handle both active export and dormant warning branches."""
     pack = _job("pack")

@@ -139,7 +139,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -n "${SOC2_EVIDENCE_SINK:-}" ]]; then
-            echo "SOC2_EVIDENCE_SINK detected (${SOC2_EVIDENCE_SINK}) - exporting evidence pack."
+            echo "SOC2_EVIDENCE_SINK detected - exporting evidence pack."
             uv run python -c "import os; from pathlib import Path; from bernstein.core.storage.soc2_export import export_soc2_evidence_pack; p = os.environ.get('PERIOD_LABEL', 'weekly'); r = os.environ.get('RUN_ID', ''); s = os.environ.get('SOC2_EVIDENCE_SINK', ''); d = Path('.sdd/evidence/soc2'); md = next(d.glob(f'soc2-evidence-{p}.md'), None); js = next(d.glob(f'soc2-evidence-{p}.json'), None); export_soc2_evidence_pack(md, js, sink_name=s, period_label=p, run_id=r)"
           else
             # A dormant export lane is not a failure, but must never look identical
