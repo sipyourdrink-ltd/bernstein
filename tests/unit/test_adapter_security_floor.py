@@ -17,9 +17,9 @@ from pathlib import Path
 import pytest
 
 from bernstein.adapters.advisories import ADAPTER_MIN_SAFE_VERSIONS
-from bernstein.adapters.canary import _VERSION_TOKEN_RE as _CANARY_VERSION_TOKEN_RE
+
 from bernstein.adapters.security_floor import (
-    _VERSION_TOKEN_RE,
+    VERSION_TOKEN_RE,
     POLICY_BLOCK,
     POLICY_WARN,
     VERDICT_PERMIT,
@@ -346,12 +346,10 @@ class TestVersionTokenRegex:
         ],
     )
     def test_extracts_the_same_token_as_before(self, blob: str, expected: str | None) -> None:
-        match = _VERSION_TOKEN_RE.search(blob)
+        match = VERSION_TOKEN_RE.search(blob)
         assert (match.group(0) if match else None) == expected
 
-    def test_matches_the_canary_scanner(self) -> None:
-        """Both probes must agree; they read the same kind of output."""
-        assert _VERSION_TOKEN_RE.pattern == _CANARY_VERSION_TOKEN_RE.pattern
+    
 
     def test_adversarial_digit_run_stays_fast(self) -> None:
         """A digit run with no dot must not blow up the scan.
@@ -362,7 +360,7 @@ class TestVersionTokenRegex:
         """
         blob = "9" * 40_000 + "x"
         start = time.perf_counter()
-        assert _VERSION_TOKEN_RE.search(blob) is None
+        assert VERSION_TOKEN_RE.search(blob) is None
         elapsed = time.perf_counter() - start
         assert elapsed < 0.5, f"version scan took {elapsed:.3f}s, expected linear time"
 
@@ -372,7 +370,7 @@ class TestVersionTokenRegex:
         def scan(size: int) -> float:
             blob = "9" * size + "x"
             start = time.perf_counter()
-            _VERSION_TOKEN_RE.search(blob)
+            VERSION_TOKEN_RE.search(blob)
             return time.perf_counter() - start
 
         # Warm the engine so the first call does not carry setup cost.

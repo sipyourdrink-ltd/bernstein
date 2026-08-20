@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -1232,4 +1233,7 @@ def post_write_lineage_hook(
         run_id=run_id,
         hmac_key=operator_hmac_key,
     )
-_VERSION_TOKEN_RE = re.compile(r"(?<!\d)\d++(?:\.\d++){1,3}")
+# : First dotted-numeric token in a ``--version`` blob. Possessive quantifiers
+# : plus the digit-run anchor keep the scan linear on untrusted subprocess
+# : output; see the matching constant in ``adapters/security_floor.py``.
+VERSION_TOKEN_RE = re.compile(r"(?<!\d)\d++(?:\.\d++){1,3}")

@@ -577,7 +577,8 @@ def _canary_verdict_for(adapter: str, installed_version: str | None, last_green_
     """
     from packaging.version import InvalidVersion, Version
 
-    from .base import _VERSION_TOKEN_RE
+    from .base import VERSION_TOKEN_RE
+    from .canary import load_last_green
 
     entries = load_last_green(last_green_path)
     entry = entries.get(adapter)
@@ -586,7 +587,7 @@ def _canary_verdict_for(adapter: str, installed_version: str | None, last_green_
     if installed_version is None:
         return CANARY_STALE
 
-    match = _VERSION_TOKEN_RE.search(installed_version)
+    match = VERSION_TOKEN_RE.search(installed_version)
     if not entry.version or match is None:
         return CANARY_STALE
 

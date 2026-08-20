@@ -35,7 +35,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-from .base import _VERSION_TOKEN_RE
+from .base import VERSION_TOKEN_RE
 
 from bernstein.adapters.advisories import ADAPTER_MIN_SAFE_VERSIONS, AdapterAdvisory
 from bernstein.core.security.path_containment import (
@@ -182,7 +182,7 @@ def security_floor_for(adapter: str) -> str | None:
 # ---------------------------------------------------------------------------
 # Version probe
 # ---------------------------------------------------------------------------
-
+_VERSION_TIMEOUT_SECONDS = 10
 
 def probe_installed_version(binary_path: str) -> str | None:
     """Return the first dotted-numeric token from ``<binary> --version``.
@@ -422,7 +422,7 @@ def receipt_floor_map_matches(doc: dict[str, Any], *, current_hash: str | None =
     expected = current_hash if current_hash is not None else floor_map_content_hash()
     return recorded == expected
 
-
+_RECEIPT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]+$")
 def write_preflight_receipt(base_dir: Path, receipt: dict[str, Any]) -> Path:
     """Write a receipt under its content-addressed name.
 
