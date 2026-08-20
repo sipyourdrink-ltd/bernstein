@@ -44,6 +44,8 @@ router = APIRouter()
 @router.get("/health")
 def health_check(request: Request) -> HealthResponse:
     """Liveness check with component-level status."""
+    from bernstein.core.routes.task_crud import _resolve_request_tenant_scope
+
     store = _get_store(request)
     is_readonly: bool = getattr(request.app.state, "readonly", False)
     summary = store.status_summary()
@@ -58,7 +60,7 @@ def health_check(request: Request) -> HealthResponse:
     return HealthResponse(
         status=overall_status,
         uptime_s=round(time.time() - store.start_ts, 2),
-        task_count=len(store.list_tasks()),
+        task_count=len(store.list_tasks(tenant_id=_resolve_request_tenant_scope(request))),
         agent_count=store.agent_count,
         task_queue_depth=summary.get("open", 0),
         memory_mb=float(runtime.get("memory_mb", 0.0)),

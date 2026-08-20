@@ -71,3 +71,24 @@ class TestBudgetForecastTenantScope:
 
         after = await client.get("/quality/budget-forecast", headers={"X-Tenant-Id": "team-a"})
         assert after.json()["task_count"] == baseline + 1
+
+
+class TestHealthCheckTenantScope:
+    @pytest.mark.asyncio
+    async def test_health_ignores_another_tenants_tasks(self, app: FastAPI, client: AsyncClient) -> None:
+        baseline = (await client.get("/health", headers={"X-Tenant-Id": "team-a"})).json()
+
+        await _create(app, "team-b work", "team-b")
+
+        after = await client.get("/health", headers={"X-Tenant-Id": "team-a"})
+        assert after.status_code == 200
+        assert after.json()["task_count"] == baseline["task_count"]
+
+    @pytest.mark.asyncio
+    async def test_health_still_counts_own_tasks(self, app: FastAPI, client: AsyncClient) -> None:
+        baseline = (await client.get("/health", headers={"X-Tenant-Id": "team-a"})).json()["task_count"]
+
+        await _create(app, "team-a work", "team-a")
+
+        after = await client.get("/health", headers={"X-Tenant-Id": "team-a"})
+        assert after.json()["task_count"] == baseline + 1
