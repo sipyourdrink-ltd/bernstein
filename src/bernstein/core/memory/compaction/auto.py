@@ -21,6 +21,10 @@ from bernstein.core.memory.compaction.tiers import (
     TierResult,
     estimate_tokens,
 )
+from bernstein.core.memory.compaction.verification import (
+    compute_referenced_content_hashes,
+    compute_source_content_hash,
+)
 from bernstein.core.tokens.compaction_pipeline import CompactionPipeline
 
 if TYPE_CHECKING:
@@ -79,11 +83,19 @@ def compact(
     after_tokens = result.tokens_after
     saved = max(0, before_tokens - after_tokens)
     cost_estimate = (saved / 1000.0) * ctx.cost_per_1k_tokens * COST_WEIGHT
+    source_hash = compute_source_content_hash(ctx.context_text)
+    ref_hashes = compute_referenced_content_hashes(
+        ctx.referenced_paths,
+        precomputed=ctx.referenced_content_hashes,
+        root_dir=ctx.root_dir,
+    )
     return TierResult(
         tier=Tier.AUTO,
         compacted_text=result.compacted_text,
         before_tokens=before_tokens,
         after_tokens=after_tokens,
+        source_content_hash=source_hash,
+        referenced_content_hashes=ref_hashes,
         cost_estimate=cost_estimate,
         correlation_id=f"compact-auto-{uuid.uuid4().hex[:8]}",
         reason="auto: context threshold",

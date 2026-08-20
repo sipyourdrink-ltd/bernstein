@@ -17,6 +17,7 @@ from bernstein.core.skills.image_provenance import (
     oci_reference_from_server_json,
     owner_from_server_json,
     parse_image_reference,
+    source_from_docker_catalog,
     verify_attestation,
     verify_signed_image_provenance,
 )
@@ -28,6 +29,8 @@ def _write_repo(
     owner: str = "sipyourdrink-ltd",
     oci_identifier: str = "ghcr.io/sipyourdrink-ltd/bernstein:3.4.1",
     catalog_image: str | None = "ghcr.io/sipyourdrink-ltd/bernstein",
+    catalog_source_project: str | None = "https://github.com/sipyourdrink-ltd/bernstein",
+    catalog_source_commit: str | None = "ec2c1306eba4f51ace107382dab495156e7f20e6",
 ) -> None:
     server = {
         "name": f"io.github.{owner}/bernstein",
@@ -40,9 +43,16 @@ def _write_repo(
     }
     (root / "server.json").write_text(json.dumps(server), encoding="utf-8")
     catalog_dir = root / "packaging" / "docker-mcp"
-    catalog_dir.mkdir(parents=True)
+    catalog_dir.mkdir(parents=True, exist_ok=True)
     if catalog_image is not None:
-        (catalog_dir / "server.yaml").write_text(f"name: bernstein\nimage: {catalog_image}\ntype: server\n", "utf-8")
+        lines = ["name: bernstein", f"image: {catalog_image}", "type: server"]
+        if catalog_source_project or catalog_source_commit:
+            lines.append("source:")
+            if catalog_source_project:
+                lines.append(f"  project: {catalog_source_project}")
+            if catalog_source_commit:
+                lines.append(f"  commit: {catalog_source_commit}")
+        (catalog_dir / "server.yaml").write_text("\n".join(lines) + "\n", "utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +100,10 @@ def test_oci_and_catalog_and_owner_extraction(tmp_path: Path) -> None:
     assert image_from_docker_catalog(tmp_path / "packaging" / "docker-mcp" / "server.yaml").repo_ref == (
         "ghcr.io/sipyourdrink-ltd/bernstein"
     )
+    assert source_from_docker_catalog(tmp_path / "packaging" / "docker-mcp" / "server.yaml") == {
+        "project": "https://github.com/sipyourdrink-ltd/bernstein",
+        "commit": "ec2c1306eba4f51ace107382dab495156e7f20e6",
+    }
     assert owner_from_server_json(tmp_path / "server.json") == "sipyourdrink-ltd"
 
 
@@ -124,6 +138,27 @@ def test_verify_fails_when_catalog_disagrees_with_listing(tmp_path: Path) -> Non
     result = verify_signed_image_provenance(repo_root=tmp_path, version="3.4.1")
     assert not result.ok
     assert "docker catalog image" in result.reason
+
+
+def test_verify_fails_when_catalog_source_project_disagrees(tmp_path: Path) -> None:
+    _write_repo(tmp_path, catalog_source_project="https://github.com/someone-else/bernstein")
+    result = verify_signed_image_provenance(repo_root=tmp_path, version="3.4.1")
+    assert not result.ok
+    assert "source.project" in result.reason
+
+
+def test_verify_fails_when_catalog_source_commit_missing(tmp_path: Path) -> None:
+    _write_repo(tmp_path, catalog_source_commit=None)
+    result = verify_signed_image_provenance(repo_root=tmp_path, version="3.4.1")
+    assert not result.ok
+    assert "source.commit pinned" in result.reason
+
+
+def test_verify_fails_when_catalog_source_commit_invalid(tmp_path: Path) -> None:
+    _write_repo(tmp_path, catalog_source_commit="not-a-valid-sha")
+    result = verify_signed_image_provenance(repo_root=tmp_path, version="3.4.1")
+    assert not result.ok
+    assert "valid commit SHA" in result.reason
 
 
 def test_verify_fails_when_catalog_missing(tmp_path: Path) -> None:

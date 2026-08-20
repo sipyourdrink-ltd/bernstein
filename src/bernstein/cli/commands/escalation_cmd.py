@@ -126,7 +126,12 @@ def escalation_verify_cmd(receipt_id: str, workdir: str) -> None:
     console.print()
     console.print(f"[bold]Escalation receipt verify[/bold] id={receipt_id}")
     if result.ok:
-        console.print("[green]OK[/green] -- failure window reconstructs from the journal and matches the receipt.")
+        if result.reason:
+            # A degraded receipt (missing/empty journal at kill time) verifies
+            # its signature and spine anchor but has no window to reconstruct.
+            console.print(f"[yellow]OK (degraded)[/yellow] -- {result.reason}.")
+        else:
+            console.print("[green]OK[/green] -- failure window reconstructs from the journal and matches the receipt.")
         raise SystemExit(0)
     if result.receipt is None:
         console.print(f"[yellow]NO RECEIPT[/yellow] -- {result.reason}")

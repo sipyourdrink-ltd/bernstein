@@ -12,11 +12,14 @@ rather than as its own attribution is exempted by hand there, with the reason.
 
 ## Added
 
+- Memory compaction now anchors `TierResult` and compact trace steps with pre-compaction source content and referenced artifact hashes (#3696). `TierResult` carries `source_content_hash` (SHA-256 over exact pre-compaction UTF-8 bytes) and `referenced_content_hashes` (mapping of referenced artifact paths to content hashes captured at compaction time, recording `"absent"` for missing files), which propagate to the `compact` `TraceStep` in the trace store and are checked via `verify_compacted_step` to detect and report post-compaction artifact modifications, deletions, or creations. Docs: [`docs/architecture/memory_tiers.md`](../architecture/memory_tiers.md).
 - The journal verifier (`verify_journal` / `verify_events`) is now covered by the mutation gate at 72.5% kill rate (#3654). Tests assert on each component of `JournalVerifyResult` — `chain_consistent`, `coverage`, `identity`, `count`, `divergent_index`, `head` — so that a change zeroing out the count or inverting a verdict would be caught. Every strict-mode validation guard is exercised with the row field deleted, replaced with the wrong type, or replaced with the empty string. The negative controls are discriminating: a corrupted journal returns the specific rejection (prev-hash break vs event-hash mismatch, chain divergence vs partial coverage), not a blanket "something is wrong", so a verifier that rejects everything would fail the tests. The survivors are in non-verification code paths: retention logic, helper functions, and error message formatting.
 - Volunteer tasks enforce `allowed_paths`, re-run the project's gates, and assemble the signed receipt (#4033). `finish_volunteer_task` takes the patch a run produced plus the project's manifest and returns either a `SignedResultBundle` or a `VolunteerRefusal` — never a bundle marked failed, because a signed bundle is a claim the work is acceptable and one that says otherwise in a boolean field is a misreading away from being treated as a pass. Scope is enforced before any gate subprocess starts, and a glob match is not the whole check: the same filesystem containment barrier the rest of the project uses refuses a path that is not repository-relative (`docs/../src/x.py` is a spelling `docs/**` matches) and a path that resolves out of the worktree through a symlinked component, and only then are the project's globs consulted through the one matcher shared with credential scoping. Matching stays case-sensitive on every platform, so a scope written for `src/` cannot be satisfied by `SRC/` on a case-insensitive filesystem. Gates run as argv under one wall-clock budget shared across them rather than one budget each, stop at the first failure, and take an environment built from the sandbox profile rather than inherited from the donor's shell. A passing run's bundle carries the manifest's own digest as `manifest_sha256` and the profile's digest as its sandbox identifier, continuing the manifest → profile → receipt chain, and its worker identity is derived from the signing key so the bundle cannot name one worker while the signature is by another. Refusals carry stable, append-only reason codes. Part of #3869. Docs: [`docs/reference/volunteer-manifest.md`](../reference/volunteer-manifest.md).
 - One answer to "which paths does this diff touch" (`bernstein.core.diff_paths`). The Tier-3 auto-heal cordon and volunteer scope enforcement both fail open on a path an extractor misses, so the extraction moved out of `autofix/tier3.py` into a shared module alongside `path_scope`, and gained the shapes it was missing: a content-preserving rename or copy, a mode change, and a binary file each touch a file while printing no hunk at all, and were previously invisible to the cordon. Quoted non-ASCII paths are decoded rather than handed to a matcher as escape sequences, and an ambiguous `diff --git` header contributes every candidate split — the extractor over-approximates on purpose, since a spurious path costs a readable refusal and a missing one costs an unchallenged write. `bernstein.core.autofix.tier3.extract_paths_from_unified_diff` still resolves for existing callers.
 - Parking a task now writes the grant-bound agent checkpoint the resume path has been checking for (#4043). Nothing in the shipped code produced an `AgentCheckpoint`, so the authority check `bernstein task resume` runs — recompute the grant hash from the role and refuse when the permission set has moved — had no input on a live run and passed by having nothing to inspect. `park_task` now writes the checkpoint after the suspend receipt exists, keyed per task rather than per adapter so two tasks parked on one adapter no longer evict each other, and hashes the same permissions the resume re-derives so the two sides agree. The role is read where it is actually recorded, the task log, and the owning run comes from `$BERNSTEIN_RUN_ID`; `--role` and `--parent-run-id` pin either explicitly. When no role can be sourced the checkpoint is written with an empty grant hash rather than one over the unrestricted default permission set, which the resume would re-derive identically — a checkpoint that reads as bound and can never refuse is worse than one that admits it is not bound. Part of #3649. Docs: [`docs/operations/durable-suspend-resume.md`](../operations/durable-suspend-resume.md).
 - The OpenCode adapter pins its own tool permissions and can re-enter a prior session (#3676). The contract row for `opencode` read `unsupported | unsupported` on resume and dangerous mode, and the adapter matched it: the spawn was a fixed `opencode run -m <model> --format json <prompt>` with no permission configuration at all, so a worker inherited whatever the operator's personal `opencode` config resolved to and two operators running the same plan got different agent behaviour. Both axes now describe flags the adapter passes. Every spawn carries an explicit `OPENCODE_PERMISSION` policy derived from the declared dangerous-mode strategy — escalated alongside `--auto` when it permits unattended action, tightened to a deny policy when it does not — applied after the environment allow-list so the pinned policy is what the worker sees rather than the host's. Neither policy resolves to `ask`, which would hang a headless run indefinitely against upstream `anomalyco/opencode#36762` and surface as a timeout rather than a blocked permission. `--continue` re-enters the prior session on a continuation retry, which the per-task worktree makes unambiguous, and the adapter opts into the continuation path so the warm retry the resume axis already derives is backed by something real. The event channel deliberately stays `text-signals`: the CLI does emit NDJSON under `--format json`, but nothing consumes it yet, and consuming it is the remaining half of #3676.
+- MCP server advertises repository URL, package version, and build provenance in its capability card and server info, sourced at runtime from packaging metadata rather than static literals (#3646).
+- Russian README (`README.ru.md`), under the same drift gate as the other six translations. The language-links line now carries `Русский` in every README including the English source, so the switcher is reachable from whichever page a reader landed on rather than only from the English one. `bernstein readme-l10n verify` covers the new page like the rest: every section is bound to a hash of the English section it mirrors and the command blocks are compared byte for byte against the source, so a Russian page that falls behind an English edit fails the build naming the stale section instead of drifting quietly. The locale and its owner are registered in `[tool.bernstein.readme-l10n]`.
 ## Security
 
 - The agent task-scope gate no longer depends on how FastAPI happens to store
@@ -79,3 +82,41 @@ rather than as its own attribution is exempted by hand there, with the reason.
   255-byte component cap now fails as `PathTooLongError` at the check instead
   of reaching `open()` as `OSError(ENAMETOOLONG)` (the same capacity-vs-
   containment distinction #4095 recorded for the pid-file sites).
+
+- Health check task count is scoped to the caller's tenant (#4156).
+- Stall escalation produces a degraded terminal receipt on a missing or empty
+  event journal instead of raising (#3737). The kill already happened in that
+  case; refusing to build the receipt left nothing in the chain to tell
+  "terminated with a recorded cause" from "never concluded". The receipt now
+  carries `journal_state` (`missing` / `empty`) in place of the reconstructed
+  window, signs and anchors on the escalation spine like any other terminal
+  receipt, and the `escalation.receipt` chain mirror records the same field, so
+  the degradation is visible from the chain alone. `EscalationError` still
+  raises for genuinely malformed input — a non-positive window, or a `fork_step`
+  no snapshot event pins. The recorded absence stays falsifiable: verifying a
+  receipt that claims `missing` against a run whose journal does hold entries
+  fails and names the contradiction, rather than letting `journal_state` become
+  a standing bypass of the window reconstruction every other receipt is held
+  to. `bernstein escalation verify` reports these as `OK (degraded)` instead of
+  claiming a window reconstructed from a journal that was never there.
+- A review correction can now be filed as a convention receipt instead of free
+  text (#3750). `file_review_correction()` in `core/knowledge/conventions.py`
+  routes the correction through the existing `file_lesson()` store and binds
+  `{rule_text_hash, subject_path, subject_symbol, base_commit_sha,
+  assertion_ref, filing_finding_id, decided_by}` into one Ed25519-signed record
+  anchored in the HMAC audit chain. Filing the same correction three times
+  leaves one receipt at `version: 3`. A rule whose `subject_symbol` no longer
+  resolves at HEAD (checked by AST for Python sources) moves to `expired` and
+  appends the chain entry saying so, rather than quietly ceasing to apply — an
+  expired rule and a rule that was never filed have to be tellable apart. A
+  correction that contradicts one already in force is rejected at file time
+  naming both receipt ids; two rules that merely touch the same file are not a
+  contradiction and both file. `bernstein verify --memory-audit` covers the
+  receipts: it runs the audit chain's own verifier before checking anchors, so
+  a rewritten rule with a hand-appended log line behind it fails rather than
+  passing a presence check. The rule set in force carries a `ruleset_hash` over
+  what each rule demands — never over receipt ids or filing timestamps — so two
+  installs with the same rules agree on the digest. Filing is still an explicit
+  call: no orchestrator path invokes it yet, which
+  [`docs/concepts/lesson-persistence.md`](../concepts/lesson-persistence.md)
+  records as the remaining gap.

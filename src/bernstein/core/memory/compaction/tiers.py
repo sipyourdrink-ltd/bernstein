@@ -25,9 +25,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
-from typing import TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from bernstein.core import defaults
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+    from pathlib import Path
 
 
 class Tier(StrEnum):
@@ -90,6 +94,8 @@ class TierResultDict(TypedDict):
     cost_estimate: float
     correlation_id: str
     reason: str
+    source_content_hash: str
+    referenced_content_hashes: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -101,6 +107,8 @@ class TierResult:
         compacted_text: Context after the tier ran.
         before_tokens: Token count before the tier ran.
         after_tokens: Token count after the tier ran.
+        source_content_hash: Content hash of the exact pre-compaction region.
+        referenced_content_hashes: Mapping of referenced artifact paths to content hashes.
         cost_estimate: Estimated USD cost attributed to this tier.
         correlation_id: Correlation id tying the event to the trace store.
         reason: Human-readable trigger reason.
@@ -110,6 +118,8 @@ class TierResult:
     compacted_text: str
     before_tokens: int
     after_tokens: int
+    source_content_hash: str = ""
+    referenced_content_hashes: Mapping[str, str] = field(default_factory=dict)
     cost_estimate: float = 0.0
     correlation_id: str = ""
     reason: str = ""
@@ -129,6 +139,25 @@ class TierResult:
             cost_estimate=self.cost_estimate,
             correlation_id=self.correlation_id,
             reason=self.reason,
+            source_content_hash=self.source_content_hash,
+            referenced_content_hashes=dict(self.referenced_content_hashes),
+        )
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> TierResult:
+        """Deserialise from a dictionary (e.g., from a stored trace record)."""
+        raw_tier = d["tier"]
+        tier = raw_tier if isinstance(raw_tier, Tier) else Tier(str(raw_tier))
+        return cls(
+            tier=tier,
+            compacted_text=str(d.get("compacted_text", "")),
+            before_tokens=int(d.get("before_tokens", 0)),
+            after_tokens=int(d.get("after_tokens", 0)),
+            source_content_hash=str(d.get("source_content_hash", "")),
+            referenced_content_hashes=dict(d.get("referenced_content_hashes", {})),
+            cost_estimate=float(d.get("cost_estimate", 0.0)),
+            correlation_id=str(d.get("correlation_id", "")),
+            reason=str(d.get("reason", "")),
         )
 
 
@@ -162,9 +191,17 @@ class TierContext:
         cost_per_1k_tokens: Per-1k-token USD rate for the active model,
             used to attribute spend to the tier. Defaults to a small
             non-zero rate so cost attribution is exercised in tests.
+        referenced_paths: Sequence of file or artifact paths referenced by
+            the compacted region.
+        referenced_content_hashes: Pre-computed mapping of artifact path to
+            content hash.
+        root_dir: Optional base directory to resolve relative paths against.
     """
 
     session_id: str
     context_text: str
     pressure: BudgetPressure = field(default_factory=BudgetPressure)
     cost_per_1k_tokens: float = 0.003
+    referenced_paths: Sequence[str] = field(default_factory=tuple)
+    referenced_content_hashes: Mapping[str, str] = field(default_factory=dict)
+    root_dir: Path | str | None = None

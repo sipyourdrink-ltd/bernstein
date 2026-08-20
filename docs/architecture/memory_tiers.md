@@ -76,7 +76,15 @@ that saves nothing costs nothing.
 
 ---
 
-## Trace recording
+## Trace recording and content hashing
+
+Every `TierResult` anchors the summarized region with content hashes:
+
+- `source_content_hash` - SHA-256 content hash of the exact pre-compaction UTF-8
+  bytes, computed before the tier runs.
+- `referenced_content_hashes` - mapping of referenced artifact paths to content
+  hashes captured at compaction time, explicitly recording `"absent"` for files
+  that did not exist on disk.
 
 `record_tier_event(trace, result)` records a compaction event in the
 existing trace store. It builds a `compact` `TraceStep` (see
@@ -87,8 +95,21 @@ existing trace store. It builds a `compact` `TraceStep` (see
   `compaction_tokens_before` / `compaction_tokens_after` fields.
 - `cost_estimate` - in the step detail.
 - `correlation_id` - via `compaction_correlation_id`.
+- `compaction_source_content_hash` - content hash of the pre-compaction region.
+- `compaction_referenced_content_hashes` - map of referenced artifact paths to
+  hashes captured at compaction time.
 
 The event is auditable from a plain JSONL tail without a special reader.
+
+---
+
+## Verification
+
+A verification helper `verify_compacted_step(step)` (and
+`verify_compaction_references(references)`) checks whether referenced artifacts
+still match what they hashed to when the compaction occurred. Mismatches are
+reported as explicit `ArtifactDivergence` records rather than silent drifts,
+detecting post-compaction modifications, deletions, or unexpected creations.
 
 ---
 

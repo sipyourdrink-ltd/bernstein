@@ -21,23 +21,44 @@ from bernstein.core.memory.compaction.tiers import (
     Tier,
     TierContext,
     TierResult,
+    TierResultDict,
     estimate_tokens,
+)
+from bernstein.core.memory.compaction.verification import (
+    ABSENT_HASH,
+    ArtifactDivergence,
+    CompactionVerificationResult,
+    compute_referenced_content_hashes,
+    compute_source_content_hash,
+    verify_compacted_step,
+    verify_compaction_references,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+    from pathlib import Path
+
     from bernstein.core.observability.traces import AgentTrace, TraceStep
 
 __all__ = [
+    "ABSENT_HASH",
     "TIER_COST_WEIGHT",
+    "ArtifactDivergence",
     "BudgetPressure",
+    "CompactionVerificationResult",
     "Tier",
     "TierContext",
     "TierResult",
+    "TierResultDict",
     "compact",
+    "compute_referenced_content_hashes",
+    "compute_source_content_hash",
     "estimate_tokens",
     "record_tier_event",
     "run_legacy_compaction",
     "select_tier",
+    "verify_compacted_step",
+    "verify_compaction_references",
 ]
 
 
@@ -45,8 +66,9 @@ def record_tier_event(trace: AgentTrace, result: TierResult) -> TraceStep:
     """Record a tier compaction event in the trace store.
 
     Builds a ``compact`` :class:`TraceStep` carrying the tier name,
-    before/after token counts, and the cost estimate so operators can audit
-    how much they spend on memory upkeep per tier. The caller is responsible
+    before/after token counts, the cost estimate, and source / referenced
+    content hashes so operators can audit memory upkeep and verify that
+    referenced artifacts have not diverged. The caller is responsible
     for appending the returned step to ``trace.steps`` and persisting.
 
     Args:
@@ -66,6 +88,8 @@ def record_tier_event(trace: AgentTrace, result: TierResult) -> TraceStep:
         tokens_before=result.before_tokens,
         tokens_after=result.after_tokens,
         reason=f"tier={result.tier.value}: {result.reason}",
+        source_content_hash=result.source_content_hash,
+        referenced_content_hashes=result.referenced_content_hashes,
     )
     # Surface the tier and cost estimate in the human-readable detail so the
     # event is auditable even from a plain JSONL tail. The structured
@@ -80,6 +104,9 @@ def run_legacy_compaction(
     *,
     context_pct_used: float = 1.0,
     turn_count: int = 1,
+    referenced_paths: Sequence[str] = (),
+    referenced_content_hashes: Mapping[str, str] | None = None,
+    root_dir: Path | str | None = None,
 ) -> TierResult:
     """Legacy single-strategy compaction entrypoint (thin shim).
 
@@ -94,6 +121,9 @@ def run_legacy_compaction(
         context_pct_used: Fraction of the context window consumed. Defaults
             to ``1.0`` to mirror the legacy "compact when full" behaviour.
         turn_count: 1-based turn number.
+        referenced_paths: Sequence of file or artifact paths referenced.
+        referenced_content_hashes: Precomputed map of path to hash.
+        root_dir: Optional root directory for resolving file paths.
 
     Returns:
         A :class:`TierResult` from the policy-selected tier.
@@ -106,5 +136,8 @@ def run_legacy_compaction(
             context_pct_used=context_pct_used,
             session_complete=False,
         ),
+        referenced_paths=referenced_paths,
+        referenced_content_hashes=dict(referenced_content_hashes or {}),
+        root_dir=root_dir,
     )
     return compact(ctx)
