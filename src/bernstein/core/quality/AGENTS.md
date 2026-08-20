@@ -12,6 +12,7 @@ verification.
 | `gate_runner.py` | Gate dispatch and execution (subprocess discipline, timeouts) |
 | `quality_gates.py` | `QualityGatesConfig` plus the core gate implementations |
 | `janitor.py` | Claim verification: did the agent do what its result claims |
+| `absence_coverage.py` | Absence-claim coverage verification: classifies a completion built on an absence claim (`glob_exists`/`file_contains` "not found", or a journal read) as `unverified` unless a coverage record backs it (#3650/#3769/#3770/#3771) |
 | `verifier_ladder.py` | Multi-tier verifier ladder with signed, re-derivable per-tier receipts (#2927) |
 | `review_pipeline/` | Fresh-context cross-model review gate |
 | `formal_verification.py` | Z3/Lean4 checks over scalar task metadata |
@@ -28,6 +29,10 @@ verification.
   which it is.
 - No package-level `__getattr__` re-export magic in this package;
   import submodules by full path (`__init__.py` explains why).
+- Absence-claim coverage fails closed: a coverage record that cannot be
+  read back (missing, malformed, or a dangling lineage reference) must
+  classify as no-coverage, never as a fabricated passing record
+  (`absence_coverage.py`).
 
 ## Testing
 
