@@ -36,6 +36,5 @@ that every adapter artifact write routes through.
 
 ## Testing
 
-Single files only, e.g.
-`uv run pytest tests/unit/test_lineage_record.py -x -q`; the
-`test_lineage_*.py` files cover entries, stores, signing, and gates.
+Single files only, e.g. `uv run pytest tests/unit/test_lineage_record.py -x -q`;
+the `test_lineage_*.py` files cover entries, stores, signing, and gates.
