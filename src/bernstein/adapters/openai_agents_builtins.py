@@ -441,11 +441,52 @@ def list_dir_in_workdir(
     emit: Callable[[dict[str, Any]], None],
 ) -> str:
     """List entries of a workdir-relative directory, recording the call."""
+    from bernstein.core.tools.coverage import ToolCoverageRecord, compute_corpus_digest
+
     emit({"type": "tool_call", "name": "list_dir", "args": {"path": path}, "tool_source": "builtin"})
     try:
         target = resolve_in_workdir(workdir, path)
+        if not target.exists():
+            coverage = ToolCoverageRecord(
+                file_count=0,
+                corpus_digest=compute_corpus_digest([]),
+                coverage="partial",
+                truncated=True,
+                truncation_reason="target_not_found",
+                exit_status="error",
+                exit_checked=True,
+            )
+            emit(
+                {
+                    "type": "tool_result",
+                    "name": "list_dir",
+                    "tool_source": "builtin",
+                    "status": "error",
+                    "error": f"DirectoryNotFound: {path}",
+                    "coverage": coverage.to_dict(),
+                }
+            )
+            return f"error: directory not found: {path}"
         entries = sorted(p.name + ("/" if p.is_dir() else "") for p in target.iterdir())
+        coverage = ToolCoverageRecord(
+            file_count=len(entries),
+            corpus_digest=compute_corpus_digest(entries),
+            coverage="complete",
+            truncated=False,
+            truncation_reason=None,
+            exit_status="ok",
+            exit_checked=True,
+        )
     except (WorkdirEscapeError, OSError) as exc:
+        coverage = ToolCoverageRecord(
+            file_count=0,
+            corpus_digest=compute_corpus_digest([]),
+            coverage="partial",
+            truncated=True,
+            truncation_reason=type(exc).__name__,
+            exit_status="error",
+            exit_checked=True,
+        )
         emit(
             {
                 "type": "tool_result",
@@ -453,6 +494,7 @@ def list_dir_in_workdir(
                 "tool_source": "builtin",
                 "status": "error",
                 "error": f"{type(exc).__name__}: {exc}",
+                "coverage": coverage.to_dict(),
             }
         )
         return f"error: {exc}"
@@ -463,6 +505,7 @@ def list_dir_in_workdir(
             "tool_source": "builtin",
             "status": "ok",
             "count": len(entries),
+            "coverage": coverage.to_dict(),
         }
     )
     return "\n".join(entries)
