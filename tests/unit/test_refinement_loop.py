@@ -780,6 +780,7 @@ def test_unseeded_runner_still_runs() -> None:
     deadline=None,
     max_examples=50,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
+derandomize=True,
 )
 @given(
     rounds=st.integers(min_value=MIN_REFINEMENT_ROUNDS, max_value=MAX_REFINEMENT_ROUNDS),
@@ -796,6 +797,7 @@ def test_property_rounds_run_never_exceeds_budget(rounds: int, threshold: float)
     deadline=None,
     max_examples=30,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
+derandomize=True,
 )
 @given(
     rounds=st.integers(min_value=MIN_REFINEMENT_ROUNDS, max_value=MAX_REFINEMENT_ROUNDS),
@@ -815,6 +817,7 @@ def test_property_threshold_invariant_score_above_stops(rounds: int, score: floa
     deadline=None,
     max_examples=30,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
+derandomize=True,
 )
 @given(
     budget=st.floats(min_value=0.01, max_value=10.0),
@@ -851,6 +854,7 @@ def test_property_monotone_in_budget(budget: float, per_round_cost: float) -> No
     deadline=None,
     max_examples=30,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
+derandomize=True,
 )
 @given(
     seed=st.integers(min_value=0, max_value=10_000),
@@ -872,6 +876,7 @@ def test_property_deterministic_with_seed(seed: int, rounds: int) -> None:
     deadline=None,
     max_examples=40,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
+derandomize=True,
 )
 @given(scores=st.lists(st.floats(min_value=0.0, max_value=1.0), min_size=0, max_size=10))
 def test_property_detect_plateau_never_fires_on_strict_growth(scores: list[float]) -> None:
@@ -886,6 +891,7 @@ def test_property_detect_plateau_never_fires_on_strict_growth(scores: list[float
     deadline=None,
     max_examples=30,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
+derandomize=True,
 )
 @given(score=st.floats(min_value=-100.0, max_value=100.0).filter(lambda x: not math.isnan(x)))
 def test_property_clamp_score_in_unit_interval(score: float) -> None:
@@ -897,6 +903,7 @@ def test_property_clamp_score_in_unit_interval(score: float) -> None:
     deadline=None,
     max_examples=30,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
+derandomize=True,
 )
 @given(rounds=st.integers(min_value=-50, max_value=200))
 def test_property_clamp_rounds_in_range(rounds: int) -> None:
@@ -911,6 +918,7 @@ def test_property_clamp_rounds_in_range(rounds: int) -> None:
     deadline=None,
     max_examples=30,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
+derandomize=True,
 )
 @given(
     rounds=st.integers(min_value=MIN_REFINEMENT_ROUNDS, max_value=MAX_REFINEMENT_ROUNDS),
@@ -935,6 +943,7 @@ def test_property_cumulative_cost_is_nonnegative(rounds: int, cost: float) -> No
     deadline=None,
     max_examples=30,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
+derandomize=True,
 )
 @given(rounds=st.integers(min_value=MIN_REFINEMENT_ROUNDS, max_value=MAX_REFINEMENT_ROUNDS))
 def test_property_per_round_lists_align(rounds: int) -> None:
@@ -950,6 +959,7 @@ def test_property_per_round_lists_align(rounds: int) -> None:
     deadline=None,
     max_examples=30,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
+derandomize=True,
 )
 @given(veto_round=st.integers(min_value=1, max_value=MAX_REFINEMENT_ROUNDS))
 def test_property_adversary_veto_stops_no_later_than_veto_round(veto_round: int) -> None:
@@ -967,6 +977,7 @@ def test_property_adversary_veto_stops_no_later_than_veto_round(veto_round: int)
     deadline=None,
     max_examples=20,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
+derandomize=True,
 )
 @given(rounds=st.integers(min_value=MIN_REFINEMENT_ROUNDS, max_value=MAX_REFINEMENT_ROUNDS))
 def test_property_gate_fail_round_set_iff_gate_stop(rounds: int) -> None:
@@ -980,6 +991,7 @@ def test_property_gate_fail_round_set_iff_gate_stop(rounds: int) -> None:
     deadline=None,
     max_examples=20,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
+derandomize=True,
 )
 @given(
     threshold=st.floats(min_value=0.0, max_value=1.0),
@@ -1005,6 +1017,7 @@ def test_property_threshold_lowered_never_increases_rounds(threshold: float, rou
     deadline=None,
     max_examples=20,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
+derandomize=True,
 )
 @given(
     score=st.floats(min_value=0.0, max_value=1.0),
@@ -1023,6 +1036,7 @@ def test_property_critique_round_trip(score: float, veto: bool, rationale: str) 
     deadline=None,
     max_examples=20,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
+derandomize=True,
 )
 @given(
     rounds=st.integers(min_value=MIN_REFINEMENT_ROUNDS, max_value=MAX_REFINEMENT_ROUNDS),
@@ -1044,6 +1058,7 @@ def test_property_seeded_run_report_stable_across_repeat(rounds: int, seed: int)
     deadline=None,
     max_examples=20,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
+derandomize=True,
 )
 @given(
     cost=st.floats(min_value=0.0, max_value=1.0),
