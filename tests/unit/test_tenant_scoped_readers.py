@@ -47,7 +47,8 @@ async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
 
 
 async def _create(app: FastAPI, title: str, tenant_id: str, **extra: object) -> None:
-    await app.state.store.create(TaskCreate(title=title, description="scoping fixture", tenant_id=tenant_id, **extra))
+    desc = extra.pop("description", "scoping fixture")
+    await app.state.store.create(TaskCreate(title=title, description=desc, tenant_id=tenant_id, **extra))
 
 
 class TestBudgetForecastTenantScope:
@@ -71,6 +72,58 @@ class TestBudgetForecastTenantScope:
 
         after = await client.get("/quality/budget-forecast", headers={"X-Tenant-Id": "team-a"})
         assert after.json()["task_count"] == baseline + 1
+
+
+class TestCiFixCounterTenantScope:
+    @pytest.mark.asyncio
+    async def test_ci_fix_count_ignores_another_tenants_tasks(self, app: FastAPI) -> None:
+        from bernstein.core.routes.webhooks import _count_ci_fix_attempts
+
+        branch = "main"
+        # Team B has an active ci-fix task
+        await _create(app, "[ci-fix] team-b failure", "team-b", description=f"branch: {branch}")
+
+        # Team A's count should be 0 (unaffected by team B)
+        count_a = _count_ci_fix_attempts(app.state.store, branch, "team-a")
+        assert count_a == 0
+
+    @pytest.mark.asyncio
+    async def test_ci_fix_count_still_counts_own_tasks(self, app: FastAPI) -> None:
+        from bernstein.core.routes.webhooks import _count_ci_fix_attempts
+
+        branch = "main"
+        # Team A has an active ci-fix task
+        await _create(app, "[ci-fix] team-a failure", "team-a", description=f"branch: {branch}")
+
+        # Team A's count should be 1
+        count_a = _count_ci_fix_attempts(app.state.store, branch, "team-a")
+        assert count_a == 1
+
+
+class TestGitlabCiFixCounterTenantScope:
+    @pytest.mark.asyncio
+    async def test_gitlab_ci_fix_count_ignores_another_tenants_tasks(self, app: FastAPI) -> None:
+        from bernstein.core.routes.webhooks import _count_gitlab_ci_fix_attempts
+
+        ref = "main"
+        # Team B has an active ci-fix task
+        await _create(app, "[ci-fix] team-b gitlab failure", "team-b", description=f"ref: {ref}")
+
+        # Team A's count should be 0 (unaffected by team B)
+        count_a = _count_gitlab_ci_fix_attempts(app.state.store, ref, "team-a")
+        assert count_a == 0
+
+    @pytest.mark.asyncio
+    async def test_gitlab_ci_fix_count_still_counts_own_tasks(self, app: FastAPI) -> None:
+        from bernstein.core.routes.webhooks import _count_gitlab_ci_fix_attempts
+
+        ref = "main"
+        # Team A has an active ci-fix task
+        await _create(app, "[ci-fix] team-a gitlab failure", "team-a", description=f"ref: {ref}")
+
+        # Team A's count should be 1
+        count_a = _count_gitlab_ci_fix_attempts(app.state.store, ref, "team-a")
+        assert count_a == 1
 
 
 class TestHealthCheckTenantScope:

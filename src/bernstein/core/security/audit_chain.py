@@ -2678,6 +2678,7 @@ def record_escalation_receipt(
     window_size: int,
     fork_snapshot_sha: str,
     journal_entry_hash: str,
+    journal_state: str = "present",
     actor: str = "escalation_receipt",
 ) -> AuditEvent:
     """Append an ``escalation.receipt`` event into *chain*.
@@ -2706,6 +2707,12 @@ def record_escalation_receipt(
             the receipt pinned no fork point.
         journal_entry_hash: The escalation-spine entry hash anchoring the
             receipt.
+        journal_state: The receipt's journal availability at kill time
+            (``'present'``, ``'missing'``, or ``'empty'``). Recorded in the
+            details payload only when it is not ``'present'``, so entries for
+            ordinary receipts stay byte-identical to prior releases while an
+            auditor walking the chain alone can still tell a degraded
+            escalation (#3737) from one with a reconstructible window.
         actor: Recorded actor; defaults to ``"escalation_receipt"``.
 
     Returns:
@@ -2724,6 +2731,8 @@ def record_escalation_receipt(
     }
     if session_id:
         details["session_id"] = session_id
+    if journal_state != "present":
+        details["journal_state"] = journal_state
     return chain.log_with_prev_digest(
         event_type=EVENT_ESCALATION_RECEIPT,
         actor=actor,

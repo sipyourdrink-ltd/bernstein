@@ -17,6 +17,7 @@ rather than as its own attribution is exempted by hand there, with the reason.
 - Parking a task now writes the grant-bound agent checkpoint the resume path has been checking for (#4043). Nothing in the shipped code produced an `AgentCheckpoint`, so the authority check `bernstein task resume` runs — recompute the grant hash from the role and refuse when the permission set has moved — had no input on a live run and passed by having nothing to inspect. `park_task` now writes the checkpoint after the suspend receipt exists, keyed per task rather than per adapter so two tasks parked on one adapter no longer evict each other, and hashes the same permissions the resume re-derives so the two sides agree. The role is read where it is actually recorded, the task log, and the owning run comes from `$BERNSTEIN_RUN_ID`; `--role` and `--parent-run-id` pin either explicitly. When no role can be sourced the checkpoint is written with an empty grant hash rather than one over the unrestricted default permission set, which the resume would re-derive identically — a checkpoint that reads as bound and can never refuse is worse than one that admits it is not bound. Part of #3649. Docs: [`docs/operations/durable-suspend-resume.md`](../operations/durable-suspend-resume.md).
 - The OpenCode adapter pins its own tool permissions and can re-enter a prior session (#3676). The contract row for `opencode` read `unsupported | unsupported` on resume and dangerous mode, and the adapter matched it: the spawn was a fixed `opencode run -m <model> --format json <prompt>` with no permission configuration at all, so a worker inherited whatever the operator's personal `opencode` config resolved to and two operators running the same plan got different agent behaviour. Both axes now describe flags the adapter passes. Every spawn carries an explicit `OPENCODE_PERMISSION` policy derived from the declared dangerous-mode strategy — escalated alongside `--auto` when it permits unattended action, tightened to a deny policy when it does not — applied after the environment allow-list so the pinned policy is what the worker sees rather than the host's. Neither policy resolves to `ask`, which would hang a headless run indefinitely against upstream `anomalyco/opencode#36762` and surface as a timeout rather than a blocked permission. `--continue` re-enters the prior session on a continuation retry, which the per-task worktree makes unambiguous, and the adapter opts into the continuation path so the warm retry the resume axis already derives is backed by something real. The event channel deliberately stays `text-signals`: the CLI does emit NDJSON under `--format json`, but nothing consumes it yet, and consuming it is the remaining half of #3676.
 - MCP server advertises repository URL, package version, and build provenance in its capability card and server info, sourced at runtime from packaging metadata rather than static literals (#3646).
+- Russian README (`README.ru.md`), under the same drift gate as the other six translations. The language-links line now carries `Русский` in every README including the English source, so the switcher is reachable from whichever page a reader landed on rather than only from the English one. `bernstein readme-l10n verify` covers the new page like the rest: every section is bound to a hash of the English section it mirrors and the command blocks are compared byte for byte against the source, so a Russian page that falls behind an English edit fails the build naming the stale section instead of drifting quietly. The locale and its owner are registered in `[tool.bernstein.readme-l10n]`.
 - Export SOC 2 evidence pack to configured storage sinks via `export_soc2_evidence_pack` under canonical keys (#4148).
 ## Security
 
@@ -82,3 +83,18 @@ rather than as its own attribution is exempted by hand there, with the reason.
   containment distinction #4095 recorded for the pid-file sites).
 
 - Health check task count is scoped to the caller's tenant (#4156).
+- Stall escalation produces a degraded terminal receipt on a missing or empty
+  event journal instead of raising (#3737). The kill already happened in that
+  case; refusing to build the receipt left nothing in the chain to tell
+  "terminated with a recorded cause" from "never concluded". The receipt now
+  carries `journal_state` (`missing` / `empty`) in place of the reconstructed
+  window, signs and anchors on the escalation spine like any other terminal
+  receipt, and the `escalation.receipt` chain mirror records the same field, so
+  the degradation is visible from the chain alone. `EscalationError` still
+  raises for genuinely malformed input — a non-positive window, or a `fork_step`
+  no snapshot event pins. The recorded absence stays falsifiable: verifying a
+  receipt that claims `missing` against a run whose journal does hold entries
+  fails and names the contradiction, rather than letting `journal_state` become
+  a standing bypass of the window reconstruction every other receipt is held
+  to. `bernstein escalation verify` reports these as `OK (degraded)` instead of
+  claiming a window reconstructed from a journal that was never there.

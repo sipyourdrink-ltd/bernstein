@@ -50,11 +50,20 @@ try:
         verbosity=Verbosity.normal,
     )
 
+    # derandomize=False, matching tests/property/conftest.py's "deep" profile
+    # (#4118): "deep" exists to explore fresh input space on the nightly
+    # cadence, so freezing it here would silence the thing it is for. #4128
+    # copied the smoke profile's derandomize=True onto this registration too,
+    # which both violates that invariant on its own and, if this file and
+    # tests/property/conftest.py ever load in the same pytest process,
+    # collides with the other file's registration of the same profile name --
+    # whichever conftest imports last wins, silently, so the effective value
+    # is order-dependent rather than a stated choice from either file.
     settings.register_profile(
         "deep",
         max_examples=1_000,
         deadline=None,
-        derandomize=True,
+        derandomize=False,
         suppress_health_check=[
             HealthCheck.too_slow,
             HealthCheck.filter_too_much,
