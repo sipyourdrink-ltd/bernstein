@@ -13,7 +13,8 @@ from bernstein.core.storage import (
     register_sink,
 )
 from bernstein.core.storage import registry as storage_registry
-from bernstein.core.storage.sink import ArtifactSink, ArtifactStat
+from bernstein.core.storage import soc2_export as soc2_export_module
+from bernstein.core.storage.sink import ArtifactSink, ArtifactStat, SinkError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -66,6 +67,40 @@ class _RecordingSink(ArtifactSink):
         pass
 
 
+class _FailingSink(ArtifactSink):
+    """ArtifactSink test double whose write() always raises."""
+
+    name: str = "failing"
+
+    async def write(
+        self,
+        key: str,
+        data: bytes,
+        *,
+        durable: bool = True,
+        content_type: str | None = None,
+    ) -> None:
+        raise SinkError("simulated sink failure")
+
+    async def read(self, key: str) -> bytes:  # pragma: no cover
+        raise NotImplementedError
+
+    async def list(self, prefix: str) -> list[str]:  # pragma: no cover
+        raise NotImplementedError
+
+    async def delete(self, key: str) -> None:  # pragma: no cover
+        raise NotImplementedError
+
+    async def exists(self, key: str) -> bool:  # pragma: no cover
+        raise NotImplementedError
+
+    async def stat(self, key: str) -> ArtifactStat:  # pragma: no cover
+        raise NotImplementedError
+
+    async def close(self) -> None:  # pragma: no cover
+        raise NotImplementedError
+
+
 @pytest.fixture(autouse=True)
 def fresh_registry() -> Iterator[None]:
     """Isolate storage registry state per test."""
@@ -74,11 +109,18 @@ def fresh_registry() -> Iterator[None]:
     storage_registry._reset_for_tests()
 
 
-def test_export_noop_when_sink_name_is_none(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_export_noop_when_sink_name_is_none(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     md_path = tmp_path / "soc2-evidence-weekly.md"
     md_path.write_text("# SOC 2 Evidence", encoding="utf-8")
     manifest_path = tmp_path / "soc2-evidence-weekly.json"
     manifest_path.write_text('{"schema_version": 1}', encoding="utf-8")
+
+    calls: list[str] = []
+    monkeypatch.setattr(soc2_export_module, "get_sink", lambda name: calls.append(name))
 
     with caplog.at_level(logging.INFO):
         export_soc2_evidence_pack(
@@ -90,11 +132,19 @@ def test_export_noop_when_sink_name_is_none(tmp_path: Path, caplog: pytest.LogCa
         )
 
     assert "skipped: no sink_name" in caplog.text
+    assert calls == [], "get_sink must never be called on the no-op path"
 
 
-def test_export_noop_when_sink_name_is_empty(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_export_noop_when_sink_name_is_empty(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     md_path = tmp_path / "soc2-evidence-weekly.md"
     md_path.write_text("# SOC 2 Evidence", encoding="utf-8")
+
+    calls: list[str] = []
+    monkeypatch.setattr(soc2_export_module, "get_sink", lambda name: calls.append(name))
 
     with caplog.at_level(logging.INFO):
         export_soc2_evidence_pack(
@@ -106,6 +156,7 @@ def test_export_noop_when_sink_name_is_empty(tmp_path: Path, caplog: pytest.LogC
         )
 
     assert "skipped: no sink_name" in caplog.text
+    assert calls == [], "get_sink must never be called on the no-op path"
 
 
 def test_export_writes_to_registered_sink(tmp_path: Path) -> None:
@@ -167,8 +218,8 @@ def test_export_with_local_fs_sink(tmp_path: Path) -> None:
 
     assert dest_md.is_file()
     assert dest_json.is_file()
-    assert dest_md.read_text(encoding="utf-8") == "markdown content"
-    assert dest_json.read_text(encoding="utf-8") == "{}"
+    assert dest_md.read_bytes() == md_file.read_bytes()
+    assert dest_json.read_bytes() == json_file.read_bytes()
 
 
 def test_export_handles_single_file_or_none(tmp_path: Path) -> None:
@@ -229,6 +280,23 @@ def test_export_unknown_sink_raises_keyerror(tmp_path: Path) -> None:
             md_file,
             None,
             sink_name="nonexistent_sink_name",
+            period_label="weekly",
+            run_id="run-1",
+        )
+
+
+def test_export_propagates_sink_write_failure(tmp_path: Path) -> None:
+    """A sink failure must surface to the caller, never be swallowed."""
+    register_sink("failing", _FailingSink())
+
+    md_file = tmp_path / "evidence.md"
+    md_file.write_text("markdown content", encoding="utf-8")
+
+    with pytest.raises(SinkError, match="simulated sink failure"):
+        export_soc2_evidence_pack(
+            md_file,
+            None,
+            sink_name="failing",
             period_label="weekly",
             run_id="run-1",
         )
