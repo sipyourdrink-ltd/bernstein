@@ -7,10 +7,16 @@ ladder-receipt verb (issue #2927):
   binding the run's journal head, lineage-spine head, and (opt-in) an
   audit-chain range under one Ed25519-signed subject with an embedded
   public JWK.
-* ``bernstein verify receipt <path> [--public-key PEM]`` -- verify a
-  receipt **fully offline** from the file alone: no HMAC key, no ``.sdd/``.
-  Exit codes: ``0`` OK, ``1`` empty/malformed input, ``2`` tamper detected
-  (naming the first divergent journal step index).
+* ``bernstein verify receipt <path> [--public-key PEM] [--require-provenance]
+  [--json]`` -- verify a receipt **fully offline** from the file alone: no
+  HMAC key, no ``.sdd/``. A pass is one of two tiers: *integrity-only*
+  (no ``--public-key``) or *provenance* (embedded key pinned and matched).
+  Exit codes: ``0`` OK (either tier, unless ``--require-provenance``),
+  ``1`` empty/malformed input, ``2`` tamper detected (naming the first
+  divergent journal step index) or a ``--public-key`` pin mismatch, ``3``
+  ``--require-provenance`` was passed and only the integrity-only tier was
+  reached. ``--json`` adds a machine-readable ``tier`` field so a caller
+  need not parse the verdict prose.
 * ``bernstein verify ladder <receipt-hash>`` -- re-derive a pre-merge
   verifier-ladder receipt: per-tier ``tier / config_hash / evidence_hash /
   verdict`` plus the composite claim, re-checked against the
@@ -42,6 +48,7 @@ it ``./run`` (or use ``bernstein verify legacy run``) in that case.
 
 from __future__ import annotations
 
+import json as _json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -1253,7 +1260,26 @@ def verify_run_cmd(
         "embedded JWK."
     ),
 )
-def verify_receipt_cmd(receipt_path: Path, public_key_path: Path | None) -> None:
+@click.option(
+    "--require-provenance",
+    "require_provenance",
+    is_flag=True,
+    default=False,
+    help=(
+        "Fail (exit 3) unless the pass reaches the provenance tier -- i.e. "
+        "--public-key was given and the embedded key matched it. Without this "
+        "flag both tiers exit 0, matching today's behaviour."
+    ),
+)
+@click.option(
+    "--json", "as_json", is_flag=True, default=False, help="Emit the verdict as JSON alongside the exit code."
+)
+def verify_receipt_cmd(
+    receipt_path: Path,
+    public_key_path: Path | None,
+    require_provenance: bool,
+    as_json: bool,
+) -> None:
     """Verify a run receipt offline from RECEIPT_PATH.
 
     Recomputes the journal head, the spine head, and (when present) the
@@ -1269,18 +1295,51 @@ def verify_receipt_cmd(receipt_path: Path, public_key_path: Path | None) -> None
     their own key. With ``--public-key`` the embedded key must match the
     pinned out-of-band key, which additionally proves provenance.
 
+    By default both tiers exit 0 -- a caller gating on provenance alone must
+    pass ``--require-provenance``, which turns an integrity-only pass into a
+    labelled failure instead of an indistinguishable ``0``. ``--json`` adds a
+    ``tier`` field (``"provenance"``, ``"integrity-only"``, or ``null`` when
+    the receipt did not verify at all) so a caller need not parse the verdict
+    prose to tell the tiers apart.
+
     \b
     Exit codes:
-      0  receipt verifies
+      0  receipt verifies (either tier, unless --require-provenance)
       1  empty or malformed input (unreadable file, missing ranges/fields)
-      2  tamper detected (the first divergent journal step index is named)
+      2  tamper detected (the first divergent journal step index is named),
+         or a --public-key pin that does not match the embedded key
+      3  --require-provenance was given and only the integrity-only tier
+         was reached
     """
     from bernstein.core.replay.run_receipt import verify_run_receipt
+
+    def _emit_json(*, tier: str | None, exit_code: int) -> None:
+        console.print(
+            _json.dumps(
+                {
+                    "ok": result.ok,
+                    "status": result.status,
+                    "tier": tier,
+                    "run_id": result.run_id,
+                    "journal_events": result.journal_events,
+                    "spine_entries": result.spine_entries,
+                    "divergent_step": result.divergent_step,
+                    "errors": result.errors,
+                    "pinned_key": public_key_pem is not None,
+                    "require_provenance": require_provenance,
+                    "exit_code": exit_code,
+                },
+                indent=2,
+            )
+        )
 
     try:
         receipt_bytes = receipt_path.read_bytes()
     except OSError as exc:
-        console.print(f"[red]Cannot read receipt:[/red] {exc}")
+        if as_json:
+            console.print(_json.dumps({"ok": False, "status": "malformed", "tier": None, "errors": [str(exc)]}))
+        else:
+            console.print(f"[red]Cannot read receipt:[/red] {exc}")
         raise SystemExit(1) from None
 
     public_key_pem: bytes | None = None
@@ -1288,18 +1347,40 @@ def verify_receipt_cmd(receipt_path: Path, public_key_path: Path | None) -> None
         try:
             public_key_pem = public_key_path.read_bytes()
         except OSError as exc:
-            console.print(f"[red]Cannot read --public-key:[/red] {exc}")
+            if as_json:
+                console.print(_json.dumps({"ok": False, "status": "malformed", "tier": None, "errors": [str(exc)]}))
+            else:
+                console.print(f"[red]Cannot read --public-key:[/red] {exc}")
             raise SystemExit(1) from None
 
     result = verify_run_receipt(receipt_bytes, public_key_pem=public_key_pem)
 
-    console.print()
-    console.print(
-        f"[bold]Run receipt[/bold] run={result.run_id or '(unknown)'} "
-        f"journal_events={result.journal_events} spine_entries={result.spine_entries}"
-    )
+    if not as_json:
+        console.print()
+        console.print(
+            f"[bold]Run receipt[/bold] run={result.run_id or '(unknown)'} "
+            f"journal_events={result.journal_events} spine_entries={result.spine_entries}"
+        )
+
     if result.ok:
-        if public_key_pem is not None:
+        # The tier a pass reached: "provenance" only when a key was pinned
+        # AND matched (a mismatch is caught earlier as status=="tampered",
+        # so reaching here with a pin means it held).
+        tier = "provenance" if public_key_pem is not None else "integrity-only"
+
+        if require_provenance and tier != "provenance":
+            if as_json:
+                _emit_json(tier=tier, exit_code=3)
+            else:
+                console.print(
+                    f"[red]REQUIRE-PROVENANCE NOT MET[/red] -- reached the [yellow]{tier}[/yellow] tier, "
+                    "which --require-provenance does not accept. Pin the worker key with --public-key."
+                )
+            raise SystemExit(3)
+
+        if as_json:
+            _emit_json(tier=tier, exit_code=0)
+        elif tier == "provenance":
             console.print(
                 "[green]OK (provenance: pinned key)[/green] -- every head recomputes from the "
                 "embedded ranges and the signature verifies against the pinned public key."
@@ -1316,16 +1397,24 @@ def verify_receipt_cmd(receipt_path: Path, public_key_path: Path | None) -> None
                 "with the operator's key for provenance.[/dim]"
             )
         raise SystemExit(0)
+
     if result.status == "malformed":
-        console.print("[yellow]MALFORMED[/yellow] -- the receipt cannot be checked:")
+        if as_json:
+            _emit_json(tier=None, exit_code=1)
+        else:
+            console.print("[yellow]MALFORMED[/yellow] -- the receipt cannot be checked:")
+            for err in result.errors:
+                console.print(f"  - {err}")
+        raise SystemExit(1)
+
+    if as_json:
+        _emit_json(tier=None, exit_code=2)
+    else:
+        console.print("[red]TAMPER DETECTED[/red]:")
         for err in result.errors:
             console.print(f"  - {err}")
-        raise SystemExit(1)
-    console.print("[red]TAMPER DETECTED[/red]:")
-    for err in result.errors:
-        console.print(f"  - {err}")
-    if result.divergent_step is not None:
-        console.print(f"  [red]first divergent journal step: {result.divergent_step}[/red]")
+        if result.divergent_step is not None:
+            console.print(f"  [red]first divergent journal step: {result.divergent_step}[/red]")
     raise SystemExit(2)
 
 

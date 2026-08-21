@@ -92,6 +92,17 @@ rather than as its own attribution is exempted by hand there, with the reason.
   containment distinction #4095 recorded for the pid-file sites).
 
 - Health check task count is scoped to the caller's tenant (#4156).
+- `bernstein verify receipt` distinguishes the integrity-only and provenance
+  tiers for automation instead of leaving both to exit `0` (#4208). A CI gate
+  scripted as `verify receipt $f && deploy` with no `--public-key` configured
+  could not tell a provenance pass from an integrity-only pass that
+  authenticates nothing about the signer; `--require-provenance` now turns an
+  integrity-only pass into exit `3`, naming the tier actually reached, and
+  `--json` adds a `tier` field (`"provenance"` / `"integrity-only"` / `null`)
+  so a caller can read the tier without parsing the verdict prose. Both flags
+  default off, so existing scripts keep today's `0`/`1`/`2` behaviour on
+  either tier unless they opt in. Docs:
+  [`docs/operations/deterministic-replay.md`](../operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
 - Stall escalation produces a degraded terminal receipt on a missing or empty
   event journal instead of raising (#3737). The kill already happened in that
   case; refusing to build the receipt left nothing in the chain to tell

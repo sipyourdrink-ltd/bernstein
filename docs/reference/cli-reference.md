@@ -483,7 +483,7 @@ Group: verifies integrity and reproducibility artefacts. It does not run lint / 
 | Subcommand | Purpose |
 |---|---|
 | `run RUN_ID` | Build the signed run receipt for a run (`--workdir`, `--output`, signing-key options). |
-| `receipt RECEIPT_PATH` | Verify a run receipt offline (`--public-key`). |
+| `receipt RECEIPT_PATH` | Verify a run receipt offline (`--public-key`, `--require-provenance`, `--json`). |
 | `ladder RECEIPT_HASH` | Re-derive and verify a verifier-ladder receipt (`--workdir`). |
 | `legacy [WHEELHOUSE_PATH]` | The pre-receipt checks: `--wal-integrity RUN_ID`, `--determinism RUN_ID` (gated by `--expect` / `--baseline`), `--memory-audit`, `--formal TASK_ID`, or a positional wheelhouse path for air-gap signature verification. |
 
