@@ -150,12 +150,12 @@ def show_cmd(
     kms_adapter = _resolve_kms(signing_key_path, signing_env_var, signing_key_id)
     receipt = _build(run_id, workdir, kms_adapter, write=False)
 
-    console.print(f"[bold]run[/bold]                {receipt.run_id}")
-    console.print(f"[bold]identity anchor[/bold]    {receipt.identity_anchor_hmac}")
-    console.print(f"[bold]through[/bold]            {receipt.through_hmac}")
+    console.print(f"[bold]run[/bold]                {receipt.run_id}", soft_wrap=True)
+    console.print(f"[bold]identity anchor[/bold]    {receipt.identity_anchor_hmac}", soft_wrap=True)
+    console.print(f"[bold]through[/bold]            {receipt.through_hmac}", soft_wrap=True)
     console.print(f"[bold]dispatch evidence[/bold]  {receipt.dispatch_evidence_verdict.value}")
     console.print(f"[bold]whole run[/bold]          {receipt.whole_run_verdict.value}")
-    console.print(f"[bold]receipt sha256[/bold]     {receipt.sha256}")
+    console.print(f"[bold]receipt sha256[/bold]     {receipt.sha256}", soft_wrap=True)
     console.print(
         "\n[dim]Verdicts are recomputed from the retained range, never read from a field. "
         "Use [bold]identity attest verify[/bold] to re-verify and emit.[/dim]"
@@ -205,8 +205,11 @@ def verify_cmd(
             console.print(f"[red]Failed to promote verified receipt:[/red] {exc}")
             raise SystemExit(EXIT_FAILURE) from None
 
-    console.print(f"[green]OK[/green] run attestation projection verified for {verification.run_id}")
+    console.print(
+        f"[green]OK[/green] run attestation projection verified for {verification.run_id}",
+        soft_wrap=True,
+    )
     console.print(f"  dispatch evidence  {verification.dispatch_evidence_verdict.value}")
     console.print(f"  whole run          {verification.whole_run_verdict.value}")
-    console.print(f"  receipt            {receipt_path}")
-    console.print(f"  sha256             {receipt.sha256}")
+    console.print(f"  receipt            {receipt_path}", soft_wrap=True)
+    console.print(f"  sha256             {receipt.sha256}", soft_wrap=True)
