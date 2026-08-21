@@ -43,6 +43,11 @@ field-level error, per the issue's acceptance criteria. HMAC audit-chain
 verification stays with whoever holds the chain key, exactly as
 :func:`audit_dsse.verify_envelope` documents; this bundle composes with it but
 does not require it.
+
+Every field the statement carries -- predicate, bundle, subject, worker,
+patch, gates, and chain -- settles its own type before anything reads it, so
+:func:`verify_result_bundle` returns a verdict for every input shape rather
+than raising on the malformed ones.
 """
 
 from __future__ import annotations
@@ -411,21 +416,57 @@ def verify_result_bundle(
             )
         )
 
-    subjects = statement.get("subject", [])
+    raw_subject = statement.get("subject", [])
     attested_digest = ""
-    if subjects and isinstance(subjects[0], dict):
-        attested_digest = subjects[0].get("digest", {}).get("sha256", "")
+    # A subject that never resolved to a real digest -- wrong-typed outright,
+    # or a first entry that is not a mapping with a digest -- has nothing for
+    # step (2) to compare against. Running that comparison anyway would pair
+    # the type error with a "digest mismatch" that is really just the type
+    # error restated: ``attested_digest`` would still be "", so the check
+    # below fires on every such bundle regardless of the embedded bundle's
+    # actual content, telling the caller nothing #4076's accumulation didn't
+    # already tell them. So this field, alone among the guards in this
+    # function, replaces its downstream check on a settle failure rather than
+    # accumulating past it.
+    subject_settled = True
+    if not isinstance(raw_subject, list):
+        subject_settled = False
+        errors.append(
+            FieldError(
+                "subject",
+                f"expected a list, got {type(raw_subject).__name__}",
+            )
+        )
+    elif raw_subject:
+        # An empty list is not settled-but-wrong -- it is the same "nothing
+        # attested" shape as the key being absent, so it falls through to
+        # step (2) exactly like the absent case always has.
+        first_subject = raw_subject[0]
+        if not isinstance(first_subject, dict):
+            subject_settled = False
+            errors.append(
+                FieldError(
+                    "subject[0]",
+                    f"expected an object, got {type(first_subject).__name__}",
+                )
+            )
+        elif not isinstance(first_subject.get("digest"), dict):
+            subject_settled = False
+            errors.append(FieldError("subject[0]", "missing digest"))
+        else:
+            attested_digest = first_subject["digest"].get("sha256", "")
 
     # (2) internal hash consistency: the embedded bundle must reproduce the
     # subject digest byte-for-byte.
-    recomputed = _sha256_hex(canonical_bytes(raw_bundle))
-    if recomputed != attested_digest:
-        errors.append(
-            FieldError(
-                "subject.digest.sha256",
-                f"embedded bundle hashes to {recomputed}, envelope attests {attested_digest}",
+    if subject_settled:
+        recomputed = _sha256_hex(canonical_bytes(raw_bundle))
+        if recomputed != attested_digest:
+            errors.append(
+                FieldError(
+                    "subject.digest.sha256",
+                    f"embedded bundle hashes to {recomputed}, envelope attests {attested_digest}",
+                )
             )
-        )
 
     # (3) the signer is the worker the bundle names.
     worker = bundle_dict.get("worker", {})
