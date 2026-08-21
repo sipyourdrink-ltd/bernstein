@@ -19,16 +19,25 @@ Aider           ``CONVENTIONS.md`` at repo root + ``.aider.conf.yml`` patch
                 both.
 Goose           ``.goosehints`` at repo root. Plaintext (markdown renders
                 fine, no required structure).
+Canonical       ``AGENTS.md`` at repo root, plus ``docs/sdd/module-map.md``
+                (the full per-file module map; ``AGENTS.md``'s own
+                "Module map" section carries only a compact index and
+                links here - see #4142).
 ==============  =============================================================
 
 Design rules:
 
-* The canonical IR (``AgentsMdSection``) is the *only* source of truth.
-  Each target's renderer is a pure function from sections to a
-  ``{Path: str}`` map.
-* No target invents new content. If a target's format requires a field
-  the IR doesn't carry (e.g. Cursor's ``description`` frontmatter), it is
-  derived from the section's existing fields (title, kind), never invented.
+* The canonical IR (``AgentsMdSection``) is the *only* source of truth,
+  with one narrow exception: the canonical target's
+  ``docs/sdd/module-map.md`` is threaded in as a precomputed string
+  (``render``'s ``module_map_page`` parameter) rather than derived from
+  ``sections``, because it needs a second filesystem read the IR doesn't
+  carry. Every other file in every other target is a pure function of
+  ``sections`` alone.
+* No target invents new content beyond that one exception. If a target's
+  format requires a field the IR doesn't carry (e.g. Cursor's
+  ``description`` frontmatter), it is derived from the section's existing
+  fields (title, kind), never invented.
 * All renderers return *relative* paths under the supplied repo root so
   the CLI's writer/verifier can reason about the destination uniformly.
 
@@ -48,6 +57,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from bernstein.core.knowledge.agents_md_generator import (
+    MODULE_MAP_PAGE,
     AgentsMdSection,
     render_canonical,
 )
@@ -98,6 +108,7 @@ def render(
     target: Target,
     *,
     repo_name: str | None = None,
+    module_map_page: str | None = None,
 ) -> BridgeOutput:
     """Translate ``sections`` into the on-disk shape for ``target``.
 
@@ -105,12 +116,22 @@ def render(
         sections: Output of :func:`bernstein.core.knowledge.agents_md_generator.generate`.
         target: One of ``ALL_TARGETS``.
         repo_name: Display name woven into the canonical H1.
+        module_map_page: Output of
+            :func:`bernstein.core.knowledge.agents_md_generator.render_module_map_page`,
+            when the caller has it. Written alongside the canonical target
+            only (``docs/sdd/module-map.md`` is one repo-wide reference
+            page, not a per-target mirror - see #4142). Threaded in as a
+            string rather than computed here from a repo path: this module
+            renders from ``sections`` alone everywhere else, and re-reading
+            the filesystem inside a "translate this IR" function would be
+            the one exception. ``None`` omits the page, matching
+            :func:`render_module_map_page`'s own not-applicable case.
 
     Returns:
         :class:`BridgeOutput` ready for the CLI to write or diff.
     """
     if target == "canonical":
-        return _render_canonical(sections, repo_name=repo_name)
+        return _render_canonical(sections, repo_name=repo_name, module_map_page=module_map_page)
     if target == "cursor":
         return _render_cursor(sections)
     if target == "claude":
@@ -126,9 +147,10 @@ def render_all(
     sections: list[AgentsMdSection],
     *,
     repo_name: str | None = None,
+    module_map_page: str | None = None,
 ) -> dict[Target, BridgeOutput]:
     """Render every target in one call. Returns a target-keyed dict."""
-    return {t: render(sections, t, repo_name=repo_name) for t in ALL_TARGETS}
+    return {t: render(sections, t, repo_name=repo_name, module_map_page=module_map_page) for t in ALL_TARGETS}
 
 
 # ---------------------------------------------------------------------------
@@ -136,9 +158,17 @@ def render_all(
 # ---------------------------------------------------------------------------
 
 
-def _render_canonical(sections: list[AgentsMdSection], *, repo_name: str | None) -> BridgeOutput:
+def _render_canonical(
+    sections: list[AgentsMdSection],
+    *,
+    repo_name: str | None,
+    module_map_page: str | None = None,
+) -> BridgeOutput:
     body = render_canonical(sections, repo_name=repo_name)
-    return BridgeOutput(target="canonical", files={"AGENTS.md": body})
+    files = {"AGENTS.md": body}
+    if module_map_page is not None:
+        files[MODULE_MAP_PAGE] = module_map_page
+    return BridgeOutput(target="canonical", files=files)
 
 
 # ---------------------------------------------------------------------------
