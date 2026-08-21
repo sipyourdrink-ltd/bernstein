@@ -21,6 +21,7 @@ class FakeAdapter(CLIAdapter):
     def __init__(self, adapter_name: str = "claude") -> None:
         self._name = adapter_name
         self.spawn_calls: list[tuple[str, Path]] = []
+        self.spawn_system_addenda: list[str] = []
 
     def name(self) -> str:
         return self._name
@@ -38,8 +39,9 @@ class FakeAdapter(CLIAdapter):
         budget_multiplier: float = 1.0,
         system_addendum: str = "",
     ) -> SpawnResult:
-        del model_config, session_id, mcp_config, timeout_seconds, task_scope, budget_multiplier, system_addendum
+        del model_config, session_id, mcp_config, timeout_seconds, task_scope, budget_multiplier
         self.spawn_calls.append((prompt, workdir))
+        self.spawn_system_addenda.append(system_addendum)
         return SpawnResult(pid=42, log_path=workdir / ".sdd" / "logs" / "fallback.log")
 
     def is_alive(self, pid: int) -> bool:  # pragma: no cover - not used here
@@ -124,6 +126,41 @@ def test_spawn_in_sandbox_falls_back_to_adapter_on_runtime_failure(
     assert adapter.spawn_calls == [("fallback", tmp_path)]
     assert session.container_id is None
     assert session.isolation == "worktree"
+
+
+def test_spawn_in_sandbox_fallback_forwards_system_addendum(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Issue #3565: the sandbox-runtime-failure fallback must still carry
+    ``system_addendum`` through to the direct adapter spawn, or an agent
+    that lands on this path never gets its completion/heartbeat
+    instructions."""
+    monkeypatch.delenv("BERNSTEIN_SANDBOX_RUNTIME", raising=False)
+    adapter = FakeAdapter("codex")
+    sandbox = DockerSandbox(enabled=True)
+    session = AgentSession(id="S-2b", role="backend")
+
+    with (
+        patch("bernstein.core.agents.spawner_core.get_registry", return_value=MagicMock()),
+        patch("bernstein.core.agents.spawner_core.spawn_in_sandbox", side_effect=ContainerError("docker unavailable")),
+    ):
+        spawner = AgentSpawner(
+            adapter=adapter,
+            templates_dir=tmp_path,
+            workdir=tmp_path,
+            use_worktrees=True,
+            sandbox=sandbox,
+        )
+        spawner._spawn_in_sandbox(  # pyright: ignore[reportPrivateUsage]
+            session_id="S-2b",
+            prompt="fallback",
+            spawn_cwd=tmp_path,
+            model_config=ModelConfig("sonnet", "high"),
+            mcp_config=None,
+            session=session,
+            adapter=adapter,
+            system_addendum="## Response style: terse\n\nheartbeat instructions",
+        )
+
+    assert adapter.spawn_system_addenda == ["## Response style: terse\n\nheartbeat instructions"]
 
 
 def _read_audit_events(audit_dir: Path) -> list[dict[str, object]]:

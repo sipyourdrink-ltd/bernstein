@@ -38,6 +38,7 @@ class _FakeAdapter(CLIAdapter):
         super().__init__()
         self._name = adapter_name
         self.spawn_calls: list[tuple[str, Path]] = []
+        self.spawn_system_addenda: list[str] = []
 
     def name(self) -> str:
         return self._name
@@ -56,8 +57,9 @@ class _FakeAdapter(CLIAdapter):
         system_addendum: str = "",
     ) -> SpawnResult:
         del model_config, session_id, mcp_config, timeout_seconds
-        del task_scope, budget_multiplier, system_addendum
+        del task_scope, budget_multiplier
         self.spawn_calls.append((prompt, workdir))
+        self.spawn_system_addenda.append(system_addendum)
         return SpawnResult(pid=99, log_path=workdir / ".sdd" / "logs" / "direct.log")
 
     def is_alive(self, pid: int) -> bool:  # pragma: no cover - not used
@@ -388,6 +390,33 @@ def test_provisioning_failure_falls_back_to_direct_spawn(tmp_path: Path) -> None
     assert result.pid == 99
     assert adapter.spawn_calls == [("fallback", tmp_path)]
     assert "S-25" not in spawner._sandbox_owned_sessions  # pyright: ignore[reportPrivateUsage]
+
+
+def test_provisioning_failure_fallback_forwards_system_addendum(tmp_path: Path) -> None:
+    """Issue #3565: the session-provisioning-failure fallback to a direct
+    adapter spawn must still carry ``system_addendum`` through, or an
+    agent that lands on this degrade path never gets its
+    completion/heartbeat instructions."""
+
+    class _BrokenBackend(_FakeBackend):
+        async def create(self, manifest: object, options: dict[str, object] | None = None) -> _FakeSession:
+            raise RuntimeError("daemon went away")
+
+    backend = _BrokenBackend(tmp_path)
+    spawner, adapter = _build_spawner_with_backend(tmp_path, backend=backend)
+
+    agent_session = AgentSession(id="S-25b", role="backend")
+    spawner._spawn_via_sandbox_session(  # pyright: ignore[reportPrivateUsage]
+        session_id="S-25b",
+        prompt="fallback",
+        spawn_cwd=tmp_path,
+        model_config=ModelConfig("sonnet", "high"),
+        mcp_config=None,
+        session=agent_session,
+        adapter=adapter,
+        system_addendum="## Response style: terse\n\nheartbeat instructions",
+    )
+    assert adapter.spawn_system_addenda == ["## Response style: terse\n\nheartbeat instructions"]
 
 
 # ---------------------------------------------------------------------------

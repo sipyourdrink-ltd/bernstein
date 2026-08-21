@@ -4513,6 +4513,7 @@ class AgentSpawner:
                                 mcp_config=attempt_mcp,
                                 session=session,
                                 adapter=target_adapter,
+                                system_addendum=style_addendum,
                             )
                         elif self._sandbox is not None:
                             result = self._spawn_in_sandbox(
@@ -4524,6 +4525,7 @@ class AgentSpawner:
                                 session=session,
                                 adapter=target_adapter,
                                 task_scope=max_scope,
+                                system_addendum=style_addendum,
                             )
                         elif self._container_mgr is not None:
                             result = self._spawn_in_container(
@@ -4535,6 +4537,7 @@ class AgentSpawner:
                                 session=session,
                                 adapter=target_adapter,
                                 task_scope=max_scope,
+                                system_addendum=style_addendum,
                             )
                         else:
                             # Extract budget_multiplier from task metadata
@@ -5102,12 +5105,35 @@ class AgentSpawner:
                     "spawn() does not accept multimodal_context."
                 )
             _resume_extra["multimodal_context"] = _resume_attachments
+        # Issue #3565: a resumed agent goes straight to ``self._adapter``
+        # (no ``_spawn_for_tasks_internal``), so it used to skip the
+        # response-style resolution that path performs and the resumed
+        # process never received ``system_addendum`` - the channel that
+        # carries the completion/heartbeat instructions. A crashed-then-
+        # resumed agent could therefore run to completion but never be
+        # seen to finish. Resolve the same way the primary spawn path
+        # does (task metadata > role policy > seed default > "balanced")
+        # so a resumed spawn gets the same protocol instructions a fresh
+        # one would.
+        _resume_style = resolve_response_style(
+            task_metadata=tasks[0].metadata or {},
+            role_policy=_policy_preview,
+            default_policy=self._role_model_policy.get("default") or {},
+        )
+        try:
+            _resume_addendum = render_style_addendum(_resume_style.style, workdir=self._workdir)
+        except ResponseStyleTemplateError as exc:
+            raise SpawnError(
+                f"Response-style profile {_resume_style.style!r} for role {role!r} "
+                f"(source={_resume_style.source}) cannot be rendered on resume: {exc}"
+            ) from exc
         result = self._adapter.spawn(
             prompt=prompt,
             workdir=worktree_path,
             model_config=model_config,
             session_id=session_id,
             task_scope=resume_scope,
+            system_addendum=_resume_addendum,
             **_resume_extra,
         )
         session.pid = result.pid
@@ -5140,6 +5166,7 @@ class AgentSpawner:
         session: AgentSession,
         adapter: CLIAdapter,
         task_scope: str = "medium",
+        system_addendum: str = "",
     ) -> SpawnResult:
         """Spawn an agent inside a container.
 
@@ -5156,6 +5183,14 @@ class AgentSpawner:
             session: AgentSession to update with container metadata.
             adapter: Adapter selected for this spawn attempt.
             task_scope: Task scope for max_turns scaling.
+            system_addendum: Rendered response-style addendum, forwarded to
+                the direct-subprocess fallback so a container that fails to
+                start doesn't also drop the completion/heartbeat
+                instructions (issue #3565). The container path itself
+                shells out via ``_adapter_cmd_for_container`` rather than
+                ``adapter.spawn()``, so it has no channel to carry this
+                through - a separate, larger gap tracked in #3565's
+                follow-up about per-adapter capability visibility.
 
         Returns:
             SpawnResult with PID and log path.
@@ -5257,6 +5292,7 @@ class AgentSpawner:
                 session_id=session_id,
                 mcp_config=mcp_config,
                 task_scope=task_scope,
+                system_addendum=system_addendum,
             )
 
     def _spawn_in_sandbox(
@@ -5270,6 +5306,7 @@ class AgentSpawner:
         session: AgentSession,
         adapter: CLIAdapter,
         task_scope: str = "medium",
+        system_addendum: str = "",
     ) -> SpawnResult:
         """Spawn an agent in a per-session Docker or Podman sandbox.
 
@@ -5282,6 +5319,10 @@ class AgentSpawner:
             session: Mutable session record to update.
             adapter: Adapter selected for this spawn attempt.
             task_scope: Task scope for max_turns scaling.
+            system_addendum: Rendered response-style addendum, forwarded to
+                the direct-subprocess fallback so a sandbox that fails to
+                start doesn't also drop the completion/heartbeat
+                instructions (issue #3565).
 
         Returns:
             Spawn result for the sandboxed process.
@@ -5371,6 +5412,7 @@ class AgentSpawner:
                 session_id=session_id,
                 mcp_config=mcp_config,
                 task_scope=task_scope,
+                system_addendum=system_addendum,
             )
 
         self._sandbox_managers[session_id] = manager
@@ -5388,6 +5430,7 @@ class AgentSpawner:
         mcp_config: dict[str, Any] | None,
         session: AgentSession,
         adapter: CLIAdapter,
+        system_addendum: str = "",
     ) -> SpawnResult:
         """Route adapter exec through a :class:`SandboxSession`.
 
@@ -5417,6 +5460,10 @@ class AgentSpawner:
             session: Mutable session record updated with isolation
                 metadata.
             adapter: The adapter selected for this spawn attempt.
+            system_addendum: Rendered response-style addendum, forwarded to
+                the direct-subprocess fallback so a session that fails to
+                provision doesn't also drop the completion/heartbeat
+                instructions (issue #3565).
 
         Returns:
             A :class:`SpawnResult`. ``pid`` is ``0`` because the
@@ -5488,6 +5535,7 @@ class AgentSpawner:
                     model_config=model_config,
                     session_id=session_id,
                     mcp_config=mcp_config,
+                    system_addendum=system_addendum,
                 )
             owned = True
             self._sandbox_owned_sessions[session_id] = sbx_session

@@ -29,6 +29,7 @@ from bernstein.core.orchestrator import Orchestrator
 from bernstein.core.spawner import AgentSpawner
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.core.agents.response_style import render_style_addendum
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -200,6 +201,41 @@ def test_spawn_for_resume_prompt_includes_changed_files(tmp_path: Path):
     prompt = adapter.spawn.call_args.kwargs.get("prompt") or adapter.spawn.call_args.args[0]
     for f in changed:
         assert f in prompt
+
+
+# ---------------------------------------------------------------------------
+# 3b. spawn_for_resume - system_addendum (issue #3565)
+# ---------------------------------------------------------------------------
+
+
+def test_spawn_for_resume_forwards_system_addendum(tmp_path: Path):
+    """A resumed agent must still receive its completion/heartbeat
+    instructions via ``system_addendum``.
+
+    Before the fix, ``spawn_for_resume`` bypassed the response-style
+    resolution ``_spawn_for_tasks_internal`` performs and called
+    ``adapter.spawn()`` without ``system_addendum`` at all, so it silently
+    defaulted to ``""`` - the crashed-then-resumed agent could run to
+    completion but never be seen to finish.
+    """
+    adapter = _mock_adapter()
+    spawner = AgentSpawner(
+        adapter=adapter,
+        templates_dir=tmp_path / "templates",
+        workdir=tmp_path,
+        default_model="mock-model",
+        role_model_policy={"backend": {"model": "mock-model", "response_style": "terse"}},
+    )
+
+    task = _make_task()
+    worktree_path = tmp_path / ".sdd" / "worktrees" / "resume-addendum"
+    worktree_path.mkdir(parents=True)
+
+    spawner.spawn_for_resume([task], worktree_path=worktree_path, changed_files=[])
+
+    addendum = adapter.spawn.call_args.kwargs["system_addendum"]
+    assert addendum
+    assert render_style_addendum("terse", workdir=tmp_path) == addendum
 
 
 def _find_task_by_id(task_store: list[dict], tid: str) -> dict | None:

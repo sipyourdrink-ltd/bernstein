@@ -57,6 +57,7 @@ class FakeAdapter(CLIAdapter):
     def __init__(self, adapter_name: str = "claude") -> None:
         self._name = adapter_name
         self.spawn_calls: list[tuple[str, Path]] = []
+        self.spawn_system_addenda: list[str] = []
 
     def name(self) -> str:
         return self._name
@@ -74,8 +75,9 @@ class FakeAdapter(CLIAdapter):
         budget_multiplier: float = 1.0,
         system_addendum: str = "",
     ) -> SpawnResult:
-        del model_config, session_id, mcp_config, timeout_seconds, task_scope, budget_multiplier, system_addendum
+        del model_config, session_id, mcp_config, timeout_seconds, task_scope, budget_multiplier
         self.spawn_calls.append((prompt, workdir))
+        self.spawn_system_addenda.append(system_addendum)
         return SpawnResult(pid=42, log_path=workdir / ".sdd" / "logs" / "fallback.log")
 
     def is_alive(self, pid: int) -> bool:  # pragma: no cover - not exercised
@@ -366,6 +368,32 @@ def test_legacy_container_degrade_to_none_is_surfaced_and_audited(
     assert isinstance(details, dict)
     assert details["requested_isolation"] == IsolationMode.CONTAINER.value
     assert details["actual_isolation"] == IsolationMode.NONE.value
+
+
+def test_legacy_container_fallback_forwards_system_addendum(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Issue #3565: the ``--container`` fallback to a direct subprocess
+    spawn must still carry ``system_addendum`` through, or an agent that
+    lands on this degrade path never gets its completion/heartbeat
+    instructions."""
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+    monkeypatch.delenv("BERNSTEIN_SANDBOX_RUNTIME", raising=False)
+
+    adapter = FakeAdapter("claude")
+    spawner = _spawner_with_failing_container_manager(tmp_path, adapter, error="Cannot connect to the Docker daemon.")
+    session = AgentSession(id="S-legacy-addendum", role="backend")
+
+    spawner._spawn_in_container(  # pyright: ignore[reportPrivateUsage]
+        session_id="S-legacy-addendum",
+        prompt="legacy container",
+        spawn_cwd=tmp_path,
+        model_config=ModelConfig("sonnet", "high"),
+        mcp_config=None,
+        session=session,
+        adapter=adapter,
+        system_addendum="## Response style: terse\n\nheartbeat instructions",
+    )
+
+    assert adapter.spawn_system_addenda == ["## Response style: terse\n\nheartbeat instructions"]
 
 
 def test_legacy_container_success_records_no_downgrade(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
