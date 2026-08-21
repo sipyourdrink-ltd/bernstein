@@ -28,6 +28,7 @@ rather than as its own attribution is exempted by hand there, with the reason.
 - `PostgresTaskStore.list_tasks()` now issues a bounded query even when the caller omits `limit` (#3813). The `limit`/`offset` support from #4157 still left the SQL unbounded by default, so a caller that forgot to pass `limit` fetched and constructed a `Task` for every row in the table. A missing `limit` now falls back to a documented default (`_LIST_TASKS_DEFAULT_LIMIT`); a caller that genuinely needs the full table pages through it by advancing `offset`.
 - Wire weekly SOC 2 evidence pack workflow export step to sink backend via `SOC2_EVIDENCE_SINK` secret (#4149).
 - Wave 2 of README translations adds 16 languages (`es`, `pt`, `de`, `fr`, `it`, `nl`, `pl`, `sv`, `fi`, `uk`, `tr`, `ar`, `he`, `id`, `vi`, `th`) under the hash-binding drift gate, bringing translated README coverage to 23 languages alongside the English source. Docs: [`docs/playbooks/readme-l10n.md`](../playbooks/readme-l10n.md).
+- The qwen adapter selects the OpenAI auth type when a custom `OPENAI_BASE_URL` is configured. The flag was sent only for a named provider, so a run pointed at a custom OpenAI-compatible endpoint on the default provider reached the CLI with no auth type selected; the CLI aborts non-interactively in that state, and the task was recorded as an agent death at zero tokens with no transcript explaining it. A bare `OPENAI_API_KEY` with no custom base URL still uses the CLI's own auth flow.
 
 ## Security
 
