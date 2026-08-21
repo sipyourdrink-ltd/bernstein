@@ -196,7 +196,12 @@ class PythonRuntimeAdapter(PluginAdapter):
             model=model_config.model,
         )
 
-        env = build_filtered_env(["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"])
+        env = build_filtered_env(
+            ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"],
+            # python_runtime_runner.py is bernstein's own code, run via
+            # sys.executable; it needs bernstein importable (issue #4221).
+            inherit_orchestrator_pythonpath=True,
+        )
 
         with log_path.open("w") as log_file:
             try:
