@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from bernstein.cli.commands import audit_cmd
 from bernstein.core.approval.card import build_card
 from bernstein.core.approval.card_gate import ApprovalCardGate
@@ -19,6 +21,13 @@ from bernstein.core.security.audit_chain import (
 )
 
 _KEY = b"k" * 32
+
+
+@pytest.fixture(autouse=True)
+def _pin_audit_key(monkeypatch):
+    # The audit-verify path reads the install key and never mints one (#4210),
+    # so pin it to the key the seeded chain was written with.
+    monkeypatch.setattr("bernstein.core.security.audit.load_audit_key", lambda *a, **k: _KEY)
 
 
 def _seed(audit_dir) -> str:

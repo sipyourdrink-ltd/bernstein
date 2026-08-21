@@ -129,3 +129,19 @@ rather than as its own attribution is exempted by hand there, with the reason.
   [`docs/concepts/lesson-persistence.md`](../concepts/lesson-persistence.md)
   records as the remaining gap.
 - Workspace merge order calculation is scoped to the caller's tenant (#4155).
+- `bernstein audit verify` reads the store and writes nothing to it, and the
+  daily seal now tells post-seal appends apart from a rewritten prefix (#4210,
+  #4201). The seal is pinned at run finalization while the log keeps growing —
+  a run closing after its own seal appends one more row — and the pillar bound
+  the whole current file, so every re-verification of a finished, untouched run
+  reported `TAMPERED` and exited non-zero. Routine use of a red verdict is how
+  a real one gets ignored. Each leaf is now recomputed over the byte prefix the
+  seal pinned, the root is re-derived from those bytes and compared against the
+  pinned root, and the verdict names the intact prefix and the post-seal row
+  count separately. The fail-closed direction is unchanged: an edit inside the
+  sealed prefix, or a segment shorter than its pin, is still `TAMPERED` with a
+  non-zero exit. Separately, seven verification pillars resolved the audit key
+  through the create-if-absent loader, so verifying a store whose key was
+  missing minted one — key material a fresh chain cannot authenticate, written
+  by the tool whose whole claim is that it only reads. They now use the
+  load-only resolver and report a missing key as a named skip.

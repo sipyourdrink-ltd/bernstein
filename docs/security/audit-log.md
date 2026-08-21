@@ -333,9 +333,15 @@ deleted, inserted, reordered, or content-tampered daily file.
 
 what the seal binds:
 
-- **leaf per file** - each file's leaf is the hash of its *whole*
-  canonical byte content, so flipping any byte of any line (not just
-  the last) changes the leaf and trips `TAMPERED` on verify.
+- **leaf per file** - each file's leaf is the hash of its canonical
+  byte content, so flipping any byte of any line (not just the last)
+  changes the leaf and trips `TAMPERED` on verify.
+- **prefix, not whole file, on verify** - the seal also pins each
+  segment's byte length. verification recomputes the leaf over exactly
+  those bytes, so rows appended after the seal (a run closing after its
+  own finalization, say) are reported as `Post-seal rows` instead of as
+  tamper. an edit *inside* the sealed prefix, or a segment shorter than
+  its pin, still trips `TAMPERED` and exits non-zero.
 - **domain-separated tree** - leaves are hashed `H(0x00 || bytes)` and
   internal nodes `H(0x01 || left || right)` (RFC-6962 style). a lone
   node at an odd level is promoted unchanged rather than paired with

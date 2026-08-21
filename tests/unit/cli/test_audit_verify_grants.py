@@ -15,8 +15,9 @@ from bernstein.core.identity import grants
 
 @pytest.fixture(autouse=True)
 def _pin_audit_key(monkeypatch):
-    # The audit-verify path loads the install audit key directly, so pin it.
-    monkeypatch.setattr("bernstein.core.security.audit.load_or_create_audit_key", lambda *a, **k: b"k" * 32)
+    # The audit-verify path loads the install audit key directly (load-only,
+    # never minting one -- #4210), so pin it.
+    monkeypatch.setattr("bernstein.core.security.audit.load_audit_key", lambda *a, **k: b"k" * 32)
 
 
 def _seed_grants(audit_dir, *, tamper: bool = False) -> None:
