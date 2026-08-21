@@ -111,6 +111,7 @@ POLICY_WARN = "warn"
 
 #: Operator opt-out env var. Any value in :data:`_WARN_TOKENS` selects the
 #: warn-only policy; everything else (including unset) keeps block-by-default.
+_POLICY_ENV = "BERNSTEIN_ADAPTER_FLOOR_POLICY"
 _WARN_TOKENS = frozenset({"warn", "warn-only", "warn_only", "advisory"})
 _VERSION_TIMEOUT_SECONDS = 10
 _RECEIPT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
