@@ -1677,6 +1677,7 @@ def _await_first_spawn_outcome(
     *,
     timeout_s: float = _FIRST_SPAWN_WAIT_S,
     poll_interval_s: float = _FIRST_SPAWN_POLL_S,
+    narrate_wait: bool = False,
 ) -> tuple[str, str | None]:
     """Briefly poll the task server for the outcome of the first agent spawn.
 
@@ -1692,6 +1693,13 @@ def _await_first_spawn_outcome(
     Args:
         timeout_s: Maximum total time to wait for a verdict.
         poll_interval_s: Delay between polls.
+        narrate_wait: When True and the first poll does not already produce a
+            verdict, show a transient Rich status ("waiting for the first
+            agent") while the remaining polls run, clearing it before the
+            caller renders its own surface. A fast start -- the first poll
+            already reports an agent -- stays silent. Off by default so the
+            non-interactive detach branch and ``--quiet`` keep today's
+            chatter-free behaviour.
 
     Returns:
         ``("spawned", None)`` once at least one agent is live,
@@ -1702,38 +1710,64 @@ def _await_first_spawn_outcome(
     deadline = time.time() + timeout_s
     transient_reason: str | None = None
     unreachable_polls = 0
-    while True:
+
+    def _poll_once() -> tuple[str, str | None] | None:
+        nonlocal unreachable_polls, transient_reason
         health = server_get("/health")
         if not isinstance(health, dict):
             unreachable_polls += 1
             if unreachable_polls >= _FIRST_SPAWN_MAX_UNREACHABLE:
                 return "unknown", None
-        else:
-            unreachable_polls = 0
-            if int(health.get("agent_count", 0) or 0) > 0:
-                return "spawned", None
-            failed_page: Any = server_get("/tasks?status=failed&limit=50")
-            entries = failed_page.get("tasks", []) if isinstance(failed_page, dict) else []
-            for entry in entries:
-                if not isinstance(entry, dict):
-                    continue
-                reason = str(entry.get("result_summary") or "")
-                if not reason.startswith("Spawn failed"):
-                    continue
-                completed_at = float(entry.get("completed_at") or 0.0)
-                if completed_at < time.time() - _FIRST_SPAWN_FRESHNESS_S:
-                    continue
-                if "(transient" in reason:
-                    # A retry may still succeed - keep polling until deadline.
-                    transient_reason = reason
-                    continue
-                return "refused", reason
-        if time.time() >= deadline:
-            break
-        time.sleep(poll_interval_s)
-    if transient_reason is not None:
-        return "refused", transient_reason
-    return "unknown", None
+            return None
+        unreachable_polls = 0
+        if int(health.get("agent_count", 0) or 0) > 0:
+            return "spawned", None
+        failed_page: Any = server_get("/tasks?status=failed&limit=50")
+        entries = failed_page.get("tasks", []) if isinstance(failed_page, dict) else []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            reason = str(entry.get("result_summary") or "")
+            if not reason.startswith("Spawn failed"):
+                continue
+            completed_at = float(entry.get("completed_at") or 0.0)
+            if completed_at < time.time() - _FIRST_SPAWN_FRESHNESS_S:
+                continue
+            if "(transient" in reason:
+                # A retry may still succeed - keep polling until deadline.
+                transient_reason = reason
+                continue
+            return "refused", reason
+        return None
+
+    # The first poll runs before any narration, so a fast start (the first
+    # poll already reports an agent) stays exactly as quiet as it is today.
+    first = _poll_once()
+    if first is not None:
+        return first
+    if time.time() >= deadline:
+        if transient_reason is not None:
+            return "refused", transient_reason
+        return "unknown", None
+
+    def _finish_waiting() -> tuple[str, str | None]:
+        while True:
+            time.sleep(poll_interval_s)
+            result = _poll_once()
+            if result is not None:
+                return result
+            if time.time() >= deadline:
+                break
+        if transient_reason is not None:
+            return "refused", transient_reason
+        return "unknown", None
+
+    if narrate_wait:
+        # Only now is the wait real: tell the operator we are still waiting
+        # for the first agent, and clear the indicator before returning.
+        with console.status("Waiting for the first agent to register..."):
+            return _finish_waiting()
+    return _finish_waiting()
 
 
 def exec_restart() -> None:

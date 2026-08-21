@@ -604,7 +604,7 @@ def _make_profile_ctx(profile: bool, workdir: Path) -> contextlib.AbstractContex
     return contextlib.nullcontext()
 
 
-def _raise_if_no_plan_after_spawn() -> None:
+def _raise_if_no_plan_after_spawn(*, narrate_wait: bool = True) -> None:
     """Diagnose a spawned-then-dead agent before a display branch's own wait.
 
     The non-interactive detach path (issue #3528, #4246) briefly confirms the
@@ -628,11 +628,17 @@ def _raise_if_no_plan_after_spawn() -> None:
     message. A spawn refusal is left untouched here; each branch's existing
     terminal-state check already accounts for it once the refused task
     reaches a terminal status.
+
+    Args:
+        narrate_wait: When True, the first-spawn wait shows a transient Rich
+            status ("waiting for the first agent") while it polls, so a slow
+            start reads as progress instead of a hang. ``--quiet`` passes
+            False to keep its promise of no progress chatter.
     """
     from bernstein.cli.run_bootstrap import _await_first_spawn_outcome, _poll_no_plan_after_spawn
     from bernstein.core.errors import BernsteinFirstRunError, ErrorCategory
 
-    outcome, _reason = _await_first_spawn_outcome()
+    outcome, _reason = _await_first_spawn_outcome(narrate_wait=narrate_wait)
     if outcome == "spawned" and _poll_no_plan_after_spawn() is not None:
         raise BernsteinFirstRunError(
             "Spawned agent exited before producing a work plan",
@@ -698,7 +704,7 @@ def _finalize_run_output(*, quiet: bool) -> None:
             # the run produced nothing" -- run the same fast diagnosis every
             # other branch runs before falling back to the slower, general
             # terminal-state wait below (issue #3528).
-            _raise_if_no_plan_after_spawn()
+            _raise_if_no_plan_after_spawn(narrate_wait=False)
             final_status = _wait_for_run_completion()
             _show_run_summary()
             _exit_nonzero_on_unhealthy_run(final_status)
