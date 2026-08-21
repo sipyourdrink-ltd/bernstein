@@ -2658,7 +2658,7 @@ class Orchestrator:
         self._running = False
 
     def _regenerate_final_retrospective(self, trigger_path: str) -> None:
-        """Regenerate the FINAL retrospective by re-reading final event state.
+        """Regenerate the FINAL retrospective and summary.json from final event state.
 
         Idempotent and safe to call from more than one terminal path
         (tick-loop drain, tick-level quiescence self-stop, future
@@ -2667,6 +2667,11 @@ class Orchestrator:
         single source of truth for "what triggered shutdown-final
         regeneration" so a `grep` of the logs always finds an explicit
         answer (logging-is-the-debugging-interface rule).
+
+        Also regenerates ``summary.json`` (issue #4223) alongside the
+        retrospective: both are written mid-run by the 8b quiescence path
+        under the same ``_summary_written`` one-shot latch, so both need
+        the same final-state overwrite at true shutdown.
 
         Args:
             trigger_path: Human-readable name of the terminal path that
@@ -2705,14 +2710,39 @@ class Orchestrator:
             status_histogram = {status: len(tasks) for status, tasks in final_tasks.items()}
             runtime_dir = self._workdir / ".sdd" / "runtime"
             runtime_dir.mkdir(parents=True, exist_ok=True)
+            final_done = final_tasks.get("done", [])
+            final_failed = final_tasks.get("failed", [])
+            collector = get_collector(self._workdir / ".sdd" / "metrics")
             generate_retrospective(
-                done_tasks=final_tasks.get("done", []),
-                failed_tasks=final_tasks.get("failed", []),
-                collector=get_collector(self._workdir / ".sdd" / "metrics"),
+                done_tasks=final_done,
+                failed_tasks=final_failed,
+                collector=collector,
                 runtime_dir=runtime_dir,
                 run_start_ts=self._run_start_ts,
                 trigger_reason="shutdown-final",
                 full_status_counts=status_histogram,
+            )
+            # Issue #4223: summary.json has the same "written once at
+            # interim quiescence, never again" problem the retrospective
+            # above was already fixed for (A5). ``_generate_run_summary``'s
+            # 8b tick-level call into ``_emit_summary_card`` is the only
+            # writer, and it's gated by the ``_summary_written`` one-shot
+            # latch - so a run whose first quiescence fire caught a task
+            # mid-flight (e.g. one still in a deferred death judgment, per
+            # #4222) ships that stale done/failed/wall-clock snapshot
+            # forever, even though the journal keeps recording events for
+            # minutes afterward. Re-run the same summary_data assembly here,
+            # against the ``final_tasks`` this shutdown path just fetched,
+            # so the last write reflects the run's actual terminal state.
+            # The interim fire from 8b is left on disk until this point -
+            # this call is what supersedes it, exactly like the
+            # retrospective regeneration above.
+            self._emit_summary_card(
+                done_tasks=final_done,
+                failed_tasks=final_failed,
+                collector=collector,
+                wall_clock_s=time.time() - self._run_start_ts,
+                total_cost=collector.get_total_cost(),
             )
             self._final_retrospective_regenerated = True
         except Exception:

@@ -4458,6 +4458,98 @@ class TestShutdownFinalOnQuiescenceSelfStop:
         assert final_content != interim_content, "final retrospective must overwrite the interim snapshot"
         assert "INTERIM" not in final_content, "the FINAL retrospective must not be labeled interim"
 
+    def test_summary_json_reflects_final_state_not_stale_interim_quiescence(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Issue #4223: ``summary.json`` has the same stale-interim problem the
+        retrospective test above already covers, but for the machine-readable
+        report instead of the human-readable one.
+
+        Same two-tick shape as
+        ``test_regeneration_fires_on_later_quiescence_after_unconfirmed_first``:
+        tick 1 quiesces on a single done task and writes summary.json via the
+        8b interim path, then the settle window finds a retry task so the run
+        continues; tick 2 quiesces for real once the retry has permanently
+        failed. Before the fix, tick 2 skipped ``_generate_run_summary``
+        entirely (gated on ``_summary_written``) and nothing else ever
+        rewrote summary.json, so the file shipped with the run's true
+        terminal state was the tick-1 snapshot: 1 task, no failure recorded,
+        even though the run went on to fail a task afterward.
+        """
+        monkeypatch.setenv("BERNSTEIN_QUIESCENCE_SETTLE_S", "0")
+
+        def _mk(task_id: str, title: str, status: str) -> dict[str, Any]:
+            return {
+                "id": task_id,
+                "title": title,
+                "description": title,
+                "role": "qa",
+                "priority": 1,
+                "scope": "small",
+                "complexity": "low",
+                "estimated_minutes": 5,
+                "status": status,
+                "depends_on": [],
+                "owned_files": [],
+                "assigned_agent": None,
+                "result_summary": "done" if status == "done" else None,
+                "task_type": "standard",
+                "retry_count": 0,
+                "max_retries": 3,
+            }
+
+        done_task = _mk("aaaa11112222", "Implement hello subcommand", "done")
+        retry_task_open = _mk("bbbb33334444", "Add test for hello subcommand (retry)", "open")
+        retry_task_failed = dict(retry_task_open, status="failed")
+
+        phase = {"n": 1, "tasks_calls": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and request.url.path == "/tasks":
+                phase["tasks_calls"] += 1
+                if phase["n"] == 1:
+                    if phase["tasks_calls"] >= 3:
+                        return _tasks_response(request.url, [done_task, retry_task_open])
+                    return _tasks_response(request.url, [done_task])
+                return _tasks_response(request.url, [done_task, retry_task_failed])
+            return httpx.Response(200, json={})
+
+        cfg = OrchestratorConfig(
+            server_url="http://testserver",
+            evolve_mode=False,
+            evolution_enabled=False,
+        )
+        orch = _build_orchestrator(tmp_path, httpx.MockTransport(handler), config=cfg)
+        orch._running = True  # as run() sets before its tick loop
+
+        # Tick 1: quiescence detected -> summary.json written with the
+        # interim (1-task, 0-failed) snapshot; settle window finds the
+        # retry task -> run continues.
+        orch.tick()
+
+        summary_path = tmp_path / ".sdd" / "runs" / orch._run_id / "summary.json"
+        interim_summary = json.loads(summary_path.read_text())
+        assert interim_summary["tasks_total"] == 1, "tick 1 sees only the already-done task"
+        assert interim_summary["tasks_failed"] == 0
+        assert orch._summary_written is True
+
+        # Tick 2: truly quiescent - the retry task has permanently failed.
+        phase["n"] = 2
+        orch.tick()
+
+        assert orch._running is False, "tick 2 must self-stop on confirmed quiescence"
+        assert orch._final_retrospective_regenerated is True
+
+        final_summary = json.loads(summary_path.read_text())
+        assert final_summary["tasks_total"] == 2, (
+            "summary.json must be regenerated at shutdown to include the retry task "
+            "that appeared after the interim fire"
+        )
+        assert final_summary["tasks_completed"] == 1
+        assert final_summary["tasks_failed"] == 1, (
+            "the retry task's eventual failure must reach summary.json, not just the retrospective"
+        )
+
 
 # --- DryRun ---
 
