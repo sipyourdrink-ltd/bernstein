@@ -604,6 +604,42 @@ def _make_profile_ctx(profile: bool, workdir: Path) -> contextlib.AbstractContex
     return contextlib.nullcontext()
 
 
+def _raise_if_no_plan_after_spawn() -> None:
+    """Diagnose a spawned-then-dead agent before a display branch's own wait.
+
+    The non-interactive detach path (issue #3528, #4246) briefly confirms the
+    first agent spawn and takes one poll to see whether that agent already
+    died before the goal was ever decomposed -- the reproduced shape where a
+    run leaves its one root task stuck ``claimed``/``in_progress``/``orphaned``
+    forever with no live agent and no plan. The TTY dashboard, the Rich
+    fallback, and ``--quiet`` all reproduce the same silence: none of them
+    checks for this shape, so they detach (or keep waiting) exactly as if the
+    run were healthy.
+
+    Called at the start of each of those three branches, before the branch's
+    own longer-running work begins, so the check lands close to the failure
+    window described in the reproduction (the agent dies almost immediately
+    after spawn) rather than after a dashboard session or a multi-hour quiet
+    wait have already moved past it.
+
+    Raises the same ``BernsteinFirstRunError``/``NO_PLAN_PRODUCED`` pair the
+    non-interactive branch raises, so this is the single producer of the
+    diagnosis text across every surface -- no renderer composes its own
+    message. A spawn refusal is left untouched here; each branch's existing
+    terminal-state check already accounts for it once the refused task
+    reaches a terminal status.
+    """
+    from bernstein.cli.run_bootstrap import _await_first_spawn_outcome, _poll_no_plan_after_spawn
+    from bernstein.core.errors import BernsteinFirstRunError, ErrorCategory
+
+    outcome, _reason = _await_first_spawn_outcome()
+    if outcome == "spawned" and _poll_no_plan_after_spawn() is not None:
+        raise BernsteinFirstRunError(
+            "Spawned agent exited before producing a work plan",
+            category=ErrorCategory.NO_PLAN_PRODUCED,
+        )
+
+
 def _finalize_run_output(*, quiet: bool) -> None:
     """Render either the interactive dashboard or the final summary.
 
@@ -642,6 +678,11 @@ def _finalize_run_output(*, quiet: bool) -> None:
     changes nothing. It fires when a run reached a terminal state inside that
     window, which is the fast-failure case.
 
+    A spawned-then-dead agent that never produced a plan (issue #3528) is
+    diagnosed the same way on every branch via ``_raise_if_no_plan_after_spawn``,
+    called before each branch's own wait so the check lands near the failure
+    window instead of after it.
+
     Args:
         quiet: When True, wait for quiescence and print only the terminal summary.
     """
@@ -653,6 +694,11 @@ def _finalize_run_output(*, quiet: bool) -> None:
 
     try:
         if quiet:
+            # `--quiet` means "no progress chatter", not "swallow the reason
+            # the run produced nothing" -- run the same fast diagnosis every
+            # other branch runs before falling back to the slower, general
+            # terminal-state wait below (issue #3528).
+            _raise_if_no_plan_after_spawn()
             final_status = _wait_for_run_completion()
             _show_run_summary()
             _exit_nonzero_on_unhealthy_run(final_status)
@@ -663,6 +709,7 @@ def _finalize_run_output(*, quiet: bool) -> None:
         caps = detect_capabilities()
 
         if caps.supports_textual:
+            _raise_if_no_plan_after_spawn()
             try:
                 from bernstein.cli.dashboard import BernsteinApp as DashboardApp
 
@@ -681,6 +728,7 @@ def _finalize_run_output(*, quiet: bool) -> None:
             _exit_nonzero_on_unhealthy_run(_poll_quiescent_status())
         elif caps.is_tty:
             # TTY but Textual not supported -- use Rich fallback (TUI-003)
+            _raise_if_no_plan_after_spawn()
             _try_fallback_display()
             _exit_nonzero_on_unhealthy_run(_poll_quiescent_status())
         else:

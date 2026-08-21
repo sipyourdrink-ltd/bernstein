@@ -8,7 +8,7 @@ reached quiescence (it is stuck ``claimed``, not terminal), so neither of
 the CLI's two existing terminal-state checks fired. The non-interactive
 detach path printed "Run continues in the background" and exited 0.
 
-Three layers are covered:
+Four layers are covered:
 
 1. ``_poll_no_plan_after_spawn`` -- the single-poll detector that recognises
    this shape from ``/status`` + ``/health`` without a confirmation window.
@@ -18,6 +18,10 @@ Three layers are covered:
 3. The structured taxonomy itself -- the new ``NO_PLAN_PRODUCED`` category
    carries a real sysexits.h exit code and a non-empty hint, exactly like
    every other first-run category.
+4. ``_finalize_run_output``'s remaining display branches -- the TTY
+   dashboard, the Rich fallback, and ``--quiet`` -- reuse the same
+   ``_raise_if_no_plan_after_spawn`` producer so the diagnosis reaches every
+   surface, not only the non-interactive one.
 """
 
 # pyright: reportPrivateUsage=false
@@ -208,6 +212,175 @@ class TestFinalizeRunOutputNoPlan:
 
         out = capsys.readouterr().out
         assert "continues in the background" in out
+
+
+# ---------------------------------------------------------------------------
+# Layer 2b: the remaining display branches -- TTY dashboard, Rich fallback,
+# and --quiet -- must reuse the same diagnosis (issue #3528 remaining scope).
+# ---------------------------------------------------------------------------
+
+_TEXTUAL_CAPS = MagicMock(supports_textual=True, is_tty=True)
+_RICH_FALLBACK_CAPS = MagicMock(supports_textual=False, is_tty=True)
+
+
+class TestFinalizeRunOutputNoPlanOnRemainingSurfaces:
+    """The TTY dashboard, the Rich fallback, and ``--quiet`` still detached
+    silently on this exact shape before #3528's remaining-scope fix: none of
+    them called ``_poll_no_plan_after_spawn`` at all, so a dead-agent-no-plan
+    run rendered (or waited) as if it were healthy on every one of them.
+    """
+
+    def test_dashboard_raises_categorised_error_before_rendering(self) -> None:
+        """The Textual dashboard must not even open on a pre-diagnosed death.
+
+        Asserting the dashboard was never constructed is what proves the
+        check runs before the branch's own display work, matching the
+        non-interactive branch's placement relative to the detach notice.
+        """
+        from bernstein.cli.run_preflight import _finalize_run_output
+
+        # `_restart_on_exit=False` and mocked `exec_restart`/fallback are
+        # defensive, not exercised on the passing path: they only matter if
+        # this assertion regresses and the dashboard branch actually runs,
+        # so a broken check fails loudly on its own assertions instead of
+        # hanging in a real Rich Live fallback with no server behind it.
+        dashboard_app = MagicMock()
+        dashboard_app.return_value = MagicMock(_restart_on_exit=False)
+        with (
+            patch("bernstein.cli.terminal_caps.detect_capabilities", return_value=_TEXTUAL_CAPS),
+            patch(
+                "bernstein.cli.run_bootstrap._await_first_spawn_outcome",
+                return_value=("spawned", None),
+            ),
+            patch(
+                "bernstein.cli.run_bootstrap._poll_no_plan_after_spawn",
+                return_value={"total": 1, "claimed": 1},
+            ),
+            patch("bernstein.cli.dashboard.BernsteinApp", dashboard_app),
+            patch("bernstein.cli.run_bootstrap.exec_restart", side_effect=AssertionError("must not re-exec")),
+            patch("bernstein.cli.run_preflight._try_fallback_display") as fallback,
+            patch("bernstein.cli.run_bootstrap._poll_quiescent_status", return_value=None),
+            patch("bernstein.cli.run_preflight._drain_completed_backlog_files") as drain,
+        ):
+            with pytest.raises(BernsteinFirstRunError) as excinfo:
+                _finalize_run_output(quiet=False)
+
+        assert excinfo.value.category is ErrorCategory.NO_PLAN_PRODUCED
+        dashboard_app.assert_not_called()
+        fallback.assert_not_called()
+        drain.assert_called_once()
+
+    def test_dashboard_healthy_spawn_still_renders(self) -> None:
+        """No regression: a normal run still opens the Textual dashboard."""
+        from bernstein.cli.run_preflight import _finalize_run_output
+
+        dashboard_app = MagicMock()
+        dashboard_app.return_value = MagicMock(_restart_on_exit=False)
+        with (
+            patch("bernstein.cli.terminal_caps.detect_capabilities", return_value=_TEXTUAL_CAPS),
+            patch(
+                "bernstein.cli.run_bootstrap._await_first_spawn_outcome",
+                return_value=("spawned", None),
+            ),
+            patch("bernstein.cli.run_bootstrap._poll_no_plan_after_spawn", return_value=None),
+            patch("bernstein.cli.dashboard.BernsteinApp", dashboard_app),
+            patch("bernstein.cli.run_bootstrap._poll_quiescent_status", return_value=None),
+            patch("bernstein.cli.run_bootstrap.exec_restart", side_effect=AssertionError("must not re-exec")),
+            patch("bernstein.cli.run_preflight._drain_completed_backlog_files"),
+        ):
+            _finalize_run_output(quiet=False)
+
+        dashboard_app.assert_called_once()
+
+    def test_rich_fallback_raises_categorised_error_before_rendering(self) -> None:
+        """The Rich fallback renderer must not run on a pre-diagnosed death."""
+        from bernstein.cli.run_preflight import _finalize_run_output
+
+        with (
+            patch("bernstein.cli.terminal_caps.detect_capabilities", return_value=_RICH_FALLBACK_CAPS),
+            patch(
+                "bernstein.cli.run_bootstrap._await_first_spawn_outcome",
+                return_value=("spawned", None),
+            ),
+            patch(
+                "bernstein.cli.run_bootstrap._poll_no_plan_after_spawn",
+                return_value={"total": 1, "claimed": 1},
+            ),
+            patch("bernstein.cli.run_preflight._try_fallback_display") as fallback,
+            patch("bernstein.cli.run_preflight._drain_completed_backlog_files") as drain,
+        ):
+            with pytest.raises(BernsteinFirstRunError) as excinfo:
+                _finalize_run_output(quiet=False)
+
+        assert excinfo.value.category is ErrorCategory.NO_PLAN_PRODUCED
+        fallback.assert_not_called()
+        drain.assert_called_once()
+
+    def test_rich_fallback_healthy_spawn_still_renders(self) -> None:
+        """No regression: a normal run still runs the Rich fallback display."""
+        from bernstein.cli.run_preflight import _finalize_run_output
+
+        with (
+            patch("bernstein.cli.terminal_caps.detect_capabilities", return_value=_RICH_FALLBACK_CAPS),
+            patch(
+                "bernstein.cli.run_bootstrap._await_first_spawn_outcome",
+                return_value=("spawned", None),
+            ),
+            patch("bernstein.cli.run_bootstrap._poll_no_plan_after_spawn", return_value=None),
+            patch("bernstein.cli.run_preflight._try_fallback_display") as fallback,
+            patch("bernstein.cli.run_bootstrap._poll_quiescent_status", return_value=None),
+            patch("bernstein.cli.run_preflight._drain_completed_backlog_files"),
+        ):
+            _finalize_run_output(quiet=False)
+
+        fallback.assert_called_once()
+
+    def test_quiet_raises_categorised_error_instead_of_waiting(self) -> None:
+        """``--quiet`` must state the reason, not swallow it behind the wait.
+
+        ``_wait_for_run_completion`` is asserted un-called: quiet mode must
+        not fall through to its slow, general terminal-state wait once the
+        fast diagnosis has already produced a verdict.
+        """
+        from bernstein.cli.run_preflight import _finalize_run_output
+
+        with (
+            patch(
+                "bernstein.cli.run_bootstrap._await_first_spawn_outcome",
+                return_value=("spawned", None),
+            ),
+            patch(
+                "bernstein.cli.run_bootstrap._poll_no_plan_after_spawn",
+                return_value={"total": 1, "claimed": 1},
+            ),
+            patch("bernstein.cli.run_bootstrap._wait_for_run_completion") as wait_for_completion,
+            patch("bernstein.cli.run_preflight._show_run_summary"),
+            patch("bernstein.cli.run_preflight._drain_completed_backlog_files") as drain,
+        ):
+            with pytest.raises(BernsteinFirstRunError) as excinfo:
+                _finalize_run_output(quiet=True)
+
+        assert excinfo.value.category is ErrorCategory.NO_PLAN_PRODUCED
+        wait_for_completion.assert_not_called()
+        drain.assert_called_once()
+
+    def test_quiet_healthy_spawn_still_waits_for_completion(self) -> None:
+        """No regression: a normal ``--quiet`` run still waits as before."""
+        from bernstein.cli.run_preflight import _finalize_run_output
+
+        with (
+            patch(
+                "bernstein.cli.run_bootstrap._await_first_spawn_outcome",
+                return_value=("spawned", None),
+            ),
+            patch("bernstein.cli.run_bootstrap._poll_no_plan_after_spawn", return_value=None),
+            patch("bernstein.cli.run_bootstrap._wait_for_run_completion", return_value=None) as wait_for_completion,
+            patch("bernstein.cli.run_preflight._show_run_summary"),
+            patch("bernstein.cli.run_preflight._drain_completed_backlog_files"),
+        ):
+            _finalize_run_output(quiet=True)
+
+        wait_for_completion.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
