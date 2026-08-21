@@ -5139,24 +5139,27 @@ class TestParallelVerification:
     def test_multiple_done_tasks_verified_concurrently(self, tmp_path: Path) -> None:
         """Multiple done tasks with signals are verified in parallel.
 
-        Mocks verify_task_completion with a 0.2s sleep. With 4 tasks running
-        serially this would take ~0.8s; in parallel it should finish in ~0.2s.
+        Each verify call blocks on a shared barrier that only releases once
+        all 4 calls have arrived. A serial implementation would leave the
+        first call waiting at the barrier alone, so the bounded wait below
+        raises ``BrokenBarrierError`` for it instead of hanging the shard;
+        genuine parallel execution releases the barrier immediately. This
+        proves overlap directly rather than inferring it from elapsed
+        wall-clock time, which flakes under ordinary CI scheduling noise
+        (see #4248).
         """
         import threading
         from unittest.mock import patch
 
-        call_times: list[float] = []
-        lock = threading.Lock()
+        num_tasks = 4
+        barrier = threading.Barrier(num_tasks, timeout=5.0)
 
-        def slow_verify(task: object, workdir: object) -> tuple[bool, list[str]]:
-            start = time.time()
-            time.sleep(0.15)
-            with lock:
-                call_times.append(start)
+        def parallel_verify(task: object, workdir: object) -> tuple[bool, list[str]]:
+            barrier.wait()
             return (True, [])
 
         task_dicts = []
-        for i in range(4):
+        for i in range(num_tasks):
             t = _make_task(id=f"T-par-{i}", status="done")
             td = _task_as_dict(t)
             td["completion_signals"] = [{"type": "path_exists", "value": "x"}]
@@ -5176,20 +5179,14 @@ class TestParallelVerification:
         # ``verify_task_completion`` so an artifact-mode task resolves to the
         # receipt path; a code_diff task still reaches ``verify_task`` beneath
         # it. Patching the retired name binds nothing.
-        with patch("bernstein.core.tasks.task_lifecycle.verify_task_completion", side_effect=slow_verify):
-            t_start = time.time()
+        with patch("bernstein.core.tasks.task_lifecycle.verify_task_completion", side_effect=parallel_verify):
             result = TickResult()
             orch._process_completed_tasks(tasks_with_signals, result)
-            elapsed = time.time() - t_start
 
-        # All 4 tasks verified
-        assert len(result.verified) == 4
-        # Total wall time should be much less than 4 × 0.15s = 0.6s
-        assert elapsed < 0.5, f"Expected parallel execution but took {elapsed:.2f}s"
-        # All 4 verify calls started within ~0.15s of each other
-        assert len(call_times) == 4
-        spread = max(call_times) - min(call_times)
-        assert spread < 0.1, f"Calls spread too far apart: {spread:.3f}s"
+        # All 4 tasks verified. This is only possible because the barrier
+        # released, which requires all 4 verify calls to have been in
+        # flight at once.
+        assert len(result.verified) == num_tasks
 
 
 # --- Parallel verification ---
