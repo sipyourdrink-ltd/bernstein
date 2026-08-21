@@ -111,9 +111,9 @@ POLICY_WARN = "warn"
 
 #: Operator opt-out env var. Any value in :data:`_WARN_TOKENS` selects the
 #: warn-only policy; everything else (including unset) keeps block-by-default.
-_POLICY_ENV = "BERNSTEIN_ADAPTER_FLOOR_POLICY"
 _WARN_TOKENS = frozenset({"warn", "warn-only", "warn_only", "advisory"})
-
+_VERSION_TIMEOUT_SECONDS = 10
+_RECEIPT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 
 class AdapterSecurityFloorRefusal(RuntimeError):
@@ -183,7 +183,7 @@ def security_floor_for(adapter: str) -> str | None:
 # ---------------------------------------------------------------------------
 # Version probe
 # ---------------------------------------------------------------------------
-_VERSION_TIMEOUT_SECONDS = 10
+
 
 def probe_installed_version(binary_path: str) -> str | None:
     """Return the first dotted-numeric token from ``<binary> --version``.
@@ -423,7 +423,7 @@ def receipt_floor_map_matches(doc: dict[str, Any], *, current_hash: str | None =
     expected = current_hash if current_hash is not None else floor_map_content_hash()
     return recorded == expected
 
-_RECEIPT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]+$")
+
 def write_preflight_receipt(base_dir: Path, receipt: dict[str, Any]) -> Path:
     """Write a receipt under its content-addressed name.
 

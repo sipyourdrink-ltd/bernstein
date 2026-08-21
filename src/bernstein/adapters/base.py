@@ -39,6 +39,11 @@ DEFAULT_TIMEOUT_SECONDS: int = 1800
 
 # Grace period between SIGTERM and SIGKILL (seconds).
 _SIGTERM_GRACE_SECONDS: int = 30
+#: First dotted-numeric token in a ``--version`` blob. Possessive quantifiers
+#: plus the digit-run anchor keep the scan linear on untrusted subprocess
+#: output; see the matching constant in ``adapters/security_floor.py``.
+VERSION_TOKEN_RE = re.compile(r"(?<!\d)\d++(?:\.\d++){1,3}")
+
 
 # ---------------------------------------------------------------------------
 # Mutation-observability capability (issue #2507)
@@ -1233,7 +1238,3 @@ def post_write_lineage_hook(
         run_id=run_id,
         hmac_key=operator_hmac_key,
     )
-# : First dotted-numeric token in a ``--version`` blob. Possessive quantifiers
-# : plus the digit-run anchor keep the scan linear on untrusted subprocess
-# : output; see the matching constant in ``adapters/security_floor.py``.
-VERSION_TOKEN_RE = re.compile(r"(?<!\d)\d++(?:\.\d++){1,3}")

@@ -40,13 +40,14 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from .base import _VERSION_TOKEN_RE
 
 from bernstein.core.security.path_containment import (
     PathContainmentError,
     PathTooLongError,
     contained_path,
 )
+
+from .base import VERSION_TOKEN_RE
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -311,7 +312,7 @@ def probe_binary_version(binary_path: str) -> str | None:
         logger.debug("canary: version probe failed for %s (%s)", binary_path, type(exc).__name__)
         return None
     blob = f"{proc.stdout}\n{proc.stderr}"
-    match = _VERSION_TOKEN_RE.search(blob)
+    match = VERSION_TOKEN_RE.search(blob)
     return match.group(0) if match else None
 
 
