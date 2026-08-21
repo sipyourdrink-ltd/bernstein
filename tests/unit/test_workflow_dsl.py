@@ -13,6 +13,8 @@ if TYPE_CHECKING:
 from bernstein.core.models import Task, TaskStatus
 from bernstein.core.workflow import WorkflowDefinition, WorkflowPhase
 from bernstein.core.workflow_dsl import (
+    BLOCKING_NODE_METADATA_KEY,
+    SKIPPED_EDGES_METADATA_KEY,
     ConditionError,
     ConditionExpr,
     DAGEdge,
@@ -1194,3 +1196,155 @@ class TestEndToEnd:
         assert executor.should_retry("fix", tasks["fix"])
         executor.record_retry("fix")
         assert not executor.should_retry("fix", tasks["fix"])
+
+
+class TestUnreachableNodes:
+    """A node whose every path in was skipped is recorded, not dropped (#3622)."""
+
+    @staticmethod
+    def _fan_in_dag() -> WorkflowDAG:
+        """Two workers feeding one merge node over unconditional edges."""
+        return WorkflowDAG(
+            definition=_simple_definition(),
+            nodes=(
+                DAGNode(id="w1", phase="implement", role="backend"),
+                DAGNode(id="w2", phase="implement", role="frontend"),
+                DAGNode(id="merge", phase="verify", role="qa"),
+            ),
+            edges=(
+                DAGEdge(source="w1", target="merge"),
+                DAGEdge(source="w2", target="merge"),
+            ),
+        )
+
+    @staticmethod
+    def _guarded_dag(guard: str) -> WorkflowDAG:
+        """One node reachable only through a single guarded edge."""
+        return WorkflowDAG(
+            definition=_simple_definition(),
+            nodes=(
+                DAGNode(id="test", phase="plan", role="qa"),
+                DAGNode(id="deploy", phase="verify", role="manager"),
+            ),
+            edges=(DAGEdge(source="test", target="deploy", condition=ConditionExpr(raw=guard)),),
+        )
+
+    def test_sole_inbound_edge_skipped_materializes_the_node(self) -> None:
+        executor = DAGExecutor(self._guarded_dag("status == 'done'"))
+        tasks = {"test": _task("test", role="qa", status=TaskStatus.FAILED)}
+
+        # The guard is false against a failed source, so deploy is not ready.
+        assert "deploy" not in executor.ready_nodes(tasks)
+
+        assert executor.materialize_unreachable(tasks) == ["deploy"]
+
+        blocked = tasks["deploy"]
+        assert blocked.status == TaskStatus.BLOCKED_BY_FAILED_DEP
+        assert blocked.metadata[BLOCKING_NODE_METADATA_KEY] == "test"
+        assert blocked.metadata[SKIPPED_EDGES_METADATA_KEY] == ["test -> deploy"]
+        assert blocked.terminal_reason == "blocked_by_failed_dependency"
+
+        # Derivable from the record alone, and the node stays off the ready list.
+        assert executor.unreachable_nodes(tasks) == [("deploy", "test")]
+        assert "deploy" not in executor.ready_nodes(tasks)
+
+    def test_all_of_several_inbound_edges_skipped(self) -> None:
+        executor = DAGExecutor(self._fan_in_dag())
+        tasks = {
+            "w1": _task("w1", status=TaskStatus.FAILED),
+            "w2": _task("w2", status=TaskStatus.CANCELLED),
+        }
+
+        assert executor.materialize_unreachable(tasks) == ["merge"]
+
+        blocked = tasks["merge"]
+        assert blocked.status == TaskStatus.BLOCKED_BY_FAILED_DEP
+        assert blocked.metadata[SKIPPED_EDGES_METADATA_KEY] == ["w1 -> merge", "w2 -> merge"]
+        # Both sources strand the node; the lowest id is the recorded cause.
+        assert blocked.metadata[BLOCKING_NODE_METADATA_KEY] == "w1"
+        assert executor.unreachable_nodes(tasks) == [("merge", "w1")]
+
+    def test_one_satisfied_edge_leaves_the_node_schedulable(self) -> None:
+        executor = DAGExecutor(self._fan_in_dag())
+        tasks = {
+            "w1": _task("w1", status=TaskStatus.DONE),
+            "w2": _task("w2", status=TaskStatus.FAILED),
+        }
+
+        assert "merge" in executor.ready_nodes(tasks)
+        assert executor.materialize_unreachable(tasks) == []
+        assert "merge" not in tasks
+        assert executor.unreachable_nodes(tasks) == []
+
+    def test_dependents_of_an_unreachable_node_are_unreachable_too(self) -> None:
+        # a -> b -> c, with a failed: b is stranded by a, c by b.
+        executor = DAGExecutor(_simple_dag())
+        tasks = {"a": _task("a", status=TaskStatus.FAILED)}
+
+        assert executor.materialize_unreachable(tasks) == ["b", "c"]
+        # Each stranded node names its nearest cause, not the original failure.
+        assert tasks["b"].metadata[BLOCKING_NODE_METADATA_KEY] == "a"
+        assert tasks["c"].metadata[BLOCKING_NODE_METADATA_KEY] == "b"
+        assert executor.unreachable_nodes(tasks) == [("b", "a"), ("c", "b")]
+
+    def test_a_branch_not_taken_is_not_unreachable(self) -> None:
+        # The source completed; the guard simply chose the other branch. The
+        # node did not run, but nothing stranded it.
+        executor = DAGExecutor(self._guarded_dag("status == 'failed'"))
+        tasks = {"test": _task("test", role="qa", status=TaskStatus.DONE)}
+
+        assert "deploy" not in executor.ready_nodes(tasks)
+        assert executor.materialize_unreachable(tasks) == []
+        assert "deploy" not in tasks
+        assert executor.unreachable_nodes(tasks) == []
+
+    def test_a_retrying_node_keeps_its_escape(self) -> None:
+        dag = WorkflowDAG(
+            definition=_simple_definition(),
+            nodes=(
+                DAGNode(
+                    id="a",
+                    phase="plan",
+                    role="manager",
+                    retry=RetryPolicy(max_attempts=3),
+                ),
+            ),
+            edges=(),
+        )
+        executor = DAGExecutor(dag)
+        tasks = {"a": _task("a", status=TaskStatus.FAILED)}
+
+        assert "a" in executor.ready_nodes(tasks)
+        assert executor.materialize_unreachable(tasks) == []
+        assert executor.unreachable_nodes(tasks) == []
+        assert "a" in executor.ready_nodes(tasks)
+
+    def test_unreachable_set_is_identical_across_derivations(self) -> None:
+        def derive() -> list[tuple[str, str]]:
+            dag = WorkflowDAG(
+                definition=_simple_definition(),
+                nodes=(
+                    DAGNode(id="root", phase="plan", role="manager"),
+                    DAGNode(id="w2", phase="implement", role="backend"),
+                    DAGNode(id="w1", phase="implement", role="frontend"),
+                    DAGNode(id="tail", phase="verify", role="qa"),
+                ),
+                edges=(
+                    DAGEdge(source="root", target="w2"),
+                    DAGEdge(source="root", target="w1"),
+                    DAGEdge(source="w2", target="tail"),
+                    DAGEdge(source="w1", target="tail"),
+                ),
+            )
+            executor = DAGExecutor(dag)
+            tasks = {"root": _task("root", status=TaskStatus.FAILED)}
+            executor.materialize_unreachable(tasks)
+            return executor.unreachable_nodes(tasks)
+
+        first = derive()
+        second = derive()
+
+        assert first == [("tail", "w1"), ("w1", "root"), ("w2", "root")]
+        assert len(first) == len(second)
+        for left, right in zip(first, second, strict=True):
+            assert left == right

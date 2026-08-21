@@ -72,7 +72,7 @@ import time
 import uuid
 from collections import defaultdict, deque
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -82,8 +82,11 @@ from bernstein.core.knowledge.task_graph import EdgeType
 from bernstein.core.models import Scope, Task, TaskStatus
 from bernstein.core.planning.recovery_receipt import DEFAULT_JOURNAL_TAIL
 from bernstein.core.planning.workflow import WorkflowDefinition, WorkflowPhase
+from bernstein.core.tasks.lifecycle import DEPENDENCY_BLOCKED_STATUSES
+from bernstein.core.tasks.unreachable import blocking_dependency, unreachable_tasks
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from bernstein.core.lineage.spine import LineageSpine
@@ -825,7 +828,27 @@ class EdgeResolution(StrEnum):
     PENDING = "pending"  # Upstream not yet terminal.
 
 
-TERMINAL_STATUSES: frozenset[TaskStatus] = frozenset({TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED})
+TERMINAL_STATUSES: frozenset[TaskStatus] = frozenset(
+    {
+        TaskStatus.DONE,
+        TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
+        # A node materialised as unreachable (#3622) never ran and never will,
+        # so an edge out of it is as resolved as an edge out of a failure.
+        # Left out of this set its own dependents resolve PENDING forever and
+        # the strand stops at the first ring.
+        TaskStatus.BLOCKED_BY_FAILED_DEP,
+    }
+)
+
+# The node whose skipped edge stranded this one. Deliberately the same key the
+# task store stamps on its own cascade (#3452), so a record from either
+# scheduler answers "why did this never run" with a lookup rather than an
+# inference.
+BLOCKING_NODE_METADATA_KEY = "blocking_task_id"
+
+# The inbound edges that all resolved SKIPPED, rendered "source -> target".
+SKIPPED_EDGES_METADATA_KEY = "skipped_edges"
 
 
 class DAGExecutor:
@@ -874,6 +897,13 @@ class DAGExecutor:
                 return EdgeResolution.SATISFIED
             return EdgeResolution.SKIPPED
 
+        # A source materialised as unreachable produced no result, so there is
+        # no outcome for a guard to test. Skipping without evaluating keeps the
+        # strand propagating instead of letting a guard such as
+        # ``status != 'done'`` read a node that never ran as a live failure.
+        if source_task.status == TaskStatus.BLOCKED_BY_FAILED_DEP:
+            return EdgeResolution.SKIPPED
+
         # Conditional edge: evaluate guard predicate.
         ctx = build_condition_context(source_task)
         try:
@@ -895,16 +925,27 @@ class DAGExecutor:
             return self.should_retry(node_id, existing)
         return existing is None
 
-    def _are_deps_resolved(self, incoming: list[DAGEdge], tasks: dict[str, Task]) -> bool:
-        """Return True if all incoming edges are resolved and at least one is satisfied."""
+    def _resolve_incoming(self, incoming: list[DAGEdge], tasks: dict[str, Task]) -> EdgeResolution:
+        """Collapse a node's inbound edges into a single resolution.
+
+        ``SATISFIED`` when at least one edge is satisfied and none is still
+        pending: the node is eligible. ``PENDING`` when any edge is still
+        pending: the node may yet become eligible. ``SKIPPED`` when every edge
+        resolved ``SKIPPED``: the node can never become eligible.
+
+        That last case is the one a bool return could not express (#3622). It
+        collapsed into the same "not ready" as PENDING, so ``ready_nodes``
+        omitted the node and no caller could tell a node that was still
+        waiting from one that had run out of paths in.
+        """
         any_satisfied = False
         for edge in incoming:
             resolution = self.resolve_edge(edge, tasks)
             if resolution == EdgeResolution.PENDING:
-                return False
+                return EdgeResolution.PENDING
             if resolution == EdgeResolution.SATISFIED:
                 any_satisfied = True
-        return any_satisfied
+        return EdgeResolution.SATISFIED if any_satisfied else EdgeResolution.SKIPPED
 
     def ready_nodes(self, tasks: dict[str, Task]) -> list[str]:
         """Return node IDs whose dependencies are fully resolved.
@@ -936,10 +977,127 @@ class DAGExecutor:
                     ready.append(node.id)
                 continue
 
-            if self._are_deps_resolved(incoming, tasks) and self._is_node_eligible(node.id, existing):
+            if self._resolve_incoming(incoming, tasks) == EdgeResolution.SATISFIED and self._is_node_eligible(
+                node.id, existing
+            ):
                 ready.append(node.id)
 
         return ready
+
+    def materialize_unreachable(self, tasks: dict[str, Task]) -> list[str]:
+        """Record every node that can no longer become ready, and what stranded it.
+
+        A node whose inbound edges all resolved ``SKIPPED`` is never returned
+        by ``ready_nodes``, so before this no Task was constructed for it and
+        the run record simply did not mention it: the node was neither blocked
+        nor cancelled, it was absent. Here it is written into *tasks* in
+        ``BLOCKED_BY_FAILED_DEP`` - the state the task store moves a stranded
+        dependent into (#3452) - carrying the skipped edges and the node that
+        stranded it.
+
+        Only a node stranded by an *unsuccessful* upstream is materialised. A
+        node whose inbound edges all skipped because their guards were false
+        while the sources completed is a branch not taken, not a strand, and
+        stays absent exactly as before. That distinction is
+        ``blocking_dependency``'s rather than a second one stated here.
+
+        Nodes are materialised a ring at a time: a node stranded by one
+        materialised in this call is found on the following pass rather than
+        mid-pass, so the answer does not depend on DAG node order.
+
+        Args:
+            tasks: Map of node_id -> Task for the run. Mutated in place.
+
+        Returns:
+            The node IDs materialised by this call, sorted.
+        """
+        materialized: list[str] = []
+
+        while True:
+            ring: dict[str, Task] = {}
+            for node in self._dag.nodes:
+                if node.id in tasks:
+                    continue
+                incoming = self._edges_by_target.get(node.id, [])
+                if not incoming or self._resolve_incoming(incoming, tasks) != EdgeResolution.SKIPPED:
+                    continue
+                blocked = self._blocked_task(node, incoming)
+                blocking_node = blocking_dependency(blocked, tasks)
+                if blocking_node is None:
+                    continue
+                blocked.metadata[BLOCKING_NODE_METADATA_KEY] = blocking_node
+                blocked.result_summary = f"dependency {blocking_node} is {tasks[blocking_node].status.value}"
+                ring[node.id] = blocked
+
+            if not ring:
+                return sorted(materialized)
+
+            tasks.update(ring)
+            materialized.extend(ring)
+
+    def unreachable_nodes(self, tasks: Mapping[str, Task]) -> list[tuple[str, str]]:
+        """Return ``(node_id, blocking_node_id)`` for nodes that could never run.
+
+        Derived from the run record alone: no edge is re-resolved and nothing
+        is re-executed, so a replayed journal yields the same answer as the
+        live map, and two runs over the same graph yield the same pairs in the
+        same order.
+
+        The rule is ``unreachable_tasks`` (#3452) rather than a second one
+        stated here, applied to a projection of the record. The projection is
+        keyed by node id, because that is what a DAG edge names while a Task
+        id carries a per-run suffix; and it carries inbound edges only for the
+        nodes materialised as blocked. The two schedulers read a dependency
+        differently - the store needs every dependency to have delivered, a
+        DAG node needs only one inbound edge satisfied - so projecting every
+        node's inbound edges would report a node that ran on one satisfied
+        edge while another was skipped. What strands a DAG node is its whole
+        inbound set resolving ``SKIPPED``, which is exactly the set
+        ``materialize_unreachable`` records.
+
+        Args:
+            tasks: Map of node_id -> Task for the run.
+
+        Returns:
+            ``(node_id, blocking_node_id)`` pairs, sorted by node ID.
+        """
+        projection = [
+            replace(
+                task,
+                id=node_id,
+                depends_on=list(task.depends_on) if task.status in DEPENDENCY_BLOCKED_STATUSES else [],
+            )
+            for node_id, task in tasks.items()
+        ]
+        return unreachable_tasks(projection)
+
+    def _blocked_task(self, node: DAGNode, incoming: list[DAGEdge]) -> Task:
+        """Build the terminal record for a node that can never become ready.
+
+        ``depends_on`` carries every inbound source rather than
+        ``create_task``'s unconditional subset, because all of them skipped -
+        that whole set is what the node waited on and never got.
+        """
+        task = Task(
+            # Deterministic where ``create_task`` mints a uuid: this node never
+            # runs, so nothing claims it by id, and a replay of the same run
+            # should reproduce the row rather than a fresh one.
+            id=f"{node.id}-unreachable",
+            title=node.description or f"DAG node: {node.id}",
+            description=node.description,
+            role=node.role,
+            priority=2,
+            scope=Scope.MEDIUM,
+            estimated_minutes=node.estimated_minutes,
+            status=TaskStatus.BLOCKED_BY_FAILED_DEP,
+            depends_on=sorted(edge.source for edge in incoming),
+            created_at=time.time(),
+        )
+        task.terminal_reason = "blocked_by_failed_dependency"
+        task.metadata[SKIPPED_EDGES_METADATA_KEY] = [
+            f"{edge.source} -> {edge.target}" for edge in sorted(incoming, key=lambda e: (e.source, e.target))
+        ]
+        return task
 
     def should_retry(self, node_id: str, task: Task) -> bool:
         """Check if a failed task should be retried per the node's retry policy.
