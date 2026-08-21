@@ -1222,8 +1222,8 @@ class TaskStore:
         )
         return True
 
-    async def _cascade_failed_dependency(self, task_id: str) -> None:
-        """Strand every task that can no longer run because *task_id* ended.
+    async def _cascade_failed_dependency(self, *task_ids: str) -> None:
+        """Strand every task that can no longer run because *task_ids* ended.
 
         Propagation is transitive: a task moved to ``BLOCKED_BY_FAILED_DEP``
         is itself a stranding dependency, so the next ring is found on the
@@ -1231,9 +1231,15 @@ class TaskStore:
         records its own nearest cause, so a chain A -> B -> C names B as C's
         cause rather than A.
 
+        Several ids seed one walk rather than one walk each, so a subtree
+        cancelled together strands its dependents in a single pass and a task
+        depending on two of them still records only its nearest cause
+        (#4247). The four single-task terminal transitions pass one id; the
+        cancel cascade passes the whole set it cancelled.
+
         Must be called with ``self._lock`` held.
         """
-        frontier = {task_id}
+        frontier = set(task_ids)
         while frontier:
             next_frontier: set[str] = set()
             for candidate in sorted(self._tasks.values(), key=lambda t: t.id):
@@ -3005,6 +3011,17 @@ class TaskStore:
                     reason=cascade_reason,
                 )
                 cancelled.append(task)
+
+            # Dependents are stranded after the whole subtree is cancelled,
+            # not per task inside the loop. A dependent that is itself a
+            # descendant must be cancelled by the walk above rather than
+            # marked blocked first: ``cancellable`` does not include
+            # ``BLOCKED_BY_FAILED_DEP``, so an early mark would make the
+            # cascade skip it and a subtask would end in the wrong terminal
+            # status. Seeding one walk with the whole set also means a task
+            # depending on two cancelled tasks records a single nearest cause.
+            if cancelled:
+                await self._cascade_failed_dependency(*(t.id for t in cancelled))
 
         return cancelled
 

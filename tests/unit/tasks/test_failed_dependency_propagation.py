@@ -234,6 +234,63 @@ class TestTaskStoreFailurePropagation:
         await store.cancel("A", "operator stopped it")
         assert dependent.status is TaskStatus.BLOCKED_BY_FAILED_DEP
 
+    async def test_cancel_cascade_propagates_to_an_in_progress_dependent(self, tmp_path: Path) -> None:
+        """#4247: the cascade transitions inline, so it used to skip propagation.
+
+        An already-CLAIMED or IN_PROGRESS dependent is the case that matters:
+        it never passes through ``claim_next`` again, so the backstop there
+        cannot rescue it and it would keep running against a dependency that
+        can never complete.
+        """
+        store = _store(tmp_path)
+        await _insert(store, "P", status=TaskStatus.IN_PROGRESS)
+        await _insert(store, "S", status=TaskStatus.IN_PROGRESS, parent_task_id="P")
+        dependent = await _insert(store, "D", status=TaskStatus.IN_PROGRESS, depends_on=["S"])
+
+        await store.cancel_cascade("P", "operator stopped the tree")
+
+        assert dependent.status is TaskStatus.BLOCKED_BY_FAILED_DEP
+        assert dependent.metadata["blocking_task_id"] == "S"
+
+    async def test_cancel_cascade_propagates_transitively(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        await _insert(store, "P", status=TaskStatus.IN_PROGRESS)
+        d1 = await _insert(store, "D1", status=TaskStatus.IN_PROGRESS, depends_on=["P"])
+        d2 = await _insert(store, "D2", depends_on=["D1"])
+
+        await store.cancel_cascade("P", "operator stopped the tree")
+
+        assert d1.status is TaskStatus.BLOCKED_BY_FAILED_DEP
+        assert d2.status is TaskStatus.BLOCKED_BY_FAILED_DEP
+        assert d2.metadata["blocking_task_id"] == "D1"
+
+    async def test_cancel_cascade_still_cancels_a_descendant_that_also_depends_on_the_root(
+        self, tmp_path: Path
+    ) -> None:
+        """A subtask must end CANCELLED, not BLOCKED_BY_FAILED_DEP.
+
+        Propagation runs after the whole subtree is cancelled for exactly this
+        case: marking the dependent first would leave it in a status the
+        cascade's ``cancellable`` set does not cover, and it would never be
+        cancelled at all.
+        """
+        store = _store(tmp_path)
+        await _insert(store, "P", status=TaskStatus.IN_PROGRESS)
+        both = await _insert(store, "S", status=TaskStatus.IN_PROGRESS, parent_task_id="P", depends_on=["P"])
+
+        await store.cancel_cascade("P", "operator stopped the tree")
+
+        assert both.status is TaskStatus.CANCELLED
+
+    async def test_cancel_cascade_leaves_an_unrelated_task_alone(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        await _insert(store, "P", status=TaskStatus.IN_PROGRESS)
+        untouched = await _insert(store, "U", status=TaskStatus.IN_PROGRESS)
+
+        await store.cancel_cascade("P", "operator stopped the tree")
+
+        assert untouched.status is TaskStatus.IN_PROGRESS
+
     async def test_a_live_sibling_dependency_does_not_keep_the_dependent_claimable(self, tmp_path: Path) -> None:
         store = _store(tmp_path)
         await _insert(store, "A", status=TaskStatus.IN_PROGRESS)
