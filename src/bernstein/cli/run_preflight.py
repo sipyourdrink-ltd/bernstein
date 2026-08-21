@@ -696,6 +696,19 @@ def _finalize_run_output(*, quiet: bool) -> None:
                 console.print(f"[red]Run failed before any work started:[/red] {reason}")
                 console.print("Details: run 'bernstein status' or read .sdd/runtime/retrospective.md")
                 raise SystemExit(1)
+            if outcome == "spawned":
+                # An agent was confirmed alive at least once, so an empty
+                # agent count now is a death, not "hasn't spawned yet". A run
+                # whose spawned agent died before decomposing the goal must
+                # say so instead of detaching silently (issue #3528).
+                from bernstein.cli.run_bootstrap import _poll_no_plan_after_spawn
+                from bernstein.core.errors import BernsteinFirstRunError, ErrorCategory
+
+                if _poll_no_plan_after_spawn() is not None:
+                    raise BernsteinFirstRunError(
+                        "Spawned agent exited before producing a work plan",
+                        category=ErrorCategory.NO_PLAN_PRODUCED,
+                    )
             # A run that already reached a terminal state within the detach
             # window must not report success on its way out.
             _exit_nonzero_on_unhealthy_run(_poll_quiescent_status())
