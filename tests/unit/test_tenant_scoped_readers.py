@@ -53,9 +53,7 @@ async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
 
 async def _create(app: FastAPI, title: str, tenant_id: str, **extra: object) -> object:
     desc = extra.pop("description", "scoping fixture")
-    return await app.state.store.create(
-        TaskCreate(title=title, description=desc, tenant_id=tenant_id, **extra)
-    )
+    return await app.state.store.create(TaskCreate(title=title, description=desc, tenant_id=tenant_id, **extra))
 
 
 class TestBudgetForecastTenantScope:
