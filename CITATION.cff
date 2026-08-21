@@ -32,8 +32,8 @@ keywords:
   - gemini-cli
   - aider
   - software-engineering
-version: "3.16.0"
-date-released: "2026-08-17"
+version: "3.17.0"
+date-released: "2026-08-21"
 preferred-citation:
   type: software
   title: "Bernstein: a deterministic Python orchestrator for CLI coding agents"
