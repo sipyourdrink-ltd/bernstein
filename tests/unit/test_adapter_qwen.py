@@ -192,6 +192,51 @@ class TestQwenAdapterSpawn:
         inner = _inner_cmd(popen.call_args.args[0])
         assert "--auth-type" not in inner
 
+    def test_custom_openai_base_url_gets_auth_type(self, tmp_path: Path) -> None:
+        """A custom OpenAI-compatible endpoint must still select the openai auth type.
+
+        Without ``--auth-type openai`` the Qwen CLI aborts non-interactively with
+        "No auth type is selected", so the agent dies at 0 tokens and the task is
+        recorded as an agent-reported failure with no transcript to explain it.
+        """
+        adapter = QwenAdapter()
+        proc_mock = _make_popen_mock(pid=106)
+        settings = _default_settings(
+            openai_api_key="sk-local-key",
+            openai_base_url="http://localhost:20128/v1",
+        )
+        with (
+            patch("bernstein.adapters.qwen.subprocess.Popen", return_value=proc_mock) as popen,
+            patch("bernstein.adapters.qwen.LLMSettings", return_value=settings),
+        ):
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="some-model", effort="high"),
+                session_id="qwen-s7",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--auth-type" in inner
+        assert inner[inner.index("--auth-type") + 1] == "openai"
+
+    def test_default_openai_endpoint_keeps_native_auth(self, tmp_path: Path) -> None:
+        """An API key alone (no custom base URL) keeps the CLI's own auth flow."""
+        adapter = QwenAdapter()
+        proc_mock = _make_popen_mock(pid=107)
+        settings = _default_settings(openai_api_key="sk-plain")
+        with (
+            patch("bernstein.adapters.qwen.subprocess.Popen", return_value=proc_mock) as popen,
+            patch("bernstein.adapters.qwen.LLMSettings", return_value=settings),
+        ):
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="qwen-max", effort="high"),
+                session_id="qwen-s8",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--auth-type" not in inner
+
     def test_opus_maps_to_qwen_max_on_default(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
         proc_mock = _make_popen_mock(pid=106)

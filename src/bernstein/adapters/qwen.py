@@ -145,7 +145,14 @@ class QwenAdapter(CLIAdapter):
         resolved = self._MODEL_MAP.get(model_name, model_name)
         cmd.extend(["--model", resolved])
 
-        if provider != "default":
+        # ``--auth-type openai`` tells the CLI to use the OpenAI-compatible key and
+        # base URL from the environment instead of its own login. Every named
+        # provider needs it, and so does the default provider once an explicit
+        # ``OPENAI_BASE_URL`` points the CLI at a custom OpenAI-compatible endpoint:
+        # without the flag the CLI aborts non-interactively with "No auth type is
+        # selected", producing a 0-token agent death with no transcript. A bare
+        # ``OPENAI_API_KEY`` with no custom base URL keeps the CLI's own auth flow.
+        if provider != "default" or settings.openai_base_url:
             cmd.extend(["--auth-type", "openai"])
 
         if mcp_config:
