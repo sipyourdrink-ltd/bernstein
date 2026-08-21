@@ -163,6 +163,83 @@ def test_spawn_in_sandbox_fallback_forwards_system_addendum(tmp_path: Path, monk
     assert adapter.spawn_system_addenda == ["## Response style: terse\n\nheartbeat instructions"]
 
 
+def test_spawn_in_sandbox_success_path_carries_system_addendum(tmp_path: Path) -> None:
+    """Issue #3565: the sandbox path that actually starts must carry the addendum too.
+
+    The fallback test above covers the branch taken when the sandbox fails to
+    start. This covers the branch taken when it succeeds -- the normal case
+    whenever isolation is configured, and the one the issue title names.
+    That branch never calls ``adapter.spawn()``: it writes the prompt to a
+    file and builds a raw shell command that ``cat``s it, so the adapter's
+    ``--append-system-prompt`` channel is out of reach and the instructions
+    have to travel in the prompt file itself.
+    """
+    adapter = FakeAdapter("claude")
+    sandbox = DockerSandbox(enabled=True, adapter_images={"claude": "bernstein/claude:latest"})
+    session = AgentSession(id="S-3a", role="backend")
+    fake_handle = ContainerHandle(container_id="sandbox-3a", session_id="S-3a", pid=333)
+    addendum = "## Completion\n\nPOST /tasks/<id>/done when finished."
+
+    with (
+        patch("bernstein.core.agents.spawner_core.get_registry", return_value=MagicMock()),
+        patch("bernstein.core.agents.spawner_core.spawn_in_sandbox", return_value=(MagicMock(), fake_handle)),
+    ):
+        spawner = AgentSpawner(
+            adapter=adapter,
+            templates_dir=tmp_path,
+            workdir=tmp_path,
+            use_worktrees=False,
+            sandbox=sandbox,
+        )
+        spawner._spawn_in_sandbox(  # pyright: ignore[reportPrivateUsage]
+            session_id="S-3a",
+            prompt="solve it",
+            spawn_cwd=tmp_path,
+            model_config=ModelConfig("sonnet", "high"),
+            mcp_config=None,
+            session=session,
+            adapter=adapter,
+            system_addendum=addendum,
+        )
+
+    # The fallback was not taken, so nothing reached adapter.spawn().
+    assert adapter.spawn_calls == []
+    written = (tmp_path / ".sdd" / "runtime" / "prompts" / "S-3a.md").read_text(encoding="utf-8")
+    assert written.startswith("solve it")
+    assert addendum in written
+
+
+def test_spawn_in_sandbox_without_addendum_writes_prompt_unchanged(tmp_path: Path) -> None:
+    """An empty addendum must not add trailing blank lines to the prompt file."""
+    adapter = FakeAdapter("claude")
+    sandbox = DockerSandbox(enabled=True, adapter_images={"claude": "bernstein/claude:latest"})
+    session = AgentSession(id="S-3b", role="backend")
+    fake_handle = ContainerHandle(container_id="sandbox-3b", session_id="S-3b", pid=334)
+
+    with (
+        patch("bernstein.core.agents.spawner_core.get_registry", return_value=MagicMock()),
+        patch("bernstein.core.agents.spawner_core.spawn_in_sandbox", return_value=(MagicMock(), fake_handle)),
+    ):
+        spawner = AgentSpawner(
+            adapter=adapter,
+            templates_dir=tmp_path,
+            workdir=tmp_path,
+            use_worktrees=False,
+            sandbox=sandbox,
+        )
+        spawner._spawn_in_sandbox(  # pyright: ignore[reportPrivateUsage]
+            session_id="S-3b",
+            prompt="solve it",
+            spawn_cwd=tmp_path,
+            model_config=ModelConfig("sonnet", "high"),
+            mcp_config=None,
+            session=session,
+            adapter=adapter,
+        )
+
+    assert (tmp_path / ".sdd" / "runtime" / "prompts" / "S-3b.md").read_text(encoding="utf-8") == "solve it"
+
+
 def _read_audit_events(audit_dir: Path) -> list[dict[str, object]]:
     """Return every audit-chain entry under ``audit_dir`` as parsed dicts."""
     events: list[dict[str, object]] = []

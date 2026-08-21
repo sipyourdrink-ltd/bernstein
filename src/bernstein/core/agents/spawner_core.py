@@ -616,6 +616,39 @@ def _render_signal_check(session_id: str) -> str:
     )
 
 
+def _prompt_with_addendum(prompt: str, system_addendum: str) -> str:
+    """Fold protocol-critical instructions into the prompt text itself.
+
+    The container, sandbox, and sandbox-session paths do not call
+    ``adapter.spawn()``. They write the prompt to a file and build a raw
+    shell command that ``cat``s it into the CLI (see
+    :meth:`AgentSpawner._adapter_cmd_for_container`), so the adapter's own
+    system-prompt channel -- ``--append-system-prompt`` on Claude Code, and
+    its equivalents elsewhere -- is never reached. Without this, an agent
+    running under isolation gets no completion or heartbeat instructions at
+    all: it does the work and is then reaped as stalled because it was never
+    told how to report done (#3565).
+
+    Appending to the user prompt is the weaker of the two channels, and the
+    adapter contract says so -- the base ``spawn`` docstring permits it as a
+    fallback, and adapters without a system-prompt flag already take it
+    (``adapters/devin_terminal.py``). It is used here for the same reason:
+    the command is assembled per adapter family, and only one of those
+    families has a system-prompt flag to pass. Carrying the instructions in
+    the weaker channel beats dropping them.
+
+    Args:
+        prompt: The rendered task prompt.
+        system_addendum: Protocol-critical instructions, possibly empty.
+
+    Returns:
+        The prompt, with the addendum appended when there is one.
+    """
+    if not system_addendum:
+        return prompt
+    return f"{prompt}\n\n{system_addendum}"
+
+
 def _resolve_task_server_url() -> str:
     """Resolve the base URL agents use to reach the task server.
 
@@ -5183,14 +5216,13 @@ class AgentSpawner:
             session: AgentSession to update with container metadata.
             adapter: Adapter selected for this spawn attempt.
             task_scope: Task scope for max_turns scaling.
-            system_addendum: Rendered response-style addendum, forwarded to
-                the direct-subprocess fallback so a container that fails to
-                start doesn't also drop the completion/heartbeat
-                instructions (issue #3565). The container path itself
-                shells out via ``_adapter_cmd_for_container`` rather than
-                ``adapter.spawn()``, so it has no channel to carry this
-                through - a separate, larger gap tracked in #3565's
-                follow-up about per-adapter capability visibility.
+            system_addendum: Rendered response-style addendum, carried on
+                both branches (issue #3565). The direct-subprocess fallback
+                passes it to ``adapter.spawn()``; the container path never
+                reaches ``adapter.spawn()``, so it is folded into the prompt
+                file by :func:`_prompt_with_addendum` instead. Either way a
+                container that fails to start, and one that starts fine, both
+                carry the completion/heartbeat instructions.
 
         Returns:
             SpawnResult with PID and log path.
@@ -5214,7 +5246,7 @@ class AgentSpawner:
         # container can read it
         prompt_file = spawn_cwd / ".sdd" / "runtime" / "prompts" / f"{session_id}.md"
         prompt_file.parent.mkdir(parents=True, exist_ok=True)
-        prompt_file.write_text(prompt, encoding="utf-8")
+        prompt_file.write_text(_prompt_with_addendum(prompt, system_addendum), encoding="utf-8")
 
         # Build the CLI command the adapter would normally run
         log_dir = spawn_cwd / ".sdd" / "logs"
@@ -5349,7 +5381,7 @@ class AgentSpawner:
 
         prompt_file = spawn_cwd / ".sdd" / "runtime" / "prompts" / f"{session_id}.md"
         prompt_file.parent.mkdir(parents=True, exist_ok=True)
-        prompt_file.write_text(prompt, encoding="utf-8")
+        prompt_file.write_text(_prompt_with_addendum(prompt, system_addendum), encoding="utf-8")
 
         log_dir = spawn_cwd / ".sdd" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -5547,7 +5579,7 @@ class AgentSpawner:
         # 1) Inject the prompt through the session's file primitive.
         write_prompt_to_session(
             session=sbx_session,
-            prompt=prompt,
+            prompt=_prompt_with_addendum(prompt, system_addendum),
             session_id=session_id,
         )
 

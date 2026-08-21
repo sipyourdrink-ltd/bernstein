@@ -429,3 +429,50 @@ def test_legacy_container_success_records_no_downgrade(tmp_path: Path, monkeypat
     assert session.isolation == IsolationMode.CONTAINER.value
     assert adapter.spawn_calls == []
     assert spawner.isolation_downgrades == []
+
+
+def test_legacy_container_success_path_carries_system_addendum(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Issue #3565: a container that starts must carry the addendum too.
+
+    ``test_legacy_container_fallback_forwards_system_addendum`` covers the
+    branch taken when the container fails to start. This covers the branch
+    taken when it starts -- the normal case whenever a container runtime is
+    configured. That branch builds a raw shell command via
+    ``_adapter_cmd_for_container`` and never calls ``adapter.spawn()``, so
+    the adapter's system-prompt flag is out of reach and the completion and
+    heartbeat instructions travel in the prompt file itself.
+    """
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+    monkeypatch.delenv("BERNSTEIN_SANDBOX_RUNTIME", raising=False)
+
+    adapter = FakeAdapter("claude")
+    with patch("bernstein.core.agents.spawner_core.get_registry", return_value=MagicMock()):
+        spawner = AgentSpawner(
+            adapter=adapter,
+            templates_dir=tmp_path,
+            workdir=tmp_path,
+            use_worktrees=False,
+        )
+    manager = MagicMock()
+    manager.config.two_phase_sandbox = None
+    manager.spawn_in_container.return_value = ContainerHandle(container_id="c-add", session_id="S-add", pid=322)
+    spawner._container_mgr = manager  # pyright: ignore[reportPrivateUsage]
+    session = AgentSession(id="S-add", role="backend")
+    addendum = "## Completion\n\nPOST /tasks/<id>/done when finished."
+
+    spawner._spawn_in_container(  # pyright: ignore[reportPrivateUsage]
+        session_id="S-add",
+        prompt="legacy container",
+        spawn_cwd=tmp_path,
+        model_config=ModelConfig("sonnet", "high"),
+        mcp_config=None,
+        session=session,
+        adapter=adapter,
+        system_addendum=addendum,
+    )
+
+    # The fallback was not taken, so nothing reached adapter.spawn().
+    assert adapter.spawn_calls == []
+    written = (tmp_path / ".sdd" / "runtime" / "prompts" / "S-add.md").read_text(encoding="utf-8")
+    assert written.startswith("legacy container")
+    assert addendum in written

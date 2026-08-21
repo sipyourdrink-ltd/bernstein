@@ -169,6 +169,38 @@ def test_spawn_via_sandbox_session_routes_through_session(tmp_path: Path) -> Non
     assert session_obj.exec_calls, "session.exec was never invoked"
 
 
+def test_sandbox_session_success_path_carries_system_addendum(tmp_path: Path) -> None:
+    """Issue #3565: the session path that actually provisions must carry the addendum.
+
+    This is the counterpart to the provisioning-failure test below. The
+    success branch injects the prompt through the session's file primitive
+    and execs a raw adapter command against it, never reaching
+    ``adapter.spawn()``, so the completion/heartbeat instructions have to
+    ride in the injected prompt itself.
+    """
+    session_obj = _FakeSession(backend_name="docker", root=tmp_path)
+    spawner, adapter = _build_spawner(tmp_path, session=session_obj)
+    agent_session = AgentSession(id="S-7a", role="backend")
+    addendum = "## Heartbeat\n\nPOST /agents/<id>/heartbeat every 60s."
+
+    spawner._spawn_via_sandbox_session(  # pyright: ignore[reportPrivateUsage]
+        session_id="S-7a",
+        prompt="solve it",
+        spawn_cwd=tmp_path,
+        model_config=ModelConfig("sonnet", "high"),
+        mcp_config=None,
+        session=agent_session,
+        adapter=adapter,
+        system_addendum=addendum,
+    )
+    spawner._sandbox_exec_handles["S-7a"].future.result(timeout=5.0)  # pyright: ignore[reportPrivateUsage]
+
+    assert adapter.spawn_calls == []
+    written = (tmp_path / ".sdd" / "runtime" / "prompts" / "S-7a.md").read_text(encoding="utf-8")
+    assert written.startswith("solve it")
+    assert addendum in written
+
+
 def test_worktree_session_does_not_trigger_routing(tmp_path: Path) -> None:
     """Worktree-backed sessions intentionally stay on the legacy path."""
     session_obj = _FakeSession(backend_name="worktree", root=tmp_path)
