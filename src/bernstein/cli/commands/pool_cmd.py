@@ -43,13 +43,13 @@ def _chain(workdir: Path) -> Any:
     return AuditChainStore(audit_dir)
 
 
-def _pool_events(workdir: Path) -> list[Any]:
+def _pool_events(workdir: Path, *, key: bytes | None = None) -> list[Any]:
     audit_dir = _audit_dir(workdir)
     if not audit_dir.is_dir():
         return []
     from bernstein.core.security.audit_chain import AuditChainStore
 
-    events = AuditChainStore(audit_dir).query()
+    events = AuditChainStore(audit_dir, key=key).query()
     return [e for e in events if str(getattr(e, "event_type", "")).startswith("pool.")]
 
 
@@ -195,17 +195,19 @@ def verify_cmd(workdir: Path) -> None:
     raise SystemExit(1)
 
 
-def verify_pools(workdir: Path) -> tuple[bool, list[str]]:
+def verify_pools(workdir: Path, *, key: bytes | None = None) -> tuple[bool, list[str]]:
     """Verify active pool bodies and stored placement receipts.
 
     Returns ``(ok, errors)``. Reused by ``bernstein audit verify`` so the pool
-    subsystem is a first-class integrity pillar alongside the HMAC chain.
+    subsystem is a first-class integrity pillar alongside the HMAC chain. The
+    caller passes *key* so reading the chain cannot mint one: verification
+    writes nothing to the store it inspects (#4210).
     """
     from bernstein.core.sandbox.pool_placement import verify_placement_receipt
 
     errors: list[str] = []
     store = _store(workdir)
-    active = project_pool_registry(_pool_events(workdir))
+    active = project_pool_registry(_pool_events(workdir, key=key))
     for name, pool_hash in sorted(active.items()):
         try:
             store.get(pool_hash)

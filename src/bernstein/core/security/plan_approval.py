@@ -179,15 +179,18 @@ def _estimate_task_cost(task: Task) -> TaskCostEstimate:
     # seed's global default model, then the complexity default. The seed
     # default keeps the plan labelled with the resolved model instead of a
     # hardcoded ``sonnet`` when a seed sets only a global model (issue #3013).
-    model = (
+    raw_model = (
         _ROLE_MODEL_OVERRIDES.get(task.role)
         or task.model
         or _DEFAULT_MODEL
-        or _DEFAULT_MODEL_BY_COMPLEXITY.get(task.complexity.value, "sonnet")
+        or _DEFAULT_MODEL_BY_COMPLEXITY.get(task.complexity.value)
     )
+    model = raw_model or "auto"
     cli = _ROLE_CLI_OVERRIDES.get(task.role) or _DEFAULT_CLI
-    if cli:
-        model = f"{cli}/{model}"
+    if cli and raw_model:
+        model = f"{cli}/{raw_model}"
+    elif cli and not raw_model:
+        model = f"{cli}/auto"
 
     # Estimate tokens
     estimated_tokens = _TOKENS_BY_SCOPE.get(task.scope.value, 80_000)

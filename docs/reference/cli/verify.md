@@ -177,8 +177,29 @@ was found before the checker timed out).
 The CLI surface ships with Bernstein; the Z3 and Lean4 binaries themselves
 must be installed separately and on `PATH` — they are not bundled.
 
+## Unified Verification Exit-Code Reference
+
+Every verification command in Bernstein follows a strict exit-code contract. The table below covers all primary verification commands, their exit codes, verdict output markers, and failure conditions:
+
+| Command | Exit Code | Verdict / Output Marker | Condition / Meaning |
+|---|---|---|---|
+| `replay <run> --verify` | `0` | `Receipt verified:` / `No divergence; chains match end-to-end.` | Execution trace intact, receipt signature valid, no step divergence |
+| | `1` | `Receipt failed verification` / `Divergence at step <N>` | Step divergence detected or chain hash mismatch |
+| | `2` | `One or both journals are missing.` / `Cannot load public key:` | Usage error, missing journal files, or unreadable key file |
+| `verify receipt <path>` | `0` | `OK (provenance: pinned key)` / `OK (integrity-only: embedded key)` | Receipt verified: all embedded heads recompute and Ed25519 signature checks |
+| | `1` | `MALFORMED` | Unreadable receipt file or missing required fields/ranges |
+| | `2` | `TAMPER DETECTED` | Step divergence, spine/audit head mismatch, signature or pinned-key mismatch |
+| `lineage verify <run>` | `0` | `OK` | Lineage spine/chain intact and non-empty, all HMAC tags / signatures valid |
+| | `1` | `NO ENTRIES` / `SEAL ONLY` | Empty run emitted no lineage (1), or chain records only journal-head seal with no artifact provenance (1) |
+| | `2` | `TAMPER DETECTED` / `RECEIPT VERIFICATION FAILED` | HMAC tag mismatch, broken Merkle chain, or recovery receipt resolution failed |
+| | `3` | `CANNOT VERIFY` | Audit HMAC key file missing (read-only verification safety fail-closed) |
+| `audit verify` | `0` | `Passed` across all pillars | All audit log pillars (HMAC chain, Merkle tree, checkpoints, evidence, artifacts, receipts, gates, grants) pass |
+| | `1` | `FAILED` / non-zero exit | Any audit pillar failed verification, broken HMAC chain, tear evidence, or missing audit directory |
+| | `2` | `[red]--payload requires --receipt.[/red]` | Invalid flag combination / usage error |
+
 ## Source
 
 `src/bernstein/cli/commands/verify_cmd.py` (command group);
 `src/bernstein/core/replay/run_receipt.py` (receipt build + offline verify);
 `src/bernstein/core/quality/verifier_ladder.py` (ladder receipts).
+

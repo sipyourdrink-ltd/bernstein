@@ -40,6 +40,9 @@ def workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
     monkeypatch.delenv("BERNSTEIN_AUTOMATION_BRIDGE_ROOT", raising=False)
     (tmp_path / ".sdd" / "audit").mkdir(parents=True)
+    # The command reads the key and never creates one (#4210), so the project
+    # has to carry it the way a real store does.
+    load_or_create_audit_key(tmp_path / "audit.key")
     monkeypatch.chdir(tmp_path)
     return tmp_path
 

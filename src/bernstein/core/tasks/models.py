@@ -1712,7 +1712,7 @@ class TaskCostEstimate:
     task_id: str
     title: str
     role: str
-    model: str = "sonnet"
+    model: str = "unresolved"
     estimated_tokens: int = 0
     estimated_cost_usd: float = 0.0
     risk_level: Literal["low", "medium", "high", "critical"] = "low"
@@ -1794,7 +1794,7 @@ class TaskPlan:
                 task_id=e["task_id"],
                 title=e["title"],
                 role=e["role"],
-                model=e.get("model", "sonnet"),
+                model=e.get("model", "unresolved"),
                 estimated_tokens=int(e.get("estimated_tokens", 0)),
                 estimated_cost_usd=float(e.get("estimated_cost_usd", 0.0)),
                 risk_level=e.get("risk_level", "low"),

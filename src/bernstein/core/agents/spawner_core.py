@@ -1729,31 +1729,47 @@ class AgentSpawner:
     def _render_mailbox_section(self, tasks: list[Task]) -> str:
         """Render pending coordination-mailbox messages for *tasks* (#2357).
 
-        Records consumption in the audit chain at render time. Render time is
-        the single chokepoint where all messages pass before reaching the
-        prompt, making it the best place to record that a message was
-        delivered to a worker's context.
+        Records consumption in the audit chain at render time and derives
+        ``since_seq`` from the task's own consumption records so a message
+        already recorded as consumed is not re-rendered on a later spawn
+        or resume (#4151).
         """
         try:
             from bernstein.core.communication.task_mailbox import (
                 TaskMailbox,
                 render_mailbox_section,
             )
+            from bernstein.core.security.audit_chain import AuditChainStore
 
             journal = self._workdir / ".sdd" / "runtime" / "mailbox.jsonl"
             if not journal.is_file():
                 logger.info("Mailbox journal missing at %s, rendering empty section.", journal)
                 return ""
             mailbox = TaskMailbox(journal)
-            pending = [message for task in tasks for message in mailbox.pending(task.id)]
+            chain = AuditChainStore(self._workdir / ".sdd" / "audit")
 
-            # Record consumption for each message rendered into the prompt (#3451).
+            pending = []
+            for task in tasks:
+                # Compute cursor: highest seq already marked consumed for this task
+                # include_archived: the cursor reasons about linkage across the
+                # retention boundary, so it must see consumption records that
+                # routine `audit archive` has already compressed into
+                # archive/*.jsonl.gz. Without it the cursor silently falls back
+                # to -1 once a segment ages out and the whole backlog is
+                # re-rendered -- the same defect this fix closes, re-armed by
+                # maintenance rather than by a code change.
+                events = chain.query(
+                    event_type="task.mailbox_consumed",
+                    resource_id=task.id,
+                    include_archived=True,
+                )
+                cursor = max((int(e.details.get("seq", -1)) for e in events), default=-1)
+                pending.extend(mailbox.pending(task.id, since_seq=cursor))
+
+            # Record consumption for each newly rendered message
             if pending:
-                from bernstein.core.security.audit import AuditLog
-
-                audit = AuditLog(audit_dir=self._workdir / ".sdd" / "audit")
                 for msg in pending:
-                    audit.log(
+                    chain.log(
                         event_type="task.mailbox_consumed",
                         actor="spawner",
                         resource_type="task",

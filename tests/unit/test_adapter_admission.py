@@ -63,10 +63,12 @@ if TYPE_CHECKING:
 
 GOLDEN_DIR = Path(__file__).parents[1] / "golden"
 
+import sys
+
 # A contract whose ``help_command`` is a self-contained subprocess printing
 # exactly the required tokens, so the in-process conformance probe returns
 # ``ok`` on any host without installing an upstream CLI.
-_OK_CONTRACT = """\
+_OK_CONTRACT = f"""\
 adapter: kimi
 binary: kimi
 install:
@@ -80,7 +82,7 @@ required_flags:
   - "--yolo"
   - "-c"
 required_subcommands: []
-help_command: ["python3", "-c", "print('usage: kimi --yolo -c PROMPT')"]
+help_command: [{json.dumps(sys.executable)}, "-c", "print('usage: kimi --yolo -c PROMPT')"]
 expected_models:
   command: []
   required_present: []
@@ -877,6 +879,26 @@ def test_every_canary_target_has_a_contract() -> None:
     missing = [t.adapter for t in CANARY_MATRIX if not (contracts / f"{t.adapter}.yaml").exists()]
 
     assert missing == []
+
+
+def test_capitalized_adapter_name_persists_and_loads_receipt(tmp_path: Path) -> None:
+    """Issue #4224: Adapters with capitalized names (e.g. 'Aider') persist and load receipts cleanly."""
+    evidence = _bare_evidence(adapter="Aider", binary="aider")
+    decision = evaluate_admission(
+        evidence,
+        ttl_seconds=86400,
+    )
+
+    receipt = build_admission_receipt(decision, generated_at=_NOW.isoformat(), kind=RECEIPT_KIND)
+    receipt_file = write_admission_receipt(tmp_path, receipt)
+    assert receipt_file.exists()
+    assert receipt_file.name.startswith("aider-")
+
+    loaded, problem = load_admission_receipt(tmp_path, "Aider")
+    assert problem == ""
+    assert loaded is not None
+    assert loaded["adapter"] == "Aider"
+    assert loaded["verdict"] == VERDICT_ADMIT
 
 
 @pytest.fixture(autouse=True)

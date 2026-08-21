@@ -566,7 +566,12 @@ class OpenAIAgentsAdapter(PluginAdapter):
             # Pass the override key through the filtered env so the runner
             # can resolve it by name.
             env_keys.append(key_env_name)
-        env = build_filtered_env(env_keys)
+        env = build_filtered_env(
+            env_keys,
+            # openai_agents_runner.py is bernstein's own code, run via
+            # sys.executable; it needs bernstein importable (issue #4221).
+            inherit_orchestrator_pythonpath=True,
+        )
         preexec_fn = self._get_preexec_fn()
         with log_path.open("w") as log_file:
             try:

@@ -41,6 +41,19 @@ def _proposal(
     )
 
 
+def _done_goal_task() -> Task:
+    """A finished goal task, satisfying AutoSpawnGuard's terminal-baseline
+    check (#4226) so tests unrelated to that check aren't refused by it."""
+    return Task(
+        id="goal",
+        title="Implement the feature",
+        description="desc",
+        role="backend",
+        task_type=TaskType.STANDARD,
+        status=TaskStatus.DONE,
+    )
+
+
 def _orch(workdir: Path, *, latest_tasks: dict[str, Task] | None = None) -> SimpleNamespace:
     client = MagicMock()
     resp = MagicMock()
@@ -52,12 +65,16 @@ def _orch(workdir: Path, *, latest_tasks: dict[str, Task] | None = None) -> Simp
         is_high_risk=lambda score: False,
     )
 
+    if latest_tasks is None:
+        goal = _done_goal_task()
+        latest_tasks = {goal.id: goal}
+
     return SimpleNamespace(
         _workdir=workdir,
         _config=SimpleNamespace(server_url="http://server"),
         _client=client,
         _risk_scorer=risk_scorer,
-        _latest_tasks_by_id=latest_tasks or {},
+        _latest_tasks_by_id=latest_tasks,
     )
 
 
@@ -82,12 +99,45 @@ def test_dedupe_refuses_upgrade_task_matching_existing_open_task(tmp_path: Path)
         task_type=TaskType.UPGRADE_PROPOSAL,
         status=TaskStatus.OPEN,
     )
-    orch = _orch(tmp_path, latest_tasks={existing.id: existing})
+    goal = _done_goal_task()
+    orch = _orch(tmp_path, latest_tasks={existing.id: existing, goal.id: goal})
     result = SimpleNamespace(errors=[])
 
     _create_upgrade_tasks(orch, [_proposal("p1", "Improve task success rate")], result)
 
     assert orch._client.post.call_count == 0
+
+
+def test_no_terminal_baseline_refuses_upgrade_task_when_run_has_no_terminal_task(tmp_path: Path) -> None:
+    """Issue #4226: a run whose only task never reached a terminal state
+    (e.g. crashed at claim) must not have its single cell displaced by an
+    upgrade task."""
+    stuck_goal = Task(
+        id="goal",
+        title="Implement the feature",
+        description="desc",
+        role="backend",
+        task_type=TaskType.STANDARD,
+        status=TaskStatus.CLAIMED,
+    )
+    orch = _orch(tmp_path, latest_tasks={stuck_goal.id: stuck_goal})
+    result = SimpleNamespace(errors=[])
+
+    _create_upgrade_tasks(orch, [_proposal("p1", "Improve task success rate")], result)
+
+    assert orch._client.post.call_count == 0
+
+
+def test_no_terminal_baseline_allows_upgrade_task_once_any_task_is_terminal(tmp_path: Path) -> None:
+    """Control: current behaviour is unchanged once the run has >=1 done or
+    failed task -- see ``_orch``'s default fixture, which already provides
+    one."""
+    orch = _orch(tmp_path)
+    result = SimpleNamespace(errors=[])
+
+    _create_upgrade_tasks(orch, [_proposal("p1", "Improve task success rate")], result)
+
+    assert orch._client.post.call_count == 1
 
 
 def test_cap_refuses_upgrade_tasks_beyond_configured_limit(tmp_path: Path) -> None:

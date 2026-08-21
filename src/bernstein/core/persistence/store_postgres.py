@@ -186,6 +186,13 @@ AND    status  = 'open'
 RETURNING *
 """
 
+# list_tasks() always issues a SQL LIMIT, even when the caller passes none -
+# an omitted limit falls back to this ceiling rather than fetching every
+# matching row. A caller that genuinely needs the full table pages through
+# it by advancing offset in a loop, or passes an explicit limit above the
+# table size.
+_LIST_TASKS_DEFAULT_LIMIT = 500
+
 
 # ---------------------------------------------------------------------------
 # Row → Task conversion
@@ -696,10 +703,12 @@ class PostgresTaskStore(BaseTaskStore):
         Args:
             status: If provided, only tasks with this status are returned.
             cell_id: If provided, only tasks in this cell are returned.
-            limit: If provided, return at most this many tasks after filtering,
-                applied as SQL ``LIMIT``. If ``None`` (the default), no bound is
-                applied and every matching row is fetched — callers that need a
-                safety ceiling on large tables must pass an explicit limit.
+            limit: Return at most this many tasks after filtering, applied as
+                SQL ``LIMIT``. If ``None`` (the default), falls back to
+                ``_LIST_TASKS_DEFAULT_LIMIT`` — the fetch is always bounded, a
+                caller that needs the full table pages through it by
+                advancing ``offset`` in a loop, or passes an explicit limit
+                above the table size.
             offset: If provided, skip this many tasks after filtering, applied
                 as SQL ``OFFSET``. Combine with ``limit`` for paginated iteration.
 
@@ -725,10 +734,10 @@ class PostgresTaskStore(BaseTaskStore):
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         sql = f"SELECT * FROM tasks {where} ORDER BY priority, created_at"
 
-        if limit is not None:
-            sql += f" LIMIT ${param_n}"
-            params.append(limit)
-            param_n += 1
+        effective_limit = limit if limit is not None else _LIST_TASKS_DEFAULT_LIMIT
+        sql += f" LIMIT ${param_n}"
+        params.append(effective_limit)
+        param_n += 1
 
         if offset is not None:
             sql += f" OFFSET ${param_n}"

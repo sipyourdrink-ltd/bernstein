@@ -25,6 +25,7 @@ rather than as its own attribution is exempted by hand there, with the reason.
 - Export SOC 2 evidence pack to configured storage sinks via `export_soc2_evidence_pack` under canonical keys (#4148).
 - Dashboard colour tokens record measured contrast ratios and are gated against WCAG AA thresholds dynamically from the stylesheet (#3589). Contrast ratios for all body text, metadata, semantic states, and pill variants are catalogued in [`docs/design/web-ui-inventory.md`](../design/web-ui-inventory.md) and enforced by `tests/unit/test_webui_contrast.py`.
 - PostgresTaskStore and BaseTaskStore declare parameterized limit and offset bounds on list_tasks (#4157). PostgresTaskStore.list_tasks mirrors TaskStore.list_tasks by accepting optional limit and offset integer bounds and parameterizing them into the SQL query (LIMIT $n OFFSET $n) to prevent unbounded row fetching across database-backed deployments.
+- `PostgresTaskStore.list_tasks()` now issues a bounded query even when the caller omits `limit` (#3813). The `limit`/`offset` support from #4157 still left the SQL unbounded by default, so a caller that forgot to pass `limit` fetched and constructed a `Task` for every row in the table. A missing `limit` now falls back to a documented default (`_LIST_TASKS_DEFAULT_LIMIT`); a caller that genuinely needs the full table pages through it by advancing `offset`.
 - Wire weekly SOC 2 evidence pack workflow export step to sink backend via `SOC2_EVIDENCE_SINK` secret (#4149).
 - Wave 2 of README translations adds 16 languages (`es`, `pt`, `de`, `fr`, `it`, `nl`, `pl`, `sv`, `fi`, `uk`, `tr`, `ar`, `he`, `id`, `vi`, `th`) under the hash-binding drift gate, bringing translated README coverage to 23 languages alongside the English source. Docs: [`docs/playbooks/readme-l10n.md`](../playbooks/readme-l10n.md).
 
@@ -92,6 +93,17 @@ rather than as its own attribution is exempted by hand there, with the reason.
   containment distinction #4095 recorded for the pid-file sites).
 
 - Health check task count is scoped to the caller's tenant (#4156).
+- `bernstein verify receipt` distinguishes the integrity-only and provenance
+  tiers for automation instead of leaving both to exit `0` (#4208). A CI gate
+  scripted as `verify receipt $f && deploy` with no `--public-key` configured
+  could not tell a provenance pass from an integrity-only pass that
+  authenticates nothing about the signer; `--require-provenance` now turns an
+  integrity-only pass into exit `3`, naming the tier actually reached, and
+  `--json` adds a `tier` field (`"provenance"` / `"integrity-only"` / `null`)
+  so a caller can read the tier without parsing the verdict prose. Both flags
+  default off, so existing scripts keep today's `0`/`1`/`2` behaviour on
+  either tier unless they opt in. Docs:
+  [`docs/operations/deterministic-replay.md`](../operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
 - Stall escalation produces a degraded terminal receipt on a missing or empty
   event journal instead of raising (#3737). The kill already happened in that
   case; refusing to build the receipt left nothing in the chain to tell
@@ -129,3 +141,19 @@ rather than as its own attribution is exempted by hand there, with the reason.
   [`docs/concepts/lesson-persistence.md`](../concepts/lesson-persistence.md)
   records as the remaining gap.
 - Workspace merge order calculation is scoped to the caller's tenant (#4155).
+- `bernstein audit verify` reads the store and writes nothing to it, and the
+  daily seal now tells post-seal appends apart from a rewritten prefix (#4210,
+  #4201). The seal is pinned at run finalization while the log keeps growing —
+  a run closing after its own seal appends one more row — and the pillar bound
+  the whole current file, so every re-verification of a finished, untouched run
+  reported `TAMPERED` and exited non-zero. Routine use of a red verdict is how
+  a real one gets ignored. Each leaf is now recomputed over the byte prefix the
+  seal pinned, the root is re-derived from those bytes and compared against the
+  pinned root, and the verdict names the intact prefix and the post-seal row
+  count separately. The fail-closed direction is unchanged: an edit inside the
+  sealed prefix, or a segment shorter than its pin, is still `TAMPERED` with a
+  non-zero exit. Separately, seven verification pillars resolved the audit key
+  through the create-if-absent loader, so verifying a store whose key was
+  missing minted one — key material a fresh chain cannot authenticate, written
+  by the tool whose whole claim is that it only reads. They now use the
+  load-only resolver and report a missing key as a named skip.

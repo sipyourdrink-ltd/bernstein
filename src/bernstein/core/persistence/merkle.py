@@ -26,7 +26,7 @@ import json
 import time
 from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -452,6 +452,10 @@ class VerifyResult:
     errors: list[str] = field(default_factory=list)
     seal_path: Path | None = None
     root_hash: str = ""
+    #: Rows appended to each sealed segment after the seal was pinned. Empty
+    #: for seals that pin no per-leaf byte length (see
+    #: :func:`_check_sealed_prefixes`).
+    post_seal_rows: dict[str, int] = field(default_factory=dict)
 
 
 def load_latest_seal(merkle_dir: Path) -> tuple[dict[str, object], Path] | None:
@@ -478,20 +482,70 @@ def _check_inserted_files(current_files: list[Path], sealed_name_set: set[str]) 
     return [f"INSERTED: {f.name} (on disk, not in seal)" for f in current_files if f.name not in sealed_name_set]
 
 
-def _check_tampered_content(sealed_leaves: list[dict[str, str]], audit_dir: Path, scheme: int) -> list[str]:
-    """Return errors for files whose leaf hash doesn't match the seal.
+def _sealed_byte_len(leaf: dict[str, Any]) -> int | None:
+    """Return the byte length the seal pinned for *leaf*, or ``None``.
 
-    Leaf derivation is recomputed under *scheme* so a seal produced under
-    one scheme always verifies the same way (byte-identical leaf rule).
+    Seals written before the per-leaf length was recorded pin no prefix, so
+    those leaves keep binding the whole file.
+    """
+    raw = leaf.get("byte_len")
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        return None
+    return raw
+
+
+def _count_rows(data: bytes) -> int:
+    """Count JSONL rows in *data*; a trailing newline does not add a row."""
+    return sum(1 for line in data.split(b"\n") if line.strip())
+
+
+def _check_sealed_prefixes(
+    sealed_leaves: list[dict[str, Any]],
+    audit_dir: Path,
+    scheme: int,
+) -> tuple[list[str], dict[str, str], dict[str, int]]:
+    """Recompute every sealed leaf over the byte prefix the seal pinned.
+
+    The log is append-only and the seal is pinned at finalization, so a segment
+    that legitimately kept growing is *longer* than the seal recorded. Binding
+    the whole current file reads every such append as tamper, which is what
+    made re-verification of a finished, untouched run permanently red
+    (issue #4201). Binding the pinned prefix keeps the properties that matter -
+    any edit inside the sealed prefix changes the recomputed leaf, and a
+    segment shorter than its pin is a deletion - while the rows past the pin
+    are counted rather than reported as damage.
+
+    Leaf derivation is recomputed under *scheme* so a seal produced under one
+    scheme always verifies the same way (byte-identical leaf rule). Legacy (v1)
+    seals and any leaf without a pinned length still bind the whole file: there
+    is no prefix to recompute over, so the historical rule stands.
+
+    Returns ``(errors, recomputed_leaves, post_seal_rows)``.
     """
     errors: list[str] = []
+    recomputed: dict[str, str] = {}
+    post_seal_rows: dict[str, int] = {}
     for leaf in sealed_leaves:
-        fpath = audit_dir / leaf["file"]
-        if fpath.exists():
+        name = str(leaf["file"])
+        fpath = audit_dir / name
+        if not fpath.exists():
+            continue  # already reported by _check_deleted_files
+        byte_len = _sealed_byte_len(leaf)
+        if byte_len is None or scheme <= _LEGACY_SCHEME_VERSION:
             current_hash = file_leaf_hash(fpath, scheme=scheme)
-            if current_hash != leaf["hash"]:
-                errors.append(f"TAMPERED: {leaf['file']} (hash mismatch)")
-    return errors
+        else:
+            content = fpath.read_bytes()
+            if byte_len > len(content):
+                errors.append(
+                    f"TAMPERED: {name} (sealed prefix truncated: {len(content)} bytes on disk, {byte_len} sealed)"
+                )
+                continue
+            current_hash = _leaf_digest(content[:byte_len])
+            post_seal_rows[name] = _count_rows(content[byte_len:])
+        recomputed[name] = current_hash
+        if current_hash != leaf["hash"]:
+            errors.append(f"TAMPERED: {name} (sealed prefix hash mismatch)")
+    return errors, recomputed, post_seal_rows
 
 
 def _seal_scheme(seal: dict[str, object]) -> int:
@@ -518,6 +572,11 @@ def verify_merkle(audit_dir: Path, merkle_dir: Path) -> VerifyResult:
     mismatches. Verification recomputes leaves and the tree under the
     scheme recorded in the seal, so pre-hardening (v1) seals still verify
     under their original rules.
+
+    Each leaf is recomputed over the byte prefix the seal pinned, so rows
+    appended to a segment after the seal are reported as
+    :attr:`VerifyResult.post_seal_rows` rather than as tamper; an edit inside
+    the sealed prefix still fails (issue #4201).
     """
     result = VerifyResult(valid=False)
 
@@ -531,8 +590,8 @@ def verify_merkle(audit_dir: Path, merkle_dir: Path) -> VerifyResult:
     result.root_hash = str(seal.get("root_hash", ""))
     scheme = _seal_scheme(seal)
 
-    sealed_leaves: list[dict[str, str]] = seal.get("leaves", [])  # type: ignore[assignment]
-    sealed_names = [leaf["file"] for leaf in sealed_leaves]
+    sealed_leaves: list[dict[str, Any]] = seal.get("leaves", [])  # type: ignore[assignment]
+    sealed_names = [str(leaf["file"]) for leaf in sealed_leaves]
     sealed_name_set = set(sealed_names)
 
     current_files = sorted(audit_dir.glob("*.jsonl"))
@@ -540,11 +599,15 @@ def verify_merkle(audit_dir: Path, merkle_dir: Path) -> VerifyResult:
 
     result.errors.extend(_check_deleted_files(sealed_names, current_name_set))
     result.errors.extend(_check_inserted_files(current_files, sealed_name_set))
-    result.errors.extend(_check_tampered_content(sealed_leaves, audit_dir, scheme))
+    prefix_errors, recomputed, post_seal_rows = _check_sealed_prefixes(sealed_leaves, audit_dir, scheme)
+    result.errors.extend(prefix_errors)
+    result.post_seal_rows = post_seal_rows
 
-    # Rebuild tree and verify root
+    # Rebuild the tree from the leaves just recomputed off disk - not from the
+    # seal's own leaf hashes, which would only restate the seal - and compare
+    # against the pinned root.
     if not result.errors:
-        leaf_hashes = [(leaf["file"], leaf["hash"]) for leaf in sealed_leaves]
+        leaf_hashes = [(name, recomputed[name]) for name in sealed_names]
         tree = build_merkle_tree(leaf_hashes, scheme=scheme)
         if tree.root.hash != seal.get("root_hash"):
             result.errors.append(f"ROOT MISMATCH: computed={tree.root.hash}, sealed={seal.get('root_hash')}")

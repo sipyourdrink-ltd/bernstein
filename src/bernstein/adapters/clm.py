@@ -427,7 +427,14 @@ class ClmAdapter(CLIAdapter):
         extra_keys = [CLM_ENDPOINT_ENV, CLM_TOKEN_ENV, CLM_MODEL_ENV]
         if tls is not None:
             extra_keys.extend([CLM_CERT_FILE_ENV, CLM_KEY_FILE_ENV, CLM_CA_FILE_ENV, CLM_VERIFY_MODE_ENV])
-        env = build_filtered_env(extra_keys)
+        env = build_filtered_env(
+            extra_keys,
+            # Only the mTLS launcher path runs bernstein's own code via
+            # sys.executable; the plain path execs straight into aider,
+            # an external CLI that must not see the orchestrator's
+            # sys.path (issue #4221).
+            inherit_orchestrator_pythonpath=tls is not None,
+        )
         # Aider speaks the OpenAI wire format; rewire it onto the CLM
         # gateway via the standard OpenAI env vars. The scoped CLM_TOKEN
         # rides as the Bearer credential - never the operator's master.

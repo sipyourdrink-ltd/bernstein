@@ -12,7 +12,7 @@ import sys
 import time
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import click
 import httpx
@@ -44,6 +44,7 @@ from bernstein.cli.run_preflight import (
     validate_seed_or_exit,
 )
 from bernstein.core.cost import estimate_run_cost
+from bernstein.core.errors import BernsteinFirstRunError
 from bernstein.core.manager_parsing import _resolve_depends_on  # pyright: ignore[reportPrivateUsage]
 from bernstein.core.orchestration.process_utils import (
     LIVENESS_ALIVE,
@@ -229,27 +230,35 @@ def _load_dry_run_tasks(plan_file: Path | None) -> list[Any]:
     return [Task.from_dict(td) for td in tasks_data]
 
 
-def _confirm_run(*, goal: str | None, seed_file: str | None) -> bool:
+def _confirm_run(
+    *,
+    goal: str | None,
+    seed_file: str | None,
+    model_override: str | None = None,
+    cli_override: str | None = None,
+) -> bool:
     """Show confirmation prompt before execution. Returns True to proceed."""
     effective_goal = goal
     team: list[str] | None = None
 
-    if effective_goal is None:
-        _peek_path: Path | None = Path(seed_file) if seed_file is not None else find_seed_file()
-        if _peek_path is not None:
-            with suppress(Exception):
-                from bernstein.core.seed import parse_seed as _parse_seed
+    _peek_path: Path | None = Path(seed_file) if seed_file is not None else find_seed_file()
+    _seed = None
+    if _peek_path is not None:
+        with suppress(Exception):
+            from bernstein.core.seed import parse_seed as _parse_seed
 
-                _seed = _parse_seed(_peek_path)
+            _seed = _parse_seed(_peek_path)
+            if effective_goal is None:
                 effective_goal = _seed.goal
-                team = list(_seed.team) if _seed.team != "auto" else None
-                from bernstein.core.plan_approval import configure_plan_models
+            team = list(_seed.team) if _seed.team != "auto" else None
 
-                configure_plan_models(
-                    _seed.role_model_policy,
-                    default_model=_seed.model,
-                    default_cli=(_seed.cli if _seed.cli and _seed.cli != "auto" else None),
-                )
+    from bernstein.core.plan_approval import configure_plan_models
+
+    configure_plan_models(
+        _seed.role_model_policy if _seed else None,
+        default_model=model_override or (_seed.model if _seed else None),
+        default_cli=cli_override or (_seed.cli if _seed and _seed.cli != "auto" else None),
+    )
 
     if effective_goal:
         plan_obj, plan_tasks = _build_synthetic_plan(effective_goal, team)
@@ -1343,6 +1352,70 @@ def _poll_quiescent_status() -> dict[str, Any] | None:
         n_incomplete=n_incomplete,
         counts_are_complete=full_counts is not None,
     ):
+        return None
+    return status_payload
+
+
+#: Statuses that mean a task was actually picked up by an agent at some
+#: point. Deliberately excludes ``open``: an unclaimed task with no live
+#: agent is the ordinary gap before the next agent spawns for it, not
+#: evidence that anything died.
+_CLAIMED_BUT_STUCK_STATUSES: Final[frozenset[str]] = frozenset({"claimed", "in_progress", "orphaned"})
+
+
+def _poll_no_plan_after_spawn() -> dict[str, Any] | None:
+    """One poll: the ``/status`` payload iff a spawned agent died before any plan formed.
+
+    Covers a shape neither :func:`_poll_quiescent_status` nor
+    :func:`_wait_for_run_completion`'s "orchestrator gone" verdict catches: the
+    orchestrator subprocess is still alive and ticking, but the agent it spawned
+    died almost immediately, the goal was never decomposed, and the single root
+    task it left behind never advances past a declared-but-unfinished status.
+    That shape reads as ``open == claimed == 0`` at the top level whenever the
+    task is stuck ``in_progress``/``orphaned`` rather than ``claimed``, so it is
+    NOT quiescent, and the orchestrator process itself never exits, so it is not
+    "gone" either -- both existing checks correctly report "still running" and
+    the CLI would otherwise detach silently (issue #3528).
+
+    Unlike the "orchestrator gone" verdict, ``agent_count`` here is a live
+    figure the task server reports directly rather than an inference from a
+    pidfile, so a single reading of "no agent registered" needs no confirmation
+    window. The false-positive this must avoid is the ordinary startup window,
+    where the same ``agent_count == 0`` reading means "hasn't spawned yet" --
+    callers must only invoke this once :func:`_await_first_spawn_outcome` has
+    already confirmed an agent was alive at some point in this run.
+
+    Returns ``None`` for every other state, including "still running
+    normally", "at least one task has ever reached a terminal state" (a real
+    plan produced real output, whatever is stuck now is a different failure),
+    and "server unreachable".
+    """
+    status_payload = server_get("/status")
+    health_payload = server_get("/health")
+    if not (isinstance(status_payload, dict) and isinstance(health_payload, dict)):
+        return None
+    if int(health_payload.get("agent_count", 0) or 0) != 0:
+        return None
+    n_incomplete, full_counts = _incomplete_declared_counts(status_payload)
+    if full_counts is not None:
+        status_payload["task_counts"] = full_counts
+    total = int(status_payload.get("total", 0) or 0)
+    # Exactly one declared task (the manager's own decompose task) and it is
+    # still the only thing in the graph: decomposition never happened, so no
+    # plan was ever produced. A run that got as far as declaring child tasks
+    # has a plan, even if something else about it later goes wrong -- that is
+    # a different failure with its own diagnosis, not this one.
+    if total != 1 or n_incomplete != 1:
+        return None
+    # "open" alone is not evidence of a death: an unclaimed task with no
+    # live agent is the ordinary gap before the next agent picks it up, and
+    # that gap is exactly as wide whether an agent died or one simply
+    # hasn't spawned for it yet. What is only explained by a death is a task
+    # that WAS claimed -- ``claimed``, ``in_progress``, or ``orphaned`` --
+    # with nobody left holding it.
+    counts = full_counts if full_counts is not None else status_payload
+    was_claimed = sum(int(counts.get(status, 0) or 0) for status in _CLAIMED_BUT_STUCK_STATUSES)
+    if was_claimed != 1:
         return None
     return status_payload
 
@@ -2505,8 +2578,18 @@ def _run_impl(
     # --plan-only`` started a server, spawned an agent, created a worktree and
     # reached the merge path (gh-3255).
     if plan_only:
-        from bernstein.core.plan_approval import create_plan
+        from bernstein.core.plan_approval import configure_plan_models, create_plan
         from bernstein.core.plan_builder import PlanBuilder
+
+        # --plan-only previews the run without reading a seed here, so there
+        # is no role policy to apply; the explicit None keeps the required
+        # positional honest rather than letting the panel fall back to the
+        # complexity default for the model.
+        configure_plan_models(
+            None,
+            default_model=model,
+            default_cli=cli,
+        )
 
         rerun_hint: str | None = None
 
@@ -2600,6 +2683,11 @@ def _run_impl(
 
             _finalize_run_output(quiet=quiet)
             return
+        except BernsteinFirstRunError:
+            # Already carries a structured category and exit code; let the
+            # outer first-run guard render its hint instead of flattening it
+            # into a generic "failed to load plan file" message.
+            raise
         except Exception as exc:
             console.print(f"[red]Failed to load plan file:[/red] {exc}")
             raise SystemExit(1) from exc
@@ -2615,7 +2703,7 @@ def _run_impl(
             raise SystemExit(1) from exc
 
     # Confirmation prompt before execution (skip with --auto-approve)
-    if not auto_approve and not _confirm_run(goal=goal, seed_file=seed_file):
+    if not auto_approve and not _confirm_run(goal=goal, seed_file=seed_file, model_override=model, cli_override=cli):
         return
 
     if goal is not None:

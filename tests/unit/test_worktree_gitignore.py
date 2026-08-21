@@ -191,6 +191,7 @@ def test_create_writes_worktree_scoped_excludes_not_a_tracked_gitignore(tmp_path
     assert "/.env" in lines
     assert "/.claude/mcp.json" in lines
     assert "/CLAUDE.md" in lines
+    assert "/.claude/scheduled_tasks.json" in lines
 
     # Must not blanket-ignore the whole .claude/ tree -- that would drop a
     # legitimate .claude/ deliverable (e.g. a skill or command).
@@ -279,6 +280,26 @@ def test_generated_session_claude_md_is_not_staged(tmp_path: Path, repo: Path) -
 
     assert "CLAUDE.md" not in staged, "the orchestrator-generated session CLAUDE.md must not be staged"
     assert "src/feature.py" in staged
+
+
+def test_injected_scheduled_tasks_json_does_not_dirty_worktree(tmp_path: Path, repo: Path) -> None:
+    """Regression for #4225: the spawner injects a per-session
+    ``.claude/scheduled_tasks.json`` (health-check cron task) into every
+    agent worktree, and its content embeds the session id and a creation
+    timestamp -- so if it were ever tracked, two agent branches merging back
+    would conflict on it. With the exclude in place, a worktree carrying the
+    injected file must report a clean tree, matching the acceptance
+    criterion in the issue."""
+    mgr = WorktreeManager(repo_root=repo)
+    session_id = "sess-scheduled-tasks"
+    worktree_path = mgr.create(session_id)
+
+    tasks_path = worktree_path / ".claude" / "scheduled_tasks.json"
+    tasks_path.parent.mkdir(parents=True, exist_ok=True)
+    tasks_path.write_text('{"tasks": [{"id": "hc-' + session_id[:8] + '"}]}\n', encoding="utf-8")
+
+    status = _git(worktree_path, "status", "--porcelain")
+    assert status == "", f"injected scheduled_tasks.json must not dirty the worktree, got: {status!r}"
 
 
 def test_git_add_dash_a_still_stages_non_runtime_claude_dir_deliverable(tmp_path: Path, repo: Path) -> None:

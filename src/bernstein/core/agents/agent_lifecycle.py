@@ -409,6 +409,12 @@ def refresh_agent_states(orch: Any, tasks_snapshot: dict[str, list[Task]]) -> No
             continue
         _handle_dead_agent(orch, session, tasks_snapshot)
 
+    # Re-check every death judgment deferred by _probe_liveness_signals: the
+    # session that deferred it is already "dead" and filtered out of the loop
+    # above, so this is the only place left that can still fail a task whose
+    # deferral was never followed by real progress (issue #4222).
+    _reevaluate_pending_death_judgments(orch, tasks_snapshot)
+
     # Purge dead agents to prevent unbounded dict growth (memory leak fix)
     purge_dead_agents(orch)
 
@@ -1634,6 +1640,24 @@ def _mtime_age(path: Path, now: float) -> float | None:
     return None
 
 
+def _mtime_and_size(path: Path | None) -> tuple[float | None, int | None]:
+    """Return ``(mtime, size)`` for ``path``, or ``(None, None)`` if missing/unreadable.
+
+    Used to build and later compare liveness snapshots (see
+    ``_liveness_snapshot`` / ``_reevaluate_pending_death_judgments``): a plain
+    age check can't tell a one-time write (e.g. a crash traceback flushed on
+    the way down) from ongoing output, but a raw mtime/size pair can be
+    compared against a later read to see whether the file moved at all.
+    """
+    if path is None:
+        return None, None
+    with contextlib.suppress(OSError):
+        if path.exists():
+            st = path.stat()
+            return st.st_mtime, st.st_size
+    return None, None
+
+
 def _probe_liveness_signals(orch: Any, session: AgentSession, now: float) -> dict[str, Any]:
     """Collect every liveness signal for a possibly-dead agent and log the judgment.
 
@@ -1713,6 +1737,147 @@ def _probe_liveness_signals(orch: Any, session: AgentSession, now: float) -> dic
         "has_fresh_signal": has_fresh_signal,
         "verdict": verdict,
     }
+
+
+def _liveness_snapshot(orch: Any, session: AgentSession, now: float) -> dict[str, Any]:
+    """Record the liveness signal state at the moment a deferred death judgment
+    is made, so a later tick can tell whether the agent actually kept working.
+
+    Persisted (keyed by task) in ``orch._pending_liveness_judgments`` by the
+    caller, since the session itself is transitioned to "dead" and dropped
+    from the main ``refresh_agent_states`` loop in this same tick -- nothing
+    else keeps this state alive for the next reap cycle to consult.
+    """
+    heartbeat_path = orch._workdir / ".sdd" / "runtime" / "heartbeats" / f"{session.id}.json"
+    log_path = _resolve_agent_log_path(orch._workdir, session)
+    _wt_dir = _resolve_agent_worktree_dir(orch._workdir, session)
+    git_path = (_wt_dir / ".git") if _wt_dir is not None else None
+
+    heartbeat_mtime, _hb_size = _mtime_and_size(heartbeat_path)
+    log_mtime, log_size = _mtime_and_size(log_path)
+    git_mtime, _git_size = _mtime_and_size(git_path)
+
+    return {
+        "session_id": session.id,
+        "pid": session.pid,
+        "recorded_at": now,
+        "heartbeat_path": heartbeat_path,
+        "log_path": log_path,
+        "git_path": git_path,
+        "heartbeat_mtime": heartbeat_mtime,
+        "log_mtime": log_mtime,
+        "log_size": log_size,
+        "git_mtime": git_mtime,
+    }
+
+
+def _reevaluate_pending_death_judgments(orch: Any, tasks_snapshot: dict[str, list[Task]]) -> None:
+    """Re-judge every task whose death was deferred by ``_probe_liveness_signals``.
+
+    A deferral only proves the agent looked alive *at the moment the tracked
+    pid was found dead* -- the fresh signal that triggered it (e.g. a crash
+    traceback flushed to the log on the process's way down) is frequently a
+    one-time write, not evidence of ongoing work, and the old code never
+    re-checked: the session that owned the deferred task is transitioned to
+    "dead" in this same tick, so it is filtered out of every later
+    ``refresh_agent_states`` pass and the promised "next reap cycle"
+    re-evaluation never actually ran, leaving the task claimed indefinitely
+    (issue #4222).
+
+    Runs every tick, independent of ``orch._agents`` state, and fails the
+    task unless a signal has advanced *past* the snapshot recorded at defer
+    time. A double-forked/re-exec'd runner whose log keeps growing after the
+    tracked launcher pid exits keeps advancing its own snapshot on each
+    check and stays correctly deferred, same as before this fix.
+    """
+    pending: dict[str, dict[str, Any]] | None = getattr(orch, "_pending_liveness_judgments", None)
+    if not pending:
+        return
+
+    base = orch._config.server_url
+    all_cached: list[Task] = []
+    for bucket in tasks_snapshot.values():
+        all_cached.extend(bucket)
+    task_by_id = {t.id: t for t in all_cached}
+
+    for task_id in list(pending.keys()):
+        snapshot = pending[task_id]
+
+        task = task_by_id.get(task_id)
+        if task is None:
+            try:
+                resp = orch._client.get(f"{base}/tasks/{task_id}")
+                resp.raise_for_status()
+                task = Task.from_dict(resp.json())
+            except httpx.HTTPError:
+                # Task no longer resolvable (deleted, or stale prior session) --
+                # nothing left to re-judge.
+                del pending[task_id]
+                continue
+        if task.status not in (TaskStatus.OPEN, TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS):
+            # Resolved through some other path (completed/failed/blocked) since
+            # the deferral -- stop tracking it.
+            del pending[task_id]
+            continue
+
+        heartbeat_mtime, _hb_size = _mtime_and_size(snapshot["heartbeat_path"])
+        log_mtime, log_size = _mtime_and_size(snapshot["log_path"])
+        git_mtime, _git_size = _mtime_and_size(snapshot["git_path"])
+
+        advanced = (
+            (heartbeat_mtime is not None and heartbeat_mtime > (snapshot["heartbeat_mtime"] or 0))
+            or (log_mtime is not None and log_mtime > (snapshot["log_mtime"] or 0))
+            or (log_size is not None and log_size > (snapshot["log_size"] or 0))
+            or (git_mtime is not None and git_mtime > (snapshot["git_mtime"] or 0))
+        )
+
+        if advanced:
+            logger.info(
+                "liveness_reeval: task=%s agent=%s still deferred -- a signal advanced past "
+                "the pid-exit snapshot (heartbeat_mtime=%s log_mtime=%s log_size=%s "
+                "git_mtime=%s), so the agent is still doing observable work",
+                task_id,
+                snapshot["session_id"],
+                heartbeat_mtime,
+                log_mtime,
+                log_size,
+                git_mtime,
+            )
+            pending[task_id] = {
+                **snapshot,
+                "heartbeat_mtime": heartbeat_mtime,
+                "log_mtime": log_mtime,
+                "log_size": log_size,
+                "git_mtime": git_mtime,
+            }
+            continue
+
+        logger.warning(
+            "liveness_reeval: task=%s agent=%s pid=%s judged dead on re-evaluation -- no "
+            "signal advanced past the snapshot taken when the tracked pid exited; the earlier "
+            "fresh signal that deferred this judgment was a one-time write (e.g. a crash "
+            "traceback), not ongoing liveness. Failing/retrying the task now instead of "
+            "leaving it claimed indefinitely.",
+            task_id,
+            snapshot["session_id"],
+            snapshot["pid"] or "unknown",
+        )
+        try:
+            retry_or_fail_task(
+                task_id,
+                f"Agent {snapshot['session_id']} died; deferred death judgment re-evaluated "
+                f"and no liveness signal advanced past the pid-exit snapshot",
+                client=orch._client,
+                server_url=base,
+                max_task_retries=orch._config.max_task_retries,
+                retried_task_ids=orch._retried_task_ids,
+                workdir=getattr(orch, "_workdir", None),
+                **_retry_escalation_context(orch),
+            )
+            del pending[task_id]
+        except httpx.HTTPError as exc:
+            logger.error("Failed to retry/fail task %s on liveness re-evaluation: %s", task_id, exc)
+            # Leave it pending -- retried again next tick rather than lost.
 
 
 def _handle_orphan_no_signals(
@@ -1810,8 +1975,9 @@ def _handle_orphan_no_signals(
         logger.warning(
             "Deferring death judgment for task %s: agent %s tracked pid=%s looks dead but "
             "liveness signals are fresh (heartbeat_age_s=%s log_age_s=%s git_age_s=%s, "
-            "grace_s=%.0f) -- NOT failing the task this tick; will re-evaluate on the next "
-            "reap cycle once signals actually go stale.",
+            "grace_s=%.0f) -- NOT failing the task this tick; recording the current signal "
+            "state and re-evaluating on every subsequent tick until a signal actually "
+            "advances past it or the task is resolved another way.",
             task_id,
             session.id,
             _liveness["pid"] or "unknown",
@@ -1820,6 +1986,17 @@ def _handle_orphan_no_signals(
             _liveness["git_age_s"],
             _ORPHAN_LIVENESS_GRACE_S,
         )
+        # The session backing this deferral is transitioned to "dead" and its
+        # worktree cleaned up in this same tick (_handle_dead_agent), so it
+        # won't be around for a later tick to re-check. Persist the pending
+        # judgment on the orchestrator itself, keyed by task, so
+        # _reevaluate_pending_death_judgments can keep re-checking it
+        # independent of the session's lifetime.
+        _pending = getattr(orch, "_pending_liveness_judgments", None)
+        if _pending is None:
+            _pending = {}
+            orch._pending_liveness_judgments = _pending
+        _pending[task_id] = _liveness_snapshot(orch, session, time.time())
         return False, "deferred_liveness_signal_fresh"
 
     # Agent died without output

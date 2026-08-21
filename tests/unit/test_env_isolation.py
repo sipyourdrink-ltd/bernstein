@@ -135,6 +135,47 @@ class TestBuildFilteredEnv:
             result = build_filtered_env(["ANTHROPIC_API_KEY"])
         assert result == {}
 
+    def test_pythonpath_not_injected_by_default(self, tmp_path: Path) -> None:
+        """Without the opt-in flag, no PYTHONPATH is injected even when the
+        orchestrator's sys.path is non-empty (issue #4221).
+
+        This is the default every external CLI adapter (aider, codex,
+        gemini, ...) gets: their own dependencies must not be shadowed by
+        the orchestrator's site-packages.
+        """
+        fake_env = {"PATH": "/usr/bin"}
+        with (
+            patch("bernstein.adapters.env_isolation.os.environ", fake_env),
+            patch("sys.path", [str(tmp_path)]),
+        ):
+            result = build_filtered_env()
+        assert "PYTHONPATH" not in result
+
+    def test_pythonpath_injected_when_opted_in(self, tmp_path: Path) -> None:
+        """The opt-in flag injects the orchestrator's sys.path entries as
+        PYTHONPATH, for spawn paths that run bernstein's own code via
+        ``sys.executable`` (issue #4221)."""
+        fake_env = {"PATH": "/usr/bin"}
+        with (
+            patch("bernstein.adapters.env_isolation.os.environ", fake_env),
+            patch("sys.path", [str(tmp_path), ""]),
+        ):
+            result = build_filtered_env(inherit_orchestrator_pythonpath=True)
+        assert result["PYTHONPATH"] == str(tmp_path)
+
+    def test_operator_pythonpath_passes_through_unmodified(self, tmp_path: Path) -> None:
+        """An operator-set PYTHONPATH passes through the allowlist unchanged,
+        regardless of the opt-in flag - the injection only fires when the
+        caller's environment carries no PYTHONPATH of its own."""
+        fake_env = {"PATH": "/usr/bin", "PYTHONPATH": "/operator/custom/path"}
+        for flag in (False, True):
+            with (
+                patch("bernstein.adapters.env_isolation.os.environ", fake_env),
+                patch("sys.path", [str(tmp_path)]),
+            ):
+                result = build_filtered_env(inherit_orchestrator_pythonpath=flag)
+            assert result["PYTHONPATH"] == "/operator/custom/path"
+
     def test_result_is_independent_copy(self) -> None:
         """Mutating the result does not affect os.environ or a subsequent call."""
         env = {"PATH": "/bin", "HOME": "/home/user"}
@@ -353,6 +394,185 @@ class TestAdaptersUseFilteredEnv:
         kwargs = popen_spy.call_args.kwargs
         assert "env" in kwargs
         assert kwargs["env"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Call-site gating: only bernstein's own sys.executable spawns opt in
+# ---------------------------------------------------------------------------
+
+
+class TestOrchestratorPythonPathCallSiteGating:
+    """Regression coverage for issue #4221.
+
+    External CLI adapters must never receive the orchestrator's sys.path
+    as PYTHONPATH - it shadows their own dependencies. Only spawn paths
+    that run bernstein's own code via ``sys.executable`` opt in.
+    """
+
+    def test_aider_does_not_receive_orchestrator_pythonpath(self, tmp_path: Path) -> None:
+        """Aider is an external CLI; it must not see the orchestrator's
+        sys.path even when the caller's environment has no PYTHONPATH of
+        its own (the exact scenario from issue #4221: a 3.12 aider venv
+        poisoned by a 3.14 orchestrator's site-packages)."""
+        from bernstein.core.models import ModelConfig
+
+        from bernstein.adapters.aider import AiderAdapter
+
+        adapter = AiderAdapter()
+        proc_mock = _make_popen_mock()
+        fake_env = {"PATH": "/usr/bin"}
+        with (
+            patch("bernstein.adapters.aider.subprocess.Popen", return_value=proc_mock) as popen_spy,
+            patch("bernstein.adapters.env_isolation.os.environ", fake_env),
+            patch("sys.path", [str(tmp_path)]),
+        ):
+            adapter.spawn(
+                prompt="do work",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="sess-aider-pythonpath",
+            )
+        env = popen_spy.call_args.kwargs["env"]
+        assert "PYTHONPATH" not in env
+
+    def test_manager_adapter_receives_orchestrator_pythonpath(self, tmp_path: Path) -> None:
+        """ManagerAdapter runs ``bernstein.core.orchestration.manager`` via
+        sys.executable - bernstein's own code - so it needs the injection
+        to import bernstein when sys.executable is the uv framework
+        Python."""
+        from bernstein.core.models import ModelConfig
+
+        from bernstein.adapters.manager import ManagerAdapter
+
+        adapter = ManagerAdapter()
+        proc_mock = _make_popen_mock()
+        fake_env = {"PATH": "/usr/bin"}
+        with (
+            patch("bernstein.adapters.manager.subprocess.Popen", return_value=proc_mock) as popen_spy,
+            patch("bernstein.adapters.env_isolation.os.environ", fake_env),
+            patch("sys.path", [str(tmp_path)]),
+        ):
+            adapter.spawn(
+                prompt="do work (id=task-42)",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="sess-manager-pythonpath",
+            )
+        env = popen_spy.call_args.kwargs["env"]
+        assert env["PYTHONPATH"] == str(tmp_path)
+
+    def test_python_runtime_adapter_receives_orchestrator_pythonpath(self, tmp_path: Path) -> None:
+        """PythonRuntimeAdapter runs python_runtime_runner.py - bernstein's
+        own code - via sys.executable, so it needs the injection."""
+        from bernstein.core.models import ModelConfig
+
+        from bernstein.adapters.python_runtime import PythonRuntimeAdapter
+
+        adapter = PythonRuntimeAdapter()
+        proc_mock = _make_popen_mock()
+        fake_env = {"PATH": "/usr/bin"}
+        with (
+            patch("bernstein.adapters.python_runtime.subprocess.Popen", return_value=proc_mock) as popen_spy,
+            patch("bernstein.adapters.env_isolation.os.environ", fake_env),
+            patch("sys.path", [str(tmp_path)]),
+        ):
+            adapter.spawn(
+                prompt="do work",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
+                session_id="sess-pyruntime-pythonpath",
+                mcp_config={"runtime_module": "custom_agent"},
+                timeout_seconds=0,
+            )
+        env = popen_spy.call_args.kwargs["env"]
+        assert env["PYTHONPATH"] == str(tmp_path)
+
+    def test_openai_agents_adapter_receives_orchestrator_pythonpath(self, tmp_path: Path) -> None:
+        """OpenAIAgentsAdapter always execs
+        ``bernstein.adapters.openai_agents_runner`` - bernstein's own code -
+        via sys.executable, so it needs the injection."""
+        from bernstein.core.models import ModelConfig
+
+        from bernstein.adapters.openai_agents import OpenAIAgentsAdapter
+
+        adapter = OpenAIAgentsAdapter()
+        proc_mock = _make_popen_mock()
+        fake_env = {"PATH": "/usr/bin"}
+        with (
+            patch("bernstein.adapters.openai_agents.subprocess.Popen", return_value=proc_mock) as popen_spy,
+            patch("bernstein.adapters.env_isolation.os.environ", fake_env),
+            patch("sys.path", [str(tmp_path)]),
+        ):
+            adapter.spawn(
+                prompt="do work",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5", effort="high"),
+                session_id="sess-oai-agents-pythonpath",
+            )
+        env = popen_spy.call_args.kwargs["env"]
+        assert env["PYTHONPATH"] == str(tmp_path)
+
+    def test_clm_adapter_pythonpath_only_when_mtls_launcher_used(self, tmp_path: Path) -> None:
+        """ClmAdapter routes through ``clm_tls_launcher`` (bernstein's own
+        code) only when mTLS is configured; the plain path execs straight
+        into aider, an external CLI, and must not get the injection."""
+        from bernstein.core.models import ModelConfig
+
+        from bernstein.adapters.clm import (
+            CLM_CA_FILE_ENV,
+            CLM_CERT_FILE_ENV,
+            CLM_ENDPOINT_ENV,
+            CLM_KEY_FILE_ENV,
+            CLM_MODEL_ENV,
+            CLM_TOKEN_ENV,
+            ClmAdapter,
+        )
+
+        base_env = {
+            "PATH": "/usr/bin",
+            CLM_ENDPOINT_ENV: "https://clm.internal.example/v1/",
+            CLM_TOKEN_ENV: "scoped-jwt-customer-001",
+            CLM_MODEL_ENV: "clm-7b-instruct",
+        }
+
+        # -- no mTLS: plain aider exec, no injection --
+        adapter = ClmAdapter()
+        proc_mock = _make_popen_mock()
+        with (
+            patch("bernstein.adapters.clm.subprocess.Popen", return_value=proc_mock) as popen_spy,
+            patch("bernstein.adapters.env_isolation.os.environ", base_env),
+            patch("sys.path", [str(tmp_path)]),
+        ):
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="clm-7b-instruct", effort="medium"),
+                session_id="sess-clm-no-mtls",
+            )
+        assert "PYTHONPATH" not in popen_spy.call_args.kwargs["env"]
+
+        # -- mTLS configured: routes through clm_tls_launcher, needs injection --
+        cert, key, ca = tmp_path / "client.crt", tmp_path / "client.key", tmp_path / "ca.crt"
+        for path, label in ((cert, "CERTIFICATE"), (key, "PRIVATE KEY"), (ca, "CERTIFICATE")):
+            path.write_text(f"-----BEGIN {label}-----\nstub\n-----END {label}-----\n", encoding="utf-8")
+        mtls_env = base_env | {
+            CLM_CERT_FILE_ENV: str(cert),
+            CLM_KEY_FILE_ENV: str(key),
+            CLM_CA_FILE_ENV: str(ca),
+        }
+        proc_mock2 = _make_popen_mock()
+        with (
+            patch("bernstein.adapters.clm.subprocess.Popen", return_value=proc_mock2) as popen_spy2,
+            patch("bernstein.adapters.env_isolation.os.environ", mtls_env),
+            patch("sys.path", [str(tmp_path)]),
+        ):
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="clm-7b-instruct", effort="medium"),
+                session_id="sess-clm-mtls",
+            )
+        assert popen_spy2.call_args.kwargs["env"]["PYTHONPATH"] == str(tmp_path)
 
 
 # ---------------------------------------------------------------------------

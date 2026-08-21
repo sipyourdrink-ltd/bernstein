@@ -288,6 +288,7 @@ def build_filtered_env(
     agent_id: str | None = None,
     role: str | None = None,
     credential_policy: AgentCredentialPolicy | None = None,
+    inherit_orchestrator_pythonpath: bool = False,
 ) -> dict[str, str]:
     """Build a filtered copy of the environment safe for agent subprocesses.
 
@@ -320,6 +321,16 @@ def build_filtered_env(
         credential_policy: Explicit policy override.  Primarily used in
             tests; production code should rely on the module-level
             default installed at orchestrator startup.
+        inherit_orchestrator_pythonpath: When ``True`` and the caller's
+            environment carries no ``PYTHONPATH`` of its own, inject the
+            orchestrator's ``sys.path`` as ``PYTHONPATH`` so the spawned
+            process can import ``bernstein`` under ``sys.executable``.
+            Only pass ``True`` from spawn paths that run bernstein's own
+            code via ``sys.executable`` (the worker's Python entrypoints,
+            e.g. ``bernstein.core.orchestration.manager``). External CLI
+            agents (aider, codex, gemini, ...) must never receive this -
+            it shadows their own dependencies with the orchestrator's
+            site-packages (issue #4221). Defaults to ``False``.
 
     Returns:
         A fresh dict containing only the allowed variables that are currently
@@ -372,11 +383,17 @@ def build_filtered_env(
     if not _embedded_teams_opt_in():
         env = {k: v for k, v in env.items() if not _is_embedded_teams_gate(k)}
 
-    # Ensure PYTHONPATH includes directories needed by bernstein-worker.
+    # Ensure PYTHONPATH includes directories needed by bernstein's own
+    # Python entrypoints (the worker's manager/runner/launcher modules).
     # When the orchestrator runs via ``uv run``, sys.executable may point
     # to the framework Python rather than the venv Python.  Without an
-    # explicit PYTHONPATH the worker subprocess cannot import bernstein.
-    if "PYTHONPATH" not in env:
+    # explicit PYTHONPATH such a spawn cannot import bernstein.
+    #
+    # Opt-in only (issue #4221): external CLI agents (aider, codex,
+    # gemini, ...) run under their own interpreter and must never see
+    # the orchestrator's sys.path - it shadows their own dependencies
+    # with bernstein's site-packages instead.
+    if inherit_orchestrator_pythonpath and "PYTHONPATH" not in env:
         import sys
 
         src_dirs = [p for p in sys.path if p and Path(p).is_dir()]

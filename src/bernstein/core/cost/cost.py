@@ -207,6 +207,10 @@ def get_all_bandit_arms() -> list[str]:
 
 def _model_cost(model: str) -> float:
     """Rough cost per 1k tokens for a model name."""
+    from bernstein.core.cost.model_prices import is_free_route
+
+    if is_free_route(model):
+        return 0.0
     model_lower = model.lower()
     for key, cost in _MODEL_COST_USD_PER_1K.items():
         if key in model_lower:

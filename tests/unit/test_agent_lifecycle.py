@@ -883,3 +883,124 @@ def test_handle_orphaned_task_provider_fatal_types_fast_fail_and_throttle(tmp_pa
         assert failure_type in retry_or_fail_task.call_args.args[1]
         orch._rate_limit_tracker.throttle_provider.assert_called_once()
         orch._record_provider_health.assert_called_once_with(session, success=False)
+
+
+# ---------------------------------------------------------------------------
+# Issue #4222: deferred death judgment must be re-evaluable after the
+# session that deferred it is reaped, and must not defer forever on a
+# liveness signal that never advances past its pid-exit snapshot.
+# ---------------------------------------------------------------------------
+
+
+def test_deferred_death_judgment_reevaluated_and_failed_when_signal_never_advances(tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    """An instantly-crashed agent's only "fresh" signal is the traceback it
+    wrote on its way down. That write never repeats, so a later
+    re-evaluation must see no advancement past the pid-exit snapshot and
+    fail the task -- instead of deferring forever because the session that
+    made the deferral is already gone by the next tick (ground truth: 12
+    identical runs where the claim was never recovered)."""
+    from bernstein.core.agents.agent_lifecycle import _reevaluate_pending_death_judgments
+
+    task = _make_task()
+    task.status = TaskStatus.CLAIMED
+    session = AgentSession(
+        id="sess-instant-crash",
+        role="backend",
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+        task_ids=[task.id],
+        pid=4242,
+        exit_code=1,  # crashed, not a clean exit
+        spawn_ts=1000.0,
+    )
+    orch = _make_orch_no_ratelimit(tmp_path)
+
+    log_path = tmp_path / ".sdd" / "runtime" / f"{session.id}.log"
+    log_path.parent.mkdir(parents=True)
+    log_path.write_text("Traceback (most recent call last):\n  ...\nRuntimeError: boom\n")
+
+    snapshot = {"claimed": [task], "open": [], "in_progress": [], "done": []}
+
+    with (
+        patch("bernstein.core.agents.agent_lifecycle.collect_completion_data", return_value={"files_modified": []}),
+        patch("bernstein.core.agents.agent_lifecycle._has_git_commits_on_branch", return_value=False),
+        patch("bernstein.core.agents.agent_lifecycle._is_process_alive", return_value=False),
+        patch("bernstein.core.agents.agent_lifecycle.complete_task") as mock_complete,
+        patch("bernstein.core.agents.agent_lifecycle.retry_or_fail_task") as mock_retry,
+    ):
+        # Tick 1: the crash traceback is a fresh log write, so the death
+        # judgment defers rather than failing the task outright.
+        handle_orphaned_task(orch, task.id, session, snapshot)
+        mock_retry.assert_not_called()
+        mock_complete.assert_not_called()
+        assert task.id in orch._pending_liveness_judgments
+
+        # The session that made the deferral is gone by the next tick (its
+        # worktree was cleaned up and it was transitioned to "dead"), so
+        # nothing else touches the log. Re-evaluate without any new write.
+        _reevaluate_pending_death_judgments(orch, snapshot)
+
+    # No signal advanced past the pid-exit snapshot -- the task must be
+    # failed/retried now, and the pending judgment must be cleared so it
+    # isn't checked forever.
+    mock_retry.assert_called_once()
+    assert task.id not in orch._pending_liveness_judgments
+
+
+def test_deferred_death_judgment_stays_deferred_while_log_keeps_growing(tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    """Regression guard for the double-fork/re-exec case (defect 8): a dead
+    tracked pid whose log keeps growing after the tracked pid exited is a
+    real live agent (untracked worker still running) and must stay
+    deferred on re-evaluation, not get failed just because a judgment was
+    made once before."""
+    from bernstein.core.agents.agent_lifecycle import _reevaluate_pending_death_judgments
+
+    task = _make_task()
+    task.status = TaskStatus.CLAIMED
+    session = AgentSession(
+        id="sess-doublefork-reeval",
+        role="manager",
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+        task_ids=[task.id],
+        pid=77,
+        exit_code=1,
+        spawn_ts=1000.0,
+    )
+    orch = _make_orch_no_ratelimit(tmp_path)
+
+    log_path = tmp_path / ".sdd" / "runtime" / f"{session.id}.log"
+    log_path.parent.mkdir(parents=True)
+    log_path.write_text("starting up\n")
+
+    snapshot = {"claimed": [task], "open": [], "in_progress": [], "done": []}
+
+    with (
+        patch("bernstein.core.agents.agent_lifecycle.collect_completion_data", return_value={"files_modified": []}),
+        patch("bernstein.core.agents.agent_lifecycle._has_git_commits_on_branch", return_value=False),
+        patch("bernstein.core.agents.agent_lifecycle._is_process_alive", return_value=False),
+        patch("bernstein.core.agents.agent_lifecycle.complete_task") as mock_complete,
+        patch("bernstein.core.agents.agent_lifecycle.retry_or_fail_task") as mock_retry,
+    ):
+        handle_orphaned_task(orch, task.id, session, snapshot)
+        mock_retry.assert_not_called()
+        mock_complete.assert_not_called()
+        assert task.id in orch._pending_liveness_judgments
+
+        # The untracked worker (still running past the double-fork) writes
+        # more output -- the log grows past the pid-exit snapshot.
+        with log_path.open("a") as fh:
+            fh.write("still working: step 2 of 5 complete\n" * 10)
+
+        _reevaluate_pending_death_judgments(orch, snapshot)
+
+        # Still growing -- must stay deferred, not get failed.
+        mock_retry.assert_not_called()
+        assert task.id in orch._pending_liveness_judgments
+
+        # And once it genuinely stops advancing, the next re-evaluation
+        # still catches it (the mechanism isn't a one-shot check).
+        _reevaluate_pending_death_judgments(orch, snapshot)
+
+    mock_retry.assert_called_once()
+    assert task.id not in orch._pending_liveness_judgments

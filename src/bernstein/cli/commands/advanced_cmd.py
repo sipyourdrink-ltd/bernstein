@@ -1848,20 +1848,60 @@ def _resolve_journal_path(run_id: str, runs_dir: Path) -> Path:
     return contained_path(runs_dir, run_id, _REPLAY_JSONL, label="run id")
 
 
+def _replay_sealed_journal_head(*, run_id: str, sdd_dir: str) -> str | None:
+    """Look up the run's journal-head seal from the lineage spine, if any.
+
+    A finalized run writes its journal head into the lineage spine at
+    completion (``seal_journal_into_spine``, issue #2293 AC5); a fresh run's
+    single spine entry *is* that seal. Returns the sealed head hash, or
+    ``None`` when the run has no spine, the spine's HMAC chain does not
+    verify (so nothing it carries can be trusted), or the audit key needed to
+    check that chain is not configured -- every one of those is exactly the
+    "no seal to check against" case, so callers fall back to the existing
+    ``unverifiable`` verdict rather than erroring (issue #4203).
+    """
+    from bernstein.core.lineage.spine import JOURNAL_SEAL_STEP_PREFIX, LineageSpine, SpineStatus
+    from bernstein.core.security.audit import AuditKeyMissingError, load_audit_key
+
+    lineage_root = Path(sdd_dir) / "lineage"
+    spine_path = lineage_root / run_id / "spine.jsonl"
+    if not spine_path.exists():
+        return None
+    try:
+        hmac_key = load_audit_key()
+    except AuditKeyMissingError:
+        return None
+
+    spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=hmac_key)
+    if spine.verify().status is SpineStatus.TAMPERED:
+        return None
+
+    head = ""
+    for entry in spine.iter_entries():
+        if entry.step_id.startswith(JOURNAL_SEAL_STEP_PREFIX):
+            head = entry.step_id.removeprefix(JOURNAL_SEAL_STEP_PREFIX)
+    return head or None
+
+
 def _replay_verify_journal(*, run_id: str, sdd_dir: str, as_json: bool) -> None:
     """Recompute the journal head and report the first divergent step.
 
     On an intact journal, reports chain consistency, reader coverage, and the
-    external-identity verdict. When a step diverges, writes a
-    ``divergence_report.json`` artifact listing ``(step_index, expected_hash,
-    actual_hash)`` and exits non-zero (issue #2293, AC2).
+    external-identity verdict. When a sealed run's spine records a
+    journal-head seal, the recomputed head and event count are checked
+    against it and the identity verdict is ``verified`` or a loud
+    ``mismatched`` -- never the weaker ``unverifiable``, which stays reserved
+    for a run with no seal to check against (issue #4203). When a step
+    diverges, writes a ``divergence_report.json`` artifact listing
+    ``(step_index, expected_hash, actual_hash)`` and exits non-zero
+    (issue #2293, AC2).
 
     Flagged provider-side mutation entries (a mutation that arrived in
     deterministic mode despite suppression being requested) fail
     verification closed even when the chain itself is intact
     (issue #2507).
     """
-    from bernstein.core.replay.journal import verify_journal
+    from bernstein.core.replay.journal import JournalIdentityStatus, JournalSeal, verify_journal
 
     runs_dir = Path(sdd_dir) / "runs"
     journal_path = _resolve_journal_path(run_id, runs_dir)
@@ -1869,9 +1909,26 @@ def _replay_verify_journal(*, run_id: str, sdd_dir: str, as_json: bool) -> None:
         console.print(f"[red]Journal not found:[/red] {journal_path}")
         raise SystemExit(1)
 
-    result = verify_journal(journal_path)
+    resolved_run_id = _replay_resolve_latest(runs_dir) if run_id == "latest" else run_id
+    sealed_head = _replay_sealed_journal_head(run_id=resolved_run_id, sdd_dir=sdd_dir)
+    seal = None
+    if sealed_head is not None:
+        # The seal records only the head (in the spine entry's step_id), not
+        # an event count. A head recomputed over the journal's Merkle chain
+        # folds each step's index into its hash, so a head match already
+        # cryptographically commits to the exact event count it was computed
+        # over -- there is no journal state that reaches the sealed head with
+        # a different count. Feeding the just-recomputed count back in as the
+        # seal's count is therefore sound: the comparison that actually does
+        # the work is the head, not this.
+        seal = JournalSeal(head=sealed_head, event_count=verify_journal(journal_path).count)
+
+    result = verify_journal(journal_path, seal=seal)
     if result.chain_consistent and not result.discarded_line_indices:
         _fail_on_flagged_provider_mutations(run_id=run_id, journal_path=journal_path, as_json=as_json)
+        if result.identity is JournalIdentityStatus.MISMATCHED:
+            _print_identity_mismatch(run_id=run_id, result=result, as_json=as_json)
+            return
         if as_json:
             console.print_json(
                 json.dumps(
@@ -1935,6 +1992,38 @@ def _fail_on_flagged_provider_mutations(*, run_id: str, journal_path: Path, as_j
         )
         for err in state.errors:
             console.print(f"[dim]{err}[/dim]")
+    raise SystemExit(1)
+
+
+def _print_identity_mismatch(*, run_id: str, result: Any, as_json: bool) -> None:
+    """Render a sealed run's identity mismatch and exit non-zero (issue #4203).
+
+    The parsed chain still recomputes cleanly from genesis here -- this is a
+    different failure than :func:`_print_verify_divergence` -- but it does
+    not reach the head (and event count) an independent seal committed to,
+    so the run's identity cannot be trusted and must not be reported as the
+    weaker ``unverifiable``.
+    """
+    if as_json:
+        console.print_json(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "chain_consistent": True,
+                    "coverage": result.coverage.value,
+                    "identity": result.identity.value,
+                    "count": result.count,
+                    "errors": result.errors,
+                }
+            )
+        )
+    else:
+        console.print(
+            f"[red]IDENTITY MISMATCH[/red] for [bold]{run_id}[/bold] ({result.count} steps); "
+            "journal does not match its sealed head"
+        )
+        for err in result.errors:
+            console.print(f"  - {err}")
     raise SystemExit(1)
 
 
