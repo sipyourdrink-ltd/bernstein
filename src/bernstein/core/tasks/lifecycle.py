@@ -228,11 +228,84 @@ TASK_TRANSITIONS: dict[tuple[TaskStatus, TaskStatus], Callable[[Task], bool]] = 
     # accepts it completes the task. Without this edge the state has no way
     # out and the sign-off is rejected by ``transition_task``.
     (TaskStatus.PENDING_APPROVAL, TaskStatus.DONE): _always,
+    # Failed-dependency cascade (#3452) - the FAILED counterpart of the
+    # abandon cascade above. A task whose dependency ended without
+    # delivering moves here instead of being re-queued forever. Kept
+    # distinct from BLOCKED_BY_ABANDON so the record still says whether the
+    # upstream was abandoned on purpose or broke while trying.
+    (TaskStatus.OPEN, TaskStatus.BLOCKED_BY_FAILED_DEP): _always,
+    (TaskStatus.CLAIMED, TaskStatus.BLOCKED_BY_FAILED_DEP): _always,
+    (TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED_BY_FAILED_DEP): _always,
+    (TaskStatus.WAITING_FOR_SUBTASKS, TaskStatus.BLOCKED_BY_FAILED_DEP): _always,
+    # Same operator recovery paths the abandon-blocked state has: requeue
+    # once the upstream is retried, or close the branch out.
+    (TaskStatus.BLOCKED_BY_FAILED_DEP, TaskStatus.OPEN): _always,
+    (TaskStatus.BLOCKED_BY_FAILED_DEP, TaskStatus.CANCELLED): _always,
+    (TaskStatus.BLOCKED_BY_FAILED_DEP, TaskStatus.ABANDONED): _always,
 }
 
 # Precompute terminal statuses (no outbound transitions).
 TERMINAL_TASK_STATUSES: frozenset[TaskStatus] = frozenset(
     s for s in TaskStatus if s not in {frm for (frm, _to), _guard in TASK_TRANSITIONS.items()}
+)
+
+
+# ---------------------------------------------------------------------------
+# Dependency-satisfaction classification (#3452)
+# ---------------------------------------------------------------------------
+
+# ``TERMINAL_TASK_STATUSES`` answers "can this status transition at all", which
+# is the wrong question for a dependent waiting on an upstream. FAILED,
+# ORPHANED and both blocked-by states each keep a recovery edge back to OPEN,
+# so they are absent from that set while still stranding every dependent until
+# an operator intervenes. The three sets below answer the dependency question
+# instead, and partition ``TaskStatus`` exhaustively so a newly added status
+# cannot slip through unclassified (asserted by the lifecycle FSM tests).
+
+# A dependency in one of these has delivered; dependents may proceed.
+SUCCESSFUL_TASK_STATUSES: frozenset[TaskStatus] = frozenset(
+    {
+        TaskStatus.DONE,
+        TaskStatus.CLOSED,
+    }
+)
+
+# A dependency in one of these will never deliver on its own. Dependents are
+# stranded until the upstream is explicitly requeued.
+UNSUCCESSFUL_TERMINAL_STATUSES: frozenset[TaskStatus] = frozenset(
+    {
+        TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
+        TaskStatus.REFUSED,
+        TaskStatus.ORPHANED,
+        TaskStatus.ABANDONED,
+        TaskStatus.BLOCKED_BY_ABANDON,
+        TaskStatus.BLOCKED_BY_FAILED_DEP,
+    }
+)
+
+# The subset of the above that a task reaches because its own dependency was
+# stranded, rather than by running and ending. Members propagate the strand
+# onward but are themselves reported as stranded rather than as a root cause.
+DEPENDENCY_BLOCKED_STATUSES: frozenset[TaskStatus] = frozenset(
+    {
+        TaskStatus.BLOCKED_BY_ABANDON,
+        TaskStatus.BLOCKED_BY_FAILED_DEP,
+    }
+)
+
+# Neither delivered nor ended: the dependent may still become claimable.
+IN_FLIGHT_TASK_STATUSES: frozenset[TaskStatus] = frozenset(
+    {
+        TaskStatus.PLANNED,
+        TaskStatus.OPEN,
+        TaskStatus.CLAIMED,
+        TaskStatus.IN_PROGRESS,
+        TaskStatus.BLOCKED,
+        TaskStatus.WAITING_FOR_SUBTASKS,
+        TaskStatus.SUSPENDED,
+        TaskStatus.PENDING_APPROVAL,
+    }
 )
 
 

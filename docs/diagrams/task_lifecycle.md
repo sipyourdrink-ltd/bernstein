@@ -17,6 +17,7 @@ stateDiagram-v2
     pending_approval : pending_approval
     abandoned : abandoned
     blocked_by_abandon : blocked_by_abandon
+    blocked_by_failed_dep : blocked_by_failed_dep
     refused : refused
 
     planned --> open : approve
@@ -71,6 +72,13 @@ stateDiagram-v2
     claimed --> refused : claimed_to_refused
     in_progress --> refused : in_progress_to_refused
     pending_approval --> done : pending_approval_to_done
+    open --> blocked_by_failed_dep : open_to_blocked_by_failed_dep
+    claimed --> blocked_by_failed_dep : claimed_to_blocked_by_failed_dep
+    in_progress --> blocked_by_failed_dep : in_progress_to_blocked_by_failed_dep
+    waiting_for_subtasks --> blocked_by_failed_dep : waiting_for_subtasks_to_blocked_by_failed_dep
+    blocked_by_failed_dep --> open : blocked_by_failed_dep_to_open
+    blocked_by_failed_dep --> cancelled : blocked_by_failed_dep_to_cancelled
+    blocked_by_failed_dep --> abandoned : blocked_by_failed_dep_to_abandoned
 
     classDef terminal fill:#f96,stroke:#333,stroke-width:2px
     class closed terminal
@@ -99,6 +107,7 @@ stateDiagram-v2
 | pending_approval | Completed, awaiting human approval | No |
 | abandoned | abandoned | Yes |
 | blocked_by_abandon | blocked_by_abandon | No |
+| blocked_by_failed_dep | blocked_by_failed_dep | No |
 | refused | refused | Yes |
 
 ## Transitions
@@ -157,3 +166,10 @@ stateDiagram-v2
 | claimed | refused | claimed_to_refused |
 | in_progress | refused | in_progress_to_refused |
 | pending_approval | done | pending_approval_to_done |
+| open | blocked_by_failed_dep | open_to_blocked_by_failed_dep |
+| claimed | blocked_by_failed_dep | claimed_to_blocked_by_failed_dep |
+| in_progress | blocked_by_failed_dep | in_progress_to_blocked_by_failed_dep |
+| waiting_for_subtasks | blocked_by_failed_dep | waiting_for_subtasks_to_blocked_by_failed_dep |
+| blocked_by_failed_dep | open | blocked_by_failed_dep_to_open |
+| blocked_by_failed_dep | cancelled | blocked_by_failed_dep_to_cancelled |
+| blocked_by_failed_dep | abandoned | blocked_by_failed_dep_to_abandoned |
