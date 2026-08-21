@@ -4563,6 +4563,18 @@ class TestRunEvolutionCycle:
         spawner = AgentSpawner(adp, templates_dir, tmp_path)
         client = httpx.Client(transport=transport, base_url="http://testserver")
         orch = Orchestrator(cfg, spawner, tmp_path, client=client, evolution=evolution)
+        # Seed a finished goal task so AutoSpawnGuard's terminal-baseline
+        # check (#4226) doesn't refuse upgrade_proposal spawns in tests that
+        # aren't exercising that check themselves.
+        goal = Task(
+            id="goal",
+            title="Implement the feature",
+            description="desc",
+            role="backend",
+            task_type=TaskType.STANDARD,
+            status=TaskStatus.DONE,
+        )
+        orch._latest_tasks_by_id = {goal.id: goal}
         return orch, evolution
 
     def _make_proposal(self, proposal_id: str = "P-001", title: str = "Improve routing") -> MagicMock:

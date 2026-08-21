@@ -14,6 +14,12 @@ This module is shared by both known auto-spawn sites:
 - ``bernstein.core.observability.watchdog.WatchdogManager._create_triage_task``
 
 Guard order (first hit wins, cheapest checks first):
+0. Terminal baseline (``kind="upgrade_proposal"`` only): refuse spawning a
+   self-improvement task while the run has zero done/failed tasks - there is
+   no outcome yet for an "improve task success" proposal to act on, and in a
+   small (e.g. single-cell) run the upgrade task would otherwise claim the
+   run's only capacity ahead of recovering the goal task itself. See
+   ``no-terminal-baseline`` below.
 1. Ancestry depth: refuse spawning a meta-task ABOUT a task that is itself an
    auto-spawned meta-task (its title already carries a known meta-task
    prefix). This caps recursion at depth 1: normal-task -> meta-task is
@@ -59,7 +65,7 @@ class AutoSpawnDecision:
     """Result of an :meth:`AutoSpawnGuard.evaluate` call."""
 
     allowed: bool
-    reason: str  # "allowed" | "depth" | "dedupe" | "cap"
+    reason: str  # "allowed" | "no-terminal-baseline" | "depth" | "dedupe" | "cap"
     ancestry_depth: int
     current_count: int
     cap: int
@@ -172,6 +178,7 @@ class AutoSpawnGuard:
         title: str,
         source_title: str | None,
         existing_open_titles: list[str],
+        has_terminal_task: bool = True,
     ) -> AutoSpawnDecision:
         """Decide whether an auto-spawn of ``title`` (of type ``kind``) is allowed.
 
@@ -185,6 +192,11 @@ class AutoSpawnGuard:
                 about, if any. Used to compute ancestry depth.
             existing_open_titles: Titles of currently-open (open or claimed)
                 auto-spawned tasks, for dedupe comparison.
+            has_terminal_task: Whether the run has at least one done/failed
+                task. Only consulted when ``kind == "upgrade_proposal"``;
+                other call sites (watchdog triage, retry-path recreation)
+                don't pass it and keep their existing behaviour via the
+                ``True`` default. See ``no-terminal-baseline`` below.
 
         Every call - allowed or refused - is logged at INFO with the full
         decision inputs (reason, dedupe key, ancestry depth); this is the
@@ -198,6 +210,35 @@ class AutoSpawnGuard:
         dedupe_key = _normalize_title(title)
         depth = compute_ancestry_depth(source_title)
         count = self._load_count()
+
+        # Terminal baseline: an upgrade_proposal ("self-improve on the run's
+        # own outcomes") has nothing to improve on until at least one task in
+        # the run has actually finished (done or failed). Refusing here keeps
+        # a stuck/crashed goal task's only cell available for its own
+        # recovery instead of the evolve loop displacing it with meta-work
+        # (issue #4226).
+        if kind == "upgrade_proposal" and not has_terminal_task:
+            decision = AutoSpawnDecision(
+                allowed=False,
+                reason="no-terminal-baseline",
+                ancestry_depth=depth,
+                current_count=count,
+                cap=self._max_auto_spawns_per_run,
+            )
+            logger.warning(
+                "Auto-spawn refused (no-terminal-baseline): kind=%s title=%r - run has zero done/failed "
+                "tasks, nothing to improve on yet",
+                kind,
+                title,
+            )
+            self._log_decision(
+                kind=kind,
+                title=title,
+                source_title=source_title,
+                dedupe_key=dedupe_key,
+                decision=decision,
+            )
+            return decision
 
         if depth > self._max_ancestry_depth:
             decision = AutoSpawnDecision(
