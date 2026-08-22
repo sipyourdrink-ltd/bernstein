@@ -76,7 +76,7 @@ class ClineAdapter(CLIAdapter):
         )
 
         env = build_filtered_env(
-            ["CLINE_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"],
+            ["CLINE_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "OPENAI_BASE_URL"],
         )
         with log_path.open("w") as log_file:
             try:

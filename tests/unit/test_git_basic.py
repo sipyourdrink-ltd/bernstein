@@ -11,6 +11,8 @@ from unittest.mock import patch
 import pytest
 from bernstein.core.git_basic import (
     GitResult,
+    _is_terminal_push_error,
+    _is_transient_push_error,
     run_git,
     safe_push,
     stage_all_except,
@@ -105,3 +107,44 @@ def test_safe_push_corrects_master_and_rebases_when_remote_is_ahead(tmp_path: Pa
     assert mock_run_git.call_args_list[1].args[0] == ["rev-list", "--count", "HEAD..origin/main"]
     assert mock_run_git.call_args_list[2].args[0] == ["rebase", "origin/main"]
     assert mock_run_git.call_args_list[3].args[0] == ["push", "origin", "main"]
+
+
+# --- Transient vs terminal push error classification ---
+
+
+class TestTransientPushError:
+    """Tests for _is_transient_push_error marker matching."""
+
+    def test_network_errors_are_transient(self) -> None:
+        assert _is_transient_push_error("could not read from remote repository")
+        assert _is_transient_push_error("unable to access 'https://github.com/repo.git'")
+        assert _is_transient_push_error("Connection refused")
+        assert _is_transient_push_error("timed out")
+        assert _is_transient_push_error("timeout")
+        assert _is_transient_push_error("reset by peer")
+
+    def test_credential_errors_are_not_transient(self) -> None:
+        # The old marker "could not read" matched both — now it shouldn't
+        assert not _is_transient_push_error(
+            "could not read Username for 'https://github.com': No such device or address"
+        )
+
+    def test_non_fast_forward_is_transient(self) -> None:
+        assert _is_transient_push_error("rejected (non-fast-forward)")
+        assert _is_transient_push_error("fetch first")
+
+
+class TestTerminalPushError:
+    """Tests for _is_terminal_push_error marker matching."""
+
+    def test_credential_errors_are_terminal(self) -> None:
+        assert _is_terminal_push_error(
+            "could not read Username for 'https://github.com': No such device or address"
+        )
+        assert _is_terminal_push_error("Authentication failed")
+        assert _is_terminal_push_error("Permission denied (publickey)")
+
+    def test_network_errors_are_not_terminal(self) -> None:
+        assert not _is_terminal_push_error("could not read from remote repository")
+        assert not _is_terminal_push_error("Connection refused")
+        assert not _is_terminal_push_error("timed out")

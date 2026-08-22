@@ -16,7 +16,7 @@ name: volunteer-rig
 services:
   # ── Gitea: local git server ─────────────────────────────────────────────
   gitea:
-    image: gitea/gitea:1.22
+    image: gitea/gitea:1.27
     environment:
       GITEA__security__INSTALL_LOCK: "true"
       GITEA__server__DOMAIN: "gitea"
