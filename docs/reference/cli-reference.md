@@ -110,7 +110,7 @@ The full flag list is large (see `bernstein run --help` and `cli/run_bootstrap.p
 | `--plan-only` | off | Show plan, do not run agents. |
 | `--auto-pr` | off | Auto-open a GitHub PR on completion. |
 | `--task PATTERN` | none | Run only matching backlog tasks. |
-| `--wait` | off | Block until the run reaches a terminal state and exit with its outcome. |
+| `--wait [SECONDS]` | off | Block until the run reaches a terminal state and exit with its outcome. Optional ceiling in seconds, default 3600. |
 | `--port N` | 8052 | Task server port. |
 | `-v / -q` | off | Verbosity. |
 

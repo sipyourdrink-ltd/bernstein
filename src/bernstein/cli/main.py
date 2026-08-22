@@ -882,7 +882,7 @@ def cli(
         auto_approve=auto_approve or yes,
         quiet=False,
         # The group is the interactive form; automation uses `bernstein run`.
-        wait=False,
+        wait=None,
         skip_gate=(),
         skip_gate_reason=None,
         audit=False,

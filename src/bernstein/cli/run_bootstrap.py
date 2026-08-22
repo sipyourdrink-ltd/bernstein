@@ -1420,10 +1420,14 @@ def _poll_no_plan_after_spawn() -> dict[str, Any] | None:
     return status_payload
 
 
+#: Ceiling for the terminal-state wait when the caller names no other.
+_RUN_WAIT_DEFAULT_S = 3600.0
+
+
 def _wait_for_run_completion(
     *,
     poll_interval_s: float = 2.0,
-    timeout_s: float = 3600.0,
+    timeout_s: float = _RUN_WAIT_DEFAULT_S,
 ) -> dict[str, Any] | None:
     """Poll the server until the run reaches a terminal state.
 
@@ -2058,11 +2062,16 @@ def exec_restart() -> None:
 )
 @click.option(
     "--wait",
-    is_flag=True,
-    default=False,
+    is_flag=False,
+    flag_value=str(_RUN_WAIT_DEFAULT_S),
+    default=None,
+    type=float,
+    metavar="[SECONDS]",
     help=(
         "Block until the run reaches a terminal state and exit with its "
-        "outcome, keeping the progress output. Without it a non-interactive "
+        "outcome, keeping the progress output. Takes an optional ceiling in "
+        f"seconds (default {_RUN_WAIT_DEFAULT_S:.0f}); a fleet that allows a "
+        "run longer than that has to say so. Without it a non-interactive "
         "run detaches once the first agent is up."
     ),
 )
@@ -2233,7 +2242,7 @@ def run(
     from_plan: Path | None = None,
     auto_approve: bool = False,
     quiet: bool = False,
-    wait: bool = False,
+    wait: float | None = None,
     skip_gate: tuple[str, ...] = (),
     skip_gate_reason: str | None = None,
     audit: bool = False,
@@ -2340,7 +2349,7 @@ def _run_impl(
     plan_only: bool,
     from_plan: Path | None,
     auto_approve: bool,
-    wait: bool = False,
+    wait: float | None = None,
     quiet: bool,
     skip_gate: tuple[str, ...],
     skip_gate_reason: str | None,
