@@ -76,6 +76,7 @@ Each adapter passes its own allowlist of API-key-style variables to
 | Adapter      | Extra keys |
 |--------------|------------|
 | Claude Code  | `ANTHROPIC_API_KEY` |
+| Cline        | `CLINE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_BASE_URL` |
 | Codex        | `OPENAI_API_KEY`, `OPENAI_ORG_ID`, `OPENAI_BASE_URL` |
 | Gemini       | `GOOGLE_API_KEY`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_APPLICATION_CREDENTIALS` |
 | Qwen         | `OPENAI_API_KEY`, `OPENAI_BASE_URL` |
