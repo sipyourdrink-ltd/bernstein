@@ -2340,7 +2340,7 @@ def _run_impl(
     plan_only: bool,
     from_plan: Path | None,
     auto_approve: bool,
-    wait: bool,
+    wait: bool = False,
     quiet: bool,
     skip_gate: tuple[str, ...],
     skip_gate_reason: str | None,
