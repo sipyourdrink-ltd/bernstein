@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 from bernstein.core.models import Task, TaskStatus
 from bernstein.core.workflow import WorkflowDefinition, WorkflowPhase
 from bernstein.core.workflow_dsl import (
+    BLOCKING_CAUSE_METADATA_KEY,
     BLOCKING_NODE_METADATA_KEY,
     SKIPPED_EDGES_METADATA_KEY,
     ConditionError,
@@ -1247,6 +1248,52 @@ class TestUnreachableNodes:
         # Derivable from the record alone, and the node stays off the ready list.
         assert executor.unreachable_nodes(tasks) == [("deploy", "test")]
         assert "deploy" not in executor.ready_nodes(tasks)
+
+    def test_stranding_cause_distinguishes_retry_exhaustion_from_plain_failure(self) -> None:
+        """A dependent must record WHY its blocker blocked, not just which node.
+
+        Both cases strand the dependent identically; the operator response
+        differs. A node that failed once with no retry policy may just need
+        one, while a node that burned every attempt is saying the failure is
+        not transient.
+        """
+        dag = WorkflowDAG(
+            definition=_simple_definition(),
+            nodes=(
+                DAGNode(id="test", phase="plan", role="qa", retry=RetryPolicy(max_attempts=2)),
+                DAGNode(id="deploy", phase="verify", role="manager"),
+            ),
+            edges=(DAGEdge(source="test", target="deploy", condition=ConditionExpr(raw="status == 'done'")),),
+        )
+
+        # Failed once, one attempt still available: not exhausted.
+        executor = DAGExecutor(dag)
+        tasks = {"test": _task("test", role="qa", status=TaskStatus.FAILED)}
+        executor.record_retry("test")
+        assert executor.should_retry("test", tasks["test"]) is True
+
+        assert executor.materialize_unreachable(tasks) == ["deploy"]
+        assert tasks["deploy"].metadata[BLOCKING_CAUSE_METADATA_KEY] == "dependency_failed"
+
+        # Same graph, same failure, but every attempt used up.
+        exhausted = DAGExecutor(dag)
+        tasks = {"test": _task("test", role="qa", status=TaskStatus.FAILED)}
+        exhausted.record_retry("test")
+        exhausted.record_retry("test")
+        assert exhausted.should_retry("test", tasks["test"]) is False
+
+        assert exhausted.materialize_unreachable(tasks) == ["deploy"]
+        assert tasks["deploy"].metadata[BLOCKING_CAUSE_METADATA_KEY] == "retry_exhausted"
+
+        # The existing key is untouched by the addition.
+        assert tasks["deploy"].metadata[BLOCKING_NODE_METADATA_KEY] == "test"
+
+    def test_node_without_retry_policy_is_never_retry_exhausted(self) -> None:
+        executor = DAGExecutor(self._guarded_dag("status == 'done'"))
+        tasks = {"test": _task("test", role="qa", status=TaskStatus.FAILED)}
+
+        assert executor.materialize_unreachable(tasks) == ["deploy"]
+        assert tasks["deploy"].metadata[BLOCKING_CAUSE_METADATA_KEY] == "dependency_failed"
 
     def test_all_of_several_inbound_edges_skipped(self) -> None:
         executor = DAGExecutor(self._fan_in_dag())

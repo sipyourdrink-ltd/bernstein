@@ -850,6 +850,28 @@ BLOCKING_NODE_METADATA_KEY = "blocking_task_id"
 # The inbound edges that all resolved SKIPPED, rendered "source -> target".
 SKIPPED_EDGES_METADATA_KEY = "skipped_edges"
 
+# Why the blocking node named by BLOCKING_NODE_METADATA_KEY is blocking. A second
+# key rather than a richer value under the existing one, so every reader that
+# already looks up ``blocking_task_id`` keeps working untouched.
+BLOCKING_CAUSE_METADATA_KEY = "blocking_cause"
+
+
+class BlockingCause(StrEnum):
+    """Why a stranded node's blocking dependency never let it run.
+
+    The outcome is the same either way - the dependent is stranded - but the
+    operator response is not. A node that failed once with no retry policy may
+    just need one, while a node that burned every attempt it was given is
+    saying the failure is not transient. Both looked identical on the record
+    before this existed.
+    """
+
+    #: The blocking node reached a terminal non-success state, and either
+    #: declared no retry policy or never exhausted one.
+    DEPENDENCY_FAILED = "dependency_failed"
+    #: The blocking node declared ``retry:`` and used up ``max_attempts``.
+    RETRY_EXHAUSTED = "retry_exhausted"
+
 
 class DAGExecutor:
     """Drives task scheduling through a conditional DAG.
@@ -1026,6 +1048,7 @@ class DAGExecutor:
                 if blocking_node is None:
                     continue
                 blocked.metadata[BLOCKING_NODE_METADATA_KEY] = blocking_node
+                blocked.metadata[BLOCKING_CAUSE_METADATA_KEY] = str(self._blocking_cause(blocking_node))
                 blocked.result_summary = f"dependency {blocking_node} is {tasks[blocking_node].status.value}"
                 ring[node.id] = blocked
 
@@ -1098,6 +1121,23 @@ class DAGExecutor:
             f"{edge.source} -> {edge.target}" for edge in sorted(incoming, key=lambda e: (e.source, e.target))
         ]
         return task
+
+    def _blocking_cause(self, node_id: str) -> BlockingCause:
+        """Classify why ``node_id`` is blocking its dependents.
+
+        Only a node that declared a retry policy AND used up ``max_attempts``
+        counts as exhausted. A node whose ``until`` condition was met stopped
+        deliberately with attempts to spare, which is not the same statement
+        about the failure, so it stays ``DEPENDENCY_FAILED``.
+        """
+        node = self._node_map.get(node_id)
+        if node is None or node.retry is None:
+            return BlockingCause.DEPENDENCY_FAILED
+
+        if self._retry_counts.get(node_id, 0) >= node.retry.max_attempts:
+            return BlockingCause.RETRY_EXHAUSTED
+
+        return BlockingCause.DEPENDENCY_FAILED
 
     def should_retry(self, node_id: str, task: Task) -> bool:
         """Check if a failed task should be retried per the node's retry policy.
