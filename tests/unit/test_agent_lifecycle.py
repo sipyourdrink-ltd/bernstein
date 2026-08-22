@@ -301,6 +301,70 @@ def test_orphaned_task_fails_on_suspicious_fast_clean_exit(tmp_path: Path) -> No
     mock_retry.assert_called_once()
 
 
+def test_zero_token_clean_exit_retries_without_charging_the_budget(tmp_path: Path) -> None:
+    """#4275: the agent never reached the model, so it never attempted the task.
+
+    The classification already existed (#4296) but the retry call was identical
+    either way, so three transport faults in a few seconds emptied the retry
+    budget and quarantined a task that was never tried.
+    """
+    task = _make_task()
+    task.status = TaskStatus.CLAIMED
+    session = AgentSession(
+        id="sess-zero-token",
+        role="backend",
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+        task_ids=[task.id],
+        exit_code=0,
+    )
+    session.tokens_used = 0
+    orch = _make_orch_no_ratelimit(tmp_path)
+
+    with (
+        patch("bernstein.core.agents.agent_lifecycle.collect_completion_data", return_value={"files_modified": []}),
+        patch("bernstein.core.agents.agent_lifecycle._has_git_commits_on_branch", return_value=False),
+        patch("bernstein.core.agents.agent_lifecycle.complete_task"),
+        patch("bernstein.core.agents.agent_lifecycle.retry_or_fail_task") as mock_retry,
+    ):
+        handle_orphaned_task(orch, task.id, session, {"claimed": [task], "open": [], "in_progress": [], "done": []})
+
+    mock_retry.assert_called_once()
+    assert mock_retry.call_args.kwargs["transport_failure"] is True
+    reason = mock_retry.call_args.args[1]
+    assert "transport" in reason.lower()
+    assert "0 tokens" in reason
+
+
+def test_fast_clean_exit_that_spent_tokens_still_charges_the_budget(tmp_path: Path) -> None:
+    """The control: an agent that did reach the model and produced nothing is a
+    real attempt and must keep costing a retry."""
+    task = _make_task()
+    task.status = TaskStatus.CLAIMED
+    session = AgentSession(
+        id="sess-spent-tokens",
+        role="backend",
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+        task_ids=[task.id],
+        exit_code=0,
+    )
+    session.tokens_used = 8192
+    orch = _make_orch_no_ratelimit(tmp_path)
+
+    with (
+        patch("bernstein.core.agents.agent_lifecycle.collect_completion_data", return_value={"files_modified": []}),
+        patch("bernstein.core.agents.agent_lifecycle._has_git_commits_on_branch", return_value=False),
+        patch("bernstein.core.agents.agent_lifecycle.complete_task"),
+        patch("bernstein.core.agents.agent_lifecycle.retry_or_fail_task") as mock_retry,
+    ):
+        handle_orphaned_task(orch, task.id, session, {"claimed": [task], "open": [], "in_progress": [], "done": []})
+
+    mock_retry.assert_called_once()
+    assert mock_retry.call_args.kwargs["transport_failure"] is False
+    assert "no verified deliverable" in mock_retry.call_args.args[1]
+
+
 # ---------------------------------------------------------------------------
 # Orphaned task: non-zero exit + no commits + no files = retry/fail
 # ---------------------------------------------------------------------------

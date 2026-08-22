@@ -1671,6 +1671,17 @@ class AgentSpawner:
         return self._adapter.name()
 
     @property
+    def default_model(self) -> str | None:
+        """The run-level model pin (``bernstein run --model``), or ``None``.
+
+        Exposed for the same reason as :attr:`role_model_policy`: retry
+        escalation has to know whether the operator named a model before it
+        stamps a Claude tier name onto a retried task (#4274). This is the
+        pin route that does not pass through ``role_model_policy``.
+        """
+        return self._default_model
+
+    @property
     def _identity_store(self) -> Any:
         """Return the AgentIdentityStore, creating it on first access."""
         if self._identity_store_instance is None:

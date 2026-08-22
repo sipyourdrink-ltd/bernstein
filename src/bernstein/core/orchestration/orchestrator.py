@@ -3753,6 +3753,8 @@ class Orchestrator:
             quarantine=self._quarantine,
             workdir=self._workdir,
             session_id=session.id if session is not None else None,
+            role_model_policy=getattr(self._spawner, "role_model_policy", None),
+            run_pinned_model=getattr(self._spawner, "default_model", None),
         )
 
     def _handle_anomaly_signal(self, signal: object) -> None:
@@ -4073,6 +4075,7 @@ class Orchestrator:
                     workdir=self._workdir,
                     role_model_policy=getattr(self._spawner, "role_model_policy", None),
                     default_adapter_name=getattr(self._spawner, "default_adapter_name", None),
+                    run_pinned_model=getattr(self._spawner, "default_model", None),
                 )
 
     def _enforce_budget_killswitch(self) -> None:
@@ -4543,6 +4546,7 @@ class Orchestrator:
         task_id: str,
         reason: str,
         tasks_snapshot: dict[str, list[Task]] | None = None,
+        transport_failure: bool = False,
     ) -> None:
         """Delegate to task_lifecycle.retry_or_fail_task."""
         retry_or_fail_task(
@@ -4556,6 +4560,8 @@ class Orchestrator:
             workdir=self._workdir,
             role_model_policy=getattr(self._spawner, "role_model_policy", None),
             default_adapter_name=getattr(self._spawner, "default_adapter_name", None),
+            run_pinned_model=getattr(self._spawner, "default_model", None),
+            transport_failure=transport_failure,
         )
 
     def _check_file_overlap(self, batch: list[Task]) -> bool:

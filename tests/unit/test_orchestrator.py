@@ -3514,8 +3514,15 @@ class TestMaybeRetryTask:
         tmp_path: Path,
         *,
         max_retries: int = 2,
+        default_model: str | None = "mock-model",
     ) -> tuple[Orchestrator, list[dict]]:
-        """Return (orchestrator, captured_post_bodies) with POST /tasks mocked."""
+        """Return (orchestrator, captured_post_bodies) with POST /tasks mocked.
+
+        ``default_model`` is the run-level ``--model`` pin. Tests that assert
+        the Claude tier ladder must pass ``None``: a pinned model is carried
+        through retries verbatim rather than escalated (#4274), so with a pin
+        in place there is no ladder to observe.
+        """
         posted: list[dict] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -3526,7 +3533,7 @@ class TestMaybeRetryTask:
 
         transport = httpx.MockTransport(handler)
         cfg = OrchestratorConfig(server_url="http://testserver", max_task_retries=max_retries)
-        orch = _build_orchestrator(tmp_path, transport, config=cfg)
+        orch = _build_orchestrator(tmp_path, transport, config=cfg, default_model=default_model)
         return orch, posted
 
     def test_first_retry_bumps_effort_keeps_model(self, tmp_path: Path) -> None:
@@ -3539,7 +3546,8 @@ class TestMaybeRetryTask:
             model="sonnet",
             effort="low",
         )
-        orch, posted = self._build(tmp_path)
+        # No run-level pin: this test is about the tier ladder itself.
+        orch, posted = self._build(tmp_path, default_model=None)
 
         result = orch._maybe_retry_task(task)
 
@@ -3578,7 +3586,8 @@ class TestMaybeRetryTask:
             effort="medium",
             retry_count=1,
         )
-        orch, posted = self._build(tmp_path)
+        # No run-level pin: this test is about the tier ladder itself.
+        orch, posted = self._build(tmp_path, default_model=None)
 
         result = orch._maybe_retry_task(task)
 
@@ -3661,7 +3670,8 @@ class TestMaybeRetryTask:
             effort="medium",
             retry_count=1,
         )
-        orch, posted = self._build(tmp_path)
+        # No run-level pin: this test is about the tier ladder itself.
+        orch, posted = self._build(tmp_path, default_model=None)
 
         orch._maybe_retry_task(task)
 

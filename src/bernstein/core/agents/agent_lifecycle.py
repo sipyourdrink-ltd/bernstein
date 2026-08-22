@@ -51,11 +51,12 @@ def _retry_escalation_context(orch: Any) -> dict[str, Any]:
     """Build the ``role_model_policy``/``default_adapter_name`` kwargs for
     :func:`retry_or_fail_task` from the orchestrator's spawner.
 
-    Lets retry escalation (task_lifecycle.py) know whether the retrying
-    role is pinned to a non-Claude provider/model, so it doesn't stamp a
-    Claude tier name ("opus"/"sonnet") onto a task that will spawn against
-    a non-Claude adapter (see task_lifecycle.py's retry-escalation
-    docstring for the run-9 attempt-8 defect this closes). Read-only,
+    Lets retry escalation (task_lifecycle.py) know which model the operator
+    named, so it doesn't stamp a Claude tier name ("opus"/"sonnet") onto a
+    task whose model was chosen deliberately (see task_lifecycle.py's
+    retry-escalation docstring for the defect this closes). Both pin routes
+    are reported: ``role_model_policy`` carries the per-role pin and
+    ``run_pinned_model`` the run-level ``--model`` flag. Read-only,
     best-effort: any missing attribute (older/mock orchestrators in tests)
     degrades to ``None``, which task_lifecycle.py treats as "assume
     Claude-compatible" - today's historical behavior, unchanged.
@@ -64,6 +65,7 @@ def _retry_escalation_context(orch: Any) -> dict[str, Any]:
     return {
         "role_model_policy": getattr(spawner, "role_model_policy", None),
         "default_adapter_name": getattr(spawner, "default_adapter_name", None),
+        "run_pinned_model": getattr(spawner, "default_model", None),
     }
 
 
@@ -1977,7 +1979,8 @@ def _handle_orphan_no_signals(
             )
             return _try_auto_complete(orch, task_id, base, summary, log_msg, session=session, start_ts=start_ts)
 
-        if _probe_result.get("no_session_activity"):
+        _transport_failure = bool(_probe_result.get("no_session_activity"))
+        if _transport_failure:
             # Zero tokens means the agent never exchanged anything with the
             # model: nothing was asked and nothing was answered. That is a
             # transport failure, not an agent that ran and produced nothing,
@@ -2012,20 +2015,39 @@ def _handle_orphan_no_signals(
                 session.id,
                 _probe_result.get("manifest_path") or "<none preserved>",
             )
+        # The reason string is what an operator reads off the run log, so it
+        # has to name the actual cause. Reporting a transport fault as an
+        # unverified deliverable sent them to look for a transcript that was
+        # never written (#4275).
+        if _transport_failure:
+            _runtime_s = float(_probe_result.get("runtime_s") or 0.0)
+            _retry_reason = (
+                f"Transport failure: agent {session.id} exited cleanly after {_runtime_s:.1f}s "
+                f"having consumed 0 tokens -- it never reached the model, so the task was "
+                f"never attempted"
+            )
+        else:
+            _retry_reason = (
+                f"Agent {session.id} exited cleanly but produced no verified deliverable "
+                f"(empty diff, no commits, no completion signals)"
+            )
         try:
             retry_or_fail_task(
                 task_id,
-                f"Agent {session.id} exited cleanly but produced no verified deliverable "
-                f"(empty diff, no commits, no completion signals)",
+                _retry_reason,
                 client=orch._client,
                 server_url=base,
                 max_task_retries=orch._config.max_task_retries,
                 retried_task_ids=orch._retried_task_ids,
                 workdir=getattr(orch, "_workdir", None),
+                transport_failure=_transport_failure,
                 **_retry_escalation_context(orch),
             )
         except httpx.HTTPError as exc:
             logger.error("Failed to retry/fail unverified clean-exit task %s: %s", task_id, exc)
+        # Routing is deliberately unchanged: the task is still failed rather
+        # than auto-completed either way. What differs is the retry accounting
+        # (transport_failure above) and the operator-facing reason.
         return False, "clean_exit_unverified"
 
     # Before declaring "died without output", check every liveness signal --

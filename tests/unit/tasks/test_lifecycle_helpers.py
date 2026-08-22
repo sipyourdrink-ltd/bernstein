@@ -88,9 +88,12 @@ def test_escalate_model_matches_substring_case_insensitive() -> None:
     assert _escalate_model("claude-3-5-SONNET-latest") == "opus"
 
 
-def test_escalate_model_unknown_defaults_to_sonnet_position() -> None:
-    # No ladder match -> default index 1 (sonnet) -> escalate to opus.
-    assert _escalate_model("gpt-5-mini") == "opus"
+def test_escalate_model_leaves_an_unknown_name_where_it_found_it() -> None:
+    # No ladder match -> no next rung. This used to default to the sonnet
+    # position and return "opus", which is the substitution #4274 is about:
+    # the ladder is a Claude tier ordering and says nothing about a name
+    # from some other provider.
+    assert _escalate_model("gpt-5-mini") == "gpt-5-mini"
 
 
 # ---------------------------------------------------------------------------
@@ -424,3 +427,67 @@ def test_has_llm_judge_signal_true_when_mixed_with_others() -> None:
         ]
     )
     assert _has_llm_judge_signal(task) is True
+
+
+# ---------------------------------------------------------------------------
+# _choose_retry_escalation: an operator-pinned model survives escalation (#4274)
+# ---------------------------------------------------------------------------
+
+
+def test_escalate_model_leaves_a_model_outside_the_ladder_alone() -> None:
+    # A name that matches no rung has no next rung. Returning "opus" for it
+    # hands the configured provider a model it does not serve (#4274).
+    assert _escalate_model("gw-coder-fast") == "gw-coder-fast"
+
+
+def test_retry_escalation_large_scope_keeps_the_pinned_model() -> None:
+    task = _task(scope=Scope.LARGE)
+    assert _choose_retry_escalation(task, 1, "gw-coder-fast", "high", pinned_model="gw-coder-fast") == (
+        "gw-coder-fast",
+        "max",
+    )
+
+
+@pytest.mark.parametrize("role", ["architect", "security"])
+def test_retry_escalation_high_value_role_keeps_the_pinned_model(role: str) -> None:
+    task = _task(role=role)
+    assert _choose_retry_escalation(task, 1, "gw-coder-fast", "low", pinned_model="gw-coder-fast") == (
+        "gw-coder-fast",
+        "max",
+    )
+
+
+def test_retry_escalation_second_retry_keeps_the_pinned_model() -> None:
+    task = _task()
+    assert _choose_retry_escalation(task, 2, "gw-coder-fast", "low", pinned_model="gw-coder-fast") == (
+        "gw-coder-fast",
+        "high",
+    )
+
+
+def test_retry_escalation_past_deadline_keeps_the_pinned_model() -> None:
+    task = _task(deadline=time.time() - 100)
+    assert _choose_retry_escalation(task, 1, "gw-coder-fast", "low", pinned_model="gw-coder-fast") == (
+        "gw-coder-fast",
+        "max",
+    )
+
+
+def test_retry_escalation_pin_overrides_a_blocking_limit_tier_jump() -> None:
+    task = _task(terminal_reason="blocking_limit")
+    assert _choose_retry_escalation(task, 1, "gw-coder-fast", "low", pinned_model="gw-coder-fast") == (
+        "gw-coder-fast",
+        "max",
+    )
+
+
+def test_retry_escalation_pin_holds_even_when_the_pin_is_a_tier_name() -> None:
+    # "sonnet" chosen deliberately by the operator is still an instruction:
+    # escalation raises effort but leaves the model where it was put.
+    task = _task(scope=Scope.LARGE)
+    assert _choose_retry_escalation(task, 1, "sonnet", "low", pinned_model="sonnet") == ("sonnet", "max")
+
+
+def test_retry_escalation_without_a_pin_keeps_the_historical_ladder() -> None:
+    task = _task(scope=Scope.LARGE)
+    assert _choose_retry_escalation(task, 1, "sonnet", "low") == ("opus", "max")

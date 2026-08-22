@@ -353,6 +353,20 @@ def _batch_timeout_seconds(batch: list[Task]) -> int:
 _EFFORT_LADDER = ["low", "medium", "high", "max"]
 _MODEL_LADDER = ["haiku", "sonnet", "opus"]
 
+# A retry budget bounds *attempts*. An agent that exited having consumed zero
+# tokens never reached the model, so it never attempted anything and must not
+# spend that budget (#4275). It still needs a ceiling of its own, or a
+# transport fault that never clears would re-queue the task forever. Three is
+# deliberately the same order as the ordinary budget: enough to ride out a
+# gateway restart or a token refresh, few enough that a misconfigured endpoint
+# reaches the DLQ within a minute or so of backoff rather than never.
+_MAX_TRANSPORT_FAILURE_RETRIES = 3
+
+# Metadata key carrying the per-lineage count of budget-neutral transport
+# retries. Lives in task.metadata (not a typed field) so it rides along with
+# every re-created retry task without a store migration.
+_TRANSPORT_RETRY_METADATA_KEY = "transport_failure_retries"
+
 
 def _bump_effort(current_effort: str) -> str:
     """Return the next effort level, capped at 'max'."""
@@ -361,14 +375,46 @@ def _bump_effort(current_effort: str) -> str:
 
 
 def _escalate_model(current_model: str) -> str:
-    """Return the next model in the escalation ladder, capped at 'opus'."""
+    """Return the next model in the escalation ladder, capped at 'opus'.
+
+    A name that matches no rung is returned unchanged. The ladder is a
+    Claude tier ordering; a model outside it has no "next" rung, and
+    inventing one substitutes a name the configured provider may not serve
+    (#4274). The historical behaviour picked the sonnet position for any
+    unmatched name and escalated to "opus" from there, which is how a
+    gateway alias became a 4xx on the first retry.
+    """
     model_lower = current_model.lower()
-    model_idx = 1  # default to sonnet position
     for i, name in enumerate(_MODEL_LADDER):
         if name in model_lower:
-            model_idx = i
-            break
-    return _MODEL_LADDER[min(model_idx + 1, len(_MODEL_LADDER) - 1)]
+            return _MODEL_LADDER[min(i + 1, len(_MODEL_LADDER) - 1)]
+    return current_model
+
+
+def _operator_pinned_model(
+    role: str,
+    role_model_policy: dict[str, dict[str, Any]] | None,
+    run_pinned_model: str | None,
+) -> str | None:
+    """Return the model the operator explicitly chose for *role*, if any.
+
+    A model can be pinned by two routes and both mean the same thing:
+
+    * ``role_model_policy.<role>.model`` - a per-role pin in the seed config,
+      how a deployment retargets every role at one provider's own model names;
+    * the run-level ``--model`` flag, which the orchestrator threads into
+      ``AgentSpawner.default_model``.
+
+    Both are collapsed here so retry escalation has a single notion of "the
+    operator chose this model" rather than one guard per route. The per-role
+    pin wins over the run-level one, matching spawn-time precedence.
+    """
+    entry = role_model_policy.get(role) if isinstance(role_model_policy, dict) else None
+    role_pin = entry.get("model") if isinstance(entry, dict) else None
+    for candidate in (role_pin, run_pinned_model):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate
+    return None
 
 
 def _choose_retry_escalation(
@@ -376,8 +422,15 @@ def _choose_retry_escalation(
     next_retry: int,
     current_model: str,
     current_effort: str,
+    pinned_model: str | None = None,
 ) -> tuple[str, str]:
     """Decide model and effort for the retry based on terminal reason and context.
+
+    ``pinned_model`` is the model the operator explicitly chose for this task
+    (see :func:`_operator_pinned_model`). When set it is returned unchanged
+    from every branch: escalation may still raise effort, but a pin is an
+    instruction, not a default, and substituting a tier name for it hands the
+    configured provider a model it does not serve (#4274).
 
     Returns (new_model, new_effort).
     """
@@ -385,28 +438,31 @@ def _choose_retry_escalation(
 
     terminal_reason = task.terminal_reason
 
+    def _model(escalated: str) -> str:
+        return pinned_model or escalated
+
     match terminal_reason:
         case "error_max_turns":
             new_effort = _bump_effort(current_effort) if current_effort != "max" else current_effort
-            return current_model, new_effort
+            return _model(current_model), new_effort
         case "error_max_budget_usd":
-            return current_model, "max"
+            return _model(current_model), "max"
         case "model_error":
-            return current_model, current_effort
+            return _model(current_model), current_effort
         case "blocking_limit":
-            return "opus", "max"
+            return _model("opus"), "max"
 
     if task.scope == _Scope.LARGE or task.role in ("architect", "security"):
-        return "opus", "max"
+        return _model("opus"), "max"
 
     if task.deadline is not None and time.time() > task.deadline:
-        return "opus", "max"
+        return _model("opus"), "max"
 
     if next_retry == 1:
-        return current_model, _bump_effort(current_effort)
+        return _model(current_model), _bump_effort(current_effort)
 
     # Second+ retry: escalate model, reset effort to high
-    return _escalate_model(current_model), "high"
+    return _model(_escalate_model(current_model)), "high"
 
 
 def _stamp_checkpoint_retry_metadata_safe(
@@ -490,11 +546,18 @@ def maybe_retry_task(
     quarantine: Any,
     workdir: Path | None = None,
     session_id: str | None = None,
+    role_model_policy: dict[str, dict[str, Any]] | None = None,
+    run_pinned_model: str | None = None,
 ) -> bool:
     """Queue a retry for a failed task with model/effort escalation.
 
     First retry bumps effort one level (low->medium->high->max), keeps model.
     Second retry escalates model (haiku->sonnet->opus) and resets effort to high.
+
+    Model escalation applies only when the operator did not name a model. A
+    per-role ``role_model_policy.<role>.model`` or a run-level ``--model``
+    (threaded in as ``run_pinned_model``) is carried through every retry
+    verbatim - see :func:`_operator_pinned_model` and #4274.
 
     Args:
         task: The failed task to potentially retry.
@@ -506,6 +569,10 @@ def maybe_retry_task(
         quarantine: QuarantineStore instance.
         workdir: Optional repo root used to inspect the failed agent log.
         session_id: Optional failed session ID for failure-context extraction.
+        role_model_policy: Optional ``AgentSpawner.role_model_policy`` snapshot,
+            read for its per-role ``model`` pin.
+        run_pinned_model: Optional run-level ``--model`` pin
+            (``AgentSpawner.default_model``).
 
     Returns:
         True if a retry task was created, False otherwise.
@@ -556,7 +623,23 @@ def maybe_retry_task(
     current_model = task.model or "sonnet"
     current_effort = task.effort or "high"
 
-    new_model, new_effort = _choose_retry_escalation(task, next_retry, current_model, current_effort)
+    pinned_model = _operator_pinned_model(task.role, role_model_policy, run_pinned_model)
+    new_model, new_effort = _choose_retry_escalation(
+        task,
+        next_retry,
+        current_model,
+        current_effort,
+        pinned_model=pinned_model,
+    )
+    if pinned_model:
+        logger.info(
+            "maybe_retry_task: task %s retries on the operator-pinned model %r "
+            "(effort %r -> %r); escalation did not substitute a tier name",
+            task.id,
+            pinned_model,
+            current_effort,
+            new_effort,
+        )
 
     failure_context = _extract_failure_context(task, workdir, session_id)
 
@@ -975,6 +1058,8 @@ def retry_or_fail_task(
     workdir: Path | None = None,
     role_model_policy: dict[str, dict[str, Any]] | None = None,
     default_adapter_name: str | None = None,
+    run_pinned_model: str | None = None,
+    transport_failure: bool = False,
 ) -> None:
     """Re-queue a task for retry, or fail it permanently if max retries reached.
 
@@ -1022,6 +1107,20 @@ def retry_or_fail_task(
             ``AgentSpawner.default_adapter_name``), used as the fallback
             Claude-compatibility check when the retrying role has no
             role_model_policy entry of its own.
+        run_pinned_model: The run-level model pin (``bernstein run --model``),
+            which the orchestrator threads in from
+            ``AgentSpawner.default_model``. Together with
+            ``role_model_policy.<role>.model`` this is the second of the two
+            routes by which an operator names a model; both are collapsed by
+            :func:`_operator_pinned_model` and both are honoured verbatim by
+            retry escalation (#4274).
+        transport_failure: The agent exited without consuming a token, so it
+            never reached the model and never attempted the task. Such a retry
+            does not decrement the ordinary retry budget; it is counted
+            separately against ``_MAX_TRANSPORT_FAILURE_RETRIES`` with its own
+            backoff, and once that ceiling is reached it is charged like any
+            other failure so a transport fault that never clears still
+            terminates (#4275).
     """
     base = server_url
     dynamic_limit = _dynamic_retry_limit(reason, max_task_retries)
@@ -1065,6 +1164,45 @@ def retry_or_fail_task(
     # higher ceiling those other two knobs would otherwise allow.
     effective_limit = min(per_task_limit, dynamic_limit, _MAX_REGULAR_TASK_RETRIES)
     _original_task_id = task.metadata.get("original_task_id", task.id) if isinstance(task.metadata, dict) else task.id
+
+    # Transport failures get their own budget (#4275). The agent exited without
+    # consuming a token, so it never reached the model and never attempted the
+    # task; charging that to the retry budget spent all three attempts in a few
+    # seconds and quarantined work nothing had tried. The separate counter is
+    # what keeps it bounded: past _MAX_TRANSPORT_FAILURE_RETRIES the exit is
+    # charged like any other failure, so an endpoint that never comes back
+    # still reaches the DLQ instead of re-queueing forever.
+    _transport_retries = 0
+    if isinstance(task.metadata, dict):
+        with contextlib.suppress(TypeError, ValueError):
+            _transport_retries = int(task.metadata.get(_TRANSPORT_RETRY_METADATA_KEY, 0) or 0)
+    budget_neutral_retry = transport_failure and _transport_retries < _MAX_TRANSPORT_FAILURE_RETRIES
+    if transport_failure:
+        if budget_neutral_retry:
+            logger.warning(
+                "Transport failure on task %s (%s): the agent produced nothing and never reached "
+                "the model, so this is not an attempt -- retrying with the retry budget left "
+                "intact at %d/%d. Transport retry %d of %d for this lineage; reason=%r",
+                task_id,
+                task.title,
+                retry_count,
+                effective_limit,
+                _transport_retries + 1,
+                _MAX_TRANSPORT_FAILURE_RETRIES,
+                reason,
+            )
+        else:
+            logger.error(
+                "Transport failure on task %s (%s) has not cleared after %d budget-neutral "
+                "retries -- charging this one against the retry budget (%d/%d) so a permanently "
+                "unreachable endpoint terminates rather than re-queueing forever; reason=%r",
+                task_id,
+                task.title,
+                _transport_retries,
+                retry_count + 1,
+                effective_limit,
+                reason,
+            )
     logger.info(
         "retry_or_fail_task decision inputs: task=%s original_task_id=%s retry_count=%d "
         "per_task_limit=%d dynamic_limit=%d hard_cap=%d -> effective_limit=%d reason=%r",
@@ -1156,6 +1294,14 @@ def retry_or_fail_task(
         # i.e. today's historical behavior, unchanged.
         role_policy_entry = role_model_policy.get(task.role, {}) if isinstance(role_model_policy, dict) else {}
         pinned_model = role_policy_entry.get("model") if isinstance(role_policy_entry, dict) else None
+        # The two pin routes converge here (#4274). The adapter check below
+        # used to be the only thing that preserved a pin, so a per-role
+        # ``model:`` with no ``provider:`` -- the shape a deployment gets when
+        # it retargets every role at one endpoint -- was judged
+        # Claude-compatible via the run-level adapter name and overwritten
+        # with "opus" anyway. The pin is now honoured on its own merit,
+        # whatever the adapter turns out to be.
+        operator_pinned_model = _operator_pinned_model(task.role, role_model_policy, run_pinned_model)
         adapter_for_role = (
             role_policy_entry.get("provider") if isinstance(role_policy_entry, dict) else None
         ) or default_adapter_name
@@ -1177,19 +1323,26 @@ def retry_or_fail_task(
             adapter_is_claude_compatible,
         )
 
+        # Effort escalates on its own schedule; only the model is subject to
+        # the pin. ``tier_model`` is what the Claude tier ladder would pick.
         if task.scope == _Scope.LARGE or task.role in _high_stakes_roles:
-            retry_model = "opus" if adapter_is_claude_compatible else (pinned_model or task.model)
-            retry_effort = "max"
+            tier_model, retry_effort = "opus", "max"
         elif retry_count >= 1:
-            retry_model = "opus" if adapter_is_claude_compatible else (pinned_model or task.model)
-            retry_effort = "high"
+            tier_model, retry_effort = "opus", "high"
         else:
-            retry_model = (task.model or "sonnet") if adapter_is_claude_compatible else (pinned_model or task.model)
-            retry_effort = task.effort or "high"
+            tier_model, retry_effort = task.model or "sonnet", task.effort or "high"
+
+        if operator_pinned_model:
+            retry_model = operator_pinned_model
+        elif adapter_is_claude_compatible:
+            retry_model = tier_model
+        else:
+            retry_model = pinned_model or task.model
 
         logger.info(
             "Retry model decision for task %s (role=%s, retry_count=%s, scope=%s): "
-            "model=%r effort=%r (claude_compatible=%s, pinned_model=%r, prior_task_model=%r, reason=%r)",
+            "model=%r effort=%r (claude_compatible=%s, operator_pinned_model=%r, "
+            "role_policy_model=%r, run_pinned_model=%r, prior_task_model=%r, reason=%r)",
             task_id,
             task.role,
             retry_count,
@@ -1197,7 +1350,9 @@ def retry_or_fail_task(
             retry_model,
             retry_effort,
             adapter_is_claude_compatible,
+            operator_pinned_model,
             pinned_model,
+            run_pinned_model,
             task.model,
             reason,
         )
@@ -1221,7 +1376,13 @@ def retry_or_fail_task(
         # retry agent sees the previous attempt's outcome without us having
         # to pollute the description with ``[retry:N]`` markers.
         new_meta_messages = list(task.meta_messages)
-        new_meta_messages.append(f"Retry {retry_count + 1}: Previous attempt failed with reason: {reason}")
+        if budget_neutral_retry:
+            new_meta_messages.append(
+                f"Transport retry {_transport_retries + 1} of {_MAX_TRANSPORT_FAILURE_RETRIES} "
+                f"(attempt {retry_count + 1} not yet started): {reason}"
+            )
+        else:
+            new_meta_messages.append(f"Retry {retry_count + 1}: Previous attempt failed with reason: {reason}")
 
         # Progressive timeout: each retry multiplies estimated_minutes by (retry_count + 2)
         # so retry 1 doubles the time, retry 2 triples it, giving agents more runway.
@@ -1237,12 +1398,27 @@ def retry_or_fail_task(
         retry_metadata = dict(task.metadata)
         retry_metadata["budget_multiplier"] = budget_multiplier
         retry_metadata.setdefault("original_task_id", task.metadata.get("original_task_id", task.id))
+        if budget_neutral_retry:
+            retry_metadata[_TRANSPORT_RETRY_METADATA_KEY] = _transport_retries + 1
+        elif not transport_failure:
+            # A retry that did reach the model proves the transport works, so
+            # the separate counter starts over. A transport failure at the
+            # ceiling keeps its count, which is what makes every subsequent
+            # one charge the ordinary budget.
+            retry_metadata.pop(_TRANSPORT_RETRY_METADATA_KEY, None)
         retry_metadata = _stamp_checkpoint_retry_metadata_safe(
             task=task,
             retry_metadata=retry_metadata,
             workdir=workdir,
             reason=reason,
         )
+
+        # Backoff for the budget-neutral path: the acceptance criteria for
+        # #4275 is "retried, with backoff" -- an immediate re-queue would spin
+        # the three free retries as fast as the three charged ones used to go.
+        retry_delay_s = task.retry_delay_s
+        if budget_neutral_retry:
+            retry_delay_s = min((task.retry_delay_s or 5.0) * (2**_transport_retries), 300.0)
 
         # Title and description are passed through verbatim (no prefix
         # mutation).  The retry agent sees the reason via meta_messages.
@@ -1262,9 +1438,9 @@ def retry_or_fail_task(
             "max_output_tokens": new_max_output_tokens,
             "meta_messages": new_meta_messages,
             "metadata": retry_metadata,
-            "retry_count": retry_count + 1,
+            "retry_count": retry_count if budget_neutral_retry else retry_count + 1,
             "max_retries": task.max_retries,
-            "retry_delay_s": task.retry_delay_s,
+            "retry_delay_s": retry_delay_s,
             # Carry forward the explicit max_turns override (if any) so the
             # retry spawn doesn't silently fall back to complexity-based
             # auto-computation in compute_max_turns().
