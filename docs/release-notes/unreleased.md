@@ -13,3 +13,7 @@ rather than as its own attribution is exempted by hand there, with the reason.
 ## Added
 
 - `bernstein run` on a TTY now says it is waiting for the first agent instead of sitting silent (#4257). The wait is bounded and returns as soon as an agent registers, so a fast start stays exactly as quiet as before: the transient status appears only once a poll has already failed to produce a verdict, and clears before the dashboard or the Rich fallback renders. The non-interactive detach path is unchanged.
+
+## Fixed
+
+- The idle-agent recycler now checks the same log/git liveness grace the heartbeat escalation ladder checks before recycling on stale heartbeat-file age (#4314). The two used to disagree about the same agent - heartbeat escalation would decline to escalate a session with a fresh runner log while the recycler SIGKILL'd it seconds later for the raw heartbeat-file age alone, killing agents mid-edit.

@@ -33,6 +33,8 @@ from bernstein.core.models import (
     TaskType,
 )
 
+from bernstein.core.defaults import AGENT
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -326,6 +328,81 @@ def test_fresh_heartbeat_agent_not_recycled(tmp_path: Path) -> None:
 
     orch._signal_mgr.write_shutdown.assert_not_called()
     orch._spawner.kill.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Liveness gate (#4314): recycler must honor heartbeat_escalation's own
+# log/git freshness verdict instead of recycling on heartbeat-file age alone
+# ---------------------------------------------------------------------------
+
+
+def test_stale_heartbeat_file_defers_to_fresh_log_mtime(tmp_path: Path) -> None:
+    """A stale heartbeat FILE plus a fresh runner-log mtime must survive the
+    recycler sweep - matching heartbeat_escalation's own decision to decline
+    a SIGTERM for the identical signal (evidence in #4314: heartbeat_escalation
+    logged "NOT escalating ... fresh log/git liveness signal" for an agent
+    that agent_recycling SIGKILL'd 3 seconds later).
+    """
+    orch = _make_orch(tmp_path)
+    session = _make_session(["T-live-1"], session_id="s-live-01")
+    orch._agents["s-live-01"] = session
+
+    # Past both the heartbeat threshold (300s) and the coarse PID-liveness
+    # extension (600s), so only the new log/git liveness gate can defer.
+    stale_ts = time.time() - (_IDLE_LIVENESS_EXTENSION_S + 5)
+    orch._signal_mgr.read_heartbeat.return_value = AgentHeartbeat(timestamp=stale_ts)
+
+    # Runner log was written moments ago - the agent is demonstrably still
+    # working (e.g. mid-edit), same signal heartbeat_escalation checks.
+    log_path = tmp_path / ".sdd" / "runtime" / f"{session.id}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text("still working\n")
+
+    tasks_snapshot = {
+        "done": [],
+        "failed": [],
+        "open": [_make_task(id="T-live-1", status="open")],
+        "claimed": [],
+        "blocked": [],
+    }
+
+    recycle_idle_agents(orch, tasks_snapshot)
+
+    orch._signal_mgr.write_shutdown.assert_not_called()
+    orch._spawner.kill.assert_not_called()
+
+
+def test_stale_heartbeat_recycles_past_suppression_cap_despite_fresh_log(tmp_path: Path) -> None:
+    """The log/git liveness defer is bounded, not a permanent exemption
+    (mirrors heartbeat.py issue #3058): once the heartbeat has been silent
+    past the suppression cap the recycler must recycle even with a fresh log
+    mtime - otherwise a stuck agent whose log keeps absorbing provider retry
+    chatter would hold its worker slot forever.
+    """
+    orch = _make_orch(tmp_path)
+    session = _make_session(["T-stuck-1"], session_id="s-stuck-01")
+    orch._agents["s-stuck-01"] = session
+
+    stale_ts = time.time() - (AGENT.liveness_suppression_cap_s + 5)
+    orch._signal_mgr.read_heartbeat.return_value = AgentHeartbeat(timestamp=stale_ts)
+
+    log_path = tmp_path / ".sdd" / "runtime" / f"{session.id}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text("noise\n")
+
+    tasks_snapshot = {
+        "done": [],
+        "failed": [],
+        "open": [_make_task(id="T-stuck-1", status="open")],
+        "claimed": [],
+        "blocked": [],
+    }
+
+    recycle_idle_agents(orch, tasks_snapshot)
+
+    orch._signal_mgr.write_shutdown.assert_called_once()
+    call_args = orch._signal_mgr.write_shutdown.call_args
+    assert "no_heartbeat_" in call_args.kwargs["reason"]
 
 
 # ---------------------------------------------------------------------------
