@@ -35,6 +35,11 @@ logger = logging.getLogger(__name__)
 # orchestrators never accumulate multi-GB metric files.
 _METRIC_FILE_ROTATE_BYTES = 10 * 1024 * 1024
 _METRIC_FILE_MAX_BACKUPS = 5
+#: How many times a line may be re-queued after its target's write failed.
+#: A target that is permanently unwritable would otherwise carry its lines
+#: forward through every flush for the life of the process, so the buffer
+#: grows without bound and each flush retries a write that cannot succeed.
+_MAX_FLUSH_ATTEMPTS = 3
 
 
 def iter_metric_files(metrics_dir: Path, prefix: str) -> list[Path]:
@@ -308,7 +313,12 @@ class MetricsCollector:
         # at record time, so a path stored here would be resolved long after
         # the directory it names was decided on -- the anchor defers the walk
         # to the moment of the write instead.
-        self._buffer: list[tuple[AnchoredDir, str, str]] = []
+        # The fourth element is how many flushes have already failed for
+        # this line. Counting per line rather than per target keeps the
+        # bound where the data is: nothing extra to lock, nothing to reset
+        # on success, and a line re-queued once does not restart the count
+        # because a later line to the same target happened to succeed.
+        self._buffer: list[tuple[AnchoredDir, str, str, int]] = []
         self._buffer_limit: int = 50
         self._flush_interval: float = 5.0  # seconds between time-based flushes
         self._last_flush: float = time.time()
@@ -948,7 +958,7 @@ class MetricsCollector:
             serialized = json.dumps(point)
             with self._lock:
                 for target in targets:
-                    self._buffer.append((target, filename, serialized))
+                    self._buffer.append((target, filename, serialized, 0))
                 should_flush = (
                     len(self._buffer) >= self._buffer_limit or (time.time() - self._last_flush) >= self._flush_interval
                 )
@@ -970,15 +980,15 @@ class MetricsCollector:
 
         # Group lines by target file. ``AnchoredDir`` is frozen, so the anchor
         # and filename form the key directly.
-        by_file: dict[tuple[AnchoredDir, str], list[str]] = {}
-        for directory, filename, line in batch:
-            by_file.setdefault((directory, filename), []).append(line)
+        by_file: dict[tuple[AnchoredDir, str], list[tuple[str, int]]] = {}
+        for directory, filename, line, attempts in batch:
+            by_file.setdefault((directory, filename), []).append((line, attempts))
 
         # Lines whose target write failed. Collected rather than re-queued
         # inline so the remaining targets in this batch are still attempted.
-        failed: list[tuple[AnchoredDir, str, str]] = []
+        failed: list[tuple[AnchoredDir, str, str, int]] = []
 
-        for (directory, filename), lines in by_file.items():
+        for (directory, filename), pending in by_file.items():
             try:
                 # Bound per-file growth: rotate *before* appending so the new
                 # write starts a fresh file once the threshold is crossed.
@@ -996,10 +1006,22 @@ class MetricsCollector:
                     max_backups=_METRIC_FILE_MAX_BACKUPS,
                 )
                 with anchored_append(directory, filename) as f:
-                    f.write("\n".join(lines) + "\n")
+                    f.write("\n".join(line for line, _ in pending) + "\n")
             except OSError:
                 logger.exception("Failed to flush metrics to %s", directory.path / filename)
-                failed.extend((directory, filename, line) for line in lines)
+                retryable = [(line, n + 1) for line, n in pending if n + 1 < _MAX_FLUSH_ATTEMPTS]
+                exhausted = len(pending) - len(retryable)
+                if exhausted:
+                    # Named, not silent: a dropped metric line is invisible
+                    # downstream, so the count and the target are the only
+                    # record that the buffer stopped describing what was asked.
+                    logger.warning(
+                        "Dropping %d metric line(s) for %s after %d failed flushes",
+                        exhausted,
+                        directory.path / filename,
+                        _MAX_FLUSH_ATTEMPTS,
+                    )
+                failed.extend((directory, filename, line, n) for line, n in retryable)
 
         if failed:
             # Put the failed target's lines back so a later flush() can retry
@@ -1014,9 +1036,12 @@ class MetricsCollector:
             # target's lines come back, so a target that wrote successfully is
             # neither undone nor duplicated.
             #
-            # Deliberately unbounded here: capping retries for a permanently
-            # failing target is a separate concern, and dropping data by
-            # default is the behaviour this is fixing.
+            # Bounded at ``_MAX_FLUSH_ATTEMPTS``: re-queueing forever turns a
+            # permanently unwritable target into unbounded buffer growth, and
+            # every later flush pays for a write that cannot succeed. Past the
+            # bound the lines are dropped with a log line that names the target
+            # and the count, which is the trade this makes explicit - losing
+            # some lines loudly beats losing the whole buffer quietly.
             with self._lock:
                 self._buffer[:0] = failed
 
