@@ -346,6 +346,28 @@ def _save_partial_work(spawner: Any, session: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _handle_orphaned_task_guarded(
+    orch: Any,
+    task_id: str,
+    session: AgentSession,
+    tasks_snapshot: dict[str, list[Task]],
+) -> None:
+    """Orphan handling for one task, isolated from the rest of the cleanup.
+
+    An exception here used to propagate out of the tick, skipping
+    ``_save_partial_work`` and worktree cleanup, so the dying agent's
+    uncommitted work was lost.
+    """
+    try:
+        handle_orphaned_task(orch, task_id, session, tasks_snapshot)
+    except Exception:
+        logger.exception(
+            "handle_orphaned_task failed for task %s (agent %s); continuing death cleanup",
+            task_id,
+            session.id,
+        )
+
+
 def _handle_dead_agent(orch: Any, session: AgentSession, tasks_snapshot: dict[str, list[Task]]) -> None:
     """Process a single agent that has been detected as dead."""
     abort_reason, abort_detail = classify_agent_abort_reason(session)
@@ -378,7 +400,7 @@ def _handle_dead_agent(orch: Any, session: AgentSession, tasks_snapshot: dict[st
     for task_id in session.task_ids:
         orch._crash_counts[task_id] = orch._crash_counts.get(task_id, 0) + 1
         _maybe_preserve_worktree(orch, session, task_id)
-        handle_orphaned_task(orch, task_id, session, tasks_snapshot)
+        _handle_orphaned_task_guarded(orch, task_id, session, tasks_snapshot)
     _save_partial_work(orch._spawner, session)
     _preserved = getattr(orch, "_preserved_worktrees", {})
     _session_preserved = any(
@@ -1523,7 +1545,15 @@ def _probe_fast_exit(
         A dict (never a bare bool) with keys: ``suspicious`` (bool),
         ``runtime_s`` (float), ``exit_code`` (int | None), ``manifest_path``
         (str | None), ``log_path`` (str | None), ``log_tail`` (list[str]),
-        ``session_id`` (str), ``task_id`` (str).
+        ``session_id`` (str), ``task_id`` (str), ``tokens_used`` (int) and
+        ``no_session_activity`` (bool).
+
+        ``no_session_activity`` is the transport-failure signal: the agent
+        exited without consuming a single token, so it never exchanged
+        anything with the model. That is a different fault from an agent that
+        ran, spent tokens and produced nothing, and it needs a different
+        response - retrying a transport failure is reasonable, while retrying
+        a genuinely empty deliverable just burns the budget again.
     """
     runtime_s = time.time() - session.spawn_ts if session.spawn_ts > 0 else -1.0
     suspicious = 0 <= runtime_s < _FAST_EXIT_THRESHOLD_S
@@ -1556,6 +1586,15 @@ def _probe_fast_exit(
                 if candidate.exists():
                     manifest_path = str(candidate)
 
+    # Callers reach this probe only after no files, no commits and no
+    # completion signals were found, so the deliverable side is already known
+    # to be empty. The one thing still unanswered is whether the agent talked
+    # to the model at all, and tokens_used answers exactly that on its own -
+    # no corroborating signal would add information the caller does not
+    # already have.
+    tokens_used = int(getattr(session, "tokens_used", 0) or 0)
+    no_session_activity = tokens_used == 0
+
     result: dict[str, Any] = {
         "suspicious": suspicious,
         "runtime_s": round(runtime_s, 2),
@@ -1565,6 +1604,8 @@ def _probe_fast_exit(
         "log_tail": log_tail,
         "session_id": session.id,
         "task_id": task_id,
+        "tokens_used": tokens_used,
+        "no_session_activity": no_session_activity,
     }
 
     if suspicious:
@@ -1936,18 +1977,41 @@ def _handle_orphan_no_signals(
             )
             return _try_auto_complete(orch, task_id, base, summary, log_msg, session=session, start_ts=start_ts)
 
-        logger.warning(
-            "SUSPICIOUS clean exit: agent %s exited cleanly (exit code 0) after only %.1fs "
-            "with no files modified, no commits, and no completion signals -- NOT "
-            "auto-completing task %s; failing it as unverified. A fast empty clean exit is a "
-            "defect signal, not health. See preserved logs under .sdd/runtime/agent_logs/%s/ "
-            "for the full transcript (manifest=%s).",
-            session.id,
-            _probe_result.get("runtime_s"),
-            task_id,
-            session.id,
-            _probe_result.get("manifest_path") or "<none preserved>",
-        )
+        if _probe_result.get("no_session_activity"):
+            # Zero tokens means the agent never exchanged anything with the
+            # model: nothing was asked and nothing was answered. That is a
+            # transport failure, not an agent that ran and produced nothing,
+            # and reporting it as an unverified deliverable sends whoever
+            # reads it to inspect a transcript that does not exist. ERROR
+            # rather than WARNING because a spawn that never reached the
+            # provider is an infrastructure fault, not an agent outcome.
+            logger.error(
+                "TRANSPORT FAILURE (zero-token clean exit): agent %s exited cleanly (exit code 0) "
+                "after only %.1fs having consumed 0 tokens -- it never exchanged anything with the "
+                "model, so there is no transcript to inspect and no deliverable was ever possible. "
+                "NOT auto-completing task %s. This is a spawn/transport fault, not an empty "
+                "deliverable. See preserved logs under .sdd/runtime/agent_logs/%s/ (manifest=%s).",
+                session.id,
+                _probe_result.get("runtime_s"),
+                task_id,
+                session.id,
+                _probe_result.get("manifest_path") or "<none preserved>",
+            )
+        else:
+            logger.warning(
+                "SUSPICIOUS clean exit: agent %s exited cleanly (exit code 0) after only %.1fs "
+                "with no files modified, no commits, and no completion signals -- NOT "
+                "auto-completing task %s; failing it as unverified. A fast empty clean exit is a "
+                "defect signal, not health. It consumed %s tokens, so it did reach the model. "
+                "See preserved logs under .sdd/runtime/agent_logs/%s/ "
+                "for the full transcript (manifest=%s).",
+                session.id,
+                _probe_result.get("runtime_s"),
+                task_id,
+                _probe_result.get("tokens_used"),
+                session.id,
+                _probe_result.get("manifest_path") or "<none preserved>",
+            )
         try:
             retry_or_fail_task(
                 task_id,
@@ -2170,9 +2234,6 @@ def handle_orphaned_task(
         emit_orphan_metrics(orch._workdir, task_id, session, start_ts, success=False, error_type="escalated")
         return
 
-    # Collect structured completion data from agent log
-    completion_data = collect_completion_data(orch._workdir, session)
-
     # Artifact-mode tasks run the pass even with no declared signals: the
     # signed receipt it records is their completion identity (issue #2608).
     if task.completion_signals or is_artifact_mode(task):
@@ -2181,7 +2242,7 @@ def handle_orphaned_task(
             try:
                 result_payload: dict[str, Any] = {
                     "result_summary": f"Auto-completed after agent {session.id} died; janitor passed",
-                } | completion_data
+                }
                 orch._client.post(
                     f"{base}/tasks/{task_id}/complete",
                     json=result_payload,
@@ -2631,7 +2692,7 @@ def _reap_wall_clock_timeout(
         orch._signal_mgr.clear_signals(session.id)
     _preserve_runner_logs(orch, session)
     for task_id in session.task_ids:
-        handle_orphaned_task(orch, task_id, session, tasks_snapshot)
+        _handle_orphaned_task_guarded(orch, task_id, session, tasks_snapshot)
     _save_partial_work(orch._spawner, session)
     _preserved = getattr(orch, "_preserved_worktrees", {})
     _session_preserved = any(

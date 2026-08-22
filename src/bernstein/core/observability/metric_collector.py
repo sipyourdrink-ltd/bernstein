@@ -974,6 +974,10 @@ class MetricsCollector:
         for directory, filename, line in batch:
             by_file.setdefault((directory, filename), []).append(line)
 
+        # Lines whose target write failed. Collected rather than re-queued
+        # inline so the remaining targets in this batch are still attempted.
+        failed: list[tuple[AnchoredDir, str, str]] = []
+
         for (directory, filename), lines in by_file.items():
             try:
                 # Bound per-file growth: rotate *before* appending so the new
@@ -995,6 +999,26 @@ class MetricsCollector:
                     f.write("\n".join(lines) + "\n")
             except OSError:
                 logger.exception("Failed to flush metrics to %s", directory.path / filename)
+                failed.extend((directory, filename, line) for line in lines)
+
+        if failed:
+            # Put the failed target's lines back so a later flush() can retry
+            # them. They were drained before any write was attempted, so
+            # without this a transient ENOSPC or a briefly unwritable tenant
+            # directory silently destroyed that target's copy while the shared
+            # copy survived - a divergence nothing downstream could detect.
+            #
+            # Prepended, not appended: anything enqueued while this flush was
+            # writing is newer, so putting the retries in front keeps each
+            # target's lines in the order they were recorded. Only the failed
+            # target's lines come back, so a target that wrote successfully is
+            # neither undone nor duplicated.
+            #
+            # Deliberately unbounded here: capping retries for a permanently
+            # failing target is a separate concern, and dropping data by
+            # default is the behaviour this is fixing.
+            with self._lock:
+                self._buffer[:0] = failed
 
     def flush(self) -> None:
         """Flush the write buffer to disk. Call this each orchestrator tick."""

@@ -158,9 +158,33 @@ def _detect_idle_reason(
     # Case 2: stale heartbeat
     hb = orch._signal_mgr.read_heartbeat(session.id)
     if hb is not None and (now - hb.timestamp) >= hb_idle_s:
+        hb_age = now - hb.timestamp
         pid = session.pid
-        if pid is not None and _is_process_alive(pid) and (now - hb.timestamp) < _IDLE_LIVENESS_EXTENSION_S:
+        if pid is not None and _is_process_alive(pid) and hb_age < _IDLE_LIVENESS_EXTENSION_S:
             return None  # still alive, within extended window
+
+        # Liveness gate (issue #4314): a stale heartbeat FILE must not
+        # out-vote heartbeat_escalation's own liveness verdict for the same
+        # agent. heartbeat.py's _escalate_heartbeat declines to SIGTERM a
+        # stuck agent whose log/git tree changed within the grace window;
+        # this recycler used to ignore that signal entirely and SIGKILL the
+        # SAME agent seconds later for heartbeat-file age alone, so whichever
+        # of the two disagreeing subsystems was harsher always won - agents
+        # got killed mid-edit. Reuse the exact verdict heartbeat_escalation
+        # uses so the two paths can no longer disagree.
+        # _agent_has_fresh_liveness_signal always logs the per-signal ages it
+        # checked (its own "liveness_judgment" line), so a recycle decision
+        # here is diagnosable the same way a deferred escalation already is.
+        has_fresh_liveness = heartbeat_protocol._agent_has_fresh_liveness_signal(orch, session)
+        if has_fresh_liveness and heartbeat_protocol._liveness_signal_may_defer(hb_age):
+            logger.info(
+                "agent_recycling: NOT recycling agent %s despite heartbeat age %.0fs -- "
+                "fresh log/git liveness signal within grace window (same verdict "
+                "heartbeat_escalation uses)",
+                session.id,
+                hb_age,
+            )
+            return None
         return f"no_heartbeat_{int(hb_idle_s)}s"
 
     # Case 3: no assigned tasks and role queue empty

@@ -5,13 +5,11 @@ from __future__ import annotations
 import json
 import threading
 import time
-from typing import TYPE_CHECKING
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from bernstein.core.metrics import MetricsCollector, MetricType
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 @pytest.fixture
@@ -185,3 +183,82 @@ def test_accepted_tenant_label_queues_both_destinations(collector: MetricsCollec
 
     assert len(collector._buffer) == 2
     assert len({directory for directory, _, _ in collector._buffer}) == 2
+
+
+# ---------------------------------------------------------------------------
+# A failed target's lines survive the flush that failed to write them
+# ---------------------------------------------------------------------------
+
+
+def _fail_writes_under(tenant_segment: str):
+    """Wrap ``anchored_append`` so only the tenant target raises OSError."""
+    import bernstein.core.observability.metric_collector as mc
+
+    real = mc.anchored_append
+
+    def _appender(directory, filename, *args, **kwargs):
+        if tenant_segment in str(directory.path):
+            raise OSError("simulated: tenant volume unwritable")
+        return real(directory, filename, *args, **kwargs)
+
+    return _appender
+
+
+def _lines_in(path: Path) -> list[str]:
+    return [line for line in path.read_text().splitlines() if line]
+
+
+def test_failed_target_write_does_not_discard_its_lines(collector: MetricsCollector, tmp_path: Path) -> None:
+    """A transient write failure must not destroy that target's copy.
+
+    ``_flush_buffer`` drains the buffer before attempting any write, so a
+    target whose write raised had its lines already removed with nowhere to
+    go. The shared copy survived and the tenant copy did not, leaving the two
+    views permanently divergent with nothing downstream able to notice.
+    """
+    collector._write_metric_point(MetricType.API_USAGE, 1.0, {"tenant_id": "team-a"})
+    assert len(collector._buffer) == 2
+
+    shared_file = tmp_path / "metrics" / f"api_usage_{time.strftime('%Y-%m-%d')}.jsonl"
+    tenant_file = tmp_path / "team-a" / "metrics" / shared_file.name
+
+    with patch(
+        "bernstein.core.observability.metric_collector.anchored_append",
+        _fail_writes_under("team-a"),
+    ):
+        collector.flush()
+
+    # The healthy target was written, and the failed one is still pending.
+    assert len(_lines_in(shared_file)) == 1
+    assert not tenant_file.exists() or _lines_in(tenant_file) == []
+    assert len(collector._buffer) == 1
+
+    # The volume comes back; the next flush lands the line it could not write.
+    collector.flush()
+
+    assert len(_lines_in(tenant_file)) == 1
+    assert collector._buffer == []
+
+    # ...and the target that already succeeded was not written a second time.
+    assert len(_lines_in(shared_file)) == 1
+    assert _lines_in(shared_file) == _lines_in(tenant_file)
+
+
+def test_retried_lines_keep_their_recorded_order(collector: MetricsCollector, tmp_path: Path) -> None:
+    """Retries go in front of whatever was enqueued while the flush ran."""
+    collector._write_metric_point(MetricType.API_USAGE, 1.0, {"tenant_id": "team-a"})
+
+    with patch(
+        "bernstein.core.observability.metric_collector.anchored_append",
+        _fail_writes_under("team-a"),
+    ):
+        collector.flush()
+
+    # A newer point for the same tenant arrives after the failed flush.
+    collector._write_metric_point(MetricType.API_USAGE, 2.0, {"tenant_id": "team-a"})
+    collector.flush()
+
+    tenant_file = tmp_path / "team-a" / "metrics" / f"api_usage_{time.strftime('%Y-%m-%d')}.jsonl"
+    values = [json.loads(line)["value"] for line in _lines_in(tenant_file)]
+
+    assert values == [1.0, 2.0], "the retried line must precede the one recorded after it"

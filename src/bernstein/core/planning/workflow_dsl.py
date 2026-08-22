@@ -82,8 +82,16 @@ from bernstein.core.knowledge.task_graph import EdgeType
 from bernstein.core.models import Scope, Task, TaskStatus
 from bernstein.core.planning.recovery_receipt import DEFAULT_JOURNAL_TAIL
 from bernstein.core.planning.workflow import WorkflowDefinition, WorkflowPhase
-from bernstein.core.tasks.lifecycle import DEPENDENCY_BLOCKED_STATUSES
-from bernstein.core.tasks.unreachable import blocking_dependency, unreachable_tasks
+from bernstein.core.tasks.lifecycle import (
+    DEPENDENCY_BLOCKED_STATUSES,
+    SUCCESSFUL_TASK_STATUSES,
+    UNSUCCESSFUL_TERMINAL_STATUSES,
+)
+from bernstein.core.tasks.unreachable import (
+    blocking_dependency,
+    dependency_can_never_satisfy,
+    unreachable_tasks,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -828,18 +836,15 @@ class EdgeResolution(StrEnum):
     PENDING = "pending"  # Upstream not yet terminal.
 
 
-TERMINAL_STATUSES: frozenset[TaskStatus] = frozenset(
-    {
-        TaskStatus.DONE,
-        TaskStatus.FAILED,
-        TaskStatus.CANCELLED,
-        # A node materialised as unreachable (#3622) never ran and never will,
-        # so an edge out of it is as resolved as an edge out of a failure.
-        # Left out of this set its own dependents resolve PENDING forever and
-        # the strand stops at the first ring.
-        TaskStatus.BLOCKED_BY_FAILED_DEP,
-    }
-)
+# Derived from the lifecycle sets rather than hand-listed. The hand-written
+# version omitted CLOSED, ORPHANED, ABANDONED, REFUSED and BLOCKED_BY_ABANDON,
+# so an edge out of a source in any of those resolved PENDING forever: a node
+# whose dependency had completed and been reaped (CLOSED) never became ready,
+# and a strand out of an abandoned or refused node stopped at the first ring -
+# the very failure mode the BLOCKED_BY_FAILED_DEP entry was added to prevent.
+#
+# Deriving it means a status added to the lifecycle cannot be forgotten here.
+TERMINAL_STATUSES: frozenset[TaskStatus] = SUCCESSFUL_TASK_STATUSES | UNSUCCESSFUL_TERMINAL_STATUSES
 
 # The node whose skipped edge stranded this one. Deliberately the same key the
 # task store stamps on its own cascade (#3452), so a record from either
@@ -849,6 +854,28 @@ BLOCKING_NODE_METADATA_KEY = "blocking_task_id"
 
 # The inbound edges that all resolved SKIPPED, rendered "source -> target".
 SKIPPED_EDGES_METADATA_KEY = "skipped_edges"
+
+# Why the blocking node named by BLOCKING_NODE_METADATA_KEY is blocking. A second
+# key rather than a richer value under the existing one, so every reader that
+# already looks up ``blocking_task_id`` keeps working untouched.
+BLOCKING_CAUSE_METADATA_KEY = "blocking_cause"
+
+
+class BlockingCause(StrEnum):
+    """Why a stranded node's blocking dependency never let it run.
+
+    The outcome is the same either way - the dependent is stranded - but the
+    operator response is not. A node that failed once with no retry policy may
+    just need one, while a node that burned every attempt it was given is
+    saying the failure is not transient. Both looked identical on the record
+    before this existed.
+    """
+
+    #: The blocking node reached a terminal non-success state, and either
+    #: declared no retry policy or never exhausted one.
+    DEPENDENCY_FAILED = "dependency_failed"
+    #: The blocking node declared ``retry:`` and used up ``max_attempts``.
+    RETRY_EXHAUSTED = "retry_exhausted"
 
 
 class DAGExecutor:
@@ -892,9 +919,17 @@ class DAGExecutor:
             return EdgeResolution.PENDING
 
         if edge.condition is None:
-            # Unconditional edge: satisfied when source is DONE.
-            if source_task.status == TaskStatus.DONE:
+            # Unconditional edge: satisfied when the source succeeded. CLOSED
+            # counts, not just DONE - a task is closed once its agent is reaped
+            # and its branch merged, which is the store's rule too
+            # (_dependencies_satisfied accepts either).
+            if source_task.status in SUCCESSFUL_TASK_STATUSES:
                 return EdgeResolution.SATISFIED
+            # Otherwise ask the shared classification instead of inferring
+            # "not done means never" locally, so this side cannot drift from
+            # the store's answer for the same status.
+            if dependency_can_never_satisfy(source_task):
+                return EdgeResolution.SKIPPED
             return EdgeResolution.SKIPPED
 
         # A source materialised as unreachable produced no result, so there is
@@ -1026,6 +1061,7 @@ class DAGExecutor:
                 if blocking_node is None:
                     continue
                 blocked.metadata[BLOCKING_NODE_METADATA_KEY] = blocking_node
+                blocked.metadata[BLOCKING_CAUSE_METADATA_KEY] = str(self._blocking_cause(blocking_node))
                 blocked.result_summary = f"dependency {blocking_node} is {tasks[blocking_node].status.value}"
                 ring[node.id] = blocked
 
@@ -1098,6 +1134,23 @@ class DAGExecutor:
             f"{edge.source} -> {edge.target}" for edge in sorted(incoming, key=lambda e: (e.source, e.target))
         ]
         return task
+
+    def _blocking_cause(self, node_id: str) -> BlockingCause:
+        """Classify why ``node_id`` is blocking its dependents.
+
+        Only a node that declared a retry policy AND used up ``max_attempts``
+        counts as exhausted. A node whose ``until`` condition was met stopped
+        deliberately with attempts to spare, which is not the same statement
+        about the failure, so it stays ``DEPENDENCY_FAILED``.
+        """
+        node = self._node_map.get(node_id)
+        if node is None or node.retry is None:
+            return BlockingCause.DEPENDENCY_FAILED
+
+        if self._retry_counts.get(node_id, 0) >= node.retry.max_attempts:
+            return BlockingCause.RETRY_EXHAUSTED
+
+        return BlockingCause.DEPENDENCY_FAILED
 
     def should_retry(self, node_id: str, task: Task) -> bool:
         """Check if a failed task should be retried per the node's retry policy.

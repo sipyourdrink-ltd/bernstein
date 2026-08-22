@@ -20,7 +20,7 @@ from bernstein.core.tasks.lifecycle import (
 )
 from bernstein.core.tasks.models import Task, TaskStatus
 from bernstein.core.tasks.task_store_core import TaskStore
-from bernstein.core.tasks.unreachable import unreachable_tasks
+from bernstein.core.tasks.unreachable import blocking_dependency, unreachable_tasks
 
 UNSUCCESSFUL_DEPENDENCY_STATUSES = [
     TaskStatus.FAILED,
@@ -333,3 +333,72 @@ class TestTaskStoreFailurePropagation:
         await _insert(store, "A", status=TaskStatus.DONE)
         await _insert(store, "B", depends_on=["A"])
         assert store.status_summary()["unreachable"] == []
+
+
+# ---------------------------------------------------------------------------
+# The two schedulers must answer "can this dependency ever satisfy me?" alike
+# ---------------------------------------------------------------------------
+
+
+class TestSchedulerAgreement:
+    """``TaskStore`` and ``DAGExecutor`` decide the same question separately.
+
+    The store gates a claim on ``_dependencies_satisfied``; the DAG executor
+    resolves an edge in ``resolve_edge``. They agreed by coincidence, not by
+    construction - there was no shared call and no test that would fail if one
+    side changed alone. This walks every task status through both and asserts
+    they land on the same verdict.
+    """
+
+    @staticmethod
+    def _store_verdict(status: TaskStatus, tmp_path: Path) -> str:
+        """What the store says about a dependent whose one dependency is *status*."""
+        from bernstein.core.tasks.task_store_core import TaskStore
+
+        store = TaskStore(tmp_path / f"agree-{status.value}" / "tasks.jsonl")
+        dep = _task("A", status)
+        dependent = _task("B", TaskStatus.OPEN, ["A"])
+        store._tasks = {"A": dep, "B": dependent}
+        store._by_status = {s: {} for s in TaskStatus}
+        store._by_status[status]["A"] = dep
+        store._by_status[TaskStatus.OPEN]["B"] = dependent
+
+        if store._dependencies_satisfied(dependent):
+            return "satisfied"
+        return "never" if blocking_dependency(dependent, store._tasks) is not None else "pending"
+
+    @staticmethod
+    def _dag_verdict(status: TaskStatus) -> str:
+        """What the DAG executor says about the same edge."""
+        from bernstein.core.planning.workflow_dsl import (
+            DAGEdge,
+            DAGExecutor,
+            DAGNode,
+            EdgeResolution,
+            WorkflowDAG,
+            WorkflowDefinition,
+        )
+
+        dag = WorkflowDAG(
+            definition=WorkflowDefinition(name="agree", phases=("plan", "verify")),
+            nodes=(DAGNode(id="A", phase="plan", role="qa"), DAGNode(id="B", phase="verify", role="qa")),
+            edges=(DAGEdge(source="A", target="B"),),
+        )
+        executor = DAGExecutor(dag)
+        resolution = executor.resolve_edge(dag.edges[0], {"A": _task("A", status)})
+
+        return {
+            EdgeResolution.SATISFIED: "satisfied",
+            EdgeResolution.SKIPPED: "never",
+            EdgeResolution.PENDING: "pending",
+        }[resolution]
+
+    @pytest.mark.parametrize("status", list(TaskStatus))
+    def test_both_schedulers_agree_for_every_dependency_status(self, status: TaskStatus, tmp_path: Path) -> None:
+        store_verdict = self._store_verdict(status, tmp_path)
+        dag_verdict = self._dag_verdict(status)
+
+        assert store_verdict == dag_verdict, (
+            f"dependency in {status.value!r}: store says {store_verdict!r} but "
+            f"DAGExecutor.resolve_edge says {dag_verdict!r}"
+        )

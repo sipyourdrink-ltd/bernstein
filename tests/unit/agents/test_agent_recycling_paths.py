@@ -122,6 +122,53 @@ def test_detect_idle_reason_stale_heartbeat() -> None:
     assert reason == "no_heartbeat_300s"
 
 
+def test_detect_idle_reason_defers_when_heartbeat_escalation_reports_fresh_liveness() -> None:
+    """Issue #4314: the recycler must consult the SAME liveness verdict
+    heartbeat_escalation uses before recycling on stale heartbeat-file age
+    alone - agents were getting SIGKILL'd here seconds after
+    heartbeat_escalation had declined to SIGTERM the identical agent for the
+    identical reason (fresh log/git liveness).
+    """
+    orch = _orch_for_detect(hb_ts=600.0)  # age 400 > 300, past hb_idle_s
+    with (
+        patch.object(ar.heartbeat_protocol, "_agent_has_fresh_liveness_signal", return_value=True),
+        patch.object(ar.heartbeat_protocol, "_liveness_signal_may_defer", return_value=True),
+    ):
+        reason = _detect_idle_reason(
+            orch, _session(task_ids=["TX"]), 1000.0, 300.0, set(), {"backend": 1}, {"backend": 1}
+        )
+    assert reason is None
+
+
+def test_detect_idle_reason_recycles_when_no_fresh_liveness_signal() -> None:
+    """Without a fresh log/git liveness signal, stale heartbeat-file age
+    still recycles the agent - the gate defers, it does not exempt."""
+    orch = _orch_for_detect(hb_ts=600.0)
+    with (
+        patch.object(ar.heartbeat_protocol, "_agent_has_fresh_liveness_signal", return_value=False),
+        patch.object(ar.heartbeat_protocol, "_liveness_signal_may_defer", return_value=True),
+    ):
+        reason = _detect_idle_reason(
+            orch, _session(task_ids=["TX"]), 1000.0, 300.0, set(), {"backend": 1}, {"backend": 1}
+        )
+    assert reason == "no_heartbeat_300s"
+
+
+def test_detect_idle_reason_recycles_past_suppression_cap_even_if_fresh() -> None:
+    """A fresh log/git signal cannot defer past the suppression cap (#3058) -
+    a heartbeat silent long enough always recycles, even with log activity.
+    """
+    orch = _orch_for_detect(hb_ts=600.0)
+    with (
+        patch.object(ar.heartbeat_protocol, "_agent_has_fresh_liveness_signal", return_value=True),
+        patch.object(ar.heartbeat_protocol, "_liveness_signal_may_defer", return_value=False),
+    ):
+        reason = _detect_idle_reason(
+            orch, _session(task_ids=["TX"]), 1000.0, 300.0, set(), {"backend": 1}, {"backend": 1}
+        )
+    assert reason == "no_heartbeat_300s"
+
+
 def test_detect_idle_reason_role_queue_empty_no_tasks() -> None:
     """An agent with no tasks and an empty role queue is idle."""
     orch = _orch_for_detect(None)

@@ -1,0 +1,53 @@
+# Volunteer rig: local gitea + fixture project for end-to-end testing.
+#
+# Smallest slice (issue #3874): gitea up, admin seeded unattended,
+# fixture repo with OSI license + volunteer.json + two issues labelled
+# volunteer-ok. Workers and full asserts land in a second PR.
+#
+# Usage:
+#   docker compose -f docker/volunteer-rig/compose.yaml -p volunteer-rig up --build --abort-on-container-exit
+#   docker compose -f docker/volunteer-rig/compose.yaml -p volunteer-rig down -v
+#
+# Note: `down -v` is required between runs to avoid duplicate issues.
+#   docker compose -f docker/volunteer-rig/compose.yaml -p volunteer-rig down -v
+
+name: volunteer-rig
+
+services:
+  # ── Gitea: local git server ─────────────────────────────────────────────
+  gitea:
+    image: gitea/gitea:1.22
+    environment:
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__server__DOMAIN: "gitea"
+      GITEA__server__ROOT_URL: "http://gitea:3000"
+      GITEA__service__DISABLE_REGISTRATION: "true"
+    command: ["sh", "-c", "gitea admin user create --admin --username bernstein --password volunteer-rig-pass --email admin@bernstein.test --must-change-password=false 2>/dev/null; gitea web"]
+    volumes:
+      - gitea-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  # ── Seeder + Assert: one-shot container ────────────────────────────────
+  # Seeds the fixture repo/issues, then asserts the seed succeeded.
+  # Exits non-zero on any failure (including auth 401) so CI catches it.
+  seeder:
+    build:
+      context: ../..
+      dockerfile: docker/volunteer-rig/Dockerfile
+    entrypoint: ["/usr/local/bin/volunteer-rig-seed"]
+    environment:
+      GITEA_URL: "http://gitea:3000"
+    depends_on:
+      gitea:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  gitea-data:
+    driver: local

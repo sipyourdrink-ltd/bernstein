@@ -210,6 +210,60 @@ class TestSpawnCommandArgs:
         parsed = json.loads(cmd[cmd.index("--mcp-config") + 1])
         assert "bernstein" in parsed["mcpServers"]
 
+    def test_bernstein_bridge_targets_the_package_entrypoint(self, tmp_path: Path) -> None:
+        """The bridge spec must spawn a module that actually answers stdio (#4313).
+
+        ``bernstein.mcp.server`` has no ``__main__`` guard, so ``-m
+        bernstein.mcp.server`` imports it and exits 0 without ever starting
+        the server. ``bernstein.mcp`` (``__main__.py``) is the entrypoint
+        that calls ``run_stdio()``.
+        """
+        cmd, _, __ = self._spawn(tmp_path, mcp_config=None)
+        parsed = json.loads(cmd[cmd.index("--mcp-config") + 1])
+        bridge = parsed["mcpServers"]["bernstein"]
+        assert bridge["args"] == ["-m", "bernstein.mcp"]
+
+    def test_bernstein_bridge_spec_answers_initialize_over_stdio(self, tmp_path: Path) -> None:
+        """Regression for #4313: subprocess round-trip, no orchestrator involved.
+
+        Spawns the exact command+args the adapter injects for the bridge
+        server as a real subprocess and checks it answers an ``initialize``
+        request. This is what actually broke: the previous spec started a
+        process that exited 0 without ever answering the handshake, so
+        every agent's ``bernstein`` MCP server showed as disconnected.
+        """
+        cmd, _, __ = self._spawn(tmp_path, mcp_config=None)
+        parsed = json.loads(cmd[cmd.index("--mcp-config") + 1])
+        bridge = parsed["mcpServers"]["bernstein"]
+
+        request = (
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {},
+                        "clientInfo": {"name": "regression-test", "version": "1"},
+                    },
+                }
+            )
+            + "\n"
+        )
+        proc = subprocess.run(
+            [bridge["command"], *bridge["args"]],
+            input=request,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        assert proc.stdout.strip(), f"bridge server produced no stdout; stderr={proc.stderr}"
+        response = json.loads(proc.stdout.splitlines()[0])
+        assert response["id"] == 1
+        assert response["result"]["serverInfo"]["name"] == "bernstein"
+
 
 # ---------------------------------------------------------------------------
 # spawn() - two-process pipeline wiring

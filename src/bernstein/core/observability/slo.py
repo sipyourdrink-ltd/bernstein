@@ -22,9 +22,11 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
 
     from bernstein.core.observability.metric_collector import MetricsCollector
+    from bernstein.core.tasks.models import Task
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +201,41 @@ class ErrorBudget:
         self.total_tasks = 0
         self.failed_tasks = 0
         self._depleted_since = None
+
+
+def error_budget_from_task_board(
+    tasks_by_status: Mapping[str, Sequence[Task]],
+    *,
+    slo_target: float = 0.90,
+) -> ErrorBudget:
+    """Compute an error budget from terminal task-board states only.
+
+    ``total_tasks``/``failed_tasks`` come strictly from the task server's
+    own ``done``/``failed`` buckets. Agent process liveness never enters
+    the computation: a task's owning agent exiting (SIGTERM from heartbeat
+    escalation, OOM, a plain crash) is not a task outcome, so it cannot
+    move this ratio one way or the other. If the agent died after its
+    claimed task already reached ``done``, that task is counted as done,
+    same as if the agent had exited cleanly (#4310).
+
+    Args:
+        tasks_by_status: Task board buckets keyed by status string, as
+            returned by ``fetch_all_tasks`` (must include ``done`` and
+            ``failed``; open/claimed/in-progress tasks are ignored since
+            they have no terminal outcome yet).
+        slo_target: Success-rate target to carry onto the returned budget.
+
+    Returns:
+        A fresh :class:`ErrorBudget` with counts derived purely from the
+        board. Callers that need the contributing task ids for incident
+        auditability can read them straight off ``tasks_by_status["failed"]``.
+    """
+    done = tasks_by_status.get("done", ())
+    failed = tasks_by_status.get("failed", ())
+    budget = ErrorBudget(slo_target=slo_target)
+    budget.total_tasks = len(done) + len(failed)
+    budget.failed_tasks = len(failed)
+    return budget
 
 
 @dataclass

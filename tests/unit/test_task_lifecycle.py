@@ -442,7 +442,13 @@ def test_claim_and_spawn_batches_sets_xl_timeout_bucket_for_high_risk_batch(tmp_
 
 
 def test_claim_and_spawn_batches_blocked_by_high_error_rate(tmp_path: Path, make_task: Any) -> None:
-    """claim_and_spawn_batches skips the entire spawn wave when convergence guard detects high error rate."""
+    """claim_and_spawn_batches skips the spawn wave when the error rate is high.
+
+    ``alive_count`` is 1, not 0: the rate gates are backpressure, and at zero
+    active agents the guard deliberately stops gating (see
+    ``test_convergence_guard_idle_floor``). One is also below ``max_agents``,
+    so the guard is the only gate that can block this wave.
+    """
     orch = _claim_orch(tmp_path)
     # Wire a convergence guard with a low error-rate threshold
     cg = ConvergenceGuard(ConvergenceGuardConfig(max_error_rate=0.3))
@@ -460,7 +466,7 @@ def test_claim_and_spawn_batches_blocked_by_high_error_rate(tmp_path: Path, make
     task = make_task(id="T-blocked", role="backend")
     result = TickResult()
 
-    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
+    claim_and_spawn_batches(orch, [[task]], alive_count=1, assigned_task_ids=set(), done_ids=set(), result=result)
 
     # Spawn must not happen - convergence guard blocked it
     orch._client.post.assert_not_called()

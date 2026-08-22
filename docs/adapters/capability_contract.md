@@ -9,7 +9,7 @@ stream-json for some, a plain-text signal grammar for others, and upstream
 hooks for the rest.
 
 To keep the orchestrator free of `if adapter == "X"` branches, each adapter
-declares its strategy on three typed axes. The orchestrator dispatches off
+declares its strategy on five typed axes. The orchestrator dispatches off
 the enum, so adding a new adapter is a contract-completion exercise rather
 than a hunt-and-patch across the core.
 
@@ -18,7 +18,7 @@ The enums and the declaration matrix live in
 Strategy is **declared**, not probed: Bernstein never runs the CLI at start
 just to discover its capabilities.
 
-## The four axes
+## The five axes
 
 ### Resume strategy (`ResumeStrategy`)
 
@@ -73,6 +73,21 @@ Every shipped adapter declares `git-diff` (the default), so the coding path is
 unchanged. See [../operations/artifacts.md](../operations/artifacts.md) for the
 artifact-mode completion path.
 
+### Session state (`SessionState`)
+
+Whether the adapter reaches agent-side state that outlives a single spawn.
+Every other axis describes how Bernstein *drives* a run; this one describes
+what the run leaves behind on the agent's side, which is what decides whether
+replaying the same inputs can be expected to reproduce the same outputs.
+
+| Value | Meaning |
+| --- | --- |
+| `stateless` | Each spawn starts from the inputs Bernstein supplies and nothing else. A replay of those inputs is reproducible. |
+| `persistent-agent` | The agent keeps its own state across spawns - a server-side session, a memory store, a persistent thread. A replay is **not** reproducible: inputs Bernstein never saw can influence the run. |
+
+`stateless` is the default, so every adapter that has not declared otherwise
+keeps its existing meaning.
+
 ## Declaring a strategy
 
 The canonical declaration is a row in `STRATEGY_MATRIX`, keyed by registry
@@ -95,7 +110,7 @@ Read the resolved strategy through `CLIAdapter.strategy()`, never the raw
 attribute: the resolver applies the inline override first, then the matrix
 keyed by registry name, then the conservative `DEFAULT_ADAPTER_STRATEGY`
 (no native resume, dangerous mode unsupported, text-signal channel,
-git-diff output mode).
+git-diff output mode, stateless session state).
 
 ## Conformance
 

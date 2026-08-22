@@ -220,6 +220,87 @@ def test_maybe_retry_ignores_legacy_title_prefix_when_typed_field_disagrees():
 
 
 # ---------------------------------------------------------------------------
+# Planning-retry race guard (#4309), tick-loop path.
+#
+# maybe_retry_task and retry_or_fail_task are independent retry-creation
+# call sites for the same failed task (see the hard-ceiling comment above
+# and retry_or_fail_task's own docstring) -- both must refuse to leave a
+# planning-role retry claimable once a sibling planning task sharing its
+# decomposition lineage has already finished. This function has no
+# tasks_snapshot to consult, so the guard falls back to a live GET.
+# ---------------------------------------------------------------------------
+
+
+def _capture_client_with_done_sibling(sibling: Task) -> tuple[MagicMock, list[dict]]:
+    """Like _capture_client, but GET /tasks?status=done returns *sibling*."""
+    client, posted = _capture_client()
+
+    def get_side_effect(url: str, params: dict | None = None, **_: object) -> MagicMock:
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        status = (params or {}).get("status")
+        resp.json.return_value = [sibling.to_dict()] if status == "done" else []
+        return resp
+
+    client.get.side_effect = get_side_effect
+    return client, posted
+
+
+def test_maybe_retry_planning_task_cancelled_when_sibling_done(tmp_path):
+    """A planning ('manager') task's retry is created and then immediately
+    cancelled once a sibling sharing its decomposition lineage is DONE."""
+    task = _build_task(task_id="planning-A", retry_count=0)
+    task.role = "manager"
+
+    sibling = _build_task(task_id="planning-B", retry_count=0)
+    sibling.role = "manager"
+    sibling.status = TaskStatus.DONE
+    sibling.metadata = {"original_task_id": "planning-A"}
+
+    client, posted = _capture_client_with_done_sibling(sibling)
+
+    created = maybe_retry_task(
+        task,
+        retried_task_ids=set(),
+        max_task_retries=3,
+        client=client,
+        server_url="http://server",
+        quarantine=MagicMock(),
+        workdir=tmp_path,
+        session_id=None,
+    )
+
+    assert created is True
+    assert len(posted) == 1  # the retry row was still created -- visible on the board
+
+    cancel_calls = [call for call in client.post.call_args_list if call[0][0].endswith("/NEW-1/cancel")]
+    assert cancel_calls, f"expected the duplicate retry to be cancelled, got: {client.post.call_args_list}"
+    assert "planning-B" in cancel_calls[0].kwargs["json"]["reason"]
+
+
+def test_maybe_retry_planning_task_unaffected_when_no_sibling_done(tmp_path):
+    """Control: no completed sibling -> the planning retry stays open."""
+    task = _build_task(task_id="planning-C", retry_count=0)
+    task.role = "manager"
+    client, posted = _capture_client()  # GET is unmocked; MagicMock default -> no siblings found
+
+    created = maybe_retry_task(
+        task,
+        retried_task_ids=set(),
+        max_task_retries=3,
+        client=client,
+        server_url="http://server",
+        quarantine=MagicMock(),
+        workdir=tmp_path,
+        session_id=None,
+    )
+
+    assert created is True
+    assert len(posted) == 1
+    assert not any(call[0][0].endswith("/cancel") for call in client.post.call_args_list)
+
+
+# ---------------------------------------------------------------------------
 # retry_or_fail_task
 # ---------------------------------------------------------------------------
 

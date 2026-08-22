@@ -10,9 +10,15 @@ can never mask a regression that turns the guard into an always-allow.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
-from bernstein.core.security.url_allowlist import UrlSchemeError, ensure_http_url
+from bernstein.core.security.url_allowlist import (
+    UrlSchemeError,
+    ensure_http_url,
+    ensure_public_http_url,
+)
 
 
 @pytest.mark.parametrize(
@@ -95,3 +101,100 @@ def test_schemeless_url_rejected() -> None:
 def test_error_message_includes_source_label() -> None:
     with pytest.raises(UrlSchemeError, match="jira webhook"):
         ensure_http_url("ftp://example.com", source="jira webhook")
+
+
+# --- ensure_public_http_url: the strict sibling for third-party-derived URLs ---
+#
+# The threat these pin: a URL read out of a *fetched* catalog index is chosen by
+# whoever authored that index, not by the operator. A scheme-only check lets a
+# crafted entry aim the fetcher at loopback, a cloud metadata service, or any
+# private range. Every reject case below is a real SSRF target.
+
+
+def _resolves_to(*addresses: str) -> Callable[[str], list[str]]:
+    """A resolver that answers with fixed addresses, so no DNS is needed."""
+    return lambda _host: list(addresses)
+
+
+def test_public_url_is_accepted_and_returned_unchanged() -> None:
+    url = "https://example.com/catalog/entry.json"
+    assert ensure_public_http_url(url, resolver=_resolves_to("93.184.216.34")) == url
+
+
+@pytest.mark.parametrize(
+    ("address", "what"),
+    [
+        ("127.0.0.1", "loopback"),
+        ("169.254.169.254", "link-local cloud metadata"),
+        ("10.0.0.5", "private 10/8"),
+        ("172.16.0.5", "private 172.16/12"),
+        ("192.168.1.5", "private 192.168/16"),
+        ("0.0.0.0", "unspecified"),
+        ("::1", "IPv6 loopback"),
+        ("fe80::1", "IPv6 link-local"),
+        ("fc00::1", "IPv6 unique-local"),
+        ("::ffff:127.0.0.1", "IPv4-mapped loopback"),
+    ],
+)
+def test_internal_destinations_are_rejected(address: str, what: str) -> None:
+    with pytest.raises(UrlSchemeError, match="internal address"):
+        ensure_public_http_url(
+            "https://evil.example/entry.json",
+            resolver=_resolves_to(address),
+        )
+    assert what  # label kept for readable parametrize ids
+
+
+def test_rebinding_style_answer_is_rejected_when_any_address_is_internal() -> None:
+    # One public and one private answer: which one the HTTP client picks is not
+    # ours to decide, so the whole name is refused.
+    with pytest.raises(UrlSchemeError, match="internal address"):
+        ensure_public_http_url(
+            "https://rebind.example/entry.json",
+            resolver=_resolves_to("93.184.216.34", "127.0.0.1"),
+        )
+
+
+def test_unresolvable_host_is_rejected_not_passed_through() -> None:
+    def _fails(_host: str) -> list[str]:
+        raise OSError("Name or service not known")
+
+    with pytest.raises(UrlSchemeError, match="could not be resolved"):
+        ensure_public_http_url("https://nx.example/entry.json", resolver=_fails)
+
+
+def test_host_resolving_to_nothing_is_rejected() -> None:
+    with pytest.raises(UrlSchemeError, match="resolved to no addresses"):
+        ensure_public_http_url("https://empty.example/x", resolver=_resolves_to())
+
+
+def test_scheme_rules_still_apply_before_resolution() -> None:
+    with pytest.raises(UrlSchemeError, match="scheme"):
+        ensure_public_http_url(
+            "http://example.com/entry.json",
+            resolver=_resolves_to("93.184.216.34"),
+        )
+
+
+def test_http_allowed_when_opted_in_and_host_is_public() -> None:
+    url = "http://example.com/entry.json"
+    assert ensure_public_http_url(url, allow_http=True, resolver=_resolves_to("93.184.216.34")) == url
+
+
+def test_loopback_http_exemption_does_not_leak_into_strict_mode() -> None:
+    # ensure_http_url lets plain http through for localhost; strict mode must not.
+    with pytest.raises(UrlSchemeError, match="internal address"):
+        ensure_public_http_url(
+            "http://localhost:8052/entry.json",
+            allow_http=True,
+            resolver=_resolves_to("127.0.0.1"),
+        )
+
+
+def test_source_label_appears_in_strict_rejection() -> None:
+    with pytest.raises(UrlSchemeError, match="skills_catalog.fetcher"):
+        ensure_public_http_url(
+            "https://evil.example/x",
+            source="skills_catalog.fetcher",
+            resolver=_resolves_to("127.0.0.1"),
+        )

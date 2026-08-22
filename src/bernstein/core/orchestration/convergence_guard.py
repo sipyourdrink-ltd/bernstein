@@ -14,6 +14,7 @@ Usage inside ``claim_and_spawn_batches``::
 
 from __future__ import annotations
 
+import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -21,6 +22,8 @@ from dataclasses import dataclass, field
 from bernstein.core.models import ConvergenceGuardConfig
 
 __all__ = ["ConvergenceGuard", "ConvergenceStatus"]
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Status
@@ -136,17 +139,25 @@ class ConvergenceGuard:
             if active_agents >= self._cfg.max_active_agents:
                 reasons.append(f"Too many active agents ({active_agents}/{self._cfg.max_active_agents})")
 
+        # Gates 3 and 4 are backpressure. At zero active agents there is no
+        # pressure to relieve, and blocking the wave removes the only thing
+        # that could clear the condition -- the run cannot recover (#4336).
+        idle = active_agents == 0
+
         # Gate 3: error rate
         if error_rate is not None:
             computed_error_rate = error_rate
-            if error_rate > self._cfg.max_error_rate:
+            if error_rate > self._cfg.max_error_rate and not idle:
                 reasons.append(f"High error rate ({error_rate:.0%} > {self._cfg.max_error_rate:.0%})")
 
         # Gate 4: spawn rate
         if spawn_rate is not None:
             computed_spawn_rate = spawn_rate
-            if spawn_rate > self._cfg.max_spawn_rate:
+            if spawn_rate > self._cfg.max_spawn_rate and not idle:
                 reasons.append(f"Spawn rate too high ({spawn_rate:.1f}/min > {self._cfg.max_spawn_rate:.1f}/min)")
+
+        if idle and (error_rate is not None or spawn_rate is not None):
+            logger.info("convergence_guard: idle floor -- rate gates skipped at 0 active agents")
 
         ready = len(reasons) == 0
         return ConvergenceStatus(

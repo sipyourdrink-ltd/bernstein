@@ -178,24 +178,50 @@ WHERE  t.id = (
 RETURNING *
 """
 
+# Shared by every single-row claim query below (by-id, its CAS variant, and
+# batch) so each one gates on ``depends_on`` exactly like ``_CLAIM_NEXT_SQL``
+# above - the column names are unqualified because they resolve against the
+# row the enclosing UPDATE targets, same as a plain WHERE clause would.
+#
+# Before this fragment existed, only ``claim_next`` carried the dependency
+# predicate: a caller that claimed a specific id, or a batch of ids, bypassed
+# unmet ``depends_on`` entirely even though the in-memory store's equivalent
+# methods already gated it (#4311). Keeping the predicate in one place is
+# what stops the two paths drifting apart again.
+_DEPENDS_ON_SATISFIED_SQL = """(
+    depends_on = '{}'::text[]
+    OR NOT EXISTS (
+        SELECT 1
+        FROM   unnest(depends_on) AS dep_id
+        WHERE  NOT EXISTS (
+            SELECT 1
+            FROM   tasks AS d
+            WHERE  d.id = dep_id
+            AND    d.status = 'done'
+        )
+    )
+)"""
+
+
 # Claim by id.  The role gate is a variant of each statement rather than a
-# string appended at call time: the predicate binds a parameter, so its
-# number depends on which variant runs, and keeping both spellings literal
-# keeps them greppable next to the queries they gate.
-_CLAIM_BY_ID_TEMPLATE = """
+# string appended at call time: the predicate binds a parameter, so its number
+# depends on which variant runs.  Assembled here rather than with `.format()`
+# because _DEPENDS_ON_SATISFIED_SQL carries literal braces a format call eats.
+def _claim_by_id_sql(role_predicate: str = "") -> str:
+    return f"""
 UPDATE tasks
 SET    status  = 'claimed',
        version = version + 1,
        claimed_by_session = $2
 WHERE  id = $1
 AND    status = 'open'{role_predicate}
+AND    {_DEPENDS_ON_SATISFIED_SQL}
 RETURNING *
 """
 
-_CLAIM_BY_ID_SQL = _CLAIM_BY_ID_TEMPLATE.format(role_predicate="")
-_CLAIM_BY_ID_ROLE_SQL = _CLAIM_BY_ID_TEMPLATE.format(role_predicate="\nAND    role = $3")
 
-_CLAIM_BY_ID_CAS_TEMPLATE = """
+def _claim_by_id_cas_sql(role_predicate: str = "") -> str:
+    return f"""
 UPDATE tasks
 SET    status  = 'claimed',
        version = version + 1,
@@ -203,11 +229,15 @@ SET    status  = 'claimed',
 WHERE  id      = $1
 AND    version = $2
 AND    status  = 'open'{role_predicate}
+AND    {_DEPENDS_ON_SATISFIED_SQL}
 RETURNING *
 """
 
-_CLAIM_BY_ID_CAS_SQL = _CLAIM_BY_ID_CAS_TEMPLATE.format(role_predicate="")
-_CLAIM_BY_ID_CAS_ROLE_SQL = _CLAIM_BY_ID_CAS_TEMPLATE.format(role_predicate="\nAND    role    = $4")
+
+_CLAIM_BY_ID_SQL = _claim_by_id_sql()
+_CLAIM_BY_ID_ROLE_SQL = _claim_by_id_sql("\nAND    role = $3")
+_CLAIM_BY_ID_CAS_SQL = _claim_by_id_cas_sql()
+_CLAIM_BY_ID_CAS_ROLE_SQL = _claim_by_id_cas_sql("\nAND    role    = $4")
 
 # list_tasks() always issues a SQL LIMIT, even when the caller passes none -
 # an omitted limit falls back to this ceiling rather than fetching every
@@ -573,6 +603,10 @@ class PostgresTaskStore(BaseTaskStore):
         failed instead of being claimed.  ``claimed_by_session`` is written
         by the claiming statement itself, so an owner is never missing from
         a task the batch claimed.
+
+        Each UPDATE also carries the ``depends_on`` predicate (see
+        ``_DEPENDS_ON_SATISFIED_SQL``), so an id whose dependencies are not
+        all ``done`` is reported as failed rather than claimed.
         """
         claimed: list[str] = []
         failed: list[str] = []
@@ -580,7 +614,7 @@ class PostgresTaskStore(BaseTaskStore):
         async with self._pool.acquire() as conn, conn.transaction():
             for task_id in task_ids:
                 params: list[Any] = [task_id, agent_id, claimed_by_session]
-                predicates = ["id = $1", "status = 'open'"]
+                predicates = ["id = $1", "status = 'open'", _DEPENDS_ON_SATISFIED_SQL]
                 if tenant_id is not None:
                     params.append(tenant_id)
                     predicates.append(f"tenant_id = ${len(params)}")

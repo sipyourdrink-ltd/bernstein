@@ -29,6 +29,18 @@ if TYPE_CHECKING:
 __all__ = ["blocking_dependency", "unreachable_tasks"]
 
 
+def dependency_can_never_satisfy(dependency: Task) -> bool:
+    """Can ``dependency``, in its recorded status, ever satisfy a dependent?
+
+    The single place this question is answered. Two schedulers ask it -
+    ``TaskStore._dependencies_satisfied`` when deciding whether a claim may
+    proceed, and ``DAGExecutor.resolve_edge`` when resolving an edge - and
+    before this they each carried their own copy of the status logic with
+    nothing keeping the two in step.
+    """
+    return dependency.status in UNSUCCESSFUL_TERMINAL_STATUSES
+
+
 def blocking_dependency(task: Task, tasks: Mapping[str, Task]) -> str | None:
     """Return the id of the dependency that strands *task*, if any.
 
@@ -45,7 +57,7 @@ def blocking_dependency(task: Task, tasks: Mapping[str, Task]) -> str | None:
     blockers = sorted(
         dep_id
         for dep_id in task.depends_on
-        if (dep := tasks.get(dep_id)) is not None and dep.status in UNSUCCESSFUL_TERMINAL_STATUSES
+        if (dep := tasks.get(dep_id)) is not None and dependency_can_never_satisfy(dep)
     )
     return blockers[0] if blockers else None
 

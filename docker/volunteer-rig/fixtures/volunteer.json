@@ -1,0 +1,11 @@
+{
+    "version": 1,
+    "license": "MIT",
+    "gates": [["echo", "hello"]],
+    "allowed_paths": [],
+    "egress_allowlist": [],
+    "sandbox": "container",
+    "max_wall_clock_minutes": 60,
+    "task_label": "volunteer-ok",
+    "local_ok": true
+}
