@@ -13,7 +13,3 @@ rather than as its own attribution is exempted by hand there, with the reason.
 ## Added
 
 - `bernstein run` on a TTY now says it is waiting for the first agent instead of sitting silent (#4257). The wait is bounded and returns as soon as an agent registers, so a fast start stays exactly as quiet as before: the transient status appears only once a poll has already failed to produce a verdict, and clears before the dashboard or the Rich fallback renders. The non-interactive detach path is unchanged.
-
-## Fixed
-
-- The error-budget monitor now derives its failed/total task counts from the task board's own `done`/`failed` states instead of the observability collector's in-memory success bit, so an agent whose process dies after its claimed task already reached `done` no longer counts as a task failure (#4310). Error-budget incidents also record the contributing task ids in their JSON/MD report for auditing.
