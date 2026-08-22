@@ -190,6 +190,24 @@ def _memory_guard_teardown(system: str) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_git_background_maintenance(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stop every git the suite starts from running background housekeeping.
+
+    ``git commit`` may hand off to ``git maintenance``, which writes and then
+    unlinks ``.git/objects/maintenance.lock`` on its own schedule. A helper
+    that walks or deletes ``.git`` right after committing races that unlink
+    and dies with ``FileNotFoundError: 'maintenance.lock'``. Pinning the
+    config through the environment reaches every git process the suite
+    starts, including helpers that never call ``git config`` themselves.
+    """
+    start = int(os.environ.get("GIT_CONFIG_COUNT", "0"))
+    for offset, (key, value) in enumerate((("gc.auto", "0"), ("maintenance.auto", "false"))):
+        monkeypatch.setenv(f"GIT_CONFIG_KEY_{start + offset}", key)
+        monkeypatch.setenv(f"GIT_CONFIG_VALUE_{start + offset}", value)
+    monkeypatch.setenv("GIT_CONFIG_COUNT", str(start + 2))
+
+
+@pytest.fixture(autouse=True)
 def _memory_guard():
     """Reclaim as RSS approaches the cap; abort the session once it exceeds it."""
     yield
