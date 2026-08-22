@@ -1122,3 +1122,80 @@ def cache_window_capability(adapter_name: str) -> CacheWindowCapability:
 CACHE_WINDOW_CAPABILITY_MATRIX: dict[str, CacheWindowCapability] = {
     name: cache_window_capability(name) for name in STRATEGY_MATRIX
 }
+
+
+# ---------------------------------------------------------------------------
+# System-addendum delivery channel (issue #4256)
+# ---------------------------------------------------------------------------
+#
+# ``system_addendum`` is the channel that carries protocol-critical text into a
+# spawn: the completion curl, the heartbeat loop, the signal check. Which
+# surface an adapter delivers it on used to be recorded only in that adapter's
+# own docstring, so an adapter that discarded it was indistinguishable from one
+# that honoured it -- and the ambiguity only resolved minutes later, when the
+# supervisor gave up waiting for signals the agent had never been told to emit.
+# Declared here, on the same axis footing as every other adapter capability,
+# and asserted against the adapter sources by the conformance suite.
+
+
+class SystemAddendumChannel(StrEnum):
+    """Where an adapter delivers ``system_addendum`` at the process boundary."""
+
+    #: A real system-prompt channel the upstream CLI exposes, e.g. Claude
+    #: Code's ``--append-system-prompt``. Survives user-prompt truncation.
+    SYSTEM_PROMPT = "system-prompt"
+    #: No separate system prompt; the text is appended to the user prompt.
+    #: The instructions do arrive, but inside a truncatable payload.
+    PROMPT_APPEND = "prompt-append"
+    #: The adapter has no surface for it at all: the text is dropped.
+    IGNORED = "ignored"
+
+
+#: Registry keys of adapters that deliver the addendum on a real system-prompt
+#: channel. Explicit rather than inferred: a system prompt is a stronger
+#: delivery guarantee than a prompt append and must be declared to be relied on.
+_SYSTEM_PROMPT_ADDENDUM_ADAPTERS: frozenset[str] = frozenset(
+    {
+        "claude",
+        "claude_routine",
+        "openai_agents",
+    }
+)
+
+#: Registry keys of adapters with no separate system prompt that nevertheless
+#: append the addendum to the user prompt, so the instructions still reach the
+#: model. The base ``CLIAdapter.spawn`` contract permits this fallback.
+_PROMPT_APPEND_ADDENDUM_ADAPTERS: frozenset[str] = frozenset(
+    {
+        "devin_terminal",
+        "junie",
+        "muse",
+        "python_runtime",
+        "q_dev",
+        "ralphex",
+    }
+)
+
+
+def system_addendum_channel(adapter_name: str) -> SystemAddendumChannel:
+    """Return the declared ``system_addendum`` delivery channel for an adapter.
+
+    Accepts either a registry key or the session-namespace form (resolved
+    through :data:`_NAMESPACE_ALIASES` first). Any adapter absent from both
+    declaration sets -- including unknown / third-party adapters -- reports
+    :attr:`SystemAddendumChannel.IGNORED`, so the orchestrator assumes the
+    protocol instructions were dropped and says so at spawn rather than
+    assuming a delivery the adapter never promised.
+    """
+    key = _NAMESPACE_ALIASES.get(adapter_name, adapter_name)
+    if key in _SYSTEM_PROMPT_ADDENDUM_ADAPTERS:
+        return SystemAddendumChannel.SYSTEM_PROMPT
+    if key in _PROMPT_APPEND_ADDENDUM_ADAPTERS:
+        return SystemAddendumChannel.PROMPT_APPEND
+    return SystemAddendumChannel.IGNORED
+
+
+#: Full per-adapter system-addendum channel map, one row per declared adapter.
+SYSTEM_ADDENDUM_CHANNEL_MATRIX: dict[str, SystemAddendumChannel] = {
+    name: system_addendum_channel(name) for name in STRATEGY_MATRIX
+}
