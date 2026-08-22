@@ -577,6 +577,54 @@ def test_probe_fast_exit_not_suspicious_for_long_lived_agent(tmp_path: Path) -> 
     assert result["manifest_path"] is None
 
 
+def _fast_exit_session(session_id: str, tokens_used: int) -> AgentSession:
+    """A clean, fast exit differing only in whether any tokens were spent."""
+    session = AgentSession(
+        id=session_id,
+        role="backend",
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+        task_ids=["T-1"],
+        exit_code=0,
+    )
+    session.spawn_ts = __import__("time").time() - 2.0
+    session.tokens_used = tokens_used
+    return session
+
+
+def test_probe_fast_exit_flags_zero_token_exit_as_no_session_activity(tmp_path: Path) -> None:
+    """Zero tokens means the agent never reached the model - a transport fault.
+
+    An agent that spent nothing produced nothing because it never exchanged
+    anything, which is a different fault from one that ran, spent tokens and
+    still produced no deliverable. Both used to be reported identically.
+    """
+    orch = SimpleNamespace()
+    orch._workdir = tmp_path
+    orch._spawner = MagicMock()
+    orch._spawner.get_worktree_path.return_value = None
+
+    result = _probe_fast_exit(orch, _fast_exit_session("sess-zero", 0), "T-1")
+
+    assert result["suspicious"] is True
+    assert result["tokens_used"] == 0
+    assert result["no_session_activity"] is True
+
+
+def test_probe_fast_exit_does_not_flag_a_fast_exit_that_spent_tokens(tmp_path: Path) -> None:
+    """Same fast clean exit, but it did reach the model: not a transport fault."""
+    orch = SimpleNamespace()
+    orch._workdir = tmp_path
+    orch._spawner = MagicMock()
+    orch._spawner.get_worktree_path.return_value = None
+
+    result = _probe_fast_exit(orch, _fast_exit_session("sess-spent", 4321), "T-1")
+
+    assert result["suspicious"] is True
+    assert result["tokens_used"] == 4321
+    assert result["no_session_activity"] is False
+
+
 def test_probe_fast_exit_falls_back_to_worktree_manifest(tmp_path: Path) -> None:
     """When no preserved manifest exists, fall back to the (still-live) worktree copy."""
     session = AgentSession(

@@ -445,6 +445,10 @@ def test_suspicious_clean_exit_is_failed_not_auto_completed(
 
     session = _session(exit_code=0)
     session.spawn_ts = _time.time() - 3.0
+    # Tokens were spent, so the agent did reach the model and this is the
+    # empty-deliverable case this test is about - not a transport failure,
+    # which is covered separately below.
+    session.tokens_used = 2048
     with caplog.at_level(logging.WARNING):
         success, error_type = al._handle_orphan_no_signals(
             _orphan_orch(tmp_path), MagicMock(), "T-1", session, "http://srv", _time.time()
@@ -457,6 +461,51 @@ def test_suspicious_clean_exit_is_failed_not_auto_completed(
     warning = next(r for r in caplog.records if "SUSPICIOUS clean exit" in r.message)
     assert "A-1" in warning.message
     assert "agent_logs" in warning.message
+
+
+def test_zero_token_clean_exit_is_reported_as_a_transport_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An agent that spent no tokens never reached the model.
+
+    Same routing as any other suspicious fast exit - the task is still failed
+    rather than auto-completed - but the operator-facing signal must say
+    transport failure, not unverified deliverable. Reporting it as the latter
+    sends whoever reads it to inspect a transcript that does not exist.
+    """
+    import logging
+    import time as _time
+
+    import bernstein.core.agents.agent_lifecycle as al
+
+    monkeypatch.setattr(al, "collect_completion_data", lambda workdir, session: {"files_modified": []})
+    completed: list[str] = []
+    monkeypatch.setattr(al, "complete_task", lambda client, base, task_id, summary: completed.append(task_id))
+    failed: list[tuple[str, str]] = []
+    monkeypatch.setattr(al, "retry_or_fail_task", lambda task_id, reason, **kw: failed.append((task_id, reason)))
+
+    session = _session(exit_code=0)
+    session.spawn_ts = _time.time() - 3.0
+    session.tokens_used = 0
+
+    with caplog.at_level(logging.WARNING):
+        success, error_type = al._handle_orphan_no_signals(
+            _orphan_orch(tmp_path), MagicMock(), "T-1", session, "http://srv", _time.time()
+        )
+
+    # Routing is unchanged: still failed, never auto-completed.
+    assert success is False
+    assert error_type == "clean_exit_unverified"
+    assert completed == []
+    assert failed and failed[0][0] == "T-1"
+
+    # ...but the signal is distinguishable, and raised to ERROR.
+    record = next(r for r in caplog.records if "TRANSPORT FAILURE" in r.message)
+    assert record.levelno == logging.ERROR
+    assert "0 tokens" in record.message
+    assert not any("SUSPICIOUS clean exit" in r.message for r in caplog.records)
 
 
 def test_long_lived_clean_exit_auto_complete_does_not_warn(
