@@ -11,12 +11,28 @@ from unittest.mock import patch
 import pytest
 from bernstein.core.git_basic import (
     GitResult,
+    _is_transient_push_error,
     run_git,
     safe_push,
     stage_all_except,
     stage_files,
     stage_task_files,
 )
+
+
+@pytest.mark.parametrize(
+    ("stderr", "expected"),
+    [
+        ("fatal: unable to access 'https://github.com/org/repo.git': Could not resolve host", True),
+        ("fatal: could not read from remote repository", True),
+        ("fatal: could not read Username for 'https://github.com': No such device or address", False),
+        ("fatal: Could not read Password for 'https://github.com': terminal prompts disabled", False),
+        ("error: failed to push some refs", False),
+    ],
+)
+def test_is_transient_push_error_distinguishes_credential_prompts(stderr: str, expected: bool) -> None:
+    """Credential prompts are terminal; transport failures remain retryable."""
+    assert _is_transient_push_error(stderr) is expected
 
 
 def test_run_git_raises_called_process_error_when_check_is_true(tmp_path: Path) -> None:

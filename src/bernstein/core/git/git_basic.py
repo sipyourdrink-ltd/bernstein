@@ -411,7 +411,7 @@ def _rebase_or_merge(cwd: Path, remote: str, branch: str) -> GitResult | None:
 
 _TRANSIENT_MARKERS = (
     "unable to access",
-    "could not read",
+    "could not read from remote",
     "connection",
     "timed out",
     "timeout",
