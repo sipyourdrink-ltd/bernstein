@@ -95,8 +95,13 @@ CREATE TABLE IF NOT EXISTS tasks (
     completion_signals JSONB      NOT NULL DEFAULT '[]',
     created_at        FLOAT8      NOT NULL,
     progress_log      JSONB       NOT NULL DEFAULT '[]',
-    version           INTEGER     NOT NULL DEFAULT 1
+    version           INTEGER     NOT NULL DEFAULT 1,
+    claimed_by_session TEXT
 );
+
+-- CREATE TABLE IF NOT EXISTS is a no-op once the table exists, so a column
+-- added after an install has run reaches it only through an ALTER.
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS claimed_by_session TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_tasks_status        ON tasks (status);
 CREATE INDEX IF NOT EXISTS idx_tasks_role_status   ON tasks (role, status);
@@ -174,19 +179,21 @@ RETURNING *
 _CLAIM_BY_ID_TEMPLATE = """
 UPDATE tasks
 SET    status  = 'claimed',
-       version = version + 1
+       version = version + 1,
+       claimed_by_session = $2
 WHERE  id = $1
 AND    status = 'open'{role_predicate}
 RETURNING *
 """
 
 _CLAIM_BY_ID_SQL = _CLAIM_BY_ID_TEMPLATE.format(role_predicate="")
-_CLAIM_BY_ID_ROLE_SQL = _CLAIM_BY_ID_TEMPLATE.format(role_predicate="\nAND    role = $2")
+_CLAIM_BY_ID_ROLE_SQL = _CLAIM_BY_ID_TEMPLATE.format(role_predicate="\nAND    role = $3")
 
 _CLAIM_BY_ID_CAS_TEMPLATE = """
 UPDATE tasks
 SET    status  = 'claimed',
-       version = version + 1
+       version = version + 1,
+       claimed_by_session = $3
 WHERE  id      = $1
 AND    version = $2
 AND    status  = 'open'{role_predicate}
@@ -194,7 +201,7 @@ RETURNING *
 """
 
 _CLAIM_BY_ID_CAS_SQL = _CLAIM_BY_ID_CAS_TEMPLATE.format(role_predicate="")
-_CLAIM_BY_ID_CAS_ROLE_SQL = _CLAIM_BY_ID_CAS_TEMPLATE.format(role_predicate="\nAND    role    = $3")
+_CLAIM_BY_ID_CAS_ROLE_SQL = _CLAIM_BY_ID_CAS_TEMPLATE.format(role_predicate="\nAND    role    = $4")
 
 # list_tasks() always issues a SQL LIMIT, even when the caller passes none -
 # an omitted limit falls back to this ceiling rather than fetching every
@@ -247,6 +254,7 @@ def _row_to_task(row: Any) -> Task:
         depends_on=list(raw.get("depends_on") or []),
         owned_files=list(raw.get("owned_files") or []),
         assigned_agent=raw.get("assigned_agent"),
+        claimed_by_session=raw.get("claimed_by_session"),
         result_summary=raw.get("result_summary"),
         cell_id=raw.get("cell_id"),
         model=raw.get("model"),
@@ -451,12 +459,17 @@ class PostgresTaskStore(BaseTaskStore):
         task_id: str,
         expected_version: int | None = None,
         agent_role: str | None = None,
+        claimed_by_session: str | None = None,
     ) -> Task:
         """Claim a specific task, optionally with CAS.
 
         When *expected_version* is provided, a Redis lock is acquired first
         (if a coordinator is configured) to prevent a race between the version
         check and the UPDATE.
+
+        *claimed_by_session* is written by the same statement that flips the
+        status, so a claimed task always carries the session that owns it -
+        a crash cannot land between the claim and its ownership record.
         """
         lock_token: str | None = None
         try:
@@ -467,14 +480,20 @@ class PostgresTaskStore(BaseTaskStore):
 
             assert self._pool is not None
             async with self._pool.acquire() as conn:
-                row = await self._claim_row(conn, task_id, expected_version, agent_role)
+                row = await self._claim_row(conn, task_id, expected_version, agent_role, claimed_by_session)
             return _row_to_task(row)
         finally:
             if self._redis is not None and lock_token is not None:
                 await self._redis.release(task_id, lock_token)
 
     @staticmethod
-    async def _claim_row(conn: Any, task_id: str, expected_version: int | None, agent_role: str | None = None) -> Any:
+    async def _claim_row(
+        conn: Any,
+        task_id: str,
+        expected_version: int | None,
+        agent_role: str | None = None,
+        claimed_by_session: str | None = None,
+    ) -> Any:
         """Execute the claim query and handle missing/conflicting tasks.
 
         The role gate rides in the statement rather than around it: a check
@@ -485,9 +504,11 @@ class PostgresTaskStore(BaseTaskStore):
         """
         if expected_version is not None:
             if agent_role is None:
-                row = await conn.fetchrow(_CLAIM_BY_ID_CAS_SQL, task_id, expected_version)
+                row = await conn.fetchrow(_CLAIM_BY_ID_CAS_SQL, task_id, expected_version, claimed_by_session)
             else:
-                row = await conn.fetchrow(_CLAIM_BY_ID_CAS_ROLE_SQL, task_id, expected_version, agent_role)
+                row = await conn.fetchrow(
+                    _CLAIM_BY_ID_CAS_ROLE_SQL, task_id, expected_version, claimed_by_session, agent_role
+                )
             if row is None:
                 exists = await conn.fetchval("SELECT 1 FROM tasks WHERE id=$1", task_id)
                 if not exists:
@@ -500,9 +521,9 @@ class PostgresTaskStore(BaseTaskStore):
                 raise ValueError(f"Version conflict: task {task_id} is at version {ver}, expected {expected_version}")
             return row
         if agent_role is None:
-            row = await conn.fetchrow(_CLAIM_BY_ID_SQL, task_id)
+            row = await conn.fetchrow(_CLAIM_BY_ID_SQL, task_id, claimed_by_session)
         else:
-            row = await conn.fetchrow(_CLAIM_BY_ID_ROLE_SQL, task_id, agent_role)
+            row = await conn.fetchrow(_CLAIM_BY_ID_ROLE_SQL, task_id, claimed_by_session, agent_role)
         if row is None:
             exists = await conn.fetchval("SELECT 1 FROM tasks WHERE id=$1", task_id)
             if not exists:
@@ -529,6 +550,7 @@ class PostgresTaskStore(BaseTaskStore):
         task_ids: list[str],
         agent_id: str,
         agent_role: str | None = None,
+        claimed_by_session: str | None = None,
         tenant_id: str | None = None,
     ) -> tuple[list[str], list[str]]:
         """Atomically claim multiple tasks.  Uses a single transaction.
@@ -539,14 +561,16 @@ class PostgresTaskStore(BaseTaskStore):
         concurrent tenant rewrites.  ``agent_role`` is folded in the same
         way, so role-locked claiming holds here exactly as it does in
         ``claim_next`` - a task belonging to another role is reported as
-        failed instead of being claimed.
+        failed instead of being claimed.  ``claimed_by_session`` is written
+        by the claiming statement itself, so an owner is never missing from
+        a task the batch claimed.
         """
         claimed: list[str] = []
         failed: list[str] = []
         assert self._pool is not None
         async with self._pool.acquire() as conn, conn.transaction():
             for task_id in task_ids:
-                params: list[Any] = [task_id, agent_id]
+                params: list[Any] = [task_id, agent_id, claimed_by_session]
                 predicates = ["id = $1", "status = 'open'"]
                 if tenant_id is not None:
                     params.append(tenant_id)
@@ -557,9 +581,10 @@ class PostgresTaskStore(BaseTaskStore):
                 row = await conn.fetchrow(
                     f"""
                         UPDATE tasks
-                        SET    status         = 'claimed',
-                               assigned_agent = $2,
-                               version        = version + 1
+                        SET    status             = 'claimed',
+                               assigned_agent     = $2,
+                               claimed_by_session = $3,
+                               version            = version + 1
                         WHERE  {" AND ".join(predicates)}
                         RETURNING id
                         """,
