@@ -546,3 +546,98 @@ def test_claim_batch_without_role_claims_any_open_task(monkeypatch: pytest.Monke
     assert claimed == ["task-backend", "task-qa"]
     assert failed == []
     assert all("role = $" not in query for query, _ in conn.queries)
+
+
+def test_claim_by_id_rejects_role_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``claim_by_id`` must honor ``agent_role`` like the in-memory store.
+
+    The gated UPDATE matches nothing, and the diagnosis that follows has to
+    tell a role mismatch apart from "already claimed": a mismatch raises
+    ``ValueError`` (409 at the HTTP layer) instead of returning the task.
+    """
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    class _Conn:
+        def __init__(self) -> None:
+            self.queries: list[str] = []
+
+        async def fetchrow(self, query: str, *args: object) -> object | None:
+            await asyncio.sleep(0)  # Async interface requirement
+            self.queries.append(query)
+            if "UPDATE tasks" in query:
+                return None  # role predicate excluded the row
+            if "SELECT * FROM tasks" in query:
+                return _task_row(status="open", role="backend")
+            raise AssertionError(f"unexpected fetchrow query: {query}")
+
+        async def fetchval(self, query: str, *args: object) -> object:
+            await asyncio.sleep(0)  # Async interface requirement
+            if "SELECT 1 FROM tasks" in query:
+                return 1
+            raise AssertionError(f"unexpected fetchval query: {query}")
+
+    conn = _Conn()
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+
+    with pytest.raises(ValueError, match="role mismatch"):
+        asyncio.run(store.claim_by_id("task-1", agent_role="qa"))
+
+    assert "role" in conn.queries[0]
+
+
+def test_claim_by_id_cas_reports_role_mismatch_not_version_conflict(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CAS variant names the real reason.
+
+    With the role gate in the statement, a mismatched role and a stale
+    version both surface as an empty UPDATE - reporting the mismatch as a
+    version conflict would send the caller into a pointless refetch/retry.
+    """
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    class _Conn:
+        async def fetchrow(self, query: str, *args: object) -> object | None:
+            await asyncio.sleep(0)  # Async interface requirement
+            if "UPDATE tasks" in query:
+                return None
+            if "SELECT * FROM tasks" in query:
+                return _task_row(status="open", role="backend", version=3)
+            raise AssertionError(f"unexpected fetchrow query: {query}")
+
+        async def fetchval(self, query: str, *args: object) -> object:
+            await asyncio.sleep(0)  # Async interface requirement
+            if "SELECT 1 FROM tasks" in query:
+                return 1
+            if "SELECT version FROM tasks" in query:
+                return 3
+            raise AssertionError(f"unexpected fetchval query: {query}")
+
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(_Conn())
+
+    with pytest.raises(ValueError, match="role mismatch"):
+        asyncio.run(store.claim_by_id("task-1", expected_version=3, agent_role="qa"))
+
+
+def test_claim_by_id_matching_role_claims_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A matching role claims normally, with the role bound as a parameter."""
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    class _Conn:
+        def __init__(self) -> None:
+            self.args: tuple[object, ...] = ()
+
+        async def fetchrow(self, query: str, *args: object) -> object | None:
+            await asyncio.sleep(0)  # Async interface requirement
+            assert "UPDATE tasks" in query
+            self.args = args
+            return _task_row(status="claimed", role="backend")
+
+    conn = _Conn()
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+
+    task = asyncio.run(store.claim_by_id("task-1", agent_role="backend"))
+
+    assert task.status is TaskStatus.CLAIMED
+    assert conn.args == ("task-1", "backend")

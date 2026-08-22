@@ -21,6 +21,16 @@ if TYPE_CHECKING:
     from bernstein.core.tasks.task_store import ArchiveRecord
 
 
+def role_mismatch_error(task_id: str, task_role: str, agent_role: str) -> ValueError:
+    """Build the error raised when an agent claims a task of another role.
+
+    Owned here because both stores raise it and the ``claim_by_id`` /
+    ``claim_batch`` contracts below document it - one wording, so a caller
+    matching on it behaves the same whichever backend answers.
+    """
+    return ValueError(f"role mismatch: task {task_id} requires role '{task_role}', agent has role '{agent_role}'")
+
+
 @dataclass
 class RoleSummary:
     """Per-role task count breakdown for the status dashboard."""

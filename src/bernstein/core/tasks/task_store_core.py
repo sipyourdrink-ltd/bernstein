@@ -25,6 +25,7 @@ from bernstein.core.hook_events import HookEvent
 from bernstein.core.persistence.anchored_write import anchored_append
 from bernstein.core.persistence.durable_write import fsynced_write
 from bernstein.core.persistence.runtime_state import rotate_log_file
+from bernstein.core.persistence.store import role_mismatch_error
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.tasks.artifacts import ArtifactSpec
 from bernstein.core.tasks.errors import TaskDomainError
@@ -2004,9 +2005,7 @@ class TaskStore:
                     f"Version conflict: task {task_id} is at version {task.version}, expected {expected_version}"
                 )
             if agent_role is not None and task.role != agent_role:
-                raise ValueError(
-                    f"role mismatch: task {task_id} requires role '{task.role}', agent has role '{agent_role}'"
-                )
+                raise role_mismatch_error(task_id, task.role, agent_role)
             if task.status != TaskStatus.OPEN:
                 # never silently re-return an already-claimed or
                 # terminal task - that enables double-claim. Raise so the

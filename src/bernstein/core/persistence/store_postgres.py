@@ -29,7 +29,7 @@ import uuid
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from bernstein.core.persistence.store import BaseTaskStore, RoleSummary, StatusSummary
+from bernstein.core.persistence.store import BaseTaskStore, RoleSummary, StatusSummary, role_mismatch_error
 from bernstein.core.tasks.models import (
     CompletionSignal,
     Complexity,
@@ -167,24 +167,34 @@ WHERE  t.id = (
 RETURNING *
 """
 
-_CLAIM_BY_ID_SQL = """
+# Claim by id.  The role gate is a variant of each statement rather than a
+# string appended at call time: the predicate binds a parameter, so its
+# number depends on which variant runs, and keeping both spellings literal
+# keeps them greppable next to the queries they gate.
+_CLAIM_BY_ID_TEMPLATE = """
 UPDATE tasks
 SET    status  = 'claimed',
        version = version + 1
 WHERE  id = $1
-AND    status = 'open'
+AND    status = 'open'{role_predicate}
 RETURNING *
 """
 
-_CLAIM_BY_ID_CAS_SQL = """
+_CLAIM_BY_ID_SQL = _CLAIM_BY_ID_TEMPLATE.format(role_predicate="")
+_CLAIM_BY_ID_ROLE_SQL = _CLAIM_BY_ID_TEMPLATE.format(role_predicate="\nAND    role = $2")
+
+_CLAIM_BY_ID_CAS_TEMPLATE = """
 UPDATE tasks
 SET    status  = 'claimed',
        version = version + 1
 WHERE  id      = $1
 AND    version = $2
-AND    status  = 'open'
+AND    status  = 'open'{role_predicate}
 RETURNING *
 """
+
+_CLAIM_BY_ID_CAS_SQL = _CLAIM_BY_ID_CAS_TEMPLATE.format(role_predicate="")
+_CLAIM_BY_ID_CAS_ROLE_SQL = _CLAIM_BY_ID_CAS_TEMPLATE.format(role_predicate="\nAND    role    = $3")
 
 # list_tasks() always issues a SQL LIMIT, even when the caller passes none -
 # an omitted limit falls back to this ceiling rather than fetching every
@@ -457,32 +467,62 @@ class PostgresTaskStore(BaseTaskStore):
 
             assert self._pool is not None
             async with self._pool.acquire() as conn:
-                row = await self._claim_row(conn, task_id, expected_version)
+                row = await self._claim_row(conn, task_id, expected_version, agent_role)
             return _row_to_task(row)
         finally:
             if self._redis is not None and lock_token is not None:
                 await self._redis.release(task_id, lock_token)
 
     @staticmethod
-    async def _claim_row(conn: Any, task_id: str, expected_version: int | None) -> Any:
-        """Execute the claim query and handle missing/conflicting tasks."""
+    async def _claim_row(conn: Any, task_id: str, expected_version: int | None, agent_role: str | None = None) -> Any:
+        """Execute the claim query and handle missing/conflicting tasks.
+
+        The role gate rides in the statement rather than around it: a check
+        before the UPDATE can be invalidated by a concurrent role rewrite,
+        and a check after it would run once the row is already claimed.  A
+        gated statement that matches nothing is therefore ambiguous, so the
+        no-match paths below re-read the row to name the real reason.
+        """
         if expected_version is not None:
-            row = await conn.fetchrow(_CLAIM_BY_ID_CAS_SQL, task_id, expected_version)
+            if agent_role is None:
+                row = await conn.fetchrow(_CLAIM_BY_ID_CAS_SQL, task_id, expected_version)
+            else:
+                row = await conn.fetchrow(_CLAIM_BY_ID_CAS_ROLE_SQL, task_id, expected_version, agent_role)
             if row is None:
                 exists = await conn.fetchval("SELECT 1 FROM tasks WHERE id=$1", task_id)
                 if not exists:
                     raise KeyError(task_id)
+                # A mismatched role and a stale version both empty the
+                # UPDATE; reporting the mismatch as a version conflict would
+                # send the caller into a refetch/retry that cannot succeed.
+                await PostgresTaskStore._reject_role_mismatch(conn, task_id, agent_role)
                 ver = await conn.fetchval("SELECT version FROM tasks WHERE id=$1", task_id)
                 raise ValueError(f"Version conflict: task {task_id} is at version {ver}, expected {expected_version}")
             return row
-        row = await conn.fetchrow(_CLAIM_BY_ID_SQL, task_id)
+        if agent_role is None:
+            row = await conn.fetchrow(_CLAIM_BY_ID_SQL, task_id)
+        else:
+            row = await conn.fetchrow(_CLAIM_BY_ID_ROLE_SQL, task_id, agent_role)
         if row is None:
             exists = await conn.fetchval("SELECT 1 FROM tasks WHERE id=$1", task_id)
             if not exists:
                 raise KeyError(task_id)
             row = await conn.fetchrow("SELECT * FROM tasks WHERE id=$1", task_id)
             assert row is not None
+            # Only a role mismatch is an error here - a task that is simply
+            # no longer open still comes back as its current state.
+            if agent_role is not None and row["role"] != agent_role:
+                raise role_mismatch_error(task_id, row["role"], agent_role)
         return row
+
+    @staticmethod
+    async def _reject_role_mismatch(conn: Any, task_id: str, agent_role: str | None) -> None:
+        """Raise if *task_id* belongs to a role other than *agent_role*."""
+        if agent_role is None:
+            return
+        current = await conn.fetchrow("SELECT * FROM tasks WHERE id=$1", task_id)
+        if current is not None and current["role"] != agent_role:
+            raise role_mismatch_error(task_id, current["role"], agent_role)
 
     async def claim_batch(
         self,
