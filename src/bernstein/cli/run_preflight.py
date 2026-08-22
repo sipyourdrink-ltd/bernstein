@@ -646,7 +646,7 @@ def _raise_if_no_plan_after_spawn(*, narrate_wait: bool = True) -> None:
         )
 
 
-def _finalize_run_output(*, quiet: bool) -> None:
+def _finalize_run_output(*, quiet: bool, wait: bool = False) -> None:
     """Render either the interactive dashboard or the final summary.
 
     Uses terminal capability detection (TUI-003) to choose between the
@@ -691,6 +691,7 @@ def _finalize_run_output(*, quiet: bool) -> None:
 
     Args:
         quiet: When True, wait for quiescence and print only the terminal summary.
+        wait: When True, wait for quiescence and keep the progress output.
     """
     from bernstein.cli.run_bootstrap import (
         _poll_quiescent_status,
@@ -699,12 +700,17 @@ def _finalize_run_output(*, quiet: bool) -> None:
     )
 
     try:
-        if quiet:
+        if quiet or wait:
             # `--quiet` means "no progress chatter", not "swallow the reason
             # the run produced nothing" -- run the same fast diagnosis every
             # other branch runs before falling back to the slower, general
             # terminal-state wait below (issue #3528).
-            _raise_if_no_plan_after_spawn(narrate_wait=False)
+            #
+            # `--wait` asks for the same terminal-state wait without giving up
+            # the progress output, and takes this branch even on a TTY: a
+            # caller that wants an exit code wants the run's outcome, not a
+            # dashboard it has to close.
+            _raise_if_no_plan_after_spawn(narrate_wait=not quiet)
             final_status = _wait_for_run_completion()
             _show_run_summary()
             _exit_nonzero_on_unhealthy_run(final_status)
