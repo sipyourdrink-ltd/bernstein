@@ -31,6 +31,7 @@ from bernstein.core.task_lifecycle import (
     _has_llm_judge_signal,
     _move_backlog_ticket,
     _record_ab_test_outcome,
+    _verify_against_merge_preview,
     _verify_via_janitor,
     claim_and_spawn_batches,
     prepare_speculative_warm_pool,
@@ -801,7 +802,16 @@ def test_process_completed_tasks_dispatches_llm_judge_to_run_janitor(
     assert mock_process.call_count == 2
     assert len(submitted) == 2
 
-    dispatched = {args[0].id: fn for fn, args, _ in submitted}
+    # A task whose session owns a worktree is verified against the agent
+    # branch merged onto the run branch (issue #4367), so the submitted
+    # callable is the preview wrapper and the real verifier is its first
+    # argument. Unwrap it so this test keeps asserting dispatch routing.
+    def _unwrap(fn: Any, args: tuple[Any, ...]) -> tuple[Any, Any]:
+        if fn is _verify_against_merge_preview:
+            return args[0], args[1]
+        return fn, args[0]
+
+    dispatched = {task_obj.id: verifier for verifier, task_obj in (_unwrap(fn, args) for fn, args, _ in submitted)}
     assert dispatched["T-judge"] is _verify_via_janitor
     # Non-judge tasks keep the sync fast path. Since #2990 that seam is
     # ``verify_task_completion``, which dispatches on the task's artifact kind
