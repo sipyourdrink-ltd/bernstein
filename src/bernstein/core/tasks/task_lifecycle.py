@@ -623,17 +623,57 @@ def maybe_retry_task(
     try:
         resp = client.post(f"{server_url}/tasks", json=payload)
         resp.raise_for_status()
-        new_task_id = resp.json().get("id", "?")
+        new_task_id = _extract_new_task_id(resp)
         retried_task_ids.add(task.id)
         logger.info(
             "Retry %d queued for failed task %s -> %s (model=%s effort=%s budget_mult=%.1fx)",
             next_retry,
             task.id,
-            new_task_id,
+            new_task_id or "?",
             new_model,
             new_effort,
             budget_multiplier,
         )
+
+        # Planning-retry race guard (#4309). This tick-loop path and
+        # retry_or_fail_task's reap path are independent retry-creation call
+        # sites for the same failed task -- see _find_done_planning_sibling.
+        # No tasks_snapshot is available here (the tick loop hands this
+        # function one failed task at a time), so the sibling lookup always
+        # takes the live-GET fallback; that is fine because planning-role
+        # failures are rare relative to worker failures.
+        if task.role == _PLANNING_ROLE and new_task_id is not None:
+            completed_sibling = _find_done_planning_sibling(
+                task,
+                retry_metadata["original_task_id"],
+                tasks_snapshot=None,
+                client=client,
+                base=server_url,
+            )
+            if completed_sibling is not None:
+                cancel_reason = (
+                    f"planning retry race: sibling planning task {completed_sibling.id} "
+                    "already completed the decomposition for this goal"
+                )
+                try:
+                    client.post(
+                        f"{server_url}/tasks/{new_task_id}/cancel", json={"reason": cancel_reason}
+                    ).raise_for_status()
+                    logger.info(
+                        "maybe_retry_task verdict=cancel_planning_retry task=%s retry=%s "
+                        "completed_sibling=%s reason=%r",
+                        task.id,
+                        new_task_id,
+                        completed_sibling.id,
+                        cancel_reason,
+                    )
+                except httpx.HTTPError as exc:
+                    logger.warning(
+                        "maybe_retry_task: failed to cancel duplicate planning retry %s (%s) -- "
+                        "it remains open and claimable",
+                        new_task_id,
+                        exc,
+                    )
         return True
     except Exception as exc:
         logger.warning("Failed to queue retry for task %s: %s", task.id, exc)
@@ -831,6 +871,98 @@ def _enqueue_dlq_if_workdir(
         logger.debug("incident synthesiser skipped for task %s: %s", task.id, exc)
 
 
+# Role that performs goal decomposition (see config/seed.py::seed_to_initial_task
+# and orchestration/manager.py). The only role whose retries this module's
+# planning-race guard applies to (#4309).
+_PLANNING_ROLE = "manager"
+
+
+def _extract_new_task_id(resp: httpx.Response) -> str | None:
+    """Best-effort task id extraction from a successful ``POST /tasks`` response."""
+    try:
+        body = resp.json()
+    except ValueError:
+        return None
+    if isinstance(body, dict):
+        new_id = body.get("id")
+        if isinstance(new_id, str) and new_id:
+            return new_id
+    return None
+
+
+def _find_done_planning_sibling(
+    task: Task,
+    lineage_id: str,
+    *,
+    tasks_snapshot: dict[str, list[Task]] | None,
+    client: httpx.Client,
+    base: str,
+) -> Task | None:
+    """Return a DONE/CLOSED planning-role sibling sharing *lineage_id*, if any.
+
+    A "sibling" is another task of the same role whose own decomposition
+    lineage (``metadata["original_task_id"]``, defaulting to its own id)
+    matches *lineage_id* -- i.e. another attempt at decomposing the same
+    goal. Consulted by :func:`retry_or_fail_task` before creating a planning
+    retry (#4309): the tick-loop sweep (``maybe_retry_task``) and this
+    reap-path function are two independent retry-creation call sites, and
+    a run can also be worked by more than one orchestrator process against
+    the same shared task board, so nothing in-process (e.g.
+    ``retried_task_ids``) can stop two of them from each retrying the same
+    failed planning task. Left unguarded, the redundant retry gets claimed
+    by a second manager agent and re-decomposes the same goal, doubling
+    every downstream task.
+
+    Prefers the pre-fetched *tasks_snapshot* (all of its buckets, since
+    callers key it differently) to avoid an extra round-trip. Falls back to
+    a pair of status-filtered GETs when no snapshot was supplied -- the
+    common case for the reap-path callers in ``agent_lifecycle.py`` that
+    retry a single task outside the tick loop.
+    """
+    candidates: list[Task] = []
+    if tasks_snapshot is not None:
+        for bucket in tasks_snapshot.values():
+            candidates.extend(bucket)
+    else:
+        for status in ("done", "closed"):
+            try:
+                resp = client.get(f"{base}/tasks", params={"status": status, "limit": 500})
+                resp.raise_for_status()
+                body = resp.json()
+            except (httpx.HTTPError, ValueError) as exc:
+                logger.warning(
+                    "planning-retry sibling check for %s: could not fetch status=%s tasks (%s) -- "
+                    "proceeding without the guard for this attempt",
+                    task.id,
+                    status,
+                    exc,
+                )
+                continue
+            raw = body.get("tasks", body) if isinstance(body, dict) else body
+            if not isinstance(raw, list):
+                continue
+            for r in raw:
+                try:
+                    candidates.append(Task.from_dict(r))
+                except (KeyError, TypeError, ValueError) as exc:
+                    logger.warning(
+                        "planning-retry sibling check for %s: skipping unparseable status=%s task (%s)",
+                        task.id,
+                        status,
+                        exc,
+                    )
+
+    for sibling in candidates:
+        if sibling.id == task.id or sibling.role != task.role:
+            continue
+        if sibling.status not in (TaskStatus.DONE, TaskStatus.CLOSED):
+            continue
+        sib_metadata = sibling.metadata if isinstance(sibling.metadata, dict) else {}
+        if sib_metadata.get("original_task_id", sibling.id) == lineage_id:
+            return sibling
+    return None
+
+
 def retry_or_fail_task(
     task_id: str,
     reason: str,
@@ -853,6 +985,14 @@ def retry_or_fail_task(
     new open task is created with ``retry_count`` incremented; otherwise the
     task is moved to the Dead Letter Queue and failed with a
     ``"Max retries exceeded"`` reason.
+
+    Planning-role retries (``task.role == "manager"``) get one extra check
+    before the new task is left open: if a sibling planning task sharing the
+    same decomposition lineage has already reached ``done``/``closed`` (see
+    ``_find_done_planning_sibling``), the retry is created and then
+    immediately cancelled with a reason instead of left claimable -- two
+    managers decomposing the same goal doubles every downstream task
+    (#4309). Worker retries are unaffected.
 
     Args:
         task_id: ID of the task to retry or fail.
@@ -1140,15 +1280,8 @@ def retry_or_fail_task(
         if task.completion_signals:
             task_body["completion_signals"] = [{"type": s.type, "value": s.value} for s in task.completion_signals]
         try:
-            client.post(f"{base}/tasks", json=task_body).raise_for_status()
-            logger.info(
-                "retry_or_fail_task verdict=retry task=%s original_task_id=%s attempt=%d/%d reason=%r",
-                task_id,
-                _original_task_id,
-                retry_count + 1,
-                effective_limit,
-                reason,
-            )
+            resp = client.post(f"{base}/tasks", json=task_body)
+            resp.raise_for_status()
         except httpx.HTTPError as exc:
             logger.error("Failed to re-create task %s for retry: %s", task_id, exc)
             # Fall through to permanent fail (DLQ-eligible: re-create failure
@@ -1162,6 +1295,64 @@ def retry_or_fail_task(
             )
             fail_task(client, base, task_id, f"Max retries exceeded: {reason}")
             return
+
+        # Planning-retry race guard (#4309). See _find_done_planning_sibling
+        # for why this can happen even against a single orchestrator process.
+        # Scoped to the planning role only -- ordinary worker retries keep
+        # racing exactly as before, which is fine because a duplicate worker
+        # retry costs one wasted task, not a doubled task tree.
+        completed_sibling = (
+            _find_done_planning_sibling(
+                task,
+                _original_task_id,
+                tasks_snapshot=tasks_snapshot,
+                client=client,
+                base=base,
+            )
+            if task.role == _PLANNING_ROLE
+            else None
+        )
+        if completed_sibling is None:
+            logger.info(
+                "retry_or_fail_task verdict=retry task=%s original_task_id=%s attempt=%d/%d reason=%r",
+                task_id,
+                _original_task_id,
+                retry_count + 1,
+                effective_limit,
+                reason,
+            )
+        else:
+            new_task_id = _extract_new_task_id(resp)
+            cancel_reason = (
+                f"planning retry race: sibling planning task {completed_sibling.id} "
+                "already completed the decomposition for this goal"
+            )
+            if new_task_id is None:
+                logger.warning(
+                    "retry_or_fail_task: planning retry for %s should be cancelled (%s) but the "
+                    "create response carried no task id -- it remains open and claimable",
+                    task_id,
+                    cancel_reason,
+                )
+            else:
+                try:
+                    client.post(f"{base}/tasks/{new_task_id}/cancel", json={"reason": cancel_reason}).raise_for_status()
+                    logger.info(
+                        "retry_or_fail_task verdict=cancel_planning_retry task=%s original_task_id=%s "
+                        "retry=%s completed_sibling=%s reason=%r",
+                        task_id,
+                        _original_task_id,
+                        new_task_id,
+                        completed_sibling.id,
+                        cancel_reason,
+                    )
+                except httpx.HTTPError as exc:
+                    logger.warning(
+                        "retry_or_fail_task: failed to cancel duplicate planning retry %s (%s) -- "
+                        "it remains open and claimable",
+                        new_task_id,
+                        exc,
+                    )
         # Fail the old task silently (it has been replaced)
         with contextlib.suppress(httpx.HTTPError):
             fail_task(client, base, task_id, f"Retried: {reason}")

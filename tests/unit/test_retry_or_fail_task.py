@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
+from bernstein.core.models import TaskStatus
 
 # Both imports point to the same function: task_lifecycle re-exports from task_retry
 from bernstein.core.task_lifecycle import retry_or_fail_task as retry_lifecycle
@@ -350,4 +351,174 @@ def test_retry_cap_decision_is_logged_with_original_task_id(caplog):
     )
     assert any("verdict=permanent_fail" in m and "orig-root-task" in m for m in messages), (
         f"expected a permanent_fail verdict log line, got: {messages}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Planning-retry race guard (#4309).
+#
+# A failed planning ("manager") task's retry can be created after a sibling
+# planning task -- decomposing the exact same goal -- has already reached
+# DONE: two independent retry-creation call sites (the tick-loop
+# maybe_retry_task sweep and this reap-path function) can each react to the
+# same failure, and a run can be worked by more than one orchestrator
+# process against the same shared task board, so in-process dedup
+# (retried_task_ids) never sees the other side. Left unguarded, the
+# redundant retry gets claimed by a second manager agent and re-decomposes
+# the same goal, doubling every downstream task.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("retry_func", [retry_lifecycle, retry_completion])
+def test_planning_retry_cancelled_when_sibling_already_done(retry_func, caplog):
+    """A' (the retry of failed planning task A) must be created and then
+    immediately cancelled -- not left open/claimable -- once a sibling
+    planning task B sharing A's decomposition lineage has already finished
+    the decomposition."""
+    mock_client = MagicMock(spec=httpx.Client)
+    mock_client.post.return_value.json.return_value = {"id": "planning-A-retry-1"}
+
+    task_a = MockTask("planning-A", title="Decompose goal")
+    task_a.role = "manager"
+    # task_a is itself the lineage root (no metadata.original_task_id yet),
+    # so its lineage id is its own task id.
+
+    sibling_b = MockTask("planning-B", title="Decompose goal")
+    sibling_b.role = "manager"
+    sibling_b.status = TaskStatus.DONE
+    sibling_b.metadata = {"original_task_id": "planning-A"}
+
+    tasks_snapshot = {"active": [task_a], "done": [sibling_b]}
+    retried_ids: set[str] = set()
+
+    with caplog.at_level(logging.INFO):
+        retry_func(
+            task_id="planning-A",
+            reason="Agent manager-abc died mid-decomposition",
+            client=mock_client,
+            server_url="http://test",
+            max_task_retries=3,
+            retried_task_ids=retried_ids,
+            tasks_snapshot=tasks_snapshot,
+        )
+
+    post_calls = mock_client.post.call_args_list
+    # The retry row is created -- visible on the board, not silently dropped.
+    assert any(call[0][0].endswith("/tasks") for call in post_calls), (
+        f"expected the retry to still be created via POST /tasks, got: {post_calls}"
+    )
+    # ... and then immediately cancelled, with a reason, instead of left open.
+    cancel_calls = [call for call in post_calls if call[0][0].endswith("/planning-A-retry-1/cancel")]
+    assert cancel_calls, f"expected a cancel call for the duplicate retry, got: {post_calls}"
+    assert "planning-B" in cancel_calls[0].kwargs["json"]["reason"]
+    # The original failed task is still marked failed/superseded as usual.
+    assert any(call[0][0].endswith("/planning-A/fail") for call in post_calls), (
+        f"expected the original task to still be failed, got: {post_calls}"
+    )
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("verdict=cancel_planning_retry" in m and "planning-B" in m for m in messages), (
+        f"expected a cancel_planning_retry verdict log line, got: {messages}"
+    )
+
+
+@pytest.mark.parametrize("retry_func", [retry_lifecycle, retry_completion])
+def test_planning_retry_unaffected_when_no_sibling_done(retry_func):
+    """Control: an ordinary planning retry with no completed sibling stays
+    open exactly like before the guard existed."""
+    mock_client = MagicMock(spec=httpx.Client)
+    mock_client.post.return_value.json.return_value = {"id": "planning-C-retry-1"}
+
+    task_c = MockTask("planning-C", title="Decompose goal")
+    task_c.role = "manager"
+    tasks_snapshot = {"active": [task_c]}
+    retried_ids: set[str] = set()
+
+    retry_func(
+        task_id="planning-C",
+        reason="Agent manager-abc died mid-decomposition",
+        client=mock_client,
+        server_url="http://test",
+        max_task_retries=3,
+        retried_task_ids=retried_ids,
+        tasks_snapshot=tasks_snapshot,
+    )
+
+    post_calls = mock_client.post.call_args_list
+    assert any(call[0][0].endswith("/tasks") for call in post_calls)
+    assert not any(call[0][0].endswith("/cancel") for call in post_calls), (
+        f"no sibling is done -- the retry must not be cancelled, got: {post_calls}"
+    )
+
+
+@pytest.mark.parametrize("retry_func", [retry_lifecycle, retry_completion])
+def test_planning_retry_unaffected_by_unrelated_completed_manager_task(retry_func):
+    """Control: a DONE manager-role task for a *different* goal (different
+    decomposition lineage) must not cancel this retry -- e.g. two unrelated
+    evolve-cycle manager tasks running concurrently are not siblings."""
+    mock_client = MagicMock(spec=httpx.Client)
+    mock_client.post.return_value.json.return_value = {"id": "planning-D-retry-1"}
+
+    task_d = MockTask("planning-D", title="Decompose goal")
+    task_d.role = "manager"
+
+    unrelated_done = MockTask("planning-E", title="Evolve cycle 9: new_features")
+    unrelated_done.role = "manager"
+    unrelated_done.status = TaskStatus.DONE
+    unrelated_done.metadata = {"original_task_id": "some-other-goal-root"}
+
+    tasks_snapshot = {"active": [task_d], "done": [unrelated_done]}
+    retried_ids: set[str] = set()
+
+    retry_func(
+        task_id="planning-D",
+        reason="Agent manager-abc died mid-decomposition",
+        client=mock_client,
+        server_url="http://test",
+        max_task_retries=3,
+        retried_task_ids=retried_ids,
+        tasks_snapshot=tasks_snapshot,
+    )
+
+    post_calls = mock_client.post.call_args_list
+    assert any(call[0][0].endswith("/tasks") for call in post_calls)
+    assert not any(call[0][0].endswith("/cancel") for call in post_calls), (
+        f"unrelated goal's completed manager task must not cancel this retry, got: {post_calls}"
+    )
+
+
+@pytest.mark.parametrize("retry_func", [retry_lifecycle, retry_completion])
+def test_worker_retry_unaffected_by_completed_planning_sibling(retry_func):
+    """Control: the guard is scoped to the planning role only -- an ordinary
+    worker task's retry is unaffected even when a same-lineage DONE
+    manager-role task exists (e.g. the manager that spawned this worker task
+    already finished, which is the normal, expected shape)."""
+    mock_client = MagicMock(spec=httpx.Client)
+    mock_client.post.return_value.json.return_value = {"id": "worker-1-retry-1"}
+
+    worker_task = MockTask("worker-1", title="Implement hello subcommand in cli.py")
+    # role defaults to "backend" on MockTask
+
+    done_manager = MockTask("planning-F", title="Decompose goal")
+    done_manager.role = "manager"
+    done_manager.status = TaskStatus.DONE
+    done_manager.metadata = {"original_task_id": "worker-1"}  # contrived id collision
+
+    tasks_snapshot = {"active": [worker_task], "done": [done_manager]}
+    retried_ids: set[str] = set()
+
+    retry_func(
+        task_id="worker-1",
+        reason="Agent backend-abc died; no completion signals and no files modified",
+        client=mock_client,
+        server_url="http://test",
+        max_task_retries=3,
+        retried_task_ids=retried_ids,
+        tasks_snapshot=tasks_snapshot,
+    )
+
+    post_calls = mock_client.post.call_args_list
+    assert any(call[0][0].endswith("/tasks") for call in post_calls)
+    assert not any(call[0][0].endswith("/cancel") for call in post_calls), (
+        f"worker retries must be unaffected by the planning-role guard, got: {post_calls}"
     )
