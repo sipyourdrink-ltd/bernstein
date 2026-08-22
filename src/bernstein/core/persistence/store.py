@@ -113,6 +113,7 @@ class BaseTaskStore(ABC):
         task_id: str,
         expected_version: int | None = None,
         agent_role: str | None = None,
+        claimed_by_session: str | None = None,
     ) -> Task:
         """Claim a specific task, optionally with CAS version check and role matching.
 
@@ -122,6 +123,9 @@ class BaseTaskStore(ABC):
                 task version matches (compare-and-swap).
             agent_role: If set, the claim is rejected unless the task's role
                 matches the agent's role (role-locked claiming).
+            claimed_by_session: Parent orchestrator session recorded as the
+                owner of this claim.  Recorded as part of the claim itself,
+                so a claimed task always carries its owner.
 
         Returns:
             The claimed :class:`~bernstein.core.models.Task`.
@@ -137,6 +141,7 @@ class BaseTaskStore(ABC):
         task_ids: list[str],
         agent_id: str,
         agent_role: str | None = None,
+        claimed_by_session: str | None = None,
         tenant_id: str | None = None,
     ) -> tuple[list[str], list[str]]:
         """Atomically claim multiple tasks by ID with optional role matching.
@@ -146,6 +151,8 @@ class BaseTaskStore(ABC):
             agent_id: Claiming agent's identifier.
             agent_role: If set, only tasks whose role matches the agent's role
                 can be claimed.
+            claimed_by_session: Parent orchestrator session recorded as the
+                owner of the claims.
             tenant_id: If set, tasks must belong to this tenant scope.
                 The check happens atomically with the claim so it cannot be
                 invalidated by a concurrent delete or tenant rewrite.

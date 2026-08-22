@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from typing import Any, cast
 
 import bernstein.core.store_postgres as store_postgres
@@ -458,11 +459,11 @@ class _ClaimBatchConn(_TxAware):
         await asyncio.sleep(0)  # Async interface requirement
         self.queries.append((query, args))
         task_id = args[0]
-        # $1 is the id and $2 the agent; the optional predicates bind the
-        # remaining params in the order they appear in the statement.
-        optional = [name for name in ("tenant_id", "role") if f"{name} = $" in query]
+        # $1 is the id, $2 the agent and $3 the claim owner; the optional
+        # predicates bind the remaining params in the order they appear.
+        optional = [name for name in ("tenant_id", "role") if f"{name} = $" in query.split("WHERE", 1)[1]]
         optional.sort(key=lambda name: query.index(f"{name} = $"))
-        bound = dict(zip(optional, args[2:], strict=True))
+        bound = dict(zip(optional, args[3:], strict=True))
 
         row = self.rows.get(cast("str", task_id))
         if row is None or row["status"] != "open":
@@ -640,4 +641,82 @@ def test_claim_by_id_matching_role_claims_task(monkeypatch: pytest.MonkeyPatch) 
     task = asyncio.run(store.claim_by_id("task-1", agent_role="backend"))
 
     assert task.status is TaskStatus.CLAIMED
-    assert conn.args == ("task-1", "backend")
+    assert conn.args == ("task-1", None, "backend")
+
+
+def test_claim_paths_accept_the_contract_signature() -> None:
+    """Every store's claim methods must accept what ``BaseTaskStore`` declares.
+
+    The routes call these by keyword, so a parameter the base class carries
+    and an implementation omits is a 500 at request time rather than an
+    error at import time (#4328). A signature check is the cheapest thing
+    that catches the drift.
+    """
+    from bernstein.core.persistence.store import BaseTaskStore
+    from bernstein.core.tasks.task_store_core import TaskStore
+
+    for method in ("claim_by_id", "claim_batch"):
+        expected = set(inspect.signature(getattr(BaseTaskStore, method)).parameters)
+        for store_cls in (TaskStore, store_postgres.PostgresTaskStore):
+            actual = set(inspect.signature(getattr(store_cls, method)).parameters)
+            missing = expected - actual
+            assert not missing, f"{store_cls.__name__}.{method} is missing {sorted(missing)}"
+
+
+def test_claim_by_id_accepts_route_call_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``POST /tasks/{id}/claim`` passes ``claimed_by_session``; recording the
+    owner happens in the claim statement itself, so a task is never left
+    claimed with no owner.
+    """
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    class _Conn:
+        def __init__(self) -> None:
+            self.args: tuple[object, ...] = ()
+            self.query = ""
+
+        async def fetchrow(self, query: str, *args: object) -> object | None:
+            await asyncio.sleep(0)  # Async interface requirement
+            self.query = query
+            self.args = args
+            return _task_row(status="claimed", claimed_by_session="sess-1")
+
+    conn = _Conn()
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+
+    task = asyncio.run(store.claim_by_id("task-1", expected_version=None, claimed_by_session="sess-1"))
+
+    assert task.claimed_by_session == "sess-1"
+    assert "claimed_by_session" in conn.query
+    assert "sess-1" in conn.args
+
+
+def test_claim_batch_accepts_route_call_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``POST /tasks/claim-batch`` passes ``claimed_by_session`` alongside the
+    tenant scope."""
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    conn = _ClaimBatchConn({"task-1": {"status": "open", "role": "backend", "tenant_id": "tenant-a"}})
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+
+    claimed, failed = asyncio.run(
+        store.claim_batch(["task-1"], "agent-1", claimed_by_session="sess-1", tenant_id="tenant-a")
+    )
+
+    assert claimed == ["task-1"]
+    assert failed == []
+    assert "claimed_by_session" in conn.queries[0][0]
+    assert "sess-1" in conn.queries[0][1]
+
+
+def test_ddl_adds_claim_owner_column_to_existing_installs() -> None:
+    """The column ships as an idempotent ALTER as well as in CREATE TABLE.
+
+    ``CREATE TABLE IF NOT EXISTS`` is a no-op on an install that already has
+    the table, so a new column reaches existing deployments only through the
+    ALTER.
+    """
+    assert "claimed_by_session" in store_postgres._DDL
+    assert "ADD COLUMN IF NOT EXISTS claimed_by_session" in store_postgres._DDL
