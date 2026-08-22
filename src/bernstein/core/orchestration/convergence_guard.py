@@ -147,7 +147,21 @@ class ConvergenceGuard:
         # Gate 3: error rate
         if error_rate is not None:
             computed_error_rate = error_rate
-            if error_rate > self._cfg.max_error_rate and not idle:
+            # A rate over one or two observations is noise, and blocking on it
+            # is self-sustaining: no wave spawns, so no further observation
+            # arrives, so the rate cannot move. One task failing its quality
+            # gate used to read as 100% and stop the run for good. A caller
+            # that supplies a rate this guard never recorded (no samples of
+            # its own) is trusted as before.
+            samples = self._error_sample_count()
+            thin = 0 < samples < self._cfg.min_error_rate_samples
+            if thin:
+                logger.info(
+                    "convergence_guard: error-rate gate skipped -- %d sample(s) < %d",
+                    samples,
+                    self._cfg.min_error_rate_samples,
+                )
+            if error_rate > self._cfg.max_error_rate and not idle and not thin:
                 reasons.append(f"High error rate ({error_rate:.0%} > {self._cfg.max_error_rate:.0%})")
 
         # Gate 4: spawn rate
@@ -215,6 +229,12 @@ class ConvergenceGuard:
             return 0.0
         window_minutes = self._cfg.spawn_rate_window_seconds / 60.0
         return len(self._spawn_timestamps) / window_minutes
+
+    def _error_sample_count(self, now: float | None = None) -> int:
+        """Observations currently inside the error-rate window."""
+        self._prune(self._success_timestamps, self._cfg.error_rate_window_seconds, now=now)
+        self._prune(self._failure_timestamps, self._cfg.error_rate_window_seconds, now=now)
+        return len(self._success_timestamps) + len(self._failure_timestamps)
 
     def current_error_rate(self, now: float | None = None) -> float:
         """Return failure rate (failures / total) over the configured window.

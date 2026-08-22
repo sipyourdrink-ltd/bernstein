@@ -1502,6 +1502,8 @@ class ConvergenceGuardConfig:
         max_spawn_rate: Maximum spawns per minute before blocking spawns.
         error_rate_window_seconds: Look-back window for computing error rate.
         spawn_rate_window_seconds: Look-back window for computing spawn rate.
+        min_error_rate_samples: Observations the error-rate window must hold
+            before that gate may block a wave.
     """
 
     max_pending_merges: int = 10
@@ -1510,6 +1512,7 @@ class ConvergenceGuardConfig:
     max_spawn_rate: float = 12.0
     error_rate_window_seconds: int = 300  # 5 minutes
     spawn_rate_window_seconds: int = 60  # 1 minute
+    min_error_rate_samples: int = 3
 
 
 @dataclass(frozen=True)
