@@ -82,8 +82,16 @@ from bernstein.core.knowledge.task_graph import EdgeType
 from bernstein.core.models import Scope, Task, TaskStatus
 from bernstein.core.planning.recovery_receipt import DEFAULT_JOURNAL_TAIL
 from bernstein.core.planning.workflow import WorkflowDefinition, WorkflowPhase
-from bernstein.core.tasks.lifecycle import DEPENDENCY_BLOCKED_STATUSES
-from bernstein.core.tasks.unreachable import blocking_dependency, unreachable_tasks
+from bernstein.core.tasks.lifecycle import (
+    DEPENDENCY_BLOCKED_STATUSES,
+    SUCCESSFUL_TASK_STATUSES,
+    UNSUCCESSFUL_TERMINAL_STATUSES,
+)
+from bernstein.core.tasks.unreachable import (
+    blocking_dependency,
+    dependency_can_never_satisfy,
+    unreachable_tasks,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -828,18 +836,15 @@ class EdgeResolution(StrEnum):
     PENDING = "pending"  # Upstream not yet terminal.
 
 
-TERMINAL_STATUSES: frozenset[TaskStatus] = frozenset(
-    {
-        TaskStatus.DONE,
-        TaskStatus.FAILED,
-        TaskStatus.CANCELLED,
-        # A node materialised as unreachable (#3622) never ran and never will,
-        # so an edge out of it is as resolved as an edge out of a failure.
-        # Left out of this set its own dependents resolve PENDING forever and
-        # the strand stops at the first ring.
-        TaskStatus.BLOCKED_BY_FAILED_DEP,
-    }
-)
+# Derived from the lifecycle sets rather than hand-listed. The hand-written
+# version omitted CLOSED, ORPHANED, ABANDONED, REFUSED and BLOCKED_BY_ABANDON,
+# so an edge out of a source in any of those resolved PENDING forever: a node
+# whose dependency had completed and been reaped (CLOSED) never became ready,
+# and a strand out of an abandoned or refused node stopped at the first ring -
+# the very failure mode the BLOCKED_BY_FAILED_DEP entry was added to prevent.
+#
+# Deriving it means a status added to the lifecycle cannot be forgotten here.
+TERMINAL_STATUSES: frozenset[TaskStatus] = SUCCESSFUL_TASK_STATUSES | UNSUCCESSFUL_TERMINAL_STATUSES
 
 # The node whose skipped edge stranded this one. Deliberately the same key the
 # task store stamps on its own cascade (#3452), so a record from either
@@ -892,9 +897,17 @@ class DAGExecutor:
             return EdgeResolution.PENDING
 
         if edge.condition is None:
-            # Unconditional edge: satisfied when source is DONE.
-            if source_task.status == TaskStatus.DONE:
+            # Unconditional edge: satisfied when the source succeeded. CLOSED
+            # counts, not just DONE - a task is closed once its agent is reaped
+            # and its branch merged, which is the store's rule too
+            # (_dependencies_satisfied accepts either).
+            if source_task.status in SUCCESSFUL_TASK_STATUSES:
                 return EdgeResolution.SATISFIED
+            # Otherwise ask the shared classification instead of inferring
+            # "not done means never" locally, so this side cannot drift from
+            # the store's answer for the same status.
+            if dependency_can_never_satisfy(source_task):
+                return EdgeResolution.SKIPPED
             return EdgeResolution.SKIPPED
 
         # A source materialised as unreachable produced no result, so there is
