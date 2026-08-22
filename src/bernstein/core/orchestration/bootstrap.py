@@ -543,7 +543,28 @@ def _sync_and_plan_tasks(
             )
             console.print("  [dim]plan[/dim]    manager agent will decompose goal")
 
+    # Record the goal only now: writing it before ``check_resume_session``
+    # above would make the file this run just created look like a resumable
+    # prior session and skip planning entirely.
+    _record_goal_for_this_run(workdir, getattr(seed, "goal", ""))
+
     return backlog_count, manager_task_id, prior_session
+
+
+def _record_goal_for_this_run(workdir: Path, goal: object) -> None:
+    """Persist the run's goal so the PR it opens can be titled from it.
+
+    Bootstrap is where every entry point converges - inline ``--goal``, a
+    seed file, a saved plan - so the goal is written down once, here, rather
+    than in each of the callers that happens to know it. Best-effort: a run
+    is not worth failing over a state file.
+    """
+    from bernstein.core.session import record_run_goal
+
+    try:
+        record_run_goal(workdir, str(goal or ""))
+    except OSError as exc:
+        logger.warning("Could not record the run goal: %s", exc)
 
 
 def _describe_cost_estimate(backlog_count: int, model: str | None) -> str:
@@ -1300,6 +1321,10 @@ def _goal_sync_and_plan(
                 auth_token=auth_token,
             )
         console.print(f"[green]{icons.arrow_right}[/green] Planning tasks (manager agent will decompose goal)")
+
+    # After the resume check above, never before it - see
+    # ``_record_goal_for_this_run``.
+    _record_goal_for_this_run(workdir, getattr(seed, "goal", ""))
 
     return backlog_count, manager_task_id, sync_result
 

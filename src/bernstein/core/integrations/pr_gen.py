@@ -14,6 +14,11 @@ The module reuses existing Bernstein state:
   diff-stat and changes summary written on graceful stop.
 * :class:`bernstein.core.tasks.models.JanitorResult` - quality-gate
   signal results used for the Verification section.
+* ``.sdd/runs/<run_id>/`` - the run's own directory: the replay metadata
+  that names the run, and the Merkle-chained journal whose merge rows the
+  Changes section is projected from. Every run writes it, including the
+  ones that end without a wrap-up file, so it is what stops a session from
+  resolving to ``unknown``.
 """
 
 from __future__ import annotations
@@ -25,15 +30,28 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
 
 
 _WRAPUP_GLOB = "*-wrapup.json"
+
+#: Files a run leaves in ``.sdd/runs/<run_id>/``: the replay metadata that
+#: names the run, and the Merkle-chained journal of what it did.
+_RUN_METADATA_FILENAME = "metadata.json"
+_RUN_JOURNAL_FILENAME = "journal.jsonl"
+
+#: Journal events the Changes section is projected from. Duplicated as plain
+#: strings rather than imported so this module stays free of orchestration
+#: imports at module scope; the names are asserted against their source in
+#: ``tests/unit/test_pr_goal_and_run_identity.py``.
+_EVENT_TASK_MERGED = "task_merged"
+_EVENT_TASK_DIFF_CAPTURED = "task_diff_captured"
 
 
 __all__ = [
     "EvidenceSummary",
     "GateResult",
+    "MergedChange",
     "SessionSummary",
     "build_pr_body",
     "build_pr_title",
@@ -64,6 +82,37 @@ _FIX_KEYWORDS = ("fix", "bug", "broken", "regression", "crash", "error")
 _DOCS_KEYWORDS = ("docs", "documentation", "readme", "changelog")
 _TEST_KEYWORDS = ("test", "tests", "coverage", "pytest")
 _REFACTOR_KEYWORDS = ("refactor", "cleanup", "rename", "reorganise", "reorganize")
+
+# Issue labels that state the change type outright. A tracker label is the
+# repository's own classification of the work, so it settles what the wording
+# of a title can only hint at - an issue labelled ``bug`` must never open a
+# PR titled ``feat:``.
+_LABEL_TYPES: Mapping[str, str] = {
+    "bug": "fix",
+    "bugfix": "fix",
+    "defect": "fix",
+    "regression": "fix",
+    "documentation": "docs",
+    "docs": "docs",
+    "performance": "perf",
+    "perf": "perf",
+    "refactor": "refactor",
+    "refactoring": "refactor",
+    "test": "test",
+    "tests": "test",
+    "testing": "test",
+    "build": "build",
+    "ci": "ci",
+    "chore": "chore",
+    "maintenance": "chore",
+    "enhancement": "feat",
+    "feature": "feat",
+}
+
+# Which mapped type wins when an issue carries several type-bearing labels.
+# Fixed order rather than label order, so the same issue always produces the
+# same title however the tracker happens to list its labels.
+_LABEL_TYPE_PRECEDENCE = ("fix", "docs", "perf", "refactor", "test", "build", "ci", "chore", "feat")
 
 
 @dataclass(frozen=True)
@@ -122,6 +171,23 @@ class EvidenceSummary:
 
 
 @dataclass(frozen=True)
+class MergedChange:
+    """One task whose work the run merged, as the run journal recorded it.
+
+    Attributes:
+        task_id: The task that was merged.
+        files: Files its captured diff touched (0 when none was captured).
+        added: Lines added by that diff.
+        removed: Lines removed by that diff.
+    """
+
+    task_id: str
+    files: int = 0
+    added: int = 0
+    removed: int = 0
+
+
+@dataclass(frozen=True)
 class SessionSummary:
     """Everything the PR generator needs from one completed session.
 
@@ -136,6 +202,10 @@ class SessionSummary:
         branch: Git branch containing the session's commits.
         base_branch: Intended PR base (usually ``main``).
         diff_stat: Output of ``git diff --stat <base>..<branch>``.
+        merged_changes: Tasks the run merged, read off the run journal.
+            Shown next to the diff-stat so a reviewer sees which tasks
+            produced the diff even when the branch has already been folded
+            into the base and ``git diff`` reports nothing.
         gates: Quality-gate outcomes from the janitor.
         cost: Aggregate cost figures for the session.
         evidence: Sealed evidence bundle for the task, or ``None`` when the
@@ -148,6 +218,7 @@ class SessionSummary:
     base_branch: str = "main"
     primary_role: str | None = None
     diff_stat: str = ""
+    merged_changes: tuple[MergedChange, ...] = ()
     gates: tuple[GateResult, ...] = ()
     cost: CostBreakdown = field(default_factory=CostBreakdown)
     evidence: EvidenceSummary | None = None
@@ -158,12 +229,34 @@ class SessionSummary:
 # ---------------------------------------------------------------------------
 
 
-def _classify(goal: str, role: str | None) -> str:
-    """Pick a conventional-commit type from the goal + role.
+def _type_from_labels(labels: Iterable[str]) -> str | None:
+    """Return the change type the issue's labels state, or ``None``.
+
+    Args:
+        labels: Tracker labels on the linked issue, in any order.
+
+    Returns:
+        A :data:`_CC_PREFIXES` member when a label maps to one, else
+        ``None`` so the caller falls back to its own heuristics.
+    """
+    mapped = {_LABEL_TYPES[label.strip().lower()] for label in labels if label.strip().lower() in _LABEL_TYPES}
+    for candidate in _LABEL_TYPE_PRECEDENCE:
+        if candidate in mapped:
+            return candidate
+    return None
+
+
+def _classify(goal: str, role: str | None, labels: Iterable[str] = ()) -> str:
+    """Pick a conventional-commit type from the goal, labels and role.
+
+    The order is strongest evidence first: a conventional-commit prefix the
+    author typed, then the linked issue's labels, then keywords guessed out
+    of the wording, then the role that did the work.
 
     Args:
         goal: Task goal / session description.
         role: Primary role, if known.
+        labels: Labels on the linked issue, if one was named.
 
     Returns:
         One of :data:`_CC_PREFIXES`; defaults to ``"feat"``.
@@ -173,6 +266,10 @@ def _classify(goal: str, role: str | None) -> str:
     for prefix in _CC_PREFIXES:
         if lowered.startswith((f"{prefix}:", f"{prefix}(")):
             return prefix
+
+    from_labels = _type_from_labels(labels)
+    if from_labels is not None:
+        return from_labels
 
     if any(kw in lowered for kw in _FIX_KEYWORDS):
         return "fix"
@@ -218,7 +315,7 @@ def _shape_outcome(goal: str) -> str:
     return cleaned[0].lower() + cleaned[1:]
 
 
-def build_pr_title(task_goal: str, role: str | None) -> str:
+def build_pr_title(task_goal: str, role: str | None, labels: Iterable[str] = ()) -> str:
     """Compose a conventional-commit pull-request title.
 
     The result is truncated to :data:`_TITLE_MAX_CHARS` characters with a
@@ -229,11 +326,14 @@ def build_pr_title(task_goal: str, role: str | None) -> str:
         task_goal: Session goal or first-task title.
         role: Primary role for the session, used as a classification
             hint when the goal offers no other signal.
+        labels: Labels on the linked issue. They outrank both the wording
+            and the role, so a PR never announces a change type the issue
+            it closes contradicts.
 
     Returns:
         A title at most :data:`_TITLE_MAX_CHARS` characters long.
     """
-    prefix = _classify(task_goal, role)
+    prefix = _classify(task_goal, role, labels)
     outcome = _shape_outcome(task_goal)
 
     full = f"{prefix}: {outcome}"
@@ -303,6 +403,37 @@ def _format_diff_stat(diff_stat: str) -> str:
     return f"```\n{stripped}\n```"
 
 
+def _format_merged_changes(merged: tuple[MergedChange, ...]) -> str:
+    """Render the tasks the run merged, one line each."""
+    lines = ["Merged in this run:"]
+    for change in merged:
+        if change.files:
+            plural = "" if change.files == 1 else "s"
+            counts = f"{change.files} file{plural}, +{change.added}/-{change.removed}"
+        else:
+            counts = "no diff captured"
+        lines.append(f"- `{change.task_id}` - {counts}")
+    return "\n".join(lines)
+
+
+def _format_changes(session: SessionSummary) -> str:
+    """Render the Changes section from the diff-stat and the merged tasks.
+
+    A run whose branch has already been folded into the base leaves ``git
+    diff`` with nothing to report, which is how a PR full of merged work came
+    to say no changes were recorded. The journal knows better, so both are
+    shown and the fallback line is reached only when neither has anything.
+    """
+    blocks: list[str] = []
+    if session.diff_stat.strip():
+        blocks.append(_format_diff_stat(session.diff_stat))
+    if session.merged_changes:
+        blocks.append(_format_merged_changes(session.merged_changes))
+    if not blocks:
+        return _format_diff_stat("")
+    return "\n\n".join(blocks)
+
+
 def _format_evidence(evidence: EvidenceSummary) -> str:
     """Render the sealed-evidence block linking the bundle (issue #2362).
 
@@ -349,7 +480,7 @@ def build_pr_body(session: SessionSummary) -> str:
         bullets,
         "",
         "## Changes",
-        _format_diff_stat(session.diff_stat),
+        _format_changes(session),
         "",
         "## Verification",
         _format_gates(session.gates),
@@ -489,6 +620,122 @@ def _candidate_task_ids(wrapup: dict[str, object]) -> list[str]:
     return []
 
 
+def _run_dir(root: Path, session_id: str | None) -> Path | None:
+    """Locate the run directory a PR should be described from.
+
+    A run leaves its durable record in ``.sdd/runs/<run_id>/`` - the replay
+    metadata that names it and the Merkle-chained journal of what it did.
+    That directory outlives the runtime state and is written by every run,
+    including the ones that never got as far as a wrap-up file, so it is what
+    keeps a session from resolving to ``unknown``.
+
+    Paths are derived through the journal module's containment barrier rather
+    than by joining strings, so an operator-supplied ``--session-id`` cannot
+    address a directory outside the runs root.
+
+    Args:
+        root: Project root.
+        session_id: Run to look up, or ``None`` for the most recent one.
+
+    Returns:
+        The run directory, or ``None`` when there is none to read.
+    """
+    from bernstein.core.replay.journal import (
+        JournalPathError,
+        contained_run_journal,
+        run_journal_path,
+    )
+
+    runs_root = root / ".sdd" / "runs"
+    if not runs_root.is_dir():
+        return None
+
+    if session_id:
+        try:
+            journal = run_journal_path(root / ".sdd", session_id)
+        except JournalPathError:
+            return None
+        return journal.parent if journal.parent.is_dir() else None
+
+    newest: tuple[float, Path] | None = None
+    for entry in runs_root.iterdir():
+        if not entry.is_dir():
+            continue
+        journal = contained_run_journal(runs_root, entry.name)
+        if journal is None:
+            continue
+        run_dir = journal.parent
+        if not (journal.exists() or (run_dir / _RUN_METADATA_FILENAME).exists()):
+            continue
+        try:
+            mtime = run_dir.stat().st_mtime
+        except OSError:
+            continue
+        if newest is None or mtime > newest[0]:
+            newest = (mtime, run_dir)
+    return newest[1] if newest else None
+
+
+def _merged_changes_from_journal(run_dir: Path) -> tuple[MergedChange, ...]:
+    """Project the run journal's merge rows into per-task change records.
+
+    ``task_merged`` says which tasks landed; ``task_diff_captured`` carries
+    the size of the diff each one produced. Reading them here means the
+    Changes section describes what the run actually merged rather than
+    whatever ``git diff`` happens to still show.
+
+    Args:
+        run_dir: The run's directory under ``.sdd/runs/``.
+
+    Returns:
+        One :class:`MergedChange` per merged task, in merge order. Empty when
+        the journal is missing, unreadable, or records no merges.
+    """
+    journal = run_dir / _RUN_JOURNAL_FILENAME
+    try:
+        lines = journal.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ()
+
+    merged_order: list[str] = []
+    diffs: dict[str, tuple[int, int, int]] = {}
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            row: object = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        typed = {str(k): v for k, v in row.items()}  # type: ignore[reportUnknownVariableType]
+        task_id = typed.get("task_id")
+        if not isinstance(task_id, str) or not task_id:
+            continue
+        event = typed.get("event")
+        if event == _EVENT_TASK_MERGED and task_id not in merged_order:
+            merged_order.append(task_id)
+        elif event == _EVENT_TASK_DIFF_CAPTURED:
+            diffs[task_id] = (
+                _as_count(typed.get("diff_files")),
+                _as_count(typed.get("diff_added")),
+                _as_count(typed.get("diff_removed")),
+            )
+
+    changes: list[MergedChange] = []
+    for task_id in merged_order:
+        files, added, removed = diffs.get(task_id, (0, 0, 0))
+        changes.append(MergedChange(task_id=task_id, files=files, added=added, removed=removed))
+    return tuple(changes)
+
+
+def _as_count(value: object) -> int:
+    """Coerce a journal count field to a non-negative int."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    return max(int(value), 0)
+
+
 def _evidence_summary_for_task(root: Path, task_ids: list[str]) -> EvidenceSummary | None:
     """Project the first sealed bundle among ``task_ids`` into an EvidenceSummary.
 
@@ -555,9 +802,18 @@ def load_session_summary(
     # wrap-up file is missing or sparse.
     live_session = _read_json(root / ".sdd" / "runtime" / "session.json")
 
-    resolved_id = str(wrapup.get("session_id") or session_id or live_session.get("run_id") or "unknown")
+    # The run directory is the last resort for identity, and the only one
+    # every run writes: a run that ended without a wrap-up file still left
+    # its metadata and journal there.
+    run_dir = _run_dir(root, session_id)
+    run_metadata = _read_json(run_dir / _RUN_METADATA_FILENAME) if run_dir else {}
+    run_id_on_disk = str(run_metadata.get("run_id") or (run_dir.name if run_dir else ""))
+
+    resolved_id = str(
+        wrapup.get("session_id") or session_id or live_session.get("run_id") or run_id_on_disk or "unknown"
+    )
     goal = str(wrapup.get("goal") or live_session.get("goal") or "")
-    branch = str(wrapup.get("branch") or live_session.get("branch") or "HEAD")
+    branch = str(wrapup.get("branch") or live_session.get("branch") or run_metadata.get("git_branch") or "HEAD")
     diff_stat = str(wrapup.get("git_diff_stat") or wrapup.get("diff_stat") or "")
     primary_role_raw = wrapup.get("primary_role") or live_session.get("primary_role")
     primary_role = str(primary_role_raw) if primary_role_raw else None
@@ -583,6 +839,8 @@ def load_session_summary(
     # field stays None and the PR body's Evidence block is omitted entirely.
     evidence = _evidence_summary_for_task(root, _candidate_task_ids(wrapup))
 
+    merged_changes = _merged_changes_from_journal(run_dir) if run_dir else ()
+
     return SessionSummary(
         session_id=resolved_id,
         goal=goal,
@@ -590,6 +848,7 @@ def load_session_summary(
         base_branch=base_branch,
         primary_role=primary_role,
         diff_stat=diff_stat,
+        merged_changes=merged_changes,
         gates=gates,
         cost=cost,
         evidence=evidence,

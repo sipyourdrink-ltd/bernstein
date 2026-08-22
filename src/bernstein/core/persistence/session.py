@@ -119,6 +119,56 @@ def save_session(workdir: Path, state: SessionState) -> None:
     write_atomic_json(session_path, state.to_dict())
 
 
+def read_session_regardless_of_age(workdir: Path) -> SessionState | None:
+    """Read the session file ignoring the resume-staleness window.
+
+    :func:`load_session` answers "can this session be resumed?", so it
+    discards anything older than the staleness threshold.  A run that lasted
+    longer than that threshold still owns the file it wrote at start, and the
+    facts recorded in it - the goal above all - stay true no matter how long
+    the run took.  Readers that want those facts rather than a resume
+    decision come here.
+
+    Args:
+        workdir: Project root directory.
+
+    Returns:
+        :class:`SessionState` if the file exists and parses; else None.
+    """
+    session_path = workdir / _SESSION_FILE
+    try:
+        data = json.loads(session_path.read_text())
+        return SessionState.from_dict(data)
+    except (OSError, KeyError, ValueError):
+        return None
+
+
+def record_run_goal(workdir: Path, goal: str) -> None:
+    """Write the goal this run was given into the session file.
+
+    The goal is the run's identity: the PR the run opens is titled and
+    summarised from it, and a resumed run describes itself with it.  Nothing
+    else on the run path persists it, so it is recorded here at start, on top
+    of whatever session state already exists rather than replacing it.
+
+    An empty or whitespace-only goal is not recorded - a backlog-driven run
+    has no goal to write, and blanking a goal already on disk is the failure
+    this function exists to prevent.
+
+    Args:
+        workdir: Project root directory.
+        goal: The resolved goal, from ``--goal``, a seed, or a plan file.
+    """
+    if not goal.strip():
+        return
+    state = read_session_regardless_of_age(workdir)
+    if state is None:
+        state = SessionState(saved_at=time.time(), goal=goal)
+    else:
+        state.goal = goal
+    save_session(workdir, state)
+
+
 def load_session(
     workdir: Path,
     stale_minutes: int = DEFAULT_STALE_MINUTES,

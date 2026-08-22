@@ -299,13 +299,20 @@ def pr_cmd(
 
     issue_number: int | None = None
     issue_title = ""
+    issue_labels: tuple[str, ...] = ()
     if issue_ref is not None:
         issue_number, ticket = _resolve_issue(issue_ref, workdir)
         issue_title = ticket.title
+        issue_labels = ticket.labels
 
     # The issue title is a cleaner source than the goal, which carries the
-    # instructions handed to the run.
-    title = title_override or build_pr_title(issue_title or summary.goal or summary.session_id, summary.primary_role)
+    # instructions handed to the run. Its labels come along so the PR does not
+    # announce a change type the issue it closes contradicts.
+    title = title_override or build_pr_title(
+        issue_title or summary.goal or summary.session_id,
+        summary.primary_role,
+        issue_labels,
+    )
     body = build_pr_body(summary)
     if issue_number is not None:
         # GitHub links an issue from the body or a commit message only.
