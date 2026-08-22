@@ -22,6 +22,31 @@ curl -s -X POST http://127.0.0.1:8052/tasks \
   }'
 ```
 
+## Task dependencies
+
+Add `"depends_on": ["<task-id>"]` to the JSON body when a task edits or
+imports what another task creates. Get `<task-id>` from the `id` field of
+the JSON the earlier `POST /tasks` call returned. A claim never fires until
+every id in `depends_on` reaches `done` - a note in `description` alone
+does not gate anything:
+
+```bash
+curl -s -X POST http://127.0.0.1:8052/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Unit tests for feature X",
+    "role": "qa",
+    "description": "Test the module task-abc123 creates",
+    "priority": 2,
+    "scope": "small",
+    "complexity": "low",
+    "depends_on": ["task-abc123"],
+    "completion_signals": [
+      {"type": "test_passes", "value": "uv run pytest tests/unit/test_feature_x.py -x -q"}
+    ]
+  }'
+```
+
 ## Completion-signal types
 
 - `path_exists` - file / directory must exist.

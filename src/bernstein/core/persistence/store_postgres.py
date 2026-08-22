@@ -167,22 +167,48 @@ WHERE  t.id = (
 RETURNING *
 """
 
-_CLAIM_BY_ID_SQL = """
+# Shared by every single-row claim query below (by-id, its CAS variant, and
+# batch) so each one gates on ``depends_on`` exactly like ``_CLAIM_NEXT_SQL``
+# above - the column names are unqualified because they resolve against the
+# row the enclosing UPDATE targets, same as a plain WHERE clause would.
+#
+# Before this fragment existed, only ``claim_next`` carried the dependency
+# predicate: a caller that claimed a specific id, or a batch of ids, bypassed
+# unmet ``depends_on`` entirely even though the in-memory store's equivalent
+# methods already gated it (#4311). Keeping the predicate in one place is
+# what stops the two paths drifting apart again.
+_DEPENDS_ON_SATISFIED_SQL = """(
+    depends_on = '{}'::text[]
+    OR NOT EXISTS (
+        SELECT 1
+        FROM   unnest(depends_on) AS dep_id
+        WHERE  NOT EXISTS (
+            SELECT 1
+            FROM   tasks AS d
+            WHERE  d.id = dep_id
+            AND    d.status = 'done'
+        )
+    )
+)"""
+
+_CLAIM_BY_ID_SQL = f"""
 UPDATE tasks
 SET    status  = 'claimed',
        version = version + 1
 WHERE  id = $1
 AND    status = 'open'
+AND    {_DEPENDS_ON_SATISFIED_SQL}
 RETURNING *
 """
 
-_CLAIM_BY_ID_CAS_SQL = """
+_CLAIM_BY_ID_CAS_SQL = f"""
 UPDATE tasks
 SET    status  = 'claimed',
        version = version + 1
 WHERE  id      = $1
 AND    version = $2
 AND    status  = 'open'
+AND    {_DEPENDS_ON_SATISFIED_SQL}
 RETURNING *
 """
 
@@ -500,6 +526,10 @@ class PostgresTaskStore(BaseTaskStore):
         way, so role-locked claiming holds here exactly as it does in
         ``claim_next`` - a task belonging to another role is reported as
         failed instead of being claimed.
+
+        Each UPDATE also carries the ``depends_on`` predicate (see
+        ``_DEPENDS_ON_SATISFIED_SQL``), so an id whose dependencies are not
+        all ``done`` is reported as failed rather than claimed.
         """
         claimed: list[str] = []
         failed: list[str] = []
@@ -507,7 +537,7 @@ class PostgresTaskStore(BaseTaskStore):
         async with self._pool.acquire() as conn, conn.transaction():
             for task_id in task_ids:
                 params: list[Any] = [task_id, agent_id]
-                predicates = ["id = $1", "status = 'open'"]
+                predicates = ["id = $1", "status = 'open'", _DEPENDS_ON_SATISFIED_SQL]
                 if tenant_id is not None:
                     params.append(tenant_id)
                     predicates.append(f"tenant_id = ${len(params)}")
