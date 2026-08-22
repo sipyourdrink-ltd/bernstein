@@ -115,14 +115,7 @@ def _is_internal(address: str) -> bool:
     if mapped is not None:
         ip = mapped
 
-    return (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_reserved
-        or ip.is_multicast
-        or ip.is_unspecified
-    )
+    return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified
 
 
 def ensure_public_http_url(
@@ -181,9 +174,7 @@ def ensure_public_http_url(
     try:
         addresses = list(resolve(host))
     except OSError as exc:
-        raise UrlSchemeError(
-            _msg(source, f"host {host!r} could not be resolved: {exc}; url={url!r}")
-        ) from exc
+        raise UrlSchemeError(_msg(source, f"host {host!r} could not be resolved: {exc}; url={url!r}")) from exc
 
     if not addresses:
         raise UrlSchemeError(_msg(source, f"host {host!r} resolved to no addresses; url={url!r}"))
@@ -192,9 +183,7 @@ def ensure_public_http_url(
         try:
             internal = _is_internal(address)
         except ValueError as exc:
-            raise UrlSchemeError(
-                _msg(source, f"host {host!r} resolved to an unparseable address {address!r}")
-            ) from exc
+            raise UrlSchemeError(_msg(source, f"host {host!r} resolved to an unparseable address {address!r}")) from exc
 
         if internal:
             raise UrlSchemeError(

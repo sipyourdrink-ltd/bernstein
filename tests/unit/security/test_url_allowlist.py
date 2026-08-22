@@ -178,9 +178,7 @@ def test_scheme_rules_still_apply_before_resolution() -> None:
 
 def test_http_allowed_when_opted_in_and_host_is_public() -> None:
     url = "http://example.com/entry.json"
-    assert (
-        ensure_public_http_url(url, allow_http=True, resolver=_resolves_to("93.184.216.34")) == url
-    )
+    assert ensure_public_http_url(url, allow_http=True, resolver=_resolves_to("93.184.216.34")) == url
 
 
 def test_loopback_http_exemption_does_not_leak_into_strict_mode() -> None:
