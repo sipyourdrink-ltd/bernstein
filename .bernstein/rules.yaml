@@ -52,6 +52,17 @@ rules:
     message: "Replace 'master' with 'main'. This repo uses 'main' as the default branch."
 
   # ---------------------------------------------------------------------------
+  # Release notes
+  # ---------------------------------------------------------------------------
+  - id: release-note-entry-carries-a-number
+    type: forbidden_pattern
+    description: "Every unreleased entry names the issue or PR it ships"
+    pattern: '^- (?!.*#\d+).+$'
+    files: "docs/release-notes/unreleased.md"
+    severity: warning
+    message: "Add the issue or PR number (#NNNN) to the entry. The release rotation attributes each line by that number; an unnumbered entry cannot be carried onto a release page."
+
+  # ---------------------------------------------------------------------------
   # Python code quality
   # ---------------------------------------------------------------------------
   - id: no-print-statements
