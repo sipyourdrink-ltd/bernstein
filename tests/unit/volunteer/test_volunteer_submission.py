@@ -12,7 +12,6 @@ import pytest
 
 from bernstein.core.git.git_basic import GitResult
 
-from bernstein.core.git.git_pr import push_head_as
 
 @pytest.fixture
 def isolated_pacing(tmp_path: Path):
