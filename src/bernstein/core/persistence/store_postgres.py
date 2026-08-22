@@ -41,6 +41,7 @@ from bernstein.core.tasks.models import (
     TaskType,
     UpgradeProposalDetails,
 )
+from bernstein.core.tenanting import DEFAULT_TENANT_ID, normalize_tenant_id
 
 if TYPE_CHECKING:
     from bernstein.core.persistence.store_redis import RedisCoordinator
@@ -96,16 +97,21 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_at        FLOAT8      NOT NULL,
     progress_log      JSONB       NOT NULL DEFAULT '[]',
     version           INTEGER     NOT NULL DEFAULT 1,
-    claimed_by_session TEXT
+    claimed_by_session TEXT,
+    tenant_id         TEXT        NOT NULL DEFAULT 'default'
 );
 
 -- CREATE TABLE IF NOT EXISTS is a no-op once the table exists, so a column
--- added after an install has run reaches it only through an ALTER.
+-- added after an install has run reaches it only through an ALTER.  Rows
+-- written before the tenant column existed carry no recorded scope, so they
+-- land in the default tenant - the only interpretation available.
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS claimed_by_session TEXT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
 
 CREATE INDEX IF NOT EXISTS idx_tasks_status        ON tasks (status);
 CREATE INDEX IF NOT EXISTS idx_tasks_role_status   ON tasks (role, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_priority      ON tasks (priority, created_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_tenant_status ON tasks (tenant_id, status);
 
 CREATE TABLE IF NOT EXISTS agents (
     id             TEXT    PRIMARY KEY,
@@ -255,6 +261,7 @@ def _row_to_task(row: Any) -> Task:
         owned_files=list(raw.get("owned_files") or []),
         assigned_agent=raw.get("assigned_agent"),
         claimed_by_session=raw.get("claimed_by_session"),
+        tenant_id=normalize_tenant_id(raw.get("tenant_id") or DEFAULT_TENANT_ID),
         result_summary=raw.get("result_summary"),
         cell_id=raw.get("cell_id"),
         model=raw.get("model"),
@@ -362,6 +369,7 @@ class PostgresTaskStore(BaseTaskStore):
             task.created_at,
             json.dumps(task.progress_log),  # type: ignore[reportUnknownMemberType]
             task.version,
+            normalize_tenant_id(task.tenant_id),
         )
 
     # -- task mutations ------------------------------------------------------
@@ -381,7 +389,7 @@ class PostgresTaskStore(BaseTaskStore):
         """
         from fastapi import HTTPException
 
-        from bernstein.core.server import _parse_upgrade_dict  # type: ignore[attr-defined]
+        from bernstein.core.tasks.task_store import _parse_upgrade_dict
 
         task = Task(
             id=uuid.uuid4().hex[:12],
@@ -400,6 +408,7 @@ class PostgresTaskStore(BaseTaskStore):
             model=req.model,
             effort=req.effort,
             completion_signals=[CompletionSignal(type=s.type, value=s.value) for s in req.completion_signals],
+            tenant_id=normalize_tenant_id(getattr(req, "tenant_id", DEFAULT_TENANT_ID)),
         )
 
         assert self._pool is not None
@@ -423,10 +432,10 @@ class PostgresTaskStore(BaseTaskStore):
                     estimated_minutes, status, task_type, upgrade_details,
                     depends_on, owned_files, assigned_agent, result_summary,
                     cell_id, model, effort, completion_signals,
-                    created_at, progress_log, version
+                    created_at, progress_log, version, tenant_id
                 ) VALUES (
                     $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
-                    $16,$17,$18,$19,$20,$21,$22
+                    $16,$17,$18,$19,$20,$21,$22,$23
                 )
                 """,
                 *self._task_params(task),
