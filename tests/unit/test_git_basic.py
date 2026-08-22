@@ -138,9 +138,7 @@ class TestTerminalPushError:
     """Tests for _is_terminal_push_error marker matching."""
 
     def test_credential_errors_are_terminal(self) -> None:
-        assert _is_terminal_push_error(
-            "could not read Username for 'https://github.com': No such device or address"
-        )
+        assert _is_terminal_push_error("could not read Username for 'https://github.com': No such device or address")
         assert _is_terminal_push_error("Authentication failed")
         assert _is_terminal_push_error("Permission denied (publickey)")
 
