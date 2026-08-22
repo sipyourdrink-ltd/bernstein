@@ -528,6 +528,7 @@ nav:
       - Release notes:
           - Changelog: CHANGELOG.md
           - Unreleased: release-notes/unreleased.md
+          - v3.17.1: release-notes/v3.17.1.md
           - v3.17.0: release-notes/v3.17.0.md
           - v3.16.0: release-notes/v3.16.0.md
           - v3.15.1: release-notes/v3.15.1.md
