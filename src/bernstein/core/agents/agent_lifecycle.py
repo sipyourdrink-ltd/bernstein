@@ -346,6 +346,28 @@ def _save_partial_work(spawner: Any, session: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _handle_orphaned_task_guarded(
+    orch: Any,
+    task_id: str,
+    session: AgentSession,
+    tasks_snapshot: dict[str, list[Task]],
+) -> None:
+    """Orphan handling for one task, isolated from the rest of the cleanup.
+
+    An exception here used to propagate out of the tick, skipping
+    ``_save_partial_work`` and worktree cleanup, so the dying agent's
+    uncommitted work was lost.
+    """
+    try:
+        handle_orphaned_task(orch, task_id, session, tasks_snapshot)
+    except Exception:
+        logger.exception(
+            "handle_orphaned_task failed for task %s (agent %s); continuing death cleanup",
+            task_id,
+            session.id,
+        )
+
+
 def _handle_dead_agent(orch: Any, session: AgentSession, tasks_snapshot: dict[str, list[Task]]) -> None:
     """Process a single agent that has been detected as dead."""
     abort_reason, abort_detail = classify_agent_abort_reason(session)
@@ -378,7 +400,7 @@ def _handle_dead_agent(orch: Any, session: AgentSession, tasks_snapshot: dict[st
     for task_id in session.task_ids:
         orch._crash_counts[task_id] = orch._crash_counts.get(task_id, 0) + 1
         _maybe_preserve_worktree(orch, session, task_id)
-        handle_orphaned_task(orch, task_id, session, tasks_snapshot)
+        _handle_orphaned_task_guarded(orch, task_id, session, tasks_snapshot)
     _save_partial_work(orch._spawner, session)
     _preserved = getattr(orch, "_preserved_worktrees", {})
     _session_preserved = any(
@@ -2212,9 +2234,6 @@ def handle_orphaned_task(
         emit_orphan_metrics(orch._workdir, task_id, session, start_ts, success=False, error_type="escalated")
         return
 
-    # Collect structured completion data from agent log
-    completion_data = collect_completion_data(orch._workdir, session)
-
     # Artifact-mode tasks run the pass even with no declared signals: the
     # signed receipt it records is their completion identity (issue #2608).
     if task.completion_signals or is_artifact_mode(task):
@@ -2223,7 +2242,7 @@ def handle_orphaned_task(
             try:
                 result_payload: dict[str, Any] = {
                     "result_summary": f"Auto-completed after agent {session.id} died; janitor passed",
-                } | completion_data
+                }
                 orch._client.post(
                     f"{base}/tasks/{task_id}/complete",
                     json=result_payload,
@@ -2673,7 +2692,7 @@ def _reap_wall_clock_timeout(
         orch._signal_mgr.clear_signals(session.id)
     _preserve_runner_logs(orch, session)
     for task_id in session.task_ids:
-        handle_orphaned_task(orch, task_id, session, tasks_snapshot)
+        _handle_orphaned_task_guarded(orch, task_id, session, tasks_snapshot)
     _save_partial_work(orch._spawner, session)
     _preserved = getattr(orch, "_preserved_worktrees", {})
     _session_preserved = any(
