@@ -13,7 +13,3 @@ rather than as its own attribution is exempted by hand there, with the reason.
 ## Added
 
 - `bernstein run` on a TTY now says it is waiting for the first agent instead of sitting silent (#4257). The wait is bounded and returns as soon as an agent registers, so a fast start stays exactly as quiet as before: the transient status appears only once a poll has already failed to produce a verdict, and clears before the dashboard or the Rich fallback renders. The non-interactive detach path is unchanged.
-
-## Fixed
-
-- A failed planning task's retry no longer races a sibling planning task that already finished the same decomposition (#4309). `retry_or_fail_task` now cancels the redundant retry with a reason instead of leaving it open, so a second manager agent can no longer re-decompose the same goal and double every downstream task. Scoped to the planning role; worker retries are unaffected.
