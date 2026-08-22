@@ -109,6 +109,25 @@ class TestPersistedCycleIsBrokenDeterministically:
         assert g.cycle_breaks == []
         assert caplog.text == ""
 
+    def test_task_depending_on_itself_is_opened(self) -> None:
+        """A self-referential depends_on is a one-node cycle, not an infinite loop."""
+        g = TaskGraph([_t(id="A", depends_on=["A"]), _t(id="B")])
+        assert [(b.edge.source, b.edge.target) for b in g.cycle_breaks] == [("A", "A")]
+        assert set(g.topological_order()) == {"A", "B"}
+
+    def test_task_downstream_of_a_cycle_still_follows_it(self) -> None:
+        g = TaskGraph(
+            [
+                _t(id="A", depends_on=["C"]),
+                _t(id="B", depends_on=["A"]),
+                _t(id="C", depends_on=["B"]),
+                _t(id="X", depends_on=["A"]),
+            ]
+        )
+        order = g.topological_order()
+        assert set(order) == {"A", "B", "C", "X"}
+        assert order.index("A") < order.index("X")
+
     def test_two_independent_cycles_are_both_opened(self) -> None:
         g = TaskGraph(
             [
