@@ -57,8 +57,17 @@ class DependencyValidator:
         )
 
     def topological_order(self, tasks: list[Task]) -> list[str]:
-        """Return dependency-respecting order or raise on cycles."""
-        order = TaskGraph(tasks).topological_order()
+        """Return dependency-respecting order or raise on cycles.
+
+        The graph opens a declared cycle so the scheduler keeps running, but
+        the caller asking for a strict ordering is still told the board is
+        invalid, and which tasks are at fault.
+        """
+        graph = TaskGraph(tasks)
+        order = graph.topological_order()
+        if graph.cycle_breaks:
+            paths = "; ".join(" -> ".join([*b.cycle, b.cycle[0]]) for b in graph.cycle_breaks)
+            raise ValueError(f"Task dependency graph contains a cycle: {paths}")
         if not order and tasks:
             raise ValueError("Task dependency graph contains a cycle")
         return order
