@@ -348,8 +348,6 @@ class TestVersionTokenRegex:
         match = VERSION_TOKEN_RE.search(blob)
         assert (match.group(0) if match else None) == expected
 
-
-
     def test_adversarial_digit_run_stays_fast(self) -> None:
         """A digit run with no dot must not blow up the scan.
 
