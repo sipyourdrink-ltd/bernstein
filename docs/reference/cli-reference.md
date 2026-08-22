@@ -1418,9 +1418,10 @@ See [`reference/mcp-catalog.md`](mcp-catalog.md) for the full reference.
 |---|---|---|
 | `--session-id ID` | most recent completed session | Session to publish. |
 | `--base BRANCH` | main | Base branch for the pull request. |
+| `--issue N\|URL` | none | Title the PR from a GitHub issue and open its body with `Closes #N`. Reads the issue, so `--dry-run` makes that one request. |
 | `--title TEXT` | auto-generated | Override the PR title. |
 | `--draft` | off | Open as a draft PR. |
-| `--dry-run` | off | Print the would-be title and body without calling `gh`. |
+| `--dry-run` | off | Print the would-be title and body without calling `gh`. Reads the issue when `--issue` is given. |
 | `--no-push` | off | Skip `git push`; assume the branch is already on origin. |
 
 (`cli/commands/pr_cmd.py:183-220`.)
