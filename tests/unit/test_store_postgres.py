@@ -439,3 +439,110 @@ def test_postgres_count_tasks_executes_select_count(monkeypatch: pytest.MonkeyPa
     assert count == 42
     assert conn.executed_query == "SELECT COUNT(*) FROM tasks WHERE status = $1 AND cell_id = $2 AND tenant_id = $3"
     assert conn.executed_params == ("done", "cell-1", "tenant-a")
+
+
+class _ClaimBatchConn(_TxAware):
+    """Fake connection that evaluates ``claim_batch``'s UPDATE predicates.
+
+    Mimics PostgreSQL closely enough for the claim gate: a row is returned
+    only when every predicate the query actually carries matches the stored
+    row.  A predicate the query omits is therefore invisible here - which is
+    exactly what a missing role gate looks like to a caller.
+    """
+
+    def __init__(self, rows: dict[str, dict[str, object]]) -> None:
+        self.rows = rows
+        self.queries: list[tuple[str, tuple[object, ...]]] = []
+
+    async def fetchrow(self, query: str, *args: object) -> object | None:
+        await asyncio.sleep(0)  # Async interface requirement
+        self.queries.append((query, args))
+        task_id = args[0]
+        # $1 is the id and $2 the agent; the optional predicates bind the
+        # remaining params in the order they appear in the statement.
+        optional = [name for name in ("tenant_id", "role") if f"{name} = $" in query]
+        optional.sort(key=lambda name: query.index(f"{name} = $"))
+        bound = dict(zip(optional, args[2:], strict=True))
+
+        row = self.rows.get(cast("str", task_id))
+        if row is None or row["status"] != "open":
+            return None
+        if any(row[name] != value for name, value in bound.items()):
+            return None
+        return {"id": task_id}
+
+
+def test_claim_batch_rejects_role_mismatched_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``claim_batch`` must honor ``agent_role`` like the in-memory store.
+
+    Without a role predicate in the UPDATE, a worker registered as one role
+    could claim another role's task on the PostgreSQL backend - bypassing
+    the role-locked claiming ``claim_next`` enforces via ``_CLAIM_NEXT_SQL``.
+    """
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    conn = _ClaimBatchConn(
+        {
+            "task-backend": {"status": "open", "role": "backend", "tenant_id": None},
+            "task-qa": {"status": "open", "role": "qa", "tenant_id": None},
+        }
+    )
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+
+    claimed, failed = asyncio.run(store.claim_batch(["task-backend", "task-qa"], "agent-1", agent_role="backend"))
+
+    assert claimed == ["task-backend"]
+    assert failed == ["task-qa"]
+    assert all("role = $" in query for query, _ in conn.queries)
+
+
+def test_claim_batch_rejects_role_mismatch_within_tenant_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The tenant-scoped variant carries the role gate too.
+
+    Both predicates apply together: a task inside the tenant scope but owned
+    by another role stays unclaimed.
+    """
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    conn = _ClaimBatchConn(
+        {
+            "task-backend": {"status": "open", "role": "backend", "tenant_id": "tenant-a"},
+            "task-qa": {"status": "open", "role": "qa", "tenant_id": "tenant-a"},
+            "task-other-tenant": {"status": "open", "role": "backend", "tenant_id": "tenant-b"},
+        }
+    )
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+
+    claimed, failed = asyncio.run(
+        store.claim_batch(
+            ["task-backend", "task-qa", "task-other-tenant"],
+            "agent-1",
+            agent_role="backend",
+            tenant_id="tenant-a",
+        )
+    )
+
+    assert claimed == ["task-backend"]
+    assert failed == ["task-qa", "task-other-tenant"]
+
+
+def test_claim_batch_without_role_claims_any_open_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``agent_role=None`` keeps the pre-existing unrestricted behavior."""
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    conn = _ClaimBatchConn(
+        {
+            "task-backend": {"status": "open", "role": "backend", "tenant_id": None},
+            "task-qa": {"status": "open", "role": "qa", "tenant_id": None},
+        }
+    )
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+
+    claimed, failed = asyncio.run(store.claim_batch(["task-backend", "task-qa"], "agent-1"))
+
+    assert claimed == ["task-backend", "task-qa"]
+    assert failed == []
+    assert all("role = $" not in query for query, _ in conn.queries)

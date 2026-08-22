@@ -13,3 +13,7 @@ rather than as its own attribution is exempted by hand there, with the reason.
 ## Added
 
 - `bernstein run` on a TTY now says it is waiting for the first agent instead of sitting silent (#4257). The wait is bounded and returns as soon as an agent registers, so a fast start stays exactly as quiet as before: the transient status appears only once a poll has already failed to produce a verdict, and clears before the dashboard or the Rich fallback renders. The non-interactive detach path is unchanged.
+
+## Fixed
+
+- The PostgreSQL backend ignored the claiming agent's role in `claim_batch`: the parameter was accepted but never reached either UPDATE (#4323), which filtered on id and `status = 'open'` only. A worker registered as one role could therefore claim another role's tasks in a batch, while the in-memory store rejected exactly that claim and `claim_next` gated on role in its own SQL. The role predicate is now folded into the statement the same way the tenant scope already was, so the check is atomic with the claim on both backends.

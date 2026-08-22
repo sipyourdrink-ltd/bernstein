@@ -496,40 +496,35 @@ class PostgresTaskStore(BaseTaskStore):
         When ``tenant_id`` is provided the tenant scope check is folded
         into the same UPDATE statement so tasks outside the scope are
         reported as failed rather than silently claimed, even under
-        concurrent tenant rewrites.
+        concurrent tenant rewrites.  ``agent_role`` is folded in the same
+        way, so role-locked claiming holds here exactly as it does in
+        ``claim_next`` - a task belonging to another role is reported as
+        failed instead of being claimed.
         """
         claimed: list[str] = []
         failed: list[str] = []
         assert self._pool is not None
         async with self._pool.acquire() as conn, conn.transaction():
             for task_id in task_ids:
-                if tenant_id is None:
-                    row = await conn.fetchrow(
-                        """
-                            UPDATE tasks
-                            SET    status         = 'claimed',
-                                   assigned_agent = $2,
-                                   version        = version + 1
-                            WHERE  id = $1 AND status = 'open'
-                            RETURNING id
-                            """,
-                        task_id,
-                        agent_id,
-                    )
-                else:
-                    row = await conn.fetchrow(
-                        """
-                            UPDATE tasks
-                            SET    status         = 'claimed',
-                                   assigned_agent = $2,
-                                   version        = version + 1
-                            WHERE  id = $1 AND status = 'open' AND tenant_id = $3
-                            RETURNING id
-                            """,
-                        task_id,
-                        agent_id,
-                        tenant_id,
-                    )
+                params: list[Any] = [task_id, agent_id]
+                predicates = ["id = $1", "status = 'open'"]
+                if tenant_id is not None:
+                    params.append(tenant_id)
+                    predicates.append(f"tenant_id = ${len(params)}")
+                if agent_role is not None:
+                    params.append(agent_role)
+                    predicates.append(f"role = ${len(params)}")
+                row = await conn.fetchrow(
+                    f"""
+                        UPDATE tasks
+                        SET    status         = 'claimed',
+                               assigned_agent = $2,
+                               version        = version + 1
+                        WHERE  {" AND ".join(predicates)}
+                        RETURNING id
+                        """,
+                    *params,
+                )
                 if row is not None:
                     claimed.append(task_id)
                 else:
