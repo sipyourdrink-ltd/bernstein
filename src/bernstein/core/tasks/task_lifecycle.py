@@ -38,6 +38,11 @@ from bernstein.core.fast_path import (
     get_l1_model_config,
     try_fast_path_batch,
 )
+from bernstein.core.git.merge_preview import (
+    MergePreviewConflict,
+    MergePreviewError,
+    merge_preview,
+)
 from bernstein.core.hook_events import HookEvent
 from bernstein.core.janitor import run_janitor
 from bernstein.core.metrics import get_collector
@@ -3995,6 +4000,166 @@ def _verify_via_janitor(
     return janitor_result.passed, failed_descs
 
 
+def _agent_preview_branch(orch: Any, session_id: str | None) -> str | None:
+    """Return the agent branch whose merge must be previewed, or None.
+
+    A session that owns a worktree committed its work to ``agent/<session-id>``
+    and the run checkout does not carry it yet. A run with no per-agent
+    worktree (a single-agent run works in the run checkout directly) has
+    nothing to preview, and keeps evaluating in ``orch._workdir`` as before.
+
+    Args:
+        orch: Orchestrator instance.
+        session_id: Session that produced the work, if one was found.
+
+    Returns:
+        The agent branch name, or None when the verdict should be computed in
+        the run checkout.
+    """
+    if not session_id:
+        return None
+    spawner = getattr(orch, "_spawner", None)
+    get_worktree_path = getattr(spawner, "get_worktree_path", None)
+    if not callable(get_worktree_path):
+        return None
+    try:
+        worktree = get_worktree_path(session_id)
+    except Exception as exc:  # pragma: no cover - defensive only
+        logger.warning("merge_preview: worktree lookup failed for session=%s: %s", session_id, exc)
+        return None
+    if worktree is None:
+        return None
+    return f"agent/{session_id}"
+
+
+def _preview_setup(orch: Any) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+    """Return the (symlink_dirs, copy_files) an agent worktree is provisioned with.
+
+    The preview has to shell out to the same toolchain the agent used, so it
+    needs the same shared directories the operator configured for worktrees.
+    Returns None when nothing is configured.
+
+    Args:
+        orch: Orchestrator instance.
+
+    Returns:
+        A pair of tuples, or None when the run does not provision worktrees.
+    """
+    setup = getattr(getattr(orch, "_spawner", None), "_worktree_setup_config", None)
+    if setup is None:
+        return None
+    try:
+        symlink_dirs = tuple(str(d) for d in (getattr(setup, "symlink_dirs", ()) or ()))
+        copy_files = tuple(str(f) for f in (getattr(setup, "copy_files", ()) or ()))
+    except TypeError:
+        return None
+    if not symlink_dirs and not copy_files:
+        return None
+    return symlink_dirs, copy_files
+
+
+def _verify_against_merge_preview(
+    verify_fn: Any,
+    task: Task,
+    workdir: Path,
+    branch: str,
+    session_id: str,
+    preview_setup: tuple[tuple[str, ...], tuple[str, ...]] | None,
+    *extra_args: Any,
+) -> tuple[bool, list[str]]:
+    """Run ``verify_fn`` against *branch* merged onto the run branch.
+
+    The gate asks whether the integrated tree is good, but the agent's commits
+    live on its own branch until the merge-back runs, and the merge-back is
+    itself gated on this verdict. Evaluating the run checkout answers a
+    different question and fails every task that produced a file
+    (issue #4367); evaluating the agent's worktree would grade work that was
+    never integrated, so a pass would stop meaning the run branch is green.
+    The merged tree is the only tree that answers the question asked.
+
+    A preview that cannot be built is a negative verdict, never a fallback to
+    the run checkout: a conflict with the run branch is reported as a
+    conflict, and any other failure to build the merged tree is reported as
+    such, so neither is mistaken for a failing check.
+
+    Args:
+        verify_fn: Verification callable, invoked as
+            ``verify_fn(task, merged_tree, *extra_args)``.
+        task: Task being verified.
+        workdir: The run checkout.
+        branch: Agent branch to merge into the preview.
+        session_id: Session that produced the work.
+        preview_setup: Shared directories and per-checkout files to provision
+            the preview with, as :func:`_preview_setup` resolves them.
+        *extra_args: Trailing arguments forwarded to *verify_fn*.
+
+    Returns:
+        The ``(passed, failed_signal_descriptions)`` tuple the completion
+        pipeline already consumes.
+    """
+    symlink_dirs, copy_files = preview_setup or ((), ())
+    try:
+        with merge_preview(
+            workdir,
+            branch,
+            session_id=session_id,
+            task_id=task.id,
+            symlink_dirs=symlink_dirs,
+            copy_files=copy_files,
+        ) as merged_tree:
+            logger.info(
+                "merge_preview: task=%s session=%s branch=%s path=%s -- verdict computed on the merged tree",
+                task.id,
+                session_id,
+                branch,
+                merged_tree,
+            )
+            return cast("tuple[bool, list[str]]", verify_fn(task, merged_tree, *extra_args))
+    except MergePreviewConflict as exc:
+        files = ", ".join(exc.conflicting_files) or "<unknown>"
+        logger.warning(
+            "merge_preview: task=%s session=%s branch=%s verdict=conflict files=%s -- "
+            "held on a merge conflict with the run branch, not on a failing check",
+            task.id,
+            session_id,
+            branch,
+            files,
+        )
+        return False, [f"merge_preview_conflict: {branch} conflicts with the run branch in {files}"]
+    except MergePreviewError as exc:
+        logger.warning(
+            "merge_preview: task=%s session=%s branch=%s verdict=unavailable detail=%s -- "
+            "held because the merged tree could not be built",
+            task.id,
+            session_id,
+            branch,
+            exc,
+        )
+        return False, [f"merge_preview_failed: {exc}"]
+
+
+def _bind_verification(
+    verify_fn: Any,
+    task: Task,
+    workdir: Path,
+    preview_branch: str | None,
+    session_id: str | None,
+    preview_setup: tuple[tuple[str, ...], tuple[str, ...]] | None,
+    *extra_args: Any,
+) -> tuple[Any, tuple[Any, ...]]:
+    """Bind a verification call, routing it through a merge preview when one applies.
+
+    Returns the callable and its positional arguments so the caller can submit
+    them to the executor or invoke them inline.
+    """
+    if preview_branch is None or session_id is None:
+        return verify_fn, (task, workdir, *extra_args)
+    return (
+        _verify_against_merge_preview,
+        (verify_fn, task, workdir, preview_branch, session_id, preview_setup, *extra_args),
+    )
+
+
 class _JanitorFutureLike(Protocol):
     """Structural contract shared by ``concurrent.futures.Future`` and
     :class:`_JanitorSyncFuture` - the only two members ever assigned into
@@ -4081,11 +4246,21 @@ def _enqueue_alive_exit_janitor_pass(
     judge_model: str | None = getattr(_orch_config, "judge_model", None)
     judge_provider: str | None = getattr(_orch_config, "judge_provider", None)
     executor = getattr(orch, "_executor", None)
+    preview_branch = _agent_preview_branch(orch, session_id)
+    preview_setup = _preview_setup(orch) if preview_branch is not None else None
     if executor is None:
         # Defensive: if the orchestrator has no executor we still want a
         # synchronous verify so the task does not silently vanish.
+        fn, args = _bind_verification(
+            verify_task_completion,
+            task,
+            orch._workdir,
+            preview_branch,
+            session_id,
+            preview_setup,
+        )
         try:
-            return _JanitorSyncFuture(verify_task_completion(task, orch._workdir))
+            return _JanitorSyncFuture(fn(*args))
         except Exception as exc:  # pragma: no cover - defensive only
             logger.warning(
                 "janitor: sync-verify failed for task=%s reason=%s exc=%s",
@@ -4096,15 +4271,27 @@ def _enqueue_alive_exit_janitor_pass(
             return None
 
     if _has_llm_judge_signal(task):
-        return executor.submit(
+        fn, args = _bind_verification(
             _verify_via_janitor,
             task,
             orch._workdir,
+            preview_branch,
+            session_id,
+            preview_setup,
             server_url,
             judge_model,
             judge_provider,
         )
-    return executor.submit(verify_task_completion, task, orch._workdir)
+        return executor.submit(fn, *args)
+    fn, args = _bind_verification(
+        verify_task_completion,
+        task,
+        orch._workdir,
+        preview_branch,
+        session_id,
+        preview_setup,
+    )
+    return executor.submit(fn, *args)
 
 
 class _JanitorSyncFuture:

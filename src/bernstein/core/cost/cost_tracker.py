@@ -148,10 +148,10 @@ def _usage_tenant_scope(raw: object) -> str:
         ValueError: The row carries a ``tenant_id`` that is not a string.
     """
     if raw is None:
-        return DEFAULT_TENANT_ID
+        return cast(str, DEFAULT_TENANT_ID)
     if not isinstance(raw, str):
         raise ValueError(f"usage tenant_id must be a string, got {type(raw).__name__}")
-    return normalize_tenant_id(raw)
+    return cast(str, normalize_tenant_id(raw))
 
 
 def _resolve_usage_buffer_size() -> int:
@@ -1598,7 +1598,7 @@ class CostTracker:
             pricing: dict[str, float] | None = None
             for key, costs in MODEL_COSTS_PER_1M_TOKENS.items():
                 if key in model_lower:
-                    pricing = costs
+                    pricing = cast("dict[str, float]", costs)
                     break
             if pricing is not None:
                 input_price = pricing.get("input", 0.0)

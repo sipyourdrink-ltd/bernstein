@@ -10,7 +10,7 @@ import logging
 import operator
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -100,10 +100,10 @@ class FreeTierMaximizer:
             for provider, limits in FREE_TIER_LIMITS.items():
                 self._statuses[provider] = FreeTierStatus(
                     provider=provider,
-                    remaining_today=int(limits["requests_per_day"]),
-                    limit_today=int(limits["requests_per_day"]),
-                    remaining_minute=int(limits["requests_per_minute"]),
-                    limit_minute=int(limits["requests_per_minute"]),
+                    remaining_today=int(cast(int, limits["requests_per_day"])),
+                    limit_today=int(cast(int, limits["requests_per_day"])),
+                    remaining_minute=int(cast(int, limits["requests_per_minute"])),
+                    limit_minute=int(cast(int, limits["requests_per_minute"])),
                 )
             return
 
@@ -112,10 +112,10 @@ class FreeTierMaximizer:
             for provider, status_data in data.get("providers", {}).items():
                 self._statuses[provider] = FreeTierStatus(
                     provider=provider,
-                    remaining_today=int(status_data.get("remaining_today", 0)),
-                    limit_today=int(status_data.get("limit_today", 0)),
-                    remaining_minute=int(status_data.get("remaining_minute", 0)),
-                    limit_minute=int(status_data.get("limit_minute", 0)),
+                    remaining_today=int(cast(int, status_data.get("remaining_today", 0))),
+                    limit_today=int(cast(int, status_data.get("limit_today", 0))),
+                    remaining_minute=int(cast(int, status_data.get("remaining_minute", 0))),
+                    limit_minute=int(cast(int, status_data.get("limit_minute", 0))),
                     reset_time=status_data.get("reset_time"),
                     last_updated=float(status_data.get("last_updated", time.time())),
                 )
