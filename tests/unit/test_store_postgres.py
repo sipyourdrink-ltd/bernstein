@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from types import SimpleNamespace
 from typing import Any, cast
 
 import bernstein.core.store_postgres as store_postgres
@@ -720,3 +721,77 @@ def test_ddl_adds_claim_owner_column_to_existing_installs() -> None:
     """
     assert "claimed_by_session" in store_postgres._DDL
     assert "ADD COLUMN IF NOT EXISTS claimed_by_session" in store_postgres._DDL
+
+
+def test_ddl_defines_and_migrates_the_tenant_column() -> None:
+    """Tenant-scoped queries reference a column the DDL must actually create.
+
+    ``claim_batch`` and ``count_tasks`` both emit ``tenant_id = $n``, and the
+    claim route always resolves a scope - so a missing column is not a
+    multi-tenant-only problem, it is every batch claim (#4332).
+    """
+    assert "tenant_id" in store_postgres._DDL
+    assert "ADD COLUMN IF NOT EXISTS tenant_id" in store_postgres._DDL
+
+
+def test_create_persists_the_requested_tenant(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A task created under a tenant is stored under it.
+
+    The in-memory store normalizes ``req.tenant_id`` onto the task; this
+    backend dropped it, so a task created under tenant B was stored with no
+    scope at all and read back as the default one.
+    """
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    class _Conn:
+        def __init__(self) -> None:
+            self.insert = ""
+            self.params: tuple[object, ...] = ()
+
+        async def fetch(self, query: str, *args: object) -> list[object]:
+            await asyncio.sleep(0)  # Async interface requirement
+            return []
+
+        async def execute(self, query: str, *args: object) -> None:
+            await asyncio.sleep(0)  # Async interface requirement
+            self.insert = query
+            self.params = args
+
+    conn = _Conn()
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+
+    req = SimpleNamespace(
+        title="Review change",
+        description="desc",
+        role="backend",
+        priority=2,
+        scope="medium",
+        complexity="medium",
+        estimated_minutes=30,
+        depends_on=[],
+        owned_files=[],
+        cell_id=None,
+        task_type="standard",
+        upgrade_details=None,
+        model=None,
+        effort=None,
+        completion_signals=[],
+        tenant_id="tenant-a",
+    )
+
+    task = asyncio.run(store.create(cast("Any", req)))
+
+    assert task.tenant_id == "tenant-a"
+    assert "tenant_id" in conn.insert
+    assert "tenant-a" in conn.params
+
+
+def test_row_to_task_reads_the_tenant_back() -> None:
+    """A stored tenant survives the round trip; a legacy row falls back."""
+    scoped = store_postgres._row_to_task(_task_row(tenant_id="tenant-a"))
+    assert scoped.tenant_id == "tenant-a"
+
+    legacy = _task_row()
+    legacy.pop("tenant_id", None)
+    assert store_postgres._row_to_task(legacy).tenant_id == "default"
