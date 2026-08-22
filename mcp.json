@@ -3,12 +3,9 @@
   "mcpServers": {
     "bernstein": {
       "args": [
-        "run",
-        "bernstein",
         "mcp"
       ],
-      "command": "uv",
-      "cwd": "${PLUGIN_ROOT}",
+      "command": "bernstein",
       "type": "stdio"
     }
   }
