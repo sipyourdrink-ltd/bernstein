@@ -617,6 +617,22 @@ class Orchestrator:
             logger.info("Exported BERNSTEIN_RUN_ID=%s for spawned-agent instrumentation", run_id)
         except Exception as exc:  # intentional-broad-except: defensive, must never block startup
             logger.warning("Failed to export BERNSTEIN_RUN_ID=%s to process env: %s", run_id, exc)
+        # Issue #4330: the same worktree-vs-root split, for liveness. Adapters
+        # derive their runtime paths from the workdir they are spawned into --
+        # the agent's worktree -- while the probes below read heartbeats from
+        # this root. Export the root so ``build_worker_cmd`` can hand every
+        # wrapped adapter's worker the directory that is actually polled;
+        # without it the worker's heartbeat lands in the worktree, nothing
+        # advances the file the orchestrator reads, and a working agent is
+        # recycled on its own uptime.
+        from bernstein.adapters.base import HEARTBEAT_DIR_ENV
+
+        _heartbeat_dir = self._workdir / ".sdd" / "runtime" / "heartbeats"
+        try:
+            os.environ[HEARTBEAT_DIR_ENV] = str(_heartbeat_dir)
+            logger.info("Exported %s=%s for spawned workers", HEARTBEAT_DIR_ENV, _heartbeat_dir)
+        except Exception as exc:  # intentional-broad-except: defensive, must never block startup
+            logger.warning("Failed to export %s to process env: %s", HEARTBEAT_DIR_ENV, exc)
         hard_budget_usd = 0.0
         _raw_hard = os.environ.get("BERNSTEIN_HARD_BUDGET_USD", "").strip()
         if _raw_hard:
