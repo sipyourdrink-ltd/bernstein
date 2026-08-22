@@ -148,6 +148,13 @@ def ensure_public_http_url(
     Resolution failure is a rejection, not a pass-through: an unresolvable host
     is not evidence of a safe host.
 
+    This validates the URL you pass it and nothing that URL later leads to. It
+    is a single pre-fetch check, so a public host that answers with a redirect
+    to ``127.0.0.1`` or ``169.254.169.254`` still reaches the client unchecked,
+    and a name re-resolved between this call and the connection can answer
+    differently the second time. Callers handling third-party-derived URLs must
+    therefore disable redirect following, or re-run this check on every hop.
+
     Args:
         url: The candidate URL string.
         allow_http: When True, accept ``http://`` as well as ``https://``.
