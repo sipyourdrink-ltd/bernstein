@@ -97,12 +97,12 @@ class SessionState:
             ValueError: If ``saved_at`` cannot be cast to float.
         """
         return cls(
-            saved_at=float(data["saved_at"]),  # type: ignore[arg-type]
+            saved_at=float(cast(int, data["saved_at"])),
             goal=str(data.get("goal", "")),
-            completed_task_ids=list(data.get("completed_task_ids", [])),  # type: ignore[arg-type]
-            pending_task_ids=list(data.get("pending_task_ids", [])),  # type: ignore[arg-type]
-            open_task_ids=list(data.get("open_task_ids", [])),  # type: ignore[arg-type]
-            cost_spent=float(data.get("cost_spent", 0.0)),  # type: ignore[arg-type]
+            completed_task_ids=list(cast("list[str]", data.get("completed_task_ids", []))),
+            pending_task_ids=list(cast("list[str]", data.get("pending_task_ids", []))),
+            open_task_ids=list(cast("list[str]", data.get("open_task_ids", []))),
+            cost_spent=float(cast(float, data.get("cost_spent", 0.0))),
         )
 
 
@@ -201,13 +201,13 @@ class WrapUpBrief:
             ValueError: If ``timestamp`` cannot be cast to float.
         """
         return cls(
-            timestamp=float(data["timestamp"]),  # type: ignore[arg-type]
+            timestamp=float(cast(int, data["timestamp"])),
             session_id=str(data.get("session_id", "")),
             changes_summary=str(data.get("changes_summary", "")),
-            learnings=list(data.get("learnings", [])),  # type: ignore[arg-type]
+            learnings=list(cast("list[str]", data.get("learnings", []))),
             next_session_brief=str(data.get("next_session_brief", "")),
             git_diff_stat=str(data.get("git_diff_stat", "")),
-            completed_task_ids=[str(t) for t in data.get("completed_task_ids", [])],  # type: ignore[union-attr]
+            completed_task_ids=[str(t) for t in cast("list[object]", data.get("completed_task_ids", []))],
         )
 
 

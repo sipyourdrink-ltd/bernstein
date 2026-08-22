@@ -263,7 +263,7 @@ class LineageStore:
         tip_path = self._tip_path(artefact_path)
         if tip_path.exists():
             with contextlib.suppress(json.JSONDecodeError):
-                return json.loads(tip_path.read_text(encoding="utf-8"))
+                return cast("dict[str, list[str]]", json.loads(tip_path.read_text(encoding="utf-8")))
         return self._recompute_tips_for(artefact_path)
 
     def reindex(self) -> None:
@@ -354,16 +354,16 @@ def _entry_from_dict(payload: dict[str, object]) -> LineageEntry:
     # All canonical-field names map 1:1 onto the dataclass kwargs. Cast through
     # ``asdict`` of a dataclass would be cyclic; we do it manually.
     return LineageEntry(
-        v=int(payload["v"]),  # type: ignore[arg-type]
+        v=int(cast(int, payload["v"])),
         artefact_path=str(payload["artefact_path"]),
         artefact_kind=str(payload["artefact_kind"]),
         content_hash=str(payload["content_hash"]),
-        parent_hashes=list(payload["parent_hashes"]),  # type: ignore[arg-type]
+        parent_hashes=list(cast("list[str]", payload["parent_hashes"])),
         agent_id=str(payload["agent_id"]),
         agent_card_kid=str(payload["agent_card_kid"]),
         tool_call_id=str(payload["tool_call_id"]),
         span_id=str(payload["span_id"]),
-        ts_ns=int(payload["ts_ns"]),  # type: ignore[arg-type]
+        ts_ns=int(cast(int, payload["ts_ns"])),
         operator_hmac=str(payload["operator_hmac"]),
         # Additive (issue #2513): absent on pre-feature entries -> None, which
         # canonicalises back to the exact bytes read, so entry_hash round-trips.

@@ -472,8 +472,8 @@ def _move_completed_files(
     """Move backlog files for completed/failed/cancelled tasks to closed/."""
     done_slugs: set[str] = set()
     for terminal in ("done", "failed", "cancelled"):
-        for task in _get_tasks_by_status(client, server_url, terminal):
-            title = task.get("title", "")
+        for server_task in _get_tasks_by_status(client, server_url, terminal):
+            title = server_task.get("title", "")
             if title:
                 done_slugs.add(normalise_title(title))
 

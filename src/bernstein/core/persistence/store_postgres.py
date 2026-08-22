@@ -59,13 +59,12 @@ logger = logging.getLogger(__name__)
 
 # ``asyncpg`` is an optional dependency - only required for postgres mode.
 try:
-    import asyncpg  # type: ignore[import-untyped]
+    import asyncpg  # type: ignore[import-not-found]
 
     _has_asyncpg = True
 except ModuleNotFoundError:
     asyncpg = None  # type: ignore[assignment]
     _has_asyncpg = False
-
 _ASYNCPG_AVAILABLE: bool = _has_asyncpg
 
 
@@ -429,7 +428,7 @@ class PostgresTaskStore(BaseTaskStore):
             priority=req.priority,
             scope=Scope(req.scope),
             complexity=Complexity(req.complexity),
-            estimated_minutes=req.estimated_minutes,
+            estimated_minutes=req.estimated_minutes or 0,
             depends_on=req.depends_on,
             owned_files=req.owned_files,
             cell_id=req.cell_id,
@@ -971,6 +970,10 @@ class PostgresTaskStore(BaseTaskStore):
                 duration_seconds=row["duration_seconds"],
                 result_summary=row["result_summary"],
                 cost_usd=row["cost_usd"],
+                tenant_id="",
+                assigned_agent="",
+                owned_files=[],
+                claimed_by_session="",
             )
             for row in reversed(rows)
         ]
