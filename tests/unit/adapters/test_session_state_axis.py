@@ -41,9 +41,7 @@ def test_no_shipped_adapter_silently_became_persistent() -> None:
     # Every row was written before this axis existed, so all of them must still
     # read as stateless. Declaring letta_code is a separate issue under #3670.
     persistent = [
-        name
-        for name, strategy in STRATEGY_MATRIX.items()
-        if strategy.session_state is not SessionState.STATELESS
+        name for name, strategy in STRATEGY_MATRIX.items() if strategy.session_state is not SessionState.STATELESS
     ]
     assert persistent == [], f"unexpected non-stateless declarations: {persistent}"
 
