@@ -28,6 +28,12 @@ from bernstein.core.integrations.pr_gen import (
     build_pr_title,
     load_session_summary,
 )
+from bernstein.core.integrations.tickets import (
+    TicketAuthError,
+    TicketParseError,
+    TicketPayload,
+    fetch_ticket,
+)
 
 _GH_MISSING_HINT = (
     "Could not find the `gh` CLI on PATH. Install it with `brew install gh` "
@@ -180,6 +186,45 @@ def _gh_pr_create(
     return True, result.stdout.strip()
 
 
+def _resolve_issue(ref: str, workdir: Path) -> tuple[int, TicketPayload]:
+    """Resolve ``--issue`` (a number or a GitHub issue URL) to its ticket.
+
+    A bare number is resolved against the repository ``gh`` sees in
+    ``workdir``, then goes down the same path as a URL so the provider's
+    ``gh``-then-REST fallback is shared.
+    """
+    ref = ref.strip().lstrip("#")
+    url = ref
+    if ref.isdigit():
+        if shutil.which("gh") is None:
+            raise click.ClickException(_GH_MISSING_HINT)
+        slug = subprocess.run(
+            ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+            capture_output=True,
+            text=True,
+            cwd=str(workdir),
+            timeout=30,
+            check=False,
+        ).stdout.strip()
+        if not slug:
+            raise click.ClickException(
+                f"Could not tell which repository #{ref} belongs to. Pass the full issue URL instead."
+            )
+        url = f"https://github.com/{slug}/issues/{ref}"
+
+    try:
+        ticket = fetch_ticket(url)
+    except TicketAuthError as exc:
+        raise click.ClickException(f"Authentication error reading the issue: {exc}") from exc
+    except TicketParseError as exc:
+        raise click.ClickException(f"Could not read the issue: {exc}") from exc
+
+    number = ticket.id.rsplit("#", 1)[-1]
+    if not number.isdigit():
+        raise click.ClickException(f"{url} is not a GitHub issue; --issue needs one to link.")
+    return int(number), ticket
+
+
 @click.command("pr")
 @click.option(
     "--session-id",
@@ -193,6 +238,17 @@ def _gh_pr_create(
     default="main",
     show_default=True,
     help="Base branch for the pull request.",
+)
+@click.option(
+    "--issue",
+    "issue_ref",
+    default=None,
+    metavar="N|URL",
+    help=(
+        "Link the PR to a GitHub issue: title it from the issue and open the "
+        "body with `Closes #N`. Reads the issue, so --dry-run makes that one "
+        "request."
+    ),
 )
 @click.option(
     "--title",
@@ -223,6 +279,7 @@ def _gh_pr_create(
 def pr_cmd(
     session_id: str | None,
     base: str,
+    issue_ref: str | None,
     title_override: str | None,
     draft: bool,
     dry_run: bool,
@@ -230,17 +287,29 @@ def pr_cmd(
 ) -> None:
     """Open a GitHub pull request from a completed Bernstein session.
 
-    The command is safe to re-run: on ``--dry-run`` it never touches the
-    network, and when ``gh`` is missing it exits with a helpful message
-    instead of a traceback.
+    The command is safe to re-run: on ``--dry-run`` it touches the network
+    only to read the issue named by ``--issue`` (nothing at all without it),
+    and when ``gh`` is missing it exits with a helpful message instead of a
+    traceback.
     """
     workdir = Path.cwd()
 
     summary = load_session_summary(session_id, workdir=workdir, base_branch=base)
     summary = _enrich_summary_with_git(summary, workdir)
 
-    title = title_override or build_pr_title(summary.goal or summary.session_id, summary.primary_role)
+    issue_number: int | None = None
+    issue_title = ""
+    if issue_ref is not None:
+        issue_number, ticket = _resolve_issue(issue_ref, workdir)
+        issue_title = ticket.title
+
+    # The issue title is a cleaner source than the goal, which carries the
+    # instructions handed to the run.
+    title = title_override or build_pr_title(issue_title or summary.goal or summary.session_id, summary.primary_role)
     body = build_pr_body(summary)
+    if issue_number is not None:
+        # GitHub links an issue from the body or a commit message only.
+        body = f"Closes #{issue_number}\n\n{body}"
 
     if dry_run:
         click.echo(f"Title: {title}")
