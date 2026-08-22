@@ -150,7 +150,7 @@ from bernstein.core.seed import resolve_seed_path
 from bernstein.core.semantic_cache import ResponseCacheManager
 from bernstein.core.signals import read_unresolved_pivots
 from bernstein.core.skills.provenance import record_usage
-from bernstein.core.slo import SLOTracker, apply_error_budget_adjustments
+from bernstein.core.slo import SLOTracker, apply_error_budget_adjustments, error_budget_from_task_board
 from bernstein.core.task_grouping import compact_small_tasks
 from bernstein.core.task_lifecycle import (
     auto_decompose_task,
@@ -1950,28 +1950,7 @@ class Orchestrator:
                 self._consecutive_failures += len([t for t in failed_tasks if t.id not in self._retried_task_ids])
 
             # Check for incidents
-            all_counted = self._slo_tracker.error_budget.total_tasks
-            failed_counted = self._slo_tracker.error_budget.failed_tasks
-            incident = self._incident_manager.check_for_incidents(
-                failed_task_count=failed_counted,
-                total_task_count=all_counted,
-                consecutive_failures=self._consecutive_failures,
-                error_budget_depleted=self._slo_tracker.error_budget.is_depleted,
-            )
-            self._incident_manager.save(self._workdir / ".sdd" / "runtime")
-
-            # Notify PagerDuty on SEV1/SEV2 incidents
-            if incident is not None and incident.severity in ("sev1", "sev2"):
-                self._notify(
-                    "incident.critical",
-                    f"Incident [{incident.severity.value.upper()}]: {incident.title}",
-                    incident.description,
-                    incident_id=incident.id,
-                    severity=incident.severity.value,
-                    failed_tasks=str(failed_counted),
-                    total_tasks=str(all_counted),
-                    consecutive_failures=str(self._consecutive_failures),
-                )
+            self._check_for_incidents(tasks_by_status)
 
         # 4c. Check heartbeat-based staleness; send WAKEUP/SHUTDOWN as needed
         check_stale_agents(self)
@@ -4423,6 +4402,46 @@ class Orchestrator:
     def _collect_completion_data(self, session: AgentSession) -> CompletionData:
         """Delegate to task_lifecycle.collect_completion_data."""
         return collect_completion_data(self._workdir, session)
+
+    def _check_for_incidents(self, tasks_by_status: dict[str, list[Task]]) -> None:
+        """Detect and record incidents from terminal task-board state.
+
+        The failed/total counts fed to the incident manager come from the
+        task server's own ``done``/``failed`` buckets via
+        :func:`error_budget_from_task_board`, never from the observability
+        collector's in-memory success bit or from agent process exit
+        codes. An agent whose process dies (SIGTERM from heartbeat
+        escalation, OOM, a plain crash) after its claimed task already
+        reached ``done`` must not move this ratio (#4310).
+
+        Args:
+            tasks_by_status: Task board buckets fetched this tick.
+        """
+        board_budget = error_budget_from_task_board(
+            tasks_by_status, slo_target=self._slo_tracker.error_budget.slo_target
+        )
+        failed_ids = [t.id for t in tasks_by_status.get("failed", [])]
+        incident = self._incident_manager.check_for_incidents(
+            failed_task_count=board_budget.failed_tasks,
+            total_task_count=board_budget.total_tasks,
+            consecutive_failures=self._consecutive_failures,
+            error_budget_depleted=board_budget.is_depleted,
+            contributing_task_ids=failed_ids,
+        )
+        self._incident_manager.save(self._workdir / ".sdd" / "runtime")
+
+        # Notify PagerDuty on SEV1/SEV2 incidents
+        if incident is not None and incident.severity in ("sev1", "sev2"):
+            self._notify(
+                "incident.critical",
+                f"Incident [{incident.severity.value.upper()}]: {incident.title}",
+                incident.description,
+                incident_id=incident.id,
+                severity=incident.severity.value,
+                failed_tasks=str(board_budget.failed_tasks),
+                total_tasks=str(board_budget.total_tasks),
+                consecutive_failures=str(self._consecutive_failures),
+            )
 
     def _should_trigger_manager_review(self, failed_count: int) -> bool:
         """Return True when a manager queue review is warranted.

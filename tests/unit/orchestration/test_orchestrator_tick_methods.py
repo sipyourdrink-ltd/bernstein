@@ -15,6 +15,8 @@ Covered methods:
   transitions, notification emission.
 * :meth:`Orchestrator._notify` - notifier fan-out + no-op when unset.
 * :meth:`Orchestrator._check_task_deadlines` - exceeded / warning / clear paths.
+* :meth:`Orchestrator._check_for_incidents` - error-budget counting from
+  terminal task-board state, incident blast-radius auditability.
 """
 
 from __future__ import annotations
@@ -25,7 +27,9 @@ from unittest.mock import MagicMock
 
 import pytest
 from bernstein.core.cost_tracker import CostTracker
+from bernstein.core.incident import IncidentManager
 from bernstein.core.models import AgentSession, Task
+from bernstein.core.slo import SLOTracker
 
 from bernstein.core.cost.budget_actions import BudgetAction, BudgetPolicy
 from bernstein.core.orchestration.orchestrator import Orchestrator
@@ -335,3 +339,81 @@ def test_check_task_deadlines_swallows_fail_post_error(monkeypatch: pytest.Monke
     stub._check_task_deadlines([_task_with_deadline("T-late", now - 50.0)])
     events = [c.args[0] for c in stub._notify.call_args_list]
     assert "task.deadline_exceeded" in events
+
+
+# ---------------------------------------------------------------------------
+# _check_for_incidents (#4310)
+# ---------------------------------------------------------------------------
+
+
+def _incident_check_stub(workdir: Any) -> SimpleNamespace:
+    stub = SimpleNamespace(
+        _slo_tracker=SLOTracker(),
+        _incident_manager=IncidentManager(),
+        _consecutive_failures=0,
+        _workdir=workdir,
+        _notify=MagicMock(),
+    )
+    stub._check_for_incidents = MethodType(
+        Orchestrator._check_for_incidents,  # type: ignore[arg-type]
+        stub,
+    )
+    return stub
+
+
+def _board_task(task_id: str) -> Task:
+    return Task(id=task_id, title=task_id, description="", role="backend")
+
+
+def test_check_for_incidents_agent_death_after_done_is_not_a_failure(tmp_path: Any) -> None:
+    """Reproduces #4310: complete a task, then SIGTERM its agent.
+
+    The task board is the only input -- a task that reached `done` is
+    counted as done no matter what happened to the agent process that
+    was working it, so a lone completed task must never raise an
+    incident.
+    """
+    stub = _incident_check_stub(tmp_path)
+    tasks_by_status = {"open": [], "claimed": [], "done": [_board_task("T-1")], "failed": []}
+
+    stub._check_for_incidents(tasks_by_status)
+
+    assert stub._incident_manager.incidents == []
+    stub._notify.assert_not_called()
+
+
+def test_check_for_incidents_genuine_failures_still_raise_sev2_with_task_ids(tmp_path: Any) -> None:
+    """Real failures must still deplete the budget and fire, now carrying
+    the contributing task ids in the incident's blast radius for audit."""
+    stub = _incident_check_stub(tmp_path)
+    failed = [_board_task(f"T-{i}") for i in range(5)]
+    tasks_by_status = {"open": [], "claimed": [], "done": [], "failed": failed}
+
+    stub._check_for_incidents(tasks_by_status)
+
+    assert len(stub._incident_manager.incidents) == 1
+    incident = stub._incident_manager.incidents[0]
+    assert incident.severity.value == "sev2"
+    assert incident.blast_radius == [t.id for t in failed]
+    assert stub._incident_manager.should_pause is True
+    stub._notify.assert_called_once()
+
+
+def test_check_for_incidents_mixed_board_uses_terminal_states_only(tmp_path: Any) -> None:
+    """9 open/claimed tasks alongside 2 done + 1 failed must count as
+    3 total / 1 failed, matching the task board, not the larger board size
+    or any agent-process-derived number."""
+    stub = _incident_check_stub(tmp_path)
+    tasks_by_status = {
+        "open": [_board_task(f"T-open-{i}") for i in range(6)],
+        "claimed": [_board_task(f"T-claimed-{i}") for i in range(3)],
+        "done": [_board_task("T-done-1"), _board_task("T-done-2")],
+        "failed": [_board_task("T-failed-1")],
+    }
+
+    stub._check_for_incidents(tasks_by_status)
+
+    # 1 failure out of 3 terminal tasks is well within the default floor
+    # of 3 tolerated failures, so no incident should fire.
+    assert stub._incident_manager.incidents == []
+    stub._notify.assert_not_called()

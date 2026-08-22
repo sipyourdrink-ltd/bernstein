@@ -237,8 +237,21 @@ class IncidentManager:
         consecutive_failures: int,
         error_budget_depleted: bool,
         _recent_errors: list[str] | None = None,
+        contributing_task_ids: list[str] | None = None,
     ) -> Incident | None:
-        """Auto-detect incident conditions and create incidents."""
+        """Auto-detect incident conditions and create incidents.
+
+        Args:
+            failed_task_count: Number of tasks counted as failed.
+            total_task_count: Number of tasks counted toward the ratio.
+            consecutive_failures: Current consecutive-failure streak.
+            error_budget_depleted: Whether the error budget is exhausted.
+            _recent_errors: Unused; kept for call-site compatibility.
+            contributing_task_ids: Ids of the failed tasks behind
+                ``failed_task_count``/``total_task_count``, recorded as the
+                incident's blast radius so an operator can audit the
+                arithmetic from the incident JSON/MD alone.
+        """
         # SEV1: >75% failure rate with 10+ tasks
         if total_task_count >= 10 and failed_task_count / total_task_count > 0.75:
             return self.create_incident(
@@ -247,6 +260,7 @@ class IncidentManager:
                 description=(
                     f"{failed_task_count}/{total_task_count} tasks have failed. System may be in a degraded state."
                 ),
+                blast_radius=contributing_task_ids or [],
             )
 
         # SEV2: Error budget depleted
@@ -258,6 +272,7 @@ class IncidentManager:
                     f"Error budget exhausted with {failed_task_count} failures "
                     f"out of {total_task_count} tasks. Automatic remediation active."
                 ),
+                blast_radius=contributing_task_ids or [],
             )
 
         # SEV3: 5+ consecutive failures
