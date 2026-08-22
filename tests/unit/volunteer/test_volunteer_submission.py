@@ -192,7 +192,10 @@ def test_pacing_releases_after_the_tracked_pr_is_merged(tmp_path: Path, isolated
     # Mock DCO and push so we don't need real git config or a real repo
     with (
         patch("bernstein.core.volunteer.submission.read_dco_line", return_value="Jane Doe <jane@example.com>"),
-        patch("bernstein.core.volunteer.submission.push_head_as", return_value=GitResult(returncode=0, stdout="", stderr="")),
+        patch(
+            "bernstein.core.volunteer.submission.push_head_as",
+            return_value=GitResult(returncode=0, stdout="", stderr=""),
+        ),
     ):
         pr_url = submit_volunteer_pr(
             bundle=_make_bundle(),
