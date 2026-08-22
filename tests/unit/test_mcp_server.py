@@ -1335,3 +1335,45 @@ def test_cancel_has_an_explicit_standard_tier_entry() -> None:
     from bernstein.core.protocols.mcp.tool_tiers import TOOL_TIERS
 
     assert TOOL_TIERS["bernstein_cancel"] == "standard"
+
+
+def test_server_module_has_a_main_guard_that_answers_initialize() -> None:
+    """Regression for #4313: ``python -m bernstein.mcp.server`` must answer stdio.
+
+    The module previously had no ``__main__`` guard, so running it directly
+    imported the module and exited 0 without ever starting the server. The
+    MCP bridge spec injected into every agent spawn pointed at exactly this
+    module path, so every agent's ``bernstein`` bridge silently failed to
+    connect. This spawns the module directly, the same way the broken spec
+    did, and checks it now answers ``initialize`` over stdio.
+    """
+    import subprocess
+    import sys
+
+    request = (
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "regression-test", "version": "1"},
+                },
+            }
+        )
+        + "\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-m", "bernstein.mcp.server"],
+        input=request,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert proc.stdout.strip(), f"server module produced no stdout; stderr={proc.stderr}"
+    response = json.loads(proc.stdout.splitlines()[0])
+    assert response["id"] == 1
+    assert response["result"]["serverInfo"]["name"] == "bernstein"

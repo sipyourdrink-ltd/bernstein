@@ -2405,3 +2405,11 @@ def run_sse(
     import uvicorn
 
     uvicorn.run(mcp.sse_app(), host=host, port=port)
+
+
+if __name__ == "__main__":
+    # bernstein/mcp/__main__.py is the documented ``python -m bernstein.mcp``
+    # entrypoint and already calls run_stdio() unconditionally. This guard
+    # covers the same invocation via ``python -m bernstein.mcp.server``
+    # directly, which has no __main__ guard of its own - see #4313.
+    run_stdio()

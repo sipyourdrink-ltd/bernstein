@@ -881,11 +881,12 @@ class ClaudeCodeAdapter(CLIAdapter):
         self._inject_hooks_config(workdir, session_id)
 
         # Inject Bernstein MCP bridge so agents can report progress, check
-        # sibling status, and read the bulletin board.  Uses the existing
-        # bernstein.mcp.server module in stdio transport mode.
+        # sibling status, and read the bulletin board.  Uses the bernstein.mcp
+        # package's stdio entrypoint (bernstein/mcp/__main__.py -> run_stdio()).
+        # bernstein.mcp.server has no __main__ guard on its own - see #4313.
         bridge_server: dict[str, Any] = {
             "command": sys.executable,
-            "args": ["-m", "bernstein.mcp.server"],
+            "args": ["-m", "bernstein.mcp"],
         }
         effective_mcp: dict[str, Any] = {}
         if mcp_config:
