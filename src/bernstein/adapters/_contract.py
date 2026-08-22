@@ -567,13 +567,34 @@ class OutputMode(StrEnum):
     ARTIFACT = "artifact"
 
 
+class SessionState(StrEnum):
+    """Whether an adapter reaches agent-side state that outlives a single spawn.
+
+    Every other axis describes how Bernstein *drives* a run. This one
+    describes what the run leaves behind on the agent's side, which is what
+    decides whether a replay of the same inputs can be expected to reproduce
+    the same outputs.
+    """
+
+    #: Each spawn starts from the inputs Bernstein supplies and nothing else.
+    #: An operator may assume a replay of those inputs is reproducible: there
+    #: is no agent-side memory carried in from an earlier run.
+    STATELESS = "stateless"
+    #: The agent keeps state of its own across spawns - a server-side session,
+    #: a memory store, a persistent thread. An operator may NOT assume a replay
+    #: is reproducible, because inputs Bernstein never saw can influence the
+    #: run.
+    PERSISTENT_AGENT = "persistent-agent"
+
+
 class StrategyView(TypedDict):
-    """JSON-serialisable view of an :class:`AdapterStrategy`'s four axes."""
+    """JSON-serialisable view of an :class:`AdapterStrategy`'s five axes."""
 
     resume: str
     dangerous_mode: str
     event_channel: str
     output_mode: str
+    session_state: str
 
 
 class StrategyRow(StrategyView):
@@ -584,7 +605,7 @@ class StrategyRow(StrategyView):
 
 @dataclass(frozen=True)
 class AdapterStrategy:
-    """The declared strategy of a single adapter across all four axes."""
+    """The declared strategy of a single adapter across all five axes."""
 
     resume: ResumeStrategy = ResumeStrategy.UNSUPPORTED
     dangerous_mode: DangerousModeStrategy = DangerousModeStrategy.UNSUPPORTED
@@ -593,6 +614,9 @@ class AdapterStrategy:
     #: committing. An adapter driving a non-coding worker declares ``artifact``
     #: so the completion path reads its canonical output instead of HEAD.
     output_mode: OutputMode = OutputMode.GIT_DIFF
+    #: Defaults to ``stateless``, so every existing row keeps its meaning: an
+    #: adapter that does carry agent-side state across spawns must say so.
+    session_state: SessionState = SessionState.STATELESS
 
     def to_dict(self) -> StrategyView:
         """Return a JSON-serialisable view for operator-facing tables."""
@@ -601,6 +625,7 @@ class AdapterStrategy:
             "dangerous_mode": str(self.dangerous_mode),
             "event_channel": str(self.event_channel),
             "output_mode": str(self.output_mode),
+            "session_state": str(self.session_state),
         }
 
 

@@ -23,6 +23,7 @@ from bernstein.adapters._contract import (
     EventChannel,
     OutputMode,
     ResumeStrategy,
+    SessionState,
     checkpoint_retry_capability,
     resume_capability,
     strategy_for,
@@ -137,12 +138,14 @@ def test_adapter_strategy_to_dict_round_trips() -> None:
         dangerous_mode=DangerousModeStrategy.ENV_VAR,
         event_channel=EventChannel.HOOKS,
         output_mode=OutputMode.ARTIFACT,
+        session_state=SessionState.PERSISTENT_AGENT,
     )
     assert strategy.to_dict() == {
         "resume": "flag",
         "dangerous_mode": "env-var",
         "event_channel": "hooks",
         "output_mode": "artifact",
+        "session_state": "persistent-agent",
     }
 
 
@@ -241,7 +244,14 @@ def test_strategy_table_rows_sorted_and_complete() -> None:
     rows = strategy_table(["gemini", "aider"])
     assert [r["adapter"] for r in rows] == ["aider", "gemini"]
     for row in rows:
-        assert set(row) == {"adapter", "resume", "dangerous_mode", "event_channel", "output_mode"}
+        assert set(row) == {
+            "adapter",
+            "resume",
+            "dangerous_mode",
+            "event_channel",
+            "output_mode",
+            "session_state",
+        }
 
 
 def test_strategy_conformance_table_covers_registry() -> None:
