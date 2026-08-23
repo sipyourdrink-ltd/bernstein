@@ -1089,7 +1089,7 @@ def _render_output_style(workdir: Path) -> str:
         return ""
 
 
-def _render_prompt(
+def _render_prompt_with_receipt(
     tasks: list[Task],
     templates_dir: Path,
     workdir: Path,
@@ -1425,6 +1425,17 @@ def _render_prompt(
     _ = cache_blocks  # computed for future use
     return "".join(sections), receipt
 
+
+def _render_prompt(*args: Any, **kwargs: Any) -> str:
+    """Build the agent prompt, discarding the context receipt.
+
+    The receipt was added for the spawner, which records it alongside the
+    run. Every other caller — the batch renderer, other modules, and the
+    prompt-shape tests — wants the prompt text, so the receipt is an
+    addition to the spawner's path rather than a change to this signature.
+    See :func:`_render_prompt_with_receipt` when the receipt is needed.
+    """
+    return _render_prompt_with_receipt(*args, **kwargs)[0]
 
 def _render_fallback(
     role: str,
@@ -4029,7 +4040,7 @@ class AgentSpawner:
                 tasks[0].id,
             )
         else:
-            prompt, receipt = _render_prompt(
+            prompt, receipt = _render_prompt_with_receipt(
                 tasks,
                 self._templates_dir,
                 self._workdir,
@@ -5116,7 +5127,7 @@ class AgentSpawner:
             _resume_max_turns,
         )
 
-        prompt, receipt = _render_prompt(
+        prompt, receipt = _render_prompt_with_receipt(
             tasks,
             self._templates_dir,
             self._workdir,
