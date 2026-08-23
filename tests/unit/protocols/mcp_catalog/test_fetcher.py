@@ -12,8 +12,10 @@ import pytest
 from bernstein.core.protocols.mcp_catalog.fetcher import (
     CatalogFetcher,
     HTTPResponse,
+    _UrllibTransport,
 )
 from bernstein.core.protocols.mcp_catalog.manifest import CatalogValidationError
+from bernstein.core.security.url_allowlist import UrlSchemeError
 
 
 def _good_catalog() -> dict[str, Any]:
@@ -154,3 +156,23 @@ def test_fetch_raises_when_no_cache_and_4xx(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="HTTP 404"):
         fetcher.fetch()
     assert not fetcher.cache_path.exists()
+
+
+def test_hostile_url_loopback_https_rejected() -> None:
+    """A loopback destination must be rejected before any network I/O.
+
+    The catalog URL is third-party-derived content, so the transport must
+    refuse to aim at an internal address (SSRF protection).
+    """
+    with pytest.raises(UrlSchemeError):
+        _UrllibTransport().get("https://127.0.0.1/catalog.json", headers={})
+
+
+def test_hostile_url_link_local_http_rejected() -> None:
+    """A link-local (cloud metadata) destination must be rejected.
+
+    ``allow_http=True`` is preserved, so the scheme passes; the host
+    restriction is what rejects the link-local address.
+    """
+    with pytest.raises(UrlSchemeError):
+        _UrllibTransport().get("http://169.254.169.254/latest/meta-data/", headers={})

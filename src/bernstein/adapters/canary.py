@@ -1127,7 +1127,12 @@ def last_green_is_stale(
     return (now - recorded).days > max_age_days
 
 
-def render_last_green_table(entries: dict[str, LastGreenEntry], *, now: datetime | None = None) -> str:
+def render_last_green_table(
+    entries: dict[str, LastGreenEntry],
+    *,
+    now: datetime | None = None,
+    absent: set[str] | None = None,
+) -> str:
     """Render the per-adapter last-green table as Markdown.
 
     Rows sort by adapter name so regeneration is deterministic; each row
@@ -1136,8 +1141,18 @@ def render_last_green_table(entries: dict[str, LastGreenEntry], *, now: datetime
     ``now``) is annotated ``(stale)`` so a frozen row stops reading as
     automation-fresh. ``now`` is injected for deterministic tests and set to
     the run timestamp by the canary; it defaults to the current UTC time.
+
+    An adapter named in ``absent`` (probed ``absent`` on the run that
+    regenerated the table) renders ``(not probed)`` instead of ``(stale)``:
+    a binary that was never on ``PATH`` was not a candidate for freshness,
+    so its row is *unverified because the probe could not run*, not
+    *unverified because the adapter stopped passing* (#4387). The last
+    known good version and receipt are still shown -- dropping them would
+    discard the one attested fact the projection is for -- but the
+    annotation tells the reader no evidence was sought this run.
     """
     current = now if now is not None else datetime.now(UTC)
+    absent_names = absent if absent is not None else frozenset()
     lines = [
         "| Adapter | Binary | Last-green version | Verified | Receipt |",
         "|---|---|---|---|---|",
@@ -1147,7 +1162,9 @@ def render_last_green_table(entries: dict[str, LastGreenEntry], *, now: datetime
     for name in sorted(entries):
         entry = entries[name]
         verified = entry.recorded_at
-        if last_green_is_stale(entry.recorded_at, now=current):
+        if name in absent_names:
+            verified = f"{entry.recorded_at} (not probed)"
+        elif last_green_is_stale(entry.recorded_at, now=current):
             verified = f"{entry.recorded_at} (stale)"
         lines.append(
             f"| {entry.adapter} | `{entry.binary}` | {entry.version} | {verified} | `{entry.receipt_sha256[:12]}` |"
@@ -1155,13 +1172,20 @@ def render_last_green_table(entries: dict[str, LastGreenEntry], *, now: datetime
     return "\n".join(lines)
 
 
-def write_last_green_doc(doc_path: Path, entries: dict[str, LastGreenEntry], *, now: datetime | None = None) -> None:
+def write_last_green_doc(
+    doc_path: Path,
+    entries: dict[str, LastGreenEntry],
+    *,
+    now: datetime | None = None,
+    absent: set[str] | None = None,
+) -> None:
     """Regenerate the last-green table between the doc's markers.
 
     Idempotent for a fixed ``now``: regenerating with the same entries and
     timestamp leaves the file byte-identical. Content outside the markers is
     preserved verbatim. ``now`` is threaded into the staleness annotation so
-    the regenerated table is a deterministic function of ``(entries, now)``.
+    the regenerated table is a deterministic function of ``(entries, now)``;
+    ``absent`` is threaded into the not-probed annotation the same way.
 
     Raises:
         ValueError: If the doc is missing either marker.
@@ -1173,7 +1197,7 @@ def write_last_green_doc(doc_path: Path, entries: dict[str, LastGreenEntry], *, 
         raise ValueError(f"{doc_path} is missing the last-green table markers")
     head = text[: begin + len(LAST_GREEN_BEGIN)]
     tail = text[end:]
-    table = render_last_green_table(entries, now=now)
+    table = render_last_green_table(entries, now=now, absent=absent)
     doc_path.write_text(f"{head}\n{table}\n{tail}", encoding="utf-8")
 
 
@@ -1260,6 +1284,9 @@ def run_matrix(
     save_last_green(last_green_path, last_green)
     if docs_path is not None:
         # Evaluate staleness as-of the run timestamp so the regenerated table
-        # is a deterministic function of the run inputs.
-        write_last_green_doc(docs_path, last_green, now=_parse_recorded_at(generated_at))
+        # is a deterministic function of the run inputs. Adapters that probed
+        # ``absent`` this run render ``(not probed)`` rather than ``(stale)``:
+        # the probe never ran, so the row must not read as a quiet regression.
+        absent_this_run = {o.adapter for o in result.outcomes if o.verdict == "absent"}
+        write_last_green_doc(docs_path, last_green, now=_parse_recorded_at(generated_at), absent=absent_this_run)
     return result

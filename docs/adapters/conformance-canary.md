@@ -153,6 +153,13 @@ Each row names the
 receipt hash prefix that attested it. A row whose `recorded_at` is older
 than seven days is annotated `(stale)`: the canary refreshes passing rows
 nightly, so a frozen row is no longer evidence the surface still conforms.
+An adapter that probed `absent` on the regenerating run (its binary was
+not on `PATH`, so the probe never ran) is annotated `(not probed)`
+instead: the row is *unverified because the probe could not run*, not
+*unverified because the adapter stopped passing* (#4387). The last known
+good version and receipt stay visible -- the projection is for attested
+facts -- but the annotation stops the row from reading as a quiet
+regression.
 
 `bernstein doctor` reads the same projection (shipped as
 `src/bernstein/adapters/last_green.json`) and, for every locally installed
@@ -176,8 +183,10 @@ covered under *Chronic-skip handling*.
   `tests/contract/contracts/agy.yaml`): the CI runner cannot install it,
   so its last-green row is refreshed only by an operator running the canary
   locally and can freeze while peer rows refresh nightly. Its row is
-  therefore expected to read `(stale)` on the CI-shipped projection; treat
-  `agy` as an operator-verified local check, not an automation-fresh row.
+  therefore expected to read `(not probed)` on the CI-shipped projection
+  (the CI probe resolves no binary, so the run annotates it unverified
+  rather than stale); treat `agy` as an operator-verified local check, not
+  an automation-fresh row.
 
 <!-- last-green:begin -->
 | Adapter | Binary | Last-green version | Verified | Receipt |

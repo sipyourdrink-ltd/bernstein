@@ -828,6 +828,114 @@ class TestLastGreen:
         assert "1.4.0" in once
         assert once.endswith("tail\n")
 
+    def test_render_table_absent_row_renders_not_probed_not_stale(self) -> None:
+        from datetime import UTC, datetime
+
+        # The #4387 shape: a row that was never a freshness candidate (binary
+        # absent from PATH this run) must not read as a quiet regression.
+        entries = update_last_green(
+            {}, _outcome(verdict="pass", failures=()), receipt_sha="cd" * 32, recorded_at="2026-07-01T00:00:00Z"
+        )
+        stale_now = datetime(2026, 7, 1, tzinfo=UTC).replace(day=1 + LAST_GREEN_STALE_DAYS + 5)
+        table = render_last_green_table(entries, now=stale_now, absent={"agy"})
+        # Distinguishable from merely-stale: not-probed, not stale.
+        assert "not probed" in table
+        assert "stale" not in table
+        # The last known good evidence is still shown (projection of receipts).
+        assert "1.4.0" in table
+        assert ("cd" * 32)[:12] in table
+
+    def test_render_table_absent_and_stale_rows_coexist(self) -> None:
+        from datetime import UTC, datetime
+
+        # agy is absent this run (never probed); gemini passed long ago and is
+        # genuinely stale. One table must carry both annotations.
+        entries = {
+            "agy": LastGreenEntry(
+                adapter="agy",
+                binary="agy",
+                version="1.0.0",
+                receipt_sha256="aa" * 32,
+                recorded_at="2026-07-01T00:00:00Z",
+            ),
+            "gemini": LastGreenEntry(
+                adapter="gemini",
+                binary="gemini",
+                version="2.0.0",
+                receipt_sha256="bb" * 32,
+                recorded_at="2026-07-01T00:00:00Z",
+            ),
+        }
+        stale_now = datetime(2026, 7, 1, tzinfo=UTC).replace(day=1 + LAST_GREEN_STALE_DAYS + 5)
+        table = render_last_green_table(entries, now=stale_now, absent={"agy"})
+        agy_row = next(line for line in table.splitlines() if line.startswith("| agy "))
+        gemini_row = next(line for line in table.splitlines() if line.startswith("| gemini "))
+        assert "(not probed)" in agy_row
+        assert "(stale)" in gemini_row
+        assert "not probed" not in gemini_row
+
+    def test_render_table_absent_does_not_mark_fresh_row(self) -> None:
+        from datetime import UTC, datetime
+
+        # A row from last night's green run is unchanged even when another
+        # adapter probed absent (the regression a careless fix could cause).
+        fresh = datetime(2026, 7, 12, tzinfo=UTC)
+        entries = update_last_green(
+            {},
+            _outcome(adapter="aider", verdict="pass", failures=()),
+            receipt_sha="cd" * 32,
+            recorded_at="2026-07-11T00:00:00Z",
+        )
+        table = render_last_green_table(entries, now=fresh, absent={"agy"})
+        assert "not probed" not in table
+        assert "stale" not in table
+
+    def test_render_table_deterministic_with_absent(self) -> None:
+        from datetime import UTC, datetime
+
+        now = datetime(2026, 7, 12, tzinfo=UTC)
+        entries = update_last_green(
+            {}, _outcome(verdict="pass", failures=()), receipt_sha="cd" * 32, recorded_at="2026-07-01T00:00:00Z"
+        )
+        first = render_last_green_table(entries, now=now, absent={"agy"})
+        second = render_last_green_table(entries, now=now, absent={"agy"})
+        assert first == second
+
+    def test_write_last_green_doc_round_trips_with_absent(self, tmp_path: Path) -> None:
+        from datetime import UTC, datetime
+
+        doc = tmp_path / "conformance-canary.md"
+        doc.write_text(
+            "# Canary\n\n<!-- last-green:begin -->\nplaceholder\n<!-- last-green:end -->\ntail\n",
+            encoding="utf-8",
+        )
+        entries = update_last_green(
+            {}, _outcome(verdict="pass", failures=()), receipt_sha="ef" * 32, recorded_at=_GENERATED_AT
+        )
+        now = datetime(2026, 7, 12, tzinfo=UTC)
+        write_last_green_doc(doc, entries, now=now, absent={"agy"})
+        once = doc.read_text(encoding="utf-8")
+        write_last_green_doc(doc, entries, now=now, absent={"agy"})
+        assert doc.read_text(encoding="utf-8") == once
+
+    def test_green_run_docs_not_affected_by_absent(self, tmp_path: Path) -> None:
+        # The doc regeneration is a pure function of (entries, now, absent);
+        # a green row is never annotated not-probed just because another
+        # adapter in the matrix was absent this run.
+        from datetime import UTC, datetime
+
+        doc = tmp_path / "conformance-canary.md"
+        doc.write_text(
+            "# Canary\n\n<!-- last-green:begin -->\nplaceholder\n<!-- last-green:end -->\ntail\n",
+            encoding="utf-8",
+        )
+        entries = update_last_green(
+            {}, _outcome(verdict="pass", failures=()), receipt_sha="ef" * 32, recorded_at=_GENERATED_AT
+        )
+        now = datetime(2026, 7, 12, tzinfo=UTC)
+        write_last_green_doc(doc, entries, now=now, absent={"other-adapter"})
+        assert "not probed" not in doc.read_text(encoding="utf-8")
+
     def test_write_last_green_doc_requires_markers(self, tmp_path: Path) -> None:
         doc = tmp_path / "no-markers.md"
         doc.write_text("# no markers\n", encoding="utf-8")
