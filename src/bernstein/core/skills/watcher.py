@@ -64,7 +64,7 @@ class WatchHandle:
     debounce timer so they can be drained on shutdown.
     """
 
-    observer: Observer
+    observer: Observer  # type: ignore[valid-type]
     _stop_event: threading.Event
 
     def stop(self, timeout: float = 1.0) -> None:
@@ -76,6 +76,7 @@ class WatchHandle:
                 supply a longer value.
         """
         self._stop_event.set()
+        assert self.observer is not None
         self.observer.stop()
         self.observer.join(timeout=timeout)
 

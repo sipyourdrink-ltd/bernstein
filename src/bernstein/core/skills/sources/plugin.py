@@ -96,7 +96,7 @@ def load_plugin_sources(
     except TypeError:
         # Python 3.9/3.10 returned a SelectableGroups object - we target 3.12+,
         # but keep the fallback defensive for tooling on older interpreters.
-        eps = tuple(entry_points().get(entry_point_group, ()))  # type: ignore[union-attr]
+        eps = tuple(entry_points().get(entry_point_group, ()))  # type: ignore[attr-defined]
 
     sources: list[SkillSource] = []
     for ep in eps:

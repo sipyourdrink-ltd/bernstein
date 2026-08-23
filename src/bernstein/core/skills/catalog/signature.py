@@ -14,6 +14,7 @@ against the catalog-level ``signer_pubkey`` unless the caller passes
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -211,7 +212,7 @@ def verify_payload(
 
     try:
         sig_bytes = _b64url_decode(signature)
-    except (ValueError, base64.binascii.Error) as exc:
+    except (ValueError, binascii.Error) as exc:
         outcome = VerificationOutcome(verified=False, reason=f"signature is not valid base64url: {exc}")
         if allow_unverified:
             return outcome
