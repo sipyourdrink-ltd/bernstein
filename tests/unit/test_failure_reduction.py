@@ -11,10 +11,12 @@ Covers:
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import httpx
+import pytest
 from bernstein.core.context import TaskContextBuilder
 from bernstein.core.models import (
     Complexity,
@@ -27,6 +29,7 @@ from bernstein.core.orchestrator import Orchestrator
 from bernstein.core.spawner import AgentSpawner
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.core.tasks.task_lifecycle import _MAX_TRANSPORT_FAILURE_RETRIES
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -81,6 +84,8 @@ def _build_orchestrator(
     max_retries: int = 2,
     adapter_name: str = "claude",
     role_model_policy: dict[str, dict] | None = None,
+    default_model: str | None = None,
+    metadata: dict | None = None,
 ) -> tuple[Orchestrator, list[dict]]:
     """Return (orchestrator, captured_post_bodies) with task-specific mock transport."""
     posted: list[dict] = []
@@ -111,6 +116,7 @@ def _build_orchestrator(
                 "max_retries": task.max_retries,
                 "retry_delay_s": task.retry_delay_s,
                 "terminal_reason": task.terminal_reason,
+                "metadata": dict(metadata or {}),
             }
             return httpx.Response(200, json=raw)
         if request.method == "POST" and path == "/tasks":
@@ -128,7 +134,13 @@ def _build_orchestrator(
     adp = _mock_adapter(name=adapter_name)
     templates_dir = tmp_path / "templates" / "roles"
     templates_dir.mkdir(parents=True)
-    spawner = AgentSpawner(adp, templates_dir, tmp_path, role_model_policy=role_model_policy)
+    spawner = AgentSpawner(
+        adp,
+        templates_dir,
+        tmp_path,
+        role_model_policy=role_model_policy,
+        default_model=default_model,
+    )
     client = httpx.Client(transport=transport, base_url="http://testserver")
     return Orchestrator(cfg, spawner, tmp_path, client=client), posted
 
@@ -313,6 +325,200 @@ class TestRetryEscalationAdapterAwareness:
         assert len(posted) == 1
         assert posted[0]["model"] == "MiniMax-M3"
         assert posted[0]["effort"] == "max"
+
+
+class TestRunLevelPinnedModelSurvivesRetry:
+    """#4274: a model pinned run-wide (``bernstein run --model <name>``) lands
+    in the spawner's ``default_model``, not in ``role_model_policy``. Retry
+    escalation never consulted it, so the first retry replaced the operator's
+    choice with a Claude tier name that the configured endpoint does not
+    serve."""
+
+    def test_run_level_pin_survives_a_high_stakes_retry(self, tmp_path: Path) -> None:
+        task = _make_task(
+            id="T-arch-runpin",
+            role="architect",
+            description="Design the system.",
+            model="gw-coder-fast",
+        )
+        orch, posted = _build_orchestrator(
+            tmp_path,
+            task,
+            adapter_name="claude",
+            default_model="gw-coder-fast",
+        )
+
+        orch._retry_or_fail_task("T-arch-runpin", "agent died")
+
+        assert len(posted) == 1
+        assert posted[0]["model"] == "gw-coder-fast"
+        assert posted[0]["effort"] == "max"
+
+    def test_run_level_pin_survives_a_second_retry(self, tmp_path: Path) -> None:
+        task = _make_task(
+            id="T-runpin-2",
+            description="Do the thing.",
+            model="gw-coder-fast",
+            retry_count=1,
+        )
+        orch, posted = _build_orchestrator(
+            tmp_path,
+            task,
+            adapter_name="claude",
+            default_model="gw-coder-fast",
+            max_retries=3,
+        )
+
+        orch._retry_or_fail_task("T-runpin-2", "agent died")
+
+        assert len(posted) == 1
+        assert posted[0]["model"] == "gw-coder-fast"
+
+    def test_no_run_level_pin_keeps_the_historical_tier_escalation(self, tmp_path: Path) -> None:
+        task = _make_task(id="T-arch-nopin", role="architect", description="Design.")
+        orch, posted = _build_orchestrator(tmp_path, task, adapter_name="claude")
+
+        orch._retry_or_fail_task("T-arch-nopin", "agent died")
+
+        assert len(posted) == 1
+        assert posted[0]["model"] == "opus"
+
+
+class TestRolePolicyPinnedModelSurvivesRetry:
+    """#4274, the second pin route. ``role_model_policy.<role>.model`` alone -
+    no ``provider`` key - is how a deployment retargets every role at a gateway
+    alias. The existing guard resolved the role's adapter, found the run-level
+    adapter name Claude-compatible, and stamped "opus" over the alias anyway:
+    the pin was only honoured as a side effect of the adapter check, never on
+    its own merit."""
+
+    def test_role_policy_pin_without_a_provider_survives_a_high_stakes_retry(self, tmp_path: Path) -> None:
+        task = _make_task(
+            id="T-arch-rolepin",
+            role="architect",
+            description="Design the system.",
+            model="gw-coder-fast",
+        )
+        orch, posted = _build_orchestrator(
+            tmp_path,
+            task,
+            adapter_name="claude",
+            role_model_policy={"architect": {"model": "gw-coder-fast"}},
+        )
+
+        orch._retry_or_fail_task("T-arch-rolepin", "agent died")
+
+        assert len(posted) == 1
+        assert posted[0]["model"] == "gw-coder-fast"
+        assert posted[0]["effort"] == "max"
+
+    def test_role_policy_pin_without_a_provider_survives_a_second_retry(self, tmp_path: Path) -> None:
+        task = _make_task(
+            id="T-rolepin-2",
+            description="Do the thing.",
+            model="gw-coder-fast",
+            retry_count=1,
+        )
+        orch, posted = _build_orchestrator(
+            tmp_path,
+            task,
+            adapter_name="claude",
+            role_model_policy={"backend": {"model": "gw-coder-fast"}},
+            max_retries=3,
+        )
+
+        orch._retry_or_fail_task("T-rolepin-2", "agent died")
+
+        assert len(posted) == 1
+        assert posted[0]["model"] == "gw-coder-fast"
+
+
+class TestTransportFailureDoesNotChargeRetryBudget:
+    """#4275: an agent that exits having consumed zero tokens never attempted
+    the task. Charging that exit against the retry budget spends the whole
+    budget in seconds on a fault the task never saw."""
+
+    def test_transport_failure_leaves_the_retry_budget_intact(self, tmp_path: Path) -> None:
+        task = _make_task(id="T-transport-1", description="Do the thing.")
+        orch, posted = _build_orchestrator(tmp_path, task)
+
+        orch._retry_or_fail_task(
+            "T-transport-1",
+            "agent exited having consumed 0 tokens",
+            transport_failure=True,
+        )
+
+        assert len(posted) == 1
+        assert posted[0]["retry_count"] == 0
+        assert posted[0]["metadata"]["transport_failure_retries"] == 1
+
+    def test_a_failure_that_produced_output_still_charges_the_budget(self, tmp_path: Path) -> None:
+        task = _make_task(id="T-transport-2", description="Do the thing.")
+        orch, posted = _build_orchestrator(tmp_path, task)
+
+        orch._retry_or_fail_task("T-transport-2", "agent died")
+
+        assert len(posted) == 1
+        assert posted[0]["retry_count"] == 1
+        assert "transport_failure_retries" not in posted[0]["metadata"]
+
+    def test_transport_failure_retries_back_off(self, tmp_path: Path) -> None:
+        task = _make_task(id="T-transport-3", description="Do the thing.")
+        orch, posted = _build_orchestrator(
+            tmp_path,
+            task,
+            metadata={"transport_failure_retries": 1},
+        )
+
+        orch._retry_or_fail_task(
+            "T-transport-3",
+            "agent exited having consumed 0 tokens",
+            transport_failure=True,
+        )
+
+        assert len(posted) == 1
+        assert posted[0]["retry_count"] == 0
+        assert posted[0]["metadata"]["transport_failure_retries"] == 2
+        assert posted[0]["retry_delay_s"] > 0
+
+    def test_the_budget_neutral_path_is_bounded(self, tmp_path: Path) -> None:
+        """A transport fault that never clears must not retry forever: once the
+        separate ceiling is reached the exit is charged like any other."""
+        task = _make_task(id="T-transport-4", description="Do the thing.")
+        orch, posted = _build_orchestrator(
+            tmp_path,
+            task,
+            metadata={"transport_failure_retries": _MAX_TRANSPORT_FAILURE_RETRIES},
+        )
+
+        orch._retry_or_fail_task(
+            "T-transport-4",
+            "agent exited having consumed 0 tokens",
+            transport_failure=True,
+        )
+
+        assert len(posted) == 1
+        assert posted[0]["retry_count"] == 1
+
+    def test_the_transport_reason_is_named_in_the_run_log(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        task = _make_task(id="T-transport-5", description="Do the thing.")
+        orch, _posted = _build_orchestrator(tmp_path, task)
+
+        with caplog.at_level(logging.INFO, logger="bernstein.core.tasks.task_lifecycle"):
+            orch._retry_or_fail_task(
+                "T-transport-5",
+                "agent exited having consumed 0 tokens",
+                transport_failure=True,
+            )
+
+        assert any(
+            "transport failure" in rec.getMessage().lower()
+            and "retry budget" in rec.getMessage().lower()
+            and "T-transport-5" in rec.getMessage()
+            for rec in caplog.records
+        )
 
 
 # ---------------------------------------------------------------------------

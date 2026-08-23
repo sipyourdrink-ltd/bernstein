@@ -29,6 +29,7 @@ class ErrorCategory(StrEnum):
     TIMEOUT = "timeout"
     PERMISSION_DENIED = "permission_denied"
     PORT_CONFLICT = "port_conflict"
+    NO_PLAN_PRODUCED = "no_plan_produced"
     UNKNOWN = "unknown"
 
 
@@ -52,6 +53,7 @@ _EXIT_CODES: Final[dict[ErrorCategory, int]] = {
     ErrorCategory.TIMEOUT: _EX_TEMPFAIL,
     ErrorCategory.PERMISSION_DENIED: _EX_NOPERM,
     ErrorCategory.PORT_CONFLICT: _EX_TEMPFAIL,
+    ErrorCategory.NO_PLAN_PRODUCED: _EX_SOFTWARE,
     ErrorCategory.UNKNOWN: _EX_SOFTWARE,
 }
 

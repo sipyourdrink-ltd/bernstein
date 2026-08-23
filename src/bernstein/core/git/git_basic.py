@@ -411,7 +411,7 @@ def _rebase_or_merge(cwd: Path, remote: str, branch: str) -> GitResult | None:
 
 _TRANSIENT_MARKERS = (
     "unable to access",
-    "could not read",
+    "could not read from remote",
     "connection",
     "timed out",
     "timeout",
@@ -419,6 +419,13 @@ _TRANSIENT_MARKERS = (
     "non-fast-forward",
     "fetch first",
     "cannot lock ref",
+)
+
+_TERMINAL_MARKERS = (
+    "could not read username",
+    "authentication failed",
+    "permission denied",
+    "fatal: could not read",
 )
 
 
@@ -433,6 +440,22 @@ def _is_transient_push_error(stderr: str) -> bool:
     """
     lower = stderr.lower()
     return any(marker in lower for marker in _TRANSIENT_MARKERS)
+
+
+def _is_terminal_push_error(stderr: str) -> bool:
+    """Check if a push failure is terminal and should not be retried.
+
+    Terminal errors indicate configuration problems (missing credentials,
+    auth failures) that will not resolve with retries.
+
+    Args:
+        stderr: Stderr output from the failed push.
+
+    Returns:
+        True if the error matches a known terminal pattern.
+    """
+    lower = stderr.lower()
+    return any(marker in lower for marker in _TERMINAL_MARKERS)
 
 
 def remote_exists(cwd: Path, remote: str = "origin") -> bool:
@@ -654,6 +677,15 @@ def _push_with_retry(
             _rebase_or_merge(cwd, remote, branch)
         push_result = run_git(["push", remote, branch], cwd, timeout=60)
         if push_result.ok:
+            return push_result
+        # Terminal errors (missing credentials, auth failures) will not
+        # resolve with retries — fail immediately with a clear message.
+        if _is_terminal_push_error(push_result.stderr):
+            logger.error(
+                "git push to %s failed (configuration error, not retried): %s",
+                remote,
+                push_result.stderr.strip(),
+            )
             return push_result
         if not _is_transient_push_error(push_result.stderr) or attempt >= max_retries:
             if attempt > 0:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ from unittest.mock import patch
 
 from bernstein.core.models import AgentSession, ModelConfig, Task
 
+from bernstein.core.defaults import AGENT
 from bernstein.core.orchestration.stalled_manager import (
     REMEDIATION_DOC,
     STALL_THRESHOLD_ENV_VAR,
@@ -410,3 +412,77 @@ def test_detect_stalled_manager_honors_raised_threshold_via_config(monkeypatch: 
     orch._config = SimpleNamespace(stalled_manager_threshold_s=300.0)
     with patch("bernstein.core.orchestration.stalled_manager.time.time", return_value=now):
         assert detect_stalled_manager(orch) is None
+
+
+# ---------------------------------------------------------------------------
+# Liveness gate (#4338)
+# ---------------------------------------------------------------------------
+#
+# Real wall-clock and real file mtimes, no patched clock: the gate reuses the
+# orchestrator's own liveness probe, and the point of these tests is that the
+# two subsystems cannot drift apart again. Patching ``stalled_manager.time``
+# would patch the same module object the probe reads, which is exactly the
+# coupling these tests exist to keep honest.
+
+
+def _write_runner_log(workdir: Path, session_id: str, *, age_s: float) -> Path:
+    """Write the manager's runner log and age its mtime by ``age_s`` seconds."""
+    path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("manager: reading repo, composing decomposition\n", encoding="utf-8")
+    stamp = time.time() - age_s
+    os.utime(path, (stamp, stamp))
+    return path
+
+
+def _past_threshold_session() -> AgentSession:
+    """A manager session whose real runtime is well past the stall threshold."""
+    return _manager_session(spawn_ts=time.time() - (STALL_THRESHOLD_S + 120.0))
+
+
+def test_detect_holds_off_while_the_manager_log_is_still_growing(tmp_path: Path) -> None:
+    """Past the wall-clock threshold but demonstrably producing output: not a stall."""
+    session = _past_threshold_session()
+    _write_runner_log(tmp_path, session.id, age_s=5.0)
+    orch = _build_orch(tmp_path, session=session)
+    assert detect_stalled_manager(orch) is None
+
+
+def test_detect_still_fires_when_the_manager_is_genuinely_silent(tmp_path: Path) -> None:
+    """Past the threshold with a log that stopped growing: still the real stall."""
+    session = _past_threshold_session()
+    _write_runner_log(tmp_path, session.id, age_s=AGENT.liveness_grace_s + 60.0)
+    orch = _build_orch(tmp_path, session=session)
+    diag = detect_stalled_manager(orch)
+    assert diag is not None
+    assert diag.session_id == session.id
+    assert diag.remediation == REMEDIATION_DOC
+
+
+def test_handle_does_not_drain_the_run_while_the_manager_is_alive(tmp_path: Path) -> None:
+    session = _past_threshold_session()
+    _write_runner_log(tmp_path, session.id, age_s=1.0)
+    orch = _build_orch(tmp_path, session=session)
+    assert handle_stalled_manager(orch) is None
+    assert orch._running is True
+    assert orch.bulletins == []
+    assert not (tmp_path / ".sdd" / "runtime" / "failures").exists()
+
+
+def test_handle_still_drains_the_run_on_a_silent_manager(tmp_path: Path) -> None:
+    session = _past_threshold_session()
+    _write_runner_log(tmp_path, session.id, age_s=AGENT.liveness_grace_s + 60.0)
+    orch = _build_orch(tmp_path, session=session)
+    assert handle_stalled_manager(orch) is not None
+    assert orch._running is False
+
+
+def test_raised_threshold_still_short_circuits_before_the_liveness_probe(monkeypatch: Any, tmp_path: Path) -> None:
+    """``BERNSTEIN_STALL_THRESHOLD_S`` keeps working: under it, nothing is probed."""
+    monkeypatch.setenv(STALL_THRESHOLD_ENV_VAR, "600")
+    session = _manager_session(spawn_ts=time.time() - 300.0)
+    _write_runner_log(tmp_path, session.id, age_s=AGENT.liveness_grace_s + 60.0)
+    orch = _build_orch(tmp_path, session=session)
+    with patch("bernstein.core.agents.heartbeat._agent_has_fresh_liveness_signal") as probe:
+        assert detect_stalled_manager(orch) is None
+    probe.assert_not_called()

@@ -62,7 +62,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
-from bernstein.core.replay.journal import run_journal_path, verify_events
+from bernstein.core.replay.journal import PATH_FIELDS, run_journal_path, verify_events
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -105,9 +105,6 @@ _NORMALIZE_RE = re.compile(r"[^a-z0-9_./-]+")
 
 #: Closed set of journal payload fields treated as scannable content spans.
 _SPAN_FIELDS = ("content_window", "content", "arguments", "command")
-
-#: Closed set of journal payload fields naming an accessed filesystem path.
-_PATH_FIELDS = ("path", "file_path")
 
 
 class CleanRunError(ValueError):
@@ -645,7 +642,7 @@ def extract_activity(
     """
     records: list[ActivityRecord] = []
     for index, row in enumerate(events):
-        raw_path = next((str(row[f]) for f in _PATH_FIELDS if isinstance(row.get(f), str) and row[f]), "")
+        raw_path = next((str(row[f]) for f in PATH_FIELDS if isinstance(row.get(f), str) and row[f]), "")
         endpoint = ""
         if isinstance(row.get("endpoint"), str) and row["endpoint"]:
             endpoint = str(row["endpoint"])

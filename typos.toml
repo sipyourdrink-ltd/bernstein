@@ -75,6 +75,9 @@ extend-exclude = [
     # Translated READMEs - typos has only an English dictionary, every
     # non-English word would be a false positive.
     "docs/i18n/**",
+    # Latin-script translated READMEs at the repo root - same false-positive
+    # profile; the English README.md does not match this glob and stays in scope.
+    "README.*.md",
     # README demo evidence (issue #3426) - machine-generated recording bytes
     # and cryptographic content (base64url JWK x / signature, hex hashes);
     # the scanner reads base64 slices like "izRV" as words. The

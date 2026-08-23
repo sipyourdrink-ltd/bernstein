@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bernstein"
-version = "3.16.0"
+version = "3.17.1"
 description = "Deterministic orchestrator for CLI coding agents (Claude Code, Codex, Gemini CLI, and 40+ more). No model in the coordination loop, so parallel runs in per-task git worktrees replay byte-identically. Signed lineage plus an opt-in HMAC audit chain a reviewer checks offline, without rerunning it. Cluster mode, air-gap deploy."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -879,7 +879,7 @@ ignore_missing_imports = true
 # Translated README variants gated by `bernstein readme-l10n verify`
 # (issue #3425). Adding a language is a data change: append its IETF tag
 # here and add README.<tag>.md carrying l10n bindings.
-languages = ["zh-Hans", "zh-TW", "ja", "ko", "hi", "bn", "ru"]
+languages = ["zh-Hans", "zh-TW", "ja", "ko", "hi", "bn", "ru", "es", "pt", "de", "fr", "it", "nl", "pl", "sv", "fi", "uk", "tr", "ar", "he", "id", "vi", "th"]
 
 # Who keeps each translation current. `verify` names the owner when a
 # language drifts, so the report reaches someone who reads the language
@@ -895,6 +895,22 @@ languages = ["zh-Hans", "zh-TW", "ja", "ko", "hi", "bn", "ru"]
 "hi" = "@chernistry"
 "bn" = "@chernistry"
 "ru" = "@chernistry"
+"es" = "@chernistry"
+"pt" = "@chernistry"
+"de" = "@chernistry"
+"fr" = "@chernistry"
+"it" = "@chernistry"
+"nl" = "@chernistry"
+"pl" = "@chernistry"
+"sv" = "@chernistry"
+"fi" = "@chernistry"
+"uk" = "@chernistry"
+"tr" = "@chernistry"
+"ar" = "@chernistry"
+"he" = "@chernistry"
+"id" = "@chernistry"
+"vi" = "@chernistry"
+"th" = "@chernistry"
 
 [tool.pytest.ini_options]
 minversion = "8.0"

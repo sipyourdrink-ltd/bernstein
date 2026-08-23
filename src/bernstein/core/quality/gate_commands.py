@@ -219,9 +219,10 @@ class GateRunnerCommandsMixin:
         if baseline_score is None:
             return GateResult(
                 name=step.name,
-                status="warn",
+                status="inconclusive",
+                reason="evidence-missing",
                 required=step.required,
-                blocked=False,
+                blocked=step.required,
                 cached=False,
                 duration_ms=0,
                 details=f"Complexity average: {current_score:.2f}; baseline unavailable ({baseline_detail})",
@@ -380,16 +381,24 @@ class GateRunnerCommandsMixin:
                 docstyle=docstyle,
             )
         except Exception as exc:  # pragma: no cover
+            # ``comment_quality.analyse`` died before producing a verdict.
+            # Issue #4181 says we must not coerce an inability-to-evaluate
+            # into pass/fail — the evaluator could not look at the code,
+            # so it cannot honestly say "pass", and "fail" trains operators
+            # to re-run until green. Return ``inconclusive`` with the
+            # closed-set ``runner-died-before-output`` reason; ``blocked``
+            # stays aligned with ``fail`` at a required gate.
             logger.warning("comment_quality.analyse failed: %s", exc)
             return GateResult(
                 name=step.name,
-                status="fail",
+                status="inconclusive",
                 required=step.required,
                 blocked=step.required,
                 cached=False,
                 duration_ms=0,
                 details=f"Comment quality gate error: {exc}",
                 metadata={},
+                reason="runner-died-before-output",
             )
 
         if report.passed and not report.issues:
@@ -498,15 +507,23 @@ class GateRunnerCommandsMixin:
         try:
             evaluation = CoverageGate(self._workdir, run_dir, base_ref=self._base_ref).evaluate()
         except Exception as exc:
+            # The CoverageGate constructor / evaluate chain died before
+            # producing a verdict. Issue #4181 says we must not coerce an
+            # inability-to-evaluate into pass/fail — without an evaluation
+            # we cannot honestly say "pass", and "fail" trains operators
+            # to re-run until green. ``inconclusive`` with the closed-set
+            # ``runner-died-before-output`` reason is the honest verdict;
+            # ``blocked`` stays aligned with ``fail`` at a required gate.
             return GateResult(
                 name=step.name,
-                status="fail",
+                status="inconclusive",
                 required=step.required,
                 blocked=step.required,
                 cached=False,
                 duration_ms=0,
-                details=str(exc),
+                details=f"Coverage gate evaluator failed: {exc}",
                 metadata={},
+                reason="runner-died-before-output",
             )
         return GateResult(
             name=step.name,
@@ -544,15 +561,23 @@ class GateRunnerCommandsMixin:
                 threshold=cfg.threshold,
             ).evaluate()
         except Exception as exc:
+            # The BenchmarkGate constructor / evaluate chain died before
+            # producing a verdict. Issue #4181 says we must not coerce an
+            # inability-to-evaluate into pass/fail — without an evaluation
+            # we cannot honestly say "pass", and "fail" trains operators
+            # to re-run until green. ``inconclusive`` with the closed-set
+            # ``runner-died-before-output`` reason is the honest verdict;
+            # ``blocked`` stays aligned with ``fail`` at a required gate.
             return GateResult(
                 name=step.name,
-                status="fail",
+                status="inconclusive",
                 required=step.required,
                 blocked=step.required,
                 cached=False,
                 duration_ms=0,
-                details=str(exc),
+                details=f"Benchmark gate evaluator failed: {exc}",
                 metadata={},
+                reason="runner-died-before-output",
             )
         regression_names = [r.name for r in evaluation.regressions]
         return GateResult(

@@ -364,7 +364,7 @@ def agents_md_is_synced() -> bool | None:
     except Exception:
         return None
     try:
-        sections, name = _generate_sections(AGENTS_MD.parent, None)
+        sections, _module_map_page, name = _generate_sections(AGENTS_MD.parent, None)
         expected = render(sections, "canonical", repo_name=name).files.get(AGENTS_MD.name)
         if expected is None or not AGENTS_MD.is_file():
             return None

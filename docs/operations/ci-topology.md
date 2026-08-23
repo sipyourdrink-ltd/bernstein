@@ -204,7 +204,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/required-check-canary.yml | verify: {"contents": "read"} | - |
 | .github/workflows/sbom.yml | workflow: {"contents": "read"}<br>sbom: {"contents": "write"} | - |
 | .github/workflows/scorecard.yml | workflow: {"contents": "read"}<br>analysis: {"actions": "read", "contents": "read", "id-token": "write", "security-events": "write"}<br>upload: {"contents": "read", "security-events": "write"} | - |
-| .github/workflows/soc2-evidence-weekly.yml | workflow: {"contents": "read"} | SOC2_EVIDENCE_ENABLED |
+| .github/workflows/soc2-evidence-weekly.yml | workflow: {"contents": "read"} | SOC2_EVIDENCE_ENABLED, SOC2_EVIDENCE_SINK |
 | .github/workflows/spa-bundle-freshness.yml | workflow: {"contents": "read"}<br>rebuild: {"contents": "read"} | - |
 | .github/workflows/spiffe-extra-e2e.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/stale.yml | workflow: {"contents": "read"}<br>stale: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |

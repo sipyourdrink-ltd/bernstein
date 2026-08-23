@@ -1,0 +1,57 @@
+id: pr-intake-review
+name: PR Intake Review
+version: "1.0"
+description: Review a machine-opened pull request before it enters the merge queue.
+tags:
+  - review
+  - github
+  - quality
+tasks:
+  - title: Scope check against the linked issue
+    role: reviewer
+    priority: 0
+    scope: small
+    complexity: medium
+    description: |
+      Every hunk in the diff traces to the linked issue's acceptance criteria.
+      Flag drive-by edits, generated files, and leftover run scaffolding
+      (pinned configs, local workaround commits) that should not ship.
+  - title: Verify the test evidence
+    role: qa
+    priority: 0
+    scope: small
+    complexity: medium
+    description: |
+      The PR claims its tests failed before the change: check the tests assert
+      the defect, not the implementation, and run the affected set against the
+      merge result with the base branch -- a green PR lane on a stale base is
+      not evidence.
+  - title: Security pass on the diff
+    role: security
+    priority: 1
+    scope: small
+    complexity: medium
+    description: |
+      Review additions for injected commands, credential handling, network
+      calls to new hosts, and permission widening. A machine-authored diff
+      gets the same scrutiny a first-time contributor's would.
+  - title: Release-notes and linkage hygiene
+    role: reviewer
+    priority: 1
+    scope: small
+    complexity: medium
+    description: |
+      The release-notes entry exists, names the issue number, and is appended
+      at the end of its section rather than prepended at the section header --
+      entries that all prepend to one anchor conflict with every other open
+      PR and no two can merge in the same queue group. The closing keyword
+      references an issue that is still open and matches the change.
+  - title: Record the verdict
+    role: manager
+    priority: 2
+    scope: small
+    complexity: medium
+    description: |
+      Leave one review on the PR: approve, or request changes naming each
+      blocking finding with file and line. Silence is not a verdict; a PR
+      nobody reviewed does not enter the queue.

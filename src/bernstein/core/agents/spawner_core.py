@@ -616,6 +616,39 @@ def _render_signal_check(session_id: str) -> str:
     )
 
 
+def _prompt_with_addendum(prompt: str, system_addendum: str) -> str:
+    """Fold protocol-critical instructions into the prompt text itself.
+
+    The container, sandbox, and sandbox-session paths do not call
+    ``adapter.spawn()``. They write the prompt to a file and build a raw
+    shell command that ``cat``s it into the CLI (see
+    :meth:`AgentSpawner._adapter_cmd_for_container`), so the adapter's own
+    system-prompt channel -- ``--append-system-prompt`` on Claude Code, and
+    its equivalents elsewhere -- is never reached. Without this, an agent
+    running under isolation gets no completion or heartbeat instructions at
+    all: it does the work and is then reaped as stalled because it was never
+    told how to report done (#3565).
+
+    Appending to the user prompt is the weaker of the two channels, and the
+    adapter contract says so -- the base ``spawn`` docstring permits it as a
+    fallback, and adapters without a system-prompt flag already take it
+    (``adapters/devin_terminal.py``). It is used here for the same reason:
+    the command is assembled per adapter family, and only one of those
+    families has a system-prompt flag to pass. Carrying the instructions in
+    the weaker channel beats dropping them.
+
+    Args:
+        prompt: The rendered task prompt.
+        system_addendum: Protocol-critical instructions, possibly empty.
+
+    Returns:
+        The prompt, with the addendum appended when there is one.
+    """
+    if not system_addendum:
+        return prompt
+    return f"{prompt}\n\n{system_addendum}"
+
+
 def _resolve_task_server_url() -> str:
     """Resolve the base URL agents use to reach the task server.
 
@@ -1638,6 +1671,17 @@ class AgentSpawner:
         return self._adapter.name()
 
     @property
+    def default_model(self) -> str | None:
+        """The run-level model pin (``bernstein run --model``), or ``None``.
+
+        Exposed for the same reason as :attr:`role_model_policy`: retry
+        escalation has to know whether the operator named a model before it
+        stamps a Claude tier name onto a retried task (#4274). This is the
+        pin route that does not pass through ``role_model_policy``.
+        """
+        return self._default_model
+
+    @property
     def _identity_store(self) -> Any:
         """Return the AgentIdentityStore, creating it on first access."""
         if self._identity_store_instance is None:
@@ -1729,31 +1773,47 @@ class AgentSpawner:
     def _render_mailbox_section(self, tasks: list[Task]) -> str:
         """Render pending coordination-mailbox messages for *tasks* (#2357).
 
-        Records consumption in the audit chain at render time. Render time is
-        the single chokepoint where all messages pass before reaching the
-        prompt, making it the best place to record that a message was
-        delivered to a worker's context.
+        Records consumption in the audit chain at render time and derives
+        ``since_seq`` from the task's own consumption records so a message
+        already recorded as consumed is not re-rendered on a later spawn
+        or resume (#4151).
         """
         try:
             from bernstein.core.communication.task_mailbox import (
                 TaskMailbox,
                 render_mailbox_section,
             )
+            from bernstein.core.security.audit_chain import AuditChainStore
 
             journal = self._workdir / ".sdd" / "runtime" / "mailbox.jsonl"
             if not journal.is_file():
                 logger.info("Mailbox journal missing at %s, rendering empty section.", journal)
                 return ""
             mailbox = TaskMailbox(journal)
-            pending = [message for task in tasks for message in mailbox.pending(task.id)]
+            chain = AuditChainStore(self._workdir / ".sdd" / "audit")
 
-            # Record consumption for each message rendered into the prompt (#3451).
+            pending = []
+            for task in tasks:
+                # Compute cursor: highest seq already marked consumed for this task
+                # include_archived: the cursor reasons about linkage across the
+                # retention boundary, so it must see consumption records that
+                # routine `audit archive` has already compressed into
+                # archive/*.jsonl.gz. Without it the cursor silently falls back
+                # to -1 once a segment ages out and the whole backlog is
+                # re-rendered -- the same defect this fix closes, re-armed by
+                # maintenance rather than by a code change.
+                events = chain.query(
+                    event_type="task.mailbox_consumed",
+                    resource_id=task.id,
+                    include_archived=True,
+                )
+                cursor = max((int(e.details.get("seq", -1)) for e in events), default=-1)
+                pending.extend(mailbox.pending(task.id, since_seq=cursor))
+
+            # Record consumption for each newly rendered message
             if pending:
-                from bernstein.core.security.audit import AuditLog
-
-                audit = AuditLog(audit_dir=self._workdir / ".sdd" / "audit")
                 for msg in pending:
-                    audit.log(
+                    chain.log(
                         event_type="task.mailbox_consumed",
                         actor="spawner",
                         resource_type="task",
@@ -4497,6 +4557,7 @@ class AgentSpawner:
                                 mcp_config=attempt_mcp,
                                 session=session,
                                 adapter=target_adapter,
+                                system_addendum=style_addendum,
                             )
                         elif self._sandbox is not None:
                             result = self._spawn_in_sandbox(
@@ -4508,6 +4569,7 @@ class AgentSpawner:
                                 session=session,
                                 adapter=target_adapter,
                                 task_scope=max_scope,
+                                system_addendum=style_addendum,
                             )
                         elif self._container_mgr is not None:
                             result = self._spawn_in_container(
@@ -4519,6 +4581,7 @@ class AgentSpawner:
                                 session=session,
                                 adapter=target_adapter,
                                 task_scope=max_scope,
+                                system_addendum=style_addendum,
                             )
                         else:
                             # Extract budget_multiplier from task metadata
@@ -5086,12 +5149,35 @@ class AgentSpawner:
                     "spawn() does not accept multimodal_context."
                 )
             _resume_extra["multimodal_context"] = _resume_attachments
+        # Issue #3565: a resumed agent goes straight to ``self._adapter``
+        # (no ``_spawn_for_tasks_internal``), so it used to skip the
+        # response-style resolution that path performs and the resumed
+        # process never received ``system_addendum`` - the channel that
+        # carries the completion/heartbeat instructions. A crashed-then-
+        # resumed agent could therefore run to completion but never be
+        # seen to finish. Resolve the same way the primary spawn path
+        # does (task metadata > role policy > seed default > "balanced")
+        # so a resumed spawn gets the same protocol instructions a fresh
+        # one would.
+        _resume_style = resolve_response_style(
+            task_metadata=tasks[0].metadata or {},
+            role_policy=_policy_preview,
+            default_policy=self._role_model_policy.get("default") or {},
+        )
+        try:
+            _resume_addendum = render_style_addendum(_resume_style.style, workdir=self._workdir)
+        except ResponseStyleTemplateError as exc:
+            raise SpawnError(
+                f"Response-style profile {_resume_style.style!r} for role {role!r} "
+                f"(source={_resume_style.source}) cannot be rendered on resume: {exc}"
+            ) from exc
         result = self._adapter.spawn(
             prompt=prompt,
             workdir=worktree_path,
             model_config=model_config,
             session_id=session_id,
             task_scope=resume_scope,
+            system_addendum=_resume_addendum,
             **_resume_extra,
         )
         session.pid = result.pid
@@ -5124,6 +5210,7 @@ class AgentSpawner:
         session: AgentSession,
         adapter: CLIAdapter,
         task_scope: str = "medium",
+        system_addendum: str = "",
     ) -> SpawnResult:
         """Spawn an agent inside a container.
 
@@ -5140,6 +5227,13 @@ class AgentSpawner:
             session: AgentSession to update with container metadata.
             adapter: Adapter selected for this spawn attempt.
             task_scope: Task scope for max_turns scaling.
+            system_addendum: Rendered response-style addendum, carried on
+                both branches (issue #3565). The direct-subprocess fallback
+                passes it to ``adapter.spawn()``; the container path never
+                reaches ``adapter.spawn()``, so it is folded into the prompt
+                file by :func:`_prompt_with_addendum` instead. Either way a
+                container that fails to start, and one that starts fine, both
+                carry the completion/heartbeat instructions.
 
         Returns:
             SpawnResult with PID and log path.
@@ -5163,7 +5257,7 @@ class AgentSpawner:
         # container can read it
         prompt_file = spawn_cwd / ".sdd" / "runtime" / "prompts" / f"{session_id}.md"
         prompt_file.parent.mkdir(parents=True, exist_ok=True)
-        prompt_file.write_text(prompt, encoding="utf-8")
+        prompt_file.write_text(_prompt_with_addendum(prompt, system_addendum), encoding="utf-8")
 
         # Build the CLI command the adapter would normally run
         log_dir = spawn_cwd / ".sdd" / "logs"
@@ -5241,6 +5335,7 @@ class AgentSpawner:
                 session_id=session_id,
                 mcp_config=mcp_config,
                 task_scope=task_scope,
+                system_addendum=system_addendum,
             )
 
     def _spawn_in_sandbox(
@@ -5254,6 +5349,7 @@ class AgentSpawner:
         session: AgentSession,
         adapter: CLIAdapter,
         task_scope: str = "medium",
+        system_addendum: str = "",
     ) -> SpawnResult:
         """Spawn an agent in a per-session Docker or Podman sandbox.
 
@@ -5266,6 +5362,10 @@ class AgentSpawner:
             session: Mutable session record to update.
             adapter: Adapter selected for this spawn attempt.
             task_scope: Task scope for max_turns scaling.
+            system_addendum: Rendered response-style addendum, forwarded to
+                the direct-subprocess fallback so a sandbox that fails to
+                start doesn't also drop the completion/heartbeat
+                instructions (issue #3565).
 
         Returns:
             Spawn result for the sandboxed process.
@@ -5292,7 +5392,7 @@ class AgentSpawner:
 
         prompt_file = spawn_cwd / ".sdd" / "runtime" / "prompts" / f"{session_id}.md"
         prompt_file.parent.mkdir(parents=True, exist_ok=True)
-        prompt_file.write_text(prompt, encoding="utf-8")
+        prompt_file.write_text(_prompt_with_addendum(prompt, system_addendum), encoding="utf-8")
 
         log_dir = spawn_cwd / ".sdd" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -5355,6 +5455,7 @@ class AgentSpawner:
                 session_id=session_id,
                 mcp_config=mcp_config,
                 task_scope=task_scope,
+                system_addendum=system_addendum,
             )
 
         self._sandbox_managers[session_id] = manager
@@ -5372,6 +5473,7 @@ class AgentSpawner:
         mcp_config: dict[str, Any] | None,
         session: AgentSession,
         adapter: CLIAdapter,
+        system_addendum: str = "",
     ) -> SpawnResult:
         """Route adapter exec through a :class:`SandboxSession`.
 
@@ -5401,6 +5503,10 @@ class AgentSpawner:
             session: Mutable session record updated with isolation
                 metadata.
             adapter: The adapter selected for this spawn attempt.
+            system_addendum: Rendered response-style addendum, forwarded to
+                the direct-subprocess fallback so a session that fails to
+                provision doesn't also drop the completion/heartbeat
+                instructions (issue #3565).
 
         Returns:
             A :class:`SpawnResult`. ``pid`` is ``0`` because the
@@ -5472,6 +5578,7 @@ class AgentSpawner:
                     model_config=model_config,
                     session_id=session_id,
                     mcp_config=mcp_config,
+                    system_addendum=system_addendum,
                 )
             owned = True
             self._sandbox_owned_sessions[session_id] = sbx_session
@@ -5483,7 +5590,7 @@ class AgentSpawner:
         # 1) Inject the prompt through the session's file primitive.
         write_prompt_to_session(
             session=sbx_session,
-            prompt=prompt,
+            prompt=_prompt_with_addendum(prompt, system_addendum),
             session_id=session_id,
         )
 

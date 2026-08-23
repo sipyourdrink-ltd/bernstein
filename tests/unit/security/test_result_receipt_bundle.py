@@ -20,6 +20,8 @@ from typing import Any
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from hypothesis import given
+from hypothesis import strategies as st
 
 from bernstein.core.security.audit_dsse import export_public_key_pem, keyid_from_public_key
 from bernstein.core.security.result_receipt_bundle import (
@@ -869,3 +871,183 @@ def test_absent_predicate_keeps_three_error_behavior():
 
     assert v.ok is False
     assert [e.field for e in v.errors] == ["subject.digest.sha256", "patch", "chain"]
+
+
+# --------------------------------------------------------------------------- #
+# #4077: a wrong-typed subject must refuse with a field-level error rather
+# than raising -- the last field in the statement that didn't.
+# --------------------------------------------------------------------------- #
+
+
+def _sign_statement_with_subject(key, bundle_dict: dict[str, Any], subject_val: Any):
+    """Build a validly-signed envelope over a hand-edited ``subject`` value.
+
+    Bypasses ``ad.Statement`` / ``ad.Subject`` -- both enforce the well-formed
+    shape at construction time -- the same way
+    ``test_absent_predicate_keeps_three_error_behavior`` builds the statement
+    dict by hand to carry a missing ``predicate``. This is the only way to get
+    a ``subject`` no real caller would ever produce onto the wire.
+    """
+    import base64 as b64
+
+    from bernstein.core.security import audit_dsse as ad
+    from bernstein.core.security import result_receipt_bundle as rb
+
+    statement_dict = {
+        "_type": ad.IN_TOTO_STATEMENT_TYPE,
+        "predicateType": rb.RESULT_RECEIPT_PREDICATE_TYPE,
+        "predicate": {
+            "schema_version": rb.BUNDLE_SCHEMA_VERSION,
+            "bundle_kind": "result-receipt",
+            "bundle": bundle_dict,
+            "chain": bundle_dict.get("chain") if isinstance(bundle_dict, dict) else None,
+        },
+        "subject": subject_val,
+    }
+    payload = rb.canonical_bytes(statement_dict)
+    sig = key.sign(ad.pae(ad.DSSE_PAYLOAD_TYPE, payload))
+    return ad.Envelope(
+        payload_type=ad.DSSE_PAYLOAD_TYPE,
+        payload_b64=b64.b64encode(payload).decode(),
+        signatures=[ad.Signature(keyid=ad.keyid_from_public_key(key.public_key()), sig=b64.b64encode(sig).decode())],
+    )
+
+
+@pytest.mark.parametrize(
+    ("subject_val", "expected_field", "expected_msg"),
+    [
+        (7, "subject", "expected a list, got int"),
+        (True, "subject", "expected a list, got bool"),
+        (1.5, "subject", "expected a list, got float"),
+        ({"k": "v"}, "subject", "expected a list, got dict"),
+        (None, "subject", "expected a list, got NoneType"),
+        ([7], "subject[0]", "expected an object, got int"),
+        (["x"], "subject[0]", "expected an object, got str"),
+        ([{"name": "t.json"}], "subject[0]", "missing digest"),
+        ([{"digest": "not-a-dict"}], "subject[0]", "missing digest"),
+    ],
+    ids=[
+        "subject-is-int",
+        "subject-is-bool",
+        "subject-is-float",
+        "subject-is-dict",
+        "subject-is-null",
+        "subject-holds-int",
+        "subject-holds-str",
+        "subject-entry-missing-digest",
+        "subject-entry-digest-wrong-type",
+    ],
+)
+def test_wrong_typed_subject_is_refused_rather_than_raised(subject_val: Any, expected_field: str, expected_msg: str):
+    """Refuse a wrong-typed subject with a field-level error rather than raising.
+
+    No pytest.raises here: before the fix, every one of these values raised
+    (TypeError for the scalars, KeyError for the mapping) out of
+    ``verify_result_bundle`` instead of landing in the returned verdict.
+    """
+    key = _key()
+    bundle_dict = _bundle(key).to_dict()
+    env = _sign_statement_with_subject(key, bundle_dict, subject_val)
+
+    v = verify_result_bundle(env, key.public_key())
+
+    assert v.ok is False
+    matched_errors = [e for e in v.errors if e.field == expected_field]
+    assert matched_errors, f"expected field error for {expected_field}, got {v.errors}"
+    assert matched_errors[0].message == expected_msg
+
+
+_subject_scalars = st.one_of(
+    st.none(),
+    st.booleans(),
+    st.integers(),
+    st.floats(allow_nan=False, allow_infinity=False),
+    st.text(max_size=20),
+    st.dictionaries(st.text(max_size=5), st.text(max_size=5), max_size=3),
+)
+
+_subject_entries = st.one_of(
+    st.none(),
+    st.booleans(),
+    st.integers(),
+    st.text(max_size=20),
+    st.lists(st.integers(), max_size=3),
+    st.dictionaries(st.text(max_size=5), st.text(max_size=5), max_size=3).filter(lambda d: "digest" not in d),
+    st.fixed_dictionaries({"digest": st.one_of(st.none(), st.integers(), st.text(max_size=10))}),
+)
+
+
+@given(subject_val=st.one_of(_subject_scalars, st.lists(_subject_entries, min_size=1, max_size=1)))
+def test_no_subject_shape_raises(subject_val: Any):
+    """Fuzz proof for the issue's actual claim -- "never raises" -- rather than
+    the seven or so hand-written cases above, which prove only those seven.
+
+    Mutates ``subject`` to a wrong top-level type or a one-element list whose
+    entry is malformed, re-signs with the same key so the envelope stays
+    valid, and asserts only that ``verify_result_bundle`` returns rather than
+    raising, with a ``subject``-family field named in the verdict.
+    """
+    key = _key()
+    bundle_dict = _bundle(key).to_dict()
+    env = _sign_statement_with_subject(key, bundle_dict, subject_val)
+
+    v = verify_result_bundle(env, key.public_key())
+
+    assert v.ok is False
+    assert any(e.field in ("subject", "subject[0]") for e in v.errors), v.errors
+
+
+def test_empty_subject_list_is_not_itself_a_field_error():
+    """An empty ``subject`` list is "nothing attested", the same shape as the
+    key being absent -- not a field error of its own.
+
+    Decision for #4077: an empty list settles (it is a list) and step (2)
+    runs exactly as it always has for an absent subject, comparing the
+    embedded bundle's hash against the empty ``attested_digest`` and
+    reporting the mismatch under ``subject.digest.sha256``. Only a subject
+    that fails to settle its type at all -- not a list, or a list whose first
+    entry is not a well-shaped mapping -- gets the new ``subject``/
+    ``subject[0]`` error instead.
+    """
+    key = _key()
+    bundle_dict = _bundle(key).to_dict()
+    env = _sign_statement_with_subject(key, bundle_dict, [])
+
+    v = verify_result_bundle(env, key.public_key())
+
+    assert v.ok is False
+    assert [e.field for e in v.errors] == ["subject.digest.sha256"]
+
+
+def test_wrong_typed_subject_does_not_also_report_digest_mismatch():
+    """A wrong-typed subject reports exactly the settle failure, not that
+    failure plus a ``subject.digest.sha256`` mismatch restating it.
+
+    This is the open decision the issue calls out: #4076 accumulated past a
+    settle failure one layer down (a malformed ``bundle`` still lets patch,
+    gates, and chain report their own errors), but here the downstream check
+    step (2) exists to run *is* ``subject.digest.sha256`` -- comparing the
+    embedded bundle's real hash against an ``attested_digest`` that stayed
+    ``""`` only because the subject was never read. Reporting that alongside
+    the settle error would tell the caller nothing the settle error hadn't
+    already told them, so this field replaces its downstream check rather
+    than accumulating past it.
+    """
+    key = _key()
+    bundle_dict = _bundle(key).to_dict()
+    env = _sign_statement_with_subject(key, bundle_dict, 7)
+
+    v = verify_result_bundle(env, key.public_key())
+
+    assert v.ok is False
+    assert [e.field for e in v.errors] == ["subject"]
+
+
+def test_a_well_shaped_subject_still_verifies():
+    """The control: the new guard must refuse only the malformed shapes."""
+    key = _key()
+    env = build_result_bundle(_bundle(key), signing_key=key)
+
+    v = verify_result_bundle(env, key.public_key())
+
+    assert v.ok is True, v.errors

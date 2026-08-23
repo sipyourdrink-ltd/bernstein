@@ -150,7 +150,7 @@ from bernstein.core.seed import resolve_seed_path
 from bernstein.core.semantic_cache import ResponseCacheManager
 from bernstein.core.signals import read_unresolved_pivots
 from bernstein.core.skills.provenance import record_usage
-from bernstein.core.slo import SLOTracker, apply_error_budget_adjustments
+from bernstein.core.slo import SLOTracker, apply_error_budget_adjustments, error_budget_from_task_board
 from bernstein.core.task_grouping import compact_small_tasks
 from bernstein.core.task_lifecycle import (
     auto_decompose_task,
@@ -617,6 +617,22 @@ class Orchestrator:
             logger.info("Exported BERNSTEIN_RUN_ID=%s for spawned-agent instrumentation", run_id)
         except Exception as exc:  # intentional-broad-except: defensive, must never block startup
             logger.warning("Failed to export BERNSTEIN_RUN_ID=%s to process env: %s", run_id, exc)
+        # Issue #4330: the same worktree-vs-root split, for liveness. Adapters
+        # derive their runtime paths from the workdir they are spawned into --
+        # the agent's worktree -- while the probes below read heartbeats from
+        # this root. Export the root so ``build_worker_cmd`` can hand every
+        # wrapped adapter's worker the directory that is actually polled;
+        # without it the worker's heartbeat lands in the worktree, nothing
+        # advances the file the orchestrator reads, and a working agent is
+        # recycled on its own uptime.
+        from bernstein.adapters.base import HEARTBEAT_DIR_ENV
+
+        _heartbeat_dir = self._workdir / ".sdd" / "runtime" / "heartbeats"
+        try:
+            os.environ[HEARTBEAT_DIR_ENV] = str(_heartbeat_dir)
+            logger.info("Exported %s=%s for spawned workers", HEARTBEAT_DIR_ENV, _heartbeat_dir)
+        except Exception as exc:  # intentional-broad-except: defensive, must never block startup
+            logger.warning("Failed to export %s to process env: %s", HEARTBEAT_DIR_ENV, exc)
         hard_budget_usd = 0.0
         _raw_hard = os.environ.get("BERNSTEIN_HARD_BUDGET_USD", "").strip()
         if _raw_hard:
@@ -1950,28 +1966,7 @@ class Orchestrator:
                 self._consecutive_failures += len([t for t in failed_tasks if t.id not in self._retried_task_ids])
 
             # Check for incidents
-            all_counted = self._slo_tracker.error_budget.total_tasks
-            failed_counted = self._slo_tracker.error_budget.failed_tasks
-            incident = self._incident_manager.check_for_incidents(
-                failed_task_count=failed_counted,
-                total_task_count=all_counted,
-                consecutive_failures=self._consecutive_failures,
-                error_budget_depleted=self._slo_tracker.error_budget.is_depleted,
-            )
-            self._incident_manager.save(self._workdir / ".sdd" / "runtime")
-
-            # Notify PagerDuty on SEV1/SEV2 incidents
-            if incident is not None and incident.severity in ("sev1", "sev2"):
-                self._notify(
-                    "incident.critical",
-                    f"Incident [{incident.severity.value.upper()}]: {incident.title}",
-                    incident.description,
-                    incident_id=incident.id,
-                    severity=incident.severity.value,
-                    failed_tasks=str(failed_counted),
-                    total_tasks=str(all_counted),
-                    consecutive_failures=str(self._consecutive_failures),
-                )
+            self._check_for_incidents(tasks_by_status)
 
         # 4c. Check heartbeat-based staleness; send WAKEUP/SHUTDOWN as needed
         check_stale_agents(self)
@@ -2658,7 +2653,7 @@ class Orchestrator:
         self._running = False
 
     def _regenerate_final_retrospective(self, trigger_path: str) -> None:
-        """Regenerate the FINAL retrospective by re-reading final event state.
+        """Regenerate the FINAL retrospective and summary.json from final event state.
 
         Idempotent and safe to call from more than one terminal path
         (tick-loop drain, tick-level quiescence self-stop, future
@@ -2667,6 +2662,11 @@ class Orchestrator:
         single source of truth for "what triggered shutdown-final
         regeneration" so a `grep` of the logs always finds an explicit
         answer (logging-is-the-debugging-interface rule).
+
+        Also regenerates ``summary.json`` (issue #4223) alongside the
+        retrospective: both are written mid-run by the 8b quiescence path
+        under the same ``_summary_written`` one-shot latch, so both need
+        the same final-state overwrite at true shutdown.
 
         Args:
             trigger_path: Human-readable name of the terminal path that
@@ -2705,14 +2705,39 @@ class Orchestrator:
             status_histogram = {status: len(tasks) for status, tasks in final_tasks.items()}
             runtime_dir = self._workdir / ".sdd" / "runtime"
             runtime_dir.mkdir(parents=True, exist_ok=True)
+            final_done = final_tasks.get("done", [])
+            final_failed = final_tasks.get("failed", [])
+            collector = get_collector(self._workdir / ".sdd" / "metrics")
             generate_retrospective(
-                done_tasks=final_tasks.get("done", []),
-                failed_tasks=final_tasks.get("failed", []),
-                collector=get_collector(self._workdir / ".sdd" / "metrics"),
+                done_tasks=final_done,
+                failed_tasks=final_failed,
+                collector=collector,
                 runtime_dir=runtime_dir,
                 run_start_ts=self._run_start_ts,
                 trigger_reason="shutdown-final",
                 full_status_counts=status_histogram,
+            )
+            # Issue #4223: summary.json has the same "written once at
+            # interim quiescence, never again" problem the retrospective
+            # above was already fixed for (A5). ``_generate_run_summary``'s
+            # 8b tick-level call into ``_emit_summary_card`` is the only
+            # writer, and it's gated by the ``_summary_written`` one-shot
+            # latch - so a run whose first quiescence fire caught a task
+            # mid-flight (e.g. one still in a deferred death judgment, per
+            # #4222) ships that stale done/failed/wall-clock snapshot
+            # forever, even though the journal keeps recording events for
+            # minutes afterward. Re-run the same summary_data assembly here,
+            # against the ``final_tasks`` this shutdown path just fetched,
+            # so the last write reflects the run's actual terminal state.
+            # The interim fire from 8b is left on disk until this point -
+            # this call is what supersedes it, exactly like the
+            # retrospective regeneration above.
+            self._emit_summary_card(
+                done_tasks=final_done,
+                failed_tasks=final_failed,
+                collector=collector,
+                wall_clock_s=time.time() - self._run_start_ts,
+                total_cost=collector.get_total_cost(),
             )
             self._final_retrospective_regenerated = True
         except Exception:
@@ -3728,6 +3753,8 @@ class Orchestrator:
             quarantine=self._quarantine,
             workdir=self._workdir,
             session_id=session.id if session is not None else None,
+            role_model_policy=getattr(self._spawner, "role_model_policy", None),
+            run_pinned_model=getattr(self._spawner, "default_model", None),
         )
 
     def _handle_anomaly_signal(self, signal: object) -> None:
@@ -4048,6 +4075,7 @@ class Orchestrator:
                     workdir=self._workdir,
                     role_model_policy=getattr(self._spawner, "role_model_policy", None),
                     default_adapter_name=getattr(self._spawner, "default_adapter_name", None),
+                    run_pinned_model=getattr(self._spawner, "default_model", None),
                 )
 
     def _enforce_budget_killswitch(self) -> None:
@@ -4394,6 +4422,46 @@ class Orchestrator:
         """Delegate to task_lifecycle.collect_completion_data."""
         return collect_completion_data(self._workdir, session)
 
+    def _check_for_incidents(self, tasks_by_status: dict[str, list[Task]]) -> None:
+        """Detect and record incidents from terminal task-board state.
+
+        The failed/total counts fed to the incident manager come from the
+        task server's own ``done``/``failed`` buckets via
+        :func:`error_budget_from_task_board`, never from the observability
+        collector's in-memory success bit or from agent process exit
+        codes. An agent whose process dies (SIGTERM from heartbeat
+        escalation, OOM, a plain crash) after its claimed task already
+        reached ``done`` must not move this ratio (#4310).
+
+        Args:
+            tasks_by_status: Task board buckets fetched this tick.
+        """
+        board_budget = error_budget_from_task_board(
+            tasks_by_status, slo_target=self._slo_tracker.error_budget.slo_target
+        )
+        failed_ids = [t.id for t in tasks_by_status.get("failed", [])]
+        incident = self._incident_manager.check_for_incidents(
+            failed_task_count=board_budget.failed_tasks,
+            total_task_count=board_budget.total_tasks,
+            consecutive_failures=self._consecutive_failures,
+            error_budget_depleted=board_budget.is_depleted,
+            contributing_task_ids=failed_ids,
+        )
+        self._incident_manager.save(self._workdir / ".sdd" / "runtime")
+
+        # Notify PagerDuty on SEV1/SEV2 incidents
+        if incident is not None and incident.severity in ("sev1", "sev2"):
+            self._notify(
+                "incident.critical",
+                f"Incident [{incident.severity.value.upper()}]: {incident.title}",
+                incident.description,
+                incident_id=incident.id,
+                severity=incident.severity.value,
+                failed_tasks=str(board_budget.failed_tasks),
+                total_tasks=str(board_budget.total_tasks),
+                consecutive_failures=str(self._consecutive_failures),
+            )
+
     def _should_trigger_manager_review(self, failed_count: int) -> bool:
         """Return True when a manager queue review is warranted.
 
@@ -4478,6 +4546,7 @@ class Orchestrator:
         task_id: str,
         reason: str,
         tasks_snapshot: dict[str, list[Task]] | None = None,
+        transport_failure: bool = False,
     ) -> None:
         """Delegate to task_lifecycle.retry_or_fail_task."""
         retry_or_fail_task(
@@ -4491,6 +4560,8 @@ class Orchestrator:
             workdir=self._workdir,
             role_model_policy=getattr(self._spawner, "role_model_policy", None),
             default_adapter_name=getattr(self._spawner, "default_adapter_name", None),
+            run_pinned_model=getattr(self._spawner, "default_model", None),
+            transport_failure=transport_failure,
         )
 
     def _check_file_overlap(self, batch: list[Task]) -> bool:

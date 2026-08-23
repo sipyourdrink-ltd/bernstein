@@ -54,6 +54,7 @@ class TaskCostEstimate:
         estimated_cost_usd: Point estimate of cost in USD.
         confidence: Confidence in the estimate (0.0 -- 1.0).
         estimated_tokens: Approximate token count backing the cost estimate.
+        model: Estimated model to use.
     """
 
     task_id: str
@@ -64,6 +65,7 @@ class TaskCostEstimate:
     estimated_cost_usd: float
     confidence: float
     estimated_tokens: int
+    model: str = "unresolved"
 
 
 @dataclass(frozen=True)
@@ -99,6 +101,7 @@ def estimate_task_cost(
     complexity: str,
     scope: str,
     historical_avg: float | None = None,
+    model: str | None = None,
 ) -> TaskCostEstimate:
     """Estimate the cost of a single task.
 
@@ -113,6 +116,7 @@ def estimate_task_cost(
         complexity: One of ``"low"``, ``"medium"``, ``"high"``, ``"critical"``.
         scope: One of ``"small"``, ``"medium"``, ``"large"``.
         historical_avg: Optional historical average cost for similar tasks.
+        model: Optional resolved model name.
 
     Returns:
         A frozen :class:`TaskCostEstimate`.
@@ -121,12 +125,20 @@ def estimate_task_cost(
     scope_mult = _SCOPE_MULTIPLIER.get(scope, 1.0)
     heuristic_cost = base * scope_mult
 
-    if historical_avg is not None and historical_avg > 0:
+    resolved_model = model or "unresolved"
+    from bernstein.core.cost.model_prices import is_free_route
+
+    if model and is_free_route(model):
+        blended = 0.0
+    elif historical_avg is not None and historical_avg > 0:
         # Blend: 60 % historical, 40 % heuristic
         blended = 0.6 * historical_avg + 0.4 * heuristic_cost
         confidence = min(_BASE_CONFIDENCE + 0.25, 1.0)
     else:
         blended = heuristic_cost
+        confidence = _BASE_CONFIDENCE
+
+    if not (historical_avg is not None and historical_avg > 0):
         confidence = _BASE_CONFIDENCE
 
     estimated_tokens = max(1, int(blended * _TOKENS_PER_USD))
@@ -140,6 +152,7 @@ def estimate_task_cost(
         estimated_cost_usd=round(blended, 6),
         confidence=round(confidence, 2),
         estimated_tokens=estimated_tokens,
+        model=resolved_model,
     )
 
 

@@ -46,6 +46,7 @@ _CATEGORY_BORDER: Final[dict[ErrorCategory, str]] = {
     ErrorCategory.TIMEOUT: "orange3",
     ErrorCategory.PERMISSION_DENIED: "red",
     ErrorCategory.PORT_CONFLICT: "yellow",
+    ErrorCategory.NO_PLAN_PRODUCED: "red",
     ErrorCategory.UNKNOWN: "white",
 }
 
@@ -58,6 +59,7 @@ _CATEGORY_TITLE: Final[dict[ErrorCategory, str]] = {
     ErrorCategory.TIMEOUT: "Timed out",
     ErrorCategory.PERMISSION_DENIED: "Permission denied",
     ErrorCategory.PORT_CONFLICT: "Port conflict",
+    ErrorCategory.NO_PLAN_PRODUCED: "No plan produced",
     ErrorCategory.UNKNOWN: "Unhandled error",
 }
 
@@ -160,6 +162,14 @@ def _hint_body(category: ErrorCategory, context: HintContext | None) -> tuple[st
         return (
             f"Port `{port}` already in use. Set `BERNSTEIN_PORT` or stop the conflicting process.",
             f"lsof -i :{port}",
+        )
+    if category is ErrorCategory.NO_PLAN_PRODUCED:
+        adapter = _ctx_get(context, "adapter", "the configured adapter")
+        return (
+            f"The spawned `{adapter}` agent exited before decomposing the goal, so no work "
+            f"plan was produced. Check `.sdd/runtime/retrospective.md` for what the agent did "
+            f"before it died.",
+            "bernstein status",
         )
     # ErrorCategory.UNKNOWN
     repo = _ctx_get(context, "repo", "chernistry/bernstein")

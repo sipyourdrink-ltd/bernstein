@@ -25,6 +25,7 @@ from bernstein.core.hook_events import HookEvent
 from bernstein.core.persistence.anchored_write import anchored_append
 from bernstein.core.persistence.durable_write import fsynced_write
 from bernstein.core.persistence.runtime_state import rotate_log_file
+from bernstein.core.persistence.store import role_mismatch_error
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.tasks.artifacts import ArtifactSpec
 from bernstein.core.tasks.errors import TaskDomainError
@@ -41,10 +42,11 @@ from bernstein.core.tasks.models import (
     TaskType,
     UpgradeProposalDetails,
 )
+from bernstein.core.tasks.unreachable import blocking_dependency, unreachable_tasks
 from bernstein.core.tenanting import ensure_tenant_layout, normalize_tenant_id, try_normalize_tenant_id
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from bernstein.core.security.audit_chain import AuditChainStore
     from bernstein.core.tasks.contracts import ContractViolation, WorkerCompletion, WorkerRefusal
@@ -456,6 +458,7 @@ class TaskStore:
         archive_path: Path = DEFAULT_ARCHIVE_PATH,
         metrics_jsonl_path: Path | None = None,
     ) -> None:
+        self._task_listeners: list[Callable[[Task], None]] = []
         self._tasks: dict[str, Task] = {}
         self._agents: dict[str, AgentSession] = {}
         # Secondary indices for O(1) status/role lookups
@@ -512,6 +515,24 @@ class TaskStore:
                 ``None`` to detach.
         """
         self._audit_chain = chain
+
+    def add_task_listener(self, listener: Callable[[Task], None]) -> None:
+        """Register a callback invoked whenever a task's status or record is updated."""
+        if listener not in self._task_listeners:
+            self._task_listeners.append(listener)
+
+    def remove_task_listener(self, listener: Callable[[Task], None]) -> None:
+        """Unregister a task update callback."""
+        if listener in self._task_listeners:
+            self._task_listeners.remove(listener)
+
+    def _notify_task_updated(self, task: Task) -> None:
+        """Invoke registered task listeners with the updated task."""
+        for listener in list(self._task_listeners):
+            try:
+                listener(task)
+            except Exception:
+                logger.exception("Error in task listener for task %s", task.id)
 
     @staticmethod
     def _claim_snapshot(task: Task) -> ClaimSnapshot:
@@ -1175,6 +1196,83 @@ class TaskStore:
 
         return dfs(new_task.id)
 
+    async def _mark_blocked_by_failed_dep(self, task: Task, blocking_task_id: str) -> bool:
+        """Move *task* to ``BLOCKED_BY_FAILED_DEP``, naming what stranded it.
+
+        Mirrors the abandon cascade's per-downstream body (#1350): the claim is
+        surrendered, the row is journalled, and a release receipt is minted,
+        because a downstream can be CLAIMED or IN_PROGRESS under a different
+        node than the one whose task ended.
+
+        Returns ``True`` when the task moved, ``False`` when it was already
+        past the point where the cascade applies.
+        """
+        blocker = self._tasks.get(blocking_task_id)
+        if blocker is None:
+            return False
+        reason = f"dependency {blocking_task_id} is {blocker.status.value}"
+        snapshot = self._claim_snapshot(task)
+        self._index_remove(task)
+        try:
+            transition_task(task, TaskStatus.BLOCKED_BY_FAILED_DEP, actor="task_store", reason=reason)
+        except IllegalTransitionError:
+            # Restore index entry - leave the task untouched, exactly as the
+            # abandon cascade does for a downstream it may not move.
+            self._index_add(task)
+            return False
+        task.result_summary = reason
+        task.terminal_reason = "blocked_by_failed_dependency"
+        # The id, not an inference: "why did this never run" is answered by a
+        # task id a replay can look up.
+        task.metadata["blocking_task_id"] = blocking_task_id
+        task.version += 1
+        self._index_add(task)
+        await self._append_jsonl(self._task_to_record(task))
+        self._record_release_receipt(
+            task,
+            snapshot,
+            release_path="failed_dependency_cascade",
+            reason=reason,
+        )
+        logger.info(
+            "Task %s blocked by failed dependency %s (%s)",
+            task.id,
+            blocking_task_id,
+            blocker.status.value,
+        )
+        self._notify_task_updated(task)
+        return True
+
+    async def _cascade_failed_dependency(self, *task_ids: str) -> None:
+        """Strand every task that can no longer run because *task_ids* ended.
+
+        Propagation is transitive: a task moved to ``BLOCKED_BY_FAILED_DEP``
+        is itself a stranding dependency, so the next ring is found on the
+        following pass. Each ring is walked in id order and each stranded task
+        records its own nearest cause, so a chain A -> B -> C names B as C's
+        cause rather than A.
+
+        Several ids seed one walk rather than one walk each, so a subtree
+        cancelled together strands its dependents in a single pass and a task
+        depending on two of them still records only its nearest cause
+        (#4247). The four single-task terminal transitions pass one id; the
+        cancel cascade passes the whole set it cancelled.
+
+        Must be called with ``self._lock`` held.
+        """
+        frontier = set(task_ids)
+        while frontier:
+            next_frontier: set[str] = set()
+            for candidate in sorted(self._tasks.values(), key=lambda t: t.id):
+                if candidate.id in frontier or not frontier.intersection(candidate.depends_on):
+                    continue
+                blocker_id = blocking_dependency(candidate, self._tasks)
+                if blocker_id is None:
+                    continue
+                if await self._mark_blocked_by_failed_dep(candidate, blocker_id):
+                    next_frontier.add(candidate.id)
+            frontier = next_frontier
+
     def _dependencies_satisfied(self, task: Task) -> bool:
         # A dependency is satisfied by either terminal-success status: tasks
         # move from "done" to "closed" once their agent is reaped and its
@@ -1186,25 +1284,11 @@ class TaskStore:
         )
         done_ids = {done_task.id for done_task in completed_tasks}
 
-        # Check for terminal-not-successful dependencies (issue #3621)
-        # A task whose depends_on contains any task in a terminal-not-successful
-        # status should not be re-queued forever.
-        terminal_failed = {
-            TaskStatus.FAILED,
-            TaskStatus.CANCELLED,
-            TaskStatus.REFUSED,
-            TaskStatus.ORPHANED,
-        }
-        for dep_id in task.depends_on:
-            dep_task = self._tasks.get(dep_id)
-            if dep_task and dep_task.status in terminal_failed:
-                logger.warning(
-                    "Task %s dependency %s is %s — task will never run",
-                    task.id,
-                    dep_id,
-                    dep_task.status.value,
-                )
-                return False
+        # A dependency that ended without delivering never satisfies its
+        # dependents (#3452). The classification lives in one place so a path
+        # that moves a task to a new terminal status cannot forget it.
+        if blocking_dependency(task, self._tasks) is not None:
+            return False
 
         if not all(dep in done_ids for dep in task.depends_on):
             return False
@@ -1827,6 +1911,9 @@ class TaskStore:
                 return None
             task: Task | None = None
             blocked_entries: list[tuple[int, str]] = []
+            # Stranded candidates are moved off the queue rather than back
+            # onto it (#3452); mutating mid-drain would reorder the heap.
+            stranded_entries: list[tuple[Task, str]] = []
             normalized_tenant = normalize_tenant_id(tenant_id) if tenant_id is not None else None
             while pq:
                 priority, task_id = heapq.heappop(pq)
@@ -1844,6 +1931,13 @@ class TaskStore:
                 if parent_session_id is not None and candidate.parent_session_id != parent_session_id:
                     blocked_entries.append((priority, task_id))
                     continue
+                # A dependency that ended without delivering makes this
+                # candidate unclaimable for good, so re-queuing it just burns
+                # a heap slot every tick, forever (#3452).
+                stranding_dep = blocking_dependency(candidate, self._tasks)
+                if stranding_dep is not None:
+                    stranded_entries.append((candidate, stranding_dep))
+                    continue
                 if not self._dependencies_satisfied(candidate):
                     blocked_entries.append((priority, task_id))
                     continue
@@ -1857,6 +1951,8 @@ class TaskStore:
                 break
             for entry in blocked_entries:
                 heapq.heappush(pq, entry)
+            for stranded, stranding_dep in stranded_entries:
+                await self._mark_blocked_by_failed_dep(stranded, stranding_dep)
             if task is None:
                 return None
             self._index_remove(task)
@@ -1909,9 +2005,7 @@ class TaskStore:
                     f"Version conflict: task {task_id} is at version {task.version}, expected {expected_version}"
                 )
             if agent_role is not None and task.role != agent_role:
-                raise ValueError(
-                    f"role mismatch: task {task_id} requires role '{task.role}', agent has role '{agent_role}'"
-                )
+                raise role_mismatch_error(task_id, task.role, agent_role)
             if task.status != TaskStatus.OPEN:
                 # never silently re-return an already-claimed or
                 # terminal task - that enables double-claim. Raise so the
@@ -2175,6 +2269,7 @@ class TaskStore:
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
             self._record_release_receipt(task, snapshot, release_path="fail", reason=reason)
+            await self._cascade_failed_dependency(task_id)
             return task
 
     async def fail_contract_violation(self, task_id: str, violation: ContractViolation) -> Task:
@@ -2219,6 +2314,7 @@ class TaskStore:
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
             self._record_release_receipt(task, snapshot, release_path="fail_contract_violation", reason=reason)
+            await self._cascade_failed_dependency(task_id)
         self._audit_contract_outcome(task_id, outcome="violation", schema_error_path=violation.path)
         return task
 
@@ -2265,6 +2361,7 @@ class TaskStore:
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
             self._record_release_receipt(task, snapshot, release_path="refuse", reason=outcome)
+            await self._cascade_failed_dependency(task_id)
         self._audit_contract_outcome(task_id, outcome=outcome)
         return task
 
@@ -2785,6 +2882,7 @@ class TaskStore:
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
             self._record_release_receipt(task, snapshot, release_path="cancel", reason=reason)
+            await self._cascade_failed_dependency(task_id)
             return task
 
     # -- TASK-002: WAITING_FOR_SUBTASKS timeout with escalation ---------------
@@ -2932,6 +3030,17 @@ class TaskStore:
                     reason=cascade_reason,
                 )
                 cancelled.append(task)
+
+            # Dependents are stranded after the whole subtree is cancelled,
+            # not per task inside the loop. A dependent that is itself a
+            # descendant must be cancelled by the walk above rather than
+            # marked blocked first: ``cancellable`` does not include
+            # ``BLOCKED_BY_FAILED_DEP``, so an early mark would make the
+            # cascade skip it and a subtask would end in the wrong terminal
+            # status. Seeding one walk with the whole set also means a task
+            # depending on two cancelled tasks records a single nearest cause.
+            if cancelled:
+                await self._cascade_failed_dependency(*(t.id for t in cancelled))
 
         return cancelled
 
@@ -3131,6 +3240,50 @@ class TaskStore:
         end = start + max(0, limit)
         return filtered[start:end]
 
+    def count_tasks(
+        self,
+        status: str | None = None,
+        cell_id: str | None = None,
+        tenant_id: str | None = None,
+        claimed_by_session: str | None = None,
+        parent_session_id: str | None = None,
+    ) -> int:
+        """Return task count, optionally filtered, without materialising task lists.
+
+        Args:
+            status: If provided, only count tasks with this status.
+            cell_id: If provided, only count tasks in this cell.
+            tenant_id: If provided, only count tasks in this tenant.
+            claimed_by_session: If provided, only count tasks claimed by this session.
+            parent_session_id: If provided, only count tasks scoped to this parent session.
+
+        Returns:
+            Number of matching tasks.
+        """
+        if status is not None:
+            try:
+                ts = TaskStatus(status)
+                seed: list[Task] = list(self._by_status[ts].values())
+            except ValueError:
+                return 0
+        else:
+            seed = list(self._tasks.values())
+
+        normalized_tenant = normalize_tenant_id(tenant_id) if tenant_id is not None else None
+        check_open_deps = status == "open"
+
+        count = 0
+        for t in seed:
+            if (
+                (cell_id is None or t.cell_id == cell_id)
+                and (normalized_tenant is None or t.tenant_id == normalized_tenant)
+                and (claimed_by_session is None or t.claimed_by_session == claimed_by_session)
+                and (parent_session_id is None or t.parent_session_id == parent_session_id)
+                and (not check_open_deps or self._dependencies_satisfied(t))
+            ):
+                count += 1
+        return count
+
     def count_by_status(self, tenant_id: str | None = None) -> dict[str, int]:
         """Return task counts per status without materialising task lists.
 
@@ -3312,6 +3465,13 @@ class TaskStore:
             "refused": status_counts[TaskStatus.REFUSED],
             "per_role": per_role,
             "total_cost_usd": round(total_cost, 4),
+            # Read-only projection (#3452): tasks that can never run, each
+            # with the dependency that stranded it. Derived from the graph on
+            # every read, so an operator recomputing it from the journal gets
+            # the same list in the same order.
+            "unreachable": [
+                {"task_id": task_id, "blocked_by": blocking_id} for task_id, blocking_id in unreachable_tasks(tasks)
+            ],
         }
         self._attach_bandit_stats(summary)
         return summary

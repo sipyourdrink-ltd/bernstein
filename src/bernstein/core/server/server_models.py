@@ -890,6 +890,7 @@ class TaskCountsResponse(BaseModel):
     orphaned: int = 0
     abandoned: int = 0
     blocked_by_abandon: int = 0
+    blocked_by_failed_dep: int = 0
     refused: int = 0
     suspended: int = 0
     total: int = 0

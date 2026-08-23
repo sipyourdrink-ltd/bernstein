@@ -60,6 +60,15 @@ _OPEN_TASK_STATUSES = {
     TaskStatus.BLOCKED,
 }
 
+# Statuses that count as a "terminal baseline" for AutoSpawnGuard's
+# no-terminal-baseline check (#4226): the evolve loop has an actual outcome
+# to improve on once at least one task in the run has finished, successfully
+# or not.
+_TERMINAL_BASELINE_STATUSES = {
+    TaskStatus.DONE,
+    TaskStatus.FAILED,
+}
+
 
 def _run_governance_step(
     orch: Any,
@@ -782,6 +791,14 @@ def _create_upgrade_tasks(orch: Any, proposals: list[Any], result: Any) -> None:
         if getattr(task, "task_type", None) == TaskType.UPGRADE_PROPOSAL
         and getattr(task, "status", None) in _OPEN_TASK_STATUSES
     ]
+    # Run health for the guard's terminal-baseline check (#4226): an
+    # upgrade_proposal has nothing to improve on until something in the run
+    # has actually finished. Computed once here from the run's full task set
+    # (not just UPGRADE_PROPOSAL tasks) and passed to the guard rather than
+    # having the guard reach for task-store state itself.
+    has_terminal_task = any(
+        getattr(task, "status", None) in _TERMINAL_BASELINE_STATUSES for task in latest_tasks.values()
+    )
     for proposal in proposals:
         if proposal.status not in _task_eligible_statuses:
             continue
@@ -792,6 +809,7 @@ def _create_upgrade_tasks(orch: Any, proposals: list[Any], result: Any) -> None:
                 title=title,
                 source_title=None,
                 existing_open_titles=existing_open_titles,
+                has_terminal_task=has_terminal_task,
             )
             if not decision.allowed:
                 continue

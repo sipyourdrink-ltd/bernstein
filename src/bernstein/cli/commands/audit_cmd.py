@@ -275,13 +275,13 @@ def verify_cmd(merkle_only: bool, hmac_only: bool, receipt_path: str | None, pay
         console.print("[red]--payload requires --receipt.[/red]")
         raise SystemExit(2)
 
-    all_passed = True
+    failed_pillars: list[str] = []
 
-    if not merkle_only:
-        all_passed = _verify_hmac_chain() and all_passed
+    if not merkle_only and not _verify_hmac_chain():
+        failed_pillars.append("HMAC Chain")
 
-    if not hmac_only:
-        all_passed = _verify_merkle_tree() and all_passed
+    if not hmac_only and not _verify_merkle_tree():
+        failed_pillars.append("Merkle Tree")
 
     # Checkpoint extension is the pillar that makes a shrink sticky: a
     # truncation that leaves the HMAC chain intact still conflicts with the
@@ -289,69 +289,122 @@ def verify_cmd(merkle_only: bool, hmac_only: bool, receipt_path: str | None, pay
     # failing until an operator acknowledges it. Like the evidence-bundle
     # pillar, it runs regardless of --hmac-only / --merkle-only: a cron job
     # invoking either narrow form must still go red when history shrinks.
-    all_passed = _verify_checkpoints() and all_passed
+    if not _verify_checkpoints():
+        failed_pillars.append("Checkpoints")
 
     # Evidence bundles are a third integrity pillar: a tampered evidence file
     # must fail verify exactly like a tampered chain entry (#2362). This runs
     # regardless of --hmac-only / --merkle-only because it is orthogonal to
     # both the HMAC chain and the Merkle seal.
-    all_passed = _verify_evidence_bundles() and all_passed
+    if not _verify_evidence_bundles():
+        failed_pillars.append("Evidence Bundles")
 
     # Agent-posted artifacts are a further integrity pillar: a flipped byte in a
     # stored artifact blob or its journal row must fail verify with the artifact
     # named (#2553). Orthogonal to both the HMAC chain and the Merkle seal.
-    all_passed = _verify_run_artifacts() and all_passed
+    if not _verify_run_artifacts():
+        failed_pillars.append("Run Artifacts")
 
     # Tournament selection receipts are a further integrity pillar: a tampered
     # score or a hand-picked winner must fail verify exactly like a tampered
     # chain entry (#2353). Orthogonal to both HMAC chain and Merkle seal.
-    all_passed = _verify_tournament_receipts() and all_passed
+    if not _verify_tournament_receipts():
+        failed_pillars.append("Tournament Receipts")
 
     # Clearance gates are a further integrity pillar: a dependent task claimed
     # while its blocker gate was still open, or a tampered graph_delta_hash,
     # must fail verify (#2556). Orthogonal to both HMAC chain and Merkle seal.
-    all_passed = _verify_clearance_gates() and all_passed
+    if not _verify_clearance_gates():
+        failed_pillars.append("Clearance Gates")
 
     # Credential grant chains are a further integrity pillar: a mutated,
     # deleted, or reordered grant / exchange / revocation record must fail
     # verify exactly like a tampered chain entry (#2516). Orthogonal to both
     # HMAC chain and Merkle seal.
-    all_passed = _verify_grant_chains() and all_passed
+    if not _verify_grant_chains():
+        failed_pillars.append("Grant Chains")
 
     # Approval cards are a further integrity pillar: a resolved approval must be
     # re-checkable offline (#2511). A mutated stored envelope, a decision that
     # echoed an unknown card_hash, or a decision made after expiry must fail
     # verify. Orthogonal to both HMAC chain and Merkle seal.
-    all_passed = _verify_approval_cards() and all_passed
+    if not _verify_approval_cards():
+        failed_pillars.append("Approval Cards")
 
     # Fleet config-plane events are a further integrity pillar: a variable
     # write spliced out of its per-name lineage, or a connection resolution
     # naming a document that was never created, must fail verify beyond the
     # HMAC check (#2550). Orthogonal to both HMAC chain and Merkle seal.
-    all_passed = _verify_fleet_config() and all_passed
+    if not _verify_fleet_config():
+        failed_pillars.append("Fleet Config")
 
     # Named sandbox pools are a further integrity pillar: a tampered pool body
     # (its content-addressed hash no longer recomputes) or a forged placement
     # receipt (a widened effective manifest, a swapped backend) must fail verify
     # exactly like a tampered chain entry (#2547). Orthogonal to both the HMAC
     # chain and the Merkle seal.
-    all_passed = _verify_pool_receipts() and all_passed
+    if not _verify_pool_receipts():
+        failed_pillars.append("Pool Receipts")
 
     # Sovereign posture attestations + drift records are a further integrity
     # pillar: a mutated effective-policy document, a forged posture signature,
     # or a drift record whose hashes agree must fail verify exactly like a
     # tampered chain entry (#2518). Orthogonal to both HMAC chain and Merkle seal.
-    all_passed = _verify_sovereign_attestations() and all_passed
+    if not _verify_sovereign_attestations():
+        failed_pillars.append("Sovereign Attestations")
 
     # Benchmark-score trajectory receipts are a further integrity pillar: a
     # tampered published score, a contaminated suite, a fabricated scalar, or a
     # cherry-picked best-of-N candidate must fail verify with the offending task
     # named (#2925). Absent receipts are a silent no-op; any present-and-tampered
     # receipt hard-fails. Orthogonal to both HMAC chain and Merkle seal.
-    all_passed = _verify_trajectory_receipts() and all_passed
+    if not _verify_trajectory_receipts():
+        failed_pillars.append("Trajectory Receipts")
 
     console.print()
-    raise SystemExit(0 if all_passed else 1)
+    if not failed_pillars:
+        console.print(
+            Panel(
+                "[bold green]Audit Verification: PASSED[/bold green]\n"
+                "[dim]All audit log pillars passed verification.[/dim]",
+                border_style="green",
+                expand=False,
+            )
+        )
+        console.print()
+        raise SystemExit(0)
+
+    failing_list = "\n".join(f"  [red]![/red] {p}" for p in failed_pillars)
+    console.print(
+        Panel(
+            f"[bold red]Audit Verification: FAILED[/bold red]\n\n[bold]Failing pillar(s):[/bold]\n{failing_list}",
+            border_style="red",
+            expand=False,
+        )
+    )
+    console.print()
+    raise SystemExit(1)
+
+
+def _verify_key(pillar: str) -> bytes | None:
+    """Load the audit key for a verification pillar, never minting one.
+
+    Verification must not write to the store it inspects (#4210). Creating key
+    material here would leave stray key bytes behind and authenticate nothing:
+    a fresh key cannot validate a chain written under the real one, so it would
+    report a fabricated tamper alarm. A missing key is a named degradation -
+    the same limit the HMAC and checkpoint pillars carry - and the HMAC pillar
+    already fails the run when segments exist without a key.
+
+    Returns the key, or ``None`` when there is none to load.
+    """
+    from bernstein.core.security.audit import AuditKeyMissingError, load_audit_key
+
+    try:
+        return load_audit_key()
+    except AuditKeyMissingError:
+        console.print(f"[yellow]{pillar} verification skipped: no audit HMAC key available.[/yellow]")
+        return None
 
 
 def _verify_trajectory_receipts() -> bool:
@@ -363,7 +416,6 @@ def _verify_trajectory_receipts() -> bool:
     entry (#2925). When no trajectory receipts exist the check is a silent
     no-op (returns True immediately).
     """
-    from bernstein.core.security.audit import AuditKeyPermissionError, load_or_create_audit_key
     from bernstein.eval.trajectory_receipt import verify_all_trajectory_receipts
 
     # Derive workdir from cwd() for consistency with how the receipts were
@@ -371,11 +423,9 @@ def _verify_trajectory_receipts() -> bool:
     # AUDIT_DIR which may be a relative path that resolves differently.
     workdir = Path.cwd()
 
-    try:
-        key = load_or_create_audit_key()
-    except (OSError, AuditKeyPermissionError) as exc:  # pragma: no cover - filesystem race
-        console.print(f"[red]Failed to load audit key for trajectory receipt verification: {exc}[/red]")
-        return False
+    key = _verify_key("Trajectory receipt")
+    if key is None:
+        return True
 
     results = verify_all_trajectory_receipts(workdir, hmac_key=key)
     if not results:
@@ -428,7 +478,6 @@ def _verify_automation_receipt(receipt_path: str, payload_path: str | None) -> N
     """
     import json as _json
 
-    from bernstein.core.security.audit import load_or_create_audit_key
     from bernstein.core.trigger_sources.receipt import verify_receipt_document
 
     try:
@@ -448,10 +497,16 @@ def _verify_automation_receipt(receipt_path: str, payload_path: str | None) -> N
             console.print(f"[red]Could not read payload:[/red] {exc}")
             raise SystemExit(2) from exc
 
+    # Load-only: answering "does this receipt check out?" must not leave key
+    # material behind in the store being inspected (#4210).
+    hmac_key = _verify_key("Receipt")
+    if hmac_key is None:
+        raise SystemExit(1)
+
     result = verify_receipt_document(
         document,
         audit_dir=AUDIT_DIR,
-        hmac_key=load_or_create_audit_key(),
+        hmac_key=hmac_key,
         body=body,
     )
 
@@ -489,17 +544,15 @@ def _verify_fleet_config() -> bool:
     fleet config events exist the check is a silent no-op.
     """
     from bernstein.core.fleet.config_audit import verify_fleet_config_events
-    from bernstein.core.security.audit import load_or_create_audit_key
     from bernstein.core.security.audit_chain import (
         EVENT_FLEET_VAR_SET,
         AuditChainStore,
     )
 
-    try:
-        chain = AuditChainStore(AUDIT_DIR, key=load_or_create_audit_key())
-    except OSError as exc:  # pragma: no cover - filesystem race
-        console.print(f"[red]Failed to load audit key for fleet config verification: {exc}[/red]")
-        return False
+    key = _verify_key("Fleet config")
+    if key is None:
+        return True
+    chain = AuditChainStore(AUDIT_DIR, key=key)
 
     # Cheap presence probe: if no variable and no connection events exist,
     # stay a silent no-op like the other pillars.
@@ -533,7 +586,10 @@ def _verify_pool_receipts() -> bool:
     """
     from bernstein.cli.commands.pool_cmd import verify_pools
 
-    ok, errors = verify_pools(Path.cwd())
+    key = _verify_key("Pool")
+    if key is None:
+        return True
+    ok, errors = verify_pools(Path.cwd(), key=key)
     console.print()
     if ok:
         console.print(Panel("[bold green]Pool Verification Passed[/bold green]", border_style="green", expand=False))
@@ -574,7 +630,6 @@ def _verify_grant_chains() -> bool:
     chain entry (#2516). When no grant chains exist the check is a silent no-op.
     """
     from bernstein.core.identity import grants
-    from bernstein.core.security.audit import load_or_create_audit_key
 
     grants_dir = AUDIT_DIR / "grants"
     if not grants_dir.is_dir():
@@ -583,11 +638,9 @@ def _verify_grant_chains() -> bool:
     if not run_files:
         return True
 
-    try:
-        key = load_or_create_audit_key()
-    except OSError as exc:  # pragma: no cover - filesystem race
-        console.print(f"[red]Failed to load audit key for grant verification: {exc}[/red]")
-        return False
+    key = _verify_key("Grant chain")
+    if key is None:
+        return True
 
     failures: list[tuple[str, list[str]]] = []
     for path in run_files:
@@ -870,7 +923,13 @@ def ack_tear_cmd(segment: str, offset: int, reason: str, actor: str | None) -> N
 
 
 def _verify_merkle_tree() -> bool:
-    """Verify Merkle tree and print results. Returns True if valid."""
+    """Verify Merkle tree and print results. Returns True if valid.
+
+    The seal is pinned at finalization and the log keeps growing after it, so
+    the verdict separates the two facts an operator needs: the sealed prefix
+    recomputed to the pinned root, and how many rows arrived after the pin
+    (#4201). Only the first is an integrity claim.
+    """
     from bernstein.core.merkle import verify_merkle
 
     result = verify_merkle(AUDIT_DIR, MERKLE_DIR)
@@ -882,6 +941,9 @@ def _verify_merkle_tree() -> bool:
         table.add_column("Key", style="dim", no_wrap=True, min_width=14)
         table.add_column("Value")
         table.add_row("Root hash", result.root_hash)
+        if result.post_seal_rows:
+            table.add_row("Sealed prefix", "intact")
+            table.add_row("Post-seal rows", str(sum(result.post_seal_rows.values())))
         if result.seal_path:
             table.add_row("Seal file", str(result.seal_path))
         console.print(table)
@@ -900,17 +962,14 @@ def _verify_evidence_bundles() -> bool:
     exist the check is a silent no-op.
     """
     from bernstein.core.evidence.bundle import verify_all_evidence_bundles
-    from bernstein.core.security.audit import load_or_create_audit_key
 
     # AUDIT_DIR is ``.sdd/audit``; the project root is two levels up. Bundles
     # live under ``<root>/.sdd/evidence/bundles``.
     workdir = AUDIT_DIR.parent.parent
 
-    try:
-        key = load_or_create_audit_key()
-    except OSError as exc:  # pragma: no cover - filesystem race
-        console.print(f"[red]Failed to load audit key for evidence verification: {exc}[/red]")
-        return False
+    key = _verify_key("Evidence bundle")
+    if key is None:
+        return True
 
     results = verify_all_evidence_bundles(workdir, hmac_key=key)
     if not results:
@@ -945,17 +1004,14 @@ def _verify_run_artifacts() -> bool:
     artifacts exist the check is a silent no-op.
     """
     from bernstein.core.evidence.run_artifacts import verify_all_run_artifacts
-    from bernstein.core.security.audit import load_or_create_audit_key
 
     # AUDIT_DIR is ``.sdd/audit``; the project root is two levels up. Artifacts
     # live under ``<root>/.sdd/runs/*/journal.jsonl`` + ``<root>/.sdd/evidence``.
     workdir = AUDIT_DIR.parent.parent
 
-    try:
-        key = load_or_create_audit_key()
-    except OSError as exc:  # pragma: no cover - filesystem race
-        console.print(f"[red]Failed to load audit key for artifact verification: {exc}[/red]")
-        return False
+    key = _verify_key("Run artifact")
+    if key is None:
+        return True
 
     results = verify_all_run_artifacts(workdir, hmac_key=key)
     if not results:
@@ -987,18 +1043,15 @@ def _verify_tournament_receipts() -> bool:
     fail with the task named, exactly like a tampered chain entry (#2353). When
     no receipts exist the check is a silent no-op.
     """
-    from bernstein.core.security.audit import load_or_create_audit_key
     from bernstein.core.tournament.receipt import verify_all_tournament_receipts
 
     # AUDIT_DIR is ``.sdd/audit``; receipts live under
     # ``<root>/.sdd/tournaments/receipts``.
     workdir = AUDIT_DIR.parent.parent
 
-    try:
-        key = load_or_create_audit_key()
-    except OSError as exc:  # pragma: no cover - filesystem race
-        console.print(f"[red]Failed to load audit key for tournament verification: {exc}[/red]")
-        return False
+    key = _verify_key("Tournament receipt")
+    if key is None:
+        return True
 
     results = verify_all_tournament_receipts(workdir, hmac_key=key)
     if not results:
@@ -1037,7 +1090,10 @@ def _verify_approval_cards() -> bool:
     """
     from bernstein.core.approval.card_verify import verify_approval_cards
 
-    result = verify_approval_cards(AUDIT_DIR)
+    key = _verify_key("Approval card")
+    if key is None:
+        return True
+    result = verify_approval_cards(AUDIT_DIR, key=key)
     if result.issued_count == 0 == result.resolved_count:
         return True  # no approval cards recorded; nothing to verify
 
@@ -1079,7 +1135,10 @@ def _verify_sovereign_attestations() -> bool:
     """
     from bernstein.core.security.deployment_profile import verify_sovereign_attestations
 
-    result = verify_sovereign_attestations(AUDIT_DIR)
+    key = _verify_key("Sovereign posture")
+    if key is None:
+        return True
+    result = verify_sovereign_attestations(AUDIT_DIR, key=key)
     if result.attestation_count == 0 == result.drift_count:
         return True  # no sovereign records; nothing to verify
 
@@ -1118,7 +1177,10 @@ def _verify_clearance_gates() -> bool:
     from bernstein.core.communication.signal_actions import verify_clearance_gates
     from bernstein.core.security.audit import AuditLog
 
-    log = AuditLog(AUDIT_DIR)
+    key = _verify_key("Clearance gate")
+    if key is None:
+        return True
+    log = AuditLog(AUDIT_DIR, key=key)
     chain_ok, chain_errors = log.verify()
     if not chain_ok:
         console.print()

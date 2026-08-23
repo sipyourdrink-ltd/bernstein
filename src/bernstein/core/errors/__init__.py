@@ -6,7 +6,7 @@ hint renderer keyed off the category.
 
 Public surface (importable from ``bernstein.core.errors``):
 
-- :class:`ErrorCategory`: closed StrEnum of the 8 categories.
+- :class:`ErrorCategory`: closed StrEnum of the 9 categories.
 - :class:`BernsteinFirstRunError`: typed exception that carries a category.
 - :class:`AdapterAuthError`: marker exception for adapter authentication
   failures (raised by adapters when an auth-failure exit code is observed).

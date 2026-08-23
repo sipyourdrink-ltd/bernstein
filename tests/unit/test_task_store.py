@@ -324,3 +324,20 @@ def test_read_archive_keeps_filtering_out_malformed_tenant_ids(tmp_path: Path) -
     records = store.read_archive(limit=50, tenant_id="team-a")
 
     assert [record["task_id"] for record in records] == ["owned-row"]
+
+
+@pytest.mark.anyio
+async def test_count_tasks_matches_len_list_tasks(tmp_path: Path) -> None:
+    """count_tasks returns the exact same number len(list_tasks) returns across filters."""
+    store = TaskStore(tmp_path / "runtime" / "tasks.jsonl")
+
+    t1 = await store.create(_task_request(title="task 1"))
+    t2 = await store.create(_task_request(title="task 2"))
+    await store.claim_by_id(t1.id, expected_version=t1.version)
+    await store.complete(t1.id, "done")
+
+    assert store.count_tasks() == len(store.list_tasks())
+    assert store.count_tasks(status="open") == len(store.list_tasks(status="open"))
+    assert store.count_tasks(status="done") == len(store.list_tasks(status="done"))
+    assert store.count_tasks(status="nonexistent") == len(store.list_tasks(status="nonexistent"))
+    assert store.count_tasks(tenant_id=t2.tenant_id) == len(store.list_tasks(tenant_id=t2.tenant_id))

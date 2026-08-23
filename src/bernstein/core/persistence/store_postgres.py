@@ -29,7 +29,7 @@ import uuid
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from bernstein.core.persistence.store import BaseTaskStore, RoleSummary, StatusSummary
+from bernstein.core.persistence.store import BaseTaskStore, RoleSummary, StatusSummary, role_mismatch_error
 from bernstein.core.tasks.models import (
     CompletionSignal,
     Complexity,
@@ -41,6 +41,7 @@ from bernstein.core.tasks.models import (
     TaskType,
     UpgradeProposalDetails,
 )
+from bernstein.core.tenanting import DEFAULT_TENANT_ID, normalize_tenant_id
 
 if TYPE_CHECKING:
     from bernstein.core.persistence.store_redis import RedisCoordinator
@@ -58,13 +59,12 @@ logger = logging.getLogger(__name__)
 
 # ``asyncpg`` is an optional dependency - only required for postgres mode.
 try:
-    import asyncpg  # type: ignore[import-untyped]
+    import asyncpg  # type: ignore[import-not-found]
 
     _has_asyncpg = True
 except ModuleNotFoundError:
     asyncpg = None  # type: ignore[assignment]
     _has_asyncpg = False
-
 _ASYNCPG_AVAILABLE: bool = _has_asyncpg
 
 
@@ -95,12 +95,22 @@ CREATE TABLE IF NOT EXISTS tasks (
     completion_signals JSONB      NOT NULL DEFAULT '[]',
     created_at        FLOAT8      NOT NULL,
     progress_log      JSONB       NOT NULL DEFAULT '[]',
-    version           INTEGER     NOT NULL DEFAULT 1
+    version           INTEGER     NOT NULL DEFAULT 1,
+    claimed_by_session TEXT,
+    tenant_id         TEXT        NOT NULL DEFAULT 'default'
 );
+
+-- CREATE TABLE IF NOT EXISTS is a no-op once the table exists, so a column
+-- added after an install has run reaches it only through an ALTER.  Rows
+-- written before the tenant column existed carry no recorded scope, so they
+-- land in the default tenant - the only interpretation available.
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS claimed_by_session TEXT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
 
 CREATE INDEX IF NOT EXISTS idx_tasks_status        ON tasks (status);
 CREATE INDEX IF NOT EXISTS idx_tasks_role_status   ON tasks (role, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_priority      ON tasks (priority, created_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_tenant_status ON tasks (tenant_id, status);
 
 CREATE TABLE IF NOT EXISTS agents (
     id             TEXT    PRIMARY KEY,
@@ -167,24 +177,73 @@ WHERE  t.id = (
 RETURNING *
 """
 
-_CLAIM_BY_ID_SQL = """
+# Shared by every single-row claim query below (by-id, its CAS variant, and
+# batch) so each one gates on ``depends_on`` exactly like ``_CLAIM_NEXT_SQL``
+# above - the column names are unqualified because they resolve against the
+# row the enclosing UPDATE targets, same as a plain WHERE clause would.
+#
+# Before this fragment existed, only ``claim_next`` carried the dependency
+# predicate: a caller that claimed a specific id, or a batch of ids, bypassed
+# unmet ``depends_on`` entirely even though the in-memory store's equivalent
+# methods already gated it (#4311). Keeping the predicate in one place is
+# what stops the two paths drifting apart again.
+_DEPENDS_ON_SATISFIED_SQL = """(
+    depends_on = '{}'::text[]
+    OR NOT EXISTS (
+        SELECT 1
+        FROM   unnest(depends_on) AS dep_id
+        WHERE  NOT EXISTS (
+            SELECT 1
+            FROM   tasks AS d
+            WHERE  d.id = dep_id
+            AND    d.status = 'done'
+        )
+    )
+)"""
+
+
+# Claim by id.  The role gate is a variant of each statement rather than a
+# string appended at call time: the predicate binds a parameter, so its number
+# depends on which variant runs.  Assembled here rather than with `.format()`
+# because _DEPENDS_ON_SATISFIED_SQL carries literal braces a format call eats.
+def _claim_by_id_sql(role_predicate: str = "") -> str:
+    return f"""
 UPDATE tasks
 SET    status  = 'claimed',
-       version = version + 1
+       version = version + 1,
+       claimed_by_session = $2
 WHERE  id = $1
-AND    status = 'open'
+AND    status = 'open'{role_predicate}
+AND    {_DEPENDS_ON_SATISFIED_SQL}
 RETURNING *
 """
 
-_CLAIM_BY_ID_CAS_SQL = """
+
+def _claim_by_id_cas_sql(role_predicate: str = "") -> str:
+    return f"""
 UPDATE tasks
 SET    status  = 'claimed',
-       version = version + 1
+       version = version + 1,
+       claimed_by_session = $3
 WHERE  id      = $1
 AND    version = $2
-AND    status  = 'open'
+AND    status  = 'open'{role_predicate}
+AND    {_DEPENDS_ON_SATISFIED_SQL}
 RETURNING *
 """
+
+
+_CLAIM_BY_ID_SQL = _claim_by_id_sql()
+_CLAIM_BY_ID_ROLE_SQL = _claim_by_id_sql("\nAND    role = $3")
+_CLAIM_BY_ID_CAS_SQL = _claim_by_id_cas_sql()
+_CLAIM_BY_ID_CAS_ROLE_SQL = _claim_by_id_cas_sql("\nAND    role    = $4")
+
+# list_tasks() always issues a SQL LIMIT, even when the caller passes none -
+# an omitted limit falls back to this ceiling rather than fetching every
+# matching row. A caller that genuinely needs the full table pages through
+# it by advancing offset in a loop, or passes an explicit limit above the
+# table size.
+_LIST_TASKS_DEFAULT_LIMIT = 500
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +289,8 @@ def _row_to_task(row: Any) -> Task:
         depends_on=list(raw.get("depends_on") or []),
         owned_files=list(raw.get("owned_files") or []),
         assigned_agent=raw.get("assigned_agent"),
+        claimed_by_session=raw.get("claimed_by_session"),
+        tenant_id=normalize_tenant_id(raw.get("tenant_id") or DEFAULT_TENANT_ID),
         result_summary=raw.get("result_summary"),
         cell_id=raw.get("cell_id"),
         model=raw.get("model"),
@@ -337,6 +398,7 @@ class PostgresTaskStore(BaseTaskStore):
             task.created_at,
             json.dumps(task.progress_log),  # type: ignore[reportUnknownMemberType]
             task.version,
+            normalize_tenant_id(task.tenant_id),
         )
 
     # -- task mutations ------------------------------------------------------
@@ -356,7 +418,7 @@ class PostgresTaskStore(BaseTaskStore):
         """
         from fastapi import HTTPException
 
-        from bernstein.core.server import _parse_upgrade_dict  # type: ignore[attr-defined]
+        from bernstein.core.tasks.task_store import _parse_upgrade_dict
 
         task = Task(
             id=uuid.uuid4().hex[:12],
@@ -366,7 +428,7 @@ class PostgresTaskStore(BaseTaskStore):
             priority=req.priority,
             scope=Scope(req.scope),
             complexity=Complexity(req.complexity),
-            estimated_minutes=req.estimated_minutes,
+            estimated_minutes=req.estimated_minutes or 0,
             depends_on=req.depends_on,
             owned_files=req.owned_files,
             cell_id=req.cell_id,
@@ -375,6 +437,7 @@ class PostgresTaskStore(BaseTaskStore):
             model=req.model,
             effort=req.effort,
             completion_signals=[CompletionSignal(type=s.type, value=s.value) for s in req.completion_signals],
+            tenant_id=normalize_tenant_id(getattr(req, "tenant_id", DEFAULT_TENANT_ID)),
         )
 
         assert self._pool is not None
@@ -398,10 +461,10 @@ class PostgresTaskStore(BaseTaskStore):
                     estimated_minutes, status, task_type, upgrade_details,
                     depends_on, owned_files, assigned_agent, result_summary,
                     cell_id, model, effort, completion_signals,
-                    created_at, progress_log, version
+                    created_at, progress_log, version, tenant_id
                 ) VALUES (
                     $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
-                    $16,$17,$18,$19,$20,$21,$22
+                    $16,$17,$18,$19,$20,$21,$22,$23
                 )
                 """,
                 *self._task_params(task),
@@ -434,12 +497,17 @@ class PostgresTaskStore(BaseTaskStore):
         task_id: str,
         expected_version: int | None = None,
         agent_role: str | None = None,
+        claimed_by_session: str | None = None,
     ) -> Task:
         """Claim a specific task, optionally with CAS.
 
         When *expected_version* is provided, a Redis lock is acquired first
         (if a coordinator is configured) to prevent a race between the version
         check and the UPDATE.
+
+        *claimed_by_session* is written by the same statement that flips the
+        status, so a claimed task always carries the session that owns it -
+        a crash cannot land between the claim and its ownership record.
         """
         lock_token: str | None = None
         try:
@@ -450,38 +518,77 @@ class PostgresTaskStore(BaseTaskStore):
 
             assert self._pool is not None
             async with self._pool.acquire() as conn:
-                row = await self._claim_row(conn, task_id, expected_version)
+                row = await self._claim_row(conn, task_id, expected_version, agent_role, claimed_by_session)
             return _row_to_task(row)
         finally:
             if self._redis is not None and lock_token is not None:
                 await self._redis.release(task_id, lock_token)
 
     @staticmethod
-    async def _claim_row(conn: Any, task_id: str, expected_version: int | None) -> Any:
-        """Execute the claim query and handle missing/conflicting tasks."""
+    async def _claim_row(
+        conn: Any,
+        task_id: str,
+        expected_version: int | None,
+        agent_role: str | None = None,
+        claimed_by_session: str | None = None,
+    ) -> Any:
+        """Execute the claim query and handle missing/conflicting tasks.
+
+        The role gate rides in the statement rather than around it: a check
+        before the UPDATE can be invalidated by a concurrent role rewrite,
+        and a check after it would run once the row is already claimed.  A
+        gated statement that matches nothing is therefore ambiguous, so the
+        no-match paths below re-read the row to name the real reason.
+        """
         if expected_version is not None:
-            row = await conn.fetchrow(_CLAIM_BY_ID_CAS_SQL, task_id, expected_version)
+            if agent_role is None:
+                row = await conn.fetchrow(_CLAIM_BY_ID_CAS_SQL, task_id, expected_version, claimed_by_session)
+            else:
+                row = await conn.fetchrow(
+                    _CLAIM_BY_ID_CAS_ROLE_SQL, task_id, expected_version, claimed_by_session, agent_role
+                )
             if row is None:
                 exists = await conn.fetchval("SELECT 1 FROM tasks WHERE id=$1", task_id)
                 if not exists:
                     raise KeyError(task_id)
+                # A mismatched role and a stale version both empty the
+                # UPDATE; reporting the mismatch as a version conflict would
+                # send the caller into a refetch/retry that cannot succeed.
+                await PostgresTaskStore._reject_role_mismatch(conn, task_id, agent_role)
                 ver = await conn.fetchval("SELECT version FROM tasks WHERE id=$1", task_id)
                 raise ValueError(f"Version conflict: task {task_id} is at version {ver}, expected {expected_version}")
             return row
-        row = await conn.fetchrow(_CLAIM_BY_ID_SQL, task_id)
+        if agent_role is None:
+            row = await conn.fetchrow(_CLAIM_BY_ID_SQL, task_id, claimed_by_session)
+        else:
+            row = await conn.fetchrow(_CLAIM_BY_ID_ROLE_SQL, task_id, claimed_by_session, agent_role)
         if row is None:
             exists = await conn.fetchval("SELECT 1 FROM tasks WHERE id=$1", task_id)
             if not exists:
                 raise KeyError(task_id)
             row = await conn.fetchrow("SELECT * FROM tasks WHERE id=$1", task_id)
             assert row is not None
+            # Only a role mismatch is an error here - a task that is simply
+            # no longer open still comes back as its current state.
+            if agent_role is not None and row["role"] != agent_role:
+                raise role_mismatch_error(task_id, row["role"], agent_role)
         return row
+
+    @staticmethod
+    async def _reject_role_mismatch(conn: Any, task_id: str, agent_role: str | None) -> None:
+        """Raise if *task_id* belongs to a role other than *agent_role*."""
+        if agent_role is None:
+            return
+        current = await conn.fetchrow("SELECT * FROM tasks WHERE id=$1", task_id)
+        if current is not None and current["role"] != agent_role:
+            raise role_mismatch_error(task_id, current["role"], agent_role)
 
     async def claim_batch(
         self,
         task_ids: list[str],
         agent_id: str,
         agent_role: str | None = None,
+        claimed_by_session: str | None = None,
         tenant_id: str | None = None,
     ) -> tuple[list[str], list[str]]:
         """Atomically claim multiple tasks.  Uses a single transaction.
@@ -489,40 +596,42 @@ class PostgresTaskStore(BaseTaskStore):
         When ``tenant_id`` is provided the tenant scope check is folded
         into the same UPDATE statement so tasks outside the scope are
         reported as failed rather than silently claimed, even under
-        concurrent tenant rewrites.
+        concurrent tenant rewrites.  ``agent_role`` is folded in the same
+        way, so role-locked claiming holds here exactly as it does in
+        ``claim_next`` - a task belonging to another role is reported as
+        failed instead of being claimed.  ``claimed_by_session`` is written
+        by the claiming statement itself, so an owner is never missing from
+        a task the batch claimed.
+
+        Each UPDATE also carries the ``depends_on`` predicate (see
+        ``_DEPENDS_ON_SATISFIED_SQL``), so an id whose dependencies are not
+        all ``done`` is reported as failed rather than claimed.
         """
         claimed: list[str] = []
         failed: list[str] = []
         assert self._pool is not None
         async with self._pool.acquire() as conn, conn.transaction():
             for task_id in task_ids:
-                if tenant_id is None:
-                    row = await conn.fetchrow(
-                        """
-                            UPDATE tasks
-                            SET    status         = 'claimed',
-                                   assigned_agent = $2,
-                                   version        = version + 1
-                            WHERE  id = $1 AND status = 'open'
-                            RETURNING id
-                            """,
-                        task_id,
-                        agent_id,
-                    )
-                else:
-                    row = await conn.fetchrow(
-                        """
-                            UPDATE tasks
-                            SET    status         = 'claimed',
-                                   assigned_agent = $2,
-                                   version        = version + 1
-                            WHERE  id = $1 AND status = 'open' AND tenant_id = $3
-                            RETURNING id
-                            """,
-                        task_id,
-                        agent_id,
-                        tenant_id,
-                    )
+                params: list[Any] = [task_id, agent_id, claimed_by_session]
+                predicates = ["id = $1", "status = 'open'", _DEPENDS_ON_SATISFIED_SQL]
+                if tenant_id is not None:
+                    params.append(tenant_id)
+                    predicates.append(f"tenant_id = ${len(params)}")
+                if agent_role is not None:
+                    params.append(agent_role)
+                    predicates.append(f"role = ${len(params)}")
+                row = await conn.fetchrow(
+                    f"""
+                        UPDATE tasks
+                        SET    status             = 'claimed',
+                               assigned_agent     = $2,
+                               claimed_by_session = $3,
+                               version            = version + 1
+                        WHERE  {" AND ".join(predicates)}
+                        RETURNING id
+                        """,
+                    *params,
+                )
                 if row is not None:
                     claimed.append(task_id)
                 else:
@@ -696,10 +805,12 @@ class PostgresTaskStore(BaseTaskStore):
         Args:
             status: If provided, only tasks with this status are returned.
             cell_id: If provided, only tasks in this cell are returned.
-            limit: If provided, return at most this many tasks after filtering,
-                applied as SQL ``LIMIT``. If ``None`` (the default), no bound is
-                applied and every matching row is fetched — callers that need a
-                safety ceiling on large tables must pass an explicit limit.
+            limit: Return at most this many tasks after filtering, applied as
+                SQL ``LIMIT``. If ``None`` (the default), falls back to
+                ``_LIST_TASKS_DEFAULT_LIMIT`` — the fetch is always bounded, a
+                caller that needs the full table pages through it by
+                advancing ``offset`` in a loop, or passes an explicit limit
+                above the table size.
             offset: If provided, skip this many tasks after filtering, applied
                 as SQL ``OFFSET``. Combine with ``limit`` for paginated iteration.
 
@@ -725,10 +836,10 @@ class PostgresTaskStore(BaseTaskStore):
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         sql = f"SELECT * FROM tasks {where} ORDER BY priority, created_at"
 
-        if limit is not None:
-            sql += f" LIMIT ${param_n}"
-            params.append(limit)
-            param_n += 1
+        effective_limit = limit if limit is not None else _LIST_TASKS_DEFAULT_LIMIT
+        sql += f" LIMIT ${param_n}"
+        params.append(effective_limit)
+        param_n += 1
 
         if offset is not None:
             sql += f" OFFSET ${param_n}"
@@ -744,6 +855,54 @@ class PostgresTaskStore(BaseTaskStore):
                 done_ids = {r["id"] for r in done_row}
                 tasks = [t for t in tasks if all(dep in done_ids for dep in t.depends_on)]
         return tasks
+
+    async def count_tasks(
+        self,
+        status: str | None = None,
+        cell_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> int:
+        """Return task count, optionally filtered, issuing SELECT COUNT(*) FROM tasks."""
+        assert self._pool is not None
+
+        conditions: list[str] = []
+        params: list[Any] = []
+        param_n = 1
+
+        if status is not None:
+            conditions.append(f"status = ${param_n}")
+            params.append(status)
+            param_n += 1
+
+        if cell_id is not None:
+            conditions.append(f"cell_id = ${param_n}")
+            params.append(cell_id)
+            param_n += 1
+
+        if tenant_id is not None:
+            conditions.append(f"tenant_id = ${param_n}")
+            params.append(tenant_id)
+            param_n += 1
+
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        async with self._pool.acquire() as conn:
+            if status == "open":
+                sql = f"SELECT * FROM tasks {where} ORDER BY priority, created_at"
+                rows = await conn.fetch(sql, *params)
+                done_rows = await conn.fetch("SELECT id FROM tasks WHERE status='done'")
+                done_ids = {r["id"] for r in done_rows}
+                count = 0
+                for r in rows:
+                    raw_deps = r.get("depends_on")
+                    deps = json.loads(raw_deps) if isinstance(raw_deps, str) else (raw_deps or [])
+                    if all(dep in done_ids for dep in deps):
+                        count += 1
+                return count
+
+            sql = f"SELECT COUNT(*) FROM tasks {where}"
+            val = await conn.fetchval(sql, *params)
+            return int(val or 0)
 
     async def get_task(self, task_id: str) -> Task | None:
         """Return a single task by ID."""
@@ -811,6 +970,10 @@ class PostgresTaskStore(BaseTaskStore):
                 duration_seconds=row["duration_seconds"],
                 result_summary=row["result_summary"],
                 cost_usd=row["cost_usd"],
+                tenant_id="",
+                assigned_agent="",
+                owned_files=[],
+                claimed_by_session="",
             )
             for row in reversed(rows)
         ]

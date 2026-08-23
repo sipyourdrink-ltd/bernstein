@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
+from types import SimpleNamespace
 from typing import Any, cast
 
 import bernstein.core.store_postgres as store_postgres
@@ -285,6 +287,117 @@ def test_claim_by_id_without_version_returns_existing_non_open_task(monkeypatch:
     assert task.status is TaskStatus.CLAIMED
 
 
+def test_claim_by_id_sql_gates_unmet_dependencies() -> None:
+    """``claim_by_id`` and its CAS variant carry the same ``depends_on``
+    predicate as ``_CLAIM_NEXT_SQL`` (#4311). ``claim_batch`` builds its
+    SQL per call, so it is covered behaviourally instead.
+
+    Before this fragment existed, only ``claim_next`` gated on dependencies -
+    claiming a task by id, or as part of a batch, bypassed ``depends_on``
+    entirely even though the in-memory store already enforced it there.
+    """
+    for sql in (
+        store_postgres._CLAIM_BY_ID_SQL,
+        store_postgres._CLAIM_BY_ID_CAS_SQL,
+    ):
+        assert "NOT EXISTS" in sql
+        assert "unnest(depends_on)" in sql
+        assert "d.status = 'done'" in sql
+
+
+def test_claim_by_id_does_not_claim_task_with_unmet_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A task whose ``depends_on`` predicate fails must not be reported as
+    claimed. The gated UPDATE matches no row, so ``claim_by_id`` falls back
+    to the existing "return current state" path instead of flipping status.
+    """
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    class _Conn:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def fetchrow(self, query: str, *args: object) -> object | None:
+            await asyncio.sleep(0)  # Async interface requirement
+            self.calls += 1
+            # First call is the gated UPDATE; unmet depends_on -> no row.
+            if self.calls == 1 and "AND    status = 'open'" in query:
+                return None
+            # Fallback re-fetch of current (still-open) state.
+            if self.calls == 2 and "SELECT * FROM tasks" in query:
+                return _task_row(status="open", depends_on=["dep-1"])
+            raise AssertionError(f"unexpected fetchrow query: {query}")
+
+        async def fetchval(self, query: str, *args: object) -> object:
+            await asyncio.sleep(0)  # Async interface requirement
+            if "SELECT 1 FROM tasks" in query:
+                return 1  # the task exists - it just was not claimable
+            raise AssertionError(f"unexpected fetchval query: {query}")
+
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(_Conn())
+
+    task = asyncio.run(store.claim_by_id("task-1"))
+
+    # Not claimed - the row the gated UPDATE would have touched never matched.
+    assert task.status is TaskStatus.OPEN
+
+
+def test_claim_by_id_cas_does_not_claim_task_with_unmet_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CAS-locked variant must also refuse an unmet-dependency task.
+
+    It surfaces through the existing conflict ``ValueError`` (409 at the
+    HTTP layer) rather than silently claiming - the version genuinely did
+    not change, since the gated UPDATE never touched the row.
+    """
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    class _Conn:
+        async def fetchrow(self, query: str, *args: object) -> object | None:
+            await asyncio.sleep(0)  # Async interface requirement
+            if "AND    version = $2" in query:
+                return None  # gated UPDATE matched nothing - dependency unmet
+            raise AssertionError(f"unexpected fetchrow query: {query}")
+
+        async def fetchval(self, query: str, *args: object) -> object:
+            await asyncio.sleep(0)  # Async interface requirement
+            if "SELECT 1 FROM tasks" in query:
+                return 1
+            if "SELECT version FROM tasks" in query:
+                return 3  # unchanged - the row was never touched
+            raise AssertionError(f"unexpected fetchval query: {query}")
+
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(_Conn())
+
+    with pytest.raises(ValueError):
+        asyncio.run(store.claim_by_id("task-1", expected_version=3))
+
+
+def test_claim_batch_reports_unmet_dependency_task_as_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A batch with one dependency-gated id and one eligible id claims only
+    the eligible one - the gated UPDATE matches no row for the blocked id,
+    so it comes back failed rather than claimed alongside the other.
+    """
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    class _Conn(_TxAware):
+        async def fetchrow(self, query: str, *args: object) -> object | None:
+            await asyncio.sleep(0)  # Async interface requirement
+            task_id = args[0]
+            if task_id == "blocked":
+                return None  # dependency unmet - gated UPDATE touches nothing
+            return {"id": task_id}
+
+    conn = _Conn()
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+
+    claimed, failed = asyncio.run(store.claim_batch(["blocked", "ready"], agent_id="worker-1"))
+
+    assert claimed == ["ready"]
+    assert failed == ["blocked"]
+
+
 def test_list_tasks_limit_and_offset_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
 
@@ -343,6 +456,39 @@ def test_list_tasks_limit_and_offset_bounds(monkeypatch: pytest.MonkeyPatch) -> 
     assert conn.queries[-1][0] == "SELECT id FROM tasks WHERE status='done'"
 
 
+def test_list_tasks_bounded_by_default_without_explicit_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """list_tasks() must not fetch the entire table when the caller omits limit."""
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+    bound = store_postgres._LIST_TASKS_DEFAULT_LIMIT
+
+    class _Conn:
+        def __init__(self, row_count: int) -> None:
+            self.queries: list[tuple[str, tuple[object, ...]]] = []
+            self.all_rows = [_task_row(id=f"task-{i}", title=f"Task {i}") for i in range(row_count)]
+
+        async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+            await asyncio.sleep(0)
+            self.queries.append((query, args))
+            if "FROM tasks" in query:
+                # Emulate PostgreSQL: only ever return up to the requested LIMIT.
+                limit_val = len(self.all_rows)
+                for i, arg in enumerate(args, start=1):
+                    if f"LIMIT ${i}" in query:
+                        limit_val = int(arg)  # type: ignore[arg-type]
+                return self.all_rows[:limit_val]
+            return []
+
+    conn = _Conn(row_count=bound + 1)
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+
+    tasks = asyncio.run(store.list_tasks())
+
+    assert len(tasks) == bound
+    assert f"LIMIT ${1}" in conn.queries[-1][0]
+    assert conn.queries[-1][1] == (bound,)
+
+
 def test_read_archive_bound_keeps_passing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
 
@@ -381,3 +527,382 @@ def test_read_archive_bound_keeps_passing(monkeypatch: pytest.MonkeyPatch) -> No
     assert len(records) == 5
     assert "LIMIT  $1" in conn.queries[0][0]
     assert conn.queries[0][1] == (5,)
+
+
+def test_postgres_count_tasks_executes_select_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    class _Conn:
+        def __init__(self) -> None:
+            self.executed_query: str | None = None
+            self.executed_params: tuple[object, ...] = ()
+
+        async def fetchval(self, query: str, *args: object) -> object:
+            await asyncio.sleep(0)
+            self.executed_query = query
+            self.executed_params = args
+            return 42
+
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    conn = _Conn()
+    cast("Any", store)._pool = _FakePool(conn)
+
+    count = asyncio.run(store.count_tasks(status="done", cell_id="cell-1", tenant_id="tenant-a"))
+
+    assert count == 42
+    assert conn.executed_query == "SELECT COUNT(*) FROM tasks WHERE status = $1 AND cell_id = $2 AND tenant_id = $3"
+    assert conn.executed_params == ("done", "cell-1", "tenant-a")
+
+
+class _ClaimBatchConn(_TxAware):
+    """Fake connection that evaluates ``claim_batch``'s UPDATE predicates.
+
+    Mimics PostgreSQL closely enough for the claim gate: a row is returned
+    only when every predicate the query actually carries matches the stored
+    row.  A predicate the query omits is therefore invisible here - which is
+    exactly what a missing role gate looks like to a caller.
+    """
+
+    def __init__(self, rows: dict[str, dict[str, object]]) -> None:
+        self.rows = rows
+        self.queries: list[tuple[str, tuple[object, ...]]] = []
+
+    async def fetchrow(self, query: str, *args: object) -> object | None:
+        await asyncio.sleep(0)  # Async interface requirement
+        self.queries.append((query, args))
+        task_id = args[0]
+        # $1 is the id, $2 the agent and $3 the claim owner; the optional
+        # predicates bind the remaining params in the order they appear.
+        optional = [name for name in ("tenant_id", "role") if f"{name} = $" in query.split("WHERE", 1)[1]]
+        optional.sort(key=lambda name: query.index(f"{name} = $"))
+        bound = dict(zip(optional, args[3:], strict=True))
+
+        row = self.rows.get(cast("str", task_id))
+        if row is None or row["status"] != "open":
+            return None
+        if any(row[name] != value for name, value in bound.items()):
+            return None
+        return {"id": task_id}
+
+
+def test_claim_batch_rejects_role_mismatched_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``claim_batch`` must honor ``agent_role`` like the in-memory store.
+
+    Without a role predicate in the UPDATE, a worker registered as one role
+    could claim another role's task on the PostgreSQL backend - bypassing
+    the role-locked claiming ``claim_next`` enforces via ``_CLAIM_NEXT_SQL``.
+    """
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    conn = _ClaimBatchConn(
+        {
+            "task-backend": {"status": "open", "role": "backend", "tenant_id": None},
+            "task-qa": {"status": "open", "role": "qa", "tenant_id": None},
+        }
+    )
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+
+    claimed, failed = asyncio.run(store.claim_batch(["task-backend", "task-qa"], "agent-1", agent_role="backend"))
+
+    assert claimed == ["task-backend"]
+    assert failed == ["task-qa"]
+    assert all("role = $" in query for query, _ in conn.queries)
+
+
+def test_claim_batch_rejects_role_mismatch_within_tenant_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The tenant-scoped variant carries the role gate too.
+
+    Both predicates apply together: a task inside the tenant scope but owned
+    by another role stays unclaimed.
+    """
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    conn = _ClaimBatchConn(
+        {
+            "task-backend": {"status": "open", "role": "backend", "tenant_id": "tenant-a"},
+            "task-qa": {"status": "open", "role": "qa", "tenant_id": "tenant-a"},
+            "task-other-tenant": {"status": "open", "role": "backend", "tenant_id": "tenant-b"},
+        }
+    )
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+
+    claimed, failed = asyncio.run(
+        store.claim_batch(
+            ["task-backend", "task-qa", "task-other-tenant"],
+            "agent-1",
+            agent_role="backend",
+            tenant_id="tenant-a",
+        )
+    )
+
+    assert claimed == ["task-backend"]
+    assert failed == ["task-qa", "task-other-tenant"]
+
+
+def test_claim_batch_without_role_claims_any_open_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``agent_role=None`` keeps the pre-existing unrestricted behavior."""
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    conn = _ClaimBatchConn(
+        {
+            "task-backend": {"status": "open", "role": "backend", "tenant_id": None},
+            "task-qa": {"status": "open", "role": "qa", "tenant_id": None},
+        }
+    )
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+
+    claimed, failed = asyncio.run(store.claim_batch(["task-backend", "task-qa"], "agent-1"))
+
+    assert claimed == ["task-backend", "task-qa"]
+    assert failed == []
+    assert all("role = $" not in query for query, _ in conn.queries)
+
+
+def test_claim_by_id_rejects_role_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``claim_by_id`` must honor ``agent_role`` like the in-memory store.
+
+    The gated UPDATE matches nothing, and the diagnosis that follows has to
+    tell a role mismatch apart from "already claimed": a mismatch raises
+    ``ValueError`` (409 at the HTTP layer) instead of returning the task.
+    """
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    class _Conn:
+        def __init__(self) -> None:
+            self.queries: list[str] = []
+
+        async def fetchrow(self, query: str, *args: object) -> object | None:
+            await asyncio.sleep(0)  # Async interface requirement
+            self.queries.append(query)
+            if "UPDATE tasks" in query:
+                return None  # role predicate excluded the row
+            if "SELECT * FROM tasks" in query:
+                return _task_row(status="open", role="backend")
+            raise AssertionError(f"unexpected fetchrow query: {query}")
+
+        async def fetchval(self, query: str, *args: object) -> object:
+            await asyncio.sleep(0)  # Async interface requirement
+            if "SELECT 1 FROM tasks" in query:
+                return 1
+            raise AssertionError(f"unexpected fetchval query: {query}")
+
+    conn = _Conn()
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+
+    with pytest.raises(ValueError, match="role mismatch"):
+        asyncio.run(store.claim_by_id("task-1", agent_role="qa"))
+
+    assert "role" in conn.queries[0]
+
+
+def test_claim_by_id_cas_reports_role_mismatch_not_version_conflict(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CAS variant names the real reason.
+
+    With the role gate in the statement, a mismatched role and a stale
+    version both surface as an empty UPDATE - reporting the mismatch as a
+    version conflict would send the caller into a pointless refetch/retry.
+    """
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    class _Conn:
+        async def fetchrow(self, query: str, *args: object) -> object | None:
+            await asyncio.sleep(0)  # Async interface requirement
+            if "UPDATE tasks" in query:
+                return None
+            if "SELECT * FROM tasks" in query:
+                return _task_row(status="open", role="backend", version=3)
+            raise AssertionError(f"unexpected fetchrow query: {query}")
+
+        async def fetchval(self, query: str, *args: object) -> object:
+            await asyncio.sleep(0)  # Async interface requirement
+            if "SELECT 1 FROM tasks" in query:
+                return 1
+            if "SELECT version FROM tasks" in query:
+                return 3
+            raise AssertionError(f"unexpected fetchval query: {query}")
+
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(_Conn())
+
+    with pytest.raises(ValueError, match="role mismatch"):
+        asyncio.run(store.claim_by_id("task-1", expected_version=3, agent_role="qa"))
+
+
+def test_claim_by_id_matching_role_claims_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A matching role claims normally, with the role bound as a parameter."""
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    class _Conn:
+        def __init__(self) -> None:
+            self.args: tuple[object, ...] = ()
+
+        async def fetchrow(self, query: str, *args: object) -> object | None:
+            await asyncio.sleep(0)  # Async interface requirement
+            assert "UPDATE tasks" in query
+            self.args = args
+            return _task_row(status="claimed", role="backend")
+
+    conn = _Conn()
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+
+    task = asyncio.run(store.claim_by_id("task-1", agent_role="backend"))
+
+    assert task.status is TaskStatus.CLAIMED
+    assert conn.args == ("task-1", None, "backend")
+
+
+def test_claim_paths_accept_the_contract_signature() -> None:
+    """Every store's claim methods must accept what ``BaseTaskStore`` declares.
+
+    The routes call these by keyword, so a parameter the base class carries
+    and an implementation omits is a 500 at request time rather than an
+    error at import time (#4328). A signature check is the cheapest thing
+    that catches the drift.
+    """
+    from bernstein.core.persistence.store import BaseTaskStore
+    from bernstein.core.tasks.task_store_core import TaskStore
+
+    for method in ("claim_by_id", "claim_batch"):
+        expected = set(inspect.signature(getattr(BaseTaskStore, method)).parameters)
+        for store_cls in (TaskStore, store_postgres.PostgresTaskStore):
+            actual = set(inspect.signature(getattr(store_cls, method)).parameters)
+            missing = expected - actual
+            assert not missing, f"{store_cls.__name__}.{method} is missing {sorted(missing)}"
+
+
+def test_claim_by_id_accepts_route_call_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``POST /tasks/{id}/claim`` passes ``claimed_by_session``; recording the
+    owner happens in the claim statement itself, so a task is never left
+    claimed with no owner.
+    """
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    class _Conn:
+        def __init__(self) -> None:
+            self.args: tuple[object, ...] = ()
+            self.query = ""
+
+        async def fetchrow(self, query: str, *args: object) -> object | None:
+            await asyncio.sleep(0)  # Async interface requirement
+            self.query = query
+            self.args = args
+            return _task_row(status="claimed", claimed_by_session="sess-1")
+
+    conn = _Conn()
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+
+    task = asyncio.run(store.claim_by_id("task-1", expected_version=None, claimed_by_session="sess-1"))
+
+    assert task.claimed_by_session == "sess-1"
+    assert "claimed_by_session" in conn.query
+    assert "sess-1" in conn.args
+
+
+def test_claim_batch_accepts_route_call_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``POST /tasks/claim-batch`` passes ``claimed_by_session`` alongside the
+    tenant scope."""
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    conn = _ClaimBatchConn({"task-1": {"status": "open", "role": "backend", "tenant_id": "tenant-a"}})
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+
+    claimed, failed = asyncio.run(
+        store.claim_batch(["task-1"], "agent-1", claimed_by_session="sess-1", tenant_id="tenant-a")
+    )
+
+    assert claimed == ["task-1"]
+    assert failed == []
+    assert "claimed_by_session" in conn.queries[0][0]
+    assert "sess-1" in conn.queries[0][1]
+
+
+def test_ddl_adds_claim_owner_column_to_existing_installs() -> None:
+    """The column ships as an idempotent ALTER as well as in CREATE TABLE.
+
+    ``CREATE TABLE IF NOT EXISTS`` is a no-op on an install that already has
+    the table, so a new column reaches existing deployments only through the
+    ALTER.
+    """
+    assert "claimed_by_session" in store_postgres._DDL
+    assert "ADD COLUMN IF NOT EXISTS claimed_by_session" in store_postgres._DDL
+
+
+def test_ddl_defines_and_migrates_the_tenant_column() -> None:
+    """Tenant-scoped queries reference a column the DDL must actually create.
+
+    ``claim_batch`` and ``count_tasks`` both emit ``tenant_id = $n``, and the
+    claim route always resolves a scope - so a missing column is not a
+    multi-tenant-only problem, it is every batch claim (#4332).
+    """
+    assert "tenant_id" in store_postgres._DDL
+    assert "ADD COLUMN IF NOT EXISTS tenant_id" in store_postgres._DDL
+
+
+def test_create_persists_the_requested_tenant(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A task created under a tenant is stored under it.
+
+    The in-memory store normalizes ``req.tenant_id`` onto the task; this
+    backend dropped it, so a task created under tenant B was stored with no
+    scope at all and read back as the default one.
+    """
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    class _Conn:
+        def __init__(self) -> None:
+            self.insert = ""
+            self.params: tuple[object, ...] = ()
+
+        async def fetch(self, query: str, *args: object) -> list[object]:
+            await asyncio.sleep(0)  # Async interface requirement
+            return []
+
+        async def execute(self, query: str, *args: object) -> None:
+            await asyncio.sleep(0)  # Async interface requirement
+            self.insert = query
+            self.params = args
+
+    conn = _Conn()
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+
+    req = SimpleNamespace(
+        title="Review change",
+        description="desc",
+        role="backend",
+        priority=2,
+        scope="medium",
+        complexity="medium",
+        estimated_minutes=30,
+        depends_on=[],
+        owned_files=[],
+        cell_id=None,
+        task_type="standard",
+        upgrade_details=None,
+        model=None,
+        effort=None,
+        completion_signals=[],
+        tenant_id="tenant-a",
+    )
+
+    task = asyncio.run(store.create(cast("Any", req)))
+
+    assert task.tenant_id == "tenant-a"
+    assert "tenant_id" in conn.insert
+    assert "tenant-a" in conn.params
+
+
+def test_row_to_task_reads_the_tenant_back() -> None:
+    """A stored tenant survives the round trip; a legacy row falls back."""
+    scoped = store_postgres._row_to_task(_task_row(tenant_id="tenant-a"))
+    assert scoped.tenant_id == "tenant-a"
+
+    legacy = _task_row()
+    legacy.pop("tenant_id", None)
+    assert store_postgres._row_to_task(legacy).tenant_id == "default"

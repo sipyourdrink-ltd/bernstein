@@ -31,6 +31,7 @@ from bernstein.core.task_lifecycle import (
     _has_llm_judge_signal,
     _move_backlog_ticket,
     _record_ab_test_outcome,
+    _verify_against_merge_preview,
     _verify_via_janitor,
     claim_and_spawn_batches,
     prepare_speculative_warm_pool,
@@ -442,7 +443,13 @@ def test_claim_and_spawn_batches_sets_xl_timeout_bucket_for_high_risk_batch(tmp_
 
 
 def test_claim_and_spawn_batches_blocked_by_high_error_rate(tmp_path: Path, make_task: Any) -> None:
-    """claim_and_spawn_batches skips the entire spawn wave when convergence guard detects high error rate."""
+    """claim_and_spawn_batches skips the spawn wave when the error rate is high.
+
+    ``alive_count`` is 1, not 0: the rate gates are backpressure, and at zero
+    active agents the guard deliberately stops gating (see
+    ``test_convergence_guard_idle_floor``). One is also below ``max_agents``,
+    so the guard is the only gate that can block this wave.
+    """
     orch = _claim_orch(tmp_path)
     # Wire a convergence guard with a low error-rate threshold
     cg = ConvergenceGuard(ConvergenceGuardConfig(max_error_rate=0.3))
@@ -460,7 +467,7 @@ def test_claim_and_spawn_batches_blocked_by_high_error_rate(tmp_path: Path, make
     task = make_task(id="T-blocked", role="backend")
     result = TickResult()
 
-    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
+    claim_and_spawn_batches(orch, [[task]], alive_count=1, assigned_task_ids=set(), done_ids=set(), result=result)
 
     # Spawn must not happen - convergence guard blocked it
     orch._client.post.assert_not_called()
@@ -795,7 +802,16 @@ def test_process_completed_tasks_dispatches_llm_judge_to_run_janitor(
     assert mock_process.call_count == 2
     assert len(submitted) == 2
 
-    dispatched = {args[0].id: fn for fn, args, _ in submitted}
+    # A task whose session owns a worktree is verified against the agent
+    # branch merged onto the run branch (issue #4367), so the submitted
+    # callable is the preview wrapper and the real verifier is its first
+    # argument. Unwrap it so this test keeps asserting dispatch routing.
+    def _unwrap(fn: Any, args: tuple[Any, ...]) -> tuple[Any, Any]:
+        if fn is _verify_against_merge_preview:
+            return args[0], args[1]
+        return fn, args[0]
+
+    dispatched = {task_obj.id: verifier for verifier, task_obj in (_unwrap(fn, args) for fn, args, _ in submitted)}
     assert dispatched["T-judge"] is _verify_via_janitor
     # Non-judge tasks keep the sync fast path. Since #2990 that seam is
     # ``verify_task_completion``, which dispatches on the task's artifact kind

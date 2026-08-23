@@ -72,6 +72,11 @@ from bernstein.core.replay.provider_state import (
     record_provider_state_mutation,
     verify_provider_state,
 )
+from bernstein.core.replay.read_paths import (
+    ReadPathDerivationError,
+    ReadPathSet,
+    derive_read_paths,
+)
 from bernstein.core.replay.run_receipt import (
     RUN_RECEIPT_FILENAME,
     RunReceipt,
@@ -132,12 +137,15 @@ __all__ = [
     "JournalVerifyResult",
     "ProviderStateMutation",
     "ProviderStateVerifyResult",
+    "ReadPathDerivationError",
+    "ReadPathSet",
     "ReplayGateway",
     "ReplayMissError",
     "RunReceipt",
     "RunReceiptError",
     "RunReceiptVerifyResult",
     "build_run_receipt",
+    "derive_read_paths",
     "diff_event_logs",
     "fork_run",
     "is_recording_enabled",

@@ -3514,8 +3514,15 @@ class TestMaybeRetryTask:
         tmp_path: Path,
         *,
         max_retries: int = 2,
+        default_model: str | None = "mock-model",
     ) -> tuple[Orchestrator, list[dict]]:
-        """Return (orchestrator, captured_post_bodies) with POST /tasks mocked."""
+        """Return (orchestrator, captured_post_bodies) with POST /tasks mocked.
+
+        ``default_model`` is the run-level ``--model`` pin. Tests that assert
+        the Claude tier ladder must pass ``None``: a pinned model is carried
+        through retries verbatim rather than escalated (#4274), so with a pin
+        in place there is no ladder to observe.
+        """
         posted: list[dict] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -3526,7 +3533,7 @@ class TestMaybeRetryTask:
 
         transport = httpx.MockTransport(handler)
         cfg = OrchestratorConfig(server_url="http://testserver", max_task_retries=max_retries)
-        orch = _build_orchestrator(tmp_path, transport, config=cfg)
+        orch = _build_orchestrator(tmp_path, transport, config=cfg, default_model=default_model)
         return orch, posted
 
     def test_first_retry_bumps_effort_keeps_model(self, tmp_path: Path) -> None:
@@ -3539,7 +3546,8 @@ class TestMaybeRetryTask:
             model="sonnet",
             effort="low",
         )
-        orch, posted = self._build(tmp_path)
+        # No run-level pin: this test is about the tier ladder itself.
+        orch, posted = self._build(tmp_path, default_model=None)
 
         result = orch._maybe_retry_task(task)
 
@@ -3578,7 +3586,8 @@ class TestMaybeRetryTask:
             effort="medium",
             retry_count=1,
         )
-        orch, posted = self._build(tmp_path)
+        # No run-level pin: this test is about the tier ladder itself.
+        orch, posted = self._build(tmp_path, default_model=None)
 
         result = orch._maybe_retry_task(task)
 
@@ -3661,7 +3670,8 @@ class TestMaybeRetryTask:
             effort="medium",
             retry_count=1,
         )
-        orch, posted = self._build(tmp_path)
+        # No run-level pin: this test is about the tier ladder itself.
+        orch, posted = self._build(tmp_path, default_model=None)
 
         orch._maybe_retry_task(task)
 
@@ -4458,6 +4468,98 @@ class TestShutdownFinalOnQuiescenceSelfStop:
         assert final_content != interim_content, "final retrospective must overwrite the interim snapshot"
         assert "INTERIM" not in final_content, "the FINAL retrospective must not be labeled interim"
 
+    def test_summary_json_reflects_final_state_not_stale_interim_quiescence(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Issue #4223: ``summary.json`` has the same stale-interim problem the
+        retrospective test above already covers, but for the machine-readable
+        report instead of the human-readable one.
+
+        Same two-tick shape as
+        ``test_regeneration_fires_on_later_quiescence_after_unconfirmed_first``:
+        tick 1 quiesces on a single done task and writes summary.json via the
+        8b interim path, then the settle window finds a retry task so the run
+        continues; tick 2 quiesces for real once the retry has permanently
+        failed. Before the fix, tick 2 skipped ``_generate_run_summary``
+        entirely (gated on ``_summary_written``) and nothing else ever
+        rewrote summary.json, so the file shipped with the run's true
+        terminal state was the tick-1 snapshot: 1 task, no failure recorded,
+        even though the run went on to fail a task afterward.
+        """
+        monkeypatch.setenv("BERNSTEIN_QUIESCENCE_SETTLE_S", "0")
+
+        def _mk(task_id: str, title: str, status: str) -> dict[str, Any]:
+            return {
+                "id": task_id,
+                "title": title,
+                "description": title,
+                "role": "qa",
+                "priority": 1,
+                "scope": "small",
+                "complexity": "low",
+                "estimated_minutes": 5,
+                "status": status,
+                "depends_on": [],
+                "owned_files": [],
+                "assigned_agent": None,
+                "result_summary": "done" if status == "done" else None,
+                "task_type": "standard",
+                "retry_count": 0,
+                "max_retries": 3,
+            }
+
+        done_task = _mk("aaaa11112222", "Implement hello subcommand", "done")
+        retry_task_open = _mk("bbbb33334444", "Add test for hello subcommand (retry)", "open")
+        retry_task_failed = dict(retry_task_open, status="failed")
+
+        phase = {"n": 1, "tasks_calls": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and request.url.path == "/tasks":
+                phase["tasks_calls"] += 1
+                if phase["n"] == 1:
+                    if phase["tasks_calls"] >= 3:
+                        return _tasks_response(request.url, [done_task, retry_task_open])
+                    return _tasks_response(request.url, [done_task])
+                return _tasks_response(request.url, [done_task, retry_task_failed])
+            return httpx.Response(200, json={})
+
+        cfg = OrchestratorConfig(
+            server_url="http://testserver",
+            evolve_mode=False,
+            evolution_enabled=False,
+        )
+        orch = _build_orchestrator(tmp_path, httpx.MockTransport(handler), config=cfg)
+        orch._running = True  # as run() sets before its tick loop
+
+        # Tick 1: quiescence detected -> summary.json written with the
+        # interim (1-task, 0-failed) snapshot; settle window finds the
+        # retry task -> run continues.
+        orch.tick()
+
+        summary_path = tmp_path / ".sdd" / "runs" / orch._run_id / "summary.json"
+        interim_summary = json.loads(summary_path.read_text())
+        assert interim_summary["tasks_total"] == 1, "tick 1 sees only the already-done task"
+        assert interim_summary["tasks_failed"] == 0
+        assert orch._summary_written is True
+
+        # Tick 2: truly quiescent - the retry task has permanently failed.
+        phase["n"] = 2
+        orch.tick()
+
+        assert orch._running is False, "tick 2 must self-stop on confirmed quiescence"
+        assert orch._final_retrospective_regenerated is True
+
+        final_summary = json.loads(summary_path.read_text())
+        assert final_summary["tasks_total"] == 2, (
+            "summary.json must be regenerated at shutdown to include the retry task "
+            "that appeared after the interim fire"
+        )
+        assert final_summary["tasks_completed"] == 1
+        assert final_summary["tasks_failed"] == 1, (
+            "the retry task's eventual failure must reach summary.json, not just the retrospective"
+        )
+
 
 # --- DryRun ---
 
@@ -4563,6 +4665,18 @@ class TestRunEvolutionCycle:
         spawner = AgentSpawner(adp, templates_dir, tmp_path)
         client = httpx.Client(transport=transport, base_url="http://testserver")
         orch = Orchestrator(cfg, spawner, tmp_path, client=client, evolution=evolution)
+        # Seed a finished goal task so AutoSpawnGuard's terminal-baseline
+        # check (#4226) doesn't refuse upgrade_proposal spawns in tests that
+        # aren't exercising that check themselves.
+        goal = Task(
+            id="goal",
+            title="Implement the feature",
+            description="desc",
+            role="backend",
+            task_type=TaskType.STANDARD,
+            status=TaskStatus.DONE,
+        )
+        orch._latest_tasks_by_id = {goal.id: goal}
         return orch, evolution
 
     def _make_proposal(self, proposal_id: str = "P-001", title: str = "Improve routing") -> MagicMock:
@@ -5035,24 +5149,27 @@ class TestParallelVerification:
     def test_multiple_done_tasks_verified_concurrently(self, tmp_path: Path) -> None:
         """Multiple done tasks with signals are verified in parallel.
 
-        Mocks verify_task_completion with a 0.2s sleep. With 4 tasks running
-        serially this would take ~0.8s; in parallel it should finish in ~0.2s.
+        Each verify call blocks on a shared barrier that only releases once
+        all 4 calls have arrived. A serial implementation would leave the
+        first call waiting at the barrier alone, so the bounded wait below
+        raises ``BrokenBarrierError`` for it instead of hanging the shard;
+        genuine parallel execution releases the barrier immediately. This
+        proves overlap directly rather than inferring it from elapsed
+        wall-clock time, which flakes under ordinary CI scheduling noise
+        (see #4248).
         """
         import threading
         from unittest.mock import patch
 
-        call_times: list[float] = []
-        lock = threading.Lock()
+        num_tasks = 4
+        barrier = threading.Barrier(num_tasks, timeout=5.0)
 
-        def slow_verify(task: object, workdir: object) -> tuple[bool, list[str]]:
-            start = time.time()
-            time.sleep(0.15)
-            with lock:
-                call_times.append(start)
+        def parallel_verify(task: object, workdir: object) -> tuple[bool, list[str]]:
+            barrier.wait()
             return (True, [])
 
         task_dicts = []
-        for i in range(4):
+        for i in range(num_tasks):
             t = _make_task(id=f"T-par-{i}", status="done")
             td = _task_as_dict(t)
             td["completion_signals"] = [{"type": "path_exists", "value": "x"}]
@@ -5072,20 +5189,14 @@ class TestParallelVerification:
         # ``verify_task_completion`` so an artifact-mode task resolves to the
         # receipt path; a code_diff task still reaches ``verify_task`` beneath
         # it. Patching the retired name binds nothing.
-        with patch("bernstein.core.tasks.task_lifecycle.verify_task_completion", side_effect=slow_verify):
-            t_start = time.time()
+        with patch("bernstein.core.tasks.task_lifecycle.verify_task_completion", side_effect=parallel_verify):
             result = TickResult()
             orch._process_completed_tasks(tasks_with_signals, result)
-            elapsed = time.time() - t_start
 
-        # All 4 tasks verified
-        assert len(result.verified) == 4
-        # Total wall time should be much less than 4 × 0.15s = 0.6s
-        assert elapsed < 0.5, f"Expected parallel execution but took {elapsed:.2f}s"
-        # All 4 verify calls started within ~0.15s of each other
-        assert len(call_times) == 4
-        spread = max(call_times) - min(call_times)
-        assert spread < 0.1, f"Calls spread too far apart: {spread:.3f}s"
+        # All 4 tasks verified. This is only possible because the barrier
+        # released, which requires all 4 verify calls to have been in
+        # flight at once.
+        assert len(result.verified) == num_tasks
 
 
 # --- Parallel verification ---

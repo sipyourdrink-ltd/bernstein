@@ -24,7 +24,7 @@ import logging
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -337,11 +337,11 @@ class PartialState:
             ValueError: If ``timestamp`` cannot be cast to float.
         """
         return cls(
-            timestamp=float(data["timestamp"]),  # type: ignore[arg-type]
+            timestamp=float(cast(int, data["timestamp"])),
             goal=str(data.get("goal", "")),
-            completed_task_ids=list(data.get("completed_task_ids", [])),  # type: ignore[arg-type]
-            in_flight_task_ids=list(data.get("in_flight_task_ids", [])),  # type: ignore[arg-type]
-            next_steps=list(data.get("next_steps", [])),  # type: ignore[arg-type]
-            cost_spent=float(data.get("cost_spent", 0.0)),  # type: ignore[arg-type]
+            completed_task_ids=list(cast("list[str]", data.get("completed_task_ids", []))),
+            in_flight_task_ids=list(cast("list[str]", data.get("in_flight_task_ids", []))),
+            next_steps=list(cast("list[str]", data.get("next_steps", []))),
+            cost_spent=float(cast(float, data.get("cost_spent", 0.0))),
             git_sha=str(data.get("git_sha", "")),
         )

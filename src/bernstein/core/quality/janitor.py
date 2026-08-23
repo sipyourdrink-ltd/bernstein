@@ -266,12 +266,20 @@ def _attribute_task_work(task: Task, workdir: Path) -> tuple[list[str], list[str
     return [], sorted(set(files)), reason
 
 
-def evaluate_signal(signal: CompletionSignal, workdir: Path) -> tuple[bool, str]:
+def evaluate_signal(
+    signal: CompletionSignal,
+    workdir: Path,
+    *,
+    coverage_record: Any | None = None,
+    lineage_store: Any | None = None,
+) -> tuple[bool, str]:
     """Evaluate a single completion signal against the filesystem.
 
     Args:
         signal: The signal to check.
         workdir: Project root -- relative paths resolve against this.
+        coverage_record: Optional ToolCoverageRecord or LineageEntry for absence claims.
+        lineage_store: Optional LineageStore for discovering anchored coverage records.
 
     Returns:
         Tuple of (passed, detail_message).
@@ -281,14 +289,34 @@ def evaluate_signal(signal: CompletionSignal, workdir: Path) -> tuple[bool, str]
             return _check_path_exists(signal.value, workdir)
         case "glob_exists":
             ok = _check_glob_exists(signal.value, workdir)
-            return ok, "matched" if ok else "no matches"
+            if ok:
+                return True, "matched"
+            from bernstein.core.quality.absence_coverage import verify_tool_absence_coverage
+
+            return verify_tool_absence_coverage(
+                tool_name="list_dir",
+                pattern_or_query=signal.value,
+                workdir=workdir,
+                coverage_record=coverage_record,
+                lineage_store=lineage_store,
+            )
         case "test_passes":
             command = _resolve_branch_check_command(signal.value, workdir)
             ok = _check_test_passes(command, workdir)
             return ok, "exit 0" if ok else "non-zero exit"
         case "file_contains":
             ok = _check_file_contains(signal.value, workdir)
-            return ok, "found" if ok else "not found"
+            if ok:
+                return True, "found"
+            from bernstein.core.quality.absence_coverage import verify_tool_absence_coverage
+
+            return verify_tool_absence_coverage(
+                tool_name="read_file",
+                pattern_or_query=signal.value,
+                workdir=workdir,
+                coverage_record=coverage_record,
+                lineage_store=lineage_store,
+            )
         case "llm_review":
             return _check_llm_review(signal.value, workdir)
         case "llm_judge":

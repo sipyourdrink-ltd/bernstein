@@ -329,6 +329,17 @@ class TestCanaryReceipts:
         with pytest.raises(ValueError, match="adapter"):
             write_canary_receipt(tmp_path / "receipts", receipt)
 
+    def test_spaced_adapter_name_writes_a_slugged_receipt(self, tmp_path: Path) -> None:
+        """Issue #4363: A spaced display name is folded to a safe slug filename."""
+        outcome = _outcome(adapter="Qwen CLI")
+        receipt = build_canary_receipt(outcome, generated_at=_GENERATED_AT)
+        path = write_canary_receipt(tmp_path / "receipts", receipt)
+        assert path.exists()
+        assert path.name.startswith("qwen-cli-")
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        assert verify_canary_receipt(doc)
+        assert doc["receipt"]["adapter"] == "Qwen CLI"
+
 
 # ---------------------------------------------------------------------------
 # Failure threshold + issue dedupe

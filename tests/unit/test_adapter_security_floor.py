@@ -17,15 +17,14 @@ from pathlib import Path
 import pytest
 
 from bernstein.adapters.advisories import ADAPTER_MIN_SAFE_VERSIONS
-from bernstein.adapters.canary import _VERSION_TOKEN_RE as _CANARY_VERSION_TOKEN_RE
 from bernstein.adapters.security_floor import (
-    _VERSION_TOKEN_RE,
     POLICY_BLOCK,
     POLICY_WARN,
     VERDICT_PERMIT,
     VERDICT_REFUSE,
     VERDICT_UNKNOWN_VERSION,
     VERDICT_WARN_OVERRIDE,
+    VERSION_TOKEN_RE,
     AdapterSecurityFloorRefusal,
     audit_preflight_no_below_floor,
     build_preflight_receipt,
@@ -165,6 +164,17 @@ class TestReceipts:
         assert receipt_floor_map_matches(doc)
         # A map mutated after the fact yields a hash mismatch at verification.
         assert not receipt_floor_map_matches(doc, current_hash="sha256:" + "0" * 64)
+
+    def test_spaced_adapter_name_writes_a_slugged_receipt(self, tmp_path: Path) -> None:
+        """Issue #4363: A spaced display name is folded to a safe slug filename."""
+        v = evaluate_spawn_floor("Qwen CLI", "qwen", _BELOW)
+        r = build_preflight_receipt(v, generated_at=_GENERATED_AT)
+        path = write_preflight_receipt(tmp_path, r)
+        assert path.exists()
+        assert path.name.startswith("qwen-cli-")
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        assert verify_preflight_receipt(doc)
+        assert doc["receipt"]["adapter"] == "Qwen CLI"
 
 
 # ---------------------------------------------------------------------------
@@ -346,12 +356,8 @@ class TestVersionTokenRegex:
         ],
     )
     def test_extracts_the_same_token_as_before(self, blob: str, expected: str | None) -> None:
-        match = _VERSION_TOKEN_RE.search(blob)
+        match = VERSION_TOKEN_RE.search(blob)
         assert (match.group(0) if match else None) == expected
-
-    def test_matches_the_canary_scanner(self) -> None:
-        """Both probes must agree; they read the same kind of output."""
-        assert _VERSION_TOKEN_RE.pattern == _CANARY_VERSION_TOKEN_RE.pattern
 
     def test_adversarial_digit_run_stays_fast(self) -> None:
         """A digit run with no dot must not blow up the scan.
@@ -362,7 +368,7 @@ class TestVersionTokenRegex:
         """
         blob = "9" * 40_000 + "x"
         start = time.perf_counter()
-        assert _VERSION_TOKEN_RE.search(blob) is None
+        assert VERSION_TOKEN_RE.search(blob) is None
         elapsed = time.perf_counter() - start
         assert elapsed < 0.5, f"version scan took {elapsed:.3f}s, expected linear time"
 
@@ -372,7 +378,7 @@ class TestVersionTokenRegex:
         def scan(size: int) -> float:
             blob = "9" * size + "x"
             start = time.perf_counter()
-            _VERSION_TOKEN_RE.search(blob)
+            VERSION_TOKEN_RE.search(blob)
             return time.perf_counter() - start
 
         # Warm the engine so the first call does not carry setup cost.

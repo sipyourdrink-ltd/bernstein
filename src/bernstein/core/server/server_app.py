@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import FastAPI
+from starlette.responses import RedirectResponse  # noqa: TC002
 
 from bernstein.core.a2a import A2AHandler
 from bernstein.core.a2a_federation import A2AFederation
@@ -1047,6 +1048,14 @@ def create_app(
 
     store = TaskStore(jsonl_path, metrics_jsonl_path=metrics_jsonl_path)
     sse_bus = SSEBus()
+
+    def _publish_task_update(task_obj: Any) -> None:
+        sse_bus.publish(
+            "task_update",
+            json.dumps({"id": task_obj.id, "status": task_obj.status.value}),
+        )
+
+    store.add_task_listener(_publish_task_update)
     workdir = (
         jsonl_path.parent.parent.parent
         if jsonl_path.parent.name == "runtime" and jsonl_path.parent.parent.name == ".sdd"
@@ -1571,11 +1580,11 @@ def create_app(
     # outside ``api_v1_router``.  We redirect rather than duplicate the
     # schema route so the SPA's swagger-ui pickup keeps the single source
     # of truth.
-    from starlette.responses import RedirectResponse as _RedirectResponse
+    from starlette.responses import RedirectResponse
 
     @application.get("/api/v1/openapi.json", include_in_schema=False)
-    async def _openapi_v1_alias() -> _RedirectResponse:
-        return _RedirectResponse(url="/openapi.json", status_code=307)
+    async def _openapi_v1_alias() -> RedirectResponse:
+        return RedirectResponse(url="/openapi.json", status_code=307)
 
     # Web GUI auto-mount (best-effort): if the SPA build is present in the
     # wheel, expose it at /ui/* and add /api/v1/gui-meta. Failure is silent -

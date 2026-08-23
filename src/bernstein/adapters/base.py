@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import functools
+import hashlib
+import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -23,7 +27,7 @@ from bernstein.core.platform_compat import (
 from bernstein.core.resource_limits import ResourceLimits, make_preexec_fn
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
     from bernstein.core.config.platform_compat import ProcessReapReceipt
@@ -38,6 +42,11 @@ DEFAULT_TIMEOUT_SECONDS: int = 1800
 
 # Grace period between SIGTERM and SIGKILL (seconds).
 _SIGTERM_GRACE_SECONDS: int = 30
+#: First dotted-numeric token in a ``--version`` blob. Possessive quantifiers
+#: plus the digit-run anchor keep the scan linear on untrusted subprocess
+#: output; see the matching constant in ``adapters/security_floor.py``.
+VERSION_TOKEN_RE = re.compile(r"(?<!\d)\d++(?:\.\d++){1,3}")
+
 
 # ---------------------------------------------------------------------------
 # Mutation-observability capability (issue #2507)
@@ -338,6 +347,20 @@ class WaitableProcess(Protocol):
         """Wait for process completion and return its exit status."""
 
 
+#: Process-environment channel carrying the orchestrator root's heartbeat
+#: directory down to ``bernstein-worker``.
+#:
+#: Adapters derive every runtime path from the ``workdir`` they are spawned
+#: into, which under worktree isolation is the agent's own worktree -- while
+#: the orchestrator reads agent state from the project root. A heartbeat
+#: written under the worktree is therefore never observed, and the agent is
+#: killed at the stale threshold with nothing in the log pointing at why
+#: (issue #4330). The root travels through the environment, the same channel
+#: ``BERNSTEIN_RUN_ID`` uses to reach agent subprocesses, so the ~50 adapter
+#: call sites do not each have to learn the difference.
+HEARTBEAT_DIR_ENV = "BERNSTEIN_HEARTBEAT_DIR"
+
+
 def build_worker_cmd(
     cmd: list[str],
     *,
@@ -347,6 +370,7 @@ def build_worker_cmd(
     workdir: Path,
     log_path: Path,
     model: str = "",
+    heartbeat_dir: Path | None = None,
 ) -> list[str]:
     """Wrap a CLI command with bernstein-worker for process visibility.
 
@@ -361,10 +385,16 @@ def build_worker_cmd(
         workdir: Project root directory.
         log_path: Path to the agent log file.
         model: Model name for metadata display.
+        heartbeat_dir: Directory the orchestrator polls for heartbeats.
+            Defaults to whatever the orchestrator exported in
+            :data:`HEARTBEAT_DIR_ENV`; when neither is set the flag is
+            omitted and the worker falls back to ``--workdir``, which is
+            what a standalone ``bernstein-worker`` invocation wants.
 
     Returns:
         Wrapped command list.
     """
+    resolved_heartbeat_dir = str(heartbeat_dir) if heartbeat_dir is not None else os.environ.get(HEARTBEAT_DIR_ENV, "")
     return [
         sys.executable,
         "-m",
@@ -381,9 +411,60 @@ def build_worker_cmd(
         str(log_path),
         "--model",
         model,
+        *(["--heartbeat-dir", resolved_heartbeat_dir] if resolved_heartbeat_dir else []),
         "--",
         *cmd,
     ]
+
+
+# ---------------------------------------------------------------------------
+# Spawn-time capability notices (issue #4256)
+# ---------------------------------------------------------------------------
+#
+# A capability an adapter does not have must be reported at spawn, never
+# silently dropped: a dropped instruction is indistinguishable from a model
+# that ignored it, and that ambiguity is what makes the failure expensive to
+# diagnose. Notices land in the run record next to the other per-run JSONL
+# journals (``refused_merges.jsonl``, ``mailbox.jsonl``) so an operator can
+# answer "how were this run's protocol instructions delivered?" from the run
+# itself rather than from adapter source.
+
+#: Run-record journal of spawn-time capability notices, relative to the agent
+#: working directory. One JSON object per line.
+CAPABILITY_NOTICES_RELPATH: tuple[str, ...] = (".sdd", "runtime", "capability_notices.jsonl")
+
+
+def capability_notices_path(workdir: Path) -> Path:
+    """Return the run-record path spawn-time capability notices append to.
+
+    Args:
+        workdir: Agent working directory (root of ``.sdd``).
+
+    Returns:
+        Path to the run's ``capability_notices.jsonl``.
+    """
+    return workdir.joinpath(*CAPABILITY_NOTICES_RELPATH)
+
+
+def _iter_capability_notices(path: Path) -> Iterator[dict[str, Any]]:
+    """Yield the parsed capability notices already recorded in a run.
+
+    Args:
+        path: The run's ``capability_notices.jsonl``.
+
+    Yields:
+        One decoded notice per well-formed line; malformed lines are skipped
+        so a corrupt journal cannot make a spawn re-report or crash.
+    """
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            parsed = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(parsed, dict):
+            yield parsed
 
 
 class CLIAdapter(ABC):
@@ -439,6 +520,41 @@ class CLIAdapter(ABC):
     def __init__(self) -> None:
         self._resource_limits: ResourceLimits | None = None
         self._rate_limit_meter: RateLimitMeter | None = None
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Wrap each subclass's ``spawn`` with the system-addendum preflight.
+
+        The ``system_addendum`` delivery bucket is a declared contract axis
+        (:meth:`system_addendum_channel`), and a declaration nothing enforces
+        is prose. Enforcing it here - once, on the base class - means every
+        adapter reports how it handled the addendum, including third-party
+        adapters and adapters written after this code, without a per-adapter
+        call anyone can forget to add.
+
+        The wrapper forwards its arguments untouched: an adapter that delivers
+        the addendum receives exactly what it received before.
+
+        Args:
+            **kwargs: Forwarded to :meth:`object.__init_subclass__`.
+        """
+        super().__init_subclass__(**kwargs)
+        spawn = cls.__dict__.get("spawn")
+        if not callable(spawn) or getattr(spawn, "__isabstractmethod__", False):
+            return
+        if getattr(spawn, "_bernstein_addendum_preflight", False):
+            return
+
+        @functools.wraps(spawn)
+        def _spawn_with_addendum_preflight(self: CLIAdapter, *args: Any, **spawn_kwargs: Any) -> Any:
+            self.report_system_addendum_delivery(
+                system_addendum=str(spawn_kwargs.get("system_addendum") or ""),
+                workdir=spawn_kwargs.get("workdir"),
+                session_id=str(spawn_kwargs.get("session_id") or ""),
+            )
+            return spawn(self, *args, **spawn_kwargs)
+
+        _spawn_with_addendum_preflight._bernstein_addendum_preflight = True  # type: ignore[attr-defined]
+        cls.spawn = _spawn_with_addendum_preflight  # type: ignore[method-assign]
 
     @property
     def rate_limit_meter(self) -> RateLimitMeter:
@@ -518,6 +634,98 @@ class CLIAdapter(ABC):
             adapter_name=self._derive_session_namespace(),
             attachments=tuple(attachments),
         )
+
+    def system_addendum_channel(self) -> Any:
+        """Return this adapter's declared ``system_addendum`` delivery channel.
+
+        Resolved from
+        :data:`bernstein.adapters._contract.SYSTEM_ADDENDUM_CHANNEL_MATRIX` by
+        registry namespace, the same way :meth:`strategy` resolves the other
+        contract axes. An adapter with no declaration -- including a
+        third-party one -- resolves to
+        :attr:`~bernstein.adapters._contract.SystemAddendumChannel.IGNORED`, so
+        the conservative assumption is that protocol instructions are dropped.
+
+        Returns:
+            The declared
+            :class:`~bernstein.adapters._contract.SystemAddendumChannel`.
+        """
+        from bernstein.adapters._contract import system_addendum_channel
+
+        return system_addendum_channel(self._derive_session_namespace())
+
+    def report_system_addendum_delivery(
+        self,
+        *,
+        system_addendum: str,
+        workdir: Path | None,
+        session_id: str,
+    ) -> None:
+        """Record how this spawn delivers ``system_addendum``, if at all.
+
+        Called by the spawn preflight (:meth:`__init_subclass__`) before every
+        adapter's ``spawn`` body runs, so no adapter can forget it. A non-empty
+        addendum on an adapter declaring
+        :attr:`~bernstein.adapters._contract.SystemAddendumChannel.IGNORED`
+        logs a warning naming the consequence and writes the notice to the run
+        record; a delivering adapter records the channel it used. An empty
+        addendum records nothing - there is no delivery to report.
+
+        Recording never fails a spawn: the notice is evidence, and a run that
+        cannot write its evidence still has to start.
+
+        Args:
+            system_addendum: The protocol-critical text handed to ``spawn``.
+            workdir: Agent working directory (root of ``.sdd``), or ``None``.
+            session_id: The Bernstein session id this spawn runs under.
+        """
+        if not system_addendum or workdir is None:
+            return
+        try:
+            from bernstein.adapters._contract import SystemAddendumChannel
+
+            channel = self.system_addendum_channel()
+            adapter = self._derive_session_namespace()
+            digest = hashlib.sha256(system_addendum.encode("utf-8")).hexdigest()
+            delivered = channel is not SystemAddendumChannel.IGNORED
+            if not delivered:
+                logger.warning(
+                    "system_addendum not delivered: adapter %r declares no channel for it, so the "
+                    "completion and heartbeat instructions (%d chars, sha256=%s) never reach session "
+                    "%s. The agent can finish its work and never report done, and is then reaped as "
+                    "stalled. Recorded in %s.",
+                    adapter,
+                    len(system_addendum),
+                    digest[:12],
+                    session_id or "<unknown>",
+                    "/".join(CAPABILITY_NOTICES_RELPATH),
+                )
+            record = {
+                "adapter": adapter,
+                "capability": "system_addendum",
+                "channel": str(channel),
+                "delivered": delivered,
+                "addendum_sha256": digest,
+                "addendum_chars": len(system_addendum),
+                "session_id": session_id,
+            }
+            path = capability_notices_path(workdir)
+            key = (adapter, session_id, digest)
+            if path.exists() and any(
+                (
+                    parsed.get("adapter"),
+                    parsed.get("session_id"),
+                    parsed.get("addendum_sha256"),
+                )
+                == key
+                for parsed in _iter_capability_notices(path)
+            ):
+                return
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, sort_keys=True) + "\n")
+        except Exception:
+            logger.debug("system-addendum capability notice could not be recorded", exc_info=True)
 
     def set_resource_limits(self, limits: ResourceLimits | None) -> None:
         """Configure OS-level resource limits applied to spawned child processes.

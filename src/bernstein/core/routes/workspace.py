@@ -81,9 +81,11 @@ def workspace_status(request: Request) -> WorkspaceResponse:
 )
 def workspace_merge_order(request: Request) -> MergeOrderResponse:
     """Return the repo merge order derived from current cross-repo task dependencies."""
+    from bernstein.core.routes.task_crud import _resolve_request_tenant_scope
+
     workspace = _load_workspace_from_request(request)
     if workspace is None:
         raise HTTPException(status_code=404, detail="No workspace configured")
     store = request.app.state.store
-    repos = workspace.merge_order(store.list_tasks())
+    repos = workspace.merge_order(store.list_tasks(tenant_id=_resolve_request_tenant_scope(request)))
     return MergeOrderResponse(repos=repos)

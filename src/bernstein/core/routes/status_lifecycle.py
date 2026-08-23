@@ -60,7 +60,7 @@ def health_check(request: Request) -> HealthResponse:
     return HealthResponse(
         status=overall_status,
         uptime_s=round(time.time() - store.start_ts, 2),
-        task_count=len(store.list_tasks(tenant_id=_resolve_request_tenant_scope(request))),
+        task_count=store.count_tasks(tenant_id=_resolve_request_tenant_scope(request)),
         agent_count=store.agent_count,
         task_queue_depth=summary.get("open", 0),
         memory_mb=float(runtime.get("memory_mb", 0.0)),

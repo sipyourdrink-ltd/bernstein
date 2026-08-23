@@ -99,6 +99,18 @@ All three must pass before committing. No exceptions, no "fix later."
 
 All non-trivial changes land via PR with at least one approving review. Security-touching changes need two approvals or operator-only push. Full process and reviewer expectations: [docs/CODE_REVIEW.md](docs/CODE_REVIEW.md).
 
+### If you cannot open a pull request
+
+Some contributors cannot reach GitHub from where they work. Post the diff as a
+comment on the issue it addresses -- inline in a fenced block, not as a link to
+a file elsewhere. Maintainers do not fetch patches from external hosts, so a
+download link is a dead end; a diff in the thread is reviewable where it lands,
+and if the issue is already assigned, the assignee can take it or decline it
+without anyone having to fetch anything.
+
+Include what a PR would carry: what changed, the tests that prove it, and the
+commit the diff applies to.
+
 ### Docs alongside code
 
 Every PR that adds or changes a feature MUST update docs in the same PR:

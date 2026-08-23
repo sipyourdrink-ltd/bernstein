@@ -567,13 +567,34 @@ class OutputMode(StrEnum):
     ARTIFACT = "artifact"
 
 
+class SessionState(StrEnum):
+    """Whether an adapter reaches agent-side state that outlives a single spawn.
+
+    Every other axis describes how Bernstein *drives* a run. This one
+    describes what the run leaves behind on the agent's side, which is what
+    decides whether a replay of the same inputs can be expected to reproduce
+    the same outputs.
+    """
+
+    #: Each spawn starts from the inputs Bernstein supplies and nothing else.
+    #: An operator may assume a replay of those inputs is reproducible: there
+    #: is no agent-side memory carried in from an earlier run.
+    STATELESS = "stateless"
+    #: The agent keeps state of its own across spawns - a server-side session,
+    #: a memory store, a persistent thread. An operator may NOT assume a replay
+    #: is reproducible, because inputs Bernstein never saw can influence the
+    #: run.
+    PERSISTENT_AGENT = "persistent-agent"
+
+
 class StrategyView(TypedDict):
-    """JSON-serialisable view of an :class:`AdapterStrategy`'s four axes."""
+    """JSON-serialisable view of an :class:`AdapterStrategy`'s five axes."""
 
     resume: str
     dangerous_mode: str
     event_channel: str
     output_mode: str
+    session_state: str
 
 
 class StrategyRow(StrategyView):
@@ -584,7 +605,7 @@ class StrategyRow(StrategyView):
 
 @dataclass(frozen=True)
 class AdapterStrategy:
-    """The declared strategy of a single adapter across all four axes."""
+    """The declared strategy of a single adapter across all five axes."""
 
     resume: ResumeStrategy = ResumeStrategy.UNSUPPORTED
     dangerous_mode: DangerousModeStrategy = DangerousModeStrategy.UNSUPPORTED
@@ -593,6 +614,9 @@ class AdapterStrategy:
     #: committing. An adapter driving a non-coding worker declares ``artifact``
     #: so the completion path reads its canonical output instead of HEAD.
     output_mode: OutputMode = OutputMode.GIT_DIFF
+    #: Defaults to ``stateless``, so every existing row keeps its meaning: an
+    #: adapter that does carry agent-side state across spawns must say so.
+    session_state: SessionState = SessionState.STATELESS
 
     def to_dict(self) -> StrategyView:
         """Return a JSON-serialisable view for operator-facing tables."""
@@ -601,6 +625,7 @@ class AdapterStrategy:
             "dangerous_mode": str(self.dangerous_mode),
             "event_channel": str(self.event_channel),
             "output_mode": str(self.output_mode),
+            "session_state": str(self.session_state),
         }
 
 
@@ -1096,4 +1121,81 @@ def cache_window_capability(adapter_name: str) -> CacheWindowCapability:
 #: Full per-adapter cache-window capability map, one row per declared adapter.
 CACHE_WINDOW_CAPABILITY_MATRIX: dict[str, CacheWindowCapability] = {
     name: cache_window_capability(name) for name in STRATEGY_MATRIX
+}
+
+
+# ---------------------------------------------------------------------------
+# System-addendum delivery channel (issue #4256)
+# ---------------------------------------------------------------------------
+#
+# ``system_addendum`` is the channel that carries protocol-critical text into a
+# spawn: the completion curl, the heartbeat loop, the signal check. Which
+# surface an adapter delivers it on used to be recorded only in that adapter's
+# own docstring, so an adapter that discarded it was indistinguishable from one
+# that honoured it -- and the ambiguity only resolved minutes later, when the
+# supervisor gave up waiting for signals the agent had never been told to emit.
+# Declared here, on the same axis footing as every other adapter capability,
+# and asserted against the adapter sources by the conformance suite.
+
+
+class SystemAddendumChannel(StrEnum):
+    """Where an adapter delivers ``system_addendum`` at the process boundary."""
+
+    #: A real system-prompt channel the upstream CLI exposes, e.g. Claude
+    #: Code's ``--append-system-prompt``. Survives user-prompt truncation.
+    SYSTEM_PROMPT = "system-prompt"
+    #: No separate system prompt; the text is appended to the user prompt.
+    #: The instructions do arrive, but inside a truncatable payload.
+    PROMPT_APPEND = "prompt-append"
+    #: The adapter has no surface for it at all: the text is dropped.
+    IGNORED = "ignored"
+
+
+#: Registry keys of adapters that deliver the addendum on a real system-prompt
+#: channel. Explicit rather than inferred: a system prompt is a stronger
+#: delivery guarantee than a prompt append and must be declared to be relied on.
+_SYSTEM_PROMPT_ADDENDUM_ADAPTERS: frozenset[str] = frozenset(
+    {
+        "claude",
+        "claude_routine",
+        "openai_agents",
+    }
+)
+
+#: Registry keys of adapters with no separate system prompt that nevertheless
+#: append the addendum to the user prompt, so the instructions still reach the
+#: model. The base ``CLIAdapter.spawn`` contract permits this fallback.
+_PROMPT_APPEND_ADDENDUM_ADAPTERS: frozenset[str] = frozenset(
+    {
+        "devin_terminal",
+        "junie",
+        "muse",
+        "python_runtime",
+        "q_dev",
+        "ralphex",
+    }
+)
+
+
+def system_addendum_channel(adapter_name: str) -> SystemAddendumChannel:
+    """Return the declared ``system_addendum`` delivery channel for an adapter.
+
+    Accepts either a registry key or the session-namespace form (resolved
+    through :data:`_NAMESPACE_ALIASES` first). Any adapter absent from both
+    declaration sets -- including unknown / third-party adapters -- reports
+    :attr:`SystemAddendumChannel.IGNORED`, so the orchestrator assumes the
+    protocol instructions were dropped and says so at spawn rather than
+    assuming a delivery the adapter never promised.
+    """
+    key = _NAMESPACE_ALIASES.get(adapter_name, adapter_name)
+    if key in _SYSTEM_PROMPT_ADDENDUM_ADAPTERS:
+        return SystemAddendumChannel.SYSTEM_PROMPT
+    if key in _PROMPT_APPEND_ADDENDUM_ADAPTERS:
+        return SystemAddendumChannel.PROMPT_APPEND
+    return SystemAddendumChannel.IGNORED
+
+
+#: Full per-adapter system-addendum channel map, one row per declared adapter.
+SYSTEM_ADDENDUM_CHANNEL_MATRIX: dict[str, SystemAddendumChannel] = {
+    name: system_addendum_channel(name) for name in STRATEGY_MATRIX
 }

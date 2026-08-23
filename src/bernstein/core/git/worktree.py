@@ -353,14 +353,20 @@ def _derive_local_exclude_entries() -> tuple[str, ...]:
     list: the orchestrator itself generates a session-specific ``CLAUDE.md``
     at the root of every worktree (see ``worktree_claude_md.write_claude_md``),
     so it is always a duplicate/decoy file at that path, never a genuine
-    target-repo deliverable. All entries are anchored to the worktree root
-    (leading ``/``) so they cannot shadow a same-named path a target project
-    legitimately keeps elsewhere (e.g. a nested ``docs/CLAUDE.md`` or a
-    ``.claude/`` skill/command the agent was tasked to author).
+    target-repo deliverable. Likewise ``/.claude/scheduled_tasks.json``: the
+    spawner injects a per-session health-check cron task at that path (see
+    ``spawner_core._inject_scheduled_tasks``), and the file's content embeds
+    the session id and a creation timestamp, so it always conflicts when two
+    agent branches carrying it merge back. All entries are anchored to the
+    worktree root (leading ``/``) so they cannot shadow a same-named path a
+    target project legitimately keeps elsewhere (e.g. a nested
+    ``docs/CLAUDE.md`` or a ``.claude/`` skill/command the agent was tasked
+    to author).
     """
     entries = [f"/{prefix}" for prefix in _MERGE_DENY_PREFIXES]
     entries.extend(f"/{exact}" for exact in sorted(_MERGE_DENY_EXACT))
     entries.append("/CLAUDE.md")
+    entries.append("/.claude/scheduled_tasks.json")
     return tuple(entries)
 
 

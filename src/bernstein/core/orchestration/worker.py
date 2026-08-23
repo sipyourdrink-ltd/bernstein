@@ -234,6 +234,86 @@ def _atomic_write_json(path: Path, info: dict[str, object]) -> None:
     write_atomic_json(path, info, indent=None)
 
 
+#: How often the worker samples the runner log for new output.
+#: Every consumer of heartbeat age works in minutes (170s for the stalled-manager
+#: detector, ~10 min for the idle recycler, 15 min for the escalation ladder), so
+#: sampling far below the tightest of them costs nothing and keeps the reported
+#: age within one interval of the truth.
+_HEARTBEAT_SAMPLE_INTERVAL_S = 15.0
+
+
+def _resolve_heartbeat_path(args: argparse.Namespace) -> Path:
+    """Where this session's heartbeat belongs.
+
+    ``--heartbeat-dir`` is the orchestrator root's heartbeat directory, passed
+    down because ``--workdir`` is the agent's worktree under worktree isolation
+    and the orchestrator reads from the root. Falling back to ``--workdir``
+    keeps a standalone ``bernstein-worker`` invocation self-consistent.
+    """
+    base = (
+        Path(args.heartbeat_dir)
+        if getattr(args, "heartbeat_dir", "")
+        else Path(args.workdir) / ".sdd" / "runtime" / "heartbeats"
+    )
+    return base / f"{args.session}.json"
+
+
+def _write_heartbeat(path: Path, *, now: float) -> None:
+    """Stamp *path* with the current time, preserving any richer body.
+
+    Adapters that parse a structured event stream report a real ``phase`` of
+    their own; this worker sees only bytes on a pipe. So it corrects the one
+    field it can speak to honestly and leaves the rest of the body as it found
+    it, rather than flattening a meaningful phase into a generic one.
+    """
+    body: dict[str, object] = {}
+    with contextlib.suppress(OSError, ValueError):
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(parsed, dict):
+            body = parsed
+    body["timestamp"] = now
+    body.setdefault("status", "running")
+    body.setdefault("phase", "running")
+    _atomic_write_json(path, body)
+
+
+def _heartbeat_refresh_loop(
+    heartbeat_path: Path,
+    log_path: Path | None,
+    is_running: Callable[[], bool],
+    *,
+    interval_s: float = _HEARTBEAT_SAMPLE_INTERVAL_S,
+) -> None:
+    """Advance the heartbeat while the child keeps producing output.
+
+    Deliberately not a timer. A heartbeat bumped on wall-clock alone reports
+    uptime, which is precisely the defect this replaces -- it would keep a
+    hung agent alive forever and leave the recycler and the escalation ladder
+    with nothing to act on. Growth in the runner log is the one progress signal
+    available for an adapter whose output the worker does not parse, so the
+    stamp moves only when new bytes have actually arrived.
+    """
+    if log_path is None:
+        return
+
+    def _size() -> int:
+        try:
+            return log_path.stat().st_size
+        except OSError:
+            return -1
+
+    last_size = _size()
+    while is_running():
+        if interval_s > 0:
+            time.sleep(interval_s)
+        size = _size()
+        # Strictly greater: a truncated or rotated log is not progress.
+        if size > last_size:
+            last_size = size
+            with contextlib.suppress(OSError):
+                _write_heartbeat(heartbeat_path, now=time.time())
+
+
 def _write_pid_file(
     pid_dir: Path,
     session: str,
@@ -404,6 +484,15 @@ def main() -> None:
     parser.add_argument("--pid-dir", required=True, help="Directory for PID metadata files")
     parser.add_argument("--workdir", default=".", help="Project root directory")
     parser.add_argument("--log-path", help="Path to the agent log file")
+    parser.add_argument(
+        "--heartbeat-dir",
+        default="",
+        help=(
+            "Directory the orchestrator polls for heartbeats. Defaults to "
+            "<workdir>/.sdd/runtime/heartbeats, which is wrong whenever "
+            "--workdir is a per-agent worktree."
+        ),
+    )
     parser.add_argument("--model", default="", help="Model name for metadata")
     parser.add_argument(
         "--tool-abort-policy",
@@ -512,13 +601,13 @@ def main() -> None:
         on_resolved=_pid_file_holder.append,
     )
 
-    # 2c. Touch heartbeat file so the agent starts with a fresh timestamp.
+    # 2c. Write the heartbeat so the agent starts with a fresh timestamp.
     # Without this, idle recycling can kill agents before their first
     # stream-json event arrives (e.g. Claude Code thinking for 2+ minutes).
+    heartbeat_path = _resolve_heartbeat_path(args)
     with contextlib.suppress(OSError):
-        hb_dir = Path(args.workdir) / ".sdd" / "runtime" / "heartbeats"
-        hb_dir.mkdir(parents=True, exist_ok=True)
-        (hb_dir / args.session).touch()
+        heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+        _write_heartbeat(heartbeat_path, now=time.time())
 
     # 3. Spawn child process (inherits our stdout/stderr/stdin).
     #
@@ -547,6 +636,19 @@ def main() -> None:
         # handler forwards to it (and lets main() reap it) instead of
         # unlinking + exiting on its own.
         _child_holder.append(child)
+        # 3b. Keep the heartbeat honest for the child's lifetime. The prompt's
+        # own heartbeat loop only runs if the model chooses to run it, and most
+        # do not, so for every wrapped adapter this thread is the only writer.
+        threading.Thread(
+            target=_heartbeat_refresh_loop,
+            args=(
+                heartbeat_path,
+                Path(args.log_path) if args.log_path else None,
+                lambda: child.poll() is None,
+            ),
+            daemon=True,
+            name="bernstein-worker-heartbeat",
+        ).start()
     except FileNotFoundError as exc:
         # Typed first-run error: the adapter binary is missing from PATH.
         # Callers running this worker as a subprocess can categorise via

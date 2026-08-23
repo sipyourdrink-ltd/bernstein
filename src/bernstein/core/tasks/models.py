@@ -189,6 +189,7 @@ class TaskStatus(Enum):
     PENDING_APPROVAL = "pending_approval"  # Completed; awaiting human approval before taking effect
     ABANDONED = "abandoned"  # Agent voluntarily abandoned with a structured reason (#1350)
     BLOCKED_BY_ABANDON = "blocked_by_abandon"  # Downstream task waiting on an abandoned dependency (#1350)
+    BLOCKED_BY_FAILED_DEP = "blocked_by_failed_dep"  # Downstream task whose dependency ended unsuccessfully (#3452)
     REFUSED = "refused"  # Worker reported a typed refusal via the completion contract (#2244)
 
 
@@ -1501,6 +1502,8 @@ class ConvergenceGuardConfig:
         max_spawn_rate: Maximum spawns per minute before blocking spawns.
         error_rate_window_seconds: Look-back window for computing error rate.
         spawn_rate_window_seconds: Look-back window for computing spawn rate.
+        min_error_rate_samples: Observations the error-rate window must hold
+            before that gate may block a wave.
     """
 
     max_pending_merges: int = 10
@@ -1509,6 +1512,7 @@ class ConvergenceGuardConfig:
     max_spawn_rate: float = 12.0
     error_rate_window_seconds: int = 300  # 5 minutes
     spawn_rate_window_seconds: int = 60  # 1 minute
+    min_error_rate_samples: int = 3
 
 
 @dataclass(frozen=True)
@@ -1711,7 +1715,7 @@ class TaskCostEstimate:
     task_id: str
     title: str
     role: str
-    model: str = "sonnet"
+    model: str = "unresolved"
     estimated_tokens: int = 0
     estimated_cost_usd: float = 0.0
     risk_level: Literal["low", "medium", "high", "critical"] = "low"
@@ -1793,7 +1797,7 @@ class TaskPlan:
                 task_id=e["task_id"],
                 title=e["title"],
                 role=e["role"],
-                model=e.get("model", "sonnet"),
+                model=e.get("model", "unresolved"),
                 estimated_tokens=int(e.get("estimated_tokens", 0)),
                 estimated_cost_usd=float(e.get("estimated_cost_usd", 0.0)),
                 risk_level=e.get("risk_level", "low"),

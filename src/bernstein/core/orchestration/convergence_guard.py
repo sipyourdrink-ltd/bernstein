@@ -14,6 +14,7 @@ Usage inside ``claim_and_spawn_batches``::
 
 from __future__ import annotations
 
+import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -21,6 +22,8 @@ from dataclasses import dataclass, field
 from bernstein.core.models import ConvergenceGuardConfig
 
 __all__ = ["ConvergenceGuard", "ConvergenceStatus"]
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Status
@@ -136,17 +139,39 @@ class ConvergenceGuard:
             if active_agents >= self._cfg.max_active_agents:
                 reasons.append(f"Too many active agents ({active_agents}/{self._cfg.max_active_agents})")
 
+        # Gates 3 and 4 are backpressure. At zero active agents there is no
+        # pressure to relieve, and blocking the wave removes the only thing
+        # that could clear the condition -- the run cannot recover (#4336).
+        idle = active_agents == 0
+
         # Gate 3: error rate
         if error_rate is not None:
             computed_error_rate = error_rate
-            if error_rate > self._cfg.max_error_rate:
+            # A rate over one or two observations is noise, and blocking on it
+            # is self-sustaining: no wave spawns, so no further observation
+            # arrives, so the rate cannot move. One task failing its quality
+            # gate used to read as 100% and stop the run for good. A caller
+            # that supplies a rate this guard never recorded (no samples of
+            # its own) is trusted as before.
+            samples = self._error_sample_count()
+            thin = 0 < samples < self._cfg.min_error_rate_samples
+            if thin:
+                logger.info(
+                    "convergence_guard: error-rate gate skipped -- %d sample(s) < %d",
+                    samples,
+                    self._cfg.min_error_rate_samples,
+                )
+            if error_rate > self._cfg.max_error_rate and not idle and not thin:
                 reasons.append(f"High error rate ({error_rate:.0%} > {self._cfg.max_error_rate:.0%})")
 
         # Gate 4: spawn rate
         if spawn_rate is not None:
             computed_spawn_rate = spawn_rate
-            if spawn_rate > self._cfg.max_spawn_rate:
+            if spawn_rate > self._cfg.max_spawn_rate and not idle:
                 reasons.append(f"Spawn rate too high ({spawn_rate:.1f}/min > {self._cfg.max_spawn_rate:.1f}/min)")
+
+        if idle and (error_rate is not None or spawn_rate is not None):
+            logger.info("convergence_guard: idle floor -- rate gates skipped at 0 active agents")
 
         ready = len(reasons) == 0
         return ConvergenceStatus(
@@ -204,6 +229,12 @@ class ConvergenceGuard:
             return 0.0
         window_minutes = self._cfg.spawn_rate_window_seconds / 60.0
         return len(self._spawn_timestamps) / window_minutes
+
+    def _error_sample_count(self, now: float | None = None) -> int:
+        """Observations currently inside the error-rate window."""
+        self._prune(self._success_timestamps, self._cfg.error_rate_window_seconds, now=now)
+        self._prune(self._failure_timestamps, self._cfg.error_rate_window_seconds, now=now)
+        return len(self._success_timestamps) + len(self._failure_timestamps)
 
     def current_error_rate(self, now: float | None = None) -> float:
         """Return failure rate (failures / total) over the configured window.

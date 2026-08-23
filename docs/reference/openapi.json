@@ -150,7 +150,7 @@
     "/agents": {
       "get": {
         "summary": "List Agents",
-        "description": "Return a flat list of agent sessions for the web GUI grid.\n\nWhen ``TaskStore.agents`` is empty (e.g. only mock adapters spawned and\nthey never heartbeat) we fall back to synthesising one entry per\nclaimed/in-progress task, marked with ``\"synthetic\": true``. That keeps\nthe GUI grid populated during demos and avoids the dreaded \"0 sessions\"\nempty state when work is obviously in flight.",
+        "description": "Return a flat list of agent sessions for the web GUI grid.\n\nWhen ``TaskStore.agents`` is empty (e.g. only mock adapters spawned and\nthey never heartbeat) we fall back to synthesising one entry per\nclaimed/in-progress task, marked with ``\"synthetic\": true``. That keeps\nthe GUI grid populated during demos and avoids the dreaded \"0 sessions\"\nempty state when work is obviously in flight.\n\nBoth branches render the id and title of the task a session is on, so\nboth narrow to the caller's tenant scope: the live sessions carry no\ntenant of their own and are placed by the task they name, while the\nsynthesised entries are built from a scoped read in the first place.",
         "operationId": "list_agents_agents_get",
         "responses": {
           "200": {
@@ -5158,7 +5158,7 @@
     "/observability/deps": {
       "get": {
         "summary": "Observability Deps",
-        "description": "Return dependency-graph validation status for current tasks.",
+        "description": "Return dependency-graph validation status for current tasks.\n\nThe response names the ids it walked - the ready set, the critical path,\nand both broken-edge lists - so the walk is narrowed to the caller's\ntenant scope rather than the whole store.",
         "operationId": "observability_deps_observability_deps_get",
         "responses": {
           "200": {
@@ -8117,7 +8117,7 @@
     "/metrics/predictions": {
       "get": {
         "summary": "Get Predictions",
-        "description": "Evaluate all predictive forecasts and return active alerts.\n\nChecks three forecast dimensions:\n\n- **Budget exhaustion**: At current spend velocity, when will the\n  budget cap be reached?\n- **Completion rate decline**: Is the task completion rate trending\n  downward, indicating the run will take longer than expected?\n- **Run duration overrun**: Based on current throughput, will the run\n  exceed the configured time window?\n\nUse ``budget_cap`` to enable the budget forecast. The run duration\nforecast requires at least one completed task.\n\nReturns a list of ``alerts`` ordered by severity (critical first).\nEach alert has: ``kind``, ``severity``, ``message``,\n``minutes_until_impact``, ``confidence``.",
+        "description": "Evaluate all predictive forecasts and return active alerts.\n\nChecks three forecast dimensions:\n\n- **Budget exhaustion**: At current spend velocity, when will the\n  budget cap be reached?\n- **Completion rate decline**: Is the task completion rate trending\n  downward, indicating the run will take longer than expected?\n- **Run duration overrun**: Based on current throughput, will the run\n  exceed the configured time window?\n\nUse ``budget_cap`` to enable the budget forecast. The run duration\nforecast requires at least one completed task.\n\nBoth numeric parameters are echoed back in the response body, so both\nrefuse non-finite values with a 422 instead of admitting them: a range\nbound alone does not exclude them (``inf >= 0.0`` is true, and every\ncomparison against ``NaN`` is false), and the JSON renderer cannot\nserialise either one.\n\nThe budget forecast is scoped to ``tenant_id``: the spend series it is\nbuilt from is narrowed to cost points recorded for the caller's tenant,\nthe same way the rest of the cost surface is (see\n``load_cost_history``).  Cost points written before per-tenant\nattribution existed are treated as the default tenant's spend, so a\nlegacy single-tenant install keeps its existing numbers.\n\nReturns a list of ``alerts`` ordered by severity (critical first).\nEach alert has: ``kind``, ``severity``, ``message``,\n``minutes_until_impact``, ``confidence``.",
         "operationId": "get_predictions_metrics_predictions_get",
         "parameters": [
           {
@@ -8966,7 +8966,7 @@
     "/api/v1/agents": {
       "get": {
         "summary": "List Agents",
-        "description": "Return a flat list of agent sessions for the web GUI grid.\n\nWhen ``TaskStore.agents`` is empty (e.g. only mock adapters spawned and\nthey never heartbeat) we fall back to synthesising one entry per\nclaimed/in-progress task, marked with ``\"synthetic\": true``. That keeps\nthe GUI grid populated during demos and avoids the dreaded \"0 sessions\"\nempty state when work is obviously in flight.",
+        "description": "Return a flat list of agent sessions for the web GUI grid.\n\nWhen ``TaskStore.agents`` is empty (e.g. only mock adapters spawned and\nthey never heartbeat) we fall back to synthesising one entry per\nclaimed/in-progress task, marked with ``\"synthetic\": true``. That keeps\nthe GUI grid populated during demos and avoids the dreaded \"0 sessions\"\nempty state when work is obviously in flight.\n\nBoth branches render the id and title of the task a session is on, so\nboth narrow to the caller's tenant scope: the live sessions carry no\ntenant of their own and are placed by the task they name, while the\nsynthesised entries are built from a scoped read in the first place.",
         "operationId": "list_agents_api_v1_agents_get",
         "responses": {
           "200": {
@@ -13974,7 +13974,7 @@
     "/api/v1/observability/deps": {
       "get": {
         "summary": "Observability Deps",
-        "description": "Return dependency-graph validation status for current tasks.",
+        "description": "Return dependency-graph validation status for current tasks.\n\nThe response names the ids it walked - the ready set, the critical path,\nand both broken-edge lists - so the walk is narrowed to the caller's\ntenant scope rather than the whole store.",
         "operationId": "observability_deps_api_v1_observability_deps_get",
         "responses": {
           "200": {
@@ -16933,7 +16933,7 @@
     "/api/v1/metrics/predictions": {
       "get": {
         "summary": "Get Predictions",
-        "description": "Evaluate all predictive forecasts and return active alerts.\n\nChecks three forecast dimensions:\n\n- **Budget exhaustion**: At current spend velocity, when will the\n  budget cap be reached?\n- **Completion rate decline**: Is the task completion rate trending\n  downward, indicating the run will take longer than expected?\n- **Run duration overrun**: Based on current throughput, will the run\n  exceed the configured time window?\n\nUse ``budget_cap`` to enable the budget forecast. The run duration\nforecast requires at least one completed task.\n\nReturns a list of ``alerts`` ordered by severity (critical first).\nEach alert has: ``kind``, ``severity``, ``message``,\n``minutes_until_impact``, ``confidence``.",
+        "description": "Evaluate all predictive forecasts and return active alerts.\n\nChecks three forecast dimensions:\n\n- **Budget exhaustion**: At current spend velocity, when will the\n  budget cap be reached?\n- **Completion rate decline**: Is the task completion rate trending\n  downward, indicating the run will take longer than expected?\n- **Run duration overrun**: Based on current throughput, will the run\n  exceed the configured time window?\n\nUse ``budget_cap`` to enable the budget forecast. The run duration\nforecast requires at least one completed task.\n\nBoth numeric parameters are echoed back in the response body, so both\nrefuse non-finite values with a 422 instead of admitting them: a range\nbound alone does not exclude them (``inf >= 0.0`` is true, and every\ncomparison against ``NaN`` is false), and the JSON renderer cannot\nserialise either one.\n\nThe budget forecast is scoped to ``tenant_id``: the spend series it is\nbuilt from is narrowed to cost points recorded for the caller's tenant,\nthe same way the rest of the cost surface is (see\n``load_cost_history``).  Cost points written before per-tenant\nattribution existed are treated as the default tenant's spend, so a\nlegacy single-tenant install keeps its existing numbers.\n\nReturns a list of ``alerts`` ordered by severity (critical first).\nEach alert has: ``kind``, ``severity``, ``message``,\n``minutes_until_impact``, ``confidence``.",
         "operationId": "get_predictions_api_v1_metrics_predictions_get",
         "parameters": [
           {
@@ -20841,6 +20841,11 @@
           "blocked_by_abandon": {
             "type": "integer",
             "title": "Blocked By Abandon",
+            "default": 0
+          },
+          "blocked_by_failed_dep": {
+            "type": "integer",
+            "title": "Blocked By Failed Dep",
             "default": 0
           },
           "refused": {

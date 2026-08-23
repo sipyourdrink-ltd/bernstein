@@ -213,6 +213,63 @@ def test_evaluate_logs_info_decision_line_for_allowed_spawn(tmp_path: Path, capl
     assert any("ancestry_depth=1" in line for line in decision_lines)
 
 
+def test_no_terminal_baseline_refuses_upgrade_proposal_with_zero_terminal_tasks(tmp_path: Path) -> None:
+    """Issue #4226: an upgrade_proposal auto-spawn is refused while the run
+    has zero done/failed tasks -- there is no outcome yet to improve on, and
+    in a single-cell run the upgrade task would otherwise displace recovery
+    of the goal task itself."""
+    guard = AutoSpawnGuard(tmp_path, max_ancestry_depth=1, max_auto_spawns_per_run=3)
+
+    decision = guard.evaluate(
+        kind="upgrade_proposal",
+        title="Upgrade: Improve task success rate",
+        source_title=None,
+        existing_open_titles=[],
+        has_terminal_task=False,
+    )
+
+    assert decision.allowed is False
+    assert decision.reason == "no-terminal-baseline"
+
+    # Refused spawns must not consume the cap.
+    state_path = tmp_path / ".sdd" / "runtime" / "auto_spawn_guard.json"
+    assert not state_path.exists()
+
+
+def test_no_terminal_baseline_allows_upgrade_proposal_with_at_least_one_terminal_task(tmp_path: Path) -> None:
+    """Control: once >=1 task in the run is done/failed, current behaviour
+    (guard falls through to depth/dedupe/cap) is unchanged."""
+    guard = AutoSpawnGuard(tmp_path, max_ancestry_depth=1, max_auto_spawns_per_run=3)
+
+    decision = guard.evaluate(
+        kind="upgrade_proposal",
+        title="Upgrade: Improve task success rate",
+        source_title=None,
+        existing_open_titles=[],
+        has_terminal_task=True,
+    )
+
+    assert decision.allowed is True
+    assert decision.reason == "allowed"
+
+
+def test_no_terminal_baseline_only_applies_to_upgrade_proposal_kind(tmp_path: Path) -> None:
+    """Other call sites (watchdog triage, retry-path recreation) don't pass
+    ``has_terminal_task`` and must keep their existing behaviour -- the
+    no-terminal-baseline check is scoped to kind="upgrade_proposal" only."""
+    guard = AutoSpawnGuard(tmp_path, max_ancestry_depth=1, max_auto_spawns_per_run=3)
+
+    decision = guard.evaluate(
+        kind="watchdog_triage",
+        title="Watchdog triage: Heartbeat stale for task X",
+        source_title=None,
+        existing_open_titles=[],
+    )
+
+    assert decision.allowed is True
+    assert decision.reason == "allowed"
+
+
 def test_evaluate_logs_info_decision_line_for_refused_spawn(tmp_path: Path, caplog) -> None:
     """A refused (depth) decision must ALSO emit the uniform INFO decision
     line, not just the WARNING alert -- the audit-3 evidence flagged that

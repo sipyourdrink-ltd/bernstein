@@ -51,11 +51,12 @@ def _retry_escalation_context(orch: Any) -> dict[str, Any]:
     """Build the ``role_model_policy``/``default_adapter_name`` kwargs for
     :func:`retry_or_fail_task` from the orchestrator's spawner.
 
-    Lets retry escalation (task_lifecycle.py) know whether the retrying
-    role is pinned to a non-Claude provider/model, so it doesn't stamp a
-    Claude tier name ("opus"/"sonnet") onto a task that will spawn against
-    a non-Claude adapter (see task_lifecycle.py's retry-escalation
-    docstring for the run-9 attempt-8 defect this closes). Read-only,
+    Lets retry escalation (task_lifecycle.py) know which model the operator
+    named, so it doesn't stamp a Claude tier name ("opus"/"sonnet") onto a
+    task whose model was chosen deliberately (see task_lifecycle.py's
+    retry-escalation docstring for the defect this closes). Both pin routes
+    are reported: ``role_model_policy`` carries the per-role pin and
+    ``run_pinned_model`` the run-level ``--model`` flag. Read-only,
     best-effort: any missing attribute (older/mock orchestrators in tests)
     degrades to ``None``, which task_lifecycle.py treats as "assume
     Claude-compatible" - today's historical behavior, unchanged.
@@ -64,6 +65,7 @@ def _retry_escalation_context(orch: Any) -> dict[str, Any]:
     return {
         "role_model_policy": getattr(spawner, "role_model_policy", None),
         "default_adapter_name": getattr(spawner, "default_adapter_name", None),
+        "run_pinned_model": getattr(spawner, "default_model", None),
     }
 
 
@@ -346,6 +348,28 @@ def _save_partial_work(spawner: Any, session: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _handle_orphaned_task_guarded(
+    orch: Any,
+    task_id: str,
+    session: AgentSession,
+    tasks_snapshot: dict[str, list[Task]],
+) -> None:
+    """Orphan handling for one task, isolated from the rest of the cleanup.
+
+    An exception here used to propagate out of the tick, skipping
+    ``_save_partial_work`` and worktree cleanup, so the dying agent's
+    uncommitted work was lost.
+    """
+    try:
+        handle_orphaned_task(orch, task_id, session, tasks_snapshot)
+    except Exception:
+        logger.exception(
+            "handle_orphaned_task failed for task %s (agent %s); continuing death cleanup",
+            task_id,
+            session.id,
+        )
+
+
 def _handle_dead_agent(orch: Any, session: AgentSession, tasks_snapshot: dict[str, list[Task]]) -> None:
     """Process a single agent that has been detected as dead."""
     abort_reason, abort_detail = classify_agent_abort_reason(session)
@@ -378,7 +402,7 @@ def _handle_dead_agent(orch: Any, session: AgentSession, tasks_snapshot: dict[st
     for task_id in session.task_ids:
         orch._crash_counts[task_id] = orch._crash_counts.get(task_id, 0) + 1
         _maybe_preserve_worktree(orch, session, task_id)
-        handle_orphaned_task(orch, task_id, session, tasks_snapshot)
+        _handle_orphaned_task_guarded(orch, task_id, session, tasks_snapshot)
     _save_partial_work(orch._spawner, session)
     _preserved = getattr(orch, "_preserved_worktrees", {})
     _session_preserved = any(
@@ -408,6 +432,12 @@ def refresh_agent_states(orch: Any, tasks_snapshot: dict[str, list[Task]]) -> No
         if orch._spawner.check_alive(session):
             continue
         _handle_dead_agent(orch, session, tasks_snapshot)
+
+    # Re-check every death judgment deferred by _probe_liveness_signals: the
+    # session that deferred it is already "dead" and filtered out of the loop
+    # above, so this is the only place left that can still fail a task whose
+    # deferral was never followed by real progress (issue #4222).
+    _reevaluate_pending_death_judgments(orch, tasks_snapshot)
 
     # Purge dead agents to prevent unbounded dict growth (memory leak fix)
     purge_dead_agents(orch)
@@ -1517,7 +1547,15 @@ def _probe_fast_exit(
         A dict (never a bare bool) with keys: ``suspicious`` (bool),
         ``runtime_s`` (float), ``exit_code`` (int | None), ``manifest_path``
         (str | None), ``log_path`` (str | None), ``log_tail`` (list[str]),
-        ``session_id`` (str), ``task_id`` (str).
+        ``session_id`` (str), ``task_id`` (str), ``tokens_used`` (int) and
+        ``no_session_activity`` (bool).
+
+        ``no_session_activity`` is the transport-failure signal: the agent
+        exited without consuming a single token, so it never exchanged
+        anything with the model. That is a different fault from an agent that
+        ran, spent tokens and produced nothing, and it needs a different
+        response - retrying a transport failure is reasonable, while retrying
+        a genuinely empty deliverable just burns the budget again.
     """
     runtime_s = time.time() - session.spawn_ts if session.spawn_ts > 0 else -1.0
     suspicious = 0 <= runtime_s < _FAST_EXIT_THRESHOLD_S
@@ -1550,6 +1588,15 @@ def _probe_fast_exit(
                 if candidate.exists():
                     manifest_path = str(candidate)
 
+    # Callers reach this probe only after no files, no commits and no
+    # completion signals were found, so the deliverable side is already known
+    # to be empty. The one thing still unanswered is whether the agent talked
+    # to the model at all, and tokens_used answers exactly that on its own -
+    # no corroborating signal would add information the caller does not
+    # already have.
+    tokens_used = int(getattr(session, "tokens_used", 0) or 0)
+    no_session_activity = tokens_used == 0
+
     result: dict[str, Any] = {
         "suspicious": suspicious,
         "runtime_s": round(runtime_s, 2),
@@ -1559,6 +1606,8 @@ def _probe_fast_exit(
         "log_tail": log_tail,
         "session_id": session.id,
         "task_id": task_id,
+        "tokens_used": tokens_used,
+        "no_session_activity": no_session_activity,
     }
 
     if suspicious:
@@ -1632,6 +1681,24 @@ def _mtime_age(path: Path, now: float) -> float | None:
         if path.exists():
             return now - path.stat().st_mtime
     return None
+
+
+def _mtime_and_size(path: Path | None) -> tuple[float | None, int | None]:
+    """Return ``(mtime, size)`` for ``path``, or ``(None, None)`` if missing/unreadable.
+
+    Used to build and later compare liveness snapshots (see
+    ``_liveness_snapshot`` / ``_reevaluate_pending_death_judgments``): a plain
+    age check can't tell a one-time write (e.g. a crash traceback flushed on
+    the way down) from ongoing output, but a raw mtime/size pair can be
+    compared against a later read to see whether the file moved at all.
+    """
+    if path is None:
+        return None, None
+    with contextlib.suppress(OSError):
+        if path.exists():
+            st = path.stat()
+            return st.st_mtime, st.st_size
+    return None, None
 
 
 def _probe_liveness_signals(orch: Any, session: AgentSession, now: float) -> dict[str, Any]:
@@ -1715,6 +1782,147 @@ def _probe_liveness_signals(orch: Any, session: AgentSession, now: float) -> dic
     }
 
 
+def _liveness_snapshot(orch: Any, session: AgentSession, now: float) -> dict[str, Any]:
+    """Record the liveness signal state at the moment a deferred death judgment
+    is made, so a later tick can tell whether the agent actually kept working.
+
+    Persisted (keyed by task) in ``orch._pending_liveness_judgments`` by the
+    caller, since the session itself is transitioned to "dead" and dropped
+    from the main ``refresh_agent_states`` loop in this same tick -- nothing
+    else keeps this state alive for the next reap cycle to consult.
+    """
+    heartbeat_path = orch._workdir / ".sdd" / "runtime" / "heartbeats" / f"{session.id}.json"
+    log_path = _resolve_agent_log_path(orch._workdir, session)
+    _wt_dir = _resolve_agent_worktree_dir(orch._workdir, session)
+    git_path = (_wt_dir / ".git") if _wt_dir is not None else None
+
+    heartbeat_mtime, _hb_size = _mtime_and_size(heartbeat_path)
+    log_mtime, log_size = _mtime_and_size(log_path)
+    git_mtime, _git_size = _mtime_and_size(git_path)
+
+    return {
+        "session_id": session.id,
+        "pid": session.pid,
+        "recorded_at": now,
+        "heartbeat_path": heartbeat_path,
+        "log_path": log_path,
+        "git_path": git_path,
+        "heartbeat_mtime": heartbeat_mtime,
+        "log_mtime": log_mtime,
+        "log_size": log_size,
+        "git_mtime": git_mtime,
+    }
+
+
+def _reevaluate_pending_death_judgments(orch: Any, tasks_snapshot: dict[str, list[Task]]) -> None:
+    """Re-judge every task whose death was deferred by ``_probe_liveness_signals``.
+
+    A deferral only proves the agent looked alive *at the moment the tracked
+    pid was found dead* -- the fresh signal that triggered it (e.g. a crash
+    traceback flushed to the log on the process's way down) is frequently a
+    one-time write, not evidence of ongoing work, and the old code never
+    re-checked: the session that owned the deferred task is transitioned to
+    "dead" in this same tick, so it is filtered out of every later
+    ``refresh_agent_states`` pass and the promised "next reap cycle"
+    re-evaluation never actually ran, leaving the task claimed indefinitely
+    (issue #4222).
+
+    Runs every tick, independent of ``orch._agents`` state, and fails the
+    task unless a signal has advanced *past* the snapshot recorded at defer
+    time. A double-forked/re-exec'd runner whose log keeps growing after the
+    tracked launcher pid exits keeps advancing its own snapshot on each
+    check and stays correctly deferred, same as before this fix.
+    """
+    pending: dict[str, dict[str, Any]] | None = getattr(orch, "_pending_liveness_judgments", None)
+    if not pending:
+        return
+
+    base = orch._config.server_url
+    all_cached: list[Task] = []
+    for bucket in tasks_snapshot.values():
+        all_cached.extend(bucket)
+    task_by_id = {t.id: t for t in all_cached}
+
+    for task_id in list(pending.keys()):
+        snapshot = pending[task_id]
+
+        task = task_by_id.get(task_id)
+        if task is None:
+            try:
+                resp = orch._client.get(f"{base}/tasks/{task_id}")
+                resp.raise_for_status()
+                task = Task.from_dict(resp.json())
+            except httpx.HTTPError:
+                # Task no longer resolvable (deleted, or stale prior session) --
+                # nothing left to re-judge.
+                del pending[task_id]
+                continue
+        if task.status not in (TaskStatus.OPEN, TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS):
+            # Resolved through some other path (completed/failed/blocked) since
+            # the deferral -- stop tracking it.
+            del pending[task_id]
+            continue
+
+        heartbeat_mtime, _hb_size = _mtime_and_size(snapshot["heartbeat_path"])
+        log_mtime, log_size = _mtime_and_size(snapshot["log_path"])
+        git_mtime, _git_size = _mtime_and_size(snapshot["git_path"])
+
+        advanced = (
+            (heartbeat_mtime is not None and heartbeat_mtime > (snapshot["heartbeat_mtime"] or 0))
+            or (log_mtime is not None and log_mtime > (snapshot["log_mtime"] or 0))
+            or (log_size is not None and log_size > (snapshot["log_size"] or 0))
+            or (git_mtime is not None and git_mtime > (snapshot["git_mtime"] or 0))
+        )
+
+        if advanced:
+            logger.info(
+                "liveness_reeval: task=%s agent=%s still deferred -- a signal advanced past "
+                "the pid-exit snapshot (heartbeat_mtime=%s log_mtime=%s log_size=%s "
+                "git_mtime=%s), so the agent is still doing observable work",
+                task_id,
+                snapshot["session_id"],
+                heartbeat_mtime,
+                log_mtime,
+                log_size,
+                git_mtime,
+            )
+            pending[task_id] = {
+                **snapshot,
+                "heartbeat_mtime": heartbeat_mtime,
+                "log_mtime": log_mtime,
+                "log_size": log_size,
+                "git_mtime": git_mtime,
+            }
+            continue
+
+        logger.warning(
+            "liveness_reeval: task=%s agent=%s pid=%s judged dead on re-evaluation -- no "
+            "signal advanced past the snapshot taken when the tracked pid exited; the earlier "
+            "fresh signal that deferred this judgment was a one-time write (e.g. a crash "
+            "traceback), not ongoing liveness. Failing/retrying the task now instead of "
+            "leaving it claimed indefinitely.",
+            task_id,
+            snapshot["session_id"],
+            snapshot["pid"] or "unknown",
+        )
+        try:
+            retry_or_fail_task(
+                task_id,
+                f"Agent {snapshot['session_id']} died; deferred death judgment re-evaluated "
+                f"and no liveness signal advanced past the pid-exit snapshot",
+                client=orch._client,
+                server_url=base,
+                max_task_retries=orch._config.max_task_retries,
+                retried_task_ids=orch._retried_task_ids,
+                workdir=getattr(orch, "_workdir", None),
+                **_retry_escalation_context(orch),
+            )
+            del pending[task_id]
+        except httpx.HTTPError as exc:
+            logger.error("Failed to retry/fail task %s on liveness re-evaluation: %s", task_id, exc)
+            # Leave it pending -- retried again next tick rather than lost.
+
+
 def _handle_orphan_no_signals(
     orch: Any,
     task: Task,
@@ -1771,32 +1979,75 @@ def _handle_orphan_no_signals(
             )
             return _try_auto_complete(orch, task_id, base, summary, log_msg, session=session, start_ts=start_ts)
 
-        logger.warning(
-            "SUSPICIOUS clean exit: agent %s exited cleanly (exit code 0) after only %.1fs "
-            "with no files modified, no commits, and no completion signals -- NOT "
-            "auto-completing task %s; failing it as unverified. A fast empty clean exit is a "
-            "defect signal, not health. See preserved logs under .sdd/runtime/agent_logs/%s/ "
-            "for the full transcript (manifest=%s).",
-            session.id,
-            _probe_result.get("runtime_s"),
-            task_id,
-            session.id,
-            _probe_result.get("manifest_path") or "<none preserved>",
-        )
+        _transport_failure = bool(_probe_result.get("no_session_activity"))
+        if _transport_failure:
+            # Zero tokens means the agent never exchanged anything with the
+            # model: nothing was asked and nothing was answered. That is a
+            # transport failure, not an agent that ran and produced nothing,
+            # and reporting it as an unverified deliverable sends whoever
+            # reads it to inspect a transcript that does not exist. ERROR
+            # rather than WARNING because a spawn that never reached the
+            # provider is an infrastructure fault, not an agent outcome.
+            logger.error(
+                "TRANSPORT FAILURE (zero-token clean exit): agent %s exited cleanly (exit code 0) "
+                "after only %.1fs having consumed 0 tokens -- it never exchanged anything with the "
+                "model, so there is no transcript to inspect and no deliverable was ever possible. "
+                "NOT auto-completing task %s. This is a spawn/transport fault, not an empty "
+                "deliverable. See preserved logs under .sdd/runtime/agent_logs/%s/ (manifest=%s).",
+                session.id,
+                _probe_result.get("runtime_s"),
+                task_id,
+                session.id,
+                _probe_result.get("manifest_path") or "<none preserved>",
+            )
+        else:
+            logger.warning(
+                "SUSPICIOUS clean exit: agent %s exited cleanly (exit code 0) after only %.1fs "
+                "with no files modified, no commits, and no completion signals -- NOT "
+                "auto-completing task %s; failing it as unverified. A fast empty clean exit is a "
+                "defect signal, not health. It consumed %s tokens, so it did reach the model. "
+                "See preserved logs under .sdd/runtime/agent_logs/%s/ "
+                "for the full transcript (manifest=%s).",
+                session.id,
+                _probe_result.get("runtime_s"),
+                task_id,
+                _probe_result.get("tokens_used"),
+                session.id,
+                _probe_result.get("manifest_path") or "<none preserved>",
+            )
+        # The reason string is what an operator reads off the run log, so it
+        # has to name the actual cause. Reporting a transport fault as an
+        # unverified deliverable sent them to look for a transcript that was
+        # never written (#4275).
+        if _transport_failure:
+            _runtime_s = float(_probe_result.get("runtime_s") or 0.0)
+            _retry_reason = (
+                f"Transport failure: agent {session.id} exited cleanly after {_runtime_s:.1f}s "
+                f"having consumed 0 tokens -- it never reached the model, so the task was "
+                f"never attempted"
+            )
+        else:
+            _retry_reason = (
+                f"Agent {session.id} exited cleanly but produced no verified deliverable "
+                f"(empty diff, no commits, no completion signals)"
+            )
         try:
             retry_or_fail_task(
                 task_id,
-                f"Agent {session.id} exited cleanly but produced no verified deliverable "
-                f"(empty diff, no commits, no completion signals)",
+                _retry_reason,
                 client=orch._client,
                 server_url=base,
                 max_task_retries=orch._config.max_task_retries,
                 retried_task_ids=orch._retried_task_ids,
                 workdir=getattr(orch, "_workdir", None),
+                transport_failure=_transport_failure,
                 **_retry_escalation_context(orch),
             )
         except httpx.HTTPError as exc:
             logger.error("Failed to retry/fail unverified clean-exit task %s: %s", task_id, exc)
+        # Routing is deliberately unchanged: the task is still failed rather
+        # than auto-completed either way. What differs is the retry accounting
+        # (transport_failure above) and the operator-facing reason.
         return False, "clean_exit_unverified"
 
     # Before declaring "died without output", check every liveness signal --
@@ -1810,8 +2061,9 @@ def _handle_orphan_no_signals(
         logger.warning(
             "Deferring death judgment for task %s: agent %s tracked pid=%s looks dead but "
             "liveness signals are fresh (heartbeat_age_s=%s log_age_s=%s git_age_s=%s, "
-            "grace_s=%.0f) -- NOT failing the task this tick; will re-evaluate on the next "
-            "reap cycle once signals actually go stale.",
+            "grace_s=%.0f) -- NOT failing the task this tick; recording the current signal "
+            "state and re-evaluating on every subsequent tick until a signal actually "
+            "advances past it or the task is resolved another way.",
             task_id,
             session.id,
             _liveness["pid"] or "unknown",
@@ -1820,6 +2072,17 @@ def _handle_orphan_no_signals(
             _liveness["git_age_s"],
             _ORPHAN_LIVENESS_GRACE_S,
         )
+        # The session backing this deferral is transitioned to "dead" and its
+        # worktree cleaned up in this same tick (_handle_dead_agent), so it
+        # won't be around for a later tick to re-check. Persist the pending
+        # judgment on the orchestrator itself, keyed by task, so
+        # _reevaluate_pending_death_judgments can keep re-checking it
+        # independent of the session's lifetime.
+        _pending = getattr(orch, "_pending_liveness_judgments", None)
+        if _pending is None:
+            _pending = {}
+            orch._pending_liveness_judgments = _pending
+        _pending[task_id] = _liveness_snapshot(orch, session, time.time())
         return False, "deferred_liveness_signal_fresh"
 
     # Agent died without output
@@ -1993,9 +2256,6 @@ def handle_orphaned_task(
         emit_orphan_metrics(orch._workdir, task_id, session, start_ts, success=False, error_type="escalated")
         return
 
-    # Collect structured completion data from agent log
-    completion_data = collect_completion_data(orch._workdir, session)
-
     # Artifact-mode tasks run the pass even with no declared signals: the
     # signed receipt it records is their completion identity (issue #2608).
     if task.completion_signals or is_artifact_mode(task):
@@ -2004,7 +2264,7 @@ def handle_orphaned_task(
             try:
                 result_payload: dict[str, Any] = {
                     "result_summary": f"Auto-completed after agent {session.id} died; janitor passed",
-                } | completion_data
+                }
                 orch._client.post(
                     f"{base}/tasks/{task_id}/complete",
                     json=result_payload,
@@ -2454,7 +2714,7 @@ def _reap_wall_clock_timeout(
         orch._signal_mgr.clear_signals(session.id)
     _preserve_runner_logs(orch, session)
     for task_id in session.task_ids:
-        handle_orphaned_task(orch, task_id, session, tasks_snapshot)
+        _handle_orphaned_task_guarded(orch, task_id, session, tasks_snapshot)
     _save_partial_work(orch._spawner, session)
     _preserved = getattr(orch, "_preserved_worktrees", {})
     _session_preserved = any(

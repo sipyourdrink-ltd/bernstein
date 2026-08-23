@@ -322,11 +322,100 @@ def _build_overview(repo_path: Path) -> AgentsMdSection | None:
     return None
 
 
+MODULE_MAP_PAGE = "docs/sdd/module-map.md"
+"""Where the full per-file table lives now (#4142). See :func:`render_module_map_page`."""
+
+
 def _build_module_map(repo_path: Path, opts: GenerateOptions) -> AgentsMdSection | None:
-    """Port of ``scripts/gen_agents_md.py`` - Python-package docstring table.
+    """Compact subsystem index; the full per-file table lives in :data:`MODULE_MAP_PAGE`.
+
+    Until #4142 this section embedded the complete per-file docstring
+    table for every package - roughly 85% of each generated mirror's line
+    count, duplicated five ways (AGENTS.md, CLAUDE.md, CONVENTIONS.md,
+    .goosehints, and one ``.mdc`` per section), and paid for by every
+    coding-agent session regardless of which subsystem the task touched.
+
+    This section is now one row per package: its name, a one-phrase
+    purpose (from :data:`PACKAGE_META`), and a pointer to where the detail
+    actually lives - that package's own directory ``AGENTS.md`` when it
+    has one (``adapters/``, ``cli/``), its source directory otherwise
+    (``core/`` has four nested ``AGENTS.md`` files one level down, not one
+    of its own, so it points at the directory). The full per-file table
+    moves to :func:`render_module_map_page`, linked from the top of this
+    section's body; agents fetch it on demand instead of paying for it
+    unconditionally.
 
     Returns ``None`` when ``src/bernstein/`` (or equivalent) is absent.
     """
+    src_root = repo_path / "src" / "bernstein"
+    if not src_root.is_dir():
+        return None
+
+    direct_agents_md = _direct_agents_md_by_package(repo_path)
+
+    rows: list[tuple[str, str]] = []
+    for pkg, meta in PACKAGE_META.items():
+        pkg_dir = src_root / pkg
+        if not pkg_dir.is_dir():
+            continue
+        pointer = direct_agents_md.get(pkg, f"`src/bernstein/{pkg}/`")
+        rows.append((f"`{pkg}/`", f"{meta} - {pointer}"))
+
+    if not rows:
+        return None
+
+    body = f"Full per-file map: `{MODULE_MAP_PAGE}` (generated).\n\n" + _render_two_column_table(
+        rows, "Package", right_header="Purpose / detail"
+    )
+    return AgentsMdSection(
+        key="module-map",
+        title="Module map",
+        body=body,
+        kind="module-map",
+        always_apply=False,
+        target_globs=("src/**", "tests/**"),
+    )
+
+
+def _direct_agents_md_by_package(repo_path: Path) -> dict[str, str]:
+    """Map each top-level package to a link for its *own* directory ``AGENTS.md``.
+
+    Only a direct child counts: ``src/bernstein/adapters/AGENTS.md`` maps
+    ``adapters``, but ``src/bernstein/core/lineage/AGENTS.md`` does not map
+    ``core`` - ``core`` has four nested files one level down, not one of
+    its own, and the compact index needs exactly one pointer per package.
+    Packages with no direct file are simply absent from the result;
+    :func:`_build_module_map` falls back to the source directory for those.
+
+    Uses the same git-tracked-files trust model as
+    :func:`_build_directory_context` (and every other builder that reads
+    the tree): inside a work tree, only a *tracked* ``AGENTS.md`` counts,
+    so an untracked scratch file cannot change the render.
+    """
+    tracked = _git_tracked_files(repo_path)
+    result: dict[str, str] = {}
+    for pkg in PACKAGE_META:
+        rel = f"src/bernstein/{pkg}/AGENTS.md"
+        is_tracked = rel in tracked if tracked is not None else (repo_path / rel).is_file()
+        if is_tracked:
+            result[pkg] = f"`{rel}`"
+    return result
+
+
+def render_module_map_page(repo_path: Path, opts: GenerateOptions | None = None) -> str | None:
+    """Full per-file module map, as a standalone reference page (#4142).
+
+    Moved out of the embedded ``AGENTS.md`` "Module map" section so the
+    five generated agent-context mirrors carry a compact index instead of
+    the complete per-file table - see :func:`_build_module_map`. This is
+    that table's new home: everything the embedded section used to render
+    inline, now in one generated page linked from there.
+
+    Returns ``None`` when there is nothing to document (no
+    ``src/bernstein/`` tree), matching :func:`_build_module_map`'s
+    not-applicable case.
+    """
+    opts = opts or GenerateOptions()
     src_root = repo_path / "src" / "bernstein"
     if not src_root.is_dir():
         return None
@@ -352,15 +441,15 @@ def _build_module_map(repo_path: Path, opts: GenerateOptions) -> AgentsMdSection
         "### Key non-package directories\n\n"
         + _render_two_column_table([(f"`{p}`", purpose) for p, purpose in _NON_PACKAGE_DIRS], "Path")
     )
-    body = "\n\n".join(blocks)
-    return AgentsMdSection(
-        key="module-map",
-        title="Module map",
-        body=body,
-        kind="module-map",
-        always_apply=False,
-        target_globs=("src/**", "tests/**"),
+    preamble = (
+        "<!-- AUTO-GENERATED by `bernstein agents-md sync` - DO NOT edit by hand. -->\n\n"
+        'Full per-file module map. `AGENTS.md`\'s own "Module map" section links '
+        "here instead of embedding this table, so the five generated agent-context "
+        "mirrors carry a compact one-line-per-package index and fetch this page on "
+        "demand rather than paying for it on every session.\n"
     )
+    body = "\n\n".join(blocks)
+    return "# Module map\n\n" + preamble + "\n" + body.rstrip() + "\n"
 
 
 def _build_directory_context(repo_path: Path) -> AgentsMdSection | None:
@@ -1132,10 +1221,12 @@ def _split_title_and_body(text: str, *, fallback: str) -> tuple[str, str]:
 
 
 __all__ = [
+    "MODULE_MAP_PAGE",
     "PACKAGE_META",
     "AgentsMdSection",
     "GenerateOptions",
     "SectionKind",
     "generate",
     "render_canonical",
+    "render_module_map_page",
 ]

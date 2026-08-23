@@ -37,7 +37,12 @@ class ManagerAdapter(CLIAdapter):
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        env = build_filtered_env(["ANTHROPIC_API_KEY"])
+        env = build_filtered_env(
+            ["ANTHROPIC_API_KEY"],
+            # ManagerAgent is bernstein's own code, run via sys.executable;
+            # it needs bernstein importable (issue #4221).
+            inherit_orchestrator_pythonpath=True,
+        )
 
         # Extract the task ID. The ManagerAgent __main__ expects --task-id
         # We know tasks are passed in the prompt, let's grab the first task id.

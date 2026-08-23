@@ -1,9 +1,8 @@
 {
   "mcpServers": {
     "bernstein": {
-      "command": "uv",
-      "args": ["run", "bernstein", "mcp"],
-      "cwd": "${PLUGIN_ROOT}"
+      "command": "bernstein",
+      "args": ["mcp"]
     }
   }
 }

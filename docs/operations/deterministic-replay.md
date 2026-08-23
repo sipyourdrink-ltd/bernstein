@@ -217,9 +217,14 @@ The build side is strict too: an unparseable journal or spine row refuses the
 whole build with the physical line named - a receipt is never signed over the
 parseable subset of a corrupted store.
 
-Exit codes for `bernstein verify receipt` (mirrors `bernstein lineage
-verify`): `0` OK, `1` empty/malformed input, `2` tamper detected (first
-divergent journal step index named).
+Exit codes for `bernstein verify receipt`:
+
+| Exit code | Tier / condition |
+|---|---|
+| `0` | OK -- either tier (integrity-only or provenance) passed, and `--require-provenance` was not given, or was given and provenance was reached. |
+| `1` | Empty or malformed input (unreadable file, missing ranges/fields). |
+| `2` | Tamper detected (first divergent journal step index named), or a `--public-key` pin that does not match the embedded key. |
+| `3` | `--require-provenance` was given and only the integrity-only tier was reached. |
 
 **Trust model - what a pass proves depends on where the key came from.** By
 default the verifier checks the signature against the Ed25519 key embedded in
@@ -235,6 +240,24 @@ exit `2`. The CLI verdict is labelled accordingly (`OK (integrity-only:
 embedded key)` vs `OK (provenance: pinned key)`), so a trust-on-first-use
 pass cannot be misread as an authenticated one. Provenance-sensitive review
 (incident triage, compliance handover) should always pin.
+
+**Gating automation on the tier alone.** Exit `0` is indistinguishable
+between the two tiers by itself, so a script that must accept only a
+provenance pass should not rely on `0` on its own. Two ways to do that
+without parsing the verdict prose:
+
+- Pass `--require-provenance`: without a pinned, matching key the command
+  exits `3` instead of `0`, naming the tier it actually reached.
+- Pass `--json`: the response carries a `"tier"` field
+  (`"provenance"`, `"integrity-only"`, or `null` when verification did not
+  pass at all) alongside `"ok"`. `--require-provenance` and `--json` compose:
+  the JSON body still reports `"tier": "integrity-only"` on an exit-`3`
+  refusal, so a caller can log which tier was reached even when gating on
+  the exit code.
+
+Both flags default off, so a `verify receipt $f && deploy` script written
+against today's behaviour keeps exiting `0` on either tier unless it opts
+in.
 
 **Automatic receipts at finalization.** When a signing key is configured via
 `BERNSTEIN_RUN_RECEIPT_SIGNING_KEY_PATH` (key file) or

@@ -43,7 +43,7 @@ jobs:
           persist-credentials: false
 
       - name: Run trufflehog
-        uses: trufflesecurity/trufflehog@6f3c981e7b77f235fd2702dd74af25fc4b72bf11  # v3.96.0
+        uses: trufflesecurity/trufflehog@bcfcf73aaf4759d4dadc2783177c245a02792318  # v3.97.0
         with:
           # The `uses:` SHA above pins the action, which is a shell wrapper;
           # the wrapper runs `ghcr.io/trufflesecurity/trufflehog:${version}`,
@@ -54,7 +54,7 @@ jobs:
           # `renovate.json` - and `tests/unit/test_trufflehog_workflow_yaml.py`
           # fails if the two ever name different releases.
           # renovate: datasource=docker depName=ghcr.io/trufflesecurity/trufflehog
-          version: 3.96.0
+          version: 3.97.0
           # Only report verified secrets - keeps signal-to-noise high and
           # lets the job act as a hard gate. Unknown / unverified results
           # are dominated by test-fixture connection strings like

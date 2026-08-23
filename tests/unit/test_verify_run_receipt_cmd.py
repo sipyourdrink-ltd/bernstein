@@ -251,6 +251,118 @@ def test_receipt_verb_wrong_public_key_exits_2(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# --require-provenance / --json (#4208): a script must be able to gate on
+# the provenance tier by exit code, or by the machine-readable tier field,
+# without parsing the human verdict prose.
+# ---------------------------------------------------------------------------
+
+
+def _built_receipt(tmp_path: Path) -> tuple[Path, Path]:
+    """A signed, self-consistent receipt plus the matching pinned pubkey."""
+    workdir = tmp_path / "proj"
+    workdir.mkdir()
+    _seed_run(workdir)
+    sign_key = tmp_path / "sign.pem"
+    _write_signing_key(sign_key)
+
+    built = CliRunner().invoke(
+        verify_cmd,
+        ["run", _RUN_ID, "-w", str(workdir), "--signing-key-path", str(sign_key)],
+    )
+    assert built.exit_code == 0, built.output
+    receipt_path = workdir / ".sdd" / "runs" / _RUN_ID / "run-receipt.json"
+
+    pub_path = tmp_path / "worker.pub.pem"
+    signing_key = Ed25519PrivateKey.from_private_bytes(b"i" * 32)
+    pub_path.write_bytes(
+        signing_key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        ),
+    )
+    return receipt_path, pub_path
+
+
+def test_integrity_only_pass_exits_0_without_require_provenance(tmp_path: Path) -> None:
+    """Today's behaviour is preserved by default: no --public-key still exits 0."""
+    receipt_path, _pub_path = _built_receipt(tmp_path)
+
+    result = CliRunner().invoke(verify_cmd, ["receipt", str(receipt_path)])
+
+    assert result.exit_code == 0, result.output
+
+
+def test_integrity_only_pass_under_require_provenance_exits_nonzero(tmp_path: Path) -> None:
+    """The gap #4208 reports: a CI gate must be able to refuse an unpinned pass."""
+    receipt_path, _pub_path = _built_receipt(tmp_path)
+
+    result = CliRunner().invoke(verify_cmd, ["receipt", str(receipt_path), "--require-provenance"])
+
+    assert result.exit_code == 3, result.output
+    assert "integrity-only" in result.output
+
+
+def test_provenance_pass_under_require_provenance_exits_0(tmp_path: Path) -> None:
+    """A pinned, matching key satisfies --require-provenance."""
+    receipt_path, pub_path = _built_receipt(tmp_path)
+
+    result = CliRunner().invoke(
+        verify_cmd,
+        ["receipt", str(receipt_path), "--public-key", str(pub_path), "--require-provenance"],
+    )
+
+    assert result.exit_code == 0, result.output
+
+
+def test_json_tier_field_distinguishes_integrity_only_from_provenance(tmp_path: Path) -> None:
+    """A caller reading JSON must not have to parse the verdict sentence."""
+    receipt_path, pub_path = _built_receipt(tmp_path)
+    runner = CliRunner()
+
+    unpinned = runner.invoke(verify_cmd, ["receipt", str(receipt_path), "--json"])
+    pinned = runner.invoke(verify_cmd, ["receipt", str(receipt_path), "--public-key", str(pub_path), "--json"])
+
+    unpinned_payload = json.loads(unpinned.output)
+    pinned_payload = json.loads(pinned.output)
+    assert unpinned.exit_code == 0, unpinned.output
+    assert pinned.exit_code == 0, pinned.output
+    assert unpinned_payload["tier"] == "integrity-only"
+    assert pinned_payload["tier"] == "provenance"
+
+
+def test_json_require_provenance_refusal_still_names_the_tier_reached(tmp_path: Path) -> None:
+    """The exit-3 refusal is JSON-visible too, not only in the human verdict."""
+    receipt_path, _pub_path = _built_receipt(tmp_path)
+
+    result = CliRunner().invoke(
+        verify_cmd,
+        ["receipt", str(receipt_path), "--require-provenance", "--json"],
+    )
+
+    payload = json.loads(result.output)
+    assert result.exit_code == 3, result.output
+    assert payload["ok"] is True
+    assert payload["tier"] == "integrity-only"
+    assert payload["require_provenance"] is True
+    assert payload["exit_code"] == 3
+
+
+def test_json_tampered_receipt_reports_null_tier(tmp_path: Path) -> None:
+    """A receipt that never verified has no tier to report."""
+    receipt_path, _pub_path = _built_receipt(tmp_path)
+    doc = json.loads(receipt_path.read_bytes())
+    doc["journal"]["events"][1]["task_id"] = "T-FORGED"
+    tampered = receipt_path.parent / "tampered.json"
+    tampered.write_text(json.dumps(doc), encoding="utf-8")
+
+    result = CliRunner().invoke(verify_cmd, ["receipt", str(tampered), "--json"])
+
+    payload = json.loads(result.output)
+    assert result.exit_code == 2
+    assert payload["tier"] is None
+
+
+# ---------------------------------------------------------------------------
 # Group promotion: legacy modes keep their exact behaviour and exit codes
 # ---------------------------------------------------------------------------
 

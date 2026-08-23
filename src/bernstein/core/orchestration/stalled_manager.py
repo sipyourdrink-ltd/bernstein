@@ -11,6 +11,10 @@ This module detects that specific failure mode directly:
 
 * A manager-role session has been alive for ``STALL_THRESHOLD_S`` seconds.
 * No child tasks exist on the server (only the manager's own seed task).
+* The manager shows no liveness signal: neither its runner log nor its
+  worktree changed inside ``AGENT.liveness_grace_s``. A manager whose log is
+  still growing is working, however slowly, and is never declared stalled -
+  the threshold alone cannot tell a slow model from a dead one.
 
 When that combination holds, we
 
@@ -375,6 +379,63 @@ def _warn_if_races_idle_kill(threshold_s: float) -> None:
         )
 
 
+def _manager_is_demonstrably_alive(orch: Any, session: Any) -> bool:
+    """Whether the manager's log or worktree changed inside the liveness grace window.
+
+    Liveness is evidence; elapsed time is not. The orchestrator already
+    computes a liveness verdict for this exact session every tick, and
+    ``heartbeat._escalate_heartbeat`` consults it before escalating an agent.
+    This is the remaining path that used to decide on a stopwatch alone: a
+    manager still reading the repo and composing its decomposition at the
+    threshold was declared stalled, and because ``handle_stalled_manager``
+    aborts the whole run rather than recycling one agent, a working manager
+    cost the entire run (issue #4338).
+
+    The gate is deliberately uncapped, unlike ``_liveness_signal_may_defer``
+    on the escalation ladder. There is exactly one manager and its failure
+    mode is heavier - the ladder recycles a worker and requeues its task,
+    while this path drains the run - so the asymmetry runs the other way:
+    deferring on a live-looking manager costs a longer run, killing a live
+    manager costs the run outright. The failure this detector exists to catch
+    (a manager that cannot reach its provider, or is misconfigured, and will
+    never emit a task) writes nothing at all, so it is caught within one grace
+    window regardless of how long the run has been going.
+
+    What this does to the race with ``AGENT.idle_log_age_threshold_s``: the two
+    tests are no longer both stopwatches. The idle-log reaper fires on log age
+    alone; this detector now requires log age past the same liveness grace
+    window *and* a runtime past its own threshold *and* no child tasks, so it
+    is strictly the more specific verdict and the threshold's few-seconds head
+    start still buys the more specific message. A manager whose log is growing
+    trips neither.
+
+    Any failure resolving the signal is treated as "no evidence of life", so a
+    genuine stall is still reported.
+
+    Args:
+        orch: The orchestrator (needs ``_workdir``).
+        session: The manager's agent session.
+
+    Returns:
+        ``True`` when the manager is demonstrably producing output.
+    """
+    try:
+        from bernstein.core.agents.heartbeat import _agent_has_fresh_liveness_signal
+
+        alive = bool(_agent_has_fresh_liveness_signal(orch, session))
+    except Exception:
+        logger.debug("stalled_manager: liveness probe unavailable; falling back to runtime", exc_info=True)
+        return False
+    if alive and getattr(orch, "_stalled_manager_liveness_held", None) != getattr(session, "id", None):
+        orch._stalled_manager_liveness_held = getattr(session, "id", None)
+        logger.info(
+            "stalled_manager: manager %s is past the runtime threshold but its log/worktree changed "
+            "inside the liveness grace window - not a stall, the run continues",
+            getattr(session, "id", "<unknown>"),
+        )
+    return alive
+
+
 def detect_stalled_manager(orch: Any) -> StalledManagerDiagnostic | None:
     """Return a diagnostic if a manager session has stalled, else ``None``.
 
@@ -398,6 +459,12 @@ def detect_stalled_manager(orch: Any) -> StalledManagerDiagnostic | None:
     runtime = max(now - float(getattr(session, "spawn_ts", now)), 0.0)
     threshold = _resolve_stall_threshold_s(orch)
     if runtime < threshold:
+        return None
+
+    # The runtime threshold is the outer bound, no longer the whole test: a
+    # manager past it that is still writing its runner log is producing tokens,
+    # and absence of progress is what this detector is named for (#4338).
+    if _manager_is_demonstrably_alive(orch, session):
         return None
 
     task_ids = getattr(session, "task_ids", []) or []

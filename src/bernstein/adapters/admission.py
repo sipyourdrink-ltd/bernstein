@@ -45,7 +45,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import shutil
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -56,6 +55,7 @@ from bernstein.core.security.path_containment import (
     PathContainmentError,
     PathTooLongError,
     contained_path,
+    slug_identifier,
 )
 
 if TYPE_CHECKING:
@@ -290,8 +290,6 @@ _GOLDEN_DIR_DEFAULT = Path(__file__).parents[3] / "tests" / "golden"
 #: in ``pyproject.toml``) so a pip install can replay the spawn path instead of
 #: refusing every adapter with :data:`REASON_NO_TRANSCRIPT` (issue #3547).
 _GOLDEN_DIR_PACKAGED = Path(__file__).resolve().parents[1] / "_default_templates" / "adapter_golden"
-
-_RECEIPT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 
 class AdapterAdmissionRefusal(RuntimeError):
@@ -577,7 +575,8 @@ def _canary_verdict_for(adapter: str, installed_version: str | None, last_green_
     """
     from packaging.version import InvalidVersion, Version
 
-    from bernstein.adapters.canary import _VERSION_TOKEN_RE, load_last_green  # pyright: ignore[reportPrivateUsage]
+    from .base import VERSION_TOKEN_RE
+    from .canary import load_last_green
 
     entries = load_last_green(last_green_path)
     entry = entries.get(adapter)
@@ -586,7 +585,7 @@ def _canary_verdict_for(adapter: str, installed_version: str | None, last_green_
     if installed_version is None:
         return CANARY_STALE
 
-    match = _VERSION_TOKEN_RE.search(installed_version)
+    match = VERSION_TOKEN_RE.search(installed_version)
     if not entry.version or match is None:
         return CANARY_STALE
 
@@ -939,11 +938,10 @@ def write_admission_receipt(base_dir: Path, receipt: dict[str, Any]) -> Path:
             escapes ``base_dir``.
     """
     adapter = str(receipt.get("adapter") or "")
-    if not _RECEIPT_NAME_RE.match(adapter):
-        raise ValueError(f"invalid adapter name for receipt filename: {adapter!r}")
+    adapter_key = slug_identifier(adapter, label="adapter name")
     sha = receipt_sha256(receipt)
     base_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"{adapter}-{sha[:16]}"
+    stem = f"{adapter_key}-{sha[:16]}"
     try:
         candidate = contained_path(base_dir, f"{stem}.json", label="receipt path")
         # The temporary sibling is opened *before* the rename, so it needs the
@@ -978,12 +976,16 @@ def load_admission_receipt(base_dir: Path, adapter: str) -> tuple[dict[str, Any]
         :data:`REASON_RECEIPT_TAMPERED` when every candidate failed its
         content-hash check.
     """
-    if not _RECEIPT_NAME_RE.match(adapter) or not base_dir.exists():
+    try:
+        adapter_key = slug_identifier(adapter, label="adapter name")
+    except PathContainmentError:
+        return None, REASON_NO_RECEIPT
+    if not base_dir.exists():
         return None, REASON_NO_RECEIPT
 
     candidates: list[dict[str, Any]] = []
     tampered = False
-    for path in sorted(base_dir.glob(f"{adapter}-*.json")):
+    for path in sorted(base_dir.glob(f"{adapter_key}-*.json")):
         try:
             doc = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -991,7 +993,11 @@ def load_admission_receipt(base_dir: Path, adapter: str) -> tuple[dict[str, Any]
         if not isinstance(doc, dict):
             continue
         body = doc.get("receipt")
-        if not isinstance(body, dict) or body.get("kind") != RECEIPT_KIND or body.get("adapter") != adapter:
+        if not isinstance(body, dict) or body.get("kind") != RECEIPT_KIND:
+            continue
+        # Match on the unmodified adapter name, not the slug: the slug is a
+        # filename concern only, the body keeps the operator-visible name.
+        if str(body.get("adapter") or "").lower() != adapter.lower():
             continue
         if not verify_admission_receipt(doc):
             tampered = True
@@ -1312,7 +1318,7 @@ def preflight_admission(
         try:
             write_admission_receipt(decisions_dir, receipt)
         except (OSError, ValueError) as exc:
-            logger.warning("Could not write admission gate receipt for %s: %s", adapter, type(exc).__name__)
+            logger.warning("Could not write admission gate receipt for %s: %s", adapter, exc)
 
     if chain is not None:
         _anchor_in_chain(chain, receipt, sha)

@@ -604,7 +604,49 @@ def _make_profile_ctx(profile: bool, workdir: Path) -> contextlib.AbstractContex
     return contextlib.nullcontext()
 
 
-def _finalize_run_output(*, quiet: bool) -> None:
+def _raise_if_no_plan_after_spawn(*, narrate_wait: bool = True) -> None:
+    """Diagnose a spawned-then-dead agent before a display branch's own wait.
+
+    The non-interactive detach path (issue #3528, #4246) briefly confirms the
+    first agent spawn and takes one poll to see whether that agent already
+    died before the goal was ever decomposed -- the reproduced shape where a
+    run leaves its one root task stuck ``claimed``/``in_progress``/``orphaned``
+    forever with no live agent and no plan. The TTY dashboard, the Rich
+    fallback, and ``--quiet`` all reproduce the same silence: none of them
+    checks for this shape, so they detach (or keep waiting) exactly as if the
+    run were healthy.
+
+    Called at the start of each of those three branches, before the branch's
+    own longer-running work begins, so the check lands close to the failure
+    window described in the reproduction (the agent dies almost immediately
+    after spawn) rather than after a dashboard session or a multi-hour quiet
+    wait have already moved past it.
+
+    Raises the same ``BernsteinFirstRunError``/``NO_PLAN_PRODUCED`` pair the
+    non-interactive branch raises, so this is the single producer of the
+    diagnosis text across every surface -- no renderer composes its own
+    message. A spawn refusal is left untouched here; each branch's existing
+    terminal-state check already accounts for it once the refused task
+    reaches a terminal status.
+
+    Args:
+        narrate_wait: When True, the first-spawn wait shows a transient Rich
+            status ("waiting for the first agent") while it polls, so a slow
+            start reads as progress instead of a hang. ``--quiet`` passes
+            False to keep its promise of no progress chatter.
+    """
+    from bernstein.cli.run_bootstrap import _await_first_spawn_outcome, _poll_no_plan_after_spawn
+    from bernstein.core.errors import BernsteinFirstRunError, ErrorCategory
+
+    outcome, _reason = _await_first_spawn_outcome(narrate_wait=narrate_wait)
+    if outcome == "spawned" and _poll_no_plan_after_spawn() is not None:
+        raise BernsteinFirstRunError(
+            "Spawned agent exited before producing a work plan",
+            category=ErrorCategory.NO_PLAN_PRODUCED,
+        )
+
+
+def _finalize_run_output(*, quiet: bool, wait: float | None = None) -> None:
     """Render either the interactive dashboard or the final summary.
 
     Uses terminal capability detection (TUI-003) to choose between the
@@ -642,18 +684,36 @@ def _finalize_run_output(*, quiet: bool) -> None:
     changes nothing. It fires when a run reached a terminal state inside that
     window, which is the fast-failure case.
 
+    A spawned-then-dead agent that never produced a plan (issue #3528) is
+    diagnosed the same way on every branch via ``_raise_if_no_plan_after_spawn``,
+    called before each branch's own wait so the check lands near the failure
+    window instead of after it.
+
     Args:
         quiet: When True, wait for quiescence and print only the terminal summary.
+        wait: Seconds to wait for quiescence, keeping the progress output;
+            None detaches as before.
     """
     from bernstein.cli.run_bootstrap import (
+        _RUN_WAIT_DEFAULT_S,
         _poll_quiescent_status,
         _wait_for_run_completion,
         exec_restart,
     )
 
     try:
-        if quiet:
-            final_status = _wait_for_run_completion()
+        if quiet or wait is not None:
+            # `--quiet` means "no progress chatter", not "swallow the reason
+            # the run produced nothing" -- run the same fast diagnosis every
+            # other branch runs before falling back to the slower, general
+            # terminal-state wait below (issue #3528).
+            #
+            # `--wait` asks for the same terminal-state wait without giving up
+            # the progress output, and takes this branch even on a TTY: a
+            # caller that wants an exit code wants the run's outcome, not a
+            # dashboard it has to close.
+            _raise_if_no_plan_after_spawn(narrate_wait=not quiet)
+            final_status = _wait_for_run_completion(timeout_s=_RUN_WAIT_DEFAULT_S if wait is None else wait)
             _show_run_summary()
             _exit_nonzero_on_unhealthy_run(final_status)
             return
@@ -663,6 +723,7 @@ def _finalize_run_output(*, quiet: bool) -> None:
         caps = detect_capabilities()
 
         if caps.supports_textual:
+            _raise_if_no_plan_after_spawn()
             try:
                 from bernstein.cli.dashboard import BernsteinApp as DashboardApp
 
@@ -681,6 +742,7 @@ def _finalize_run_output(*, quiet: bool) -> None:
             _exit_nonzero_on_unhealthy_run(_poll_quiescent_status())
         elif caps.is_tty:
             # TTY but Textual not supported -- use Rich fallback (TUI-003)
+            _raise_if_no_plan_after_spawn()
             _try_fallback_display()
             _exit_nonzero_on_unhealthy_run(_poll_quiescent_status())
         else:
@@ -696,6 +758,19 @@ def _finalize_run_output(*, quiet: bool) -> None:
                 console.print(f"[red]Run failed before any work started:[/red] {reason}")
                 console.print("Details: run 'bernstein status' or read .sdd/runtime/retrospective.md")
                 raise SystemExit(1)
+            if outcome == "spawned":
+                # An agent was confirmed alive at least once, so an empty
+                # agent count now is a death, not "hasn't spawned yet". A run
+                # whose spawned agent died before decomposing the goal must
+                # say so instead of detaching silently (issue #3528).
+                from bernstein.cli.run_bootstrap import _poll_no_plan_after_spawn
+                from bernstein.core.errors import BernsteinFirstRunError, ErrorCategory
+
+                if _poll_no_plan_after_spawn() is not None:
+                    raise BernsteinFirstRunError(
+                        "Spawned agent exited before producing a work plan",
+                        category=ErrorCategory.NO_PLAN_PRODUCED,
+                    )
             # A run that already reached a terminal state within the detach
             # window must not report success on its way out.
             _exit_nonzero_on_unhealthy_run(_poll_quiescent_status())

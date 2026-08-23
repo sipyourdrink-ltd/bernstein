@@ -30,7 +30,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -41,7 +40,10 @@ from bernstein.core.security.path_containment import (
     PathContainmentError,
     PathTooLongError,
     contained_path,
+    slug_identifier,
 )
+
+from .base import VERSION_TOKEN_RE
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -111,19 +113,7 @@ POLICY_WARN = "warn"
 #: warn-only policy; everything else (including unset) keeps block-by-default.
 _POLICY_ENV = "BERNSTEIN_ADAPTER_FLOOR_POLICY"
 _WARN_TOKENS = frozenset({"warn", "warn-only", "warn_only", "advisory"})
-
-#: First dotted-numeric token in a ``--version`` blob.
-#:
-#: The quantifiers are possessive (``\d++``) and the match is anchored to the
-#: start of a digit run (``(?<!\d)``) so the scan is linear in the size of the
-#: blob. Without those guards a long digit run with no dot forces the engine to
-#: retry every interior offset, which is quadratic on untrusted subprocess
-#: output. Neither guard changes which token is found: ``\d`` and ``\.`` are
-#: disjoint, so backtracking into a digit run can never make a following ``\.``
-#: match, and the leftmost match always begins at a digit-run boundary anyway.
-_VERSION_TOKEN_RE = re.compile(r"(?<!\d)\d++(?:\.\d++){1,3}")
 _VERSION_TIMEOUT_SECONDS = 10
-_RECEIPT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 
 class AdapterSecurityFloorRefusal(RuntimeError):
@@ -216,7 +206,7 @@ def probe_installed_version(binary_path: str) -> str | None:
         logger.debug("floor: version probe failed for %s (%s)", binary_path, type(exc).__name__)
         return None
     blob = f"{proc.stdout}\n{proc.stderr}"
-    match = _VERSION_TOKEN_RE.search(blob)
+    match = VERSION_TOKEN_RE.search(blob)
     return match.group(0) if match else None
 
 
@@ -443,11 +433,10 @@ def write_preflight_receipt(base_dir: Path, receipt: dict[str, Any]) -> Path:
     adapter string can never escape the receipts directory.
     """
     adapter = str(receipt.get("adapter") or "")
-    if not _RECEIPT_NAME_RE.match(adapter):
-        raise ValueError(f"invalid adapter name for receipt filename: {adapter!r}")
+    adapter_key = slug_identifier(adapter, label="adapter name")
     sha = receipt_sha256(receipt)
     base_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"{adapter}-{sha[:16]}"
+    stem = f"{adapter_key}-{sha[:16]}"
     try:
         candidate = contained_path(base_dir, f"{stem}.json", label="receipt path")
         # The temporary sibling is opened *before* the rename, so it needs the

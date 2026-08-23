@@ -320,6 +320,7 @@ PARTIAL_TABLE_FULL_SURFACES: dict[str, frozenset[str]] = {
             "--skip-gate",
             "--skip-gate-reason",
             "--task",
+            "--wait",
             "--two-phase-sandbox",
             "--worker",
             "--workflow",

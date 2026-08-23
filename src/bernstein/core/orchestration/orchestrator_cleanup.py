@@ -122,7 +122,7 @@ def save_session_state(orch: Any) -> None:
         orch: The orchestrator instance.
     """
     try:
-        from bernstein.core.session import SessionState, save_session
+        from bernstein.core.session import SessionState, read_session_regardless_of_age, save_session
 
         resp = orch._client.get(f"{orch._config.server_url}/tasks")
         resp.raise_for_status()
@@ -141,9 +141,23 @@ def save_session_state(orch: Any) -> None:
         # resumed run look finished when it had been paused mid-flight.
         open_ids: list[str] = [str(t["id"]) for t in task_list if t.get("status") == "open"]
 
+        # Carry the goal forward rather than overwriting it. The orchestrator
+        # never sees the goal, so the only copy is the one the run wrote at
+        # start; a stop that rewrote this file with an empty goal is what left
+        # every PR titled from nothing. The read ignores the resume-staleness
+        # window on purpose - a run longer than that window still owns its own
+        # goal. When the file is gone or unreadable there is nothing to carry,
+        # and that is said out loud instead of being written away silently.
+        prior = read_session_regardless_of_age(orch._workdir)
+        carried_goal = prior.goal if prior is not None else ""
+        if not carried_goal:
+            logger.warning(
+                "Session state has no goal to carry forward; the PR this run opens will have none either.",
+            )
+
         state = SessionState(
             saved_at=time.time(),
-            goal="",
+            goal=carried_goal,
             completed_task_ids=done_ids,
             pending_task_ids=pending_ids,
             open_task_ids=open_ids,

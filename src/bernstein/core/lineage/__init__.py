@@ -14,6 +14,7 @@ gate, merge, compliance pack, and MCP resource live in sibling modules under
 this package and re-export through here.
 """
 
+from bernstein.core.lineage.activity import active_set
 from bernstein.core.lineage.artifact_uri import (
     ARTIFACT_URI_SCHEMES,
     EXTERNAL_ARTEFACT_KIND,
@@ -119,6 +120,7 @@ __all__ = [
     "TrackerAuditEntry",
     "TrackerAuditLog",
     "VerifyResult",
+    "active_set",
     "artifact_key_rejection_reason",
     "build_merge_entry",
     "canonical_artifact_key",

@@ -213,6 +213,45 @@ class TestIncidentManager:
         )
         assert inc is None
 
+    def test_check_for_incidents_error_budget_depleted_records_task_ids(self) -> None:
+        """Contributing task ids land in blast_radius for incident auditability (#4310)."""
+        mgr = IncidentManager()
+        inc = mgr.check_for_incidents(
+            failed_task_count=3,
+            total_task_count=10,
+            consecutive_failures=0,
+            error_budget_depleted=True,
+            contributing_task_ids=["T-1", "T-2", "T-3"],
+        )
+        assert inc is not None
+        assert inc.blast_radius == ["T-1", "T-2", "T-3"]
+        assert "T-1" in inc.to_markdown()
+        assert inc.to_dict()["blast_radius"] == ["T-1", "T-2", "T-3"]
+
+    def test_check_for_incidents_critical_failure_rate_records_task_ids(self) -> None:
+        mgr = IncidentManager()
+        inc = mgr.check_for_incidents(
+            failed_task_count=8,
+            total_task_count=10,
+            consecutive_failures=0,
+            error_budget_depleted=False,
+            contributing_task_ids=["T-9"],
+        )
+        assert inc is not None
+        assert inc.blast_radius == ["T-9"]
+
+    def test_check_for_incidents_no_task_ids_defaults_to_empty_blast_radius(self) -> None:
+        """Omitting contributing_task_ids must not error (call-site compatibility)."""
+        mgr = IncidentManager()
+        inc = mgr.check_for_incidents(
+            failed_task_count=3,
+            total_task_count=10,
+            consecutive_failures=0,
+            error_budget_depleted=True,
+        )
+        assert inc is not None
+        assert inc.blast_radius == []
+
     def test_generate_post_mortem_task(self) -> None:
         mgr = IncidentManager()
         inc = mgr.create_incident(

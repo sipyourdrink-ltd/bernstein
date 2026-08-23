@@ -61,7 +61,7 @@ _FAKE_EVENTS_HASH = "sha256:" + "b" * 64
 def _pin_audit_key(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pin the install audit key so no filesystem side-effects occur."""
     monkeypatch.setattr(
-        "bernstein.core.security.audit.load_or_create_audit_key",
+        "bernstein.core.security.audit.load_audit_key",
         lambda *a, **kw: _KEY,
     )
 

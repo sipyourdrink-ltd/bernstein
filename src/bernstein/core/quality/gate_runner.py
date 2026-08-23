@@ -21,6 +21,9 @@ from bernstein.core.quality.gate_commands import (
     _resolve_import_from,
 )
 from bernstein.core.quality.gate_pipeline import (
+    COMMAND_ERROR_PREFIX as _COMMAND_ERROR_PREFIX,
+)
+from bernstein.core.quality.gate_pipeline import (
     NO_PYTHON_FILES as _NO_PYTHON_FILES,
 )
 from bernstein.core.quality.gate_pipeline import (
@@ -168,7 +171,17 @@ class GateRunner:
                 span.set_attribute("quality_gate.cached", result.cached)
                 span.set_attribute("quality_gate.duration_ms", result.duration_ms)
 
-        if cache_key is not None and result.status in {"pass", "fail", "skipped"}:
+        # Cache terminal verdicts. ``"inconclusive"`` is also a terminal
+        # verdict (the runner cannot resolve it without operator action),
+        # so the cache key must include it — otherwise a flaky runner
+        # would loop through a re-run cycle without ever converging on a
+        # reproducible verdict (issue #4181).
+        if cache_key is not None and result.status in {
+            "pass",
+            "fail",
+            "skipped",
+            "inconclusive",
+        }:
             await asyncio.to_thread(self._store_cached_result_sync, cache_key, result)
         return result
 
@@ -372,17 +385,27 @@ class GateRunner:
         try:
             plugin_result = await asyncio.to_thread(plugin.run, changed_files, run_dir, task.title, task.description)
         except Exception as exc:
+            # The plugin died before producing a verdict. Issue #4181 says we
+            # must not coerce an inability-to-evaluate into pass/fail — the
+            # runner cannot honestly say "this gate passed", so return
+            # ``inconclusive`` with the closed-set ``runner-died-before-output``
+            # reason. ``blocked`` semantics stay aligned with ``fail`` at a
+            # required gate (the verdict differs, the outcome does not).
+            logger.warning("Gate plugin %r died before output: %s", step.name, exc)
             return GateResult(
                 name=step.name,
-                status="fail",
+                status="inconclusive",
                 required=step.required,
                 blocked=step.required,
                 cached=False,
                 duration_ms=0,
                 details=f"Gate plugin {step.name!r} failed: {exc}",
                 metadata={},
+                reason="runner-died-before-output",
             )
-        blocked = plugin_result.blocked or (step.required and plugin_result.status == "fail")
+        # ``inconclusive`` blocks at a required gate just like ``fail``; the
+        # verdict differs, the promotion decision does not (issue #4181).
+        blocked = plugin_result.blocked or (step.required and plugin_result.status in {"fail", "inconclusive"})
         return GateResult(
             name=step.name,
             status=plugin_result.status,
@@ -565,9 +588,10 @@ class GateRunner:
         if baseline_score is None:
             return GateResult(
                 name=step.name,
-                status="warn",
+                status="inconclusive",
+                reason="evidence-missing",
                 required=step.required,
-                blocked=False,
+                blocked=step.required,
                 cached=False,
                 duration_ms=0,
                 details=f"Complexity average: {current_score:.2f}; baseline unavailable ({baseline_detail})",
@@ -666,16 +690,24 @@ class GateRunner:
                 docstyle=docstyle,
             )
         except Exception as exc:  # pragma: no cover
+            # ``comment_quality.analyse`` died before producing a verdict.
+            # Issue #4181 says we must not coerce an inability-to-evaluate
+            # into pass/fail — the evaluator could not look at the code,
+            # so it cannot honestly say "pass", and "fail" trains operators
+            # to re-run until green. Return ``inconclusive`` with the
+            # closed-set ``runner-died-before-output`` reason; ``blocked``
+            # stays aligned with ``fail`` at a required gate.
             logger.warning("comment_quality.analyse failed: %s", exc)
             return GateResult(
                 name=step.name,
-                status="fail",
+                status="inconclusive",
                 required=step.required,
                 blocked=step.required,
                 cached=False,
                 duration_ms=0,
                 details=f"Comment quality gate error: {exc}",
                 metadata={},
+                reason="runner-died-before-output",
             )
 
         if report.passed and not report.issues:
@@ -780,15 +812,24 @@ class GateRunner:
         try:
             evaluation = CoverageGate(self._workdir, run_dir, base_ref=self._base_ref).evaluate()
         except Exception as exc:
+            # The CoverageGate constructor / evaluate chain died before
+            # producing a verdict. Issue #4181 says we must not coerce an
+            # inability-to-evaluate into pass/fail — without an evaluation
+            # we cannot honestly say "pass", and "fail" trains operators
+            # to re-run until green. ``inconclusive`` with the closed-set
+            # ``runner-died-before-output`` reason is the honest verdict;
+            # ``blocked`` stays aligned with ``fail`` at a required gate.
+            logger.warning("CoverageGate.evaluate failed: %s", exc)
             return GateResult(
                 name=step.name,
-                status="fail",
+                status="inconclusive",
                 required=step.required,
                 blocked=step.required,
                 cached=False,
                 duration_ms=0,
-                details=str(exc),
+                details=f"Coverage gate evaluator failed: {exc}",
                 metadata={},
+                reason="runner-died-before-output",
             )
         return GateResult(
             name=step.name,
@@ -824,15 +865,24 @@ class GateRunner:
                 threshold=cfg.threshold,
             ).evaluate()
         except Exception as exc:
+            # The BenchmarkGate constructor / evaluate chain died before
+            # producing a verdict. Issue #4181 says we must not coerce an
+            # inability-to-evaluate into pass/fail — without an evaluation
+            # we cannot honestly say "pass", and "fail" trains operators
+            # to re-run until green. ``inconclusive`` with the closed-set
+            # ``runner-died-before-output`` reason is the honest verdict;
+            # ``blocked`` stays aligned with ``fail`` at a required gate.
+            logger.warning("BenchmarkGate.evaluate failed: %s", exc)
             return GateResult(
                 name=step.name,
-                status="fail",
+                status="inconclusive",
                 required=step.required,
                 blocked=step.required,
                 cached=False,
                 duration_ms=0,
-                details=str(exc),
+                details=f"Benchmark gate evaluator failed: {exc}",
                 metadata={},
+                reason="runner-died-before-output",
             )
         regression_names = [r.name for r in evaluation.regressions]
         return GateResult(
@@ -1018,7 +1068,28 @@ class GateRunner:
             enabled=True,
             block_on_fail=step.required,
         )
-        result = await generate_and_run(task, run_dir, cfg)
+        try:
+            result = await generate_and_run(task, run_dir, cfg)
+        except Exception as exc:
+            # The integration-test generator died before producing a verdict.
+            # Issue #4181 says we must not coerce an inability-to-evaluate
+            # into pass/fail — the generator could not even run, so neither
+            # "pass" nor "fail" is honest. ``inconclusive`` with the
+            # closed-set ``runner-died-before-output`` reason is the honest
+            # verdict; ``blocked`` stays aligned with ``fail`` at a required
+            # gate (the verdict differs, the outcome does not).
+            logger.warning("integration_test_gen gate failed: %s", exc)
+            return GateResult(
+                name=step.name,
+                status="inconclusive",
+                required=step.required,
+                blocked=step.required,
+                cached=False,
+                duration_ms=0,
+                details=f"Integration test generation gate failed: {exc}",
+                metadata={},
+                reason="runner-died-before-output",
+            )
         metadata: dict[str, Any] = {}
         if result.test_path:
             metadata["test_path"] = result.test_path
@@ -1146,6 +1217,28 @@ class GateRunner:
                 details=detail,
                 metadata={"command": command},
             )
+        if detail.startswith(_COMMAND_ERROR_PREFIX):
+            # The command could not be executed at all (OSError from
+            # subprocess.run: shell unavailable, cwd vanished, ...). No
+            # evidence was produced, so neither "pass" (a bypass) nor
+            # "fail" (a lie that trains operators to re-run until green)
+            # is honest — issue #4181. ``evidence-missing`` is the closed
+            # reason; at a required gate this blocks exactly like ``fail``.
+            return GateResult(
+                name=step.name,
+                status="inconclusive",
+                reason="evidence-missing",
+                required=step.required,
+                blocked=step.required,
+                cached=False,
+                duration_ms=0,
+                details=detail,
+                metadata={"command": command},
+            )
+        # Non-zero exit with captured output: the tool ran and reported a
+        # real failure — that is evidence, and it is unfavourable. ``fail``
+        # is the honest verdict here (distinct from the absent-evidence
+        # cases above, which carry ``inconclusive``).
         return GateResult(
             name=step.name,
             status="fail",

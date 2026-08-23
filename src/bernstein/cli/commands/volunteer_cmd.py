@@ -109,6 +109,96 @@ def verify_cmd(repo_root: Path, as_json: bool) -> None:
     _print_report(manifest, manifest_path, effective_egress(manifest), unenforced)
 
 
+@volunteer_group.command("browse")
+@click.option(
+    "--index",
+    "index_urls",
+    multiple=True,
+    help="HTTPS URL of a volunteer index JSON document. Can be repeated.",
+)
+@click.option("--size", default=None, help="Filter by size label (e.g., 's', 'm').")
+@click.option("--language", default=None, help="Filter by language topic.")
+@click.option("--local-ok", "local_ok_only", is_flag=True, help="Only show projects that accept local models.")
+@click.option("--budget", "budget_minutes", type=int, default=None, help="Max wall-clock minutes you will provide.")
+@click.option("--verbose", is_flag=True, help="Show dropped projects with reasons.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def browse_cmd(
+    index_urls: tuple[str, ...],
+    size: str | None,
+    language: str | None,
+    local_ok_only: bool,
+    budget_minutes: int | None,
+    verbose: bool,
+    as_json: bool,
+) -> None:
+    """Browse opt-in volunteer projects from one or more indexes.
+
+    Fetches configured indexes (HTTPS only), merges and deduplicates by repo,
+    validates each project's ``.bernstein/volunteer.json``, and filters by
+    your donor preferences.
+
+    \b
+    Examples::
+
+        bernstein volunteer browse --index https://example.test/index.json
+        bernstein volunteer browse --index https://a.test/i.json --index https://b.test/i.json \\
+            --local-ok --language python
+        bernstein volunteer browse --verbose
+    """
+    from bernstein.core.volunteer.registry import browse_indexes
+
+    if not index_urls:
+        _fail("no index URLs provided; use --index at least once", field="--index", as_json=as_json, path=Path("<cli>"))
+        return
+
+    joinable, dropped = browse_indexes(
+        list(index_urls),
+        size=size,
+        language=language,
+        local_ok_only=local_ok_only,
+        budget_minutes=budget_minutes,
+    )
+
+    if as_json:
+        payload = {
+            "joinable": [
+                {
+                    "repo_url": r.repo_url,
+                    "default_branch": r.default_branch,
+                    "manifest_url": r.manifest_url,
+                    "manifest_sha256": r.digest,
+                    "license": r.manifest.license,
+                    "local_ok": r.manifest.local_ok,
+                    "max_wall_clock_minutes": r.manifest.max_wall_clock_minutes,
+                    "task_label": r.manifest.task_label,
+                    "topics": list(r.topics),
+                }
+                for r in joinable
+            ],
+            "dropped": [{"repo_url": d.repo_url, "reason": d.reason} for d in dropped] if verbose else [],
+        }
+        click.echo(json.dumps(payload, indent=2))
+        return
+
+    if not joinable:
+        click.echo("No joinable projects found.")
+    else:
+        for r in joinable:
+            click.echo(f"  {r.repo_url}")
+            click.echo(f"    digest     {r.digest}")
+            click.echo(f"    license    {r.manifest.license}")
+            click.echo(f"    local ok   {'yes' if r.manifest.local_ok else 'no'}")
+            click.echo(f"    wall clock {r.manifest.max_wall_clock_minutes} min")
+            click.echo(f"    task label {r.manifest.task_label}")
+            if r.topics:
+                click.echo(f"    topics     {', '.join(r.topics)}")
+
+    if verbose and dropped:
+        click.echo("\nDropped:")
+        for d in dropped:
+            click.echo(f"  {d.repo_url}: {d.reason}")
+
+
 def _report(
     manifest: VolunteerManifest,
     path: Path,

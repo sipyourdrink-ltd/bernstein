@@ -1,0 +1,48 @@
+id: issue-to-pr
+name: Issue to Pull Request
+version: "1.0"
+description: Resolve one tracked issue end to end and leave a reviewable pull request behind.
+tags:
+  - github
+  - issues
+  - quality
+  - automation
+tasks:
+  - title: Confirm the defect still exists at HEAD
+    role: qa
+    priority: 0
+    scope: small
+    complexity: medium
+    description: |
+      Issue bodies go stale: counts drift, referenced code moves, an unrelated
+      merge fixes the defect first. Re-derive the reproduction from the issue
+      against the current checkout before anyone implements. If the defect is
+      gone, say so with the commit that fixed it and stop the scenario there.
+  - title: Write the failing test first
+    role: qa
+    priority: 1
+    scope: small
+    complexity: medium
+    description: |
+      Encode the issue's acceptance criteria as a test that fails on the
+      unmodified checkout. Quote the failing assertion in the task result --
+      a fix whose test was never seen red proves nothing.
+  - title: Implement the fix
+    role: backend
+    priority: 1
+    scope: medium
+    complexity: high
+    description: |
+      Fix the root cause, not the symptom. Keep the diff scoped to the issue:
+      no drive-by refactors, no unrelated cleanups. Name the new or changed
+      files in the completion signal so the quality gate can verify them on
+      the merged result.
+  - title: Prepare the pull request record
+    role: reviewer
+    priority: 2
+    scope: small
+    complexity: medium
+    description: |
+      The PR body states the root cause, the red-then-green test evidence, and
+      which acceptance criterion each change satisfies. Add a release-notes
+      entry naming the issue number. Link the issue with a closing keyword.

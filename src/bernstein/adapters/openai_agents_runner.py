@@ -521,6 +521,9 @@ def _build_instrumentation_hooks(sdk: Any, manifest: RunnerManifest) -> Any:
                     is_error,
                     type(result).__name__,
                 )
+                coverage = getattr(context, "coverage", None)
+                if coverage is None and isinstance(result, dict):
+                    coverage = result.get("coverage")
                 instrumenter.log_tool_call(
                     call_id=call_id,
                     ts_start=ts_start,
@@ -530,6 +533,7 @@ def _build_instrumentation_hooks(sdk: Any, manifest: RunnerManifest) -> Any:
                     success=not is_error,
                     error=f"{type(result).__name__}: {result}" if is_error else None,
                     result=result_for_log,
+                    coverage=coverage,
                 )
                 logger.debug(
                     "wrote tool_call entry call_id=%s tool=%s session=%s success=%s",
@@ -642,6 +646,7 @@ def _instrument_event(event: Mapping[str, Any]) -> None:
                 success=not is_error,
                 error=str(event.get("error")) if event.get("error") else None,
                 result=result_value,
+                coverage=event.get("coverage"),
             )
             return
     except Exception as exc:

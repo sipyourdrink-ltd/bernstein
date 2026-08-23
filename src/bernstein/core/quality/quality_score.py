@@ -148,4 +148,10 @@ class QualityScorer:
             return 100
         if status in {"warn", "timeout"}:
             return 50
+        if status == "inconclusive":
+            # The gate could not honestly evaluate its evidence. Not a
+            # failure of the change, but not a pass either — worth less
+            # than a warning (which at least produced a verdict), and
+            # strictly more than a plain failure's 0 (issue #4181).
+            return 30
         return 0

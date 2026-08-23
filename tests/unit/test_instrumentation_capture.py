@@ -129,3 +129,111 @@ class TestExtraDirsFanOut:
         records = _read_jsonl(base / "conversation.jsonl")
         assert records[0]["content"] == "hi"
         assert blocked.read_text(encoding="utf-8") == "not a dir"
+
+
+class TestLogToolCallCoverage:
+    def test_coverage_record_round_trips_with_call_id(self, tmp_path: Path) -> None:
+        inst = RunInstrumenter(run_id="r1", task_id="t1", agent_id="a1", base_dir=tmp_path / "agent")
+        coverage = {
+            "file_count": 5,
+            "corpus_digest": "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+            "coverage": "complete",
+            "truncated": False,
+            "truncation_reason": None,
+            "exit_status": 0,
+            "exit_checked": True,
+        }
+        inst.log_tool_call(
+            call_id="c-cov-1",
+            ts_start="2026-01-01T00:00:00+00:00",
+            ts_end="2026-01-01T00:00:01+00:00",
+            tool="list_dir",
+            success=True,
+            result=["a.py", "b.py"],
+            coverage=coverage,
+        )
+        records = _read_jsonl(tmp_path / "agent" / "tool-calls.jsonl")
+        assert len(records) == 1
+        assert records[0]["call_id"] == "c-cov-1"
+        assert records[0]["coverage"] == coverage
+
+    def test_coverage_record_not_truncated_by_result_cap(self, tmp_path: Path) -> None:
+        inst = RunInstrumenter(run_id="r1", task_id="t1", agent_id="a1", base_dir=tmp_path / "agent")
+        long_digest = "sha256:" + "a" * 600
+        coverage = {
+            "file_count": 100,
+            "corpus_digest": long_digest,
+            "coverage": "complete",
+            "truncated": False,
+            "truncation_reason": None,
+            "exit_status": 0,
+            "exit_checked": True,
+        }
+        inst.log_tool_call(
+            call_id="c-cov-2",
+            ts_start="2026-01-01T00:00:00+00:00",
+            ts_end="2026-01-01T00:00:01+00:00",
+            tool="search_files",
+            success=True,
+            coverage=coverage,
+        )
+        records = _read_jsonl(tmp_path / "agent" / "tool-calls.jsonl")
+        recorded_cov = records[0].get("coverage")
+        assert isinstance(recorded_cov, dict)
+        assert recorded_cov["corpus_digest"] == long_digest
+        assert not recorded_cov["corpus_digest"].endswith("...[truncated]")
+
+    def test_truncated_walk_coverage_reflects_truncation(self, tmp_path: Path) -> None:
+        inst = RunInstrumenter(run_id="r1", task_id="t1", agent_id="a1", base_dir=tmp_path / "agent")
+        coverage = {
+            "file_count": 50,
+            "corpus_digest": "sha256:fedcba",
+            "coverage": "partial",
+            "truncated": True,
+            "truncation_reason": "timeout",
+            "exit_status": "timeout",
+            "exit_checked": True,
+        }
+        inst.log_tool_call(
+            call_id="c-cov-3",
+            ts_start="2026-01-01T00:00:00+00:00",
+            ts_end="2026-01-01T00:00:05+00:00",
+            tool="list_dir",
+            success=False,
+            coverage=coverage,
+        )
+        records = _read_jsonl(tmp_path / "agent" / "tool-calls.jsonl")
+        rec = records[0]
+        assert rec["coverage"]["truncated"] is True
+        assert rec["coverage"]["truncation_reason"] == "timeout"
+        assert rec["coverage"]["coverage"] == "partial"
+
+    def test_absent_coverage_differs_from_present_empty_coverage(self, tmp_path: Path) -> None:
+        inst = RunInstrumenter(run_id="r1", task_id="t1", agent_id="a1", base_dir=tmp_path / "agent")
+        inst.log_tool_call(
+            call_id="c-nocov",
+            ts_start="2026-01-01T00:00:00+00:00",
+            ts_end="2026-01-01T00:00:01+00:00",
+            tool="list_dir",
+            success=True,
+        )
+        empty_cov = {
+            "file_count": 0,
+            "corpus_digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "coverage": "complete",
+            "truncated": False,
+            "truncation_reason": None,
+            "exit_status": 0,
+            "exit_checked": True,
+        }
+        inst.log_tool_call(
+            call_id="c-emptycov",
+            ts_start="2026-01-01T00:00:00+00:00",
+            ts_end="2026-01-01T00:00:01+00:00",
+            tool="list_dir",
+            success=True,
+            coverage=empty_cov,
+        )
+        records = _read_jsonl(tmp_path / "agent" / "tool-calls.jsonl")
+        assert "coverage" not in records[0] or records[0]["coverage"] is None
+        assert records[1]["coverage"] == empty_cov

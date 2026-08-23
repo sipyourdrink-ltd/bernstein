@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from bernstein.core.slo import ErrorBudgetAction, SLOStatus, SLOTracker
+from bernstein.core.slo import (
+    ErrorBudgetAction,
+    SLOStatus,
+    SLOTracker,
+    error_budget_from_task_board,
+)
 
 
 def test_slo_tracker_initial_state() -> None:
@@ -96,3 +102,68 @@ def test_slo_tracker_update_from_collector() -> None:
     assert tracker.targets["merge_success"].current == pytest.approx(0.5)
     assert tracker.error_budget.total_tasks == 2
     assert tracker.error_budget.failed_tasks == 1
+
+
+# ---------------------------------------------------------------------------
+# error_budget_from_task_board (#4310)
+# ---------------------------------------------------------------------------
+
+
+def _task(task_id: str) -> SimpleNamespace:
+    return SimpleNamespace(id=task_id)
+
+
+def test_error_budget_from_task_board_counts_terminal_states_only() -> None:
+    """Only done/failed count; open/claimed tasks are not terminal yet."""
+    tasks_by_status = {
+        "open": [_task("T-4"), _task("T-5")],
+        "claimed": [_task("T-6")],
+        "done": [_task("T-1"), _task("T-2")],
+        "failed": [_task("T-3")],
+    }
+    budget = error_budget_from_task_board(tasks_by_status)
+    assert budget.total_tasks == 3  # 2 done + 1 failed, not all 6 on the board
+    assert budget.failed_tasks == 1
+
+
+def test_error_budget_from_task_board_agent_death_after_done_not_counted() -> None:
+    """Reproduces the issue: complete a task, then SIGTERM its agent.
+
+    The board only knows the task reached `done`; agent process liveness
+    is not an input to this function at all, so there is no way for an
+    agent death to move the ratio.
+    """
+    tasks_by_status = {"open": [], "claimed": [], "done": [_task("T-1")], "failed": []}
+    budget = error_budget_from_task_board(tasks_by_status)
+    assert budget.total_tasks == 1
+    assert budget.failed_tasks == 0
+    assert not budget.is_depleted
+
+
+def test_error_budget_from_task_board_matches_board_not_collector() -> None:
+    """Regression for the reported evidence: board showed 1 failed of 12
+    (2 done, 9 open/claimed) while the collector-derived ratio claimed
+    4 failures out of 6. The board-derived budget must match the board."""
+    tasks_by_status = {
+        "open": [_task(f"T-open-{i}") for i in range(6)],
+        "claimed": [_task(f"T-claimed-{i}") for i in range(3)],
+        "done": [_task("T-done-1"), _task("T-done-2")],
+        "failed": [_task("T-failed-1")],
+    }
+    budget = error_budget_from_task_board(tasks_by_status)
+    assert budget.total_tasks == 3
+    assert budget.failed_tasks == 1
+
+
+def test_error_budget_from_task_board_missing_keys_default_to_empty() -> None:
+    """Defensive: a board snapshot without done/failed keys counts as zero,
+    not an error (mirrors fetch_all_tasks' early-return {} on server errors)."""
+    budget = error_budget_from_task_board({})
+    assert budget.total_tasks == 0
+    assert budget.failed_tasks == 0
+    assert not budget.is_depleted
+
+
+def test_error_budget_from_task_board_honors_slo_target() -> None:
+    budget = error_budget_from_task_board({"done": [], "failed": []}, slo_target=0.5)
+    assert budget.slo_target == 0.5

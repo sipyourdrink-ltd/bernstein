@@ -13,6 +13,7 @@ that every adapter artifact write routes through.
 | `entry.py` | `LineageEntry` frozen dataclass; `canonicalise` / `entry_hash` |
 | `identity.py` | `AgentCard` (A2A subset); Ed25519 `sign_detached` / `verify_detached` |
 | `signed_write.py` | `seal_write` / `SignedLineageLog` signed-write path |
+| `coverage.py` | Anchors a `ToolCoverageRecord` (issue #3769) as a `"coverage"`-kind entry keyed by `tool_call_id` (issue #3770). Anchors a `content_hash` commitment only, not the record's bytes - a reader that cannot independently recover the payload must treat the claim as unverified, never fabricate a passing record from the entry alone |
 | `gate.py` | Lineage CI gate (ADR-009 §6.2) |
 
 ## Invariants
@@ -35,6 +36,5 @@ that every adapter artifact write routes through.
 
 ## Testing
 
-Single files only, e.g.
-`uv run pytest tests/unit/test_lineage_record.py -x -q`; the
-`test_lineage_*.py` files cover entries, stores, signing, and gates.
+Single files only, e.g. `uv run pytest tests/unit/test_lineage_record.py -x -q`;
+the `test_lineage_*.py` files cover entries, stores, signing, and gates.
