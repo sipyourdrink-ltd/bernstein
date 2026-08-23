@@ -38,21 +38,6 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ContextPartTokens:
-    """Token estimate for a single named context section from the receipt.
-
-    Attributes:
-        label: Section name, e.g. ``"lessons"``, ``"rag_context"``.
-        token_estimate: Estimated token count from the receipt entry.
-        content_sha256: SHA-256 content hash from the receipt entry.
-    """
-
-    label: str
-    token_estimate: int
-    content_sha256: str
-
-
-@dataclass
 class AgentSessionTokenBreakdown:
     """Token consumption breakdown for a single agent session.
 
@@ -88,10 +73,6 @@ class AgentSessionTokenBreakdown:
     cost_usd: float = 0.0
     task_id: str = ""
     optimization_notes: list[str] = field(default_factory=list)
-    # Per-part context breakdown from the context receipt (issue #4405). Each
-    # entry names a context section actually included in the prompt with its
-    # token estimate and content hash. Empty when no receipt was captured.
-    context_parts: list[ContextPartTokens] = field(default_factory=list)
 
     @property
     def total_tokens(self) -> int:
