@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
+from typing import Any, cast
 
 from bernstein.core.git_ops import (
     commit as git_commit,
@@ -349,7 +350,7 @@ class UpgradeExecutor:
             # auto-executes on a reviewer verdict alone, which is the bypass
             # the gate exists to close: an approved upgrade from a producer
             # with a poor measured history would still apply.
-            decision = self._admission.evaluate(transaction)
+            decision = self._admission.evaluate(cast("Any", transaction))
             if not decision.admitted:
                 transaction.status = UpgradeStatus.REVIEW_REJECTED
                 transaction.error_message = f"Refused by admission policy: {decision.reason}"
@@ -471,7 +472,7 @@ class UpgradeExecutor:
             if result.ok:
                 commit_hash = rev_parse_head(self._workdir)
                 logger.info("Committed upgrade %s as %s", transaction.id, commit_hash)
-                return commit_hash
+                return cast(str, commit_hash)
 
             logger.warning("Git commit failed: %s", result.stderr)
             return None
