@@ -107,7 +107,7 @@ def prepare_resume(
     _runtime_dir = workdir / ".sdd" / "runtime"
     _agent_checkpoint = find_checkpoint_for_task(task_id, _runtime_dir)
     if _agent_checkpoint is not None:
-        _ok, _reason = is_checkpoint_recoverable(_agent_checkpoint)
+        _ok, _reason = is_checkpoint_recoverable(_agent_checkpoint, current_task_id=task_id)
         if not _ok:
             raise GrantRefusedError(_reason)
 
