@@ -338,6 +338,9 @@ class TokenDefaults:
     truncation_threshold_pct: float = 80.0  # truncate tool output above 80%
     rejection_threshold_pct: float = 95.0  # reject new work above 95%
 
+    spawn_prompt_budget_pct: float = 25.0  # warn when assembled prompt exceeds 25% of context window
+    spawn_prompt_budget_abs: int = 32_768  # absolute fallback budget in tokens when model context unknown
+
     code_block_max_lines: int = 100  # truncate code blocks >100 lines
     file_listing_max_entries: int = 50  # truncate ls/find listings >50 items
 

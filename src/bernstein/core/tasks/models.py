@@ -1225,6 +1225,13 @@ class AgentSession:
     # sent to the model. Empty when no receipt was captured.
     context_receipt: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
 
+    # Spawn-time prompt budget measurement (#4377). Stamped before the
+    # adapter is invoked so the cost is queryable without waiting for the
+    # session to end.
+    spawn_prompt_tokens: int = 0  # estimated token count of assembled prompt at spawn
+    spawn_prompt_utilization_pct: float = 0.0  # percentage of context window consumed by prompt
+    spawn_prompt_over_budget: bool = False  # True when prompt exceeded the budget threshold
+
 
 class IsolationMode(StrEnum):
     """Agent isolation mode."""

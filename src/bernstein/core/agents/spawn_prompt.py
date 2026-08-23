@@ -773,6 +773,7 @@ def _render_prompt(
     file_ownership: dict[str, str] | None = None,
     max_turns: int | None = None,
     mailbox_section: str = "",
+    model: str = "",
 ) -> str:
     """Build the full agent prompt from role template + tasks + context.
 
@@ -1114,6 +1115,22 @@ def _render_prompt(
         ", ".join(section_names),
     )
 
+    # Spawn-time prompt budget check (#4377): measure before the adapter is
+    # invoked and warn (non-fatally) when the assembled prompt consumes more
+    # than the configured fraction of the model's context window.
+    try:
+        from bernstein.core.agents.spawn_prompt_budget import check_spawn_prompt_budget
+
+        _budget = check_spawn_prompt_budget(
+            named_sections,
+            model=model,
+            session_id=session_id,
+        )
+        if _budget.over_budget:
+            logger.warning(_budget.warning_message)
+    except Exception as _budget_exc:
+        logger.debug("Spawn prompt budget check failed: %s", _budget_exc)
+
     # Prompt token-usage breakdown (system prompt %, context %, user prompt %)
     if session_id:
         try:
@@ -1220,6 +1237,7 @@ def render_prompt(
     file_ownership: dict[str, str] | None = None,
     max_turns: int | None = None,
     mailbox_section: str = "",
+    model: str = "",
 ) -> str:
     """Public wrapper for compatibility-safe prompt rendering.
 
@@ -1242,6 +1260,7 @@ def render_prompt(
         file_ownership=file_ownership,
         max_turns=max_turns,
         mailbox_section=mailbox_section,
+        model=model,
     )
     _observe_cache_locality(rendered, tasks)
     return rendered

@@ -1089,6 +1089,7 @@ def _render_prompt_with_receipt(
     meta_messages: list[str] | None = None,
     max_turns: int | None = None,
     mailbox_section: str = "",
+    model: str = "",
 ) -> tuple[str, ContextReceipt]:
     """Build the full agent prompt from role template + tasks + context.
 
@@ -1397,6 +1398,21 @@ def _render_prompt_with_receipt(
     from bernstein.core.agents.context_receipt import build_context_receipt
 
     receipt = build_context_receipt(named_sections)
+
+    # Spawn-time prompt budget check (#4377). This is the prompt the adapter
+    # is actually handed, so the measurement belongs here rather than only in
+    # the batch renderer - a budget checked on a prompt nobody spawns reports
+    # nothing about a real run. Non-fatal: an over-budget prompt is a warning,
+    # not a refused spawn.
+    from bernstein.core.agents.spawn_prompt_budget import check_spawn_prompt_budget
+
+    try:
+        budget = check_spawn_prompt_budget(named_sections, model=model, session_id=session_id)
+        if budget.over_budget:
+            logger.warning(budget.warning_message)
+    except Exception:
+        logger.exception("Spawn prompt budget check failed for session=%s", session_id)
+
     sections = [content for _, content in named_sections]
 
     # Annotate prompt sections with cache hints so adapters can apply
@@ -4039,6 +4055,7 @@ class AgentSpawner:
                 meta_messages=meta_messages,
                 max_turns=_effective_max_turns,
                 mailbox_section=mailbox_section,
+                model=model_config.model,
             )
 
         agent_source = catalog_agent.source if catalog_agent else "built-in"
@@ -5123,6 +5140,7 @@ class AgentSpawner:
             meta_messages=meta_messages,
             max_turns=_resume_max_turns,
             mailbox_section=self._render_mailbox_section(tasks),
+            model=model_config.model,
         )
         # Prepend crash recovery context
         prompt = resume_header + prompt
