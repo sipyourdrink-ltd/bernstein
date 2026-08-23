@@ -300,3 +300,97 @@ def test_a_symlink_planted_at_the_receipt_leaf_is_not_followed(tmp_path: Path) -
     with pytest.raises(OSError) as excinfo:
         _read_leaf_text(leaf)
     assert excinfo.value.errno == _errno.ELOOP
+
+
+# ---------------------------------------------------------------------------
+# Three-valued verdicts: round-trip, re-derivation, backward compat (AC3)
+# ---------------------------------------------------------------------------
+
+_VERDICT_STATES = [
+    (4, 12, 16, Verdict.SIGNIFICANT_IMPROVEMENT, "significant_improvement"),
+    (12, 4, 16, Verdict.SIGNIFICANT_REGRESSION, "significant_regression"),
+    (0, 8, 8, Verdict.INSUFFICIENT_EVIDENCE, "below_minimum_n"),
+]
+
+
+@pytest.mark.parametrize(
+    ("base_passes", "cand_passes", "n", "expected_verdict", "expected_reason"),
+    _VERDICT_STATES,
+)
+def test_round_trip_preserves_verdict_and_reason_byte_exactly(
+    tmp_path: Path,
+    base_passes: int,
+    cand_passes: int,
+    n: int,
+    expected_verdict: Verdict,
+    expected_reason: str,
+) -> None:
+    base, cand = _outcomes(base_passes, cand_passes, n)
+    receipt = _build(tmp_path, base, cand)
+    parsed = read_verdict_receipt(tmp_path, receipt.receipt_hash)
+    assert parsed is not None
+    assert parsed.verdict == expected_verdict
+    assert parsed.evidence.reason == expected_reason
+    # Byte-exact: the parsed receipt re-serializes to the sealed canonical bytes.
+    assert parsed.canonical_payload_without_anchor() == receipt.canonical_payload_without_anchor()
+
+
+@pytest.mark.parametrize(
+    ("base_passes", "cand_passes", "n", "expected_verdict", "expected_reason"),
+    _VERDICT_STATES,
+)
+def test_verifier_rederives_same_verdict_from_receipt_alone(
+    tmp_path: Path,
+    base_passes: int,
+    cand_passes: int,
+    n: int,
+    expected_verdict: Verdict,
+    expected_reason: str,
+) -> None:
+    base, cand = _outcomes(base_passes, cand_passes, n)
+    receipt = _build(tmp_path, base, cand)
+    result = verify_verdict_receipt(
+        workdir=tmp_path,
+        lineage_root=tmp_path / ".sdd" / "lineage",
+        hmac_key=_KEY,
+        receipt_hash=receipt.receipt_hash,
+    )
+    assert result.ok, result.reason
+    assert result.receipt is not None
+    assert result.receipt.verdict == expected_verdict
+    assert result.receipt.evidence.reason == expected_reason
+
+
+def test_schema_v1_receipt_without_reason_parses_as_binary_era(tmp_path: Path) -> None:
+    # A schema_version=1 receipt sealed before three-valued verdicts carried no
+    # `reason` in its evidence. It must still parse (reason defaulting to empty)
+    # rather than being rejected as malformed.
+    base, cand = _outcomes(base_passes=4, cand_passes=12, n=16)
+    receipt = _build(tmp_path, base, cand)
+    path = verdict_receipt_path(tmp_path, receipt.receipt_hash)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 1
+    del payload["evidence"]["reason"]
+    payload["receipt_hash"] = recompute_receipt_hash(payload)
+    binary_era_path = verdict_receipt_path(tmp_path, payload["receipt_hash"])
+    binary_era_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    parsed = read_verdict_receipt(tmp_path, payload["receipt_hash"])
+    assert parsed is not None
+    assert parsed.schema_version == 1
+    assert parsed.verdict == Verdict.SIGNIFICANT_IMPROVEMENT
+    assert parsed.evidence.reason == ""
+
+
+@pytest.mark.parametrize(
+    ("base_passes", "cand_passes", "n"),
+    [(4, 12, 16), (12, 4, 16), (0, 8, 8)],
+)
+def test_determinism_across_verdict_states(tmp_path: Path, base_passes: int, cand_passes: int, n: int) -> None:
+    base, cand = _outcomes(base_passes, cand_passes, n)
+    machine_a = _build(tmp_path / "a", base, cand)
+    base_rev = dict(reversed(list(base.items())))
+    cand_rev = dict(reversed(list(cand.items())))
+    machine_b = _build(tmp_path / "b", base_rev, cand_rev)
+    assert machine_a.receipt_hash == machine_b.receipt_hash
+    assert machine_a.canonical_payload_without_anchor() == machine_b.canonical_payload_without_anchor()

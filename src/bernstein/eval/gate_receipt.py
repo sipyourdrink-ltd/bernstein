@@ -235,7 +235,9 @@ class VerdictReceipt:
 def _significance_from_dict(raw: Mapping[str, Any]) -> SignificanceResult:
     return SignificanceResult(
         verdict=Verdict(str(raw["verdict"])),
-        reason=str(raw["reason"]),
+        # schema_version=1 receipts sealed before three-valued verdicts carried
+        # no `reason`; default it so a binary-era receipt still parses.
+        reason=str(raw.get("reason", "")),
         test=str(raw["test"]),
         alpha=float(raw["alpha"]),
         n_baseline=int(raw["n_baseline"]),

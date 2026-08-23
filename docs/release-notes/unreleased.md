@@ -11,3 +11,9 @@ already documents fails the build. An entry that cites released work as context
 rather than as its own attribution is exempted by hand there, with the reason.
 
 Nothing yet: v3.17.1 was cut from this page.
+
+## Eval gate receipts read their own history
+
+A gate verdict receipt sealed before three-valued verdicts carried no `reason`
+in its evidence. The parser now defaults it, so a binary-era receipt still
+parses instead of being rejected as malformed (#4182).
