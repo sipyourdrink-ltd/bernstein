@@ -193,6 +193,46 @@ def _read_cached(path: Path) -> str:
     return content
 
 
+def _resolve_project_context(tasks: list[Task], workdir: Path) -> str:
+    """Resolve project context, preferring the nearest subtree-scoped file.
+
+    Walks up from each task's owned files looking for a scoped
+    ``.sdd/project.md``; the nearest ancestor wins. When a scoped file is
+    found it supplements the top-level file (scoped content first). When none
+    is found, only the top-level file is returned (byte-identical to the
+    pre-scoping behaviour).
+
+    Args:
+        tasks: Batch of tasks whose owned files scope the lookup.
+        workdir: Project working directory.
+
+    Returns:
+        Combined project context string.
+    """
+    top_level = _read_cached(workdir / ".sdd" / "project.md")
+
+    scoped: str | None = None
+    for t in tasks:
+        for f in t.owned_files:
+            d = (workdir / f).parent
+            while d != workdir:
+                content = _read_cached(d / ".sdd" / "project.md")
+                if content:
+                    scoped = content
+                    break
+                d = d.parent
+            if scoped is not None:
+                break
+        if scoped is not None:
+            break
+
+    if scoped is None:
+        return top_level
+    if top_level:
+        return scoped + "\n\n" + top_level
+    return scoped
+
+
 def _list_subdirs_cached(path: Path) -> list[str]:
     """Return sorted list of immediate subdirectory names, cached by mtime.
 
@@ -1156,8 +1196,7 @@ def _render_prompt(
     task_block = "\n".join(task_lines)
 
     # Project context from .sdd/project.md if it exists
-    project_md = workdir / ".sdd" / "project.md"
-    project_context = _read_cached(project_md)
+    project_context = _resolve_project_context(tasks, workdir)
 
     # Completion instructions use the first-class CLI (#3015), NOT a hand-built
     # curl. The command resolves the token and server port itself and retries a

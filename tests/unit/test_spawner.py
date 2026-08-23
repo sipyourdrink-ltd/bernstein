@@ -46,6 +46,7 @@ from bernstein.adapters.plugin_sdk import (
     PluginAdapter,
 )
 from bernstein.core.agents.spawn_errors import ModelNotConfiguredError
+from bernstein.core.agents.spawner_core import _FILE_CACHE, _read_cached
 from bernstein.core.tasks.artifacts import ArtifactKind, ArtifactSpec
 
 # --- spawn_for_tasks ---
@@ -278,6 +279,60 @@ class TestRenderPrompt:
         prompt = _render_prompt([task], tmp_path, tmp_path)
 
         assert "This project uses FastAPI." in prompt
+
+    def test_subtree_scoped_project_context_supplements_top_level(self, tmp_path: Path, make_task) -> None:
+        _FILE_CACHE.clear()
+        (tmp_path / ".sdd").mkdir()
+        (tmp_path / ".sdd" / "project.md").write_text("Top-level context.")
+        scoped = tmp_path / "src" / "bernstein" / "adapters" / ".sdd"
+        scoped.mkdir(parents=True)
+        (scoped / "project.md").write_text("Adapters subtree context.")
+
+        task = make_task(owned_files=["src/bernstein/adapters/foo.py"])
+        prompt = _render_prompt([task], tmp_path, tmp_path)
+
+        assert "Adapters subtree context." in prompt
+        assert "Top-level context." in prompt
+
+    def test_no_scoped_project_context_is_byte_identical_to_top_level(self, tmp_path: Path, make_task) -> None:
+        _FILE_CACHE.clear()
+        (tmp_path / ".sdd").mkdir()
+        (tmp_path / ".sdd" / "project.md").write_text("Top-level context.")
+
+        task = make_task(owned_files=["src/foo.py"])
+        prompt = _render_prompt([task], tmp_path, tmp_path)
+
+        old = _read_cached(tmp_path / ".sdd" / "project.md")
+        assert old in prompt
+        assert "Top-level context." in prompt
+
+    def test_nearest_ancestor_project_context_wins(self, tmp_path: Path, make_task) -> None:
+        _FILE_CACHE.clear()
+        (tmp_path / ".sdd").mkdir()
+        (tmp_path / ".sdd" / "project.md").write_text("Top-level context.")
+        closer = tmp_path / "src" / "bernstein" / ".sdd"
+        closer.mkdir(parents=True)
+        (closer / "project.md").write_text("Closer ancestor.")
+        nearest = tmp_path / "src" / "bernstein" / "adapters" / ".sdd"
+        nearest.mkdir(parents=True)
+        (nearest / "project.md").write_text("Nearest ancestor.")
+
+        task = make_task(owned_files=["src/bernstein/adapters/foo.py"])
+        prompt = _render_prompt([task], tmp_path, tmp_path)
+
+        assert "Nearest ancestor." in prompt
+        assert "Closer ancestor." not in prompt
+
+    def test_empty_owned_files_falls_back_to_top_level(self, tmp_path: Path, make_task) -> None:
+        _FILE_CACHE.clear()
+        (tmp_path / ".sdd").mkdir()
+        (tmp_path / ".sdd" / "project.md").write_text("Top-level context.")
+
+        task = make_task(owned_files=[])
+        prompt = _render_prompt([task], tmp_path, tmp_path)
+
+        assert "Top-level context." in prompt
+
 
     def test_no_project_context_when_absent(self, tmp_path: Path, make_task) -> None:
         task = make_task()
