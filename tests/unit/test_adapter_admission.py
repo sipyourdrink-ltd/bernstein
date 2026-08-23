@@ -364,6 +364,25 @@ def test_tampered_receipt_fails_its_content_hash(receipts_dir: Path) -> None:
     assert problem == REASON_RECEIPT_TAMPERED
 
 
+def test_spaced_adapter_name_persists_and_loads_receipt(tmp_path: Path) -> None:
+    """Issue #4363: A spaced display name (e.g. 'Qwen CLI') is slugified to a
+    safe filename but keeps its operator-visible name in the receipt body, and
+    round-trips through load_admission_receipt."""
+    evidence = _bare_evidence(adapter="Qwen CLI", binary="qwen")
+    decision = evaluate_admission(evidence, ttl_seconds=86400)
+
+    receipt = build_admission_receipt(decision, generated_at=_NOW.isoformat(), kind=RECEIPT_KIND)
+    receipt_file = write_admission_receipt(tmp_path, receipt)
+    assert receipt_file.exists()
+    assert receipt_file.name.startswith("qwen-cli-")
+
+    loaded, problem = load_admission_receipt(tmp_path, "Qwen CLI")
+    assert problem == ""
+    assert loaded is not None
+    assert loaded["adapter"] == "Qwen CLI"
+    assert loaded["verdict"] == VERDICT_ADMIT
+
+
 def test_write_admission_receipt_rejects_a_hostile_adapter_name(receipts_dir: Path) -> None:
     decision = evaluate_admission(_bare_evidence(adapter="../../etc/passwd"))
     receipt = build_admission_receipt(decision, generated_at=_NOW.isoformat())

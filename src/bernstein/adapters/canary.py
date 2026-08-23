@@ -45,6 +45,7 @@ from bernstein.core.security.path_containment import (
     PathContainmentError,
     PathTooLongError,
     contained_path,
+    slug_identifier,
 )
 
 from .base import VERSION_TOKEN_RE
@@ -132,7 +133,6 @@ LAST_GREEN_JSON_PATH = Path(__file__).parent / "last_green.json"
 #: Docs page carrying the rendered last-green table (dev checkout path).
 LAST_GREEN_DOC_PATH = Path(__file__).parents[3] / "docs" / "adapters" / "conformance-canary.md"
 
-_ADAPTER_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 _VERSION_TIMEOUT_SECONDS = 10
 
@@ -513,11 +513,10 @@ def write_canary_receipt(base_dir: Path, receipt: dict[str, Any]) -> Path:
             path escapes ``base_dir``.
     """
     adapter = str(receipt.get("adapter") or "")
-    if not _ADAPTER_NAME_RE.match(adapter):
-        raise ValueError(f"invalid adapter name for receipt filename: {adapter!r}")
+    adapter_key = slug_identifier(adapter, label="adapter name")
     sha = receipt_sha256(receipt)
     base_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"{adapter}-{sha[:16]}"
+    stem = f"{adapter_key}-{sha[:16]}"
     try:
         candidate = contained_path(base_dir, f"{stem}.json", label="receipt path")
         # The temporary sibling is opened *before* the rename, so it needs the

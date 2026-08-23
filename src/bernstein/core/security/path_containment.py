@@ -96,6 +96,46 @@ class PathTooLongError(PathContainmentError):
     """
 
 
+def slug_identifier(name: str, *, label: str = "identifier") -> str:
+    """Fold an externally-influenced identifier into a filename-safe slug.
+
+    Some receipts embed a *human-readable* adapter name (``Qwen CLI``,
+    ``Claude Code``) that contains spaces, while the persistence layer wants
+    a single filename component. Rather than reject such names outright, this
+    folds the name to the :data:`SAFE_SEGMENT_RE` alphabet so the caller can
+    keep writing a file.
+
+    The fold is deliberately not a path. Any character that could change
+    where the file lands -- a separator, a NUL byte, or anything that would
+    make the slug start with a dot -- is refused *before* the fold, so a
+    hostile name cannot be silently relocated into something that looks safe.
+
+    Args:
+        name: The identifier to fold. May contain spaces and punctuation,
+            but never a path component operator.
+        label: Noun used in error messages (e.g. ``"adapter name"``).
+
+    Returns:
+        The lowercase slug: every run of non-``[a-z0-9]`` collapsed to a
+        single ``-``, with leading/trailing ``-`` stripped. Safe as a single
+        path segment under :func:`contained_path`.
+
+    Raises:
+        PathContainmentError: If *name* is empty, carries a separator/NUL/``..``
+            traversal shape, or folds to an empty slug.
+        PathTooLongError: If the slug exceeds :data:`MAX_SEGMENT_BYTES` once
+            encoded.
+    """
+    if not name:
+        raise PathContainmentError(f"invalid {label}: {name!r} (empty)")
+    if "\x00" in name or "/" in name or "\\" in name:
+        raise PathContainmentError(f"invalid {label}: {name!r} (traversal is refused)")
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    if not slug:
+        raise PathContainmentError(f"invalid {label}: {name!r} (folds to an empty slug)")
+    return validate_path_segment(slug, label=label)
+
+
 def validate_path_segment(segment: str, *, label: str = "identifier") -> str:
     """Return *segment* unchanged when it is a safe single path segment.
 

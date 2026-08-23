@@ -102,6 +102,14 @@ Sealed receipts live under `.sdd/adapters/admission/` and are
 content-addressed, so a tampered body no longer hashes to its recorded
 identity and is rejected without any key material.
 
+Receipt filenames embed a slug of the adapter name: a display name such as
+`Qwen CLI` is folded to `qwen-cli` for the filename, while the operator-visible
+name stays unmodified in the receipt body. This lets an adapter whose name is
+not already a filesystem-safe slug write a receipt at all. The slug fold also
+changes the stored filename for any adapter whose name was already slug-safe
+but under a different convention; after an upgrade the first run re-derives
+the receipt rather than reuses the previous file.
+
 ## Where the evidence comes from
 
 The verdict is derived from two trees that live under `tests/` in a source

@@ -165,6 +165,17 @@ class TestReceipts:
         # A map mutated after the fact yields a hash mismatch at verification.
         assert not receipt_floor_map_matches(doc, current_hash="sha256:" + "0" * 64)
 
+    def test_spaced_adapter_name_writes_a_slugged_receipt(self, tmp_path: Path) -> None:
+        """Issue #4363: A spaced display name is folded to a safe slug filename."""
+        v = evaluate_spawn_floor("Qwen CLI", "qwen", _BELOW)
+        r = build_preflight_receipt(v, generated_at=_GENERATED_AT)
+        path = write_preflight_receipt(tmp_path, r)
+        assert path.exists()
+        assert path.name.startswith("qwen-cli-")
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        assert verify_preflight_receipt(doc)
+        assert doc["receipt"]["adapter"] == "Qwen CLI"
+
 
 # ---------------------------------------------------------------------------
 # Enforcement: the refusal IS the chain-anchored receipt (AC1)

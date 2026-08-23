@@ -45,7 +45,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import shutil
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -56,6 +55,7 @@ from bernstein.core.security.path_containment import (
     PathContainmentError,
     PathTooLongError,
     contained_path,
+    slug_identifier,
 )
 
 if TYPE_CHECKING:
@@ -290,8 +290,6 @@ _GOLDEN_DIR_DEFAULT = Path(__file__).parents[3] / "tests" / "golden"
 #: in ``pyproject.toml``) so a pip install can replay the spawn path instead of
 #: refusing every adapter with :data:`REASON_NO_TRANSCRIPT` (issue #3547).
 _GOLDEN_DIR_PACKAGED = Path(__file__).resolve().parents[1] / "_default_templates" / "adapter_golden"
-
-_RECEIPT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 
 class AdapterAdmissionRefusal(RuntimeError):
@@ -940,9 +938,7 @@ def write_admission_receipt(base_dir: Path, receipt: dict[str, Any]) -> Path:
             escapes ``base_dir``.
     """
     adapter = str(receipt.get("adapter") or "")
-    adapter_key = adapter.lower()
-    if not _RECEIPT_NAME_RE.match(adapter_key):
-        raise ValueError(f"invalid adapter name for receipt filename: {adapter!r}")
+    adapter_key = slug_identifier(adapter, label="adapter name")
     sha = receipt_sha256(receipt)
     base_dir.mkdir(parents=True, exist_ok=True)
     stem = f"{adapter_key}-{sha[:16]}"
@@ -980,8 +976,11 @@ def load_admission_receipt(base_dir: Path, adapter: str) -> tuple[dict[str, Any]
         :data:`REASON_RECEIPT_TAMPERED` when every candidate failed its
         content-hash check.
     """
-    adapter_key = adapter.lower()
-    if not _RECEIPT_NAME_RE.match(adapter_key) or not base_dir.exists():
+    try:
+        adapter_key = slug_identifier(adapter, label="adapter name")
+    except PathContainmentError:
+        return None, REASON_NO_RECEIPT
+    if not base_dir.exists():
         return None, REASON_NO_RECEIPT
 
     candidates: list[dict[str, Any]] = []
@@ -996,7 +995,9 @@ def load_admission_receipt(base_dir: Path, adapter: str) -> tuple[dict[str, Any]
         body = doc.get("receipt")
         if not isinstance(body, dict) or body.get("kind") != RECEIPT_KIND:
             continue
-        if str(body.get("adapter") or "").lower() != adapter_key:
+        # Match on the unmodified adapter name, not the slug: the slug is a
+        # filename concern only, the body keeps the operator-visible name.
+        if str(body.get("adapter") or "").lower() != adapter.lower():
             continue
         if not verify_admission_receipt(doc):
             tampered = True

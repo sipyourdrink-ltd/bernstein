@@ -30,7 +30,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -41,6 +40,7 @@ from bernstein.core.security.path_containment import (
     PathContainmentError,
     PathTooLongError,
     contained_path,
+    slug_identifier,
 )
 
 from .base import VERSION_TOKEN_RE
@@ -114,7 +114,6 @@ POLICY_WARN = "warn"
 _POLICY_ENV = "BERNSTEIN_ADAPTER_FLOOR_POLICY"
 _WARN_TOKENS = frozenset({"warn", "warn-only", "warn_only", "advisory"})
 _VERSION_TIMEOUT_SECONDS = 10
-_RECEIPT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 
 class AdapterSecurityFloorRefusal(RuntimeError):
@@ -434,11 +433,10 @@ def write_preflight_receipt(base_dir: Path, receipt: dict[str, Any]) -> Path:
     adapter string can never escape the receipts directory.
     """
     adapter = str(receipt.get("adapter") or "")
-    if not _RECEIPT_NAME_RE.match(adapter):
-        raise ValueError(f"invalid adapter name for receipt filename: {adapter!r}")
+    adapter_key = slug_identifier(adapter, label="adapter name")
     sha = receipt_sha256(receipt)
     base_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"{adapter}-{sha[:16]}"
+    stem = f"{adapter_key}-{sha[:16]}"
     try:
         candidate = contained_path(base_dir, f"{stem}.json", label="receipt path")
         # The temporary sibling is opened *before* the rename, so it needs the
