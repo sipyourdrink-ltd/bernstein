@@ -148,4 +148,11 @@ def test_cli_missing_path_reports_as_failure(runner: CliRunner, tmp_path: Path) 
         catch_exceptions=False,
     )
     assert result.exit_code == 1
-    assert "does-not-exist" in result.output
+    # The report renders through Rich, which hard-wraps at the terminal width
+    # and can split the filename mid-token
+    # (``does-not-ex\nist.md``). Whether the CLI names the offending file is
+    # the behaviour under test; where the renderer broke the line is not, and
+    # asserting on the wrapped form makes the test fail on nothing but a long
+    # tmpdir path or a narrow terminal.
+    unwrapped = result.output.replace("\n", "")
+    assert "does-not-exist" in unwrapped
