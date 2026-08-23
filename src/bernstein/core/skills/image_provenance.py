@@ -269,7 +269,8 @@ def verify_signed_image_provenance(*, repo_root: Path, version: str) -> ImagePro
     server_json_data: dict[str, object] = {}
     with suppress(OSError, json.JSONDecodeError):
         server_json_data = json.loads(server_json.read_text(encoding="utf-8"))
-    expected_repo_url = (server_json_data.get("repository") or {}).get("url", "")
+    repo_raw = server_json_data.get("repository")
+    expected_repo_url = str(repo_raw.get("url", "")) if isinstance(repo_raw, dict) else ""
     if expected_repo_url and catalog_source["project"] != expected_repo_url:
         return ImageProvenanceResult(
             ok=False,
