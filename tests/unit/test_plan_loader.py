@@ -104,7 +104,11 @@ def test_load_plan_seed_shaped_file_gives_actionable_error(tmp_path: Path) -> No
     run_option_flags = {opt for param in run_bootstrap.run.params for opt in getattr(param, "opts", [])}
     assert "--seed" in run_option_flags
     assert "--seed" in message
-    assert "-f" not in message
+    # The path is embedded in the message and may legitimately contain "-f"
+    # (a checkout under e.g. ~/my-feature/, a CI tmpdir named after the user).
+    # Strip it so the assertion judges only the advice text.
+    message_without_path = message.replace(str(plan_file), "")
+    assert "-f" not in message_without_path
 
 
 def test_load_plan_seed_shaped_file_goal_only(tmp_path: Path) -> None:
