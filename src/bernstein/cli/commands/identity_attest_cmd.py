@@ -171,7 +171,7 @@ def attest_group() -> None:
     \b
       bernstein identity attest show --run r-1234 --signing-key-path key.pem
       bernstein identity attest verify --run r-1234 --signing-key-path key.pem
-      bernstein identity attest verify --run r-1234 --through-hmac <hmac> \
+      bernstein identity attest verify --run r-1234 --through-hmac <hmac> \\
           --signing-key-path key.pem
     """
 
@@ -186,7 +186,7 @@ def show_cmd(
     signing_key_id: str | None,
     workdir: str,
 ) -> None:
-    """Project without writing; exit 1 on key or projection failure."""
+    """Project without writing; exit non-zero on key or projection failure."""
     kms_adapter = _resolve_kms(signing_key_path, signing_env_var, signing_key_id)
     receipt = _build(run_id, workdir, kms_adapter, through_hmac=through_hmac, write=False)
 

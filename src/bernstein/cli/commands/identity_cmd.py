@@ -59,7 +59,7 @@ def identity_group() -> None:
       bernstein identity verify c4j2k7n8p3q5r9s7 \\
           --nonce 0123456789abcdef0123 --version-major 1
       bernstein identity disable
-      bernstein identity attest show --run r-1234 \
+      bernstein identity attest show --run r-1234 \\
           --signing-key-path key.pem
     """
 
