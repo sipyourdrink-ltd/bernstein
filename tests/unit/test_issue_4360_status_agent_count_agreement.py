@@ -14,10 +14,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from bernstein.core.models import AgentSession
 from httpx import ASGITransport, AsyncClient
 
 from bernstein.cli.status import render_status_plain
-from bernstein.core.models import AgentSession
 from bernstein.core.server import create_app
 
 

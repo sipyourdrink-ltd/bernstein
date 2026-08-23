@@ -424,9 +424,11 @@ def _status_agent_items(
     if items:
         return items
 
+    # No live agent in the store: fall back to the on-disk snapshot, which is
+    # the archival view of the run. Every snapshot row is emitted, reaped ones
+    # included - issue #953 holds this path to a full dict per agent, and the
+    # caller counts liveness per row rather than trusting the list length.
     for snapshot in agent_snapshots.values():
-        if not _agent_is_alive(str(snapshot.get("status", _AGENT_STATUS_DEAD))):
-            continue
         items.append(
             {
                 "id": str(snapshot.get("id", "")),
@@ -959,7 +961,7 @@ def status_dashboard(request: Request) -> JSONResponse:
     }
     agent_items = _status_agent_items(store, agent_snapshots, total_cost_by_role, now)
     payload["agents"] = {
-        "count": len(agent_items),
+        "count": sum(1 for item in agent_items if _agent_is_alive(str(item.get("status", "")))),
         "items": agent_items,
     }
     payload["costs"] = live_costs
