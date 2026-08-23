@@ -1437,6 +1437,7 @@ def _render_prompt(*args: Any, **kwargs: Any) -> str:
     """
     return _render_prompt_with_receipt(*args, **kwargs)[0]
 
+
 def _render_fallback(
     role: str,
     templates_dir: Path,
