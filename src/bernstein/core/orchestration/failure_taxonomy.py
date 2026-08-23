@@ -182,6 +182,7 @@ _EXCEPTION_TYPE_RULES: Final[dict[str, tuple[str, FailureCategory, float]]] = {
     "ConnectionResetError": ("network_error", FailureCategory.TIMEOUT, 0.8),
     "ConnectionRefusedError": ("network_error", FailureCategory.TIMEOUT, 0.8),
     "RateLimited": ("rate_limit", FailureCategory.TIMEOUT, 0.95),
+    "StandingCapError": ("standing_cap", FailureCategory.CONTEXT_MISS, 0.9),
     "PermissionError": ("sandbox_violation", FailureCategory.SCOPE_CREEP, 0.7),
     "ModuleNotFoundError": ("missing_dependency", FailureCategory.HALLUCINATION, 0.9),
     "ImportError": ("missing_dependency", FailureCategory.HALLUCINATION, 0.75),
