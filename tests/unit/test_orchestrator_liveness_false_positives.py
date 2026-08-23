@@ -286,9 +286,7 @@ def test_health_fixture_matches_the_real_server() -> None:
         # ``agents`` is what the real TaskStore exposes and what the health
         # builder now counts liveness over; ``agent_count`` alone counted
         # reaped agents too, which is the disagreement issue #4360 names.
-        store = SimpleNamespace(
-            agent_count=0, agents={}, jsonl_path=sdd / "runtime" / "tasks.jsonl"
-        )
+        store = SimpleNamespace(agent_count=0, agents={}, jsonl_path=sdd / "runtime" / "tasks.jsonl")
 
         # No pidfile -> the server reports neither ok nor down.
         components = _health_components(request, store)  # type: ignore[arg-type]
