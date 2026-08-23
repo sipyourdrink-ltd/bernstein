@@ -834,14 +834,9 @@ def verify_run_artifacts(sdd_dir: Path, task_id: str, *, hmac_key: bytes) -> lis
     # identity verdict is overridden to "unverifiable" for every artifact from
     # this task journal, regardless of the seal status.
     has_persistent_agent_step = any(
-        str(row.get("event", "")) == JOURNAL_EVENT_PERSISTENT_AGENT_STEP
-        for row in load_events(path).events
+        str(row.get("event", "")) == JOURNAL_EVENT_PERSISTENT_AGENT_STEP for row in load_events(path).events
     )
-    journal_identity = (
-        "unverifiable"
-        if has_persistent_agent_step
-        else journal_result.identity.value
-    )
+    journal_identity = "unverifiable" if has_persistent_agent_step else journal_result.identity.value
 
     store = EvidenceStore(sdd_dir / "evidence")
     spine = LineageSpine(sdd_dir / "lineage", run_id=_task_run_id(task_id), hmac_key=hmac_key)
