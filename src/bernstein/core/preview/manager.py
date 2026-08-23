@@ -35,7 +35,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from bernstein.core.preview.command_discovery import (
     DiscoveredCommand,
@@ -55,8 +55,6 @@ from bernstein.core.preview.port_capture import (
 from bernstein.core.preview.token_issuer import IssuedAuth, PreviewTokenIssuer
 from bernstein.core.preview.tunnel_bridge import TunnelBridge, TunnelBridgeError
 from bernstein.core.security.audit import AuditLog
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import builtins
