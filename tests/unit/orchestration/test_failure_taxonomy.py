@@ -117,6 +117,23 @@ def test_compile_error_string_classified_as_compile_error() -> None:
     assert result.reason_code == "compile_error"
 
 
+def test_standing_cap_string_classified_as_standing_cap() -> None:
+    """A standing-cap message maps to ``standing_cap`` and is not transient."""
+
+    result = classify_failure("maximum number of active sessions reached")
+    assert result.reason_code == "standing_cap"
+    assert result.category is FailureCategory.CONTEXT_MISS
+    assert result.transient is False
+
+
+def test_standing_cap_not_in_transient_codes() -> None:
+    """``standing_cap`` must never be retried."""
+
+    result = classify_failure("spending limit exceeded")
+    assert result.reason_code == "standing_cap"
+    assert result.transient is False
+
+
 # ---------------------------------------------------------------------------
 # Classifier - hint flags and explicit overrides
 # ---------------------------------------------------------------------------

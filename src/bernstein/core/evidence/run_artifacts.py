@@ -47,6 +47,7 @@ from bernstein.core.defaults import (
     ARTIFACT_TYPE_TABLE,
     ARTIFACT_TYPES,
     JOURNAL_EVENT_ARTIFACT_POSTED,
+    JOURNAL_EVENT_PERSISTENT_AGENT_STEP,
     LINK_KINDS,
 )
 from bernstein.core.evidence.bundle import DEFAULT_MAX_BLOB_BYTES, EvidenceStore
@@ -755,6 +756,31 @@ def post_run_artifact(
 
 
 # ---------------------------------------------------------------------------
+# Persistent-agent recording
+# ---------------------------------------------------------------------------
+
+
+def record_persistent_agent_step(sdd_dir: Path, task_id: str, adapter_name: str) -> None:
+    """Record a ``persistent_agent_step`` event when ``adapter_name`` carries agent-side state.
+
+    A persistent-agent adapter keeps state Bernstein never hashed, so a replay
+    of the same inputs is not guaranteed reproducible. Recording this event
+    lets :func:`verify_run_artifacts` mark the task's artifacts ``unverifiable``.
+    A stateless adapter records nothing, so stateless runs stay byte-identical.
+    """
+    from bernstein.adapters._contract import SessionState, strategy_for
+    from bernstein.core.replay.journal import EventJournal
+
+    if strategy_for(adapter_name).session_state is not SessionState.PERSISTENT_AGENT:
+        return
+    EventJournal.resume(_task_run_id(task_id), sdd_dir).record(
+        JOURNAL_EVENT_PERSISTENT_AGENT_STEP,
+        task_id=task_id,
+        adapter=adapter_name,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Verification
 # ---------------------------------------------------------------------------
 
@@ -771,7 +797,7 @@ def verify_run_artifacts(sdd_dir: Path, task_id: str, *, hmac_key: bytes) -> lis
     An id that cannot name any task has nothing to verify, so it reads as
     empty rather than raising, matching :func:`read_artifact_rows`.
     """
-    from bernstein.core.replay.journal import verify_journal
+    from bernstein.core.replay.journal import load_events, verify_journal
 
     try:
         path = _artifact_journal_path(sdd_dir, task_id)
@@ -802,6 +828,16 @@ def verify_run_artifacts(sdd_dir: Path, task_id: str, *, hmac_key: bytes) -> lis
             )
         ]
 
+    # A persistent-agent adapter carries state Bernstein never hashed, so a
+    # replay is not guaranteed reproducible even when every step hash matches.
+    # When any persistent_agent_step event is present in the journal, the
+    # identity verdict is overridden to "unverifiable" for every artifact from
+    # this task journal, regardless of the seal status.
+    has_persistent_agent_step = any(
+        str(row.get("event", "")) == JOURNAL_EVENT_PERSISTENT_AGENT_STEP for row in load_events(path).events
+    )
+    journal_identity = "unverifiable" if has_persistent_agent_step else journal_result.identity.value
+
     store = EvidenceStore(sdd_dir / "evidence")
     spine = LineageSpine(sdd_dir / "lineage", run_id=_task_run_id(task_id), hmac_key=hmac_key)
     spine_ok = spine.verify().ok
@@ -819,7 +855,7 @@ def verify_run_artifacts(sdd_dir: Path, task_id: str, *, hmac_key: bytes) -> lis
                 journal_index=record.journal_index,
                 content_hash=record.content_hash,
                 reason=reason,
-                journal_identity=journal_result.identity.value,
+                journal_identity=journal_identity,
             )
         )
     return results
@@ -978,6 +1014,7 @@ __all__ = [
     "live_artifact_content_hashes",
     "post_run_artifact",
     "read_artifact_rows",
+    "record_persistent_agent_step",
     "verify_all_run_artifacts",
     "verify_run_artifacts",
 ]

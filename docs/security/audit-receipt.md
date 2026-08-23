@@ -138,16 +138,34 @@ bernstein identity attest show --run <run-id> --signing-key-path key.pem
 
 # Rebuild, verify the projection, and emit the receipt.
 bernstein identity attest verify --run <run-id> --signing-key-path key.pem
+
+# Reproduce a historical projection at an authenticated chain boundary.
+bernstein identity attest verify --run <run-id> \
+  --through-hmac <authenticated-hmac> \
+  --signing-key-path key.pem
 ```
 
 `verify` exits non-zero and names each failing check when the recomputed range
 no longer supports the projection. It stages the receipt privately and moves
 it into the evidence directory only after semantic verification passes, so a
-failed projection is never left behind as normal evidence. `show` creates
-neither a receipt nor audit key material. Both verdicts are recomputed from the
-retained range on every invocation; neither is read from a field in the receipt,
-so a serialized claim cannot promote itself through this surface any more than
-it can through the library.
+failed projection is never left behind as normal evidence. Before reporting
+success it re-hashes the promoted file and requires those durable bytes to
+match the verified in-memory projection. `show` creates neither a receipt nor
+audit key material. Both verdicts are recomputed from the retained range on
+every invocation; neither is read from a field in the receipt, so a serialized
+claim cannot promote itself through this surface any more than it can through
+the library.
+
+Without `--through-hmac`, both verbs use the verified source snapshot head.
+Supplying an authenticated HMAC pins the retained range so an unchanged
+historical provisional projection remains reproducible after unrelated audit
+events are appended. Whole-run-complete projections still require the verified
+source snapshot head: a historical boundary cannot prove that the suffix
+contains no later same-run evidence.
+
+`identity attest verify` intentionally does not append an
+`audit.receipt_export` event. Verification must not mutate the chain it checks:
+an appended event would move the default boundary and change the next receipt.
 
 These verbs sit under `identity attest` rather than extending `identity
 verify`, which checks an install-rev fingerprint token. The two answer

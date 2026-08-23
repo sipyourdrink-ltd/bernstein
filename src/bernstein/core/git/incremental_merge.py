@@ -123,11 +123,20 @@ class IncrementalMergeState:
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> IncrementalMergeState:
         """Deserialise from a dict read from the state file."""
+        merged_files_raw = data.get("merged_files", [])
+        if not isinstance(merged_files_raw, list):
+            raise ValueError(f"merged_files must be a list, got {type(merged_files_raw).__name__}")
+        merge_commits_raw = data.get("merge_commits", [])
+        if not isinstance(merge_commits_raw, list):
+            raise ValueError(f"merge_commits must be a list, got {type(merge_commits_raw).__name__}")
+        last_merged_ts_raw = data.get("last_merged_ts", 0.0)
+        if isinstance(last_merged_ts_raw, bool) or not isinstance(last_merged_ts_raw, (int, float)):
+            raise ValueError(f"last_merged_ts must be a number, got {type(last_merged_ts_raw).__name__}")
         return cls(
             session_id=str(data.get("session_id", "")),
-            merged_files=list(data.get("merged_files", [])),  # type: ignore[arg-type]
-            merge_commits=list(data.get("merge_commits", [])),  # type: ignore[arg-type]
-            last_merged_ts=float(data.get("last_merged_ts", 0.0)),  # type: ignore[arg-type]
+            merged_files=[str(f) for f in merged_files_raw],
+            merge_commits=[str(c) for c in merge_commits_raw],
+            last_merged_ts=float(last_merged_ts_raw),
         )
 
 

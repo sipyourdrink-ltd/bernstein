@@ -24,6 +24,7 @@ a run's attestation evidence. They share a noun and nothing else.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from pathlib import Path
 
@@ -36,7 +37,17 @@ EXIT_USAGE = 2
 
 _SIGNING_OPTIONS = (
     click.option("--run", "run_id", required=True, help="Run id to project."),
-    click.option("--signing-key-path", default=None, help="Path to an Ed25519 receipt signing key."),
+    click.option(
+        "--through-hmac",
+        default=None,
+        help="Authenticated audit-chain boundary to project through; defaults to the verified snapshot head.",
+    ),
+    click.option(
+        "--signing-key-path",
+        default=None,
+        type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+        help="Path to an Ed25519 receipt signing key.",
+    ),
     click.option(
         "--signing-env-var",
         default=None,
@@ -73,6 +84,23 @@ def _prepare_output_dir(workdir: str, output: str | None) -> Path:
     return output_dir
 
 
+def _sha256_file(path: Path) -> str:
+    """Return the SHA-256 of the bytes at the final promoted path."""
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _discard_untrusted_receipt(path: Path) -> None:
+    """Best-effort removal after promoted-byte verification fails."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        console.print(f"[red]Failed to remove untrusted promoted receipt:[/red] {exc}")
+
+
 def _resolve_kms(signing_key_path: str | None, signing_env_var: str | None, signing_key_id: str | None):  # type: ignore[no-untyped-def]
     from bernstein.core.persistence.lineage_signer import LineageSignerError
     from bernstein.core.security.lineage_kms import EnvBasedKMSAdapter, FileBasedKMSAdapter, KMSAdapter
@@ -96,7 +124,15 @@ def _resolve_kms(signing_key_path: str | None, signing_env_var: str | None, sign
     return kms_adapter
 
 
-def _build(run_id: str, workdir: str, kms_adapter: object, *, write: bool, output_dir: Path | None = None):  # type: ignore[no-untyped-def]
+def _build(  # type: ignore[no-untyped-def]
+    run_id: str,
+    workdir: str,
+    kms_adapter: object,
+    *,
+    through_hmac: str | None,
+    write: bool,
+    output_dir: Path | None = None,
+):
     from bernstein.core.security.audit import AuditKeyMissingError, AuditKeyPermissionError, load_audit_key
     from bernstein.core.security.run_attestation_receipt import (
         RunAttestationReceiptError,
@@ -116,6 +152,7 @@ def _build(run_id: str, workdir: str, kms_adapter: object, *, write: bool, outpu
             run_id=run_id,
             key=audit_key,
             kms_adapter=kms_adapter,  # type: ignore[arg-type]
+            through_hmac=through_hmac,
             output_dir=output_dir,
             write=write,
         )
@@ -134,6 +171,8 @@ def attest_group() -> None:
     \b
       bernstein identity attest show --run r-1234 --signing-key-path key.pem
       bernstein identity attest verify --run r-1234 --signing-key-path key.pem
+      bernstein identity attest verify --run r-1234 --through-hmac <hmac> \\
+          --signing-key-path key.pem
     """
 
 
@@ -141,14 +180,15 @@ def attest_group() -> None:
 @_signing_options
 def show_cmd(
     run_id: str,
+    through_hmac: str | None,
     signing_key_path: str | None,
     signing_env_var: str | None,
     signing_key_id: str | None,
     workdir: str,
 ) -> None:
-    """Project without writing; exit 1 on key or projection failure."""
+    """Project without writing; exit non-zero on key or projection failure."""
     kms_adapter = _resolve_kms(signing_key_path, signing_env_var, signing_key_id)
-    receipt = _build(run_id, workdir, kms_adapter, write=False)
+    receipt = _build(run_id, workdir, kms_adapter, through_hmac=through_hmac, write=False)
 
     console.print(f"[bold]run[/bold]                {receipt.run_id}", soft_wrap=True)
     console.print(f"[bold]identity anchor[/bold]    {receipt.identity_anchor_hmac}", soft_wrap=True)
@@ -167,6 +207,7 @@ def show_cmd(
 @click.option("--output", default=None, help="Directory to write the emitted receipt into.")
 def verify_cmd(
     run_id: str,
+    through_hmac: str | None,
     signing_key_path: str | None,
     signing_env_var: str | None,
     signing_key_id: str | None,
@@ -184,9 +225,20 @@ def verify_cmd(
     from bernstein.core.security.run_attestation_receipt import verify_run_attestation_projection
 
     kms_adapter = _resolve_kms(signing_key_path, signing_env_var, signing_key_id)
+    # Resolve the source before creating the default output directory. A
+    # missing project audit chain is a read failure and must leave no
+    # receipt-shaped filesystem residue behind.
+    _resolve_audit_dir(workdir)
     output_dir = _prepare_output_dir(workdir, output)
     with TemporaryDirectory(prefix=".attest-", dir=output_dir) as staging_dir:
-        receipt = _build(run_id, workdir, kms_adapter, write=True, output_dir=Path(staging_dir))
+        receipt = _build(
+            run_id,
+            workdir,
+            kms_adapter,
+            through_hmac=through_hmac,
+            write=True,
+            output_dir=Path(staging_dir),
+        )
 
         verification = verify_run_attestation_projection(receipt.receipt)
         if not verification.ok:
@@ -205,6 +257,21 @@ def verify_cmd(
             console.print(f"[red]Failed to promote verified receipt:[/red] {exc}")
             raise SystemExit(EXIT_FAILURE) from None
 
+        try:
+            promoted_sha256 = _sha256_file(receipt_path)
+        except OSError as exc:
+            _discard_untrusted_receipt(receipt_path)
+            console.print(f"[red]Failed to re-hash promoted receipt:[/red] {exc}")
+            raise SystemExit(EXIT_FAILURE) from None
+        if promoted_sha256 != receipt.sha256:
+            _discard_untrusted_receipt(receipt_path)
+            console.print("[red]Promoted receipt bytes differ from the verified projection.[/red]")
+            raise SystemExit(EXIT_FAILURE)
+
+    # Deliberately do not append ``audit.receipt_export`` here. Verification
+    # must not advance the source chain: doing so would move the next default
+    # boundary and make a repeated projection differ because it was checked.
+
     console.print(
         f"[green]OK[/green] run attestation projection verified for {verification.run_id}",
         soft_wrap=True,
@@ -212,4 +279,4 @@ def verify_cmd(
     console.print(f"  dispatch evidence  {verification.dispatch_evidence_verdict.value}")
     console.print(f"  whole run          {verification.whole_run_verdict.value}")
     console.print(f"  receipt            {receipt_path}", soft_wrap=True)
-    console.print(f"  sha256             {receipt.sha256}", soft_wrap=True)
+    console.print(f"  sha256             {promoted_sha256}", soft_wrap=True)

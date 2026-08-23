@@ -23,10 +23,10 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
-from bernstein.core.git_ops import (
+from bernstein.core.git.git_ops import (
     commit as git_commit,
 )
-from bernstein.core.git_ops import (
+from bernstein.core.git.git_ops import (
     is_git_repo,
     rev_parse_head,
     revert_commit,

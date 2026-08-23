@@ -17,6 +17,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from bernstein.adapters.http_429_classifier import HTTP429Classification, classify_429
 from bernstein.core.lineage.artifact_events import emit_production_event
 from bernstein.core.lineage.spine import LineageSpine
 from bernstein.core.platform_compat import (
@@ -71,6 +72,14 @@ class SpawnError(RuntimeError):
 
 class RateLimitError(SpawnError):
     """Raised when an adapter detects provider-side rate limiting on startup."""
+
+
+class StandingCapError(SpawnError):
+    """Raised when an adapter detects a standing account/key/session/spend cap.
+
+    Unlike :class:`RateLimitError`, a standing cap will not clear within
+    the run, so it must not consume the retry budget or trigger backoff.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -907,6 +916,7 @@ class CLIAdapter(ABC):
 
         Raises:
             RateLimitError: Provider immediately exited due to rate limiting.
+            StandingCapError: Provider immediately exited due to a standing cap.
             SpawnError: Provider immediately exited for another reason.
         """
         try:
@@ -927,6 +937,10 @@ class CLIAdapter(ABC):
         tail_lines = self._read_last_lines(log_path, n=10)
         tail_text = tail_lines[-1] if tail_lines else "(no log output)"
         if self._is_rate_limit_error(tail_lines):
+            # Distinguish a standing cap (won't clear this run) from a
+            # transient request-rate limit before touching the meter.
+            if classify_429(tail_text) is HTTP429Classification.STANDING:
+                raise StandingCapError(f"{provider_name} hit a standing cap during startup: {tail_text}")
             # Tap the meter once before raising so the panel and the
             # ``rate_limit.hit`` event both see the spawn-time 429.
             try:

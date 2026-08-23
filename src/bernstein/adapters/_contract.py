@@ -692,7 +692,10 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "charm": AdapterStrategy(dangerous_mode=DangerousModeStrategy.CLI_FLAG),
     "kimi": AdapterStrategy(dangerous_mode=DangerousModeStrategy.CLI_FLAG),
     "rovo": AdapterStrategy(dangerous_mode=DangerousModeStrategy.CLI_FLAG),
-    "letta_code": AdapterStrategy(dangerous_mode=DangerousModeStrategy.CLI_FLAG),
+    "letta_code": AdapterStrategy(
+        dangerous_mode=DangerousModeStrategy.CLI_FLAG,
+        session_state=SessionState.PERSISTENT_AGENT,
+    ),
     # Codex drives unattended via its sandbox/full-auto flag.
     "codex": AdapterStrategy(dangerous_mode=DangerousModeStrategy.CLI_FLAG),
     # Everyone else - no native resume, text-signal channel. Dangerous-mode

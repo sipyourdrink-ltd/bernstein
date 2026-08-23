@@ -13,9 +13,12 @@ Subcommands:
   full HMAC-strength verification.
 * ``bernstein identity disable`` - print the env-var line the user can
   paste into their shell to suppress all emit sites.
+* ``bernstein identity attest show|verify --run <id>`` - project or verify a
+  run-attestation receipt without overloading install-rev verification.
 
-The CLI is read-only and never opens a network connection.  This is the
-project's hard rule: no telemetry, ever.
+The install-rev verbs are read-only and never open a network connection.  This
+is the project's hard rule: no telemetry, ever.  The nested ``attest verify``
+verb may write a verified receipt into the operator-selected evidence directory.
 
 See ``docs/operations/install-fingerprint.md`` for the full operator
 playbook (seed generation, storage, rotation, decode).
@@ -56,6 +59,8 @@ def identity_group() -> None:
       bernstein identity verify c4j2k7n8p3q5r9s7 \\
           --nonce 0123456789abcdef0123 --version-major 1
       bernstein identity disable
+      bernstein identity attest show --run r-1234 \\
+          --signing-key-path key.pem
     """
 
 
