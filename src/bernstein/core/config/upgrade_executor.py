@@ -25,12 +25,13 @@ from pathlib import Path
 
 from bernstein.core.git.git_ops import (
     commit as git_commit,
+)
+from bernstein.core.git.git_ops import (
     is_git_repo,
     rev_parse_head,
     revert_commit,
     stage_files,
 )
-
 from bernstein.core.llm import call_llm
 from bernstein.core.models import (
     RollbackPlan,
