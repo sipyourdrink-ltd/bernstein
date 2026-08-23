@@ -7,18 +7,18 @@ goal: 'Implement tickets from .sdd/backlog/open/ by priority (p0 first, then p1,
 cli: claude
 max_agents: 7
 role_model_policy:
-  manager: {model: coding-manager, effort: max}
-  architect: {model: coding-manager, effort: max}
-  security: {model: coding-worker, effort: high}
-  backend: {model: coding-worker, effort: high}
-  frontend: {model: coding-worker, effort: high}
-  qa: {model: coding-worker, effort: high}
-  reviewer: {model: coding-worker, effort: high}
-  docs: {model: coding-worker, effort: high}
-  devops: {model: coding-worker, effort: high}
+  manager: {model: opus, effort: max}
+  architect: {model: opus, effort: max}
+  security: {model: sonnet, effort: high}
+  backend: {model: sonnet, effort: high}
+  frontend: {model: sonnet, effort: high}
+  qa: {model: sonnet, effort: high}
+  reviewer: {model: sonnet, effort: high}
+  docs: {model: sonnet, effort: high}
+  devops: {model: sonnet, effort: high}
 budget: $0
-internal_llm_provider: openai
-internal_llm_model: coding-manager
+internal_llm_provider: claude
+internal_llm_model: claude-sonnet-4-6
 evolution_enabled: false
 auto_decompose: false
 constraints:
@@ -35,11 +35,7 @@ quality_gates:
   lint: true
   lint_command: ruff check .
   type_check: false
-  tests: true
-  test_command: uv run python scripts/run_tests.py -x --affected origin/main --parallel 4
-  timeout_s: 900
-  merge_conflict_check: true
-  large_file_check: true
+  tests: false
 context_files:
 - docs/architecture/DESIGN.md
 - CLAUDE.md

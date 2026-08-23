@@ -8329,7 +8329,7 @@ def record_verifier_tier(
             "verdict": verdict,
             "spine_entry_hash": spine_entry_hash,
         },
-)
+    )
 
 
 #: Issue #3768 -- emitted whenever a computed capability delta (a
@@ -8500,7 +8500,7 @@ def record_capability_authorization(
         resource_type="capability_authorization",
         resource_id=delta_hash,
         details=payload,
-    )   )
+    )
 
 
 __all__ = [
@@ -8523,6 +8523,8 @@ __all__ = [
     "EVENT_CACHE_EVICTION",
     "EVENT_CACHE_HIT",
     "EVENT_CACHE_MISS",
+    "EVENT_CAPABILITY_AUTHORIZATION",
+    "EVENT_CAPABILITY_DELTA",
     "EVENT_CHECKPOINT_RETRY",
     "EVENT_CLAIM_JOURNAL_RECEIPT",
     "EVENT_CLEAN_RUN_ATTESTATION",
@@ -8636,6 +8638,8 @@ __all__ = [
     "GATE_TERMINAL_RESOLUTIONS",
     "UNRELEASED_CLAIM_PATHS",
     "AuditChainStore",
+    "CapabilityAuthorizationDetails",
+    "CapabilityDeltaDetails",
     "ClearanceResolutionRefusal",
     "ComputerUseActionDetails",
     "CostProfileReportDetails",
@@ -8663,6 +8667,8 @@ __all__ = [
     "record_cache_eviction",
     "record_cache_hit",
     "record_cache_miss",
+    "record_capability_authorization",
+    "record_capability_delta",
     "record_capability_refusal",
     "record_capability_selection",
     "record_checkpoint_retry",
