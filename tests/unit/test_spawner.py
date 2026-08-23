@@ -361,7 +361,6 @@ class TestRenderPrompt:
 
         assert "Top-level context." in prompt
 
-
     def test_no_project_context_when_absent(self, tmp_path: Path, make_task) -> None:
         task = make_task()
         prompt = _render_prompt([task], tmp_path, tmp_path)

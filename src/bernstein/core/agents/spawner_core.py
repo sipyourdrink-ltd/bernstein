@@ -178,10 +178,6 @@ _read_cached = _project_context.read_cached
 _SANDBOX_AUDIT_LOCK = threading.Lock()
 
 
-
-
-
-
 def _list_subdirs_cached(path: Path) -> list[str]:
     """Return sorted list of immediate subdirectory names, cached by mtime.
 

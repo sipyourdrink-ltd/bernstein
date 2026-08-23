@@ -427,10 +427,6 @@ _FILE_CACHE = _project_context._FILE_CACHE
 _read_cached = _project_context.read_cached
 
 
-
-
-
-
 def _list_subdirs_cached(path: Path) -> list[str]:
     """Return sorted list of immediate subdirectory names, cached by mtime.
 

@@ -134,7 +134,10 @@ def test_render_prompt_uses_subtree_scoped_project_context(tmp_path: Path, make_
     _lesson_cache.clear()
     _FILE_CACHE.clear()
     task = make_task(
-        id="T-1", role="backend", title="Do something", description="Description.",
+        id="T-1",
+        role="backend",
+        title="Do something",
+        description="Description.",
         owned_files=["src/bernstein/adapters/foo.py"],
     )
     templates_dir = tmp_path / "templates"
@@ -191,7 +194,10 @@ def test_render_prompt_nearest_ancestor_wins(tmp_path: Path, make_task: Any) -> 
     _lesson_cache.clear()
     _FILE_CACHE.clear()
     task = make_task(
-        id="T-1", role="backend", title="Do something", description="Description.",
+        id="T-1",
+        role="backend",
+        title="Do something",
+        description="Description.",
         owned_files=["src/bernstein/adapters/foo.py"],
     )
     templates_dir = tmp_path / "templates"
@@ -244,7 +250,6 @@ def test_render_prompt_empty_owned_files_falls_back_to_top_level(tmp_path: Path,
         )
 
     assert "Top-level context." in prompt
-
 
 
 def test_render_prompt_includes_git_safety_protocol(tmp_path: Path, make_task: Any) -> None:
