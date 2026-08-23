@@ -341,13 +341,16 @@ anything that is not a regular file, opening non-blocking and checking the type
 on the descriptor. A FIFO planted at a blob's own name needs no link at all,
 and would otherwise block the read until a writer appeared.
 
-This covers the **blob** read, which is what `receipt verify` consults. The
-`.meta.json` sidecar beside each blob is read without the walk, and deliberately
-so: unlike the blob, it is not content-addressed, so there is no digest to check
-it against. An attacker holding the write access needed to plant a symlink in
-the store can equally write a hostile sidecar in place, which no symlink refusal
-would catch. Nothing in the verification path reads metadata; treat it as
-descriptive, not as evidence.
+The same anchored walk protects direct reads of the `.meta.json` sidecar beside
+each blob, including the reads used by `list_entries`. This prevents a shard or
+sidecar symlink from redirecting the file open, but it does **not** authenticate
+the metadata: unlike the blob, the sidecar is not content-addressed and has no
+digest to verify. Treat its fields as descriptive, not as evidence.
+
+On POSIX, anchoring a metadata read adds descriptor opens for the store root and
+shard plus a regular-file check before reading the sidecar. This small per-read
+cost is accepted so a future metadata consumer cannot silently inherit an
+unanchored path. Windows retains the single-open fallback described above.
 
 `fork-race` requires a microVM-capable host; on an unsupported host it
 fails loudly. The determinism/tamper guarantees are validated

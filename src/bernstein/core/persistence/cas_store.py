@@ -175,22 +175,23 @@ class CASStore:
     def _read_meta(self, digest: str) -> CASEntry | None:
         """Load the :class:`CASEntry` sidecar, or ``None`` if missing.
 
-        This read is **not** anchored the way :meth:`get` is, deliberately.
-        Unlike a blob, the sidecar is not content-addressed: there is no digest
-        to check it against, so an attacker holding the write access needed to
-        plant a symlink in the store can write a hostile sidecar in place and a
-        symlink refusal would catch nothing. Nothing in the verification path
-        reads metadata -- see "Symlink refusal, and where it stops" in
-        ``docs/architecture/sandbox.md``.
-
-        **That exemption depends on metadata staying descriptive.** A caller
-        that starts making a trust decision from these fields invalidates the
-        reasoning above, and this read needs anchoring before it does.
+        The sidecar is descriptive rather than content-addressed, so anchoring
+        does not authenticate its fields. It does ensure the read cannot be
+        redirected through a symlinked shard or sidecar, matching the path
+        guarantees of :meth:`get` without claiming an integrity guarantee.
         """
-        meta = self._meta_path(digest)
-        if not meta.exists():
+        try:
+            fd = open_anchored(
+                self._root,
+                digest[:2],
+                f"{digest}.meta.json",
+                flags=os.O_RDONLY,
+                require_regular_file=True,
+            )
+        except FileNotFoundError:
             return None
-        data: dict[str, Any] = json.loads(meta.read_text())
+        with os.fdopen(fd, "r", encoding="utf-8") as handle:
+            data: dict[str, Any] = json.load(handle)
         return CASEntry(**data)
 
     # -- public API ----------------------------------------------------------
@@ -380,8 +381,10 @@ class CASStore:
                 continue
             for meta_file in sorted(shard.glob("*.meta.json")):
                 try:
-                    data: dict[str, Any] = json.loads(meta_file.read_text())
-                    entries.append(CASEntry(**data))
+                    digest = meta_file.name.removesuffix(".meta.json")
+                    entry = self._read_meta(digest)
+                    if entry is not None:
+                        entries.append(entry)
                 except (json.JSONDecodeError, TypeError, KeyError):
                     logger.warning("Corrupt CAS metadata: %s", meta_file)
 
