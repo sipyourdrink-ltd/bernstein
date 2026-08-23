@@ -64,6 +64,14 @@ token *value* must never be logged (see #2762 / #2763)."""
 JOURNAL_EVENT_ARTIFACT_POSTED: Final[str] = "artifact_posted"
 """Journal event emitted when a worker posts a task artifact."""
 
+JOURNAL_EVENT_PERSISTENT_AGENT_STEP: Final[str] = "persistent_agent_step"
+"""Journal event emitted when a step runs under a persistent-agent adapter.
+
+A persistent-agent adapter carries agent-side state Bernstein never hashed, so
+a replay of the same inputs is not guaranteed reproducible. Recording this
+event lets verification mark the run's artifacts ``unverifiable``.
+"""
+
 ARTIFACT_TYPE_REPORT: Final[str] = "report"
 ARTIFACT_TYPE_TABLE: Final[str] = "table"
 ARTIFACT_TYPE_LINK: Final[str] = "link"
