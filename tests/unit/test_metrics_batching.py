@@ -182,7 +182,7 @@ def test_accepted_tenant_label_queues_both_destinations(collector: MetricsCollec
     collector._write_metric_point(MetricType.API_USAGE, 1.0, {"tenant_id": "team-a"})
 
     assert len(collector._buffer) == 2
-    assert len({directory for directory, _, _ in collector._buffer}) == 2
+    assert len({directory for directory, _, _, _ in collector._buffer}) == 2
 
 
 # ---------------------------------------------------------------------------
