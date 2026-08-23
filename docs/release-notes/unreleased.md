@@ -12,9 +12,15 @@ rather than as its own attribution is exempted by hand there, with the reason.
 
 Nothing yet: v3.17.1 was cut from this page.
 
-- The `/status` live-agent count no longer disagrees with itself:
-  `summary.agents`, `agents.count` and the rendered `Active agents: N` line
-  each filtered the same session with a different expression, so a reaped
-  (dead) agent could read as active on one surface and not on another. A
-  single `_agent_is_alive` predicate now owns the call on every surface
-  (#4360).
+## Eval gate receipts read their own history
+
+A gate verdict receipt sealed before three-valued verdicts carried no `reason`
+in its evidence. The parser now defaults it, so a binary-era receipt still
+parses instead of being rejected as malformed (#4182).
+
+## `/status` agrees with itself about live agents
+
+`summary.agents`, `agents.count` and the rendered `Active agents: N` line each
+filtered the same session with a different expression, so a reaped agent could
+read as active on one surface and not on another. A single `_agent_is_alive`
+predicate now owns the call on every surface (#4360).

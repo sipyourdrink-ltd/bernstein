@@ -1219,6 +1219,11 @@ class AgentSession:
     # event, so the session record names exactly the digests the chain
     # attests. Empty when the session's tasks declare no attachments.
     multimodal_attachments: list[dict[str, str]] = field(default_factory=list)
+    # Per-section context receipt captured at spawn time (issue #4405). Each
+    # entry is ``{"label", "content_sha256", "token_estimate", "char_count"}``
+    # in prompt order - a deterministic fingerprint of the context actually
+    # sent to the model. Empty when no receipt was captured.
+    context_receipt: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
 
 
 class IsolationMode(StrEnum):

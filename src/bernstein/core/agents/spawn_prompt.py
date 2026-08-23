@@ -12,7 +12,9 @@ import time as _time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.agents import project_context as _project_context
 from bernstein.core.agents.heartbeat import HeartbeatMonitor
+from bernstein.core.agents.project_context import resolve_project_context
 from bernstein.core.context_recommendations import RecommendationEngine
 from bernstein.core.defaults import SPAWN
 from bernstein.core.lessons import gather_lessons_for_context
@@ -415,31 +417,14 @@ class CacheSafeParams:
 # ---------------------------------------------------------------------------
 # Module-level file cache (mtime-keyed, automatically invalidates on change)
 # ---------------------------------------------------------------------------
-_FILE_CACHE: dict[str, tuple[float, str]] = {}
 _DIR_CACHE: dict[str, tuple[float, list[str]]] = {}
 
-
-def _read_cached(path: Path) -> str:
-    """Return file contents, re-reading only when mtime changes.
-
-    Args:
-        path: File to read.
-
-    Returns:
-        File contents, or empty string if the file does not exist.
-    """
-    key = str(path)
-    try:
-        mtime = path.stat().st_mtime
-    except OSError:
-        _FILE_CACHE.pop(key, None)
-        return ""
-    cached = _FILE_CACHE.get(key)
-    if cached is not None and cached[0] == mtime:
-        return cached[1]
-    content = path.read_text(encoding="utf-8")
-    _FILE_CACHE[key] = (mtime, content)
-    return content
+# The implementation moved to ``project_context`` so this module and
+# ``spawn_prompt`` share one cache and one resolver. These names stay: the
+# warm pool reads role YAML through the reader, ``spawner.py`` re-exports
+# both, and tests reach for the cache to assert invalidation.
+_FILE_CACHE = _project_context._FILE_CACHE
+_read_cached = _project_context.read_cached
 
 
 def _list_subdirs_cached(path: Path) -> list[str]:
@@ -843,8 +828,7 @@ def _render_prompt(
     task_block = "\n".join(task_lines)
 
     # Project context from .sdd/project.md if it exists
-    project_md = workdir / ".sdd" / "project.md"
-    project_context = _read_cached(project_md)
+    project_context = resolve_project_context(tasks, workdir)
 
     # Completion-contract instructions shared with templates/roles via the
     # single _includes/completion_contract.md partial (#2244).
