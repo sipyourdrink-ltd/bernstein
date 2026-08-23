@@ -416,6 +416,39 @@ class TestCASStoreInit:
 
 @pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX symlink semantics")
 class TestCASStoreSymlinkSafety:
+    def test_get_entry_refuses_to_follow_a_symlinked_sidecar(self, cas: CASStore, tmp_path: Path) -> None:
+        """Metadata lookup must not follow a sidecar replaced by a link."""
+        digest = cas.put(b"authentic blob")
+        sidecar = cas.root / digest[:2] / f"{digest}.meta.json"
+        target = tmp_path / "attacker-meta.json"
+        target.write_text(sidecar.read_text())
+        sidecar.unlink()
+        sidecar.symlink_to(target)
+
+        with pytest.raises(OSError) as excinfo:
+            cas.get_entry(digest)
+        assert not isinstance(excinfo.value, FileNotFoundError)
+
+    def test_get_entry_refuses_to_follow_a_symlinked_shard_directory(
+        self,
+        cas: CASStore,
+        tmp_path: Path,
+    ) -> None:
+        """Metadata lookup must anchor every component below the CAS root."""
+        digest = cas.put(b"authentic blob")
+        shard = cas.root / digest[:2]
+        sidecar = shard / f"{digest}.meta.json"
+        decoy = tmp_path / "attacker-shard"
+        decoy.mkdir()
+        (decoy / sidecar.name).write_text(sidecar.read_text())
+        shutil.rmtree(shard)
+        shard.symlink_to(decoy, target_is_directory=True)
+
+        with pytest.raises(OSError) as excinfo:
+            cas.get_entry(digest)
+        assert not isinstance(excinfo.value, FileNotFoundError)
+        assert excinfo.value.errno in {errno.ELOOP, errno.ENOTDIR}
+
     def test_get_refuses_to_follow_a_symlinked_blob(self, cas: CASStore, tmp_path: Path) -> None:
         """A blob path replaced by a symlink must be rejected by the read itself
         (O_NOFOLLOW), atomically - never followed to its target. This is the
