@@ -55,6 +55,21 @@ __all__ = [
 type _CAST_DICT_STR_ANY = dict[str, Any]
 
 
+# Canonical "is this agent still alive?" test. ``AgentSession.status`` is a
+# plain string (a Literal of "starting" / "working" / "idle" / "dead"), but
+# the /status surfaces historically tested it two different ways -
+# ``str(agent.status) != "dead"`` in one place and ``agent.status != "dead"``
+# in another. That let ``summary.agents``, ``agents.count`` and the rendered
+# ``Active agents: N`` line all disagree about the same run (issue #4360).
+# One helper owns that call so every surface reports the same live count.
+_AGENT_STATUS_DEAD = "dead"
+
+
+def _agent_is_alive(status: str) -> bool:
+    """Return True when an agent status is not a reaped (dead) one."""
+    return status != _AGENT_STATUS_DEAD
+
+
 def _get_store(request: Request) -> TaskStore:
     return request.app.state.store  # type: ignore[no-any-return]
 
@@ -380,7 +395,8 @@ def _status_agent_items(
 ) -> list[dict[str, Any]]:
     """Build normalized agent rows for shared operational surfaces."""
     items: list[dict[str, Any]] = []
-    live_agents = list(store.agents.values())
+    store_agents = store.agents.values()
+    live_agents = [agent for agent in store_agents if _agent_is_alive(agent.status)]
     for agent in live_agents:
         snapshot = agent_snapshots.get(agent.id, {})
         model_name = _agent_model_label(agent)
@@ -408,6 +424,10 @@ def _status_agent_items(
     if items:
         return items
 
+    # No live agent in the store: fall back to the on-disk snapshot, which is
+    # the archival view of the run. Every snapshot row is emitted, reaped ones
+    # included - issue #953 holds this path to a full dict per agent, and the
+    # caller counts liveness per row rather than trusting the list length.
     for snapshot in agent_snapshots.values():
         items.append(
             {
@@ -894,7 +914,7 @@ def status_dashboard(request: Request) -> JSONResponse:
     sdd_dir = getattr(request.app.state, "sdd_dir", None)
     agent_snapshots = _read_agents_snapshot(sdd_dir if isinstance(sdd_dir, Path) else None)
     total_cost_by_role = store.cost_by_role()
-    live_agents = [agent for agent in store.agents.values() if str(agent.status) != "dead"]
+    live_agents = [agent for agent in store.agents.values() if _agent_is_alive(agent.status)]
     total_spent = float(live_costs.get("spent_usd") or sum(total_cost_by_role.values()))
 
     # Recently completed tasks still within grace period (visible in panels).
@@ -939,9 +959,10 @@ def status_dashboard(request: Request) -> JSONResponse:
         "count": len(tasks),
         "items": _status_task_items(tasks, now),
     }
+    agent_items = _status_agent_items(store, agent_snapshots, total_cost_by_role, now)
     payload["agents"] = {
-        "count": len(live_agents) if live_agents else len(agent_snapshots),
-        "items": _status_agent_items(store, agent_snapshots, total_cost_by_role, now),
+        "count": sum(1 for item in agent_items if _agent_is_alive(str(item.get("status", "")))),
+        "items": agent_items,
     }
     payload["costs"] = live_costs
     payload["alerts"] = build_alerts(store, live_agents, total_spent, now, agent_snapshots, tenant_id)
@@ -1226,7 +1247,7 @@ def dashboard_data(request: Request) -> JSONResponse:
         _populate_agents_from_snapshots(agents, agent_snapshots)
 
     all_agents = agents.values()
-    alive_agents = [a for a in all_agents if a.status != "dead"]
+    alive_agents = [a for a in all_agents if _agent_is_alive(a.status)]
     cost_by_role = store.cost_by_role()
     total_cost = sum(cost_by_role.values())
     agent_count = len(alive_agents)

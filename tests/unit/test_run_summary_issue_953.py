@@ -33,7 +33,7 @@ import pytest
 
 from bernstein.cli.run import _normalize_agent_entries, render_run_summary_from_dict
 from bernstein.cli.ui import AgentInfo
-from bernstein.core.routes.status_dashboard import _status_agent_items
+from bernstein.core.routes.status_dashboard import _agent_is_alive, _status_agent_items
 
 # ---------------------------------------------------------------------------
 # Layer 1: producer/consumer shape
@@ -417,3 +417,28 @@ def test_agent_info_from_dict_str_or_dict_typing() -> None:
     assert isinstance(a, AgentInfo)
     assert isinstance(b, AgentInfo)
     assert a.agent_id == b.agent_id == "a1"
+
+
+class TestAgentCountExcludesDeadRows:
+    """Issue #4360 asks the three /status surfaces to agree on the live count.
+
+    Issue #953 asks the producer never to drop a row. Both hold at once only
+    when liveness is a property of the row rather than a filter on the list,
+    so this pins the pair: a dead agent is still serialized, and still not
+    counted.
+    """
+
+    def test_dead_snapshot_is_listed_but_not_counted(self) -> None:
+        store = MagicMock()
+        store.agents = {}
+        snapshots = {
+            "agent-dead": {"id": "agent-dead", "role": "backend", "status": "dead"},
+            "agent-live": {"id": "agent-live", "role": "backend", "status": "working"},
+        }
+        items = _status_agent_items(store, snapshots, {}, now=1000.0)
+
+        assert {i["id"] for i in items} == {"agent-dead", "agent-live"}
+        assert all(isinstance(i, dict) for i in items)
+
+        live = sum(1 for i in items if _agent_is_alive(str(i.get("status", ""))))
+        assert live == 1
