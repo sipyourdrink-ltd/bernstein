@@ -1301,8 +1301,8 @@ class TaskStore:
         )
         logger.info(
             "Task %s unblocked by completed dependency %s",
-            task.id,
-            unblocker_task_id,
+            sanitize_log(task.id),
+            sanitize_log(unblocker_task_id),
         )
         self._notify_task_updated(task)
         return True
@@ -2287,7 +2287,7 @@ class TaskStore:
                 )
                 logger.warning(
                     "Planning task %s completed without creating child tasks; marked FAILED (%s).",
-                    task_id,
+                    sanitize_log(task_id),
                     _ZERO_YIELD_PLANNING_REASON,
                 )
                 return task

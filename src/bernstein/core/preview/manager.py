@@ -35,7 +35,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from bernstein.core.preview.command_discovery import (
     DiscoveredCommand,
@@ -55,6 +55,9 @@ from bernstein.core.preview.port_capture import (
 from bernstein.core.preview.token_issuer import IssuedAuth, PreviewTokenIssuer
 from bernstein.core.preview.tunnel_bridge import TunnelBridge, TunnelBridgeError
 from bernstein.core.security.audit import AuditLog
+
+if TYPE_CHECKING:
+    import builtins
 
 logger = logging.getLogger(__name__)
 
@@ -245,7 +248,7 @@ class PreviewStore:
     # Internal
     # ------------------------------------------------------------------
 
-    def _load(self) -> list[PreviewState]:
+    def _load(self) -> builtins.list[PreviewState]:
         if not self._path.exists():
             return []
         try:
@@ -264,7 +267,7 @@ class PreviewStore:
                 logger.debug("Skipping malformed preview state row: %s", exc)
         return out
 
-    def _save(self, records: list[PreviewState]) -> None:
+    def _save(self, records: builtins.list[PreviewState]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"previews": [r.to_dict() for r in records]}
         tmp = self._path.with_suffix(self._path.suffix + ".tmp")
@@ -344,7 +347,7 @@ class PreviewManager:
         """Return state for *preview_id* or ``None``."""
         return self._store.get(preview_id)
 
-    def discover(self, cwd: Path) -> list[DiscoveredCommand]:
+    def discover(self, cwd: Path) -> builtins.list[DiscoveredCommand]:
         """Return every discovered candidate command under *cwd*."""
         return list_candidates(cwd)
 

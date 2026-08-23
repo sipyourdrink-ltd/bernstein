@@ -19,6 +19,7 @@ from rich.table import Table
 from rich.text import Text
 
 from bernstein.cli.icons import get_agent_icon, get_status_icon
+from bernstein.core.tasks.lifecycle import is_agent_alive
 
 _STYLE_BOLD_CYAN = "bold cyan"
 
@@ -638,7 +639,7 @@ def create_summary_table(stats: RunStats) -> Table:
     table.add_row("[red]Failed[/red]", f"[red]{s.failed}[/red]")
     table.add_row("[orange3]Refused[/orange3]", f"[orange3]{s.refused}[/orange3]")
     table.add_section()
-    table.add_row("Active agents", str(len(stats.agents)))
+    table.add_row("Active agents", str(sum(1 for a in stats.agents if is_agent_alive(a))))
     table.add_row("Elapsed", format_duration(stats.elapsed_seconds))
     if stats.total_cost_usd > 0:
         table.add_row("Total cost", f"[green]${stats.total_cost_usd:.4f}[/green]")
@@ -665,7 +666,7 @@ def create_summary_plain(stats: RunStats) -> str:
         f"  In progress: {s.in_progress}",
         f"  Failed:      {s.failed}",
         f"  Refused:     {s.refused}",
-        f"Active agents: {len(stats.agents)}",
+        f"Active agents: {sum(1 for a in stats.agents if is_agent_alive(a))}",
         f"Elapsed:       {format_duration(stats.elapsed_seconds)}",
     ]
     if stats.total_cost_usd > 0:

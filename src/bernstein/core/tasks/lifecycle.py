@@ -377,6 +377,17 @@ AGENT_TRANSITIONS: dict[tuple[AgentStatus, AgentStatus], Callable[[AgentSession]
 }
 
 
+def is_agent_alive(agent_or_status: Any) -> bool:
+    """Return True if an agent (AgentSession, AgentInfo, dict, or status str) is alive (not dead)."""
+    if isinstance(agent_or_status, str):
+        return agent_or_status != "dead"
+    if hasattr(agent_or_status, "status"):
+        return str(getattr(agent_or_status, "status", "")) != "dead"
+    if isinstance(agent_or_status, dict):
+        return str(agent_or_status.get("status", "")) != "dead"
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Event stream
 # ---------------------------------------------------------------------------
