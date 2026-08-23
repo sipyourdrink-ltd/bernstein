@@ -163,9 +163,7 @@ class TestBudgetRunsOnTheSpawnPath:
         assert recorded.total_estimated_tokens > 0
         assert recorded.section_breakdown
 
-    def test_spawner_builder_flags_an_over_budget_prompt(
-        self, tmp_path: Path, make_task
-    ) -> None:
+    def test_spawner_builder_flags_an_over_budget_prompt(self, tmp_path: Path, make_task) -> None:
         """A prompt far past the absolute fallback is recorded as over budget."""
         from bernstein.core.agents.spawner_core import _render_prompt_with_receipt
 
