@@ -39,11 +39,22 @@ def test_default_is_stateless_so_existing_rows_keep_their_meaning() -> None:
 
 def test_no_shipped_adapter_silently_became_persistent() -> None:
     # Every row was written before this axis existed, so all of them must still
-    # read as stateless. Declaring letta_code is a separate issue under #3670.
-    persistent = [
-        name for name, strategy in STRATEGY_MATRIX.items() if strategy.session_state is not SessionState.STATELESS
-    ]
-    assert persistent == [], f"unexpected non-stateless declarations: {persistent}"
+    # read as stateless — except letta_code, which carries cross-task memory via
+    # Letta Cloud and is now explicitly declared PERSISTENT_AGENT (issue #4289).
+    persistent = {
+        name: strategy.session_state
+        for name, strategy in STRATEGY_MATRIX.items()
+        if strategy.session_state is not SessionState.STATELESS
+    }
+    assert set(persistent) == {"letta_code"}, f"unexpected non-stateless declarations: {persistent}"
+    assert persistent["letta_code"] is SessionState.PERSISTENT_AGENT
+
+
+def test_letta_code_declared_persistent_agent() -> None:
+    # Regression guard: letta_code maintains long-lived state across separate
+    # invocations via Letta Cloud. This row cannot quietly revert to the
+    # stateless default.
+    assert STRATEGY_MATRIX["letta_code"].session_state is SessionState.PERSISTENT_AGENT
 
 
 def test_axis_reaches_the_operator_facing_view() -> None:
