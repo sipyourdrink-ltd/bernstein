@@ -27,6 +27,7 @@ from bernstein.adapters.registry import adapter_name_for_provider, get_adapter
 from bernstein.adapters.skills_injector import inject_skills
 from bernstein.agents.registry import AgentRegistry, get_registry
 from bernstein.bridges.base import AgentState, BridgeError, RuntimeBridge, SpawnRequest
+from bernstein.core.agents import project_context as _project_context
 from bernstein.core.agents.adapter_health import AdapterHealthMonitor
 from bernstein.core.agents.attachment_dispatch import (
     AttachmentDispatchError,
@@ -43,6 +44,7 @@ from bernstein.core.agents.context_attachments import (
 )
 from bernstein.core.agents.heartbeat import HeartbeatMonitor
 from bernstein.core.agents.in_process_agent import InProcessAgent
+from bernstein.core.agents.project_context import resolve_project_context
 from bernstein.core.agents.response_style import (
     ResponseStyleTemplateError,
     addendum_sha256,
@@ -154,8 +156,14 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Module-level file cache (mtime-keyed, automatically invalidates on change)
 # ---------------------------------------------------------------------------
-_FILE_CACHE: dict[str, tuple[float, str]] = {}
 _DIR_CACHE: dict[str, tuple[float, list[str]]] = {}
+
+# The implementation moved to ``project_context`` so this module and
+# ``spawn_prompt`` share one cache and one resolver. These names stay: the
+# warm pool reads role YAML through the reader, ``spawner.py`` re-exports
+# both, and tests reach for the cache to assert invalidation.
+_FILE_CACHE = _project_context._FILE_CACHE
+_read_cached = _project_context.read_cached
 
 # Serializes every sandbox lifecycle audit append across threads.
 #
@@ -170,67 +178,8 @@ _DIR_CACHE: dict[str, tuple[float, list[str]]] = {}
 _SANDBOX_AUDIT_LOCK = threading.Lock()
 
 
-def _read_cached(path: Path) -> str:
-    """Return file contents, re-reading only when mtime changes.
-
-    Args:
-        path: File to read.
-
-    Returns:
-        File contents, or empty string if the file does not exist.
-    """
-    key = str(path)
-    try:
-        mtime = path.stat().st_mtime
-    except OSError:
-        _FILE_CACHE.pop(key, None)
-        return ""
-    cached = _FILE_CACHE.get(key)
-    if cached is not None and cached[0] == mtime:
-        return cached[1]
-    content = path.read_text(encoding="utf-8")
-    _FILE_CACHE[key] = (mtime, content)
-    return content
 
 
-def _resolve_project_context(tasks: list[Task], workdir: Path) -> str:
-    """Resolve project context, preferring the nearest subtree-scoped file.
-
-    Walks up from each task's owned files looking for a scoped
-    ``.sdd/project.md``; the nearest ancestor wins. When a scoped file is
-    found it supplements the top-level file (scoped content first). When none
-    is found, only the top-level file is returned (byte-identical to the
-    pre-scoping behaviour).
-
-    Args:
-        tasks: Batch of tasks whose owned files scope the lookup.
-        workdir: Project working directory.
-
-    Returns:
-        Combined project context string.
-    """
-    top_level = _read_cached(workdir / ".sdd" / "project.md")
-
-    scoped: str | None = None
-    for t in tasks:
-        for f in t.owned_files:
-            d = (workdir / f).parent
-            while d != workdir:
-                content = _read_cached(d / ".sdd" / "project.md")
-                if content:
-                    scoped = content
-                    break
-                d = d.parent
-            if scoped is not None:
-                break
-        if scoped is not None:
-            break
-
-    if scoped is None:
-        return top_level
-    if top_level:
-        return scoped + "\n\n" + top_level
-    return scoped
 
 
 def _list_subdirs_cached(path: Path) -> list[str]:
@@ -1196,7 +1145,7 @@ def _render_prompt(
     task_block = "\n".join(task_lines)
 
     # Project context from .sdd/project.md if it exists
-    project_context = _resolve_project_context(tasks, workdir)
+    project_context = resolve_project_context(tasks, workdir)
 
     # Completion instructions use the first-class CLI (#3015), NOT a hand-built
     # curl. The command resolves the token and server port itself and retries a

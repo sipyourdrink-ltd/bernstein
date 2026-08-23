@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import threading
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
@@ -305,6 +306,33 @@ class TestRenderPrompt:
         old = _read_cached(tmp_path / ".sdd" / "project.md")
         assert old in prompt
         assert "Top-level context." in prompt
+
+    def test_owned_file_outside_the_workdir_is_skipped(self, tmp_path: Path, make_task) -> None:
+        """An owned path that escapes the workdir must not hang the walk.
+
+        ``workdir / owned`` returns ``owned`` unchanged when it is absolute,
+        so the upward walk starts outside the project and never reaches
+        ``workdir`` by taking ``.parent`` — it used to spin at the
+        filesystem root. Guarded by a timeout: a regression here hangs
+        rather than fails.
+        """
+        _FILE_CACHE.clear()
+        (tmp_path / ".sdd").mkdir()
+        (tmp_path / ".sdd" / "project.md").write_text("Top-level context.")
+        outside = tmp_path.parent / "outside-the-project"
+        outside.mkdir(exist_ok=True)
+
+        task = make_task(owned_files=[str(outside / "foo.py"), "../elsewhere/bar.py"])
+
+        done: list[str] = []
+        worker = threading.Thread(
+            target=lambda: done.append(_render_prompt([task], tmp_path, tmp_path)),
+            daemon=True,
+        )
+        worker.start()
+        worker.join(timeout=10)
+        assert not worker.is_alive(), "resolver did not terminate on an escaping owned path"
+        assert "Top-level context." in done[0]
 
     def test_nearest_ancestor_project_context_wins(self, tmp_path: Path, make_task) -> None:
         _FILE_CACHE.clear()
