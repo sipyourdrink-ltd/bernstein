@@ -22,7 +22,6 @@ clock).
 
 from __future__ import annotations
 
-import builtins
 import contextlib
 import json
 import logging
@@ -56,6 +55,11 @@ from bernstein.core.preview.port_capture import (
 from bernstein.core.preview.token_issuer import IssuedAuth, PreviewTokenIssuer
 from bernstein.core.preview.tunnel_bridge import TunnelBridge, TunnelBridgeError
 from bernstein.core.security.audit import AuditLog
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import builtins
 
 logger = logging.getLogger(__name__)
 
