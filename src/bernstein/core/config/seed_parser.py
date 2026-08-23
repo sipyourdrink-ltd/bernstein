@@ -1283,7 +1283,9 @@ def _parse_storage(raw: object) -> StorageConfig | None:
     _valid_storage_backends = ("memory", "postgres", "redis")
     if storage_backend_raw not in _valid_storage_backends:
         raise SeedError(f"storage.backend must be one of {list(_valid_storage_backends)}, got: {storage_backend_raw!r}")
-    storage_backend = cast('Literal["memory", "postgres", "redis"]', storage_backend_raw)
+    storage_backend = cast(
+        'Literal["memory", "postgres", "redis"]', storage_backend_raw
+    )  # narrowed by membership check
     storage_db_url_raw: object = storage_dict.get("database_url")
     storage_db_url: str | None = str(storage_db_url_raw) if storage_db_url_raw is not None else None
     storage_redis_url_raw: object = storage_dict.get("redis_url")
@@ -1686,6 +1688,12 @@ def _parse_quality_gates(raw: object) -> QualityGatesConfig | None:
             raise SeedError(f"quality_gates.{key} must contain only strings")
         return [str(item) for item in list_raw]
 
+    def _qg_float(key: str, default: float) -> float:
+        val = qg_dict.get(key, default)
+        if isinstance(val, bool) or not isinstance(val, (int, float)):
+            raise SeedError(f"quality_gates.{key} must be a number, got: {type(val).__name__}")
+        return float(val)
+
     pipeline = _parse_quality_gate_pipeline(qg_dict.get("pipeline"))
     pii_scan_paths_raw = qg_dict.get("pii_scan_paths", ["src/"])
     if not isinstance(pii_scan_paths_raw, list):
@@ -1717,7 +1725,7 @@ def _parse_quality_gates(raw: object) -> QualityGatesConfig | None:
         coverage_delta=_qg_bool("coverage_delta", False),
         coverage_delta_command=_qg_optional_str("coverage_delta_command"),
         complexity_check=_qg_bool("complexity_check", False),
-        complexity_threshold=float(cast(float, qg_dict.get("complexity_threshold", 0.20))),
+        complexity_threshold=_qg_float("complexity_threshold", 0.20),
         complexity_check_command=_qg_optional_str("complexity_check_command"),
         dead_code_check=_qg_bool("dead_code_check", False),
         dead_code_command=_qg_str("dead_code_command", "vulture"),
@@ -1732,7 +1740,7 @@ def _parse_quality_gates(raw: object) -> QualityGatesConfig | None:
         merge_conflict_check=_qg_bool("merge_conflict_check", False),
         flaky_detection=_qg_bool("flaky_detection", False),
         flaky_min_runs=_qg_int("flaky_min_runs", 5),
-        flaky_threshold=float(cast(float, qg_dict.get("flaky_threshold", 0.15))),
+        flaky_threshold=_qg_float("flaky_threshold", 0.15),
         auto_format=_qg_bool("auto_format", False),
         auto_format_python_command=_qg_str("auto_format_python_command", "ruff format"),
         auto_format_js_command=_qg_str("auto_format_js_command", "prettier --write"),

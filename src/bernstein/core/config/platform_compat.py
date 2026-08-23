@@ -1353,7 +1353,7 @@ def _win_process_alive(pid: int) -> bool:
     _STILL_ACTIVE = 259
 
     kernel32: object = ctypes.windll.kernel32  # type: ignore[attr-defined]
-    handle: int = kernel32.OpenProcess(  # type: ignore[attr-defined]
+    handle: int = kernel32.OpenProcess(  # type: ignore[union-attr]
         _PROCESS_QUERY_LIMITED_INFORMATION,
         False,
         pid,
@@ -1362,11 +1362,11 @@ def _win_process_alive(pid: int) -> bool:
         return False
     try:
         exit_code = ctypes.wintypes.DWORD()
-        if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):  # type: ignore[attr-defined]
+        if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):  # type: ignore[union-attr]
             return bool(exit_code.value == _STILL_ACTIVE)
         return False
     finally:
-        kernel32.CloseHandle(handle)  # type: ignore[attr-defined]
+        kernel32.CloseHandle(handle)  # type: ignore[union-attr]
 
 
 # ---------------------------------------------------------------------------
