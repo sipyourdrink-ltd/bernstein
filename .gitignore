@@ -134,6 +134,12 @@ benchmarks/results/
 benchmarks/swe_bench/results/
 .cache/
 
+# Working notes an agent writes beside the repo while preparing a change
+# (PR bodies, review drafts). Three of these were committed by accident in
+# a single week and reached main, so the directory is ignored rather than
+# relying on everyone remembering to leave it out of `git add -A`.
+scratch/
+
 # Internal-only research / strategy / audit material (never ship to public docs)
 docs/internal/
 docs/strategy/

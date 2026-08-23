@@ -17,3 +17,11 @@ Nothing yet: v3.17.1 was cut from this page.
 A gate verdict receipt sealed before three-valued verdicts carried no `reason`
 in its evidence. The parser now defaults it, so a binary-era receipt still
 parses instead of being rejected as malformed (#4182).
+
+## Working notes stopped riding along in commits
+
+Three PR-body drafts reached `main` under `scratch/` in one week, each
+carried in by a change that had nothing to do with them. The directory is
+ignored now, the three files are gone, and a test fails if either the
+ignore rule or the untracked state regresses — an ignore rule alone does
+not untrack a file already in the index.
