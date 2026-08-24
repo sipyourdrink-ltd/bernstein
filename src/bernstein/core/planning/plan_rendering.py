@@ -1,10 +1,13 @@
 """Deterministic plan rendering with SHA-256 hash binding (#3839 slice 3).
 
 Produces a canonical text representation of a :class:`TaskPlan` and a
-stable SHA-256 digest that the approval gate can bind its decision to.
-The rendering is *order-invariant*: tasks are sorted by id before
-serialisation, so the same plan always yields the same hash regardless
-of the order tasks appear in ``plan.task_estimates``.
+stable SHA-256 digest. The rendering is *order-invariant*: tasks are
+sorted by id before serialisation, so the same plan always yields the
+same hash regardless of the order tasks appear in ``plan.task_estimates``.
+
+The approval-gate binding (storing the hash on approve and verifying it
+on decision) is a follow-up in a later slice; this slice ships the
+rendering primitive only.
 """
 
 from __future__ import annotations
