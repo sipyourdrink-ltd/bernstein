@@ -3032,6 +3032,130 @@ def _run_quality_gates(
     return True, qg_result
 
 
+#: Config key: ``gate_repair_enabled`` on ``OrchestratorConfig`` (also the
+#: ``bernstein.yaml`` top-level key of the same name). Default on.
+#: Env override: ``BERNSTEIN_GATE_REPAIR`` (see ``_gate_repair_enabled``).
+_GATE_REPAIR_TRUTHY = frozenset({"1", "true", "yes", "on", "enable", "enabled"})
+_GATE_REPAIR_FALSY = frozenset({"0", "false", "no", "off", "disable", "disabled"})
+
+#: Fixed instruction appended after the gate output tail (issue #4463): the
+#: repair attempt must close the gap, not use it as licence to redesign.
+_GATE_REPAIR_INSTRUCTION = (
+    "Make the existing tests and lint pass. Do not rewrite the feature. Keep the diff as small as possible."
+)
+
+#: How much of the real gate output the repair goal keeps. The tail is what
+#: a human would scroll to first -- the actual assertion/error, not the
+#: framework preamble above it.
+_GATE_REPAIR_OUTPUT_TAIL_LINES = 40
+
+
+def _gate_repair_enabled(orch: Any) -> bool:
+    """Whether a merge-gate failure seeds a bounded repair task first (#4463).
+
+    ``BERNSTEIN_GATE_REPAIR`` overrides the config when set to a recognised
+    truthy/falsy word (case-insensitive); otherwise
+    ``OrchestratorConfig.gate_repair_enabled`` decides (default True).
+    """
+    raw = os.environ.get("BERNSTEIN_GATE_REPAIR", "").strip().lower()
+    if raw in _GATE_REPAIR_TRUTHY:
+        return True
+    if raw in _GATE_REPAIR_FALSY:
+        return False
+    return bool(getattr(orch._config, "gate_repair_enabled", True))
+
+
+def _build_gate_repair_goal(qg_result: Any) -> str:
+    """Build the repair task's goal: the tail of the real gate output plus
+    the fixed repair instruction (issue #4463).
+
+    Joins the ``detail`` of every gate that actually blocked the merge (run
+    order), keeps only the last ``_GATE_REPAIR_OUTPUT_TAIL_LINES`` lines, and
+    appends the fixed instruction. The result is what the next agent is
+    handed as its task description -- a bounded, skimmable excerpt of the
+    actual failure instead of a pointer to a log the operator has to
+    excavate.
+    """
+    blocked = [r for r in qg_result.gate_results if r.blocked and not r.passed]
+    sections = [f"[{r.gate}]\n{r.detail}".strip() for r in blocked if r.detail]
+    output = "\n\n".join(sections) if sections else "(quality gate blocked the merge; no output captured)"
+    tail = "\n".join(output.splitlines()[-_GATE_REPAIR_OUTPUT_TAIL_LINES:])
+    return f"The merge gate failed. Real gate output (tail):\n\n{tail}\n\n{_GATE_REPAIR_INSTRUCTION}"
+
+
+def _maybe_schedule_gate_repair(
+    orch: Any,
+    task: Task,
+    qg_result: Any,
+    worktree: Path | None,
+) -> str | None:
+    """On a quality-gate failure, seed one bounded repair task on the same
+    branch before the caller falls through to the existing fail/quarantine
+    path (issue #4463).
+
+    Creates exactly one new task whose description is
+    :func:`_build_gate_repair_goal` and whose metadata is pre-seeded with
+    ``gate_repair_attempted=True`` -- so if *that* task's own quality gate
+    also fails, this function sees the flag already set and declines a
+    second repair, falling through to the caller's normal reopen/permanent-
+    fail handling exactly as it runs today. The failing worktree is
+    preserved (``orch._preserved_worktrees``) so the repair task's next
+    claim resumes it via ``spawn_for_resume`` instead of starting a fresh
+    branch from main.
+
+    Returns the new task's id, or ``None`` when no repair was scheduled
+    (switch off, already attempted, no worktree to resume, no server, or the
+    create call failed) -- callers treat ``None`` as "handle this exactly as
+    before".
+    """
+    if qg_result is None or qg_result.passed:
+        return None
+    if not _gate_repair_enabled(orch):
+        return None
+    if task.metadata.get("gate_repair_attempted"):
+        return None
+    if worktree is None:
+        logger.debug("gate_repair: no worktree for task %s, skipping repair", task.id)
+        return None
+
+    server_url = getattr(orch._config, "server_url", None)
+    if not server_url:
+        logger.warning("gate_repair: task=%s action=skip reason=no_server_url", task.id)
+        return None
+
+    goal = _build_gate_repair_goal(qg_result)
+    body: dict[str, Any] = {
+        "title": f"[GATE-REPAIR] {task.title[:80]}",
+        "description": goal,
+        "role": task.role,
+        "priority": max(1, task.priority - 1),
+        "scope": "small",
+        "complexity": "medium",
+        "owned_files": task.owned_files,
+        "metadata": {"gate_repair_of": task.id, "gate_repair_attempted": True},
+    }
+    try:
+        resp = orch._client.post(f"{server_url}/tasks", json=body)
+        resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.warning("gate_repair: failed to create repair task for %s: %s", task.id, exc)
+        return None
+
+    new_task_id = _extract_new_task_id(resp)
+    if new_task_id is None:
+        logger.warning("gate_repair: repair task created for %s but id missing from response", task.id)
+        return None
+
+    orch._preserved_worktrees[new_task_id] = worktree
+    logger.info(
+        "gate_repair: task=%s scheduled repair=%s on preserved worktree=%s (one attempt)",
+        task.id,
+        new_task_id,
+        worktree,
+    )
+    return new_task_id
+
+
 def _run_rule_enforcement(
     orch: Any,
     task: Task,
@@ -3417,6 +3541,8 @@ def _reap_and_cleanup_session(
     skip_merge: bool,
     _completion_data: CompletionData | None,
     cache_diff_lines: int,
+    *,
+    preserve_worktree: bool = False,
 ) -> tuple[bool, int, bool]:
     """Reap agent, handle merge, cleanup worktree.
 
@@ -3425,6 +3551,12 @@ def _reap_and_cleanup_session(
     for a non-conflict reason (issue #2792). The caller routes that case
     through the bounded reopen/permanent-fail budget instead of leaving the
     task on the open queue for uncapped retry.
+
+    ``preserve_worktree`` (issue #4463) is set by the caller when a bounded
+    gate-repair task was just scheduled on this session's branch: the
+    worktree and its ``agent/<id>`` branch must survive so the repair task's
+    resumed spawn (see ``_maybe_schedule_gate_repair``) has something to
+    resume.
     """
     merge_result: MergeResult | None = orch._spawner.reap_completed_agent(
         session,
@@ -3492,6 +3624,13 @@ def _reap_and_cleanup_session(
             session.id,
             session.id,
             merge_result.error or "unknown reason",
+        )
+    elif preserve_worktree:
+        logger.info(
+            "gate_repair: preserving worktree and branch agent/%s for task %s so the "
+            "scheduled repair task can resume the same branch",
+            session.id,
+            task.id,
         )
     else:
         orch._spawner.cleanup_worktree(session.id)
@@ -4584,6 +4723,7 @@ def _process_single_completed_task(
     cache_diff_lines = 0
     qg_result: Any = None
     merge_failed = False
+    gate_repair_task_id: str | None = None
 
     # DEFECT 30 FIX: the alive-exit /complete path runs the janitor+verdict
     # action here. Log at INFO so a silent no-op in the orchestrator tick
@@ -4635,6 +4775,18 @@ def _process_single_completed_task(
         orch._record_provider_health(session, success=janitor_passed)
         _record_bandit_outcome(orch, task, session, janitor_passed)
 
+        # issue #4463: a quality-gate failure (as opposed to a later
+        # verification-gate failure such as cross-model review) gets one
+        # bounded repair attempt on the same branch before falling through
+        # to the normal reopen/permanent-fail handling below. `qg_result`
+        # reflects the quality-gate outcome specifically, so this never
+        # fires for a task that failed for some other reason.
+        gate_repair_task_id = (
+            _maybe_schedule_gate_repair(orch, task, qg_result, worktree)
+            if qg_result is not None and not qg_result.passed
+            else None
+        )
+
         skip_merge = _evaluate_approval_gate(orch, task, session, completion_data, janitor_passed)
         cache_verified, cache_diff_lines, merge_failed = _reap_and_cleanup_session(
             orch,
@@ -4645,6 +4797,7 @@ def _process_single_completed_task(
             skip_merge,
             completion_data,
             cache_diff_lines,
+            preserve_worktree=gate_repair_task_id is not None,
         )
 
     task_m, cost_usd = _record_completion_metrics(
@@ -4667,13 +4820,26 @@ def _process_single_completed_task(
 
     _record_evolution_completion(orch, task, session, task_m, cost_usd, janitor_passed)
 
+    # issue #4463: a scheduled gate repair already reopened this unit of work
+    # under a new task id on the preserved branch -- fail this task with a
+    # pointer to it instead of ALSO running it through the generic reopen
+    # budget below, which would spawn a second, duplicate agent on a fresh
+    # branch for the same failure.
+    if gate_repair_task_id is not None:
+        fail_task(
+            orch._client,
+            orch._config.server_url,
+            task.id,
+            f"gate_repair_scheduled: quality gate failed; repair task {gate_repair_task_id} "
+            "continues on the same branch (bounded, single attempt)",
+        )
     # issue #2792: when the worker's own work passed the janitor but the
     # merge-back failed for a non-conflict reason, the task must not silently
     # return to the open queue for uncapped retry. Route it through the same
     # bounded reopen/permanent-fail budget as a janitor FAIL. A janitor FAIL
     # takes precedence (it already reopens/fails) so the two paths never both
     # act on the same completion.
-    if janitor_passed and merge_failed:
+    elif janitor_passed and merge_failed:
         _apply_merge_failure_action(orch, task)
     else:
         _apply_janitor_verdict_action(orch, task, janitor_passed)

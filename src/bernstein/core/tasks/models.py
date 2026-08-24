@@ -1696,6 +1696,12 @@ class OrchestratorConfig:
     # On by default; threaded from the seed's ``orchestration.test_followup``
     # (bernstein.yaml). See core.orchestration.test_followup.
     test_followup_enabled: bool = True
+    # Issue #4463: on a merge-gate (lint/tests) failure in the reap-and-merge
+    # path, seed one bounded repair task carrying the real gate output before
+    # falling through to the existing reopen/permanent-fail handling. Default
+    # on. Env override ``BERNSTEIN_GATE_REPAIR`` takes precedence when set
+    # (see ``task_lifecycle._gate_repair_enabled``).
+    gate_repair_enabled: bool = True
     # Janitor LLM-judge model/provider override, threaded from the seed's
     # ``judge_model``/``judge_provider`` (bernstein.yaml). None = fall back
     # to the janitor's hardcoded JUDGE_MODEL/JUDGE_PROVIDER defaults.
