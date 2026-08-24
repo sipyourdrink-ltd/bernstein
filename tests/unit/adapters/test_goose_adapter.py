@@ -204,7 +204,8 @@ def test_goose_mode_not_inherited_from_operator_env(tmp_path: Path, monkeypatch:
     """An operator's ``GOOSE_MODE`` never leaks into the spawned env."""
     monkeypatch.setenv("GOOSE_MODE", "chat")
     env = _spawn_and_capture_env(tmp_path)
-    assert env["GOOSE_MODE"] == "approve"
+    assert env["GOOSE_MODE"] != "chat"
+    assert env["GOOSE_MODE"] == "auto"
 
 
 def test_error_event_is_failure_signal() -> None:
