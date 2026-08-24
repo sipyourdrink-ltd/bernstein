@@ -635,6 +635,7 @@ nav:
           - Run actor: orchestration/run-actor.md
           - Worker coordination: orchestration/worker-coordination.md
           - Review gate: orchestration/review-gate.md
+          - Merge-gate repair: orchestration/gate-repair.md
           - Failure taxonomy: orchestration/failure-taxonomy.md
           - Federation: orchestration/federation.md
           - Consensus scoring: quality/consensus-scoring.md
