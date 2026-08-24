@@ -379,6 +379,7 @@ _REDIRECT_MAP: dict[str, str] = {
     "plan_approval": "bernstein.core.security.plan_approval",
     "plan_builder": "bernstein.core.planning.plan_builder",
     "plan_loader": "bernstein.core.planning.plan_loader",
+    "plan_rendering": "bernstein.core.planning.plan_rendering",
     "plan_schema": "bernstein.core.planning.plan_schema",
     "planner": "bernstein.core.planning.planner",
     "platform_compat": "bernstein.core.config.platform_compat",
