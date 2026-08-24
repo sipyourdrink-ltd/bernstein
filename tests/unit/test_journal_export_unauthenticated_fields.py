@@ -6,12 +6,10 @@ import json
 import tarfile
 from pathlib import Path
 
-import pytest
-
 from bernstein.core.persistence.journal import Journal
 from bernstein.core.persistence.journal_export import (
-    ReceiptManifest,
     _UNAUTHENTICATED_FIELDS,
+    ReceiptManifest,
     export_receipt,
     verify_receipt,
 )

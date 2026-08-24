@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from bernstein.core.replay.journal import (
+    _NON_DETERMINISTIC_FIELDS,
     EventJournal,
     JournalVerifyResult,
-    _NON_DETERMINISTIC_FIELDS,
     load_events,
     verify_events,
     verify_journal,
@@ -58,7 +59,6 @@ def test_verify_journal_divergent_chain_has_unauthenticated_fields(tmp_path: Pat
 
     # Tamper with the journal
     lines = journal.path.read_text(encoding="utf-8").splitlines()
-    import json
     row = json.loads(lines[2])
     row["task_id"] = "T-INJECTED"
     lines[2] = json.dumps(row, sort_keys=True, separators=(",", ":"))

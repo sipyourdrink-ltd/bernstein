@@ -5,10 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
+from bernstein.cli.advanced_cmd import replay_cmd
 from click.testing import CliRunner
 
-from bernstein.cli.advanced_cmd import replay_cmd
 from bernstein.core.replay.journal import EventJournal, seal_journal_into_spine
 
 _SEAL_KEY = b"k" * 32
@@ -84,6 +83,7 @@ class TestCLIVerifyUnauthenticatedFields:
 
         # Tamper: modify a row's task_id to break the chain
         import json
+
         lines = journal.path.read_text(encoding="utf-8").splitlines()
         row = json.loads(lines[2])
         row["task_id"] = "T-INJECTED"
@@ -107,6 +107,7 @@ class TestCLIVerifyUnauthenticatedFields:
 
         # Tamper: modify a row's task_id to break the chain
         import json
+
         lines = journal.path.read_text(encoding="utf-8").splitlines()
         row = json.loads(lines[2])
         row["task_id"] = "T-INJECTED"
