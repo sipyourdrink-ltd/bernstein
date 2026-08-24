@@ -434,6 +434,11 @@ class Orchestrator:
         # ``_check_zero_terminal_stall``; see core.orchestration.run_stall.
         self._run_stall_state = RunStallState()
         self._run_stall_stopped: bool = False
+        # No-progress window for the done>0 wedged-claim pattern (#4453).
+        # Separate from ``_run_stall_state`` because the two detectors
+        # have different preconditions (zero-terminal vs done>0).
+        self._progress_stall_state = RunStallState()
+        self._progress_stall_stopped: bool = False
         self._cached_critical_path_ids: set[str] = set()
         self._dependency_scanner = DependencyVulnerabilityScanner(
             workdir,
@@ -2108,7 +2113,8 @@ class Orchestrator:
         # summary generation below; quiescence detection, the settle-window
         # check, the self-stop, and shutdown-final regeneration re-run on
         # every quiescent tick until confirmed.
-        if not self._config.evolve_mode and result.open_tasks == result.active_agents == 0:
+        _raw_open = len(tasks_by_status.get("open", []))
+        if not self._config.evolve_mode and result.open_tasks == result.active_agents == 0 and _raw_open == 0:
             refreshed_tasks_by_status = tasks_by_status
             try:
                 refreshed_tasks_by_status = fetch_all_tasks(self._client, base)
@@ -4365,12 +4371,13 @@ class Orchestrator:
         return unclaimed
 
     def _release_stale_claims(self, claimed_tasks: list[Task]) -> int:
-        """Fail claimed tasks that have been stuck longer than the timeout.
+        """Release claimed tasks whose agent is dead or whose claim is stale.
 
-        When an agent dies silently (no crash signal, no heartbeat timeout),
-        its claimed tasks stay in "claimed" forever.  This method detects
-        tasks with no matching live agent that have exceeded the stale claim
-        timeout and marks them failed so they can be retried.
+        Two paths:
+        - Dead/gone agent: retry immediately via ``_retry_or_fail_task``.
+          The agent is confirmed gone (not tracked, or marked dead), so
+          waiting for a timeout is pointless.
+        - Live but slow agent: fail after ``stale_claim_timeout_s``.
 
         Args:
             claimed_tasks: Tasks with status "claimed" from the current tick.
@@ -4382,37 +4389,54 @@ class Orchestrator:
         timeout = self._config.stale_claim_timeout_s
         released = 0
         for task in claimed_tasks:
-            # Skip tasks that have a known live agent in this session
-            if task.id in self._task_to_session:
-                agent_id = self._task_to_session[task.id]
-                agent = self._agents.get(agent_id)
-                if agent is not None and agent.status != "dead":
-                    continue
+            agent_id = self._task_to_session.get(task.id)
+            agent = self._agents.get(agent_id) if agent_id is not None else None
+            agent_dead = agent is None or agent.status == "dead"
 
-            # Use claimed_at (when available) to measure actual time in claimed
-            # state.  Fall back to created_at for legacy tasks that pre-date the
-            # claimed_at field - this is conservative (over-counts) but safe.
-            claim_epoch = task.claimed_at if task.claimed_at is not None else task.created_at
-            age_s = now - claim_epoch
-            if age_s < timeout:
+            if agent_dead:
+                # Agent confirmed gone — reclaim immediately, no timeout wait.
+                try:
+                    self._retry_or_fail_task(
+                        task.id,
+                        reason=("Dead agent: claimed task held by agent no longer tracked (or confirmed dead)"),
+                    )
+                    released += 1
+                    logger.warning(
+                        "Immediately reclaimed task %s (%s) from dead/gone agent",
+                        task.id,
+                        task.title,
+                    )
+                except Exception:
+                    logger.debug(
+                        "Failed to reclaim task %s from dead agent",
+                        task.id,
+                        exc_info=True,
+                    )
                 continue
 
-            try:
-                fail_task(
-                    self._client,
-                    self._config.server_url,
-                    task.id,
-                    reason=f"Stale claim: task stuck in claimed state for {age_s / 60:.0f}m with no live agent",
-                )
-                released += 1
-                logger.warning(
-                    "Released stale claimed task %s (%s) - stuck for %.0fm",
-                    task.id,
-                    task.title,
-                    age_s / 60,
-                )
-            except Exception:
-                logger.debug("Failed to release stale task %s", task.id, exc_info=True)
+            # Agent is alive but the claim may be stale (slow agent).
+            if task.id in self._task_to_session:
+                claim_epoch = task.claimed_at if task.claimed_at is not None else task.created_at
+                age_s = now - claim_epoch
+                if age_s < timeout:
+                    continue
+
+                try:
+                    fail_task(
+                        self._client,
+                        self._config.server_url,
+                        task.id,
+                        reason=f"Stale claim: task stuck in claimed state for {age_s / 60:.0f}m with no live agent",
+                    )
+                    released += 1
+                    logger.warning(
+                        "Released stale claimed task %s (%s) - stuck for %.0fm",
+                        task.id,
+                        task.title,
+                        age_s / 60,
+                    )
+                except Exception:
+                    logger.debug("Failed to release stale task %s", task.id, exc_info=True)
 
         if released:
             logger.warning("Released %d stale claimed task(s)", released)

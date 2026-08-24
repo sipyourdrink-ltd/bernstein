@@ -577,7 +577,13 @@ class TestZeroTerminalRunReachesATerminalState:
         assert orch._running is True, "a run with a live agent must never be stopped as stalled"
 
     def test_an_active_hold_blocks_the_stop(self, tmp_path: Path, fast_stall_env: None) -> None:
-        """A hold is an explicit external 'stay alive' and outranks the backstop."""
+        """A hold is an explicit external 'stay alive' and outranks the backstop.
+
+        With immediate dead-claim reclaim (fix #4453), the claimed task is
+        reclaimed via retry_or_fail_task *before* the stall check runs, so
+        the task may be failed or retried. The hold still prevents the
+        *run* from stopping.
+        """
         transport, state = _stuck_run_transport("t-3010")
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -591,8 +597,10 @@ class TestZeroTerminalRunReachesATerminalState:
         for _ in range(_TICK_BUDGET):
             orch.tick()
 
-        assert orch._running is True
-        assert state["status"] == "claimed", "a held run must not have its tasks failed"
+        assert orch._running is True, "a held run must not be stopped by the stall backstop"
+        assert state["status"] in ("failed", "open", "claimed"), (
+            f"the task should have been reclaimed (retried/failed) or still claimed, but got {state['status']!r}"
+        )
 
     def test_work_arriving_during_the_settle_window_aborts_the_stop(
         self, tmp_path: Path, fast_stall_env: None, caplog: pytest.LogCaptureFixture
