@@ -87,6 +87,52 @@ async def test_planning_task_with_child_tasks_succeeds(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_zero_yield_planning_fails_despite_unrelated_task_in_store(tmp_path: Path) -> None:
+    """A zero-child manager task fails even when the store is not otherwise
+    empty -- a retried planning attempt, or any resumed project carrying
+    prior history (issue #4466).
+
+    The zero-yield check must be scoped to whether THIS task has children of
+    its own, not to whether it is the only task the store has ever seen: the
+    latter is defeated by anything else in the store, including this same
+    manager task's own earlier retry attempt.
+    """
+    store = TaskStore(jsonl_path=tmp_path / "tasks.jsonl", archive_path=tmp_path / "archive.jsonl")
+
+    prior = await store.create(
+        TaskCreate(
+            title="Unrelated earlier task",
+            description="From a previous goal",
+            role="backend",
+            priority=1,
+        )
+    )
+    await store.claim_by_id(prior.id)
+    await store.complete(prior.id, result_summary="Finished earlier work")
+
+    manager_task = await store.create(
+        TaskCreate(
+            title="Plan and decompose goal into tasks",
+            description="Decompose project goal",
+            role="manager",
+            priority=1,
+            scope="large",
+        )
+    )
+    await store.claim_by_id(manager_task.id)
+    completed_task = await store.complete(manager_task.id, result_summary="Auto-completed: no real work")
+
+    assert completed_task.status == TaskStatus.FAILED
+    assert completed_task.result_summary == "Planning task produced no child tasks"
+
+    summary = store.status_summary()
+    assert summary["failed"] == 1
+    # The run must not read as healthy just because an unrelated task
+    # happened to already exist when the zero-child manager task completed.
+    assert run_healthy_from_status_counts(summary) is False
+
+
+@pytest.mark.asyncio
 async def test_worker_task_without_children_succeeds(tmp_path: Path) -> None:
     """A non-manager worker task that runs alone completes as DONE."""
     store = TaskStore(jsonl_path=tmp_path / "tasks.jsonl", archive_path=tmp_path / "archive.jsonl")

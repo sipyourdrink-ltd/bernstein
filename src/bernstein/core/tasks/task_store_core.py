@@ -2263,7 +2263,14 @@ class TaskStore:
 
             # Issue #4401: A planning/manager task that created zero child tasks has not
             # accomplished any work. It must fail rather than falsely reporting success.
-            if task.role == "manager" and not any(t.id != task_id for t in self._tasks.values()):
+            # Scoped to THIS task's own children (issue #4466): the original check asked
+            # "does the store contain any other task at all", which a retried planning
+            # attempt or any resumed project's prior history satisfies trivially, letting
+            # a still-zero-child manager task complete as DONE the moment anything else
+            # has ever run. Checking for a child whose parent_task_id names this task is
+            # what "produced zero child tasks" actually means, regardless of what else the
+            # store holds.
+            if task.role == "manager" and not any(t.parent_task_id == task_id for t in self._tasks.values()):
                 snapshot = self._claim_snapshot(task)
                 self._index_remove(task)
                 transition_task(
