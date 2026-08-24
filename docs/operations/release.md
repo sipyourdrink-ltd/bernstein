@@ -143,6 +143,7 @@ the project.
 |---|---|---|
 | `fedora-43` | x86_64, aarch64 | current stable |
 | `fedora-44` | x86_64, aarch64 | current stable |
+| `fedora-45` | x86_64, aarch64 | pre-release; non-gating until Python 3.15 wheels for cbor2/grpcio are available |
 | `fedora-rawhide` | x86_64, aarch64 | follows Fedora branching, so a new Fedora release needs no manual edit here |
 | `epel-9` | x86_64, aarch64 | spec requires `python3.12` from AppStream (distribution `python3` is 3.9) |
 | `epel-10` | x86_64, aarch64 | distribution `python3` is 3.12 |
@@ -173,6 +174,7 @@ the build service, so bump the release or delete the existing build first.
 | The build ends `failed`, `canceled` or `skipped` within the watch window | fails |
 | The build ends `succeeded` | passes |
 | The build is still queued or running when the watch window expires | passes, with a `::notice::` naming the build URL |
+| A pre-release chroot (`fedora-45`, `fedora-rawhide`) fails | passes with a `::notice::` naming the failed chroot(s); the release is not held |
 
 The job has no warn-and-continue path for a *known-bad* outcome: nothing about
 the RPM channel is visible from this repository, so a swallowed failure would
