@@ -123,6 +123,15 @@ Every PR that adds or changes a feature MUST update docs in the same PR:
 
 PRs without the matching docs change will be sent back. Docs and code ship together.
 
+### Release notes
+
+Add `docs/release-notes/fragments/<issue-or-slug>.md` describing a
+user-visible change: a `## <title>` heading and a short paragraph, same as
+any existing entry. One file per PR means two PRs never conflict on the
+same line the way appending to `docs/release-notes/unreleased.md` did.
+Editing `unreleased.md` directly still works during the transition; see
+`docs/release-notes/README.md`.
+
 ### Pre-push hook
 
 Install the versioned pre-push hook to catch lint and architecture-contract
