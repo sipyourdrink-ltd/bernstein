@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from bernstein.core.tasks.models import Task, TaskPlan
+    from bernstein.core.tasks.models import TaskPlan
 
 
 def _canonical_json(obj: Any) -> str:
@@ -74,7 +74,6 @@ class PlanRendering:
 
 def render_plan(
     plan: TaskPlan,
-    tasks: list[Task],
     journal_head: str | None = None,
 ) -> PlanRendering:
     """Produce a deterministic rendering of *plan* and compute its SHA-256.
@@ -87,8 +86,6 @@ def render_plan(
 
     Args:
         plan: The task execution plan to render.
-        tasks: Full Task objects (used only for reference; the rendering
-            is driven by ``plan.task_estimates``).
         journal_head: Optional Merkle head to bind into the hash.
 
     Returns:
