@@ -221,7 +221,9 @@ class TestTestFollowupEndToEnd:
         assert orch._test_followup_scheduled is False
         assert orch._running is False
 
-    def test_no_followup_when_disabled_via_env(self, tmp_path: Path, fast_settle: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_no_followup_when_disabled_via_env(
+        self, tmp_path: Path, fast_settle: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("BERNSTEIN_TEST_FOLLOWUP", "0")
         _init_repo_with_agent_branch(tmp_path, session_id="sess-notests", with_tests=False)
         server = _ScriptedServer(session_id="sess-notests")
