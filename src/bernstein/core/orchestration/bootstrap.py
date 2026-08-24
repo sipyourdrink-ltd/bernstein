@@ -1015,7 +1015,7 @@ def _supervisor_should_stand_down(workdir: Path) -> str | None:
 
     Only POSITIVE evidence counts, because the default has to be to recover: a
     supervisor that withholds a restart on a merely ambiguous reading leaves the
-    run with no orchestrator and nothing to notice, permanently. Two signals
+    run with no orchestrator and nothing to notice, permanently. Three signals
     qualify:
 
     * ``.sdd/runtime/draining`` -- written by ``DrainCoordinator._phase_freeze``
@@ -1024,6 +1024,17 @@ def _supervisor_should_stand_down(workdir: Path) -> str | None:
     * ``watchdog.pid`` no longer naming this process -- we have been superseded
       or killed (teardown SIGTERMs it first), so we are not the supervisor of
       record any more and must not act as one.
+    * the run this supervisor's owner record names already journaled
+      ``run_completed`` -- written only by ``Orchestrator.run()``'s own
+      shutdown sequence, right before the process exits on a clean quiescence
+      self-stop (issue #4445). A crash never reaches that code: the process
+      dies before it can journal anything, so the row is absent and the
+      ordinary restart default is untouched. Reading the journal directly
+      (rather than the audit-chain closure marker ``_restart_spawner``
+      reconciles as bookkeeping) keeps this cheap enough to call every poll --
+      the marker it looks for is written once, at the very end of one run's
+      own small journal, not re-derived by re-verifying the whole project's
+      audit history.
 
     A missing pidfile for a SUPERVISED process is deliberately not on this list.
     It is the ordinary aftermath of a crash plus ``bernstein doctor --fix``, and
@@ -1040,6 +1051,17 @@ def _supervisor_should_stand_down(workdir: Path) -> str | None:
             return None
         if recorded != os.getpid():
             return f"watchdog.pid names pid {recorded}, not this supervisor ({os.getpid()})"
+
+    from bernstein.core.orchestration.run_closure_owner import read_spawner_run_owner
+    from bernstein.core.replay.journal import contained_run_journal, load_events
+
+    sdd_dir = workdir / ".sdd"
+    owner = read_spawner_run_owner(sdd_dir)
+    if owner is not None:
+        journal_path = contained_run_journal(sdd_dir / "runs", owner.run_id)
+        events = load_events(journal_path).events if journal_path is not None else []
+        if events and events[-1].get("event") == "run_completed":
+            return f"run {owner.run_id} already self-stopped cleanly (run_completed journaled)"
     return None
 
 

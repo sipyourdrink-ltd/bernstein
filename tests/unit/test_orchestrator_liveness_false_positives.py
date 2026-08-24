@@ -523,3 +523,80 @@ def test_an_error_body_is_not_a_task_histogram(tmp_path: Path, monkeypatch: pyte
         n_incomplete, full_counts = rb._incomplete_declared_counts(STATUS_OPEN)
     assert full_counts == FULL_OPEN
     assert n_incomplete == 1
+
+
+# ---------------------------------------------------------------------------
+# Defect 6 (issue #4445): a cleanly completed run was restarted like a crash,
+# five times, until the restart budget was exhausted.
+# ---------------------------------------------------------------------------
+
+
+def _owned_run_journal(tmp_path: Path, *, run_id: str = "run-1", pid: int = DEAD_PID) -> Any:
+    """Write an owner record naming *pid* and return its open journal."""
+    from bernstein.core.orchestration.run_closure_owner import write_spawner_run_owner
+    from bernstein.core.replay.journal import EventJournal
+
+    journal = EventJournal(run_id, tmp_path / ".sdd")
+    journal.record("run_started", run_id=run_id)
+    write_spawner_run_owner(
+        sdd_dir=tmp_path / ".sdd",
+        run_id=run_id,
+        journal_head=journal.fingerprint(),
+        journal_event_count=journal.event_count(),
+        pid=pid,
+    )
+    return journal
+
+
+def test_supervisor_stands_down_after_a_clean_quiescence_self_stop(tmp_path: Path) -> None:
+    """The exact regression: a completed run was restarted like a crash.
+
+    ``Orchestrator.run()`` journals ``run_completed`` as the last thing it does
+    before a clean quiescence self-stop lets the process exit (the
+    ``tick-quiescence-self-stop`` / ``tick-loop-drain`` paths in
+    orchestrator.py). That marker is positive evidence the run is over, and
+    the supervisor must read it before deciding to restart -- not only after,
+    as bookkeeping inside the restart itself.
+    """
+    from bernstein.core.orchestration.bootstrap import _supervisor_should_stand_down
+
+    journal = _owned_run_journal(tmp_path)
+    journal.record("run_completed", run_id="run-1", outcome="completed")
+
+    assert _supervisor_should_stand_down(tmp_path) is not None
+
+
+def test_supervisor_still_restarts_a_crash_with_open_tasks(tmp_path: Path) -> None:
+    """The regression's twin: recovery must not weaken for a genuine crash.
+
+    A ``kill -9`` mid-run never reaches ``Orchestrator.run()``'s shutdown
+    sequence, so its journal has no ``run_completed`` row -- only the ordinary
+    in-flight events a live run produces. The supervisor must keep supervising.
+    """
+    from bernstein.core.orchestration.bootstrap import _supervisor_should_stand_down
+
+    journal = _owned_run_journal(tmp_path)
+    journal.record("task_claimed", run_id="run-1", task_id="t1")
+
+    assert _supervisor_should_stand_down(tmp_path) is None
+
+
+def test_supervisor_ignores_an_owner_record_with_no_journal(tmp_path: Path) -> None:
+    """An owner record naming a run whose journal doesn't exist must fail open.
+
+    Not the crash case (that one has SOME journal); this is what a corrupted
+    or hand-edited owner file leaves behind. Absence must read the same as
+    "not yet closed", never as "closed".
+    """
+    from bernstein.core.orchestration.bootstrap import _supervisor_should_stand_down
+    from bernstein.core.orchestration.run_closure_owner import write_spawner_run_owner
+
+    write_spawner_run_owner(
+        sdd_dir=tmp_path / ".sdd",
+        run_id="ghost-run",
+        journal_head="a" * 64,
+        journal_event_count=1,
+        pid=DEAD_PID,
+    )
+
+    assert _supervisor_should_stand_down(tmp_path) is None
