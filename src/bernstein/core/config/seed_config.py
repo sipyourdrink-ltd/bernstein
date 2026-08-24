@@ -455,6 +455,12 @@ class SeedConfig:
     # default, so ``evolution_enabled: false`` silently ran the self-evolution
     # loop anyway. Parsed here and threaded into OrchestratorConfig by the CLI.
     evolution_enabled: bool = True
+    # Issue #4463: on a merge-gate (lint/tests) failure, seed one bounded
+    # repair task carrying the real gate output before falling through to
+    # the existing reopen/permanent-fail handling. Threaded into
+    # OrchestratorConfig.gate_repair_enabled by the CLI; BERNSTEIN_GATE_REPAIR
+    # overrides at runtime.
+    gate_repair_enabled: bool = True
     # Janitor LLM-judge model/provider override (falls back to
     # bernstein.core.quality.janitor.JUDGE_MODEL/JUDGE_PROVIDER when unset).
     judge_model: str | None = None

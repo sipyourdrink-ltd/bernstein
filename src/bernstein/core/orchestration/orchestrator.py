@@ -6869,6 +6869,9 @@ if __name__ == "__main__":
             test_followup_enabled=(
                 getattr(getattr(seed, "orchestration", None), "test_followup", True) if seed else True
             ),
+            # Issue #4463: top-level ``gate_repair_enabled`` key in
+            # bernstein.yaml; BERNSTEIN_GATE_REPAIR overrides at runtime.
+            gate_repair_enabled=getattr(seed, "gate_repair_enabled", True) if seed else True,
         )
 
         if args.cells > 1:
