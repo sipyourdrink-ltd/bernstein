@@ -157,7 +157,7 @@ _WIP_SUBJECT_RE = re.compile(r"^\s*(?:\[wip\]|wip\b|fixup!|squash!|amend!)", re.
 _HOUSEKEEPING_PHRASE_RE = re.compile(
     r"\b(?:"
     r"lint|linter|linting|ruff|black|isort|prettier|eslint|gofmt|rustfmt"
-    r"|formatter|formatting|reformat(?:ted|ting)?|auto-?formatt?(?:ed|ing)?"
+    r"|formatter|formatting|(?:re|auto-?)format(?:s|ted|ting)?"
     r"|pre-commit|whitespace|typos?|regenerat(?:e|ed|es|ing|ion)"
     r")\b",
     re.IGNORECASE,
