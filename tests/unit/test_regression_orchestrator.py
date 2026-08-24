@@ -38,6 +38,7 @@ from bernstein.core.task_lifecycle import (
 from bernstein.core.tick_pipeline import prioritize_starving_roles
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.core.agents.spawn_rate_limiter import SpawnRateLimitConfig, SpawnRateLimiter
 from bernstein.core.lifecycle import (
     AGENT_TRANSITIONS,
     TASK_TRANSITIONS,
@@ -272,6 +273,83 @@ class TestDependencyFiltering:
         assert "B" not in spawned_task_ids
         assert "C" not in spawned_task_ids
         assert "D" not in spawned_task_ids
+
+    def test_preexisting_cycle_still_schedules_every_task_after_deterministic_break(
+        self, tmp_path: Path
+    ) -> None:
+        """A board carrying a declared cycle drains instead of wedging (#4287).
+
+        ``POST /tasks`` rejects a cycle-forming edge today, but legacy board
+        state can still hold one. ``TaskGraph`` opens the cycle by dropping a
+        single edge -- the dropped edge nevertheless stays in the dependent's
+        ``depends_on``, so unless the readiness filter exempts it no task on
+        the cycle ever satisfies its dependencies and the run idles with open
+        tasks no agent will pick up. Driving the real scheduler must dispatch
+        every task on the cycle, starting on the first tick.
+        """
+        # CYC-a -> CYC-b -> CYC-c -> CYC-a, every task open. The break is
+        # deterministic, so which task is released first is stable; the test
+        # asserts the property (the board drains) rather than the choice.
+        task_dicts = [
+            _task_as_dict(
+                _make_task(id="CYC-a", role="backend", status="open", depends_on=["CYC-c"]),
+            ),
+            _task_as_dict(
+                _make_task(id="CYC-b", role="backend", status="open", depends_on=["CYC-a"]),
+            ),
+            _task_as_dict(
+                _make_task(id="CYC-c", role="backend", status="open", depends_on=["CYC-b"]),
+            ),
+        ]
+        by_id = {td["id"]: td for td in task_dicts}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = request.url
+            if request.method == "GET" and url.path == "/tasks":
+                return httpx.Response(200, json=task_dicts)
+            if request.method == "POST" and "/claim" in url.path:
+                task_id = url.path.split("/")[-2]
+                return httpx.Response(200, json=by_id.get(task_id, task_dicts[0]))
+            return httpx.Response(200, json={})
+
+        orch = _build_orchestrator(
+            tmp_path,
+            httpx.MockTransport(handler),
+            config=OrchestratorConfig(
+                max_agents=6,
+                poll_interval_s=1,
+                max_tasks_per_agent=1,
+                server_url="http://testserver",
+            ),
+        )
+        # Three back-to-back spawns would trip the default spawn rate limit
+        # (2 per 10s per provider), which is orthogonal to dependency
+        # readiness and would mask a genuine wedge as a spawn failure.
+        orch._spawner._spawn_rate_limiter = SpawnRateLimiter(
+            SpawnRateLimitConfig(max_spawns=len(task_dicts)),
+        )
+
+        dispatched: list[str] = []
+        for tick_no in range(1, len(task_dicts) + 1):
+            result = orch.tick()
+            newly = [
+                task_id
+                for session_id in result.spawned
+                if (session := orch._agents.get(session_id)) is not None
+                for task_id in session.task_ids
+            ]
+            assert newly, (
+                f"tick {tick_no} dispatched nothing - the cycle-broken board is wedged "
+                f"(dispatched so far: {dispatched})"
+            )
+            dispatched.extend(newly)
+            # The agent finishes: its task becomes a satisfied dependency,
+            # which is what releases the next task on the former cycle.
+            for task_id in newly:
+                by_id[task_id]["status"] = "done"
+
+        assert set(dispatched) == {"CYC-a", "CYC-b", "CYC-c"}
+        assert len(dispatched) == 3, f"a task was dispatched twice: {dispatched}"
 
 
 class TestTaskStateTransitions:

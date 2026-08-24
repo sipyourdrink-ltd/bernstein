@@ -440,7 +440,6 @@ class Orchestrator:
         self._progress_stall_state = RunStallState()
         self._progress_stall_stopped: bool = False
         self._cached_critical_path_ids: set[str] = set()
-        self._cached_broken_deps: set[tuple[str, str]] = set()
         self._dependency_scanner = DependencyVulnerabilityScanner(
             workdir,
             enabled=config.dependency_scan_enabled,
@@ -1525,15 +1524,27 @@ class Orchestrator:
             len(tasks_by_status.get("failed", [])),
         )
 
-        # 1c. Build task graph and compute optimal parallelism
-        #     Graph analysis + dependency validation are expensive - gate behind
-        #     _run_normal. The all_tasks list and task ID cache are always needed.
+        # 1c. Build the task graph. Construction is deliberately un-gated:
+        #     the readiness filter just below and the critical-path claim
+        #     ordering in step 1c-ii both run on every tick and both need a
+        #     graph. A fast tick already paid for the identical construction
+        #     inside ``DependencyValidator.critical_path``, which is only
+        #     ``TaskGraph(tasks).critical_path()``, so building it once here
+        #     and reusing it costs a fast tick nothing and drops a normal
+        #     tick from two constructions to one. What stays gated behind
+        #     _run_normal is the expensive work built on top of the graph:
+        #     analyse(), full dependency validation, the snapshot write
+        #     (step 1c-ii) and warm-pool preparation (step 3).
         all_tasks = list(itertools.chain.from_iterable(tasks_by_status.values()))
         self._latest_tasks_by_id = {task.id: task for task in all_tasks}
 
         task_graph = TaskGraph(all_tasks)
+        # A declared cycle is opened by dropping one edge, but the dropped
+        # edge stays in the dependent's depends_on. Without exempting it
+        # here every task on the cycle would fail the readiness filter
+        # forever and the board would stay wedged - the failure #4287
+        # describes. Keyed (dependent, dependency) to match the lookup below.
         broken_deps = {(b.edge.target, b.edge.source) for b in task_graph.cycle_breaks}
-        self._cached_broken_deps = broken_deps
 
         # The server returns tasks matching the requested status; apply the
         # dependency filter here for "open" tasks.
@@ -1628,9 +1639,10 @@ class Orchestrator:
             # Check for file-based approval grant
             self._check_workflow_approval()
 
-        # 1c. Build task graph and compute optimal parallelism
-        #     Graph analysis + dependency validation are expensive - gate behind
-        #     _run_normal. The all_tasks list and task ID cache are always needed.
+        # 1c-ii. Analyse the graph and validate dependencies. Both walk the
+        #        board repeatedly and the snapshot write touches disk, so
+        #        they are gated behind _run_normal; the graph they run on
+        #        was built above because every tick needs one.
         if _run_normal:
             analysis = task_graph.analyse()
             dep_validator = DependencyValidator()
@@ -1722,7 +1734,12 @@ class Orchestrator:
         alive_count = sum(1 for a in self._agents.values() if a.status != "dead")
         result.active_agents = alive_count
 
-        if task_graph is not None:
+        # Warm-pool preparation creates worktree and adapter capacity, so it
+        # is normal-tick work. It used to ride on ``task_graph is not None``,
+        # which only held on a normal tick back when the graph was built
+        # inside the gate; the condition is spelled out now that the graph is
+        # always available.
+        if _run_normal:
             prepare_speculative_warm_pool(self, task_graph, all_tasks)
 
         # 3a. Build alive-per-role map for task distribution prioritization.
