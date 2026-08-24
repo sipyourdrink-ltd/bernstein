@@ -128,6 +128,125 @@ nodes:
 
 
 # ---------------------------------------------------------------------------
+# Conditional `when` gating (#4464)
+# ---------------------------------------------------------------------------
+
+
+def test_when_false_skips_node_without_failing_the_run(runner_workdir: Path) -> None:
+    """A false `when` predicate skips its node but doesn't abort the DAG."""
+    spec = _spec_from(
+        """
+name: conditional-skip
+description: "A gated node whose predicate never passes"
+version: "1.0.0"
+nodes:
+  - id: setup
+    command: "true"
+  - id: gated
+    depends_on: [setup]
+    command: "echo should-not-run > gated.txt"
+    when: "false"
+"""
+    )
+    runner = _build_runner(workdir=runner_workdir)
+    execution = runner.run(spec)
+
+    by_id = {n.node_id: n for n in execution.nodes}
+    assert by_id["setup"].status == NodeStatus.SUCCESS
+    assert by_id["gated"].status == NodeStatus.SKIPPED
+    assert by_id["gated"].condition_skipped is True
+    assert execution.succeeded is True
+    assert not (runner_workdir / "gated.txt").exists()
+
+
+def test_when_true_runs_the_node_normally(runner_workdir: Path) -> None:
+    """A passing `when` predicate behaves like an ungated node."""
+    spec = _spec_from(
+        """
+name: conditional-run
+description: "A gated node whose predicate always passes"
+version: "1.0.0"
+nodes:
+  - id: gated
+    command: "echo ran > gated.txt"
+    when: "true"
+"""
+    )
+    runner = _build_runner(workdir=runner_workdir)
+    execution = runner.run(spec)
+
+    gated = execution.nodes[0]
+    assert gated.status == NodeStatus.SUCCESS
+    assert gated.condition_skipped is False
+    assert (runner_workdir / "gated.txt").read_text().strip() == "ran"
+
+
+def test_downstream_of_a_condition_skipped_node_still_runs(runner_workdir: Path) -> None:
+    """A node depending on a condition-skipped node is not itself blocked.
+
+    This is what distinguishes `when: false` from a failed dependency: the
+    node was intentionally not needed, not aborted, so anything downstream
+    that only needed the DAG to *reach* this point still proceeds.
+    """
+    spec = _spec_from(
+        """
+name: skip-does-not-cascade
+description: "review -> gated revise -> verify, revise's `when` is false"
+version: "1.0.0"
+nodes:
+  - id: review
+    command: "true"
+  - id: revise
+    depends_on: [review]
+    command: "echo revised > revise.txt"
+    when: "false"
+  - id: verify
+    depends_on: [review, revise]
+    command: "echo verified > verify.txt"
+"""
+    )
+    runner = _build_runner(workdir=runner_workdir)
+    execution = runner.run(spec)
+
+    by_id = {n.node_id: n for n in execution.nodes}
+    assert by_id["review"].status == NodeStatus.SUCCESS
+    assert by_id["revise"].status == NodeStatus.SKIPPED
+    assert by_id["revise"].condition_skipped is True
+    assert by_id["verify"].status == NodeStatus.SUCCESS
+    assert execution.succeeded is True
+    assert (runner_workdir / "verify.txt").read_text().strip() == "verified"
+
+
+def test_failure_skip_still_blocks_downstream_unlike_condition_skip(runner_workdir: Path) -> None:
+    """A cascade skip (from a *failed* dependency) still blocks children.
+
+    Only a `when`-gated skip is "intentionally not needed"; a node skipped
+    because its own dependency failed must keep blocking the DAG exactly
+    as it did before `when` existed.
+    """
+    spec = _spec_from(
+        """
+name: failure-still-cascades
+description: "bad fails; never depends on bad and must stay skipped"
+version: "1.0.0"
+nodes:
+  - id: bad
+    command: "exit 9"
+  - id: never
+    depends_on: [bad]
+    command: "echo nope > never.txt"
+"""
+    )
+    runner = _build_runner(workdir=runner_workdir)
+    execution = runner.run(spec)
+
+    by_id = {n.node_id: n for n in execution.nodes}
+    assert by_id["never"].status == NodeStatus.SKIPPED
+    assert by_id["never"].condition_skipped is False
+    assert execution.succeeded is False
+
+
+# ---------------------------------------------------------------------------
 # Fan-out parallel
 # ---------------------------------------------------------------------------
 

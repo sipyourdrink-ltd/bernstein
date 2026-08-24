@@ -115,6 +115,14 @@ class WorkflowNode(BaseModel):
         model: Optional provider-specific model identifier for this node.
         effort: Optional reasoning-effort override for this node.
         loop: Optional loop predicate.  When set the node re-fires.
+        when: Optional bash predicate gating whether this node runs at
+            all, evaluated once its ``depends_on`` are satisfied.  Exit
+            0 runs the node normally; non-zero marks it ``SKIPPED``
+            without failing the run, and - unlike a dependency-failure
+            skip - does not block nodes that depend on this one.  Lets a
+            manifest express "run this node only if an earlier one asked
+            for it" (e.g. revise-on-request-changes) without the DSL's
+            conditional-DAG machinery.
         fresh_context: When ``True``, agent-typed nodes get a fresh
             session per iteration (no carryover).  Ignored for command-
             typed nodes.
@@ -139,6 +147,7 @@ class WorkflowNode(BaseModel):
     model: str | None = Field(default=None, min_length=1, max_length=256)
     effort: str | None = Field(default=None, min_length=1, max_length=32)
     loop: LoopSpec | None = None
+    when: str | None = Field(default=None, min_length=1, description="Bash predicate gating whether this node runs.")
     fresh_context: bool = False
     interactive: bool = False
     timeout_seconds: int = Field(default=DEFAULT_NODE_TIMEOUT_SECONDS, ge=1, le=86_400)

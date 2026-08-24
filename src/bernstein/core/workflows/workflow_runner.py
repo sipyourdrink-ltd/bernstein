@@ -43,7 +43,14 @@ logger = logging.getLogger(__name__)
 
 
 class NodeStatus(StrEnum):
-    """Terminal status for a single workflow node execution."""
+    """Terminal status for a single workflow node execution.
+
+    ``SKIPPED`` covers two distinct situations, told apart by
+    :attr:`NodeExecution.condition_skipped`: a node whose ``depends_on``
+    included a failed (or cascade-skipped) node - which keeps blocking
+    anything depending on *it* in turn - versus a node whose own ``when``
+    predicate came back false, which does not.
+    """
 
     SUCCESS = "success"
     FAILED = "failed"
@@ -67,8 +74,10 @@ class NodeExecution:
 
     Attributes:
         node_id: The id of the executed node.
-        status: Terminal status.  ``SKIPPED`` is used when a node is
-            preempted because an upstream dependency failed.
+        status: Terminal status.  ``SKIPPED`` is used both when a node is
+            preempted because an upstream dependency failed, and when
+            the node's own ``when`` predicate came back false - see
+            ``condition_skipped`` to tell them apart.
         iterations: How many times the node fired.  ``1`` for
             non-looping nodes; up to ``loop.max_iterations`` for loops.
         exit_code: Final exit code for command-typed nodes.  Always 0
@@ -80,6 +89,11 @@ class NodeExecution:
             iteration if looping).  Empty string for command nodes.
         error: Human-readable error message when status is FAILED.
         wall_time_seconds: Wall clock spent in this node, end-to-end.
+        condition_skipped: ``True`` only when ``status`` is ``SKIPPED``
+            because this node's own ``when`` predicate was false.  Such a
+            skip was intentional - it does not fail the run and does not
+            block nodes that depend on this one, unlike a skip cascading
+            from a failed (or itself-blocked) dependency.
     """
 
     node_id: str
@@ -91,6 +105,7 @@ class NodeExecution:
     session_id: str = ""
     error: str = ""
     wall_time_seconds: float = 0.0
+    condition_skipped: bool = False
 
 
 @dataclass
@@ -103,8 +118,10 @@ class WorkflowExecution:
             same logical run can be tied together across nodes.
         nodes: Per-node results, in the order they finished.
         wall_time_seconds: Total wall clock for the run.
-        succeeded: ``True`` only if every executed node ended in
-            :attr:`NodeStatus.SUCCESS`.
+        succeeded: ``True`` only if every node ended in
+            :attr:`NodeStatus.SUCCESS` or was intentionally
+            condition-skipped (``NodeExecution.condition_skipped``); a
+            dependency-failure skip still fails the run.
     """
 
     spec_name: str
@@ -221,10 +238,20 @@ class WorkflowRunner:
 
             ready_nodes: list[WorkflowNode] = []
             for node in layer:
-                if not all(results[dep].status == NodeStatus.SUCCESS for dep in node.depends_on if dep in results):
+                if not all(self._dep_satisfied(results.get(dep)) for dep in node.depends_on if dep in results):
                     skipped = NodeExecution(node_id=node.id, status=NodeStatus.SKIPPED)
                     results[node.id] = skipped
                     execution.nodes.append(skipped)
+                    continue
+                if node.when is not None and not self._loop_predicate_passes(node.when):
+                    skipped = NodeExecution(node_id=node.id, status=NodeStatus.SKIPPED, condition_skipped=True)
+                    results[node.id] = skipped
+                    execution.nodes.append(skipped)
+                    self._audit(
+                        "workflow.node_condition_skipped",
+                        node.id,
+                        {"run_id": rid, "when": node.when},
+                    )
                     continue
                 ready_nodes.append(node)
 
@@ -240,7 +267,7 @@ class WorkflowRunner:
 
         execution.wall_time_seconds = time.monotonic() - start
         execution.succeeded = not aborted and all(
-            r.status == NodeStatus.SUCCESS for r in execution.nodes if execution.nodes
+            r.status == NodeStatus.SUCCESS or r.condition_skipped for r in execution.nodes
         )
         self._audit(
             "workflow.finish",
@@ -254,6 +281,22 @@ class WorkflowRunner:
         return execution
 
     # ----- internal helpers -------------------------------------------------
+
+    @staticmethod
+    def _dep_satisfied(dep_result: NodeExecution | None) -> bool:
+        """Whether a dependency's outcome unblocks nodes depending on it.
+
+        A plain success always unblocks.  A condition-gated skip
+        (``when`` was false) unblocks too - it was intentionally not
+        needed, not aborted.  Any other skip (cascading from a failed or
+        itself-blocked dependency) still blocks, exactly as before
+        ``when`` existed.
+        """
+        if dep_result is None:
+            return False
+        if dep_result.status == NodeStatus.SUCCESS:
+            return True
+        return dep_result.status == NodeStatus.SKIPPED and dep_result.condition_skipped
 
     def _execute_layer(
         self,
@@ -379,8 +422,14 @@ class WorkflowRunner:
         return last
 
     def _loop_predicate_passes(self, predicate: str) -> bool:
-        """Return ``True`` when the bash predicate exits with status 0."""
-        # SECURITY: shell=True required because loop predicates are manifest-authored
+        """Return ``True`` when the bash predicate exits with status 0.
+
+        Shared by loop's ``until`` and a node's ``when``: both are
+        manifest-authored bash predicates evaluated the same way (the
+        name predates ``when`` - kept as-is since it's a monkeypatch
+        seam an existing test reaches into directly).
+        """
+        # SECURITY: shell=True required because predicates are manifest-authored
         # bash expressions (e.g. "test -f marker") that rely on shell parsing; not user input.
         proc = subprocess.run(
             predicate,
