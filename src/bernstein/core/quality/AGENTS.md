@@ -22,12 +22,8 @@ configurable gate pipeline plus the janitor's claim verification.
   come from a registered gate plugin; the runner rejects anything else
   (`gate_runner.py`).
 - Defaults are deliberate: `lint`, `pii_scan`, `dlp_scan`, `run_config` on;
-  `tests`, `type_check`, and the heavier gates off (`quality_gates.py`). Do
-  not flip defaults as a side effect of another change.
-- `run_config` is a safety invariant, not a heuristic: a change whose diff
-  touches a run-configuration path is a leak of the run's own state, never
-  work. Its path set lives in `core/config/run_overlay.RUN_CONFIG_PATHS` and
-  is shared with the merge guard and the worktree excludes.
+  `tests`, `type_check`, heavier gates off (`quality_gates.py`); never flip one
+  as a side effect. `run_config` is a safety invariant (`../config/run_overlay.py`).
 - Blocking vs advisory semantics are per-gate; a new gate must declare
   which it is.
 - No package-level `__getattr__` re-export magic in this package;
