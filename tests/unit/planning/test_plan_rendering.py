@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from bernstein.core.planning.plan_rendering import PlanRendering, render_plan
-from bernstein.core.tasks.models import PlanStatus, Task, TaskCostEstimate, TaskPlan
+from bernstein.core.tasks.models import PlanStatus, TaskCostEstimate, TaskPlan
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -55,13 +55,6 @@ def _make_plan(
     )
 
 
-def _make_tasks() -> list[Task]:
-    return [
-        Task(id="t-1", title="Implement core", description="", role="backend"),
-        Task(id="t-2", title="Write tests", description="", role="qa"),
-    ]
-
-
 # ---------------------------------------------------------------------------
 # Determinism
 # ---------------------------------------------------------------------------
@@ -69,16 +62,15 @@ def _make_tasks() -> list[Task]:
 
 def test_same_inputs_produce_same_hash() -> None:
     plan = _make_plan()
-    tasks = _make_tasks()
-    r1 = render_plan(plan, tasks)
-    r2 = render_plan(plan, tasks)
+    r1 = render_plan(plan)
+    r2 = render_plan(plan)
     assert r1.rendering_hash == r2.rendering_hash
     assert r1.text == r2.text
 
 
 def test_hash_is_64_hex_chars() -> None:
     plan = _make_plan()
-    rendering = render_plan(plan, _make_tasks())
+    rendering = render_plan(plan)
     assert len(rendering.rendering_hash) == 64
     int(rendering.rendering_hash, 16)  # must not raise
 
@@ -101,8 +93,8 @@ def test_task_order_does_not_affect_hash() -> None:
     )
     plan_fwd = _make_plan(estimates=[est_a, est_b])
     plan_rev = _make_plan(estimates=[est_b, est_a])
-    r_fwd = render_plan(plan_fwd, [])
-    r_rev = render_plan(plan_rev, [])
+    r_fwd = render_plan(plan_fwd)
+    r_rev = render_plan(plan_rev)
     assert r_fwd.rendering_hash == r_rev.rendering_hash
     assert r_fwd.text == r_rev.text
 
@@ -114,7 +106,7 @@ def test_risk_reason_sort_stability() -> None:
         risk_level="high", risk_reasons=["z-reason", "a-reason"],
     )
     plan = _make_plan(estimates=[est])
-    rendering = render_plan(plan, [])
+    rendering = render_plan(plan)
     # Sorted in text
     assert "a-reason; z-reason" in rendering.text
 
@@ -126,9 +118,8 @@ def test_risk_reason_sort_stability() -> None:
 
 def test_different_journal_head_produces_different_hash() -> None:
     plan = _make_plan()
-    tasks = _make_tasks()
-    r1 = render_plan(plan, tasks, journal_head="aaa")
-    r2 = render_plan(plan, tasks, journal_head="bbb")
+    r1 = render_plan(plan, journal_head="aaa")
+    r2 = render_plan(plan, journal_head="bbb")
     assert r1.rendering_hash != r2.rendering_hash
     assert "Journal head: aaa" in r1.text
     assert "Journal head: bbb" in r2.text
@@ -136,14 +127,14 @@ def test_different_journal_head_produces_different_hash() -> None:
 
 def test_no_journal_head_omits_line() -> None:
     plan = _make_plan()
-    rendering = render_plan(plan, [], journal_head=None)
+    rendering = render_plan(plan, journal_head=None)
     assert "Journal head" not in rendering.text
     assert rendering.journal_head is None
 
 
 def test_with_journal_head_appears_in_text() -> None:
     plan = _make_plan()
-    rendering = render_plan(plan, [], journal_head="deadbeef")
+    rendering = render_plan(plan, journal_head="deadbeef")
     assert rendering.journal_head == "deadbeef"
     assert "Journal head: deadbeef" in rendering.text
 
@@ -155,17 +146,17 @@ def test_with_journal_head_appears_in_text() -> None:
 
 def test_empty_plan_no_estimates() -> None:
     plan = _make_plan(estimates=[], total_cost=0.0, total_minutes=0, high_risk=[])
-    rendering = render_plan(plan, [])
+    rendering = render_plan(plan)
     assert "Tasks:" in rendering.text
     assert rendering.rendering_hash
     # Hash should still be deterministic
-    assert rendering.rendering_hash == render_plan(plan, []).rendering_hash
+    assert rendering.rendering_hash == render_plan(plan).rendering_hash
 
 
 def test_empty_plan_with_journal_head() -> None:
     plan = _make_plan(estimates=[], total_cost=0.0, total_minutes=0, high_risk=[])
-    r1 = render_plan(plan, [], journal_head="h1")
-    r2 = render_plan(plan, [], journal_head=None)
+    r1 = render_plan(plan, journal_head="h1")
+    r2 = render_plan(plan, journal_head=None)
     assert r1.rendering_hash != r2.rendering_hash
 
 
@@ -176,7 +167,7 @@ def test_empty_plan_with_journal_head() -> None:
 
 def test_roundtrip_to_dict_from_dict() -> None:
     plan = _make_plan()
-    rendering = render_plan(plan, _make_tasks(), journal_head="abc")
+    rendering = render_plan(plan, journal_head="abc")
     d = rendering.to_dict()
     restored = PlanRendering.from_dict(d)
     assert restored == rendering
@@ -184,7 +175,7 @@ def test_roundtrip_to_dict_from_dict() -> None:
 
 def test_roundtrip_without_journal_head() -> None:
     plan = _make_plan()
-    rendering = render_plan(plan, _make_tasks())
+    rendering = render_plan(plan)
     d = rendering.to_dict()
     restored = PlanRendering.from_dict(d)
     assert restored == rendering
@@ -197,28 +188,28 @@ def test_roundtrip_without_journal_head() -> None:
 
 def test_text_contains_plan_id_and_goal() -> None:
     plan = _make_plan(plan_id="p-42", goal="Fix login bug")
-    rendering = render_plan(plan, [])
+    rendering = render_plan(plan)
     assert "Plan: p-42" in rendering.text
     assert "Goal: Fix login bug" in rendering.text
 
 
 def test_text_contains_totals() -> None:
     plan = _make_plan(total_cost=3.14, total_minutes=90)
-    rendering = render_plan(plan, [])
+    rendering = render_plan(plan)
     assert "$3.140000" in rendering.text
     assert "Total minutes: 90" in rendering.text
 
 
 def test_text_contains_high_risk_tasks() -> None:
     plan = _make_plan(high_risk=["t-2", "t-1"])
-    rendering = render_plan(plan, [])
+    rendering = render_plan(plan)
     # Sorted in text
     assert "['t-1', 't-2']" in rendering.text
 
 
 def test_text_contains_rendering_hash() -> None:
     plan = _make_plan()
-    rendering = render_plan(plan, [])
+    rendering = render_plan(plan)
     assert f"Rendering hash: {rendering.rendering_hash}" in rendering.text
 
 
@@ -234,7 +225,7 @@ def test_estimates_sorted_by_id_in_text() -> None:
         risk_reasons=[],
     )
     plan = _make_plan(estimates=[est_b, est_a])
-    rendering = render_plan(plan, [])
+    rendering = render_plan(plan)
     idx_a = rendering.text.index("t-a:")
     idx_b = rendering.text.index("t-b:")
     assert idx_a < idx_b
