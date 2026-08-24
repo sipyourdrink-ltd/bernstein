@@ -302,7 +302,17 @@ def test_content_hash_prefixed(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _write_v1_row(spine: LineageSpine, *, artifact_path: str, content: bytes, actor: str, step_id: str, model: str, timestamp: int, prev_hash: str = "") -> str:
+def _write_v1_row(
+    spine: LineageSpine,
+    *,
+    artifact_path: str,
+    content: bytes,
+    actor: str,
+    step_id: str,
+    model: str,
+    timestamp: int,
+    prev_hash: str = "",
+) -> str:
     """Append a legacy v1 entry directly to the JSONL (no domain tag, raw key)."""
     c_hash = content_hash_of(content)
     e_hash = compute_entry_hash(
