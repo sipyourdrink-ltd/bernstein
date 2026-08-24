@@ -43,10 +43,13 @@ USER_AGENT = "bernstein-copr-build-watch"
 # Copr reports one state for the whole build, and that state is `failed` when
 # any single chroot failed. `publish.yml` deliberately submits to rawhide
 # without gating the release on it: rawhide is a moving target whose churn
-# costs more than it catches. Reading the aggregate state alone contradicts
-# that, so a `failed` aggregate is re-read per chroot and only the gating ones
-# decide the verdict.
-NON_GATING_CHROOT_MARKERS = ("rawhide",)
+# costs more than it catches. fedora-45 is a pre-release Fedora whose
+# interpreter (Python 3.15) lacks wheels for cbor2 and grpcio, so its failure
+# is upstream churn, not a release defect; once it goes stable and wheels are
+# available it should be removed from this list. Reading the aggregate state
+# alone contradicts that, so a `failed` aggregate is re-read per chroot and
+# only the gating ones decide the verdict.
+NON_GATING_CHROOT_MARKERS = ("rawhide", "fedora-45")
 
 SUCCESS_STATES = frozenset({"succeeded"})
 # `skipped` means Copr already had this exact build and did not rebuild it. It
