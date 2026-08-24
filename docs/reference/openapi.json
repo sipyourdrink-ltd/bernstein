@@ -6592,7 +6592,7 @@
             "description": "Plan not found, or plan mode is not enabled on this server"
           },
           "409": {
-            "description": "Plan already decided"
+            "description": "Plan already decided, or the plan changed after it was rendered for review"
           },
           "422": {
             "description": "Validation Error",
@@ -6660,7 +6660,7 @@
             "description": "Plan not found, or plan mode is not enabled on this server"
           },
           "409": {
-            "description": "Plan already decided"
+            "description": "Plan already decided, or the plan changed after it was rendered for review"
           },
           "422": {
             "description": "Validation Error",
@@ -15408,7 +15408,7 @@
             "description": "Plan not found, or plan mode is not enabled on this server"
           },
           "409": {
-            "description": "Plan already decided"
+            "description": "Plan already decided, or the plan changed after it was rendered for review"
           },
           "422": {
             "description": "Validation Error",
@@ -15476,7 +15476,7 @@
             "description": "Plan not found, or plan mode is not enabled on this server"
           },
           "409": {
-            "description": "Plan already decided"
+            "description": "Plan already decided, or the plan changed after it was rendered for review"
           },
           "422": {
             "description": "Validation Error",

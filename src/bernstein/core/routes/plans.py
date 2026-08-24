@@ -93,7 +93,7 @@ def get_plan(request: Request, plan_id: str) -> dict[str, Any]:
     "/{plan_id}/approve",
     responses={
         404: {"description": "Plan not found, or plan mode is not enabled on this server"},
-        409: {"description": "Plan already decided"},
+        409: {"description": "Plan already decided, or the plan changed after it was rendered for review"},
     },
 )
 def approve_plan(request: Request, plan_id: str, body: PlanDecisionRequest | None = None) -> dict[str, Any]:
@@ -149,7 +149,7 @@ def approve_plan(request: Request, plan_id: str, body: PlanDecisionRequest | Non
     "/{plan_id}/reject",
     responses={
         404: {"description": "Plan not found, or plan mode is not enabled on this server"},
-        409: {"description": "Plan already decided"},
+        409: {"description": "Plan already decided, or the plan changed after it was rendered for review"},
     },
 )
 def reject_plan(request: Request, plan_id: str, body: PlanDecisionRequest | None = None) -> dict[str, Any]:
