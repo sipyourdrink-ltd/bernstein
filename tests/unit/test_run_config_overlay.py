@@ -105,7 +105,9 @@ def test_overlay_never_dirties_the_work_tree(repo: Path) -> None:
     write_overlay({"max_agents": 9, "internal_llm_provider": "anthropic"}, config_path=config_path)
 
     assert _git(repo, "status", "--porcelain") == "", "an overlay write must not show up as a work-tree change"
-    assert config_path.read_text(encoding="utf-8") == before, "the committed file must be byte-identical after a run override"
+    assert config_path.read_text(encoding="utf-8") == before, (
+        "the committed file must be byte-identical after a run override"
+    )
     assert parse_seed(config_path).max_agents == 9, "the override must nevertheless be in effect"
 
 
@@ -117,7 +119,11 @@ def test_commit_all_after_an_overlay_write_contains_no_configuration_file(repo: 
     (repo / "src" / "feature.py").write_text("VALUE = 2\n", encoding="utf-8")
     _git(repo, "commit", "-a", "-m", "feat: bump the value")
 
-    changed = [line.strip() for line in _git(repo, "show", "--name-only", "--pretty=format:", "HEAD").splitlines() if line.strip()]
+    changed = [
+        line.strip()
+        for line in _git(repo, "show", "--name-only", "--pretty=format:", "HEAD").splitlines()
+        if line.strip()
+    ]
     assert changed == ["src/feature.py"]
     assert check_commit(repo).ok
 
