@@ -133,6 +133,89 @@ async def test_zero_yield_planning_fails_despite_unrelated_task_in_store(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_planning_task_counts_children_created_during_its_own_run(tmp_path: Path) -> None:
+    """Subtasks a planner creates during its run count even with no back-link.
+
+    The agent-driven planner path has the manager POST plain ``/tasks``
+    bodies, which carry no ``parent_task_id`` at all -- the prompt tracks the
+    relationship through the description instead, and tells the agent to drop
+    the association outright when the parent id does not resolve for its
+    token. Reading yield off the back-link alone would fail a planner that
+    decomposed correctly, and the run then re-plans from scratch and
+    multiplies its subtasks.
+    """
+    store = TaskStore(jsonl_path=tmp_path / "tasks.jsonl", archive_path=tmp_path / "archive.jsonl")
+
+    prior = await store.create(
+        TaskCreate(title="Unrelated earlier task", description="From a previous goal", role="backend", priority=1)
+    )
+    await store.claim_by_id(prior.id)
+    await store.complete(prior.id, result_summary="Finished earlier work")
+
+    manager_task = await store.create(
+        TaskCreate(
+            title="Plan and decompose goal into tasks",
+            description="Decompose project goal",
+            role="manager",
+            priority=1,
+            scope="large",
+        )
+    )
+    await store.claim_by_id(manager_task.id)
+
+    # The planner agent creates its subtasks the way the prompt shows: a bare
+    # POST /tasks body, no parent_task_id.
+    for index in (1, 2):
+        created = await store.create(
+            TaskCreate(
+                title=f"Subtask {index}",
+                description=f"... [subtask of {manager_task.id}]",
+                role="backend",
+                priority=1,
+            )
+        )
+        assert created.parent_task_id is None
+
+    completed_task = await store.complete(manager_task.id, result_summary="Created 2 subtasks")
+
+    assert completed_task.status == TaskStatus.DONE
+    assert completed_task.result_summary == "Created 2 subtasks"
+    assert store.status_summary()["failed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_planning_task_ignores_tasks_created_before_it_was_claimed(tmp_path: Path) -> None:
+    """Work that predates the claim is somebody else's yield, not this task's.
+
+    This is the edge the scoping rule turns on: a task sitting in the store
+    when the planner starts cannot be evidence that the planner produced
+    anything, however recently it was queued.
+    """
+    store = TaskStore(jsonl_path=tmp_path / "tasks.jsonl", archive_path=tmp_path / "archive.jsonl")
+
+    manager_task = await store.create(
+        TaskCreate(
+            title="Plan and decompose goal into tasks",
+            description="Decompose project goal",
+            role="manager",
+            priority=1,
+            scope="large",
+        )
+    )
+    # Queued by another part of the run, before this planner ever started.
+    await store.create(
+        TaskCreate(title="Unrelated backlog item", description="Queued elsewhere", role="backend", priority=1)
+    )
+
+    await store.claim_by_id(manager_task.id)
+    completed_task = await store.complete(manager_task.id, result_summary="Auto-completed: no real work")
+
+    assert completed_task.status == TaskStatus.FAILED
+    assert completed_task.result_summary == "Planning task produced no child tasks"
+    assert run_healthy_from_status_counts(store.status_summary()) is False
+
+
+@pytest.mark.asyncio
 async def test_worker_task_without_children_succeeds(tmp_path: Path) -> None:
     """A non-manager worker task that runs alone completes as DONE."""
     store = TaskStore(jsonl_path=tmp_path / "tasks.jsonl", archive_path=tmp_path / "archive.jsonl")

@@ -670,6 +670,34 @@ class TaskStore:
         """
         return len(self._by_parent.get(parent_task_id, ()))
 
+    def _planning_yield_is_zero(self, task: Task) -> bool:
+        """Return True when planning *task* produced no work of its own.
+
+        "Produced no work" (#4401) is scoped to this task's own attempt
+        (#4466), and a planning task can show its yield two ways:
+
+        * a task naming it in ``parent_task_id`` - the explicit link the
+          in-process splitter and the ``self-create`` route write; or
+        * a task that came into existence after this one was claimed - the
+          only signal the agent-driven planner path leaves, because its
+          prompt has the manager POST plain ``/tasks`` bodies carrying no
+          back-link, and tells it to drop the link outright when the parent
+          id does not resolve for its token.
+
+        Demanding the back-link alone would fail every agent-driven planner
+        that decomposed correctly, and the run then re-plans from scratch and
+        multiplies the subtasks instead of failing loudly. Asking only "does
+        the store hold any other task" (the original form) is satisfied by any
+        prior history at all, including this task's own earlier attempt, so it
+        never fires on a real run. The window from claim to completion is the
+        part of the store that belongs to this attempt: work that predates the
+        claim is somebody else's, and an empty window is a zero yield.
+        """
+        if self.count_subtasks(task.id) > 0:
+            return False
+        started_at = task.claimed_at if task.claimed_at is not None else task.created_at
+        return not any(other.id != task.id and other.created_at > started_at for other in self._tasks.values())
+
     # -- persistence --------------------------------------------------------
 
     def replay_jsonl(self) -> None:
@@ -2263,14 +2291,9 @@ class TaskStore:
 
             # Issue #4401: A planning/manager task that created zero child tasks has not
             # accomplished any work. It must fail rather than falsely reporting success.
-            # Scoped to THIS task's own children (issue #4466): the original check asked
-            # "does the store contain any other task at all", which a retried planning
-            # attempt or any resumed project's prior history satisfies trivially, letting
-            # a still-zero-child manager task complete as DONE the moment anything else
-            # has ever run. Checking for a child whose parent_task_id names this task is
-            # what "produced zero child tasks" actually means, regardless of what else the
-            # store holds.
-            if task.role == "manager" and not any(t.parent_task_id == task_id for t in self._tasks.values()):
+            # Scoped to this task's own attempt (issue #4466) - see
+            # ``_planning_yield_is_zero``.
+            if task.role == "manager" and self._planning_yield_is_zero(task):
                 snapshot = self._claim_snapshot(task)
                 self._index_remove(task)
                 transition_task(
