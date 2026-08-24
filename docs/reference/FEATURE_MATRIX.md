@@ -239,6 +239,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | `bernstein doctor` | Full | 4 | Pre-flight health check |
 | `bernstein recap` | Full | 3 | Post-run summary |
 | `bernstein retro` | Full | 3 | Retrospective report |
+| `bernstein runs report` | Full | 3 | Finished runs projected from the work ledger and classified `pr-opened` / `gate-failed` / `no-changes` / `infra-error` / `wedged`, each with the evidence line it was read from |
 | `bernstein report commits/incident/postmortem` | Brief | 3 | Per-run markdown summaries: `commits` is per-agent commit attribution ([reference](../operations/commit-attribution.md)); `incident` correlates a timeline from logs, metrics, and traces; `postmortem` writes a structured report for a failed run. The group has no reference page of its own; `cli-reference.md` and `bernstein report --help` carry it |
 | `bernstein trace ID` | Full | 3 | Decision trace |
 | `bernstein logs` | Full | 3 | Agent log tail |

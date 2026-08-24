@@ -345,6 +345,7 @@ hand-assembled as a request with a bearer header.
 | `bernstein retro` | Detailed retrospective. | `cli/commands/advanced_cmd.py:299` |
 | `bernstein wrap-up` | End-of-session summary. | `cli/wrap_up_cmd.py` |
 | `bernstein history` | Show run history. | `cli/maintenance_cmd.py:history_cmd` |
+| `bernstein runs report` | Finished runs with a classified outcome. | `cli/commands/runs_cmd.py` |
 | `bernstein report commits` | Per-run git diff stats. | `cli/commands/status_cmd.py:1232` |
 | `bernstein report` | Build a custom report (group). | `cli/report_cmd.py` |
 | `bernstein slo` | SLO dashboard. | `cli/slo_cmd.py:191` |
@@ -415,6 +416,30 @@ it still answers what happened after the run and its server have exited.
 | `--output FILE` / `-o` | `.sdd/runtime/retrospective.md` | Output path. |
 | `--print` | off | Also print to stdout. |
 | `--archive PATH` | `.sdd/archive/tasks.jsonl` | Source archive. |
+
+#### `bernstein runs`
+
+Group over the runs recorded in the work ledger.
+
+| Subcommand | Flags | Purpose |
+|---|---|---|
+| `report` | `--since DURATION`, `--workdir PATH`, `--json` | Finished runs with a classified outcome and one line of evidence. |
+
+##### `bernstein runs report`
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--since DURATION` | all | Only include runs started in the last DURATION (`45m`, `6h`, `2d`). |
+| `--workdir PATH` | `.` | Project root. |
+| `--json` | off | Emit stable machine-readable rows instead of the table. |
+
+The report is projected from `.sdd/` alone, so it still answers what came of a
+batch of runs after the orchestrator and its task server have exited. Each row
+carries the outcome class and the one line of evidence it was classified from:
+`pr-opened` (a branch was published), `gate-failed` (a quality gate blocked the
+run), `no-changes` (zero commits over base), `infra-error` (adapter or transport
+death, or no wrap-up was ever recorded), and `wedged` (the run ended with open
+tasks nothing could spawn).
 
 #### `bernstein watch`
 
