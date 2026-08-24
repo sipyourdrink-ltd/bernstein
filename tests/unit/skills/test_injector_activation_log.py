@@ -384,3 +384,39 @@ def test_inject_skills_auto_route_ignores_malformed_frontmatter(
     )
 
     assert (workdir / ".claude" / "skills" / "pytest-helper.md").is_file()
+
+
+def test_inject_skills_returns_audit_record_even_when_activation_log_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The injector returns an audit record for each skill regardless of the activation log setting."""
+    monkeypatch.setenv(ENV_VAR, "0")
+    templates_dir = _make_skill_templates(tmp_path)
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+
+    audit_records = inject_skills(
+        workdir=workdir,
+        role="security",
+        tasks=[_make_task("T-001")],
+        session_id="sec-abc",
+        templates_dir=templates_dir,
+    )
+
+    # We expect two skills for the security role: the two always-inject skills.
+    assert len(audit_records) == 2
+    # Check that each record has the required fields.
+    for record in audit_records:
+        assert isinstance(record, dict)
+        assert "template_name" in record
+        assert "version" in record
+        assert "pre_render_digest" in record
+        assert "rendered_digest" in record
+        assert "trigger_source" in record
+        # For these skills, we expect them to be successfully injected.
+        assert record["status"] == "injected"
+        # We can also check one of the skills by name and version.
+        if record["template_name"] == "bernstein-completion-protocol.md":
+            assert record["version"] == "1.2.3"
+            assert record["trigger_source"] == "role-binding"
