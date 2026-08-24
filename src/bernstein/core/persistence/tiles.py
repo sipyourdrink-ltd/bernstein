@@ -92,8 +92,8 @@ def list_tile_segments(audit_dir: Path) -> list[str]:
 
 __all__ = [
     "TILES_SUBDIR",
-    "tile_path",
     "has_tile",
-    "read_tile",
     "list_tile_segments",
+    "read_tile",
+    "tile_path",
 ]
