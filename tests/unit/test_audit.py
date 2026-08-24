@@ -10,7 +10,16 @@ from bernstein.core.audit import (
     ArchiveResult,
     AuditLog,
     RetentionPolicy,
+    _compute_hmac,  # pyright: ignore[reportPrivateUsage]
     _load_segment_index,  # pyright: ignore[reportPrivateUsage]
+)
+
+from bernstein.core.security.key_derivation import (
+    DOMAIN_AUDIT,
+    DOMAIN_LINEAGE,
+    SCHEME_V2,
+    derive_store_key,
+    domain_tag,
 )
 
 
@@ -580,3 +589,159 @@ def test_recover_chain_tail_stable_across_archive(tmp_path: Path) -> None:
     reopened.log("e4", "a4", "r4", "i4")
     valid, errors = AuditLog(audit_dir, key=b"test-key").verify()
     assert valid is True, errors
+
+
+# ---------------------------------------------------------------------------
+# v2 scheme: HKDF-derived per-store keys + domain-tagged preimages
+# ---------------------------------------------------------------------------
+
+
+def test_new_entries_are_scheme_v2_with_derived_key(tmp_path: Path) -> None:
+    """New entries carry ``scheme: 2`` and are MAC'd with the derived key.
+
+    The on-disk line must include the ``scheme`` field (it is part of the
+    HMAC-covered body), and the stored HMAC must match a recomputation using
+    the HKDF-derived audit key and the domain-tagged preimage.
+    """
+    audit_dir = tmp_path / "audit"
+    key = b"test-key"
+    log = AuditLog(audit_dir, key=key)
+    event = log.log("task.created", "system", "task", "task-1", {"foo": "bar"})
+
+    assert event.scheme == SCHEME_V2
+
+    day_file = audit_dir / f"{event.timestamp[:10]}.jsonl"
+    raw = day_file.read_bytes()
+    assert b'"scheme": 2' in raw
+
+    entry = json.loads(raw.decode())
+    assert entry["scheme"] == SCHEME_V2
+    body = {k: v for k, v in entry.items() if k != "hmac"}
+    derived = derive_store_key(key, DOMAIN_AUDIT)
+    expected = _compute_hmac(
+        derived,
+        entry["prev_hmac"],
+        body,
+        domain_prefix=domain_tag(DOMAIN_AUDIT, SCHEME_V2),
+    )
+    assert entry["hmac"] == expected
+
+
+def test_v1_entries_still_verify(tmp_path: Path) -> None:
+    """A legacy v1 entry (no ``scheme`` field, raw key, no prefix) verifies."""
+    audit_dir = tmp_path / "audit"
+    key = b"test-key"
+    prev = _GENESIS_HMAC
+    entry = {
+        "timestamp": "2026-01-01T00:00:00.000000Z",
+        "event_type": "v1.event",
+        "actor": "a",
+        "resource_type": "task",
+        "resource_id": "r1",
+        "details": {},
+        "prev_hmac": prev,
+    }
+    hmac = _compute_hmac(key, prev, entry)
+    line = json.dumps(entry | {"hmac": hmac}, sort_keys=True) + "\n"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    (audit_dir / "2026-01-01.jsonl").write_bytes(line.encode())
+
+    valid, errors = AuditLog(audit_dir, key=key).verify()
+    assert valid is True, errors
+    assert errors == []
+
+
+def test_mixed_v1_v2_chain_verifies(tmp_path: Path) -> None:
+    """A chain interleaving v1 and v2 entries verifies end to end.
+
+    Each entry carries its own scheme indicator, so the verifier picks the
+    correct key and domain prefix per record.
+    """
+    audit_dir = tmp_path / "audit"
+    key = b"test-key"
+    derived = derive_store_key(key, DOMAIN_AUDIT)
+    prefix = domain_tag(DOMAIN_AUDIT, SCHEME_V2)
+
+    prev = _GENESIS_HMAC
+    lines: list[str] = []
+    # v1 entry (raw key, no prefix).
+    e1 = {
+        "timestamp": "2026-01-01T00:00:00.000000Z",
+        "event_type": "v1",
+        "actor": "a",
+        "resource_type": "task",
+        "resource_id": "r1",
+        "details": {},
+        "prev_hmac": prev,
+    }
+    h1 = _compute_hmac(key, prev, e1)
+    lines.append(json.dumps(e1 | {"hmac": h1}, sort_keys=True))
+    # v2 entry (derived key, prefix) chaining onto h1.
+    e2 = {
+        "timestamp": "2026-01-01T00:00:00.000001Z",
+        "event_type": "v2",
+        "actor": "a",
+        "resource_type": "task",
+        "resource_id": "r2",
+        "details": {},
+        "prev_hmac": h1,
+        "scheme": SCHEME_V2,
+    }
+    h2 = _compute_hmac(derived, h1, e2, domain_prefix=prefix)
+    lines.append(json.dumps(e2 | {"hmac": h2}, sort_keys=True))
+    # Another v1 entry chaining onto h2.
+    e3 = {
+        "timestamp": "2026-01-01T00:00:00.000002Z",
+        "event_type": "v1b",
+        "actor": "a",
+        "resource_type": "task",
+        "resource_id": "r3",
+        "details": {},
+        "prev_hmac": h2,
+    }
+    h3 = _compute_hmac(key, h2, e3)
+    lines.append(json.dumps(e3 | {"hmac": h3}, sort_keys=True))
+
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    (audit_dir / "2026-01-01.jsonl").write_text("\n".join(lines) + "\n")
+
+    valid, errors = AuditLog(audit_dir, key=key).verify()
+    assert valid is True, errors
+    assert errors == []
+
+
+def test_audit_tag_fails_with_lineage_derived_key(tmp_path: Path) -> None:
+    """A v2 tag minted with the audit-derived key fails under the lineage key.
+
+    Guards the domain separation: a record produced for the audit store must
+    not verify when the lineage-derived key is used instead.
+    """
+    audit_dir = tmp_path / "audit"
+    key = b"test-key"
+    prev = _GENESIS_HMAC
+    entry = {
+        "timestamp": "2026-01-01T00:00:00.000000Z",
+        "event_type": "x",
+        "actor": "a",
+        "resource_type": "task",
+        "resource_id": "r1",
+        "details": {},
+        "prev_hmac": prev,
+        "scheme": SCHEME_V2,
+    }
+    audit_derived = derive_store_key(key, DOMAIN_AUDIT)
+    hmac = _compute_hmac(
+        audit_derived,
+        prev,
+        entry,
+        domain_prefix=domain_tag(DOMAIN_AUDIT, SCHEME_V2),
+    )
+    line = json.dumps(entry | {"hmac": hmac}, sort_keys=True) + "\n"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    (audit_dir / "2026-01-01.jsonl").write_bytes(line.encode())
+
+    # Verifying with the lineage-derived key must fail the HMAC check.
+    lineage_derived = derive_store_key(key, DOMAIN_LINEAGE)
+    valid, errors = AuditLog(audit_dir, key=lineage_derived).verify()
+    assert valid is False
+    assert any("HMAC mismatch" in err for err in errors)
