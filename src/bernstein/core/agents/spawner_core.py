@@ -94,7 +94,6 @@ from bernstein.core.agents.spawner_worktree import (
     release_warm_pool_slot,
     worktree_manager_for_repo,
 )
-from bernstein.core.evidence.run_artifacts import record_persistent_agent_step
 from bernstein.core.agents.spawner_worktree import (
     cleanup_worktree as _cleanup_worktree,
 )
@@ -104,6 +103,7 @@ from bernstein.core.agents.spawner_worktree import (
 from bernstein.core.context import TaskContextBuilder
 from bernstein.core.context_recommendations import RecommendationEngine
 from bernstein.core.defaults import SPAWN
+from bernstein.core.evidence.run_artifacts import record_persistent_agent_step
 from bernstein.core.lessons import gather_lessons_for_context
 from bernstein.core.lifecycle import transition_agent
 from bernstein.core.models import (
