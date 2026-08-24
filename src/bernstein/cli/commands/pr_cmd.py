@@ -1,9 +1,13 @@
 """``bernstein pr`` - open a pull request from a completed session.
 
-This command reads the newest (or a specific) session's wrap-up state,
-derives a conventional-commit title, composes a markdown body with the
-janitor quality-gate verdict and cost breakdown, pushes the session
-branch if needed, and calls ``gh pr create`` to open the PR.
+This command describes the *change*, not the run that made it: it reads the
+branch's commits and diff, titles the pull request after the commit that
+altered ``src/`` most (skipping merges, WIP and formatting upkeep), composes
+a body from the linked issue's problem statement, the files the diff touches
+and the gates that ran, pushes the session branch if needed, and calls ``gh
+pr create``. Once the PR exists, the posted description is anchored against
+its diff through the review-receipt machinery, so a reader can check offline
+that the description belongs to this diff.
 
 All pure logic lives in :mod:`bernstein.core.integrations.pr_gen`; this
 module is a thin click wrapper that also handles subprocess calls to
@@ -18,15 +22,20 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import click
 
 from bernstein.core.integrations.pr_gen import (
+    COMMIT_LOG_FORMAT,
     SessionSummary,
+    attest_pr_description,
     build_pr_body,
     build_pr_title,
+    build_provenance,
     load_session_summary,
+    parse_commit_log,
 )
 from bernstein.core.integrations.tickets import (
     TicketAuthError,
@@ -80,8 +89,41 @@ def _diff_stat(cwd: Path, base: str, head: str) -> str:
     return result.stdout
 
 
+def _diff_bytes(cwd: Path, base: str, head: str) -> bytes:
+    """Return ``git diff base..head`` as raw bytes (empty on failure).
+
+    Bytes, not text: the diff is hashed, and decoding it would make the hash
+    depend on this process's error handling rather than on the diff.
+    """
+    result = subprocess.run(
+        ["git", "diff", f"{base}..{head}"],
+        cwd=cwd,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    if result.returncode != 0:
+        return b""
+    return result.stdout
+
+
+def _commit_log(cwd: Path, base: str, head: str) -> str:
+    """Return the branch's commits with per-file churn, for ranking."""
+    result = _run_git(
+        ["log", f"--format={COMMIT_LOG_FORMAT}", "--numstat", "--no-color", f"{base}..{head}"],
+        cwd=cwd,
+    )
+    if result.returncode != 0:
+        return ""
+    return result.stdout
+
+
 def _enrich_summary_with_git(summary: SessionSummary, cwd: Path) -> SessionSummary:
-    """Fill in the branch + diff-stat from git when the state file lacked them.
+    """Fill in the git-derived fields the state file could not supply.
+
+    Branch and diff-stat as before, plus the two the description is composed
+    from: the branch's commits (which commit the pull request is about) and
+    the provenance binding (which diff the description describes).
 
     Args:
         summary: The summary loaded from persisted state.
@@ -91,15 +133,15 @@ def _enrich_summary_with_git(summary: SessionSummary, cwd: Path) -> SessionSumma
         A new :class:`SessionSummary` with git-derived fields populated
         when they were missing from the original.
     """
-    from dataclasses import replace
-    from typing import cast
-
     branch = summary.branch if summary.branch not in ("", "HEAD") else _current_branch(cwd)
     diff_stat = summary.diff_stat or _diff_stat(cwd, summary.base_branch, branch)
-    if branch == summary.branch and diff_stat == summary.diff_stat:
-        return summary
+    commits = summary.commits or parse_commit_log(_commit_log(cwd, summary.base_branch, branch))
+    provenance = summary.provenance or build_provenance(
+        diff=_diff_bytes(cwd, summary.base_branch, branch),
+        journal_head=summary.journal_head,
+    )
 
-    return cast("SessionSummary", replace(summary, branch=branch, diff_stat=diff_stat))
+    return replace(summary, branch=branch, diff_stat=diff_stat, commits=commits, provenance=provenance)
 
 
 def _push_branch(branch: str, cwd: Path) -> tuple[bool, str]:
@@ -257,6 +299,12 @@ def _resolve_issue(ref: str, workdir: Path) -> tuple[int, TicketPayload]:
     help="Override the auto-generated PR title.",
 )
 @click.option(
+    "--body",
+    "body_override",
+    default=None,
+    help="Override the auto-generated PR body. `Closes #N` is still prepended with --issue.",
+)
+@click.option(
     "--draft",
     is_flag=True,
     default=False,
@@ -281,11 +329,17 @@ def pr_cmd(
     base: str,
     issue_ref: str | None,
     title_override: str | None,
+    body_override: str | None,
     draft: bool,
     dry_run: bool,
     no_push: bool,
 ) -> None:
     """Open a GitHub pull request from a completed Bernstein session.
+
+    The title names the commit that changed the most under ``src/``, so a run
+    that ends with a lint or formatting pass is still titled after the change
+    it made; a run that left nothing but upkeep falls back to the linked
+    issue's title. ``--title`` and ``--body`` override both.
 
     The command is safe to re-run: on ``--dry-run`` it touches the network
     only to read the issue named by ``--issue`` (nothing at all without it),
@@ -299,22 +353,28 @@ def pr_cmd(
 
     issue_number: int | None = None
     issue_title = ""
+    issue_body = ""
     issue_labels: tuple[str, ...] = ()
     if issue_ref is not None:
         issue_number, ticket = _resolve_issue(issue_ref, workdir)
         issue_title = ticket.title
+        issue_body = ticket.description
         issue_labels = ticket.labels
 
+    summary = replace(summary, issue_problem=issue_body)
+
     # The issue title is a cleaner source than the goal, which carries the
-    # instructions handed to the run. Its labels come along so the PR does not
-    # announce a change type the issue it closes contradicts.
+    # instructions handed to the run; the branch's commits are cleaner still,
+    # because they say what actually landed. Labels come along so the PR does
+    # not announce a change type the issue it closes contradicts.
     title = title_override or build_pr_title(
         issue_title or summary.goal or summary.session_id,
         summary.primary_role,
         issue_labels,
         changes_summary=summary.changes_summary,
+        commits=summary.commits,
     )
-    body = build_pr_body(summary)
+    body = body_override or build_pr_body(summary)
     if issue_number is not None:
         # GitHub links an issue from the body or a commit message only.
         body = f"Closes #{issue_number}\n\n{body}"
@@ -345,3 +405,73 @@ def pr_cmd(
         raise click.ClickException(f"gh pr create failed: {message}")
 
     click.echo(message)
+    _attest_description(
+        summary=summary,
+        pr_url=_pr_url_from_output(message),
+        description=f"{title}\n\n{body}",
+        issue_body=issue_body,
+        cwd=workdir,
+    )
+
+
+def _pr_url_from_output(message: str) -> str:
+    """Return the PR url ``gh pr create`` printed, or ``""``."""
+    for line in reversed(message.splitlines()):
+        candidate = line.strip()
+        if candidate.startswith(("http://", "https://")):
+            return candidate
+    return ""
+
+
+def _repo_slug_from_pr_url(pr_url: str) -> str:
+    """Return ``owner/repo`` for a GitHub pull-request url, or ``""``."""
+    parts = pr_url.rstrip("/").split("/")
+    if len(parts) < 5:
+        return ""
+    return f"{parts[-4]}/{parts[-3]}"
+
+
+def _attest_description(
+    *,
+    summary: SessionSummary,
+    pr_url: str,
+    description: str,
+    issue_body: str,
+    cwd: Path,
+) -> None:
+    """Anchor the posted description against the diff it describes.
+
+    Runs after the pull request exists, so the receipt names a real url. The
+    diff is re-read and its hash checked against the one the body published:
+    if the branch moved between composing the description and opening the PR,
+    the description no longer describes this diff and attesting it would
+    assert something false, so the receipt is skipped and the operator told.
+
+    Failure to attest never fails the command - the pull request is already
+    open by this point, and an unanchored description is a smaller problem
+    than a command that reports failure for work that succeeded.
+    """
+    if not pr_url or summary.provenance is None:
+        return
+    try:
+        diff = _diff_bytes(cwd, summary.base_branch, summary.branch)
+        recomputed = build_provenance(diff=diff, journal_head=summary.journal_head)
+        if recomputed.diff_hash != summary.provenance.diff_hash:
+            click.echo(
+                "note: the branch changed while the pull request was being opened; "
+                "the description was not anchored to a diff.",
+                err=True,
+            )
+            return
+        attest_pr_description(
+            workdir=cwd,
+            pr_url=pr_url,
+            repo=_repo_slug_from_pr_url(pr_url),
+            issue_body=issue_body,
+            description=description,
+            diff=diff,
+            journal_head=summary.journal_head,
+            task_id=summary.session_id,
+        )
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        click.echo(f"note: could not anchor the pull-request description: {exc}", err=True)

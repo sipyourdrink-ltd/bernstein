@@ -133,12 +133,21 @@ def test_title_falls_back_to_goal_when_changes_summary_empty() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_body_uses_changes_summary_for_change_section() -> None:
-    summary = _fixture_summary(changes_summary="- Add JWT auth: wired refresh tokens\n- Fix login: patched redirect")
+def test_body_describes_the_diff_not_the_wrapups_task_status() -> None:
+    """The Change section is projected from the diff, never from run telemetry.
+
+    The wrap-up's change bullets are task rows whose result summaries are
+    whatever an agent typed on completion -- usually ``Completed: <the task
+    title again>``. Rendering them made the pull request describe the session
+    (#4484), so the section now comes from the diff and the summary reaches
+    only the title, and then only when no commits are known.
+    """
+    summary = _fixture_summary(changes_summary="- Add JWT auth: Completed: Add JWT auth\n- Fix login: patched redirect")
     body = build_pr_body(summary)
     assert "## Change" in body
-    assert "Add JWT auth: wired refresh tokens" in body
-    assert "Fix login: patched redirect" in body
+    assert "src/auth.py" in body  # from diff_stat in code fence
+    assert "Completed:" not in body
+    assert "patched redirect" not in body
 
 
 def test_body_falls_back_to_diff_stat_when_changes_summary_empty() -> None:

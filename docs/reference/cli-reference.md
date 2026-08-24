@@ -1415,12 +1415,21 @@ See [`reference/mcp-catalog.md`](mcp-catalog.md) for the full reference.
 
 #### `bernstein pr`
 
+The title names the commit that changed the most under `src/`; merge, `[WIP]`,
+`style:`/`chore:`, formatter and lint-repair commits and generated-context-file
+syncs are excluded, so a run that ends with upkeep is still titled after the
+change it made. The body is composed from the linked issue's problem statement,
+the files the diff touches and the gates that ran, and carries a Provenance
+block naming the diff hash and the run's journal head; `bernstein review-receipt
+verify` recomputes both and rejects a description whose diff has since changed.
+
 | Flag | Default | Meaning |
 |---|---|---|
 | `--session-id ID` | most recent completed session | Session to publish. |
 | `--base BRANCH` | main | Base branch for the pull request. |
-| `--issue N\|URL` | none | Title the PR from a GitHub issue and open its body with `Closes #N`. Reads the issue, so `--dry-run` makes that one request. |
-| `--title TEXT` | auto-generated | Override the PR title. |
+| `--issue N\|URL` | none | Link the PR to a GitHub issue: the issue's problem statement opens the body, `Closes #N` links it, and its title names the PR when the run left only housekeeping commits. Reads the issue, so `--dry-run` makes that one request. |
+| `--title TEXT` | the dominant commit's subject | Override the PR title. |
+| `--body TEXT` | generated from the diff | Override the PR body. `Closes #N` is still prepended with `--issue`. |
 | `--draft` | off | Open as a draft PR. |
 | `--dry-run` | off | Print the would-be title and body without calling `gh`. Reads the issue when `--issue` is given. |
 | `--no-push` | off | Skip `git push`; assume the branch is already on origin. |

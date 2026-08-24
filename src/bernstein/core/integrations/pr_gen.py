@@ -6,6 +6,19 @@ markdown body of a GitHub pull request.  It is deliberately free of
 isolation; the CLI wrapper in :mod:`bernstein.cli.commands.pr_cmd`
 handles I/O, git push and ``gh`` invocation.
 
+The description is composed from the *change*, not from the run that made
+it. A run's last commit is often housekeeping - a lint repair, a formatting
+pass, a regenerated context file - so titling the pull request after the
+newest subject names the wrong change; :func:`rank_commits` orders the
+branch's commits by how much they alter ``src/`` and drops the structurally
+housekeeping ones, and the surviving dominant subject titles the pull
+request. The body follows the same rule: the linked issue's problem
+statement, the files the diff touches, and the gates that actually ran.
+:func:`build_provenance` binds the result to the diff hash and the run's
+journal head, and :func:`attest_pr_description` anchors that binding through
+the existing review-receipt machinery so a reader can check offline that the
+description belongs to this diff.
+
 The module reuses existing Bernstein state:
 
 * :class:`bernstein.core.persistence.session.SessionState` - run-level
@@ -25,12 +38,15 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
+
+    from bernstein.core.review.receipt import ReviewReceipt
 
 
 _WRAPUP_GLOB = "*-wrapup.json"
@@ -49,13 +65,22 @@ _EVENT_TASK_DIFF_CAPTURED = "task_diff_captured"
 
 
 __all__ = [
+    "ChangeProvenance",
+    "CommitRecord",
     "EvidenceSummary",
+    "FileChange",
     "GateResult",
     "MergedChange",
     "SessionSummary",
+    "attest_pr_description",
     "build_pr_body",
     "build_pr_title",
+    "build_provenance",
+    "dominant_commit",
+    "is_housekeeping_commit",
     "load_session_summary",
+    "parse_commit_log",
+    "rank_commits",
 ]
 
 
@@ -113,6 +138,69 @@ _LABEL_TYPES: Mapping[str, str] = {
 # Fixed order rather than label order, so the same issue always produces the
 # same title however the tracker happens to list its labels.
 _LABEL_TYPE_PRECEDENCE = ("fix", "docs", "perf", "refactor", "test", "build", "ci", "chore", "feat")
+
+# Where behaviour lives. Commits are ranked by how much they change under this
+# prefix, so a large test or docs commit never outranks the feature it covers.
+_SRC_PREFIX = "src/"
+
+# Conventional-commit types that state outright that a commit is upkeep.
+_HOUSEKEEPING_TYPES = frozenset({"style", "chore"})
+
+_CC_SUBJECT_RE = re.compile(r"^(?P<type>[a-z]+)(?:\([^)]*\))?!?:\s", re.IGNORECASE)
+
+# Markers for a commit that was never meant to describe anything.
+_WIP_SUBJECT_RE = re.compile(r"^\s*(?:\[wip\]|wip\b|fixup!|squash!|amend!)", re.IGNORECASE)
+
+# The wording a repair commit uses whatever conventional-commit type it
+# claims. ``fix: resolve lint gate failures`` is typed ``fix`` and is still
+# upkeep, so the type check alone cannot catch it.
+_HOUSEKEEPING_PHRASE_RE = re.compile(
+    r"\b(?:"
+    r"lint|linter|linting|ruff|black|isort|prettier|eslint|gofmt|rustfmt"
+    r"|formatter|formatting|reformat(?:ted|ting)?|auto-?formatt?(?:ed|ing)?"
+    r"|pre-commit|whitespace|typos?|regenerat(?:e|ed|es|ing|ion)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# Agent-context files a run regenerates. A commit that touches only these
+# synced nothing but its own instructions.
+_GENERATED_CONTEXT_NAMES = frozenset(
+    {
+        "AGENTS.md",
+        "CLAUDE.md",
+        "CONVENTIONS.md",
+        "GEMINI.md",
+        ".clinerules",
+        ".cursorrules",
+        ".windsurfrules",
+        "copilot-instructions.md",
+    }
+)
+_GENERATED_CONTEXT_DIRS = (".cursor/", ".github/instructions/")
+
+#: Separators the commit-log format uses. ASCII record/unit separators cannot
+#: occur in a commit subject, so parsing never has to guess.
+_COMMIT_RECORD_SEP = "\x1e"
+_COMMIT_FIELD_SEP = "\x1f"
+
+#: Newline split for commit-log parsing. ``str.splitlines`` also breaks on the
+#: ASCII record separator the format uses, which would consume every marker.
+_LINE_SPLIT_RE = re.compile(r"\r?\n")
+
+#: The ``git log --format`` string :func:`parse_commit_log` expects. Exported
+#: so the CLI asks for exactly the shape the parser reads.
+COMMIT_LOG_FORMAT = f"format:{_COMMIT_RECORD_SEP}%H{_COMMIT_FIELD_SEP}%P{_COMMIT_FIELD_SEP}%s"
+
+# How many files the Change section names before it stops listing them.
+_MAX_FILES_LISTED = 20
+
+# How much of the linked issue's body the Problem section quotes.
+_PROBLEM_MAX_CHARS = 600
+
+#: Verdict recorded on a receipt that attests a pull-request description
+#: rather than a code review, so the two are told apart on read-back.
+DESCRIPTION_VERDICT = "description"
 
 
 @dataclass(frozen=True)
@@ -188,6 +276,82 @@ class MergedChange:
 
 
 @dataclass(frozen=True)
+class FileChange:
+    """One file a commit touched, with the line churn git reported.
+
+    Attributes:
+        path: Repository-relative path.
+        added: Lines added; ``0`` for a binary change, which git reports as
+            ``-`` rather than a count.
+        removed: Lines removed; ``0`` for a binary change.
+    """
+
+    path: str
+    added: int = 0
+    removed: int = 0
+
+    @property
+    def churn(self) -> int:
+        """Lines the file gained plus lines it lost."""
+        return self.added + self.removed
+
+
+@dataclass(frozen=True)
+class CommitRecord:
+    """One commit on the branch a pull request is opened from.
+
+    Attributes:
+        sha: Full commit hash.
+        subject: The commit's first line.
+        is_merge: Whether the commit has more than one parent.
+        files: The files the commit touched, with their churn. Merge commits
+            and empty commits carry none.
+    """
+
+    sha: str
+    subject: str
+    is_merge: bool = False
+    files: tuple[FileChange, ...] = ()
+
+    @property
+    def short_sha(self) -> str:
+        """The abbreviated hash shown next to the subject in the body."""
+        return self.sha[:7]
+
+    @property
+    def src_churn(self) -> int:
+        """Lines this commit changed under :data:`_SRC_PREFIX`."""
+        return sum(f.churn for f in self.files if f.path.startswith(_SRC_PREFIX))
+
+    @property
+    def total_churn(self) -> int:
+        """Lines this commit changed anywhere in the tree."""
+        return sum(f.churn for f in self.files)
+
+
+@dataclass(frozen=True)
+class ChangeProvenance:
+    """The binding between a pull-request description and what it describes.
+
+    A description is prose, and prose can be written about any diff. These two
+    values are what make it checkable: the diff the description was composed
+    from, and the run journal head identifying every step that produced it.
+    Both are recomputable, so a reader can tell a description that belongs to
+    this diff from one that does not.
+
+    Attributes:
+        diff_hash: ``sha256:`` content hash of the diff bytes, computed by
+            :func:`bernstein.core.review.receipt.compute_diff_hash` - the same
+            function ``review-receipt verify`` recomputes with.
+        journal_head: The run journal's Merkle head, or ``""`` when the run
+            left no journal.
+    """
+
+    diff_hash: str
+    journal_head: str = ""
+
+
+@dataclass(frozen=True)
 class SessionSummary:
     """Everything the PR generator needs from one completed session.
 
@@ -210,6 +374,15 @@ class SessionSummary:
         cost: Aggregate cost figures for the session.
         evidence: Sealed evidence bundle for the task, or ``None`` when the
             task declared no evidence producers.
+        issue_problem: The linked issue's body. Its first paragraph is the
+            Problem section, so the pull request states the problem the issue
+            states rather than the instructions the run was handed.
+        commits: The branch's commits, newest first. When present they are
+            what the title and the Change section are derived from.
+        journal_head: The run journal's Merkle head, carried into
+            :class:`ChangeProvenance`.
+        provenance: The description's binding to the diff it describes, or
+            ``None`` when no diff was available to hash.
     """
 
     session_id: str
@@ -223,6 +396,186 @@ class SessionSummary:
     gates: tuple[GateResult, ...] = ()
     cost: CostBreakdown = field(default_factory=CostBreakdown)
     evidence: EvidenceSummary | None = None
+    issue_problem: str = ""
+    commits: tuple[CommitRecord, ...] = ()
+    journal_head: str = ""
+    provenance: ChangeProvenance | None = None
+
+
+# ---------------------------------------------------------------------------
+# Commit ranking - which commit the pull request is about
+# ---------------------------------------------------------------------------
+
+
+def _is_generated_context_path(path: str) -> bool:
+    """Whether ``path`` is an agent-context file a run regenerates."""
+    name = path.rsplit("/", 1)[-1]
+    return name in _GENERATED_CONTEXT_NAMES or path.startswith(_GENERATED_CONTEXT_DIRS)
+
+
+def is_housekeeping_commit(commit: CommitRecord) -> bool:
+    """Whether ``commit`` is structural upkeep rather than the change itself.
+
+    Housekeeping is decided from the commit's shape and its subject, never
+    from its position in the branch - the failure this guards against is a run
+    that *ends* with upkeep, and "last commit wins" is exactly what named the
+    whole pull request after a lint repair.
+
+    A commit is housekeeping when any of the following holds:
+
+    * it is a merge commit, or it touches no files at all;
+    * its subject is a work-in-progress or rebase marker (``[WIP]``,
+      ``fixup!``, ``squash!``, ``amend!``);
+    * its conventional-commit type is ``style`` or ``chore``;
+    * its subject names a formatter, a linter or a regeneration - the wording
+      a repair commit uses whatever type it claims, which is how ``fix:
+      resolve lint gate failures`` slipped through a type-only check;
+    * every file it touches is a generated agent-context file.
+
+    The wording rule can misread a genuine change to the lint setup itself.
+    That misread is benign: a run whose *only* substantive commit is
+    classified away falls back to the linked issue's title, which for such a
+    run says the same thing.
+
+    Args:
+        commit: The commit to classify.
+
+    Returns:
+        ``True`` when the commit must not name the pull request.
+    """
+    if commit.is_merge or not commit.files:
+        return True
+
+    subject = commit.subject.strip()
+    if not subject or _WIP_SUBJECT_RE.match(subject):
+        return True
+
+    conventional = _CC_SUBJECT_RE.match(subject)
+    if conventional is not None and conventional.group("type").lower() in _HOUSEKEEPING_TYPES:
+        return True
+
+    if _HOUSEKEEPING_PHRASE_RE.search(subject):
+        return True
+
+    return all(_is_generated_context_path(f.path) for f in commit.files)
+
+
+def rank_commits(commits: Iterable[CommitRecord]) -> tuple[CommitRecord, ...]:
+    """Return the substantive commits, the one that changed the most first.
+
+    Ranking is by ``src/`` churn, because that is where behaviour lives; ties
+    break on whole-tree churn and then on input order, so the same branch
+    always produces the same ranking however git happened to list it.
+    Housekeeping commits are dropped rather than ranked last: they are not
+    candidates to name the pull request at all.
+
+    Args:
+        commits: The branch's commits, in any order.
+
+    Returns:
+        The substantive commits, most-changed first. Empty when every commit
+        is housekeeping.
+    """
+    substantive = [(index, commit) for index, commit in enumerate(commits) if not is_housekeeping_commit(commit)]
+    substantive.sort(key=lambda pair: (-pair[1].src_churn, -pair[1].total_churn, pair[0]))
+    return tuple(commit for _, commit in substantive)
+
+
+def dominant_commit(commits: Iterable[CommitRecord]) -> CommitRecord | None:
+    """Return the commit the pull request is about, or ``None``.
+
+    Args:
+        commits: The branch's commits, in any order.
+
+    Returns:
+        The highest-ranked substantive commit, or ``None`` when the run left
+        nothing but housekeeping and the caller must fall back to the issue.
+    """
+    ranked = rank_commits(commits)
+    return ranked[0] if ranked else None
+
+
+def parse_commit_log(raw: str) -> tuple[CommitRecord, ...]:
+    """Parse ``git log --format=<record> --numstat`` output into records.
+
+    The expected format is the one :data:`COMMIT_LOG_FORMAT` asks for: each
+    commit opens with an ASCII record separator followed by
+    ``<sha>\x1f<parents>\x1f<subject>``, and its ``--numstat`` rows follow
+    until the next separator. Anything that does not parse is skipped rather
+    than raising, so a malformed row costs one commit and not the whole
+    description.
+
+    Args:
+        raw: Raw stdout from the git invocation.
+
+    Returns:
+        One :class:`CommitRecord` per commit, in git's output order.
+    """
+    records: list[CommitRecord] = []
+    sha = ""
+    subject = ""
+    is_merge = False
+    files: list[FileChange] = []
+    started = False
+
+    def flush() -> None:
+        if started and sha:
+            records.append(CommitRecord(sha=sha, subject=subject, is_merge=is_merge, files=tuple(files)))
+
+    # ``str.splitlines`` treats the ASCII record separator as a line boundary
+    # and would eat the very marker the format uses, so split on newlines only.
+    for line in _LINE_SPLIT_RE.split(raw):
+        if line.startswith(_COMMIT_RECORD_SEP):
+            flush()
+            fields = line[len(_COMMIT_RECORD_SEP) :].split(_COMMIT_FIELD_SEP)
+            sha = fields[0].strip() if fields else ""
+            parents = fields[1].split() if len(fields) > 1 else []
+            subject = fields[2].strip() if len(fields) > 2 else ""
+            is_merge = len(parents) > 1
+            files = []
+            started = True
+            continue
+        if not started or not line.strip():
+            continue
+        parsed = _parse_numstat_row(line)
+        if parsed is not None:
+            files.append(parsed)
+    flush()
+    return tuple(records)
+
+
+def _parse_numstat_row(line: str) -> FileChange | None:
+    """Parse one ``<added>\\t<removed>\\t<path>`` row, or return ``None``."""
+    parts = line.split("\t")
+    if len(parts) < 3:
+        return None
+    added, removed, path = parts[0].strip(), parts[1].strip(), parts[2].strip()
+    if not path:
+        return None
+    return FileChange(path=_normalise_rename(path), added=_numstat_count(added), removed=_numstat_count(removed))
+
+
+def _numstat_count(value: str) -> int:
+    """Return a numstat count, mapping git's ``-`` (binary) to ``0``."""
+    try:
+        return max(int(value), 0)
+    except ValueError:
+        return 0
+
+
+def _normalise_rename(path: str) -> str:
+    """Return the destination path of a git rename notation.
+
+    ``git`` renders a rename as ``old => new`` or ``dir/{old => new}/file``;
+    the destination is the path the pull request actually changed.
+    """
+    if "=>" not in path:
+        return path
+    if "{" in path and "}" in path:
+        prefix, rest = path.split("{", 1)
+        inner, suffix = rest.split("}", 1)
+        return f"{prefix}{inner.split('=>', 1)[-1].strip()}{suffix}"
+    return path.split("=>", 1)[-1].strip()
 
 
 # ---------------------------------------------------------------------------
@@ -352,40 +705,53 @@ def build_pr_title(
     labels: Iterable[str] = (),
     *,
     changes_summary: str = "",
+    commits: Iterable[CommitRecord] = (),
 ) -> str:
     """Compose a conventional-commit pull-request title.
 
     The result is truncated to :data:`_TITLE_MAX_CHARS` characters with a
-    trailing ellipsis when the cleaned goal is longer.  The shape is
+    trailing ellipsis when the cleaned outcome is longer.  The shape is
     always ``"<type>: <outcome>"``.
 
-    When ``changes_summary`` is non-empty the outcome is derived from the
-    first change line (what landed) rather than the goal (what was asked).
-    The conventional-commit type still uses the goal, labels and role so a
-    ``bug``-labelled issue never opens a ``feat:`` PR regardless of wording.
+    The outcome names the dominant change. When ``commits`` are supplied they
+    settle it: :func:`dominant_commit` picks the commit that altered ``src/``
+    most among the non-housekeeping ones, and its subject is the outcome. A
+    run that left nothing but housekeeping has no substantive subject to
+    offer, so the title falls back to ``task_goal`` - the linked issue's
+    title, as the CLI passes it. Only when no commits are known at all does
+    the wrap-up's ``changes_summary`` get a say.
+
+    The conventional-commit type comes from the same string the outcome does,
+    then labels, then role - so a ``bug``-labelled issue never opens a
+    ``feat:`` PR on wording alone.
 
     Args:
-        task_goal: Session goal or first-task title.
+        task_goal: Session goal or, when one is linked, the issue title.
         role: Primary role for the session, used as a classification
-            hint when the goal offers no other signal.
+            hint when nothing stronger is available.
         labels: Labels on the linked issue. They outrank both the wording
             and the role, so a PR never announces a change type the issue
             it closes contradicts.
         changes_summary: Newline-separated change bullets from the wrap-up.
-            When non-empty, the outcome is derived from the first line
-            instead of the goal.
+            Consulted only when ``commits`` is empty.
+        commits: The branch's commits. When non-empty they decide the
+            outcome.
 
     Returns:
         A title at most :data:`_TITLE_MAX_CHARS` characters long.
     """
-    prefix = _classify(task_goal, role, labels)
+    known = tuple(commits)
+    dominant = dominant_commit(known) if known else None
 
-    outcome_source = task_goal
-    if changes_summary.strip():
-        extracted = _outcome_from_changes_summary(changes_summary)
-        if extracted:
-            outcome_source = extracted
+    if dominant is not None:
+        outcome_source = dominant.subject
+    elif known:
+        # Every commit was housekeeping: none of them may name the PR.
+        outcome_source = task_goal
+    else:
+        outcome_source = _outcome_from_changes_summary(changes_summary) or task_goal
 
+    prefix = _classify(outcome_source if dominant is not None else task_goal, role, labels)
     outcome = _shape_outcome(outcome_source)
 
     full = f"{prefix}: {outcome}"
@@ -405,9 +771,11 @@ def build_pr_title(
 def _problem_line(goal: str) -> str:
     """Reduce a goal to a single one-line problem statement.
 
-    Only the first sentence (split on ``.`` or ``;``) is kept so the full
-    issue body is never pasted verbatim.  For a goal like ``Resolve GitHub
-    issue #N: <issue title>`` the title portion after the colon is returned.
+    A run's goal is the brief it was handed, so everything after the first
+    blank line is standing instructions ("Work only inside this repository")
+    rather than the problem; it is dropped before the first sentence is taken.
+    For a goal like ``Resolve GitHub issue #N: <issue title>`` the title
+    portion after the colon is returned.
 
     Args:
         goal: The raw goal string.
@@ -417,12 +785,52 @@ def _problem_line(goal: str) -> str:
     """
     stripped = goal.strip()
     if not stripped:
-        return "Automated session completed with no explicit goal."
-    first = re.split(r"[.;]\s+", stripped, maxsplit=1)[0].strip()
+        return "No linked issue and no recorded goal; the change is described below."
+    lead = re.split(r"\n\s*\n", stripped, maxsplit=1)[0].strip()
+    first = re.split(r"[.;]\s+", lead, maxsplit=1)[0].strip()
     # A ``Resolve GitHub issue #N: <title>`` goal: the title is the problem.
     if ": " in first:
         first = first.split(": ", 1)[1].strip()
-    return first or stripped
+    return first or lead
+
+
+def _problem_statement(session: SessionSummary) -> str:
+    """Return the Problem section's text.
+
+    The linked issue states the problem; the run's goal only restates it,
+    wrapped in the instructions the run was given. So the issue body's first
+    paragraph wins whenever there is one, and the goal is the fallback for an
+    unlinked run.
+
+    Args:
+        session: The session being described.
+
+    Returns:
+        The problem statement, never empty.
+    """
+    paragraph = _first_paragraph(session.issue_problem)
+    return paragraph or _problem_line(session.goal)
+
+
+def _first_paragraph(text: str) -> str:
+    """Return the first prose paragraph of ``text``, capped in length.
+
+    Leading markdown headings ("## Problem") and blockquote markers are
+    skipped so an issue that opens with a heading still yields prose.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return ""
+    for block in re.split(r"\n\s*\n", stripped):
+        lines = [line.strip() for line in block.splitlines()]
+        kept = [line for line in lines if line and not line.startswith("#")]
+        paragraph = " ".join(kept).strip()
+        if not paragraph:
+            continue
+        if len(paragraph) > _PROBLEM_MAX_CHARS:
+            return paragraph[:_PROBLEM_MAX_CHARS].rstrip() + "…"
+        return paragraph
+    return ""
 
 
 def _format_gates(gates: tuple[GateResult, ...]) -> str:
@@ -479,15 +887,71 @@ def _format_merged_changes(merged: tuple[MergedChange, ...]) -> str:
     return "\n".join(lines)
 
 
-def _format_changes(session: SessionSummary) -> str:
-    """Render the Changes section from the diff-stat and the merged tasks.
+def _format_file_lines(files: Iterable[FileChange]) -> list[str]:
+    """Render the files a commit touched, largest change first."""
+    ordered = sorted(files, key=lambda f: (-f.churn, f.path))
+    lines = [f"- `{change.path}` (+{change.added}/-{change.removed})" for change in ordered[:_MAX_FILES_LISTED]]
+    remaining = len(ordered) - len(lines)
+    if remaining > 0:
+        lines.append(f"- _…and {remaining} more file(s)._")
+    return lines
 
-    A run whose branch has already been folded into the base leaves ``git
-    diff`` with nothing to report, which is how a PR full of merged work came
-    to say no changes were recorded. The journal knows better, so both are
-    shown and the fallback line is reached only when neither has anything.
+
+def _format_commit_changes(commits: tuple[CommitRecord, ...]) -> str:
+    """Render the Change section from the branch's commits.
+
+    The dominant commit leads with the files it altered, so a reader sees the
+    change the pull request is about before anything else. Remaining
+    substantive commits follow as one line each, and housekeeping commits are
+    listed last and labelled, so they are visible without being mistaken for
+    the point of the branch.
+
+    Args:
+        commits: The branch's commits, in git's order.
+
+    Returns:
+        The rendered section, or ``""`` when there are no commits to render.
+    """
+    if not commits:
+        return ""
+
+    ranked = rank_commits(commits)
+    housekeeping = [commit for commit in commits if is_housekeeping_commit(commit) and not commit.is_merge]
+
+    lines: list[str] = []
+    if ranked:
+        lead, *rest = ranked
+        lines.append(f"{lead.subject.strip()} (`{lead.short_sha}`)")
+        lines.append("")
+        lines.extend(_format_file_lines(lead.files))
+        if rest:
+            lines.append("")
+            lines.append("Also in this branch:")
+            lines.extend(f"- {commit.subject.strip()} (`{commit.short_sha}`)" for commit in rest)
+
+    if housekeeping:
+        if lines:
+            lines.append("")
+        lines.append("Housekeeping, not what this pull request is about:")
+        lines.extend(f"- {commit.subject.strip()} (`{commit.short_sha}`)" for commit in housekeeping)
+
+    return "\n".join(lines)
+
+
+def _format_changes(session: SessionSummary) -> str:
+    """Render the Changes section from the commits, diff-stat and merged tasks.
+
+    The commits are the primary source: they say what the diff does and which
+    files it alters. The diff-stat and the run journal's merge rows follow as
+    corroboration - a run whose branch has already been folded into the base
+    leaves ``git diff`` with nothing to report, which is how a PR full of
+    merged work came to say no changes were recorded. The fallback line is
+    reached only when none of the three has anything.
     """
     blocks: list[str] = []
+    commit_block = _format_commit_changes(session.commits)
+    if commit_block:
+        blocks.append(commit_block)
     if session.diff_stat.strip():
         blocks.append(_format_diff_stat(session.diff_stat))
     if session.merged_changes:
@@ -495,6 +959,17 @@ def _format_changes(session: SessionSummary) -> str:
     if not blocks:
         return _format_diff_stat("")
     return "\n\n".join(blocks)
+
+
+def _format_provenance(provenance: ChangeProvenance) -> str:
+    """Render the Provenance block binding the description to its diff."""
+    return "\n".join(
+        [
+            f"- **Diff:** `{provenance.diff_hash}`",
+            f"- **Journal head:** `{provenance.journal_head or 'unrecorded'}`",
+            "- **Verify:** `bernstein review-receipt verify --pr <this PR> --issue <issue.md> --diff <pr.diff>`",
+        ]
+    )
 
 
 def _format_evidence(evidence: EvidenceSummary) -> str:
@@ -525,6 +1000,13 @@ def build_pr_body(session: SessionSummary) -> str:
     Change, Verification and Cost - are always present even when the
     underlying data is empty, so tests can rely on their presence.
 
+    Every section is projected from the change: the linked issue states the
+    problem, the commits and their files state what the diff does, and the
+    gates state what was actually run. The session's own status text - the
+    wrap-up's task-completion lines - is deliberately not a source: it
+    describes the run, and a reader of the pull request is asking about the
+    diff.
+
     Args:
         session: The fully-populated session summary.
 
@@ -537,14 +1019,12 @@ def build_pr_body(session: SessionSummary) -> str:
     # with a single regex.
     short_id = session.session_id[:12] if session.session_id else "unknown"
 
-    change_block = session.changes_summary.strip() or _format_changes(session)
-
     parts: list[str] = [
         "## Problem",
-        _problem_line(session.goal),
+        _problem_statement(session),
         "",
         "## Change",
-        change_block,
+        _format_changes(session),
         "",
         "## Verification",
         _format_gates(session.gates),
@@ -559,6 +1039,16 @@ def build_pr_body(session: SessionSummary) -> str:
             _format_evidence(session.evidence),
             "",
         ]
+    # The description is prose about a diff, and prose can be written about
+    # any diff. The block below is what makes this one checkable: the diff it
+    # was composed from and the journal head of the run that produced it, both
+    # recomputable by ``review-receipt verify``.
+    if session.provenance is not None:
+        parts += [
+            "## Provenance",
+            _format_provenance(session.provenance),
+            "",
+        ]
     parts += [
         "## Cost",
         _format_cost(session.cost),
@@ -569,6 +1059,92 @@ def build_pr_body(session: SessionSummary) -> str:
         f"bernstein-session-id: {short_id}",
     ]
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Provenance - binding the description to the diff it describes
+# ---------------------------------------------------------------------------
+
+
+def build_provenance(*, diff: bytes, journal_head: str = "") -> ChangeProvenance:
+    """Bind a description to its diff and to the run that produced it.
+
+    The diff hash comes from
+    :func:`bernstein.core.review.receipt.compute_diff_hash` - the same
+    function ``review-receipt verify`` recomputes with, so there is one
+    hashing path and a description cannot be bound by a rule the verifier
+    does not apply.
+
+    Args:
+        diff: The pull request's diff bytes.
+        journal_head: The run journal's Merkle head, when the run left one.
+
+    Returns:
+        The :class:`ChangeProvenance` the body renders.
+    """
+    from bernstein.core.review.receipt import compute_diff_hash
+
+    return ChangeProvenance(diff_hash=compute_diff_hash(diff), journal_head=journal_head)
+
+
+def attest_pr_description(
+    *,
+    workdir: Path,
+    pr_url: str,
+    repo: str,
+    issue_body: str,
+    description: str,
+    diff: bytes,
+    journal_head: str = "",
+    task_id: str = "",
+    timestamp: int | None = None,
+    hmac_key: bytes | None = None,
+) -> ReviewReceipt:
+    """Anchor a pull-request description against the diff it describes.
+
+    The description takes the receipt's ``plan`` slot: the receipt then binds
+    ``{issue, description, journal head, diff}`` in one signed, spine-anchored
+    record, which is exactly the question a reader of the description has -
+    does this text belong to this diff. ``bernstein review-receipt verify``
+    answers it offline and rejects a diff that has since changed.
+
+    Args:
+        workdir: Project root; the receipt lands under ``.sdd/reviews/``.
+        pr_url: The pull request the description was posted to.
+        repo: ``owner/repo`` slug.
+        issue_body: The linked issue's body, or ``""`` when unlinked.
+        description: The posted description (title and body).
+        diff: The diff the description describes.
+        journal_head: The run journal's Merkle head.
+        task_id: Task the run is attributed to.
+        timestamp: Receipt timestamp; defaults to now. Passing one makes the
+            receipt byte-identical across runs of the same inputs.
+        hmac_key: Audit-chain key; defaults to the install's own.
+
+    Returns:
+        The signed, anchored receipt.
+    """
+    from bernstein.core.review.receipt import emit_review_receipt, load_or_create_review_identity
+    from bernstein.core.security.audit import load_or_create_audit_key
+
+    private_pem, public_pem = load_or_create_review_identity(workdir / ".sdd" / "identity")
+    return emit_review_receipt(
+        workdir=workdir,
+        lineage_root=workdir / ".sdd" / "lineage",
+        hmac_key=hmac_key if hmac_key is not None else load_or_create_audit_key(),
+        private_key_pem=private_pem,
+        public_key_pem=public_pem,
+        pr_url=pr_url,
+        repo=repo,
+        issue_body=issue_body,
+        plan=description,
+        journal_head=journal_head,
+        diff=diff,
+        findings=(),
+        verdict=DESCRIPTION_VERDICT,
+        task_id=task_id,
+        timestamp=timestamp if timestamp is not None else int(time.time()),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -793,6 +1369,38 @@ def _merged_changes_from_journal(run_dir: Path) -> tuple[MergedChange, ...]:
     return tuple(changes)
 
 
+def _journal_head(run_dir: Path) -> str:
+    """Return the run journal's Merkle head, or ``""`` when unreadable.
+
+    The head is the ``event_hash`` of the journal's last row - the same value
+    :meth:`bernstein.core.replay.journal.EventJournal.head` reports, read off
+    disk here because the run has already finished by the time a PR is opened.
+
+    Args:
+        run_dir: The run's directory under ``.sdd/runs/``.
+
+    Returns:
+        The head hash, or ``""`` when the journal is missing or empty.
+    """
+    journal = run_dir / _RUN_JOURNAL_FILENAME
+    try:
+        lines = journal.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        try:
+            row: object = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            head = {str(k): v for k, v in row.items()}.get("event_hash")  # type: ignore[reportUnknownVariableType]
+            if isinstance(head, str) and head:
+                return head
+    return ""
+
+
 def _as_count(value: object) -> int:
     """Coerce a journal count field to a non-negative int."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -905,6 +1513,7 @@ def load_session_summary(
     evidence = _evidence_summary_for_task(root, _candidate_task_ids(wrapup))
 
     merged_changes = _merged_changes_from_journal(run_dir) if run_dir else ()
+    journal_head = _journal_head(run_dir) if run_dir else ""
 
     return SessionSummary(
         session_id=resolved_id,
@@ -918,4 +1527,5 @@ def load_session_summary(
         gates=gates,
         cost=cost,
         evidence=evidence,
+        journal_head=journal_head,
     )
