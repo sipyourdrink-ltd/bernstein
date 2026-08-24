@@ -299,6 +299,11 @@ class JournalVerifyResult:
         discarded_line_indices: 0-based physical lines hidden by tolerant
             parsing.
         errors: Human-readable divergence explanations.
+        unauthenticated_fields: Names of the wall-clock envelope and derived
+            chain fields excluded from the Merkle ``payload_hash`` (the
+            ``_NON_DETERMINISTIC_FIELDS`` set). Downstream consumers (CLI,
+            receipt export) surface these so operators can see which fields
+            are not covered by the chain.
     """
 
     chain_consistent: bool
@@ -311,6 +316,7 @@ class JournalVerifyResult:
     head: str = ""
     discarded_line_indices: tuple[int, ...] = ()
     errors: list[str] = field(default_factory=list[str])
+    unauthenticated_fields: tuple[str, ...] = field(default_factory=lambda: tuple(sorted(_NON_DETERMINISTIC_FIELDS)))
 
 
 #: Cheap identity-and-length token for a journal file: ``(st_ino, st_dev,
@@ -1090,6 +1096,7 @@ def verify_journal(path: Path, *, seal: JournalSeal | None = None) -> JournalVer
         head=chain.head,
         discarded_line_indices=loaded.discarded_line_indices,
         errors=errors,
+        unauthenticated_fields=tuple(sorted(_NON_DETERMINISTIC_FIELDS)),
     )
 
 
@@ -1116,6 +1123,7 @@ def verify_events(events: list[dict[str, Any]]) -> JournalVerifyResult:
             coverage=JournalCoverageStatus.COMPLETE,
             identity=JournalIdentityStatus.UNVERIFIABLE,
             count=0,
+            unauthenticated_fields=tuple(sorted(_NON_DETERMINISTIC_FIELDS)),
         )
 
     prev_hash = _GENESIS_HASH
@@ -1143,6 +1151,7 @@ def verify_events(events: list[dict[str, Any]]) -> JournalVerifyResult:
                 actual_hash=stored_hash,
                 head=prev_hash,
                 errors=[reason],
+                unauthenticated_fields=tuple(sorted(_NON_DETERMINISTIC_FIELDS)),
             )
         prev_hash = stored_hash
 
@@ -1152,6 +1161,7 @@ def verify_events(events: list[dict[str, Any]]) -> JournalVerifyResult:
         identity=JournalIdentityStatus.UNVERIFIABLE,
         count=len(events),
         head=prev_hash,
+        unauthenticated_fields=tuple(sorted(_NON_DETERMINISTIC_FIELDS)),
     )
 
 
