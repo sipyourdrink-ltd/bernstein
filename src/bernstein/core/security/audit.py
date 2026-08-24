@@ -748,6 +748,18 @@ def _verify_log_bytes(
         # domain prefix. The scheme stays in the entry so the canonical-byte
         # check below and the HMAC computation both cover it.
         scheme = entry.get("scheme", SCHEME_V1)
+        if scheme not in (SCHEME_V1, SCHEME_V2):
+            # An unknown scheme must not silently fall back to v1: the verifier
+            # could not pick the right key, so it cannot authenticate the
+            # record. Surface it as a hard failure rather than guessing.
+            _fail(
+                line_no,
+                line_offset,
+                len(raw_line),
+                "unsupported_scheme",
+                (f"{display_name}:{line_no}: unsupported audit scheme {scheme!r}",),
+            )
+            continue
 
         # Tamper-evidence beyond JSON: ``json.loads`` accepts incidental
         # whitespace (e.g. a trailing ``\r`` after ``}``) which would
@@ -873,6 +885,10 @@ def _record_is_locally_valid(key: bytes, entry: dict[str, Any], scheme: int | No
     """
     if scheme is None:
         scheme = entry.get("scheme", SCHEME_V1)
+    if scheme not in (SCHEME_V1, SCHEME_V2):
+        # An unknown scheme cannot be authenticated (the verifier would not
+        # know which key/prefix to use), so it is never locally valid.
+        return False
     if scheme == SCHEME_V2:
         verify_key = derive_store_key(key, DOMAIN_AUDIT)
         verify_prefix = domain_tag(DOMAIN_AUDIT, SCHEME_V2)

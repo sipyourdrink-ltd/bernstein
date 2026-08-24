@@ -22,8 +22,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from bernstein.core.lineage.spine import LineageSpine
 from bernstein.core.replay.journal import EventJournal
 from bernstein.core.replay.run_receipt import (
+    _GENESIS,  # pyright: ignore[reportPrivateUsage]
     RUN_RECEIPT_FILENAME,
     RunReceiptError,
+    _walk_spine_rows,  # pyright: ignore[reportPrivateUsage]
     build_run_receipt,
     verify_run_receipt,
     write_run_receipt_if_configured,
@@ -433,6 +435,32 @@ def test_incomplete_spine_never_signed(tmp_path: Path, bad_line: str, match: str
     with pytest.raises(RunReceiptError, match=match):
         build_run_receipt(_RUN_ID, sdd, _kms(tmp_path))
     assert not (sdd / "runs" / _RUN_ID / RUN_RECEIPT_FILENAME).exists()
+
+
+def test_walk_spine_rows_rejects_unknown_scheme_version() -> None:
+    """An entry with an unsupported ``v`` is rejected, not treated as v1.
+
+    A spine row carrying an unknown scheme version must not silently hash as
+    v1 (which would let a forged row verify under the bare preimage); the
+    walker reports it as a divergence instead.
+    """
+    rows = [
+        {
+            "v": 99,
+            "prev_hash": _GENESIS,
+            "artifact_path": "src/app.py",
+            "content_hash": "c",
+            "actor": "backend",
+            "step_id": "T-1",
+            "model": "m1",
+            "timestamp": 1111,
+            "entry_hash": "h",
+        }
+    ]
+    head, idx, error = _walk_spine_rows(rows)
+    assert idx == 0
+    assert "unsupported scheme version" in error
+    assert head == _GENESIS
 
 
 # ---------------------------------------------------------------------------

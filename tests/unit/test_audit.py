@@ -12,6 +12,7 @@ from bernstein.core.audit import (
     RetentionPolicy,
     _compute_hmac,  # pyright: ignore[reportPrivateUsage]
     _load_segment_index,  # pyright: ignore[reportPrivateUsage]
+    _record_is_locally_valid,  # pyright: ignore[reportPrivateUsage]
 )
 
 from bernstein.core.security.key_derivation import (
@@ -745,3 +746,48 @@ def test_audit_tag_fails_with_lineage_derived_key(tmp_path: Path) -> None:
     valid, errors = AuditLog(audit_dir, key=lineage_derived).verify()
     assert valid is False
     assert any("HMAC mismatch" in err for err in errors)
+
+
+def test_unknown_scheme_fails_verification(tmp_path: Path) -> None:
+    """An entry with an unsupported scheme is a hard verification failure.
+
+    Unknown schemes must not silently fall back to v1 (which would let a
+    forged record verify under the raw key); the verifier reports them.
+    """
+    audit_dir = tmp_path / "audit"
+    key = b"test-key"
+    entry = {
+        "timestamp": "2026-01-01T00:00:00.000000Z",
+        "event_type": "x",
+        "actor": "a",
+        "resource_type": "task",
+        "resource_id": "r1",
+        "details": {},
+        "prev_hmac": _GENESIS_HMAC,
+        "scheme": 99,
+    }
+    hmac = _compute_hmac(key, _GENESIS_HMAC, entry)
+    line = json.dumps(entry | {"hmac": hmac}, sort_keys=True) + "\n"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    (audit_dir / "2026-01-01.jsonl").write_bytes(line.encode())
+
+    valid, errors = AuditLog(audit_dir, key=key).verify()
+    assert valid is False
+    assert any("unsupported audit scheme" in err for err in errors)
+
+
+def test_record_is_locally_valid_rejects_unknown_scheme() -> None:
+    """``_record_is_locally_valid`` returns False for an unknown scheme."""
+    key = b"test-key"
+    entry = {
+        "timestamp": "2026-01-01T00:00:00.000000Z",
+        "event_type": "x",
+        "actor": "a",
+        "resource_type": "task",
+        "resource_id": "r1",
+        "details": {},
+        "prev_hmac": _GENESIS_HMAC,
+        "scheme": 99,
+        "hmac": "0" * 64,
+    }
+    assert _record_is_locally_valid(key, entry) is False

@@ -66,6 +66,7 @@ from bernstein.core.replay.journal import (
 )
 from bernstein.core.security.key_derivation import (
     DOMAIN_LINEAGE,
+    SCHEME_V1,
     SCHEME_V2,
     domain_tag,
 )
@@ -423,6 +424,8 @@ def _walk_spine_rows(rows: list[dict[str, Any]]) -> tuple[str, int | None, str]:
         # v2 entries hash a domain-tagged preimage; v1 entries (no ``v`` or
         # ``v: 1``) hash the bare preimage.
         entry_version = row.get("v")
+        if entry_version not in (None, SCHEME_V1, SCHEME_V2):
+            return prev, i, f"spine entry {i}: unsupported scheme version {entry_version!r}"
         hash_prefix = domain_tag(DOMAIN_LINEAGE, SCHEME_V2) if entry_version == SCHEME_V2 else ""
         try:
             expected = compute_entry_hash(
