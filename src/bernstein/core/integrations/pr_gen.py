@@ -216,6 +216,7 @@ class SessionSummary:
     goal: str
     branch: str
     base_branch: str = "main"
+    changes_summary: str = ""
     primary_role: str | None = None
     diff_stat: str = ""
     merged_changes: tuple[MergedChange, ...] = ()
@@ -311,6 +312,11 @@ def _shape_outcome(goal: str) -> str:
 
     if not cleaned:
         return "update project"
+
+    # Preserve leading acronyms (MCP, CLI, HMAC, ...) so they don't become
+    # mCP / cLI / hMAC; only lower-case a normal sentence-starting capital.
+    if len(cleaned) >= 2 and cleaned[0].isupper() and cleaned[1].isupper():
+        return cleaned
 
     return cleaned[0].lower() + cleaned[1:]
 
@@ -813,6 +819,7 @@ def load_session_summary(
         wrapup.get("session_id") or session_id or live_session.get("run_id") or run_id_on_disk or "unknown"
     )
     goal = str(wrapup.get("goal") or live_session.get("goal") or "")
+    changes_summary = str(wrapup.get("changes_summary") or "")
     branch = str(wrapup.get("branch") or live_session.get("branch") or run_metadata.get("git_branch") or "HEAD")
     diff_stat = str(wrapup.get("git_diff_stat") or wrapup.get("diff_stat") or "")
     primary_role_raw = wrapup.get("primary_role") or live_session.get("primary_role")
@@ -844,6 +851,7 @@ def load_session_summary(
     return SessionSummary(
         session_id=resolved_id,
         goal=goal,
+        changes_summary=changes_summary,
         branch=branch,
         base_branch=base_branch,
         primary_role=primary_role,

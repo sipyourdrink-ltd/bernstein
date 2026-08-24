@@ -20,6 +20,7 @@ from bernstein.core.integrations.pr_gen import (
     CostBreakdown,
     GateResult,
     SessionSummary,
+    _shape_outcome,
     build_pr_body,
     build_pr_title,
     load_session_summary,
@@ -48,6 +49,22 @@ def _fixture_summary(**overrides: object) -> SessionSummary:
     }
     base.update(overrides)
     return SessionSummary(**base)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# _shape_outcome acronym casing
+# ---------------------------------------------------------------------------
+
+
+def test_shape_outcome_preserves_leading_acronym() -> None:
+    assert _shape_outcome("MCP server advertises no repo") == "MCP server advertises no repo"
+    assert _shape_outcome("CLI tool for X") == "CLI tool for X"
+    assert _shape_outcome("HMAC signing for webhooks") == "HMAC signing for webhooks"
+
+
+def test_shape_outcome_lowercases_sentence_start() -> None:
+    assert _shape_outcome("Fix broken login") == "fix broken login"
+    assert _shape_outcome("Add JWT auth") == "add JWT auth"
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +204,30 @@ def test_load_session_summary_picks_newest_wrapup(tmp_path: Path) -> None:
     assert len(summary.gates) == 2
     assert math.isclose(summary.cost.total_usd, 0.42)
     assert summary.cost.by_role == {"engineer": 0.42}
+
+
+def test_load_session_summary_reads_changes_summary(tmp_path: Path) -> None:
+    sessions = tmp_path / ".sdd" / "sessions"
+    sessions.mkdir(parents=True)
+
+    wrapup = sessions / "1000-wrapup.json"
+    wrapup.write_text(
+        json.dumps(
+            {
+                "timestamp": 1000.0,
+                "session_id": "abc",
+                "goal": "Add JWT auth",
+                "changes_summary": "- Add JWT auth: wired refresh tokens\n- Fix login: patched redirect",
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    summary = load_session_summary(None, workdir=tmp_path)
+
+    assert summary.changes_summary == (
+        "- Add JWT auth: wired refresh tokens\n- Fix login: patched redirect"
+    )
 
 
 def test_load_session_summary_falls_back_to_live_session(tmp_path: Path) -> None:
