@@ -18,3 +18,6 @@ The nightly full-closure audit runs `pip-audit --strict` over the dev closure an
 ## Watchdog no longer restarts a run that already finished
 
 A clean quiescence self-stop journals `run_completed` and exits, but the recovery watchdog's stand-down check only recognised teardown in progress, so it restarted the orchestrator anyway — five times, until it gave up and logged a spurious error. The check now reads the run's own completion record before restarting it (#4445).
+## An entry no longer has to share this file
+
+Every PR appended one line here, so any two open PRs conflicted on this file in the merge queue and each needed a manual rebase and re-enqueue. An entry can be a `docs/release-notes/fragments/<issue-or-slug>.md` file instead; the release rotation concatenates fragments in filename order into the version page and deletes them in the same commit (#4474).
