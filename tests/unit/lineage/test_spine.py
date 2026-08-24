@@ -27,6 +27,11 @@ from bernstein.core.lineage.spine import (
     SpineStatus,
     compute_entry_hash,
 )
+from bernstein.core.security.key_derivation import (
+    DOMAIN_LINEAGE,
+    SCHEME_V2,
+    domain_tag,
+)
 
 _KEY = b"k" * 32
 
@@ -104,6 +109,7 @@ def test_entry_hash_chains_previous(tmp_path: Path) -> None:
         step_id="s2",
         model="m",
         timestamp=2,
+        domain_prefix=domain_tag(DOMAIN_LINEAGE, SCHEME_V2),
     )
     assert h2 == expected
     assert entries[1].prev_hash == h1

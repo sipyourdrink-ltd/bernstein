@@ -63,6 +63,13 @@ from bernstein.core.lineage.artifact_uri import (
     REASON_UNKNOWN_SCHEME,
     artifact_key_rejection_reason,
 )
+from bernstein.core.security.key_derivation import (
+    DOMAIN_LINEAGE,
+    SCHEME_V1,
+    SCHEME_V2,
+    derive_store_key,
+    domain_tag,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -70,8 +77,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 #: Version stamped into every spine entry. Bump only on a wire-format
-#: change; ``verify`` rejects unknown versions.
-SPINE_ENTRY_VERSION = 1
+#: change; ``verify`` rejects unknown versions. v2 entries are MAC'd with an
+#: HKDF-derived per-store key and a domain-tagged hash preimage; v1 entries
+#: (version 1) use the raw key with no domain tag.
+SPINE_ENTRY_VERSION = 2
 
 #: ``step_id`` prefix of the internal journal-head seal written at run
 #: finalization (see ``bernstein.core.replay.journal.seal_journal_into_spine``).
@@ -179,11 +188,15 @@ def compute_entry_hash(
     traceparent: str | None = None,
     tracestate: str | None = None,
     baggage: str | None = None,
+    domain_prefix: str = "",
 ) -> str:
     """Return ``entry_hash = H(prev_hash, artifact_path, content_hash, ...)``.
 
     The pre-image is the canonical JSON of the ordered field tuple, so
-    the digest is deterministic across processes and platforms.
+    the digest is deterministic across processes and platforms. When
+    ``domain_prefix`` is non-empty (scheme v2 domain separation) it is
+    prepended to the pre-image; for v1 entries it is empty and the output is
+    byte-identical to the legacy behaviour.
     """
     fields = {
         "prev_hash": prev_hash,
@@ -200,7 +213,7 @@ def compute_entry_hash(
         fields["tracestate"] = tracestate
     if baggage is not None:
         fields["baggage"] = baggage
-    preimage = json.dumps(
+    preimage = domain_prefix.encode("utf-8") + json.dumps(
         fields,
         ensure_ascii=False,
         separators=(",", ":"),
@@ -369,6 +382,11 @@ class LineageSpine:
         self._root = Path(root)
         self._run_id = _validate_run_id(run_id)
         self._hmac_key = hmac_key
+        # v2 entries are MAC'd with an HKDF-derived per-store key and a
+        # domain-tagged hash preimage; v1 entries keep the raw key with no
+        # domain tag. ``self._hmac_key`` stays the raw master key for v1
+        # backward compatibility.
+        self._derived_key = derive_store_key(hmac_key, DOMAIN_LINEAGE)
 
     # -- paths --------------------------------------------------------------
 
@@ -408,7 +426,7 @@ class LineageSpine:
 
     def _write_head(self, head_hash: str, count: int) -> None:
         body = {"head_hash": head_hash, "count": count}
-        head_hmac = _compute_hmac(self._hmac_key, body)
+        head_hmac = _compute_hmac(self._derived_key, body)
         payload = body | {"hmac": head_hmac}
         tmp = self.head_path.with_suffix(".head.tmp")
         tmp.write_text(
@@ -502,6 +520,7 @@ class LineageSpine:
                 traceparent=traceparent,
                 tracestate=tracestate,
                 baggage=baggage,
+                domain_prefix=domain_tag(DOMAIN_LINEAGE, SCHEME_V2),
             )
             body = {
                 "v": SPINE_ENTRY_VERSION,
@@ -520,7 +539,7 @@ class LineageSpine:
                 body["tracestate"] = tracestate
             if baggage is not None:
                 body["baggage"] = baggage
-            tag = _compute_hmac(self._hmac_key, body)
+            tag = _compute_hmac(self._derived_key, body)
             entry = SpineEntry(
                 v=SPINE_ENTRY_VERSION,
                 prev_hash=prev_hash,
@@ -637,9 +656,16 @@ class LineageSpine:
             if missing:
                 errors.append(f"line {line_no}: missing fields {sorted(missing)}")
                 continue
-            if row.get("v") != SPINE_ENTRY_VERSION:
-                errors.append(f"line {line_no}: unsupported entry version {row.get('v')!r}")
+            entry_version = row.get("v")
+            if entry_version not in (SCHEME_V1, SCHEME_V2):
+                errors.append(f"line {line_no}: unsupported entry version {entry_version!r}")
                 continue
+            if entry_version == SCHEME_V2:
+                verify_key = self._derived_key
+                verify_prefix = domain_tag(DOMAIN_LINEAGE, SCHEME_V2)
+            else:
+                verify_key = self._hmac_key
+                verify_prefix = ""
             if row["prev_hash"] != prev_hash:
                 errors.append(
                     f"line {line_no}: prev_hash break (expected {prev_hash[:16]!r}, got {str(row['prev_hash'])[:16]!r})"
@@ -656,6 +682,7 @@ class LineageSpine:
                     traceparent=row.get("traceparent"),
                     tracestate=row.get("tracestate"),
                     baggage=row.get("baggage"),
+                    domain_prefix=verify_prefix,
                 )
             except (TypeError, ValueError):
                 errors.append(f"line {line_no}: unhashable field types")
@@ -663,7 +690,7 @@ class LineageSpine:
             if not _hmac.compare_digest(str(row["entry_hash"]), expected_hash):
                 errors.append(f"line {line_no}: entry_hash mismatch")
             body = {k: row[k] for k in row if k != "hmac"}
-            expected_hmac = _compute_hmac(self._hmac_key, body)
+            expected_hmac = _compute_hmac(verify_key, body)
             if not _hmac.compare_digest(str(row["hmac"]), expected_hmac):
                 errors.append(f"line {line_no}: hmac mismatch")
             # An attempt record counts with the seal here: neither is a produced
@@ -697,6 +724,12 @@ def verify_entry(entry: SpineEntry, hmac_key: bytes) -> bool:
     Returns:
         ``True`` when both the entry hash and the HMAC tag recompute.
     """
+    if entry.v == SCHEME_V2:
+        key = derive_store_key(hmac_key, DOMAIN_LINEAGE)
+        prefix = domain_tag(DOMAIN_LINEAGE, SCHEME_V2)
+    else:
+        key = hmac_key
+        prefix = ""
     expected_hash = compute_entry_hash(
         prev_hash=entry.prev_hash,
         artifact_path=entry.artifact_path,
@@ -708,10 +741,11 @@ def verify_entry(entry: SpineEntry, hmac_key: bytes) -> bool:
         traceparent=entry.traceparent,
         tracestate=entry.tracestate,
         baggage=entry.baggage,
+        domain_prefix=prefix,
     )
     if not _hmac.compare_digest(entry.entry_hash, expected_hash):
         return False
-    return _hmac.compare_digest(entry.hmac, _compute_hmac(hmac_key, entry.body()))
+    return _hmac.compare_digest(entry.hmac, _compute_hmac(key, entry.body()))
 
 
 __all__ = [

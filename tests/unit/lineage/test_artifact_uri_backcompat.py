@@ -47,6 +47,28 @@ _GOLDEN_ENTRY_HASH_2 = "sha256:a7d45b063325f0538e2a62e98cdc3dec1f42a18a10e472b07
 _GOLDEN_V1_ENTRY_HASH = "sha256:0736d77f457187f1cf2be2b8e0b05123ddec3b298a7802279ae6e5973bc926d1"
 _GOLDEN_V1_HMAC = "c66884314da2b102d5307f33bb4cbb9d1fcbc914b95cea82a9100b65fbec02d1"
 
+# Goldens captured from the post-#2559 writer, which emits scheme-v2 entries
+# (HKDF-derived per-store key + domain-tagged hash preimage). The v1 goldens
+# above still verify; these pin the current writer's deterministic bytes.
+_GOLDEN_V2_ROW_1 = (
+    '{"actor":"agent:worker-1","artifact_path":"src/bernstein/core/lineage/spine.py",'
+    '"content_hash":"sha256:8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8",'
+    '"entry_hash":"sha256:6955c3f6f6c1b6205c2848b42dcb2f8ac779bc36813c1fcb4d57c4d149d32a15",'
+    '"hmac":"19cc6a3688c62e6e4b6c23c19006f45664afc4e454c51c1fa042005bfca73b82",'
+    '"model":"sonnet","prev_hash":"","step_id":"task-1","timestamp":1700000000000000000,"v":2}'
+)
+_GOLDEN_V2_ROW_2 = (
+    '{"actor":"agent:worker-2","artifact_path":"docs/lineage.md",'
+    '"content_hash":"sha256:f44e64e75f3948e9f73f8dfa94721c4ce8cbb4f265c4790c702b2d41cfbf2753",'
+    '"entry_hash":"sha256:f8bd23f58b1217a883227a9e259653f76fcd9537cd582ccfde1767b598114a24",'
+    '"hmac":"0d27c789ae6a9151b508fc49479267e76d890d0815c6be51f15539c156045e3b",'
+    '"model":"opus","prev_hash":"sha256:6955c3f6f6c1b6205c2848b42dcb2f8ac779bc36813c1fcb4d57c4d149d32a15",'
+    '"step_id":"task-2","timestamp":1700000001000000000,"v":2}'
+)
+
+_GOLDEN_V2_ENTRY_HASH_1 = "sha256:6955c3f6f6c1b6205c2848b42dcb2f8ac779bc36813c1fcb4d57c4d149d32a15"
+_GOLDEN_V2_ENTRY_HASH_2 = "sha256:f8bd23f58b1217a883227a9e259653f76fcd9537cd582ccfde1767b598114a24"
+
 
 def _write_golden_spine(root: Path) -> LineageSpine:
     run_dir = root / _GOLDEN_RUN_ID
@@ -67,10 +89,12 @@ def test_pre_feature_spine_still_verifies(tmp_path: Path) -> None:
 def test_recording_the_same_inputs_reproduces_the_golden_hashes(tmp_path: Path) -> None:
     """Replaying the pre-feature writes today produces byte-identical rows.
 
-    This is the strongest form of the compatibility claim: not merely that old
-    records still verify, but that the writer produces the same bytes for the
-    same inputs, so an old and a new record of the same write are the same
-    record.
+    The writer now emits scheme-v2 entries (HKDF-derived key + domain-tagged
+    hash preimage), so the current golden values differ from the v1 goldens
+    above. The v1 goldens still verify (see
+    ``test_pre_feature_spine_still_verifies``); this test pins the current
+    writer's deterministic bytes so a future change to the entry shape or key
+    derivation breaks loudly.
     """
     spine = LineageSpine(tmp_path, run_id=_GOLDEN_RUN_ID, hmac_key=_GOLDEN_HMAC_KEY)
     first = spine.record(
@@ -89,11 +113,11 @@ def test_recording_the_same_inputs_reproduces_the_golden_hashes(tmp_path: Path) 
         model="opus",
         timestamp=1700000001000000000,
     )
-    assert first == _GOLDEN_ENTRY_HASH_1
-    assert second == _GOLDEN_ENTRY_HASH_2
+    assert first == _GOLDEN_V2_ENTRY_HASH_1
+    assert second == _GOLDEN_V2_ENTRY_HASH_2
 
     rows = (tmp_path / _GOLDEN_RUN_ID / "spine.jsonl").read_text(encoding="utf-8").splitlines()
-    assert rows == [_GOLDEN_ROW_1, _GOLDEN_ROW_2]
+    assert rows == [_GOLDEN_V2_ROW_1, _GOLDEN_V2_ROW_2]
 
 
 def test_pre_feature_spine_still_detects_tampering(tmp_path: Path) -> None:

@@ -941,8 +941,14 @@ def _chain_tail_from_bytes(raw_bytes: bytes, key: bytes | None = None) -> str | 
             continue
         if "hmac" not in entry:
             continue
-        if key is not None and not _record_is_locally_valid(key, entry):
-            continue
+        if key is not None:
+            # Try both schemes so recovery accepts a v1 or v2 tip regardless of
+            # whether the entry carries a ``scheme`` field; prefer v2 when both
+            # match (the stored hmac is identical either way).
+            valid_v1 = _record_is_locally_valid(key, entry, scheme=SCHEME_V1)
+            valid_v2 = _record_is_locally_valid(key, entry, scheme=SCHEME_V2)
+            if not (valid_v1 or valid_v2):
+                continue
         return str(entry["hmac"])
     return None
 
@@ -1568,6 +1574,10 @@ class AuditLog:
             self._key = key
         else:
             self._key = load_or_create_audit_key(key_path)
+        # Scheme v2 entries are MAC'd with an HKDF-derived per-store key and a
+        # domain-tagged preimage; v1 entries keep the raw key with no prefix.
+        # ``self._key`` stays the raw master key for v1 backward compatibility.
+        self._derived_key = derive_store_key(self._key, DOMAIN_AUDIT)
         self._prev_hmac = self._recover_chain_tail()
         # Tracks the day file and its identity+length stamp after this
         # instance's last append, so ``log`` can skip re-reading the tail from
@@ -1767,8 +1777,14 @@ class AuditLog:
             "resource_id": resource_id,
             "details": details,
             "prev_hmac": self._prev_hmac,
+            "scheme": SCHEME_V2,
         }
-        computed_hmac = _compute_hmac(self._key, self._prev_hmac, entry_dict)
+        computed_hmac = _compute_hmac(
+            self._derived_key,
+            self._prev_hmac,
+            entry_dict,
+            domain_prefix=domain_tag(DOMAIN_AUDIT, SCHEME_V2),
+        )
         entry_dict["hmac"] = computed_hmac
         event = AuditEvent(
             timestamp=ts,
@@ -1779,6 +1795,7 @@ class AuditLog:
             details=details,
             prev_hmac=self._prev_hmac,
             hmac=computed_hmac,
+            scheme=SCHEME_V2,
         )
         return event, json.dumps(entry_dict, sort_keys=True) + "\n"
 
