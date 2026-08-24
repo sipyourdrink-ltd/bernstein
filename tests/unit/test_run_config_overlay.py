@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -459,3 +460,45 @@ def test_bulk_staging_unstages_run_configuration_not_only_directories(repo: Path
     assert "bernstein.yaml" not in staged
     assert ".env" not in staged
     assert check_staged(repo).ok is True
+
+
+# ---------------------------------------------------------------------------
+# The one path that pushes straight to the default branch
+# ---------------------------------------------------------------------------
+
+
+def test_evolve_refuses_to_push_a_commit_carrying_run_configuration(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gate stops the push even where the staging filter does not reach.
+
+    ``stage_all_except`` unstages the never-stage names, but that list is not
+    the run-configuration set: ``.bernstein/bernstein.yaml`` is a seed file the
+    loader reads and the staging filter has never heard of. The commit gate is
+    what refuses the push.
+    """
+    import bernstein.core.git_ops as git_ops
+
+    from bernstein.core.orchestration.orchestrator_evolve import evolve_auto_commit
+
+    (repo / ".bernstein").mkdir()
+    (repo / ".bernstein" / "bernstein.yaml").write_text(COMMITTED_SEED, encoding="utf-8")
+    (repo / "src" / "feature.py").write_text("VALUE = 6\n", encoding="utf-8")
+
+    real_run = subprocess.run
+
+    def _run(cmd: list[str], **kwargs: object) -> object:
+        if cmd[:3] == ["uv", "run", "pytest"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return real_run(cmd, **kwargs)  # type: ignore[arg-type]
+
+    pushes: list[str] = []
+    monkeypatch.setattr(git_ops, "safe_push", lambda _cwd, branch: pushes.append(branch))
+    monkeypatch.setattr(subprocess, "run", _run)
+
+    orch = SimpleNamespace(_workdir=repo)
+    pushed = evolve_auto_commit(orch)
+
+    assert pushed is False
+    assert pushes == [], "a commit carrying run configuration must not reach the default branch"
+    assert check_commit(repo).ok is False

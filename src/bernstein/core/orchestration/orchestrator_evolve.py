@@ -499,6 +499,7 @@ def evolve_auto_commit(orch: Any) -> bool:
         stage_all_except,
         status_porcelain,
     )
+    from bernstein.core.quality.run_config_gate import check_commit
 
     try:
         changed = status_porcelain(orch._workdir)
@@ -524,6 +525,16 @@ def evolve_auto_commit(orch: Any) -> bool:
         result = conventional_commit(orch._workdir, evolve=True)
         if not result.ok:
             logger.warning("Evolve: commit failed: %s", result.stderr)
+            return False
+
+        # This is the one path that pushes straight to the default branch, so
+        # the commit is checked before it leaves the machine: a run's own
+        # configuration inside it would rewrite the repository's configuration
+        # for every user of it (issue #4485). The commit stays on the local
+        # branch for an operator to inspect rather than being amended away.
+        run_config_verdict = check_commit(orch._workdir)
+        if not run_config_verdict.ok:
+            logger.error("Evolve: refusing to push - %s", run_config_verdict.details)
             return False
 
         safe_push(orch._workdir, "main")
