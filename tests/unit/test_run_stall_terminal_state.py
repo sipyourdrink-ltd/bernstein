@@ -31,6 +31,7 @@ from bernstein.core.spawner import AgentSpawner
 from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.orchestration.run_stall import (
     RunStallState,
+    evaluate_progress_stall,
     evaluate_run_stall,
     resolve_grace_s,
     resolve_min_ticks,
@@ -89,6 +90,31 @@ def _drive(
         state, verdict = evaluate_run_stall(
             state,
             snapshot,
+            now=start + i * step_s,
+            grace_s=grace_s,
+            min_ticks=min_ticks,
+        )
+    return state, verdict
+
+
+def _drive_progress(
+    snapshot: dict[str, list[Task]],
+    *,
+    ticks: int,
+    grace_s: float,
+    min_ticks: int,
+    active_agents: int = 0,
+    start: float = 1_000.0,
+    step_s: float = 10.0,
+) -> tuple[RunStallState, Any]:
+    """Evaluate the same snapshot ``ticks`` times on a synthetic clock."""
+    state = RunStallState()
+    verdict = None
+    for i in range(ticks):
+        state, verdict = evaluate_progress_stall(
+            state,
+            snapshot,
+            active_agents=active_agents,
             now=start + i * step_s,
             grace_s=grace_s,
             min_ticks=min_ticks,
@@ -226,6 +252,110 @@ class TestStallCriterion:
         from bernstein.core.defaults import ORCHESTRATOR
 
         assert ORCHESTRATOR.stalled_run_grace_s > ORCHESTRATOR.stale_claim_timeout_s
+
+
+# --------------------------------------------------------------------------
+# The progress-stall criterion (#4453)
+# --------------------------------------------------------------------------
+
+
+class TestProgressStallCriterion:
+    def test_progress_stall_fires_when_claimed_wedged_with_done_tasks(self) -> None:
+        """The #4453 shape: done>0, a claimed task, no agent, nothing moving."""
+        snapshot = _snapshot(done=[_task("T-1", "done")], claimed=[_task("T-2", "claimed")])
+
+        _state, verdict = _drive_progress(snapshot, ticks=6, grace_s=30.0, min_ticks=3)
+
+        assert verdict is not None
+        assert verdict.stalled is True
+        assert verdict.stuck_task_ids == ("T-2",)
+        assert "wedged" in verdict.reason
+        assert "1 terminal task(s)" in verdict.reason
+
+    def test_progress_stall_requires_zero_agents(self) -> None:
+        """A live agent is progress by definition, even with a claimed task."""
+        snapshot = _snapshot(done=[_task("T-1", "done")], claimed=[_task("T-2", "claimed")])
+
+        _state, verdict = _drive_progress(snapshot, ticks=6, grace_s=30.0, min_ticks=3, active_agents=1)
+
+        assert verdict is not None
+        assert verdict.stalled is False
+        assert "live agent" in verdict.reason
+
+    def test_progress_stall_requires_at_least_one_claimed(self) -> None:
+        """No claimed task means nothing is wedged on a dead agent."""
+        snapshot = _snapshot(done=[_task("T-1", "done")], open=[_task("T-2", "open")])
+
+        _state, verdict = _drive_progress(snapshot, ticks=6, grace_s=30.0, min_ticks=3)
+
+        assert verdict is not None
+        assert verdict.stalled is False
+        assert "no claimed task" in verdict.reason
+
+    def test_progress_stall_requires_at_least_one_terminal(self) -> None:
+        """Zero terminal tasks is the zero-terminal stall, not this one."""
+        snapshot = _snapshot(claimed=[_task("T-1", "claimed")])
+
+        _state, verdict = _drive_progress(snapshot, ticks=6, grace_s=30.0, min_ticks=3)
+
+        assert verdict is not None
+        assert verdict.stalled is False
+        assert "no terminal task" in verdict.reason
+
+    def test_progress_stall_grace_window_must_elapse(self) -> None:
+        """Ticks satisfied, grace not: a barely-moved clock must not stop a run."""
+        snapshot = _snapshot(done=[_task("T-1", "done")], claimed=[_task("T-2", "claimed")])
+
+        _state, verdict = _drive_progress(snapshot, ticks=8, grace_s=600.0, min_ticks=3, step_s=1.0)
+
+        assert verdict is not None
+        assert verdict.stalled is False
+        assert "grace window" in verdict.reason
+
+    def test_progress_stall_min_ticks_floor(self) -> None:
+        """Grace satisfied on the second observation, tick floor not."""
+        snapshot = _snapshot(done=[_task("T-1", "done")], claimed=[_task("T-2", "claimed")])
+
+        _state, verdict = _drive_progress(snapshot, ticks=2, grace_s=1.0, min_ticks=5, step_s=10_000.0)
+
+        assert verdict is not None
+        assert verdict.stalled is False
+        assert "need 5" in verdict.reason
+
+    def test_progress_stall_retry_backoff_suppresses(self) -> None:
+        """An open task in retry backoff is scheduled work, not a stall."""
+        snapshot = _snapshot(
+            done=[_task("T-1", "done")],
+            claimed=[_task("T-2", "claimed")],
+            open=[_task("T-3", "open", created_at=5_000.0)],
+        )
+
+        _state, verdict = _drive_progress(snapshot, ticks=20, grace_s=0.0, min_ticks=1, start=1_000.0)
+
+        assert verdict is not None
+        assert verdict.stalled is False
+        assert "retry backoff" in verdict.reason
+
+    def test_progress_stall_fingerprint_change_resets_window(self) -> None:
+        """A task moving between statuses is forward motion, not a stall."""
+        state = RunStallState()
+        wedged = _snapshot(done=[_task("T-1", "done")], claimed=[_task("T-2", "claimed")])
+        changed = _snapshot(
+            done=[_task("T-1", "done")],
+            claimed=[_task("T-2", "claimed"), _task("T-3", "claimed")],
+        )
+
+        for i in range(9):
+            state, verdict = evaluate_progress_stall(
+                state, wedged, active_agents=0, now=1000.0 + i, grace_s=2.0, min_ticks=3
+            )
+        assert verdict.stalled is True, "control: the unchanged snapshot does stall"
+
+        # Same world plus a new claimed task -> the window restarts.
+        state, verdict = evaluate_progress_stall(state, changed, active_agents=0, now=2000.0, grace_s=2.0, min_ticks=3)
+        assert verdict.stalled is False
+        assert verdict.observed_ticks == 1
+        assert "progress observed" in verdict.reason
 
 
 # --------------------------------------------------------------------------

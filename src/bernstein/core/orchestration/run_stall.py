@@ -314,10 +314,151 @@ def evaluate_run_stall(
     )
 
 
+def evaluate_progress_stall(
+    prev: RunStallState,
+    tasks_by_status: dict[str, list[Task]],
+    *,
+    active_agents: int,
+    now: float,
+    grace_s: float,
+    min_ticks: int,
+) -> tuple[RunStallState, StallVerdict]:
+    """Decide whether a run with terminal tasks has wedged on a dead claim.
+
+    Pure: reads only its arguments, mutates nothing, and performs no IO.
+    The caller supplies ``now`` so tests do not sleep.
+
+    This is the sibling of :func:`evaluate_run_stall` for the shape where
+    the run *has* finished work but is stuck anyway: ``done > 0`` yet a
+    claimed task is held by a dead agent, so quiescence can never be
+    reached. The zero-terminal and progress-stall criteria are structurally
+    different and deliberately not merged.
+
+    Args:
+        prev: State returned by the previous call, or a fresh
+            :class:`RunStallState` on the first qualifying tick.
+        tasks_by_status: The post-settle task snapshot, bucketed by status.
+        active_agents: Number of live agents. Passed in, not inferred, so
+            the caller's liveness view is authoritative.
+        now: Current wall clock, seconds.
+        grace_s: Seconds the fingerprint must stay unchanged.
+        min_ticks: Consecutive qualifying ticks required.
+
+    Returns:
+        ``(next_state, verdict)``. The caller stores ``next_state`` and acts
+        on ``verdict.stalled``.
+    """
+    terminal_count = 0
+    claimed_ids: list[str] = []
+    deferred_ids: list[str] = []
+
+    for status_key, tasks in tasks_by_status.items():
+        for task in tasks:
+            status = _status_of(status_key, task)
+            if status in TERMINAL_STATUSES:
+                terminal_count += 1
+                continue
+            task_id = str(task.id)
+            if status == "claimed":
+                claimed_ids.append(task_id)
+            if status == "open" and float(getattr(task, "created_at", 0.0) or 0.0) > now:
+                deferred_ids.append(task_id)
+
+    claimed_ids.sort()
+
+    # Condition 1: at least one terminal task. Zero terminal tasks is the
+    # shape ``evaluate_run_stall`` owns; this detector is only for runs that
+    # finished something but still cannot quiesce.
+    if terminal_count == 0:
+        return RunStallState(), StallVerdict(
+            stalled=False,
+            reason="no terminal task yet - zero-terminal stall is handled by evaluate_run_stall",
+        )
+
+    # Condition 2: no live agent. A live agent is progress by definition.
+    if active_agents > 0:
+        return RunStallState(), StallVerdict(
+            stalled=False,
+            reason=f"{active_agents} live agent(s) - work is still in flight",
+        )
+
+    # Condition 3: at least one claimed task. A dead agent holding a claim
+    # is the wedge that prevents quiescence.
+    if not claimed_ids:
+        return RunStallState(), StallVerdict(
+            stalled=False,
+            reason="no claimed task - nothing is wedged on a dead agent",
+        )
+
+    # Condition 6: retry backoff (capped at 300s) will make work claimable
+    # again without anything else having to happen.
+    if deferred_ids:
+        return RunStallState(), StallVerdict(
+            stalled=False,
+            reason=f"{len(deferred_ids)} task(s) deferred by retry backoff - work is still scheduled",
+        )
+
+    fingerprint = task_state_fingerprint(tasks_by_status)
+
+    # Condition 4: any change to the task-state fingerprint is forward
+    # motion. Restart the window rather than extending the old one.
+    if prev.fingerprint != fingerprint:
+        return RunStallState(fingerprint=fingerprint, since_ts=now, observed_ticks=1), StallVerdict(
+            stalled=False,
+            reason="task state changed since the last qualifying tick - progress observed",
+            observed_ticks=1,
+        )
+
+    observed_ticks = prev.observed_ticks + 1
+    quiet_for_s = max(now - prev.since_ts, 0.0)
+    state = replace(prev, observed_ticks=observed_ticks)
+
+    # Condition 5: the consecutive-tick floor. Guards the wall-clock test
+    # against a single time discontinuity.
+    if observed_ticks < min_ticks:
+        return state, StallVerdict(
+            stalled=False,
+            reason=(
+                f"no progress for {quiet_for_s:.0f}s over {observed_ticks} tick(s) - "
+                f"need {min_ticks} before declaring a stall"
+            ),
+            observed_ticks=observed_ticks,
+            quiet_for_s=quiet_for_s,
+        )
+
+    if quiet_for_s < grace_s:
+        return state, StallVerdict(
+            stalled=False,
+            reason=(
+                f"no progress for {quiet_for_s:.0f}s over {observed_ticks} tick(s) - grace window is {grace_s:.0f}s"
+            ),
+            observed_ticks=observed_ticks,
+            quiet_for_s=quiet_for_s,
+        )
+
+    return state, StallVerdict(
+        stalled=True,
+        reason=(
+            f"run stalled: {terminal_count} terminal task(s) but {len(claimed_ids)} claimed task(s) "
+            f"wedged with no live agent for {quiet_for_s:.0f}s across {observed_ticks} tick(s)"
+        ),
+        stuck_task_ids=tuple(claimed_ids),
+        observed_ticks=observed_ticks,
+        quiet_for_s=quiet_for_s,
+    )
+
+
 #: Reason recorded against each stuck task when the run is stopped. Written
 #: verbatim into the task's failure reason so the retrospective, the audit
 #: chain, and ``bernstein status`` all carry the same explanation.
 STUCK_TASK_FAIL_REASON: str = (
     "Run stalled: the task never reached a terminal state, no agent was alive, "
     "and no claimable work remained. The run did not meet its goal."
+)
+
+#: Reason recorded against each wedged claimed task when a run that already
+#: produced terminal tasks is stopped for the progress-stall pattern.
+PROGRESS_STUCK_CLAIM_FAIL_REASON: str = (
+    "Run stalled: the run finished work but a claimed task was held by a dead "
+    "agent, so quiescence could never be reached. The run did not meet its goal."
 )
