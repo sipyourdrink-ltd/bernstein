@@ -94,6 +94,7 @@ from bernstein.core.agents.spawner_worktree import (
     release_warm_pool_slot,
     worktree_manager_for_repo,
 )
+from bernstein.core.evidence.run_artifacts import record_persistent_agent_step
 from bernstein.core.agents.spawner_worktree import (
     cleanup_worktree as _cleanup_worktree,
 )
@@ -4878,6 +4879,10 @@ class AgentSpawner:
             except Exception as exc:
                 logger.warning("Failed to write initial trace for %s: %s", session_id, exc)
 
+            # Record persistent-agent step for each task if adapter is persistent
+            for _t in tasks:
+                record_persistent_agent_step(self._workdir / ".sdd", _t.id, adapter_name)
+
             get_plugin_manager().fire_agent_spawned(
                 session_id=session.id, role=session.role, model=session.model_config.model
             )
@@ -5239,6 +5244,10 @@ class AgentSpawner:
 
         # Track worktree so reap_completed_agent can merge+clean up
         self._worktree_paths[session_id] = worktree_path
+
+        # Record persistent-agent step for each task if adapter is persistent
+        for _t in tasks:
+            record_persistent_agent_step(self._workdir / ".sdd", _t.id, self._adapter.name())
 
         return session
 
