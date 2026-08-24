@@ -177,6 +177,70 @@ class TestParseFile:
         agents = AgencyProvider._parse_file(f, division="engineering")
         assert all(isinstance(a, CatalogAgent) for a in agents)
 
+    def test_scalar_tools_split_on_comma(self, tmp_path: Path) -> None:
+        md = textwrap.dedent("""\
+            ---
+            name: Scalar Tools Agent
+            tools: WebFetch, WebSearch, Read
+            ---
+
+            Body.
+        """)
+        f = tmp_path / "eng-scalar-tools.md"
+        f.write_text(md, encoding="utf-8")
+        agents = AgencyProvider._parse_file(f, division="engineering")
+        assert agents[0].tools == ["WebFetch", "WebSearch", "Read"]
+
+    def test_scalar_capabilities_split_on_comma(self, tmp_path: Path) -> None:
+        md = textwrap.dedent("""\
+            ---
+            name: Scalar Caps Agent
+            capabilities: code-review, security-analysis
+            ---
+
+            Body.
+        """)
+        f = tmp_path / "eng-scalar-caps.md"
+        f.write_text(md, encoding="utf-8")
+        agents = AgencyProvider._parse_file(f, division="engineering")
+        assert agents[0].capabilities == ["code-review", "security-analysis"]
+
+    def test_scalar_single_tool(self, tmp_path: Path) -> None:
+        md = textwrap.dedent("""\
+            ---
+            name: Single Tool Agent
+            tools: Read
+            ---
+
+            Body.
+        """)
+        f = tmp_path / "eng-single-tool.md"
+        f.write_text(md, encoding="utf-8")
+        agents = AgencyProvider._parse_file(f, division="engineering")
+        assert agents[0].tools == ["Read"]
+
+    def test_scalar_extra_whitespace_stripped(self, tmp_path: Path) -> None:
+        md = textwrap.dedent("""\
+            ---
+            name: Whitespace Agent
+            tools: A , B ,  C
+            capabilities:  x , y
+            ---
+
+            Body.
+        """)
+        f = tmp_path / "eng-whitespace.md"
+        f.write_text(md, encoding="utf-8")
+        agents = AgencyProvider._parse_file(f, division="engineering")
+        assert agents[0].tools == ["A", "B", "C"]
+        assert agents[0].capabilities == ["x", "y"]
+
+    def test_yaml_list_tools_still_works(self, tmp_path: Path) -> None:
+        f = tmp_path / "engineering-code-reviewer.md"
+        f.write_text(FULL_AGENT_MD, encoding="utf-8")
+        agents = AgencyProvider._parse_file(f, division="engineering")
+        assert agents[0].tools == ["ruff", "mypy", "pytest"]
+
 
 # ---------------------------------------------------------------------------
 # provider_id / is_available

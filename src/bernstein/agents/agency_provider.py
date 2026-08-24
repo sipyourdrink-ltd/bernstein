@@ -360,12 +360,18 @@ class AgencyProvider:
         agent_id = f"agency:{_slugify(name)}"
 
         # Extract capabilities list (e.g. [api-design, authentication, jwt])
-        raw_caps: list[Any] = list(fm.get("capabilities") or [])
-        capabilities: list[str] = [str(c) for c in raw_caps]
+        raw_caps: Any = fm.get("capabilities") or []
+        if isinstance(raw_caps, str):
+            capabilities: list[str] = [c.strip() for c in raw_caps.split(",") if c.strip()]
+        else:
+            capabilities = [str(c) for c in raw_caps]
 
         # Extract preferred tools list (e.g. [pytest, ruff, mypy])
-        raw_tools: list[Any] = list(fm.get("tools") or [])
-        tools: list[str] = [str(t) for t in raw_tools]
+        raw_tools: Any = fm.get("tools") or []
+        if isinstance(raw_tools, str):
+            tools: list[str] = [t.strip() for t in raw_tools.split(",") if t.strip()]
+        else:
+            tools = [str(t) for t in raw_tools]
 
         # Infer role from agent metadata instead of relying solely on division
         role = _infer_role(name, description, capabilities, division_role)
