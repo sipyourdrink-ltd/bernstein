@@ -269,7 +269,10 @@ def test_orphaned_task_fails_when_branch_commits_predate_agent_spawn(tmp_path: P
     _init_worktree_repo(worktree)
     subprocess.run(["git", "checkout", "-b", "agent/pre-existing"], cwd=str(worktree), capture_output=True, check=True)
     subprocess.run(
-        ["git", "commit", "--allow-empty", "-m", "pre-existing work"], cwd=str(worktree), capture_output=True, check=True
+        ["git", "commit", "--allow-empty", "-m", "pre-existing work"],
+        cwd=str(worktree),
+        capture_output=True,
+        check=True,
     )
 
     task = _make_task()
@@ -320,7 +323,9 @@ def test_orphaned_task_completes_on_git_commits_made_after_spawn(tmp_path: Path)
     orch._spawner.get_worktree_path.return_value = worktree
 
     subprocess.run(["git", "checkout", "-b", "agent/A-1"], cwd=str(worktree), capture_output=True, check=True)
-    subprocess.run(["git", "commit", "--allow-empty", "-m", "agent work"], cwd=str(worktree), capture_output=True, check=True)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "agent work"], cwd=str(worktree), capture_output=True, check=True
+    )
 
     with (
         patch("bernstein.core.agents.agent_lifecycle.collect_completion_data", return_value={"files_modified": []}),
