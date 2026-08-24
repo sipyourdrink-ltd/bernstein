@@ -857,3 +857,140 @@ class TestNoCatalog:
 
         spawner.spawn_for_tasks([make_task()])
         mock_adapter.spawn.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# 16. Scalar frontmatter tools/capabilities through trifecta enforcement
+# ---------------------------------------------------------------------------
+
+
+class TestScalarFrontmatterTrifectaEnforcement:
+    """Regression: before the fix (task ffe2d7a6ad9d, commit c1f8f92),
+    ``list(fm.get("tools") or [])`` on a scalar string iterated
+    *characters* instead of splitting on comma.  The single-character
+    tool names never matched any registered tool, so
+    ``_enforce_lethal_trifecta`` saw an empty declared set and the
+    check was silently bypassed.
+
+    This test proves the fix closes that bypass end-to-end: parse an
+    agency MD file with scalar ``tools:`` form, feed the resulting
+    CatalogAgent through the real spawner path, and verify the
+    trifecta fires.
+    """
+
+    def test_scalar_tools_parsed_as_names_not_chars(self, tmp_path: Path) -> None:
+        """Scalar ``tools: A, B, C`` must produce ``["A", "B", "C"]``,
+        not ``["A", ",", " ", "B", ...]``.
+        """
+        from bernstein.agents.agency_provider import AgencyProvider
+
+        md_file = tmp_path / "trifecta-agent.md"
+        md_file.write_text(
+            "---\n"
+            "name: Trifecta Agent\n"
+            "description: Agent with scalar tools form\n"
+            "tools: fs.read_secret, net.egress, exec.shell\n"
+            "---\n"
+            "You are a test agent.\n",
+            encoding="utf-8",
+        )
+
+        agents = AgencyProvider._parse_file(md_file, division="engineering")
+
+        assert len(agents) == 1
+        assert agents[0].tools == ["fs.read_secret", "net.egress", "exec.shell"]
+
+    def test_scalar_trifecta_refuses_spawn(
+        self,
+        workdir: Path,
+        mock_adapter: MagicMock,
+        make_task: Any,
+        tmp_path: Path,
+    ) -> None:
+        """Full end-to-end: scalar frontmatter → parse → catalog → spawner
+        → spawn refused in enforce mode."""
+        from bernstein.agents.agency_provider import AgencyProvider
+        from bernstein.core.security.capability_matrix import (
+            CapabilityRegistry,
+            ToolCapabilities,
+        )
+
+        md_file = tmp_path / "trifecta-agent.md"
+        md_file.write_text(
+            "---\n"
+            "name: Trifecta Agent\n"
+            "description: Agent with scalar tools form\n"
+            "tools: fs.read_secret, net.egress, exec.shell\n"
+            "---\n"
+            "You are a test agent.\n",
+            encoding="utf-8",
+        )
+
+        # 1. Parse the scalar-frontmatter MD file.
+        agents = AgencyProvider._parse_file(md_file, division="engineering")
+        assert len(agents) == 1
+        parsed_agent = agents[0]
+
+        # 2. Tools are full names, not individual characters.
+        assert parsed_agent.tools == ["fs.read_secret", "net.egress", "exec.shell"]
+
+        # 3. Register those tools with capabilities that union the trifecta.
+        registry = CapabilityRegistry()
+        registry.register(
+            ToolCapabilities(
+                tool_name="fs.read_secret",
+                capabilities=frozenset({Capability.PRIVATE_DATA}),
+            )
+        )
+        registry.register(
+            ToolCapabilities(
+                tool_name="net.egress",
+                capabilities=frozenset({Capability.UNTRUSTED_INPUT, Capability.EXTERNAL_COMM}),
+            )
+        )
+        registry.register(
+            ToolCapabilities(
+                tool_name="exec.shell",
+                capabilities=frozenset({Capability.PRIVATE_DATA, Capability.EXTERNAL_COMM}),
+            )
+        )
+
+        # 4. Build catalog + spawner and call spawn_for_tasks.
+        catalog = CatalogRegistry()
+        catalog.register_agent(parsed_agent)
+        spawner = _build_spawner(workdir=workdir, adapter=mock_adapter, catalog=catalog)
+
+        # Patch the registry loaded by the spawner so it uses ours.
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(
+            CapabilityRegistry,
+            "load_default",
+            classmethod(lambda cls, **kwargs: registry),  # type: ignore[arg-type]
+        )
+
+        # 5. Spawn must be refused.
+        with pytest.raises(SpawnError, match="lethal trifecta"):
+            spawner.spawn_for_tasks([make_task(task_id="T-scalar-trifecta")])
+
+        mock_adapter.spawn.assert_not_called()
+
+        # 6. Persisted manifest must list full tool names, not characters.
+        manifest_dir = workdir / ".sdd" / "runtime" / "spawn_capabilities"
+        manifests = sorted(manifest_dir.glob("*.json"))
+        assert manifests, "Expected a manifest on refusal"
+        manifest = json.loads(manifests[-1].read_text(encoding="utf-8"))
+        assert manifest["allowed"] is False
+        # Each listed tool is a full name, never a single character.
+        for tool in manifest["tools"]:
+            assert len(tool) > 1, (
+                f"Manifest tool {tool!r} is a single character — "
+                "scalar frontmatter was not split on comma"
+            )
+        # The scalar-parsed tools must appear in full form in the manifest.
+        # The spawner prepends the adapter tool, so the manifest has 4 entries.
+        expected_tools = {"fs.read_secret", "net.egress", "exec.shell"}
+        assert expected_tools.issubset(set(manifest["tools"])), (
+            f"Scalar-parsed tools missing from manifest: {expected_tools - set(manifest['tools'])}"
+        )
+
+        monkeypatch.undo()
