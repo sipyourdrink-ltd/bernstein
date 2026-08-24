@@ -1,26 +1,25 @@
 """Deterministic plan rendering with SHA-256 hash binding (#3839 slice 3).
 
 Produces a canonical text representation of a :class:`TaskPlan` and a
-stable SHA-256 digest that the approval gate can bind its decision to.
-The rendering is *order-invariant*: tasks are sorted by id before
-serialisation, so the same plan always yields the same hash regardless
-of the order tasks appear in ``plan.task_estimates``.
+stable SHA-256 digest. The rendering is *order-invariant*: tasks are
+sorted by id before serialisation, so the same plan always yields the
+same hash regardless of the order tasks appear in ``plan.task_estimates``.
+
+The approval-gate binding (storing the hash on approve and verifying it
+on decision) is a follow-up in a later slice; this slice ships the
+rendering primitive only.
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.cost.profile_report import canonical_json_bytes
+
 if TYPE_CHECKING:
-    from bernstein.core.tasks.models import Task, TaskPlan
-
-
-def _canonical_json(obj: Any) -> str:
-    """Compact canonical JSON serialisation (no whitespace)."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"))
+    from bernstein.core.tasks.models import TaskPlan
 
 
 def _estimate_dict(e: Any) -> dict[str, Any]:
@@ -71,7 +70,6 @@ class PlanRendering:
 
 def render_plan(
     plan: TaskPlan,
-    tasks: list[Task],
     journal_head: str | None = None,
 ) -> PlanRendering:
     """Produce a deterministic rendering of *plan* and compute its SHA-256.
@@ -84,8 +82,6 @@ def render_plan(
 
     Args:
         plan: The task execution plan to render.
-        tasks: Full Task objects (used only for reference; the rendering
-            is driven by ``plan.task_estimates``).
         journal_head: Optional Merkle head to bind into the hash.
 
     Returns:
@@ -106,7 +102,7 @@ def render_plan(
     if journal_head is not None:
         payload["journal_head"] = journal_head
 
-    rendering_hash = hashlib.sha256(_canonical_json(payload).encode()).hexdigest()
+    rendering_hash = hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
 
     # Build the human-readable text.
     lines = [
