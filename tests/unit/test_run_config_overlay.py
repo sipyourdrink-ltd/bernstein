@@ -149,6 +149,20 @@ def test_overlay_path_inside_the_work_tree_is_refused(repo: Path, monkeypatch: p
     assert _git(repo, "status", "--porcelain") == ""
 
 
+def test_overlay_path_reaching_the_work_tree_through_a_symlink_is_refused(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A different spelling of a work-tree path is still a work-tree path."""
+    alias = tmp_path / "alias"
+    alias.symlink_to(repo, target_is_directory=True)
+    monkeypatch.setenv(ENV_CONFIG_OVERLAY, str(alias / "run-overlay.yaml"))
+
+    with pytest.raises(RunOverlayError, match="inside the work tree"):
+        write_overlay({"max_agents": 4}, config_path=repo / "bernstein.yaml")
+
+    assert _git(repo, "status", "--porcelain") == ""
+
+
 def test_sandbox_supplied_overlay_path_is_honoured(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A sandbox can place the overlay outside the repository entirely."""
     sandbox_overlay = tmp_path / "sandbox" / "overlay.yaml"

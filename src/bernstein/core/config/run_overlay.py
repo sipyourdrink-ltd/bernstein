@@ -204,19 +204,18 @@ def resolve_overlay_path(config_path: Path) -> Path | None:
     explicit = _env_overlay_path()
     if explicit is not None:
         return explicit
-    workdir = config_path.parent if config_path.parent != Path("") else Path.cwd()
-    git_dir = git_dir_for(workdir)
+    git_dir = git_dir_for(config_path.parent)
     if git_dir is None:
         return None
     return git_dir / OVERLAY_RELATIVE_TO_GIT_DIR
 
 
-def _is_inside(candidate: Path, root: Path) -> bool:
-    try:
-        candidate.relative_to(root)
-    except ValueError:
-        return False
-    return True
+def _resolved(path: Path, *, relative_to: Path) -> Path:
+    """Absolute, symlink-resolved form of *path* (it need not exist)."""
+    candidate = path.expanduser()
+    if not candidate.is_absolute():
+        candidate = relative_to / candidate
+    return candidate.resolve()
 
 
 def assert_outside_work_tree(overlay_path: Path, *, workdir: Path) -> None:
@@ -231,13 +230,11 @@ def assert_outside_work_tree(overlay_path: Path, *, workdir: Path) -> None:
     root = work_tree_root_for(workdir)
     if root is None:
         return
-    resolved = overlay_path.expanduser()
-    resolved = resolved if resolved.is_absolute() else (workdir / resolved)
-    resolved = Path(os.path.normpath(resolved))
+    resolved = _resolved(overlay_path, relative_to=workdir)
     git_dir = git_dir_for(workdir)
-    if git_dir is not None and _is_inside(resolved, Path(os.path.normpath(git_dir))):
+    if git_dir is not None and resolved.is_relative_to(git_dir.resolve()):
         return
-    if _is_inside(resolved, Path(os.path.normpath(root))):
+    if resolved.is_relative_to(root.resolve()):
         raise RunOverlayError(
             f"Refusing to use {resolved} as the run-configuration overlay: it is inside the work tree "
             f"({root}), so a run could commit it. Point {ENV_CONFIG_OVERLAY} at a path outside the work "
@@ -404,8 +401,7 @@ def write_overlay(updates: Mapping[str, Any], *, config_path: Path) -> Path:
             f"No configuration overlay location for {config_path}: it is not inside a git repository. "
             f"Set {ENV_CONFIG_OVERLAY} to a writable path outside the work tree."
         )
-    workdir = config_path.parent if str(config_path.parent) else Path.cwd()
-    assert_outside_work_tree(overlay_path, workdir=workdir)
+    assert_outside_work_tree(overlay_path, workdir=config_path.parent)
 
     merged = deep_merge(load_overlay_mapping(overlay_path), updates)
     try:
