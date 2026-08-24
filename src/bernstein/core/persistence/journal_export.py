@@ -56,6 +56,11 @@ _JOURNAL_PREFIX = "journal"
 #: Where CAS blobs live inside the tarball.
 _BLOBS_PREFIX = "blobs"
 
+#: Wall-clock envelope and derived chain fields excluded from the Merkle
+#: ``payload_hash``; surfaced in the manifest so operators can see which
+#: fields are not covered by the chain.
+_UNAUTHENTICATED_FIELDS = ["ts", "elapsed_s", "index", "prev_hash", "payload_hash", "event_hash"]
+
 
 class ReceiptError(RuntimeError):
     """Raised for unrecoverable receipt build/parse/verify errors."""
@@ -73,6 +78,9 @@ class ReceiptManifest:
         created_at: ISO 8601 timestamp of export.
         blob_digests: SHA-256 hex digests of every CAS blob bundled.
         format_version: Receipt format version; bump on schema changes.
+        unauthenticated_fields: Names of the wall-clock envelope and derived
+            chain fields excluded from the Merkle payload_hash. These fields
+            are not covered by the chain integrity verification.
     """
 
     agent_id: str
@@ -82,6 +90,7 @@ class ReceiptManifest:
     created_at: str
     blob_digests: list[str] = field(default_factory=list)
     format_version: int = 1
+    unauthenticated_fields: list[str] = field(default_factory=lambda: _UNAUTHENTICATED_FIELDS.copy())
 
     def canonical_bytes(self) -> bytes:
         """Return the UTF-8 canonical-JSON bytes used for signing."""
@@ -93,6 +102,7 @@ class ReceiptManifest:
             "created_at": self.created_at,
             "blob_digests": self.blob_digests.copy(),
             "format_version": self.format_version,
+            "unauthenticated_fields": self.unauthenticated_fields.copy(),
         }
         return json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
@@ -107,6 +117,7 @@ class ReceiptManifest:
                 "created_at": self.created_at,
                 "blob_digests": self.blob_digests.copy(),
                 "format_version": self.format_version,
+                "unauthenticated_fields": self.unauthenticated_fields.copy(),
             },
             sort_keys=True,
             indent=2,
@@ -129,6 +140,7 @@ class ReceiptManifest:
                 created_at=str(data.get("created_at", "")),
                 blob_digests=list(data.get("blob_digests") or []),
                 format_version=int(data.get("format_version", 1)),
+                unauthenticated_fields=list(data.get("unauthenticated_fields", _UNAUTHENTICATED_FIELDS)),
             )
         except (KeyError, TypeError, ValueError) as exc:
             msg = f"manifest missing required fields: {exc}"

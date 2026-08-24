@@ -1938,6 +1938,7 @@ def _replay_verify_journal(*, run_id: str, sdd_dir: str, as_json: bool) -> None:
                         "coverage": result.coverage.value,
                         "identity": result.identity.value,
                         "count": result.count,
+                        "unauthenticated_fields": result.unauthenticated_fields,
                     }
                 )
             )
@@ -1946,6 +1947,8 @@ def _replay_verify_journal(*, run_id: str, sdd_dir: str, as_json: bool) -> None:
                 f"[green]CHAIN INTACT[/green] for [bold]{run_id}[/bold] ({result.count} steps); "
                 f"identity={result.identity.value}"
             )
+            if result.unauthenticated_fields:
+                console.print(f"unauthenticated fields: {', '.join(result.unauthenticated_fields)}")
         return
 
     report = {
@@ -2038,7 +2041,10 @@ def _print_verify_divergence(
     """Render the chain-divergence outcome and exit non-zero."""
 
     if as_json:
-        console.print_json(json.dumps(report))
+        # Add unauthenticated fields to JSON output for consistency.
+        json_report = dict(report)
+        json_report["unauthenticated_fields"] = result.unauthenticated_fields
+        console.print_json(json.dumps(json_report))
     else:
         console.print(
             f"[red]DIVERGENCE[/red] first divergent step [bold]{result.divergent_index}[/bold] "
@@ -2047,6 +2053,8 @@ def _print_verify_divergence(
         console.print(f"[dim]expected:[/dim] {result.expected_hash}")
         console.print(f"[dim]actual:  [/dim] {result.actual_hash}")
         console.print(f"[dim]Divergence report written to:[/dim] {report_path}")
+        if result.unauthenticated_fields:
+            console.print(f"unauthenticated fields: {', '.join(result.unauthenticated_fields)}")
     raise SystemExit(1)
 
 
