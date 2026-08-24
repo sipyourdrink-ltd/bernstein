@@ -21,11 +21,16 @@ from typing import TYPE_CHECKING, Any
 from bernstein.core.cost.profile_report import canonical_json_bytes
 
 if TYPE_CHECKING:
-    from bernstein.core.tasks.models import TaskPlan
+    from bernstein.core.tasks.models import TaskCostEstimate, TaskPlan
 
 
-def _estimate_dict(e: Any) -> dict[str, Any]:
-    """Serialise a TaskCostEstimate to a canonical dict."""
+def _estimate_dict(e: TaskCostEstimate) -> dict[str, Any]:
+    """Serialise a TaskCostEstimate to a canonical dict.
+
+    Field types come from the :class:`TaskCostEstimate` dataclass contract
+    and are not re-validated here; a caller that hands over something else
+    is a type error at the boundary, not a runtime branch.
+    """
     return {
         "task_id": e.task_id,
         "title": e.title,
