@@ -1937,7 +1937,7 @@ def _handle_orphan_no_signals(
     has_commits = False
     worktree_path = orch._spawner.get_worktree_path(session.id)
     if worktree_path is not None:
-        has_commits = _has_git_commits_on_branch(worktree_path)
+        has_commits = _has_git_commits_on_branch(worktree_path, start_ts)
     clean_exit = session.exit_code == 0
 
     if files_changed > 0:
@@ -2575,11 +2575,22 @@ def check_stalled_tasks(orch: Any) -> None:
     heartbeat_protocol.check_stalled_tasks(orch)
 
 
-def _has_git_commits_on_branch(worktree_path: Path) -> bool:
-    """Return True if the worktree branch has commits beyond main."""
+def _has_git_commits_on_branch(worktree_path: Path, since_ts: float) -> bool:
+    """Return True if the branch has commits beyond main committed after since_ts.
+
+    Scoped to the agent's own session (issue #4466): ``git log main..HEAD``
+    alone answers "does this branch have ANY commit ahead of main", which is
+    unconditionally true for a run resumed on a branch that already carried
+    work before this agent spawned - a reviewed PR checkout, a rebase-onto
+    flow. That let a dead agent on such a branch read as "made git commits"
+    and auto-complete its task on the branch's pre-existing history, even
+    when the agent itself produced zero commits. Only commits whose
+    committer timestamp is after ``since_ts`` (the agent's own start point,
+    i.e. its ``spawn_ts``) count as evidence this agent did something.
+    """
     try:
         result = subprocess.run(
-            ["git", "log", "--oneline", "main..HEAD"],
+            ["git", "log", "--format=%ct", "main..HEAD"],
             cwd=str(worktree_path),
             capture_output=True,
             text=True,
@@ -2587,7 +2598,17 @@ def _has_git_commits_on_branch(worktree_path: Path) -> bool:
             errors="replace",
             timeout=5,
         )
-        return len(result.stdout.strip()) > 0
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                commit_ts = float(line)
+            except ValueError:
+                continue
+            if commit_ts > since_ts:
+                return True
+        return False
     except Exception:
         return False
 

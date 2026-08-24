@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -177,25 +178,41 @@ def test_save_partial_work_no_changes_returns_false(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_has_git_commits_true_when_ahead_of_main(tmp_path: Path) -> None:
-    """A branch with commits beyond main reports True."""
+def test_has_git_commits_true_when_committed_after_since_ts(tmp_path: Path) -> None:
+    """A commit made after since_ts counts (fresh-branch behavior unchanged)."""
     _init_repo(tmp_path)
     _git(tmp_path, "checkout", "-b", "agent/A-1")
+    since_ts = time.time() - 5
     (tmp_path / "work.py").write_text("y = 2\n")
     _git(tmp_path, "add", "-A")
     _git(tmp_path, "commit", "-m", "agent work")
-    assert _has_git_commits_on_branch(tmp_path) is True
+    assert _has_git_commits_on_branch(tmp_path, since_ts) is True
+
+
+def test_has_git_commits_false_when_all_commits_predate_since_ts(tmp_path: Path) -> None:
+    """A branch already ahead of main before since_ts does not count that
+    pre-existing history (issue #4466): a resumed branch, or a checked-out
+    PR under review, must not read as "this agent made commits" just
+    because *some* commit exists in ``main..HEAD``.
+    """
+    _init_repo(tmp_path)
+    _git(tmp_path, "checkout", "-b", "agent/A-1")
+    (tmp_path / "pre.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-m", "pre-existing work")
+    since_ts = time.time() + 5  # the agent "starts" after this commit landed
+    assert _has_git_commits_on_branch(tmp_path, since_ts) is False
 
 
 def test_has_git_commits_false_on_main(tmp_path: Path) -> None:
     """On main with no extra commits, reports False."""
     _init_repo(tmp_path)
-    assert _has_git_commits_on_branch(tmp_path) is False
+    assert _has_git_commits_on_branch(tmp_path, time.time() - 5) is False
 
 
 def test_has_git_commits_false_for_non_git_dir(tmp_path: Path) -> None:
     """A non-git directory yields False (exception swallowed)."""
-    assert _has_git_commits_on_branch(tmp_path) is False
+    assert _has_git_commits_on_branch(tmp_path, time.time()) is False
 
 
 # ---------------------------------------------------------------------------

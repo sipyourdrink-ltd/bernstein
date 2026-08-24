@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -143,17 +145,17 @@ def _make_orch_no_ratelimit(tmp_path: Path) -> SimpleNamespace:  # type: ignore[
 
 
 def test_has_git_commits_on_branch_returns_true_when_commits_exist(tmp_path: Path) -> None:
-    """_has_git_commits_on_branch returns True when subprocess reports commits."""
+    """_has_git_commits_on_branch returns True when a commit postdates since_ts."""
     with patch("bernstein.core.agents.agent_lifecycle.subprocess") as mock_subprocess:
         mock_result = MagicMock()
-        mock_result.stdout = "abc1234 Add feature\ndef5678 Fix tests\n"
+        mock_result.stdout = "1700000200\n1700000100\n"
         mock_subprocess.run.return_value = mock_result
         mock_subprocess.TimeoutExpired = TimeoutError
         mock_subprocess.SubprocessError = Exception
 
-        assert _has_git_commits_on_branch(tmp_path) is True
+        assert _has_git_commits_on_branch(tmp_path, 1700000000.0) is True
         mock_subprocess.run.assert_called_once_with(
-            ["git", "log", "--oneline", "main..HEAD"],
+            ["git", "log", "--format=%ct", "main..HEAD"],
             cwd=str(tmp_path),
             capture_output=True,
             text=True,
@@ -161,6 +163,22 @@ def test_has_git_commits_on_branch_returns_true_when_commits_exist(tmp_path: Pat
             errors="replace",
             timeout=5,
         )
+
+
+def test_has_git_commits_on_branch_returns_false_when_all_commits_predate_since_ts(tmp_path: Path) -> None:
+    """_has_git_commits_on_branch returns False when every commit predates since_ts.
+
+    Regression for #4466: a branch already ahead of main before the agent's
+    own start point must not read as "this agent made commits".
+    """
+    with patch("bernstein.core.agents.agent_lifecycle.subprocess") as mock_subprocess:
+        mock_result = MagicMock()
+        mock_result.stdout = "1699999900\n1699999800\n"
+        mock_subprocess.run.return_value = mock_result
+        mock_subprocess.TimeoutExpired = TimeoutError
+        mock_subprocess.SubprocessError = Exception
+
+        assert _has_git_commits_on_branch(tmp_path, 1700000000.0) is False
 
 
 def test_has_git_commits_on_branch_returns_false_when_no_commits(tmp_path: Path) -> None:
@@ -172,7 +190,7 @@ def test_has_git_commits_on_branch_returns_false_when_no_commits(tmp_path: Path)
         mock_subprocess.TimeoutExpired = TimeoutError
         mock_subprocess.SubprocessError = Exception
 
-        assert _has_git_commits_on_branch(tmp_path) is False
+        assert _has_git_commits_on_branch(tmp_path, 1700000000.0) is False
 
 
 def test_has_git_commits_on_branch_returns_false_on_error(tmp_path: Path) -> None:
@@ -182,7 +200,7 @@ def test_has_git_commits_on_branch_returns_false_on_error(tmp_path: Path) -> Non
         mock_subprocess.TimeoutExpired = TimeoutError
         mock_subprocess.SubprocessError = Exception
 
-        assert _has_git_commits_on_branch(tmp_path) is False
+        assert _has_git_commits_on_branch(tmp_path, 1700000000.0) is False
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +226,104 @@ def test_orphaned_task_completes_on_git_commits(tmp_path: Path) -> None:
     with (
         patch("bernstein.core.agents.agent_lifecycle.collect_completion_data", return_value={"files_modified": []}),
         patch("bernstein.core.agents.agent_lifecycle._has_git_commits_on_branch", return_value=True),
+        patch("bernstein.core.agents.agent_lifecycle.complete_task") as mock_complete,
+        patch("bernstein.core.agents.agent_lifecycle.retry_or_fail_task") as mock_retry,
+    ):
+        handle_orphaned_task(orch, task.id, session, {"claimed": [task], "open": [], "in_progress": [], "done": []})
+
+    mock_complete.assert_called_once_with(
+        orch._client,
+        "http://server",
+        task.id,
+        f"Auto-completed: agent {session.id} made git commits on branch (no signals to verify)",
+    )
+    mock_retry.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Orphaned task: git-commit indicator is scoped to the agent's own session
+# (#4466) -- exercised against a real git repo rather than a mocked
+# _has_git_commits_on_branch, so the scoping fix is proven end to end.
+# ---------------------------------------------------------------------------
+
+
+def _init_worktree_repo(worktree: Path) -> None:
+    """A minimal real git repo: ``main`` with one commit, ready to branch from."""
+    worktree.mkdir(parents=True, exist_ok=True)
+    for args in (
+        ["init", "-b", "main"],
+        ["config", "user.email", "test@example.com"],
+        ["config", "user.name", "Test"],
+        ["commit", "--allow-empty", "-m", "init"],
+    ):
+        subprocess.run(["git", *args], cwd=str(worktree), capture_output=True, check=True)
+
+
+def test_orphaned_task_fails_when_branch_commits_predate_agent_spawn(tmp_path: Path) -> None:
+    """Regression #4466: a branch already ahead of main when the agent spawns
+    must not read as "this agent made commits". An orphaned agent on a
+    resumed/reviewed-PR branch with zero commits of its own fails honestly
+    instead of auto-completing on the branch's pre-existing history.
+    """
+    worktree = tmp_path / "worktree"
+    _init_worktree_repo(worktree)
+    subprocess.run(["git", "checkout", "-b", "agent/pre-existing"], cwd=str(worktree), capture_output=True, check=True)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "pre-existing work"], cwd=str(worktree), capture_output=True, check=True
+    )
+
+    task = _make_task()
+    task.status = TaskStatus.CLAIMED
+    session = AgentSession(
+        id="sess-preloaded",
+        role="backend",
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+        task_ids=[task.id],
+        exit_code=1,
+        spawn_ts=time.time(),  # agent "starts" after the branch's pre-existing commit
+    )
+    orch = _make_orch_no_ratelimit(tmp_path)
+    orch._spawner.get_worktree_path.return_value = worktree
+
+    with (
+        patch("bernstein.core.agents.agent_lifecycle.collect_completion_data", return_value={"files_modified": []}),
+        patch("bernstein.core.agents.agent_lifecycle.complete_task") as mock_complete,
+        patch("bernstein.core.agents.agent_lifecycle.retry_or_fail_task") as mock_retry,
+    ):
+        handle_orphaned_task(orch, task.id, session, {"claimed": [task], "open": [], "in_progress": [], "done": []})
+
+    mock_complete.assert_not_called()
+    mock_retry.assert_called_once()
+    assert "no completion signals and no files modified" in mock_retry.call_args.args[1]
+
+
+def test_orphaned_task_completes_on_git_commits_made_after_spawn(tmp_path: Path) -> None:
+    """Fresh-branch behavior is unchanged: a commit the agent actually made
+    after it spawned still auto-completes the orphaned task.
+    """
+    worktree = tmp_path / "worktree"
+    _init_worktree_repo(worktree)
+
+    task = _make_task()
+    task.status = TaskStatus.CLAIMED
+    session = AgentSession(
+        id="sess-fresh",
+        role="backend",
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+        task_ids=[task.id],
+        exit_code=1,
+        spawn_ts=time.time() - 5,  # agent "starts" before the commit below
+    )
+    orch = _make_orch_no_ratelimit(tmp_path)
+    orch._spawner.get_worktree_path.return_value = worktree
+
+    subprocess.run(["git", "checkout", "-b", "agent/A-1"], cwd=str(worktree), capture_output=True, check=True)
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "agent work"], cwd=str(worktree), capture_output=True, check=True)
+
+    with (
+        patch("bernstein.core.agents.agent_lifecycle.collect_completion_data", return_value={"files_modified": []}),
         patch("bernstein.core.agents.agent_lifecycle.complete_task") as mock_complete,
         patch("bernstein.core.agents.agent_lifecycle.retry_or_fail_task") as mock_retry,
     ):
