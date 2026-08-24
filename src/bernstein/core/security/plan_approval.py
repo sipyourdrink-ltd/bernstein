@@ -31,12 +31,22 @@ from bernstein.core.models import (
     TaskCostEstimate,
     TaskPlan,
 )
+from bernstein.core.plan_rendering import render_plan
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+class PlanHashMismatchError(Exception):
+    """Raised when a plan's current rendering hash differs from the stored one.
+
+    The plan was modified after it was rendered for review, so the approval
+    decision cannot be bound to the content the human actually reviewed.
+    """
+
 
 # ---------------------------------------------------------------------------
 # Risk classification
@@ -248,7 +258,7 @@ def create_plan(goal: str, tasks: list[Task]) -> TaskPlan:
     total_minutes = sum(t.estimated_minutes for t in tasks)
     high_risk = [e.task_id for e in estimates if e.risk_level in ("high", "critical")]
 
-    return TaskPlan(
+    plan = TaskPlan(
         id=uuid.uuid4().hex[:12],
         goal=goal,
         task_estimates=estimates,
@@ -256,6 +266,8 @@ def create_plan(goal: str, tasks: list[Task]) -> TaskPlan:
         total_estimated_minutes=total_minutes,
         high_risk_tasks=high_risk,
     )
+    plan.rendering_hash = render_plan(plan).rendering_hash
+    return plan
 
 
 class PlanStore:
@@ -309,6 +321,25 @@ class PlanStore:
             plans = [p for p in plans if p.status == status]
         return sorted(plans, key=lambda p: p.created_at, reverse=True)
 
+    def verify_rendering_hash(self, plan_id: str) -> None:
+        """Verify a plan's current rendering matches the hash stored at creation.
+
+        Plans created before the rendering-hash gate shipped carry an empty
+        hash and are accepted without verification (backward compatibility).
+
+        Raises:
+            PlanHashMismatchError: If the plan was modified after it was
+                rendered for review.
+        """
+        plan = self._plans.get(plan_id)
+        if plan is None or not plan.rendering_hash:
+            return
+        current = render_plan(plan).rendering_hash
+        if current != plan.rendering_hash:
+            raise PlanHashMismatchError(
+                f"Plan {plan_id} rendering hash mismatch: stored {plan.rendering_hash}, current {current}"
+            )
+
     def approve_plan(self, plan_id: str, reason: str = "") -> TaskPlan | None:
         """Mark a plan as approved.
 
@@ -317,6 +348,7 @@ class PlanStore:
         plan = self._plans.get(plan_id)
         if plan is None:
             return None
+        self.verify_rendering_hash(plan_id)
         plan.status = PlanStatus.APPROVED
         plan.decided_at = time.time()
         plan.decision_reason = reason
@@ -336,6 +368,7 @@ class PlanStore:
         plan = self._plans.get(plan_id)
         if plan is None:
             return None
+        self.verify_rendering_hash(plan_id)
         plan.status = PlanStatus.REJECTED
         plan.decided_at = time.time()
         plan.decision_reason = reason

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from bernstein.core.lifecycle import transition_task
 from bernstein.core.models import PlanStatus, TaskStatus
+from bernstein.core.plan_approval import PlanHashMismatchError
 from bernstein.core.routes._unconfigured import UNCONFIGURED_STATUS
 from bernstein.core.security.auth_middleware import enforce_agent_task_scope_for_ids
 
@@ -110,6 +111,13 @@ def approve_plan(request: Request, plan_id: str, body: PlanDecisionRequest | Non
 
     reason = body.reason if body else ""
 
+    # Bind the decision to the reviewed rendering: refuse to promote tasks if
+    # the plan changed after it was rendered for approval.
+    try:
+        store.verify_rendering_hash(plan_id)
+    except PlanHashMismatchError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     # Promote tasks from PLANNED to OPEN
     task_store = request.app.state.store  # type: ignore[attr-defined]
     # The plan id resolves to a batch of existing tasks this route
@@ -157,6 +165,13 @@ def reject_plan(request: Request, plan_id: str, body: PlanDecisionRequest | None
         raise HTTPException(status_code=409, detail=f"Plan already {plan.status.value}")
 
     reason = body.reason if body else ""
+
+    # Bind the decision to the reviewed rendering: refuse to cancel tasks if
+    # the plan changed after it was rendered for review.
+    try:
+        store.verify_rendering_hash(plan_id)
+    except PlanHashMismatchError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     # Cancel PLANNED tasks
     task_store = request.app.state.store  # type: ignore[attr-defined]
