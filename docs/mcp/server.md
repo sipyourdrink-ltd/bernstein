@@ -545,6 +545,12 @@ work while the plan is still `pending` - and `POST /plans/{plan_id}/reject`
 only cancels tasks that are still `planned`, so a task released early survives
 a rejection of the plan it belongs to.
 
+The plan decision is bound to a SHA-256 rendering hash computed when the plan
+was created. If the plan's content changes after it was rendered for review
+(an edited goal, a re-priced estimate, a reordered task), the approve and
+reject routes refuse the decision with `409` before any task is promoted or
+cancelled, so an operator never signs off on content they did not see.
+
 ## The completion gate
 
 `bernstein_complete` reports the result of work the caller is executing. It

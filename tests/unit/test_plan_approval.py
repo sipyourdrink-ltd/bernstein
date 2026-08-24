@@ -6,8 +6,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from bernstein.core.models import Complexity, PlanStatus, Scope, Task
-from bernstein.core.plan_approval import PlanStore, _classify_risk, create_plan
+from bernstein.core.plan_approval import (
+    PlanHashMismatchError,
+    PlanStore,
+    _classify_risk,
+    create_plan,
+)
 
 
 def _task(
@@ -169,3 +175,66 @@ def test_plan_approval_panel_and_post_approval_line_agree_for_free_route() -> No
     assert plan.total_estimated_cost_usd == 0.0
     assert low_usd == 0.0
     assert high_usd == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Rendering-hash approval gate
+# ---------------------------------------------------------------------------
+
+
+def test_create_plan_binds_rendering_hash() -> None:
+    """create_plan stores a SHA-256 rendering hash on the plan."""
+    plan = create_plan("Hash me", [_task("T-hash-1", title="Do a thing")])
+
+    assert len(plan.rendering_hash) == 64
+    int(plan.rendering_hash, 16)  # must not raise
+
+
+def test_approve_verifies_rendering_hash(tmp_path: Path) -> None:
+    """approve_plan succeeds when the plan is unchanged since creation."""
+    store = PlanStore(tmp_path / ".sdd")
+    plan = create_plan("Stable", [_task("T-hash-2", title="Do a thing")])
+    store.save_plan(plan)
+
+    approved = store.approve_plan(plan.id, "reviewed")
+
+    assert approved is not None
+    assert approved.status == PlanStatus.APPROVED
+
+
+def test_approve_rejects_modified_plan(tmp_path: Path) -> None:
+    """approve_plan refuses a plan whose content changed after creation."""
+    store = PlanStore(tmp_path / ".sdd")
+    plan = create_plan("Mutable", [_task("T-hash-3", title="Original title")])
+    store.save_plan(plan)
+
+    # Tamper with the plan after it was rendered for review.
+    plan.goal = "Tampered goal"
+
+    with pytest.raises(PlanHashMismatchError):
+        store.approve_plan(plan.id, "reviewed")
+
+
+def test_reject_verifies_rendering_hash(tmp_path: Path) -> None:
+    """reject_plan also refuses a plan modified after creation."""
+    store = PlanStore(tmp_path / ".sdd")
+    plan = create_plan("Mutable", [_task("T-hash-4", title="Original title")])
+    store.save_plan(plan)
+
+    plan.goal = "Tampered goal"
+
+    with pytest.raises(PlanHashMismatchError):
+        store.reject_plan(plan.id, "out of scope")
+
+
+def test_verify_rendering_hash_skips_legacy_plan(tmp_path: Path) -> None:
+    """Plans without a stored hash (pre-gate) are accepted without verification."""
+    store = PlanStore(tmp_path / ".sdd")
+    plan = create_plan("Legacy", [_task("T-hash-5", title="Do a thing")])
+    plan.rendering_hash = ""
+    store.save_plan(plan)
+
+    approved = store.approve_plan(plan.id, "reviewed")
+
+    assert approved is not None
+    assert approved.status == PlanStatus.APPROVED
