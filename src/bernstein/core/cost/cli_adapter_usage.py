@@ -159,11 +159,68 @@ def _record_usage(rec: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _envelope_in_out(rec: dict[str, Any]) -> tuple[int, int] | None:
+    """Extract ``(input, output)`` from a goose stream-json envelope record.
+
+    Goose's ``--output-format stream-json`` carries the provider's own
+    cumulative accounting on a terminal ``envelope`` event under
+    ``metadata.tokens`` (``input``/``output``/``cache_read``/``cache_write``/
+    ``total``). Returns None when the record is not an envelope or carries no
+    recognisable token counts.
+    """
+    if rec.get("type") != "envelope":
+        return None
+    metadata = _as_dict(rec.get("metadata"))
+    if metadata is None:
+        return None
+    tokens = _as_dict(metadata.get("tokens"))
+    if tokens is None:
+        return None
+    tokens_in, tokens_out = _extract_in_out(tokens)
+    if tokens_in > 0 or tokens_out > 0:
+        return tokens_in, tokens_out
+    return None
+
+
+def _extract_cost_usd(text: str) -> float:
+    """Extract the provider-reported ``cost_usd`` from a goose envelope.
+
+    Goose's envelope ``metadata`` carries an upstream ``cost_usd`` figure that
+    is more authoritative than the price-model estimate derived from token
+    counts, so it is written into the ``.tokens`` sidecar record for the cost
+    path to prefer.
+
+    Args:
+        text: Raw session-log text (line-delimited stream-json).
+
+    Returns:
+        The envelope's ``cost_usd``, or ``0.0`` when absent/uncoercible.
+    """
+    for rec in _records_from_text(text):
+        if rec.get("type") != "envelope":
+            continue
+        metadata = _as_dict(rec.get("metadata"))
+        if metadata is None:
+            continue
+        cost = metadata.get("cost_usd")
+        if cost is None:
+            continue
+        try:
+            value = float(cost)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return 0.0
+
+
 def parse_stream_json_usage(text: str) -> tuple[int, int, str]:
     """Parse qwen-code stream-json output into ``(in, out, model)`` tokens.
 
     Precedence, most authoritative first, so counts are never double-summed:
 
+    0. The goose stream-json ``envelope`` event's ``metadata.tokens`` - the
+       provider's own cumulative per-session accounting.
     1. ``stats.models`` / ``metrics.models`` - the provider's own cumulative
        per-session breakdown (``tokens.prompt`` / ``tokens.completion``).
     2. The terminal ``result`` message's cumulative ``usage`` block.
@@ -186,6 +243,13 @@ def parse_stream_json_usage(text: str) -> tuple[int, int, str]:
         fallback_model = _record_model(rec)
         if fallback_model:
             break
+
+    # 0. Goose stream-json envelope - the provider's own cumulative
+    #    per-session accounting (``metadata.tokens``).
+    for rec in records:
+        envelope = _envelope_in_out(rec)
+        if envelope is not None:
+            return envelope[0], envelope[1], fallback_model
 
     # 1. Authoritative provider breakdown.
     for rec in records:
@@ -276,7 +340,8 @@ def capture_cli_adapter_usage(
     """Recover CLI-adapter token usage and materialise the recovery sidecar.
 
     Parses the adapter's structured session log and, when it carries real
-    token counts, appends a ``{"ts", "in", "out"}`` record to the
+    token counts, appends a ``{"ts", "in", "out"}`` record (plus an optional
+    ``cost_usd`` when the log reports one) to the
     orchestrator-root ``.sdd/runtime/<session_id>.tokens`` sidecar - the exact
     file
     :func:`bernstein.core.agents.agent_lifecycle._read_runner_cost_usd` reads
@@ -322,9 +387,15 @@ def capture_cli_adapter_usage(
 
     try:
         sidecar_path.parent.mkdir(parents=True, exist_ok=True)
-        record = json.dumps({"ts": time.time(), "in": tokens_in, "out": tokens_out})
+        record: dict[str, Any] = {"ts": time.time(), "in": tokens_in, "out": tokens_out}
+        # Goose's envelope carries an upstream ``cost_usd`` that is more
+        # authoritative than the price-model estimate derived from token
+        # counts; carry it on the record so the cost path can prefer it.
+        cost_usd = _extract_cost_usd(text)
+        if cost_usd > 0:
+            record["cost_usd"] = cost_usd
         with sidecar_path.open("a", encoding="utf-8") as fh:
-            fh.write(record + "\n")
+            fh.write(json.dumps(record) + "\n")
     except OSError as exc:
         # "tokens" here is the usage-count sidecar file, not a credential.
         # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure

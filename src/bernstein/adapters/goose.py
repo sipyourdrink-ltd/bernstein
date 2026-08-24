@@ -24,6 +24,7 @@ import subprocess
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
+from bernstein.adapters._contract import DangerousModeStrategy
 from bernstein.adapters.base import (
     DEFAULT_TIMEOUT_SECONDS,
     CLIAdapter,
@@ -31,6 +32,7 @@ from bernstein.adapters.base import (
     build_worker_cmd,
 )
 from bernstein.adapters.env_isolation import build_filtered_env
+from bernstein.core.defaults import COST
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -55,6 +57,29 @@ class GooseAdapter(CLIAdapter):
     Integrates with the Goose CLI agent.
     GitHub: https://github.com/aaif-goose/goose
     """
+
+    def _goose_mode(self) -> str:
+        """Return the GOOSE_MODE autonomy policy for this spawn.
+
+        Goose controls autonomy via the ``GOOSE_MODE`` env var (``auto``,
+        ``approve``, ``smart_approve``, ``chat``); there is no CLI flag. The
+        policy is pinned on every spawn from the adapter's declared
+        dangerous-mode strategy so an un-pinned spawn never inherits the
+        operator's own ``GOOSE_MODE``. A permissive strategy (``auto``) lets
+        the agent act unattended; anything else is restricted (``approve``)
+        so a headless run fails fast instead of blocking on a prompt nobody
+        answers.
+        """
+        declared = getattr(self.strategy(), "dangerous_mode", DangerousModeStrategy.UNSUPPORTED)
+        if not isinstance(declared, DangerousModeStrategy):
+            declared = DangerousModeStrategy.UNSUPPORTED
+        if declared in (
+            DangerousModeStrategy.ENV_VAR,
+            DangerousModeStrategy.CLI_FLAG,
+            DangerousModeStrategy.ALWAYS_ON,
+        ):
+            return "auto"
+        return "approve"
 
     def spawn(
         self,
@@ -93,7 +118,24 @@ class GooseAdapter(CLIAdapter):
 
         model_id = _MODEL_MAP.get(model_config.model, model_config.model)
 
-        cmd = ["goose", "run", "--text", prompt]
+        # Max turns derived from effort and task scope, mirroring the claude
+        # adapter's computation so large tasks get proportionally more turns.
+        effort = getattr(model_config, "effort", "normal")
+        base_turns = COST.effort_base_turns.get(effort, 50)
+        scope_multiplier = COST.scope_multipliers.get(task_scope, 1.5)
+        max_turns = int(base_turns * scope_multiplier)
+
+        cmd = [
+            "goose",
+            "run",
+            "--text",
+            prompt,
+            "--output-format",
+            "stream-json",
+            "--no-session",
+            "--max-turns",
+            str(max_turns),
+        ]
         if model_id:
             cmd += ["--model", model_id]
 
@@ -115,6 +157,11 @@ class GooseAdapter(CLIAdapter):
         env = build_filtered_env(
             ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GOOGLE_API_KEY"],
         )
+        # Pin the autonomy policy AFTER the allow-list so the worker sees the
+        # adapter's value whatever the operator's own environment holds.
+        # ``GOOSE_MODE`` is deliberately not in ``build_filtered_env``'s
+        # extra_keys - it is set explicitly here, never inherited.
+        env["GOOSE_MODE"] = self._goose_mode()
         with log_path.open("w") as log_file:
             try:
                 proc = subprocess.Popen(
