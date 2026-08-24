@@ -724,12 +724,24 @@ def verify_entry(entry: SpineEntry, hmac_key: bytes) -> bool:
     Returns:
         ``True`` when both the entry hash and the HMAC tag recompute.
     """
+    if entry.v not in (SCHEME_V1, SCHEME_V2):
+        # Reject unknown scheme versions rather than silently falling back to v1.
+        # This matches the behavior of verify(), _walk_spine_rows, and
+        # _verify_log_bytes.
+        return False
     if entry.v == SCHEME_V2:
         key = derive_store_key(hmac_key, DOMAIN_LINEAGE)
         prefix = domain_tag(DOMAIN_LINEAGE, SCHEME_V2)
-    else:
+    elif entry.v == SCHEME_V1:
         key = hmac_key
         prefix = ""
+    else:
+        # An unknown version is not a v1 entry: silently treating it as v1
+        # would accept a row whose hash preimage and MAC key are undefined,
+        # so the check fails closed. ``verify`` and ``_walk_spine_rows`` already
+        # reject unknown versions; this is the per-entry counterpart catching
+        # up (issue #2559).
+        return False
     expected_hash = compute_entry_hash(
         prev_hash=entry.prev_hash,
         artifact_path=entry.artifact_path,

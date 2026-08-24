@@ -10,6 +10,7 @@
     'prev_hmac': '<masked>',
     'resource_id': 't-1',
     'resource_type': 'task',
+    'scheme': 2,
     'timestamp': '<masked>',
   })
 # ---

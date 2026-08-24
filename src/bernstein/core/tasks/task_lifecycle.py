@@ -671,6 +671,11 @@ def maybe_retry_task(
     retry_metadata = dict(task.metadata)
     retry_metadata["budget_multiplier"] = budget_multiplier
     retry_metadata.setdefault("original_task_id", task.metadata.get("original_task_id", task.id))
+    # ``retry_of`` names the failed task this retry replaces. It is the
+    # direct link the store consults when a retry succeeds and has to revive
+    # tasks stranded on the original -- only the direct dependent is
+    # rewired, not the whole transitive closure (issue #4376).
+    retry_metadata["retry_of"] = task.id
     retry_metadata = _stamp_checkpoint_retry_metadata_safe(
         task=task,
         retry_metadata=retry_metadata,
@@ -1403,6 +1408,11 @@ def retry_or_fail_task(
         retry_metadata = dict(task.metadata)
         retry_metadata["budget_multiplier"] = budget_multiplier
         retry_metadata.setdefault("original_task_id", task.metadata.get("original_task_id", task.id))
+        # ``retry_of`` names the failed task this retry replaces. It is the
+        # direct link the store consults when a retry succeeds and has to
+        # revive tasks stranded on the original -- only the direct dependent
+        # is rewired, not the whole transitive closure (issue #4376).
+        retry_metadata["retry_of"] = task.id
         if budget_neutral_retry:
             retry_metadata[_TRANSPORT_RETRY_METADATA_KEY] = _transport_retries + 1
         elif not transport_failure:

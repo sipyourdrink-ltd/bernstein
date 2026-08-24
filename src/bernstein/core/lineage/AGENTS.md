@@ -18,15 +18,13 @@ single always-on Merkle+HMAC store that every adapter artifact write routes thro
 
 ## Invariants
 
-- Adapter artifact writes route through `LineageSpine.record` at the
-  single write boundary in `../../adapters/base.py` - no per-adapter
-  opt-in, no second write path (`spine.py` docstring, issue #2292).
+- Adapter artifact writes route through `LineageSpine.record` at the single write boundary in
+  `../../adapters/base.py` - no per-adapter opt-in, no second write path (issue #2292).
 - Spine entries chain: `entry_hash = H(prev_hash, artifact_path, content_hash, actor, step_id,
   model, timestamp)`. Changing the entry shape breaks head-hash verification for existing runs.
-- The spine's HMAC tag derives a per-store key from the audit-chain master key via HKDF-SHA256
-  (`../security/key_derivation.py`): v2 entries are MAC'd with the derived key over a
-  domain-tagged preimage, v1 entries keep the raw key and no domain tag. Key handling rules from
-  `../security/audit.py` apply.
+- The spine's HMAC tag uses a per-store key derived from the audit-chain master key with
+  HKDF-SHA256 (`../security/key_derivation.py`): v2 MACs the derived key over a domain-tagged
+  preimage, v1 keeps the raw key untagged. `../security/audit.py`'s key rules apply.
 - A new `LineageEntry` field must be optional, default `None`, dropped from `_canonical_body`
   when `None`, and read back in `_entry_from_dict` (cf. `attachment_digests`) - that is what
   keeps every historical entry's bytes, HMAC and JWS valid.

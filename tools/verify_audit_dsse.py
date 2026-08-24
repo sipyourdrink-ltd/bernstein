@@ -49,16 +49,21 @@ import sys
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    import io
+from typing import Any, TextIO
 
 # We re-implement the wire-format constants from the DSSE / in-toto specs and
 # the bernstein audit module. Any drift between this file and
 # ``src/bernstein/core/security/audit_dsse.py`` is caught by the dedicated
 # round-trip test (``tests/unit/test_audit_dsse.py``). DO NOT replace these
 # with imports from the bernstein package - see the module docstring above.
+
+# Scheme versions matching src/bernstein/core/security/key_derivation.py
+SCHEME_V1 = 1
+SCHEME_V2 = 2
+
+# Domain tags matching src/bernstein/core/security/key_derivation.py
+DOMAIN_AUDIT = "audit"
+_TAG_PREFIX = "bernstein"
 
 DSSE_PAYLOAD_TYPE = "application/vnd.in-toto+json"
 IN_TOTO_STATEMENT_TYPE = "https://in-toto.io/Statement/v1"
@@ -90,6 +95,38 @@ class VerifyResult:
     def ok(self) -> bool:
         """True iff every check that ran reported success."""
         return all(c.ok for c in self.checks)
+
+
+# ---------------------------------------------------------------------------
+# HKDF key derivation - matches src/bernstein/core/security/key_derivation.py
+# ---------------------------------------------------------------------------
+
+
+def derive_store_key(master_key: bytes, domain: str) -> bytes:
+    """Derive a deterministic 32-byte per-store HMAC key via HKDF-SHA256.
+
+    Matches :func:`bernstein.core.security.key_derivation.derive_store_key`.
+    """
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=domain.encode("utf-8"),
+    )
+    return hkdf.derive(master_key)
+
+
+def domain_tag(domain: str, version: int = SCHEME_V2) -> str:
+    """Return the versioned domain tag string used to prefix chain preimages.
+
+    Matches :func:`bernstein.core.security.key_derivation.domain_tag`.
+    """
+    if version == SCHEME_V1:
+        return ""
+    return f"{_TAG_PREFIX}:{domain}:v{version}"
 
 
 # ---------------------------------------------------------------------------
@@ -270,12 +307,15 @@ def verify_hmac_chain(bundle_path: Path, hmac_key: bytes) -> CheckResult:
     Args:
         bundle_path: Path to an Article 12 bundle zip carrying
             ``events.jsonl``.
-        hmac_key: Raw HMAC-SHA256 key (caller responsibility).
+        hmac_key: Raw HMAC-SHA256 master key (caller responsibility). The
+            function will derive the per-store key for scheme v2 entries.
 
     Returns:
         :class:`CheckResult` with ``ok=True`` when every event's HMAC matches
         ``HMAC(key, prev_hmac || canonical_json(payload-without-hmac))`` and
-        ``prev_hmac`` matches the previous link.
+        ``prev_hmac`` matches the previous link. Supports both scheme v1
+        (raw key, no domain prefix) and scheme v2 (HKDF-derived key, domain
+        tagged preimage).
     """
     try:
         with zipfile.ZipFile(bundle_path) as zf:
@@ -317,7 +357,27 @@ def verify_hmac_chain(bundle_path: Path, hmac_key: bytes) -> CheckResult:
                     f"events.jsonl:{line_no}: prev_hmac mismatch (expected {prev[:16]}…, got {recorded_prev[:16]}…)"
                 ),
             )
-        expected = hmac.new(hmac_key, _canonical_chain_payload(prev, entry), hashlib.sha256).hexdigest()
+
+        # Determine scheme from entry (default to v1 for backward compat)
+        scheme = entry.get("scheme", SCHEME_V1)
+        if scheme == SCHEME_V2:
+            verify_key = derive_store_key(hmac_key, DOMAIN_AUDIT)
+            verify_prefix = domain_tag(DOMAIN_AUDIT, SCHEME_V2)
+        elif scheme == SCHEME_V1:
+            verify_key = hmac_key
+            verify_prefix = ""
+        else:
+            return CheckResult(
+                name="hmac_chain",
+                ok=False,
+                detail=f"events.jsonl:{line_no}: unsupported audit scheme {scheme!r}",
+            )
+
+        expected = hmac.new(
+            verify_key,
+            verify_prefix.encode() + _canonical_chain_payload(prev, entry),
+            hashlib.sha256,
+        ).hexdigest()
         if stored != expected:
             return CheckResult(
                 name="hmac_chain",
@@ -335,7 +395,7 @@ def verify_hmac_chain(bundle_path: Path, hmac_key: bytes) -> CheckResult:
 # ---------------------------------------------------------------------------
 
 
-def _print_check(check: CheckResult, *, verbose: bool, stream: io.TextIOBase) -> None:
+def _print_check(check: CheckResult, *, verbose: bool, stream: TextIO) -> None:
     """Emit one check result line (PASS/FAIL plus optional detail)."""
     status = "PASS" if check.ok else "FAIL"
     line = f"[{status}] {check.name}"
@@ -351,7 +411,7 @@ def run_verify(
     public_key_path: Path,
     hmac_key_path: Path | None,
     verbose: bool,
-    stream: io.TextIOBase,
+    stream: TextIO,
 ) -> VerifyResult:
     """Run every verification step and emit human-readable output."""
     result = VerifyResult()

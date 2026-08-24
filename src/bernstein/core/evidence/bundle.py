@@ -62,6 +62,11 @@ from bernstein.core.lineage.spine import (
     compute_entry_hash,
     content_hash_of,
 )
+from bernstein.core.security.key_derivation import (
+    DOMAIN_LINEAGE,
+    SCHEME_V2,
+    domain_tag,
+)
 from bernstein.core.skills.catalog.signature import sign_payload, verify_payload
 
 if TYPE_CHECKING:
@@ -623,6 +628,7 @@ def _seal_media_credential(
                 step_id=task_id,
                 model=_EVIDENCE_MODEL,
                 timestamp=timestamp,
+                domain_prefix=domain_tag(DOMAIN_LINEAGE, SCHEME_V2),
             ),
             hmac="",
         )

@@ -1414,6 +1414,7 @@ def _event_to_row(event: AuditEvent) -> dict[str, Any]:
         "details": event.details,
         "prev_hmac": event.prev_hmac,
         "hmac": event.hmac,
+        "scheme": event.scheme,
     }
 
 
@@ -1427,6 +1428,7 @@ def _row_to_event(row: dict[str, Any]) -> AuditEvent:
         details=row.get("details", {}),
         prev_hmac=row.get("prev_hmac", ""),
         hmac=row.get("hmac", ""),
+        scheme=row.get("scheme"),
     )
 
 
@@ -1502,6 +1504,7 @@ def _events_from_text(
                 details=entry.get("details", {}),
                 prev_hmac=entry.get("prev_hmac", ""),
                 hmac=entry.get("hmac", ""),
+                scheme=entry.get("scheme"),
             )
         )
     return events
