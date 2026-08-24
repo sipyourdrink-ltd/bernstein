@@ -726,10 +726,15 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "droid": AdapterStrategy(),
     "forge": AdapterStrategy(),
     "generic": AdapterStrategy(),
-    # Goose speaks ACP natively; Bernstein consumes its lifecycle over the
-    # JSON-RPC client transport and journals each event content-addressed,
-    # so its stdout lifecycle parser is bypassed.
-    "goose": AdapterStrategy(event_channel=EventChannel.ACP),
+    # Goose emits NDJSON under --output-format stream-json whose events carry
+    # tokens/cost_usd and an error event (the authoritative failure signal;
+    # status:'completed' is a constant not a verdict). Dangerous mode is the
+    # GOOSE_MODE env var (auto/approve/smart_approve/chat), set explicitly by
+    # the adapter, not a CLI flag.
+    "goose": AdapterStrategy(
+        event_channel=EventChannel.STREAM_JSON,
+        dangerous_mode=DangerousModeStrategy.ENV_VAR,
+    ),
     "gptme": AdapterStrategy(),
     # Hermes is driven through its one-shot mode, which auto-bypasses approvals
     # rather than exposing a flag to do so - the CLI is unattended by
