@@ -22,6 +22,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -487,10 +488,10 @@ def test_evolve_refuses_to_push_a_commit_carrying_run_configuration(
 
     real_run = subprocess.run
 
-    def _run(cmd: list[str], **kwargs: object) -> object:
+    def _run(cmd: list[str], **kwargs: Any) -> Any:
         if cmd[:3] == ["uv", "run", "pytest"]:
             return subprocess.CompletedProcess(cmd, 0, "", "")
-        return real_run(cmd, **kwargs)  # type: ignore[arg-type]
+        return real_run(cmd, **kwargs)
 
     pushes: list[str] = []
     monkeypatch.setattr(git_ops, "safe_push", lambda _cwd, branch: pushes.append(branch))
