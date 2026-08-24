@@ -44,6 +44,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.git.git_basic import run_git
+from bernstein.core.quality.run_config_gate import check_paths
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -475,6 +476,28 @@ def _execute_incremental_merge(
             conflicting_files=conflicting,
             commit_sha="",
             error="All files conflicted during checkout",
+        )
+
+    # The file list reaches here from an API caller, so nothing upstream has
+    # decided that these paths are deliverables. A run-configuration path is
+    # refused before it is staged rather than restored after the commit, so
+    # the invariant does not depend on this particular path remembering to
+    # clean up afterwards (issue #4485).
+    run_config_verdict = check_paths(merged)
+    if not run_config_verdict.ok:
+        logger.warning(
+            "Incremental merge for session %s refused: %s",
+            session_id,
+            run_config_verdict.details,
+        )
+        return IncrementalMergeResult(
+            success=False,
+            merged_files=[],
+            skipped_already_merged=already_merged_requested,
+            uncommitted_files=uncommitted,
+            conflicting_files=conflicting,
+            commit_sha="",
+            error=run_config_verdict.details,
         )
 
     run_git(["add", "--", *merged], workdir)

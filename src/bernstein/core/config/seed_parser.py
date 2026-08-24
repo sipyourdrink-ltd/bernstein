@@ -21,6 +21,10 @@ import yaml
 
 from bernstein.agents.catalog import CatalogRegistry
 from bernstein.core.compliance import ComplianceConfig, CompliancePreset
+from bernstein.core.config.run_overlay import (
+    RunOverlayError,
+    resolve_effective_mapping,
+)
 from bernstein.core.config.seed_config import (
     CORSConfig,
     DashboardAuthConfig,
@@ -1738,6 +1742,7 @@ def _parse_quality_gates(raw: object) -> QualityGatesConfig | None:
             "pii_allowlist_prefixes",
             ["FAKE", "TEST", "EXAMPLE", "DUMMY", "PLACEHOLDER", "LOCALHOST"],
         ),
+        run_config=_qg_bool("run_config", True),
         security_scan=_qg_bool("security_scan", False),
         security_scan_command=_qg_optional_str("security_scan_command"),
         coverage_delta=_qg_bool("coverage_delta", False),
@@ -2261,7 +2266,17 @@ def parse_seed(path: Path) -> SeedConfig:
     if not isinstance(data_raw, dict):
         raise SeedError(f"Seed file must be a YAML mapping, got {type(data_raw).__name__}")
 
-    data: dict[str, object] = cast("_StrObjDict", data_raw)
+    committed: dict[str, object] = cast("_StrObjDict", data_raw)
+
+    # Run-scoped overrides are merged in from an untracked overlay rather than
+    # written into the file above. The committed file is read by a run and
+    # never written by one, so no commit an agent makes can carry it. With no
+    # overlay and no ``$BERNSTEIN_CONFIG_OVERRIDE`` this is the identity, and
+    # a setup that edits the committed file directly behaves as it always did.
+    try:
+        data: dict[str, object] = cast("_StrObjDict", resolve_effective_mapping(committed, config_path=path))
+    except RunOverlayError as exc:
+        raise SeedError(str(exc)) from exc
 
     _warn_unknown_top_level_keys(data)
 

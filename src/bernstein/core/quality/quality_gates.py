@@ -172,6 +172,10 @@ class QualityGatesConfig:
             via AST pattern matching.
         comment_quality_check: Run comment quality gate on changed Python files.
             Checks docstring accuracy, completeness, redundancy, and style.
+        run_config: Block a change that contains one of the run-configuration
+            paths (``bernstein.yaml``, ``.claude/mcp.json``, ...). On by
+            default: run overrides belong in the untracked overlay, so a
+            configuration file inside a change is always a leak, never work.
         comment_quality_docstyle: Expected docstring style for the comment-quality
             gate. One of ``"google"``, ``"numpy"``, ``"rest"``, or ``"auto"``
             (auto-detect per docstring).
@@ -200,6 +204,7 @@ class QualityGatesConfig:
     pii_allowlist_prefixes: list[str] = field(
         default_factory=lambda: ["FAKE", "TEST", "EXAMPLE", "DUMMY", "PLACEHOLDER", "LOCALHOST"]
     )
+    run_config: bool = True
     security_scan: bool = False
     security_scan_command: str | None = None
     coverage_delta: bool = False

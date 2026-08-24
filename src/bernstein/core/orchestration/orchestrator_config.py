@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from bernstein.core.config.run_overlay import effective_mtime
+
 logger = logging.getLogger(__name__)
 
 # Key source files whose modification triggers an orchestrator restart.
@@ -63,7 +65,11 @@ def maybe_reload_config(orch: Any) -> bool:
     try:
         if not orch._config_path.exists():
             return False
-        current_mtime = orch._config_path.stat().st_mtime
+        # Both layers count: a run writes its overrides to the untracked
+        # overlay rather than to the tracked file, so watching only the
+        # tracked file's mtime would miss every change a run is allowed to
+        # make (issue #4485).
+        current_mtime = effective_mtime(orch._config_path)
         if current_mtime <= orch._config_mtime:
             return False
     except OSError:

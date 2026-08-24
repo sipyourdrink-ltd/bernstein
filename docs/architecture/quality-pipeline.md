@@ -101,6 +101,7 @@ Default required gates (only those whose `quality_gates.<flag>: true`):
 | `pii_scan`               | `pii_scan: true`            | `any_changed`      | required            |
 | `dlp_scan`               | `dlp_scan: true`            | `any_changed`      | required            |
 | `merge_conflict`         | `merge_conflict_check`      | `any_changed`      | required            |
+| `run_config`             | `run_config: true`          | `always`           | required            |
 | `coverage_delta`         | `coverage_delta`            | `python_changed`   | required            |
 | `dep_audit`              | `dep_audit`                 | `deps_changed`     | required            |
 | `import_cycle`           | `import_cycle_check`        | `python_changed`   | required            |

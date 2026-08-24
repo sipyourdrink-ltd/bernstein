@@ -132,6 +132,78 @@ how a match changes a spawned prompt: see
 
 ---
 
+### 1.1) Run overrides: the untracked overlay
+
+`bernstein.yaml` is a tracked file. A run never writes it.
+
+Overrides that belong to one run - a pinned `role_model_policy`, a different
+`internal_llm_provider`, a quality-gate switch - go to an **overlay** that
+lives outside the work tree, and configuration loading merges the overlay over
+the committed file.
+
+Precedence, lowest first:
+
+| Layer | Where |
+|---|---|
+| 1. committed configuration | `bernstein.yaml` in the work tree |
+| 2. overlay | `$BERNSTEIN_CONFIG_OVERLAY`, else `<git-dir>/bernstein/run-overlay.yaml` |
+| 3. inline override | `$BERNSTEIN_CONFIG_OVERRIDE` (a YAML or JSON mapping) |
+| 4. explicit CLI flags | `--model`, `--cli`, ... applied after the merge |
+
+Nested sections merge key by key, so overriding one role's model leaves the
+other roles at their committed values. Scalars and lists replace wholesale.
+
+```bash
+# one knob, no file
+BERNSTEIN_CONFIG_OVERRIDE='{max_agents: 8}' bernstein run
+
+# a sandbox supplying its own overlay outside a read-only work tree
+BERNSTEIN_CONFIG_OVERLAY=/run/bernstein/overlay.yaml bernstein run
+```
+
+With no overlay and neither variable set, the merge is the identity: a setup
+that edits `bernstein.yaml` directly behaves exactly as it always has.
+
+Two consequences worth knowing:
+
+- The default overlay is inside `.git/`, so `git status` never reports it and
+  `git commit -a` cannot carry it. An overlay path pointed *inside* the work
+  tree is refused rather than written.
+- The orchestrator's config hot-reload watches the newest mtime across both
+  layers, so an overlay write is picked up on the next tick.
+
+#### The one in-tree exemption: `.claude/mcp.json`
+
+Claude Code reads its MCP bridge manifest from `<workdir>/.claude/mcp.json`
+and takes no argument pointing elsewhere, so that file has to be written
+inside the work tree. It is registered in the repository's `info/exclude` for
+the run instead, which keeps a broad `git add -A` from staging it.
+`info/exclude` is used rather than `.gitignore` because `.gitignore` is itself
+a tracked file.
+
+Git ignore rules only apply to untracked paths. If a project already tracks
+`.claude/mcp.json`, the exclude has no effect on it and the `run_config`
+quality gate below is what stops the change.
+
+#### The `run_config` gate
+
+`run_config` is a required quality gate, on by default. It fails any change
+whose diff touches a run-configuration path - `bernstein.yaml`,
+`bernstein.yml`, `.bernstein/bernstein.yaml`, `.bernstein/bernstein.yml`,
+`.mcp.json`, `.claude/mcp.json` - and names the offending file. The same path
+set backs the default-branch merge guard and the per-worktree local excludes,
+so the three cannot drift apart.
+
+Turn it off for a project that genuinely keeps one of those paths as a
+deliverable:
+
+```yaml
+quality_gates:
+  run_config: false
+```
+
+---
+
 ## 2) Workspace runtime defaults: `.sdd/config.yaml`
 
 Created by:
@@ -161,6 +233,8 @@ Environment variables are useful in CI and automation. Common variables:
 | `BERNSTEIN_STORAGE_BACKEND` | Storage backend (`memory`, `postgres`, `redis`) |
 | `BERNSTEIN_DATABASE_URL` | PostgreSQL DSN for `postgres`/`redis` backends |
 | `BERNSTEIN_REDIS_URL` | Redis URL for distributed locking backend |
+| `BERNSTEIN_CONFIG_OVERLAY` | Path to the run-configuration overlay (see §1.1). Must be outside the work tree. |
+| `BERNSTEIN_CONFIG_OVERRIDE` | Inline override mapping (YAML or JSON) merged above the overlay (see §1.1). |
 | `BERNSTEIN_SKIP_GATES` | Skip selected quality gates |
 | `BERNSTEIN_SKIP_GATE_REASON` | Audit reason when gates are skipped |
 | `BERNSTEIN_WORKFLOW` | Workflow mode override |

@@ -66,6 +66,7 @@ VALID_GATE_NAMES = frozenset(
         "comment_quality",
         "import_cycle",
         "merge_conflict",
+        "run_config",
         "benchmark",
         "dep_audit",
         "migration_reversibility",
@@ -227,6 +228,11 @@ _DEFAULT_GATE_SPECS: list[tuple[str, str, bool, str]] = [
     ("import_cycle_check", "import_cycle", True, "python_changed"),
     ("coverage_delta", "coverage_delta", True, "python_changed"),
     ("merge_conflict_check", "merge_conflict", True, "any_changed"),
+    # The run's own configuration is never part of a deliverable; a change
+    # that carries it would rewrite the repository's configuration for
+    # every user of it. Cheap (a set membership test over the changed-file
+    # names) and required, so a leak stops the run instead of shipping.
+    ("run_config", "run_config", True, "always"),
     ("pii_scan", "pii_scan", True, "any_changed"),
     ("dlp_scan", "dlp_scan", True, "any_changed"),
     ("mutation_testing", "mutation_testing", True, "python_changed"),

@@ -232,13 +232,15 @@ def stage_all_except(cwd: Path, exclude: list[str] | None = None) -> None:
         exclude: Paths/globs to unstage after the bulk add.
     """
     run_git(["add", "-A"], cwd)
-    to_unstage = list(exclude or [])
-    # Always unstage never-stage paths that are directories
-    for pat in _NEVER_STAGE:
-        if pat.endswith("/"):
-            to_unstage.append(pat)
-    if to_unstage:
-        run_git(["reset", "HEAD", "--", *to_unstage], cwd)
+    # Every never-stage entry is unstaged, not only the directory prefixes.
+    # The earlier version appended a pattern only when it ended in "/", so
+    # ``bernstein.yaml``, ``.claude/mcp.json`` and ``.env`` survived the bulk
+    # ``git add -A`` and were committed - and this helper's only caller
+    # commits and pushes to the default branch (issue #4485). Git reads the
+    # bare names and the ``*.pid`` / ``*.log`` forms as pathspecs, and a
+    # pathspec that matches nothing is a no-op.
+    to_unstage = list(exclude or []) + sorted(_NEVER_STAGE)
+    run_git(["reset", "HEAD", "--", *to_unstage], cwd)
 
 
 # ------------------------------------------------------------------

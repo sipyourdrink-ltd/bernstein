@@ -41,6 +41,7 @@ from bernstein.core.quality.gate_pipeline import (
 from bernstein.core.quality.gate_pipeline import (
     is_dep_file as _is_dep_file,
 )
+from bernstein.core.quality.run_config_gate import check_paths
 from bernstein.core.telemetry import start_span
 
 if TYPE_CHECKING:
@@ -434,6 +435,7 @@ class GateRunner:
             "coverage_delta": self._run_coverage_delta_gate_sync,
             "merge_conflict": self._run_merge_conflict_gate_sync,
             "large_file": self._run_large_file_gate_sync,
+            "run_config": self._run_run_config_gate_sync,
         }
         sync_fn = _sync_cf_gates.get(step.name)
         if sync_fn is not None:
@@ -938,6 +940,51 @@ class GateRunner:
             duration_ms=0,
             details=detail,
             metadata={"migration_count": migration_count, "missing_rollback": len(issues)},
+        )
+
+    def _run_run_config_gate_sync(
+        self,
+        step: GatePipelineStep,
+        run_dir: Path,
+        changed_files: list[str],
+    ) -> GateResult:
+        """Block a change that carries one of the run's own configuration files.
+
+        A run resolves its overrides from an untracked overlay, so a
+        configuration path inside a change is never the work that was asked
+        for - it is the run's own state about to be proposed as a rewrite of
+        the repository's configuration for every user of it. The check is a
+        set membership test over the names git already reported, so it costs
+        nothing to run on every task.
+
+        ``run_dir`` is unused: the verdict depends only on which paths the
+        change touches, never on their contents.
+        """
+        del run_dir
+        verdict = check_paths(changed_files)
+        if verdict.ok:
+            return GateResult(
+                name=step.name,
+                status="pass",
+                required=step.required,
+                blocked=False,
+                cached=False,
+                duration_ms=0,
+                details=verdict.details,
+                metadata={"run_config_files": 0},
+            )
+        return GateResult(
+            name=step.name,
+            status="fail",
+            required=step.required,
+            blocked=step.required,
+            cached=False,
+            duration_ms=0,
+            details=verdict.details,
+            metadata={
+                "run_config_files": len(verdict.offending_paths),
+                "paths": list(verdict.offending_paths),
+            },
         )
 
     def _run_large_file_gate_sync(

@@ -48,6 +48,8 @@ def test_default_pipeline_includes_additive_gates() -> None:
         "import_cycle",
         "coverage_delta",
         "merge_conflict",
+        # On by default: run configuration must never be part of a change.
+        "run_config",
         "pii_scan",
         "dlp_scan",
     ]

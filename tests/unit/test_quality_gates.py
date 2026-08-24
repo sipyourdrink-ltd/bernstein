@@ -113,6 +113,7 @@ class TestLintGate:
             tests=False,
             pii_scan=False,
             dlp_scan=False,
+            run_config=False,
         )
         task = _make_task()
         result = run_quality_gates(task, tmp_path, tmp_path, config)
@@ -131,6 +132,7 @@ class TestLintGate:
             tests=False,
             pii_scan=False,
             dlp_scan=False,
+            run_config=False,
         )
         task = _make_task()
         result = run_quality_gates(task, tmp_path, tmp_path, config)
@@ -141,7 +143,13 @@ class TestLintGate:
 
     def test_lint_skipped_when_disabled(self, tmp_path: Path) -> None:
         config = QualityGatesConfig(
-            enabled=True, lint=False, type_check=False, tests=False, pii_scan=False, dlp_scan=False
+            enabled=True,
+            lint=False,
+            type_check=False,
+            tests=False,
+            pii_scan=False,
+            dlp_scan=False,
+            run_config=False,
         )
         task = _make_task()
         with patch("bernstein.core.quality.quality_gates._run_command") as mock_run:
@@ -166,6 +174,7 @@ class TestTypeCheckGate:
             tests=False,
             pii_scan=False,
             dlp_scan=False,
+            run_config=False,
         )
         task = _make_task()
         result = run_quality_gates(task, tmp_path, tmp_path, config)
@@ -181,6 +190,7 @@ class TestTypeCheckGate:
             tests=False,
             pii_scan=False,
             dlp_scan=False,
+            run_config=False,
         )
         task = _make_task()
         result = run_quality_gates(task, tmp_path, tmp_path, config)
@@ -203,6 +213,7 @@ class TestTestGate:
             test_command="exit 0",
             pii_scan=False,
             dlp_scan=False,
+            run_config=False,
         )
         task = _make_task()
         result = run_quality_gates(task, tmp_path, tmp_path, config)
@@ -218,6 +229,7 @@ class TestTestGate:
             test_command="exit 1",
             pii_scan=False,
             dlp_scan=False,
+            run_config=False,
         )
         task = _make_task()
         result = run_quality_gates(task, tmp_path, tmp_path, config)
@@ -242,6 +254,7 @@ class TestMultipleGates:
             test_command="exit 0",
             pii_scan=False,
             dlp_scan=False,
+            run_config=False,
         )
         task = _make_task()
         result = run_quality_gates(task, tmp_path, tmp_path, config)
@@ -263,6 +276,7 @@ class TestMultipleGates:
             test_command="exit 0",
             pii_scan=False,
             dlp_scan=False,
+            run_config=False,
         )
         task = _make_task()
         result = run_quality_gates(task, tmp_path, tmp_path, config)
@@ -285,6 +299,7 @@ class TestMetricsRecording:
             tests=False,
             pii_scan=False,
             dlp_scan=False,
+            run_config=False,
         )
         task = _make_task(id="T-metrics-1")
         run_quality_gates(task, tmp_path, tmp_path, config)
@@ -305,6 +320,7 @@ class TestMetricsRecording:
             tests=False,
             pii_scan=False,
             dlp_scan=False,
+            run_config=False,
         )
         task = _make_task(id="T-metrics-2")
         run_quality_gates(task, tmp_path, tmp_path, config)
@@ -322,6 +338,7 @@ class TestMetricsRecording:
             tests=False,
             pii_scan=False,
             dlp_scan=False,
+            run_config=False,
             cache_enabled=False,
         )
         task = _make_task(id="T-metrics-rich")
@@ -367,6 +384,7 @@ class TestMetricsRecording:
             tests=False,
             pii_scan=False,
             dlp_scan=False,
+            run_config=False,
         )
         task = _make_task(id="T-span")
         fake_span = MagicMock()

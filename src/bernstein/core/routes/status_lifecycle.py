@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
+from bernstein.core.config.run_overlay import RunOverlayError, write_overlay
 from bernstein.core.prometheus import (
     generate_latest,
     registry,
@@ -145,24 +146,23 @@ async def update_config(request: Request) -> JSONResponse:
         return JSONResponse(status_code=400, content={"error": "missing max_agents"})
     new_max = max(1, min(int(new_max), 50))  # clamp to sane range
 
-    # Update bernstein.yaml - the orchestrator watches mtime and hot-reloads
+    # Write the run override to the untracked overlay, never to the tracked
+    # file: this endpoint changes configuration for the duration of a run, and
+    # a run that edits bernstein.yaml in the work tree puts that edit into
+    # every commit an agent makes with a staged tree (issue #4485). The
+    # orchestrator's hot-reload watches both layers, so the change is picked
+    # up exactly as it was before.
     yaml_path = Path.cwd() / "bernstein.yaml"
     if not yaml_path.exists():
         return JSONResponse(status_code=404, content={"error": "bernstein.yaml not found"})
 
     try:
-        import yaml as _yaml
-
-        raw = yaml_path.read_text(encoding="utf-8")
-        data: dict[str, Any] = _yaml.safe_load(raw) or {}
-        data["max_agents"] = new_max
-        yaml_path.write_text(_yaml.dump(data, default_flow_style=False, sort_keys=False), encoding="utf-8")
-    # bot-ack: pre-existing-1723 (yaml IO + serialisation can raise broadly)
-    except Exception as exc:
-        logger.error("Failed to update bernstein.yaml: %s", exc)
+        overlay_path = write_overlay({"max_agents": new_max}, config_path=yaml_path)
+    except RunOverlayError as exc:
+        logger.error("Failed to write the run-configuration overlay: %s", exc)
         return JSONResponse(status_code=500, content={"error": "config update failed"})
 
-    logger.info("Config updated via API: max_agents=%d", new_max)
+    logger.info("Config updated via API: max_agents=%d (overlay %s)", new_max, overlay_path)
     return JSONResponse(content={"max_agents": new_max, "status": "updated"})
 
 

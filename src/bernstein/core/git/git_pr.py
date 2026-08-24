@@ -15,6 +15,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from bernstein.core.config.run_overlay import RUN_CONFIG_PATHS
 from bernstein.core.git.git_basic import GitResult, run_git
 from bernstein.core.telemetry import start_span
 
@@ -85,13 +86,12 @@ _MERGE_DENY_PREFIXES: tuple[str, ...] = (
     "auth/",
 )
 # Exact filenames that are runtime artefacts, never part of a deliverable.
-_MERGE_DENY_EXACT: frozenset[str] = frozenset(
-    {
-        "bernstein.yaml",
-        ".claude/mcp.json",
-        ".env",
-    }
-)
+# The run-configuration half is imported from the config layer rather than
+# repeated here: :data:`bernstein.core.config.run_overlay.RUN_CONFIG_PATHS`
+# is the single definition of "this file carries run configuration", shared
+# with the per-worktree local excludes and the commit gate, so the three
+# cannot drift apart.
+_MERGE_DENY_EXACT: frozenset[str] = RUN_CONFIG_PATHS | frozenset({".env"})
 
 
 def _is_forbidden_for_merge(path: str) -> bool:

@@ -180,13 +180,30 @@ def _register_mcp_discovery(workdir: Path) -> None:
     access to the Bernstein orchestration tools (bernstein_status, etc.)
     without manual configuration.
 
+    The file is written into the work tree because Claude Code reads it from
+    there and nowhere else, and is registered in the repository's local git
+    excludes so it still cannot be staged. See
+    :mod:`bernstein.core.git.local_exclude` for why this path is the sole
+    exemption from "run configuration lives outside the work tree".
+
     Args:
         workdir: Project root directory.
     """
     import json as _json
 
+    from bernstein.core.git.local_exclude import register_run_excludes
+
     mcp_path = workdir / ".claude" / "mcp.json"
     mcp_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # This is the one run-owned file that has to live inside the work tree:
+    # Claude Code resolves it at a fixed project-local path and takes no
+    # argument pointing elsewhere. Registering it in the repository's
+    # ``info/exclude`` keeps a broad ``git add -A`` from staging it, so the
+    # "run configuration is never part of a change" invariant holds for it
+    # too. Done before the early return below so the exclusion is in place
+    # even on the run where the file needed no rewrite (issue #4485).
+    register_run_excludes(workdir)
 
     existing: dict[str, object] = {}
     if mcp_path.exists():

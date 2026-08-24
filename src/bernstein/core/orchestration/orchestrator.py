@@ -53,6 +53,7 @@ from bernstein.core.bandit_router import BanditRouter
 from bernstein.core.batch_api import ProviderBatchManager
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage, SignalActionFailure
 from bernstein.core.cluster import NodeHeartbeatClient
+from bernstein.core.config.run_overlay import effective_mtime
 from bernstein.core.context import refresh_knowledge_base
 from bernstein.core.context_degradation_detector import (
     ContextDegradationConfig,
@@ -819,10 +820,13 @@ class Orchestrator:
         # detect when agents modify its own code and restart in-place.
         self._source_mtime: float = time.time()
 
-        # Config hot-reload: track bernstein.yaml mtime so mutable config
-        # fields (max_agents, budget_usd) are picked up without restart.
+        # Config hot-reload: track the newest mtime across the committed
+        # bernstein.yaml and its untracked overlay, so mutable config fields
+        # (max_agents, budget_usd) are picked up without restart. Both layers
+        # count: an overlay write is the only kind of configuration write a
+        # run is allowed to make (issue #4485).
         self._config_path: Path = resolve_seed_path(workdir)
-        self._config_mtime: float = self._config_path.stat().st_mtime if self._config_path.exists() else 0.0
+        self._config_mtime: float = effective_mtime(self._config_path)
 
         # Memory leak detection: sampled every few ticks
         self._memory_guard = MemoryGuard()
@@ -1058,7 +1062,7 @@ class Orchestrator:
         try:
             if not self._config_path.exists():
                 return False
-            current_mtime = self._config_path.stat().st_mtime
+            current_mtime = effective_mtime(self._config_path)
             if current_mtime <= self._config_mtime:
                 return False
         except OSError:
