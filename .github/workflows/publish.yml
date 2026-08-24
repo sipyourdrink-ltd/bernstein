@@ -605,6 +605,34 @@ jobs:
             echo "::error::server.json version $MANIFEST_VERSION does not match release $VERSION"
             exit 1
           fi
+      - name: Check docker-mcp catalog source.commit matches the release commit
+        run: |
+          set -euo pipefail
+          # server.yaml is hand-maintained: the commit hash cannot be known
+          # before the release commit exists, so nothing regenerates it. This
+          # step catches a forgotten refresh before the catalog PR ships a
+          # source.commit that does not point at the release being submitted.
+          python3 - <<'PY'
+          import re
+          import subprocess
+          from pathlib import Path
+
+          text = Path("packaging/docker-mcp/server.yaml").read_text(encoding="utf-8")
+          match = re.search(r"^  commit:\s*([0-9a-f]{40})\s*$", text, re.MULTILINE)
+          if not match:
+              print("::error::packaging/docker-mcp/server.yaml has no valid source.commit (40-char lowercase hex SHA)")
+              raise SystemExit(1)
+          pinned = match.group(1)
+          head = subprocess.run(
+              ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+          ).stdout.strip()
+          if pinned != head:
+              print(
+                  f"::error::packaging/docker-mcp/server.yaml source.commit {pinned} does not match "
+                  f"the release commit {head}; refresh it before opening the catalog PR"
+              )
+              raise SystemExit(1)
+          PY
       - name: Install mcp-publisher
         env:
           # Pinned mcp-publisher release. Bumping requires updating the tag and

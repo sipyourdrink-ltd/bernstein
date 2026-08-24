@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import tomllib
@@ -369,6 +370,34 @@ def test_dockerfile_has_mcp_registry_server_name_label() -> None:
     server_name = _json.loads((_REPO / "server.json").read_text(encoding="utf-8"))["name"]
     assert "io.modelcontextprotocol.server.name" in dockerfile
     assert server_name in dockerfile
+
+
+def test_docker_mcp_catalog_source_commit_and_project_are_valid() -> None:
+    """The Docker MCP catalog entry must pin a real commit and the right repo.
+
+    ``packaging/docker-mcp/server.yaml`` is hand-maintained: the commit hash
+    cannot be known before the release commit exists, so nothing regenerates
+    it. This pins the two fields the catalog validator enforces - a 40-char
+    lowercase hex SHA and a ``source.project`` that agrees with the
+    ``server.json`` repository URL - so a stale or mis-targeted entry fails at
+    commit time instead of at catalog review.
+    """
+    import yaml
+
+    catalog = yaml.safe_load(
+        (_REPO / "packaging" / "docker-mcp" / "server.yaml").read_text(encoding="utf-8")
+    )
+    commit = catalog["source"]["commit"]
+    assert re.fullmatch(r"[0-9a-f]{40}", commit), (
+        f"server.yaml source.commit {commit!r} is not a 40-char lowercase hex SHA"
+    )
+
+    project = catalog["source"]["project"]
+    server = json.loads((_REPO / "server.json").read_text(encoding="utf-8"))
+    assert project == server["repository"]["url"], (
+        f"server.yaml source.project {project!r} does not match "
+        f"server.json repository.url {server['repository']['url']!r}"
+    )
 
 
 def test_publish_workflow_mcp_registry_is_idempotent() -> None:
