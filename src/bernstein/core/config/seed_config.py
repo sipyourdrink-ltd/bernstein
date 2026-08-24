@@ -157,6 +157,23 @@ class GithubConfig:
     sync_backlog: bool = False
 
 
+@dataclass(frozen=True)
+class OrchestrationConfig:
+    """Orchestrator run-lifecycle behaviour configuration.
+
+    Attributes:
+        test_followup: When ``True`` (the default), a run whose branch diff
+            touches ``src/*`` without touching ``tests/*`` gets exactly one
+            bounded test-authoring follow-up task scheduled at run
+            completion instead of parking at the merge gate for an operator
+            to notice (issue #4462). The ``BERNSTEIN_TEST_FOLLOWUP`` env var
+            overrides this value at runtime; see
+            ``core.orchestration.test_followup.resolve_test_followup_enabled``.
+    """
+
+    test_followup: bool = True
+
+
 def github_backlog_sync_enabled(
     seed: Any,
     env: dict[str, str] | None = None,
@@ -404,6 +421,7 @@ class SeedConfig:
     workspace: Workspace | None = None
     session: SessionConfig = field(default_factory=SessionConfig)
     github: GithubConfig = field(default_factory=GithubConfig)
+    orchestration: OrchestrationConfig = field(default_factory=OrchestrationConfig)
     worktree_setup: WorktreeSetupConfig | None = None
     quality_gates: QualityGatesConfig | None = None
     formal_verification: FormalVerificationConfig | None = None

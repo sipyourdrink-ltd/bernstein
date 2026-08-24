@@ -29,6 +29,7 @@ from bernstein.core.config.seed_config import (
     ModelFallbackSeedConfig,
     NetworkConfig,
     NotifyConfig,
+    OrchestrationConfig,
     RateLimitBucketConfig,
     RateLimitConfig,
     SeedConfig,
@@ -1440,6 +1441,25 @@ def _parse_github(raw: object) -> GithubConfig:
     return GithubConfig(sync_backlog=sync_raw)
 
 
+def _parse_orchestration(raw: object) -> OrchestrationConfig:
+    """Parse the optional ``orchestration`` section.
+
+    Only ``test_followup`` is recognised today (issue #4462): whether a run
+    that finishes having touched ``src/`` without ``tests/`` gets one bounded
+    test-authoring follow-up task. Defaults to ``True`` - an unattended run
+    that trips the merge gate's test-evidence check should not need an
+    operator to notice and re-drive it by hand.
+    """
+    if raw is None:
+        return OrchestrationConfig()
+    if not isinstance(raw, dict):
+        raise SeedError(f"orchestration must be a mapping, got: {type(raw).__name__}")
+    test_followup_raw: object = cast("_StrObjDict", raw).get("test_followup", True)
+    if not isinstance(test_followup_raw, bool):
+        raise SeedError(f"orchestration.test_followup must be a bool, got: {type(test_followup_raw).__name__}")
+    return OrchestrationConfig(test_followup=test_followup_raw)
+
+
 def _parse_workspace(
     workspace_raw: object,
     repos_raw: object,
@@ -2116,6 +2136,7 @@ _PARSED_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
         "model_policy",
         "network",
         "notify",
+        "orchestration",
         "org_policies",
         "provider_availability",
         "quality_gates",
@@ -2323,6 +2344,7 @@ def parse_seed(path: Path) -> SeedConfig:
     cluster = _parse_cluster(data.get("cluster"))
     session_cfg = _parse_session(data.get("session"))
     github_cfg = _parse_github(data.get("github"))
+    orchestration_cfg = _parse_orchestration(data.get("orchestration"))
     workspace = _parse_workspace(data.get("workspace"), data.get("repos"), path.parent)
     worktree_setup = _parse_worktree_setup(data.get("worktree_setup"))
     batch = _parse_batch(data.get("batch"))
@@ -2387,6 +2409,7 @@ def parse_seed(path: Path) -> SeedConfig:
         workspace=workspace,
         session=session_cfg,
         github=github_cfg,
+        orchestration=orchestration_cfg,
         worktree_setup=worktree_setup,
         secrets=secrets,
         key_rotation=key_rotation,

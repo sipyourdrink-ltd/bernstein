@@ -462,6 +462,12 @@ class Orchestrator:
         self._last_replenish_ts: float = 0.0
         # Run completion summary state
         self._summary_written: bool = False
+        # One-shot latch (issue #4462): True once this run has scheduled its
+        # one bounded test-authoring follow-up task. Never reset for the
+        # life of this process, so the quiescence the follow-up task's OWN
+        # completion produces can never schedule a second one. See
+        # core.orchestration.test_followup and _maybe_schedule_test_followup.
+        self._test_followup_scheduled: bool = False
         # Guards the FINAL (shutdown-final) retrospective regeneration so it
         # only ever runs once per process, regardless of which terminal path
         # triggers it (tick-loop drain in run(), or the tick-level
@@ -2329,6 +2335,14 @@ class Orchestrator:
                                 self._tick_count,
                                 _hold_reasons,
                             )
+                        elif self._maybe_schedule_test_followup(settled.get("done", [])):
+                            logger.info(
+                                "Quiescence confirmed after %.1fs settle window (tick #%d) but a "
+                                "bounded test-authoring follow-up was just scheduled - "
+                                "deferring self-stop",
+                                _settle_s,
+                                self._tick_count,
+                            )
                         else:
                             logger.info(
                                 "Quiescence confirmed after %.1fs settle window (tick #%d, "
@@ -2657,6 +2671,85 @@ class Orchestrator:
         self._closure_outcome = RunClosureOutcome.FAILED
         self._regenerate_final_retrospective(trigger_path="tick-stalled-run-self-stop")
         self._running = False
+
+    def _maybe_schedule_test_followup(self, done_tasks: list[Task]) -> bool:
+        """Schedule one bounded test-authoring follow-up if this run needs it (#4462).
+
+        Called from the confirmed-quiescence self-stop branch of the tick's
+        step-8b handling, before the run would otherwise stop. Returns True
+        iff a follow-up task was just created - the caller must skip
+        self-stopping this tick when it is, since the run now has one more
+        bounded task to execute before it is actually finished.
+
+        The ``_test_followup_scheduled`` one-shot latch means a later
+        quiescence in this same orchestrator process - including the one the
+        follow-up task's own completion produces - never schedules a second
+        one (no loops), regardless of what that follow-up's own diff looks
+        like.
+        """
+        from bernstein.core.orchestration.test_followup import (
+            build_followup_goal,
+            diff_name_only,
+            evaluate_test_followup,
+            resolve_run_branch,
+            resolve_test_followup_enabled,
+        )
+
+        enabled = resolve_test_followup_enabled(self._config.test_followup_enabled)
+        branch: str | None = None
+        changed: tuple[str, ...] = ()
+        if enabled and not self._test_followup_scheduled:
+            try:
+                from bernstein.core.git.git_basic import resolve_default_branch
+
+                branch = resolve_run_branch(self._workdir, done_tasks)
+                if branch is not None:
+                    base_branch = resolve_default_branch(self._workdir)
+                    changed = diff_name_only(self._workdir, base_branch, branch)
+            except Exception:
+                logger.exception("test_followup: branch-diff lookup failed - skipping")
+                branch = None
+
+        decision = evaluate_test_followup(
+            enabled=enabled,
+            already_scheduled=self._test_followup_scheduled,
+            changed_files=changed,
+        )
+        if not decision.should_schedule:
+            logger.debug("test_followup: not scheduling (%s)", decision.reason)
+            return False
+        if branch is None:
+            # The diff shape says a follow-up is warranted, but no completed
+            # task in this run has a git branch left to diff (already merged
+            # and cleaned up, or a merge_strategy that never leaves one).
+            # Fail closed rather than guessing which branch to target.
+            logger.warning("test_followup: src-without-tests diff detected but no run branch was resolvable")
+            return False
+
+        goal = build_followup_goal(decision.src_files)
+        try:
+            response = self._client.post(
+                f"{self._config.server_url}/tasks",
+                json={
+                    "title": "Add tests for untested source change",
+                    "description": goal,
+                    "role": "qa",
+                    "priority": 2,
+                    "metadata": {"origin": "test_followup", "source_branch": branch},
+                },
+            )
+            response.raise_for_status()
+        except Exception as exc:
+            logger.warning("test_followup: failed to create follow-up task: %s", exc)
+            return False
+
+        self._test_followup_scheduled = True
+        logger.info(
+            "test_followup: scheduled one bounded test-authoring follow-up on %s (%d src file(s) without tests)",
+            branch,
+            len(decision.src_files),
+        )
+        return True
 
     def _regenerate_final_retrospective(self, trigger_path: str) -> None:
         """Regenerate the FINAL retrospective and summary.json from final event state.
@@ -6747,6 +6840,12 @@ if __name__ == "__main__":
             # bernstein.yaml never reached the runtime object and the
             # self-evolution loop ran regardless of the seed (#config-drift).
             evolution_enabled=getattr(seed, "evolution_enabled", True) if seed else True,
+            # Threads ``orchestration.test_followup`` from bernstein.yaml
+            # (issue #4462); see core.orchestration.test_followup for the
+            # env-override resolution applied when this is actually used.
+            test_followup_enabled=(
+                getattr(getattr(seed, "orchestration", None), "test_followup", True) if seed else True
+            ),
         )
 
         if args.cells > 1:

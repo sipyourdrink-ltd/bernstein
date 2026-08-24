@@ -375,6 +375,22 @@ class GithubSchema(BaseModel):
     )
 
 
+class OrchestrationSchema(BaseModel):
+    """Orchestrator run-lifecycle behaviour configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    test_followup: bool = Field(
+        default=True,
+        description=(
+            "Schedule one bounded test-authoring follow-up task when a run's "
+            "branch diff touches src/ without touching tests/, instead of "
+            "parking at the merge gate for an operator to notice. On by "
+            "default. Overridable at runtime with BERNSTEIN_TEST_FOLLOWUP."
+        ),
+    )
+
+
 class ClusterSchema(BaseModel):
     """Cluster mode configuration."""
 
@@ -853,6 +869,7 @@ class BernsteinConfig(BaseModel):
     sovereign: SovereignProfileSchema | None = None
     session: SessionSchema | None = None
     github: GithubSchema | None = None
+    orchestration: OrchestrationSchema | None = None
     cluster: ClusterSchema | None = None
     remote: RemoteSchema | None = None
     agency: AgencySchema | None = None

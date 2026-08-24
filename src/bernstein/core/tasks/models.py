@@ -1691,6 +1691,11 @@ class OrchestratorConfig:
     # is never given unrequested background maintenance tasks; enable only when
     # the target repo declares Python dependencies that should be audited.
     dependency_scan_enabled: bool = False
+    # Whether a run whose branch diff touches src/ without tests/ gets one
+    # bounded test-authoring follow-up task at run completion (issue #4462).
+    # On by default; threaded from the seed's ``orchestration.test_followup``
+    # (bernstein.yaml). See core.orchestration.test_followup.
+    test_followup_enabled: bool = True
     # Janitor LLM-judge model/provider override, threaded from the seed's
     # ``judge_model``/``judge_provider`` (bernstein.yaml). None = fall back
     # to the janitor's hardcoded JUDGE_MODEL/JUDGE_PROVIDER defaults.
