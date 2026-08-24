@@ -3077,7 +3077,10 @@ def _build_gate_repair_goal(qg_result: Any) -> str:
     excavate.
     """
     blocked = [r for r in qg_result.gate_results if r.blocked and not r.passed]
-    sections = [f"[{r.gate}]\n{r.detail}".strip() for r in blocked if r.detail]
+    # Gate results from older callers (and their test doubles) may not carry
+    # ``detail``; a missing field means "no output captured", never a crash.
+    details = [(r, getattr(r, "detail", None)) for r in blocked]
+    sections = [f"[{r.gate}]\n{d}".strip() for r, d in details if d]
     output = "\n\n".join(sections) if sections else "(quality gate blocked the merge; no output captured)"
     tail = "\n".join(output.splitlines()[-_GATE_REPAIR_OUTPUT_TAIL_LINES:])
     return f"The merge gate failed. Real gate output (tail):\n\n{tail}\n\n{_GATE_REPAIR_INSTRUCTION}"
