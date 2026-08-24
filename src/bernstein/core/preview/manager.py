@@ -59,6 +59,9 @@ from bernstein.core.preview.token_issuer import IssuedAuth, PreviewTokenIssuer
 from bernstein.core.preview.tunnel_bridge import TunnelBridge, TunnelBridgeError
 from bernstein.core.security.audit import AuditLog
 
+if TYPE_CHECKING:
+    import builtins
+
 logger = logging.getLogger(__name__)
 
 

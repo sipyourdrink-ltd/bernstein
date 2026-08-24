@@ -1,0 +1,6 @@
+extensions:
+  - addsTo:
+      pack: codeql/python-all
+      extensible: barrierModel
+    data:
+      - ["bernstein.core.security.sanitize", "Member[sanitize_log].ReturnValue", "log-injection"]

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from bernstein.adapters.base import RateLimitError, SpawnError
+from bernstein.adapters.base import RateLimitError, SpawnError, StandingCapError
 from bernstein.core.agents.container import ContainerError
 from bernstein.core.worktree import WorktreeError
 
@@ -30,6 +30,9 @@ class SpawnAnalyzer:
     def analyze(self, error: Exception, task: Task) -> SpawnFailureAnalysis:
         """Classify a spawn error and recommend recovery."""
         lowered = str(error).lower()
+        if isinstance(error, StandingCapError):
+            reason_code = getattr(error, "reason_code", "standing_cap_exceeded")
+            return SpawnFailureAnalysis(reason_code, False, 0.0, "abort", str(error))
         if isinstance(error, RateLimitError):
             return SpawnFailureAnalysis("rate_limit", True, 60.0, "wait", str(error))
         if isinstance(error, SpawnError) and "adapter not found" in lowered:

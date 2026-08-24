@@ -58,8 +58,15 @@ import re
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.core.git.git_basic import run_git
+
+if TYPE_CHECKING:
+    # Only reachable from annotations: ``SnapshotStore.list`` shadows the
+    # builtin inside the class body, so return types have to name it
+    # explicitly.
+    import builtins
 
 logger = logging.getLogger(__name__)
 
@@ -560,7 +567,7 @@ class SnapshotStore:
                 logger.warning("failed to remove metadata %s: %s", meta_path, exc)
         return existed
 
-    def gc(self, *, older_than_days: int = DEFAULT_GC_DAYS) -> list[str]:
+    def gc(self, *, older_than_days: int = DEFAULT_GC_DAYS) -> builtins.list[str]:
         """Delete snapshots older than *older_than_days* days.
 
         Returns the list of deleted snapshot IDs so callers can log a

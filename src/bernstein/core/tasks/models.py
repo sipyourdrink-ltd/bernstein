@@ -1219,6 +1219,18 @@ class AgentSession:
     # event, so the session record names exactly the digests the chain
     # attests. Empty when the session's tasks declare no attachments.
     multimodal_attachments: list[dict[str, str]] = field(default_factory=list)
+    # Per-section context receipt captured at spawn time (issue #4405). Each
+    # entry is ``{"label", "content_sha256", "token_estimate", "char_count"}``
+    # in prompt order - a deterministic fingerprint of the context actually
+    # sent to the model. Empty when no receipt was captured.
+    context_receipt: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
+
+    # Spawn-time prompt budget measurement (#4377). Stamped before the
+    # adapter is invoked so the cost is queryable without waiting for the
+    # session to end.
+    spawn_prompt_tokens: int = 0  # estimated token count of assembled prompt at spawn
+    spawn_prompt_utilization_pct: float = 0.0  # percentage of context window consumed by prompt
+    spawn_prompt_over_budget: bool = False  # True when prompt exceeded the budget threshold
 
 
 class IsolationMode(StrEnum):

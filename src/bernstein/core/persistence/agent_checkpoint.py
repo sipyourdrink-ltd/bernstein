@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import subprocess
 import sys
 import time
@@ -38,6 +39,7 @@ from bernstein.core.persistence.atomic_write import write_atomic_json
 from bernstein.core.security.permissions import AgentPermissions, get_permissions_for_role
 
 _CHECKPOINT_FILENAME = "checkpoint.json"
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +294,10 @@ def is_checkpoint_recoverable(
     checkpoint: AgentCheckpoint,
     *,
     role_overrides: dict[str, AgentPermissions] | None = None,
+    current_role: str | None = None,
+    current_task_id: str | None = None,
+    current_parent_run_id: str | None = None,
+    current_chain_head: str | None = None,
 ) -> tuple[bool, str]:
     """Check if a checkpoint can be recovered.
 
@@ -308,32 +314,51 @@ def is_checkpoint_recoverable(
         checkpoint: The checkpoint to inspect.
         role_overrides: Optional per-project permission overrides forwarded
             to :func:`get_permissions_for_role`.
+        current_role: The role currently assigned to the agent.
+        current_task_id: The task id currently assigned.
+        current_parent_run_id: The parent run id currently assigned.
+        current_chain_head: The current journal chain head.
 
     Returns:
         ``(recoverable, reason)``. Recoverable if the grant still holds and
         the worktree has uncommitted changes that can be resumed.
     """
     # --- Authority check (must happen before any side effect) ---
-    if checkpoint.grant_hash:
+    if not checkpoint.grant_hash:
+        logger.warning(
+            "checkpoint for task %s has no grant_hash -- authority check skipped; "
+            "resume proceeds with liveness checks only",
+            checkpoint.task_id,
+        )
+    else:
         current_perms = get_permissions_for_role(checkpoint.role, role_overrides)
         expected_hash = compute_grant_hash(
-            role=checkpoint.role,
+            role=current_role if current_role is not None else checkpoint.role,
             permissions=current_perms,
-            task_id=checkpoint.task_id,
-            parent_run_id=checkpoint.parent_run_id,
-            chain_head=checkpoint.chain_head_at_suspend,
+            task_id=current_task_id if current_task_id is not None else checkpoint.task_id,
+            parent_run_id=current_parent_run_id if current_parent_run_id is not None else checkpoint.parent_run_id,
+            chain_head=current_chain_head if current_chain_head is not None else checkpoint.chain_head_at_suspend,
         )
         if expected_hash != checkpoint.grant_hash:
-            # Only the hash of the suspend-time grant is stored, so the
-            # refusal cannot prove which single input moved; it names the
-            # bindings the hash covers so the operator knows where to look.
-            reason = (
-                "grant mismatch — resume refused before first side effect; "
-                f"role '{checkpoint.role}' permissions narrowed or changed, "
-                f"or a grant-bound field no longer matches (task "
-                f"'{checkpoint.task_id}', parent run '{checkpoint.parent_run_id}', "
-                "chain head at suspend)"
-            )
+            changes = []
+            if current_role is not None and current_role != checkpoint.role:
+                changes.append("role changed")
+            if current_task_id is not None and current_task_id != checkpoint.task_id:
+                changes.append("task_id changed")
+            if current_parent_run_id is not None and current_parent_run_id != checkpoint.parent_run_id:
+                changes.append("parent_run_id changed")
+            if current_chain_head is not None and current_chain_head != checkpoint.chain_head_at_suspend:
+                changes.append("chain_head_at_suspend changed")
+
+            if changes:
+                reason = f"grant mismatch — {', '.join(changes)}"
+            elif all(v is None for v in (current_role, current_task_id, current_parent_run_id, current_chain_head)):
+                reason = (
+                    "grant mismatch — cannot determine which field changed (no current values "
+                    "provided); role permissions (allowed_paths/denied_paths) changed"
+                )
+            else:
+                reason = "grant mismatch — role permissions (allowed_paths/denied_paths) changed"
             return False, reason
 
     # --- Liveness checks (only reached when grant is valid or absent) ---

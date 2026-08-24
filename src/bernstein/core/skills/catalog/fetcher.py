@@ -22,7 +22,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
-from bernstein.core.security.url_allowlist import ensure_http_url
+from bernstein.core.security.url_allowlist import ensure_public_http_url
 from bernstein.core.skills.catalog.manifest import (
     SkillCatalog,
     SkillCatalogValidationError,
@@ -92,7 +92,7 @@ class _UrllibTransport:
     """Default transport backed by :mod:`urllib.request`."""
 
     def get(self, url: str, *, headers: dict[str, str]) -> HTTPResponse:
-        ensure_http_url(url, allow_http=False, source="skills_catalog.fetcher")
+        ensure_public_http_url(url, allow_http=False, source="skills_catalog.fetcher")
         request = urllib.request.Request(url, headers=headers)
         try:
             # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected

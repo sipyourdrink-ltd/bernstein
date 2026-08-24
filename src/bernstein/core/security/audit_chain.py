@@ -26,6 +26,7 @@ is treated as the stable surface. Helpers MUST:
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
     from pathlib import Path
 
+from bernstein.core.security.agent_card_signer import canonicalize_jcs
 from bernstein.core.security.audit import (
     AGENT_FRESH_RESTART_ON_RETRY as AGENT_FRESH_RESTART_ON_RETRY,
 )
@@ -8330,6 +8332,177 @@ def record_verifier_tier(
     )
 
 
+#: Issue #3768 -- emitted whenever a computed capability delta (a
+#: :class:`~bernstein.core.security.capability_delta.GrantDelta`) is
+#: recorded for an agent role. The event carries the producing run id, the
+#: role whose permissions changed, the delta's ``sha256:`` content hash, a
+#: widening flag, and the JCS-canonical JSON of the changes tuple so a
+#: verifier holding the original permission states can recompute the delta
+#: byte-identically and check it against the chain.
+EVENT_CAPABILITY_DELTA = "capability.delta_recorded"
+
+#: Issue #3768 -- emitted whenever a widening capability delta is
+#: authorized. The event carries the run id, the ``sha256:`` hash of the
+#: authorized delta, the authorizer identity, the authorization timestamp,
+#: and a self-authenticating ``authorization_hash`` (the ``sha256:`` of the
+#: JCS-canonical body with the ``authorization_hash`` field blanked), so
+#: flipping any byte of the entry changes the chain HMAC.
+EVENT_CAPABILITY_AUTHORIZATION = "capability.authorization"
+
+
+@dataclass(frozen=True)
+class CapabilityDeltaDetails:
+    """Structured payload for the ``capability.delta_recorded`` event."""
+
+    run_id: str
+    role: str
+    delta_hash: str
+    is_widening: bool
+    changes_json: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "role": self.role,
+            "delta_hash": self.delta_hash,
+            "is_widening": self.is_widening,
+            "changes_json": self.changes_json,
+        }
+
+
+def record_capability_delta(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    role: str,
+    delta_hash: str,
+    is_widening: bool,
+    changes_json: str,
+) -> AuditEvent:
+    """Append a ``capability.delta_recorded`` event into *chain* (#3768).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run that produced the delta.
+        role: The agent role whose permissions changed.
+        delta_hash: The ``sha256:`` + hexdigest from
+            :attr:`GrantDelta.delta_hash`.
+        is_widening: Whether the delta widens any capability.
+        changes_json: JCS-canonical JSON of the changes tuple, for
+            independent verification.
+
+    Returns:
+        The recorded :class:`AuditEvent`. The event details payload
+        carries every input plus ``prev_chain_digest`` (set to the
+        chain head at write time).
+    """
+    payload = CapabilityDeltaDetails(
+        run_id=run_id,
+        role=role,
+        delta_hash=delta_hash,
+        is_widening=is_widening,
+        changes_json=changes_json,
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_CAPABILITY_DELTA,
+        actor=role,
+        resource_type="capability_delta",
+        resource_id=delta_hash,
+        details=payload,
+    )
+
+
+@dataclass(frozen=True)
+class CapabilityAuthorizationDetails:
+    """Structured payload for the ``capability.authorization`` event."""
+
+    run_id: str
+    delta_hash: str
+    authorizer: str
+    authorized_at_ns: int
+    authorization_hash: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "delta_hash": self.delta_hash,
+            "authorizer": self.authorizer,
+            "authorized_at_ns": self.authorized_at_ns,
+            "authorization_hash": self.authorization_hash,
+        }
+
+
+def _compute_authorization_hash(
+    *,
+    run_id: str,
+    delta_hash: str,
+    authorizer: str,
+    authorized_at_ns: int,
+) -> str:
+    """Return the self-authenticating ``sha256:`` hash of the authorization body.
+
+    The hash covers the JCS-canonical bytes of the details body with the
+    ``authorization_hash`` field blanked (mirroring how
+    :func:`~bernstein.core.lineage.entry.compute_operator_hmac` blanks
+    ``operator_hmac``), so the recorded hash binds every other field and
+    flipping any byte changes the chain HMAC.
+    """
+    body = CapabilityAuthorizationDetails(
+        run_id=run_id,
+        delta_hash=delta_hash,
+        authorizer=authorizer,
+        authorized_at_ns=authorized_at_ns,
+        authorization_hash="",
+    ).to_dict()
+    digest = hashlib.sha256(canonicalize_jcs(body)).hexdigest()
+    return f"sha256:{digest}"
+
+
+def record_capability_authorization(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    delta_hash: str,
+    authorizer: str,
+    authorized_at_ns: int,
+) -> AuditEvent:
+    """Append a ``capability.authorization`` event into *chain* (#3768).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run that required authorization.
+        delta_hash: The ``sha256:`` hash of the authorized widening delta.
+        authorizer: Who authorized (e.g. ``"operator"`` or
+            ``"steward:agent-id"``).
+        authorized_at_ns: Timestamp of the authorization.
+
+    Returns:
+        The recorded :class:`AuditEvent`. The event details payload
+        carries every input plus the computed ``authorization_hash`` and
+        ``prev_chain_digest`` (set to the chain head at write time).
+    """
+    authorization_hash = _compute_authorization_hash(
+        run_id=run_id,
+        delta_hash=delta_hash,
+        authorizer=authorizer,
+        authorized_at_ns=authorized_at_ns,
+    )
+    payload = CapabilityAuthorizationDetails(
+        run_id=run_id,
+        delta_hash=delta_hash,
+        authorizer=authorizer,
+        authorized_at_ns=authorized_at_ns,
+        authorization_hash=authorization_hash,
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_CAPABILITY_AUTHORIZATION,
+        actor=authorizer,
+        resource_type="capability_authorization",
+        resource_id=delta_hash,
+        details=payload,
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -8350,6 +8523,8 @@ __all__ = [
     "EVENT_CACHE_EVICTION",
     "EVENT_CACHE_HIT",
     "EVENT_CACHE_MISS",
+    "EVENT_CAPABILITY_AUTHORIZATION",
+    "EVENT_CAPABILITY_DELTA",
     "EVENT_CHECKPOINT_RETRY",
     "EVENT_CLAIM_JOURNAL_RECEIPT",
     "EVENT_CLEAN_RUN_ATTESTATION",
@@ -8463,6 +8638,8 @@ __all__ = [
     "GATE_TERMINAL_RESOLUTIONS",
     "UNRELEASED_CLAIM_PATHS",
     "AuditChainStore",
+    "CapabilityAuthorizationDetails",
+    "CapabilityDeltaDetails",
     "ClearanceResolutionRefusal",
     "ComputerUseActionDetails",
     "CostProfileReportDetails",
@@ -8490,6 +8667,8 @@ __all__ = [
     "record_cache_eviction",
     "record_cache_hit",
     "record_cache_miss",
+    "record_capability_authorization",
+    "record_capability_delta",
     "record_capability_refusal",
     "record_capability_selection",
     "record_checkpoint_retry",

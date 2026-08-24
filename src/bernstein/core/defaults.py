@@ -64,6 +64,14 @@ token *value* must never be logged (see #2762 / #2763)."""
 JOURNAL_EVENT_ARTIFACT_POSTED: Final[str] = "artifact_posted"
 """Journal event emitted when a worker posts a task artifact."""
 
+JOURNAL_EVENT_PERSISTENT_AGENT_STEP: Final[str] = "persistent_agent_step"
+"""Journal event emitted when a step runs under a persistent-agent adapter.
+
+A persistent-agent adapter carries agent-side state Bernstein never hashed, so
+a replay of the same inputs is not guaranteed reproducible. Recording this
+event lets verification mark the run's artifacts ``unverifiable``.
+"""
+
 ARTIFACT_TYPE_REPORT: Final[str] = "report"
 ARTIFACT_TYPE_TABLE: Final[str] = "table"
 ARTIFACT_TYPE_LINK: Final[str] = "link"
@@ -329,6 +337,9 @@ class TokenDefaults:
 
     truncation_threshold_pct: float = 80.0  # truncate tool output above 80%
     rejection_threshold_pct: float = 95.0  # reject new work above 95%
+
+    spawn_prompt_budget_pct: float = 25.0  # warn when assembled prompt exceeds 25% of context window
+    spawn_prompt_budget_abs: int = 32_768  # absolute fallback budget in tokens when model context unknown
 
     code_block_max_lines: int = 100  # truncate code blocks >100 lines
     file_listing_max_entries: int = 50  # truncate ls/find listings >50 items

@@ -9,6 +9,7 @@ and are deliberately not re-asserted here.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +20,7 @@ from click.testing import CliRunner
 from bernstein.cli.commands import identity_attest_cmd
 from bernstein.cli.commands.identity_cmd import identity_group
 from bernstein.core.security import run_attestation_receipt
+from bernstein.core.security.audit_chain import AuditChainStore
 from tests.support.run_attestation import HMAC_KEY, anchored_provider, intent, kms
 
 
@@ -65,6 +67,8 @@ def test_attest_verify_is_not_the_install_rev_verify() -> None:
 
 
 def test_signing_sources_are_mutually_exclusive(tmp_path: Path) -> None:
+    signing_key = tmp_path / "key.pem"
+    signing_key.write_text("unused because the options are mutually exclusive")
     result = CliRunner().invoke(
         identity_group,
         [
@@ -73,7 +77,7 @@ def test_signing_sources_are_mutually_exclusive(tmp_path: Path) -> None:
             "--run",
             "run-1",
             "--signing-key-path",
-            str(tmp_path / "key.pem"),
+            str(signing_key),
             "--signing-env-var",
             "SOME_KEY",
             "--workdir",
@@ -82,6 +86,25 @@ def test_signing_sources_are_mutually_exclusive(tmp_path: Path) -> None:
     )
     assert result.exit_code == 2
     assert "mutually exclusive" in result.output
+
+
+def test_missing_signing_key_path_uses_click_usage_contract(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        identity_group,
+        [
+            "attest",
+            "verify",
+            "--run",
+            "run-1",
+            "--signing-key-path",
+            str(tmp_path / "missing.pem"),
+            "--workdir",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == identity_attest_cmd.EXIT_USAGE
+    assert "does not exist" in result.output
 
 
 def test_missing_signing_source_is_refused(tmp_path: Path) -> None:
@@ -110,6 +133,29 @@ def test_missing_audit_directory_names_the_path(tmp_path: Path) -> None:
     )
     assert result.exit_code == 1
     assert "Audit directory not found" in result.output or "signing key" in result.output
+
+
+def test_verify_missing_audit_directory_leaves_no_default_output(tmp_path: Path) -> None:
+    kms(tmp_path / "signing")
+    signing_key = tmp_path / "signing" / "receipt-signing.pem"
+
+    result = CliRunner().invoke(
+        identity_group,
+        [
+            "attest",
+            "verify",
+            "--run",
+            "run-1",
+            "--signing-key-path",
+            str(signing_key),
+            "--workdir",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == identity_attest_cmd.EXIT_FAILURE
+    assert "Audit directory not found" in result.output
+    assert not (tmp_path / ".sdd" / "evidence").exists()
 
 
 def test_run_id_is_required(tmp_path: Path) -> None:
@@ -147,6 +193,7 @@ def test_real_chain_show_and_verify_emit(attest_cli_env: tuple[Path, list[str], 
     assert "whole run" in show.output
 
     output_dir = root / "receipts"
+    audit_before = {path.name: path.read_bytes() for path in (root / ".sdd" / "audit").glob("*") if path.is_file()}
     verify = runner.invoke(
         identity_group,
         ["attest", "verify", *common, "--output", str(output_dir)],
@@ -156,7 +203,115 @@ def test_real_chain_show_and_verify_emit(attest_cli_env: tuple[Path, list[str], 
     assert "projection verified" in verify.output
     receipts = list(output_dir.glob("run-attestation-*.json"))
     assert len(receipts) == 1
+    promoted_sha256 = hashlib.sha256(receipts[0].read_bytes()).hexdigest()
+    assert promoted_sha256 in verify.output
     assert not list(output_dir.glob(".attest-*"))
+    audit_after = {path.name: path.read_bytes() for path in (root / ".sdd" / "audit").glob("*") if path.is_file()}
+    assert audit_after == audit_before
+
+
+def test_through_hmac_reproduces_projection_after_chain_advances(
+    attest_cli_env: tuple[Path, list[str], dict[str, str]],
+) -> None:
+    root, common, env = attest_cli_env
+    chain = AuditChainStore(root / ".sdd" / "audit", key=HMAC_KEY)
+    boundary = chain.query(include_archived=True)[-1].hmac
+    runner = CliRunner()
+
+    before = runner.invoke(
+        identity_group,
+        ["attest", "show", *common, "--through-hmac", boundary],
+        env=env,
+    )
+    assert before.exit_code == 0, before.output
+
+    chain.log(
+        event_type="unrelated.audit.event",
+        actor="operator",
+        resource_type="system",
+        resource_id="unrelated",
+    )
+
+    pinned = runner.invoke(
+        identity_group,
+        ["attest", "show", *common, "--through-hmac", boundary],
+        env=env,
+    )
+    current = runner.invoke(identity_group, ["attest", "show", *common], env=env)
+    output_dir = root / "pinned-receipts"
+    verified = runner.invoke(
+        identity_group,
+        [
+            "attest",
+            "verify",
+            *common,
+            "--through-hmac",
+            boundary,
+            "--output",
+            str(output_dir),
+        ],
+        env=env,
+    )
+
+    assert pinned.exit_code == 0, pinned.output
+    assert pinned.output == before.output
+    assert current.exit_code == 0, current.output
+    assert current.output != pinned.output
+    assert verified.exit_code == 0, verified.output
+    receipt_path = next(output_dir.glob("run-attestation-*.json"))
+    receipt = json.loads(receipt_path.read_text())
+    assert receipt["run_attestation"]["through_hmac"] == boundary
+
+
+def test_promoted_digest_mismatch_fails_and_removes_receipt(
+    attest_cli_env: tuple[Path, list[str], dict[str, str]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, common, env = attest_cli_env
+    output_dir = root / "receipts"
+    monkeypatch.setattr(identity_attest_cmd, "_sha256_file", lambda _path: "0" * 64)
+
+    result = CliRunner().invoke(
+        identity_group,
+        ["attest", "verify", *common, "--output", str(output_dir)],
+        env=env,
+    )
+
+    assert result.exit_code == identity_attest_cmd.EXIT_FAILURE
+    assert "Promoted receipt bytes differ" in result.output
+    assert not list(output_dir.glob("*.json"))
+    assert not list(output_dir.glob(".attest-*"))
+
+
+def test_promoted_receipt_read_failure_removes_receipt(
+    attest_cli_env: tuple[Path, list[str], dict[str, str]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, common, env = attest_cli_env
+    output_dir = root / "receipts"
+
+    def _fail_read(_path: Path) -> str:
+        raise OSError("forced durable read failure")
+
+    monkeypatch.setattr(identity_attest_cmd, "_sha256_file", _fail_read)
+
+    result = CliRunner().invoke(
+        identity_group,
+        ["attest", "verify", *common, "--output", str(output_dir)],
+        env=env,
+    )
+
+    assert result.exit_code == identity_attest_cmd.EXIT_FAILURE
+    assert "Failed to re-hash promoted receipt" in result.output
+    assert not list(output_dir.glob("*.json"))
+    assert not list(output_dir.glob(".attest-*"))
+
+
+def test_identity_help_names_attest_operator_surface() -> None:
+    result = CliRunner().invoke(identity_group, ["--help"])
+
+    assert result.exit_code == 0
+    assert "identity attest show" in result.output
 
 
 def test_real_chain_tamper_exits_nonzero_and_names_entry(

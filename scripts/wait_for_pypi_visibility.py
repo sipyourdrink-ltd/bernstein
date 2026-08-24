@@ -117,10 +117,10 @@ def wait_for_visibility(
 
     if reachable:
         print(
-            f"::error::{project} {version} never became resolvable from {index_url} "
-            f"within the wait budget ({attempts} attempts). The index was reachable "
-            f"but never offered a distribution for this version: the index has not "
-            f"converged. This is not evidence that the build is broken.",
+            f"::error::PyPI index propagation timeout: {project} {version} never became resolvable "
+            f"from {index_url} within the wait budget ({attempts} attempts). The index was reachable "
+            f"but PyPI index propagation has not converged. This is an index propagation delay, "
+            f"not a packaging defect in {project}.",
             file=stream,
         )
     else:

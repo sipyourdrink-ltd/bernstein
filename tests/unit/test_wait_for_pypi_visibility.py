@@ -98,8 +98,8 @@ class TestWaitForVisibility:
         gate.wait_for_visibility("3.15.1", attempts=2, delay=0, sleep=lambda _: None, stream=sys.stdout)
 
         message = capsys.readouterr().out
-        assert "not evidence that the build is broken" in message
-        assert "has not" in message and "converged" in message
+        assert "not a packaging defect" in message
+        assert "index propagation" in message
 
     def test_unreadable_index_is_reported_as_a_fault_not_a_missing_release(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

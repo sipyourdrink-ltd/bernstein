@@ -129,6 +129,129 @@ def test_render_prompt_falls_back_and_includes_context_sections(tmp_path: Path, 
     assert "Signal files (check periodically)" in prompt
 
 
+def test_render_prompt_uses_subtree_scoped_project_context(tmp_path: Path, make_task: Any) -> None:
+    """_render_prompt supplements top-level project context with the nearest subtree-scoped file."""
+    _lesson_cache.clear()
+    _FILE_CACHE.clear()
+    task = make_task(
+        id="T-1",
+        role="backend",
+        title="Do something",
+        description="Description.",
+        owned_files=["src/bernstein/adapters/foo.py"],
+    )
+    templates_dir = tmp_path / "templates"
+    templates_dir.mkdir()
+    (tmp_path / ".sdd").mkdir()
+    (tmp_path / ".sdd" / "project.md").write_text("Top-level context.", encoding="utf-8")
+    scoped = tmp_path / "src" / "bernstein" / "adapters" / ".sdd"
+    scoped.mkdir(parents=True)
+    (scoped / "project.md").write_text("Adapters subtree context.", encoding="utf-8")
+
+    with (
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+    ):
+        prompt = _render_prompt(
+            [task],
+            templates_dir=templates_dir,
+            workdir=tmp_path,
+            session_id="A-1",
+        )
+
+    assert "Adapters subtree context." in prompt
+    assert "Top-level context." in prompt
+
+
+def test_render_prompt_no_scoped_context_is_byte_identical(tmp_path: Path, make_task: Any) -> None:
+    """_render_prompt with no scoped file returns only the top-level project context."""
+    _lesson_cache.clear()
+    _FILE_CACHE.clear()
+    task = make_task(id="T-1", role="backend", title="Do something", description="Description.")
+    templates_dir = tmp_path / "templates"
+    templates_dir.mkdir()
+    (tmp_path / ".sdd").mkdir()
+    (tmp_path / ".sdd" / "project.md").write_text("Top-level context.", encoding="utf-8")
+
+    with (
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+    ):
+        prompt = _render_prompt(
+            [task],
+            templates_dir=templates_dir,
+            workdir=tmp_path,
+            session_id="A-1",
+        )
+
+    assert "Top-level context." in prompt
+
+
+def test_render_prompt_nearest_ancestor_wins(tmp_path: Path, make_task: Any) -> None:
+    """_render_prompt uses the nearest ancestor scoped project context."""
+    _lesson_cache.clear()
+    _FILE_CACHE.clear()
+    task = make_task(
+        id="T-1",
+        role="backend",
+        title="Do something",
+        description="Description.",
+        owned_files=["src/bernstein/adapters/foo.py"],
+    )
+    templates_dir = tmp_path / "templates"
+    templates_dir.mkdir()
+    (tmp_path / ".sdd").mkdir()
+    (tmp_path / ".sdd" / "project.md").write_text("Top-level context.", encoding="utf-8")
+    closer = tmp_path / "src" / "bernstein" / ".sdd"
+    closer.mkdir(parents=True)
+    (closer / "project.md").write_text("Closer ancestor.", encoding="utf-8")
+    nearest = tmp_path / "src" / "bernstein" / "adapters" / ".sdd"
+    nearest.mkdir(parents=True)
+    (nearest / "project.md").write_text("Nearest ancestor.", encoding="utf-8")
+
+    with (
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+    ):
+        prompt = _render_prompt(
+            [task],
+            templates_dir=templates_dir,
+            workdir=tmp_path,
+            session_id="A-1",
+        )
+
+    assert "Nearest ancestor." in prompt
+    assert "Closer ancestor." not in prompt
+
+
+def test_render_prompt_empty_owned_files_falls_back_to_top_level(tmp_path: Path, make_task: Any) -> None:
+    """_render_prompt with no owned files falls back to the top-level project context."""
+    _lesson_cache.clear()
+    _FILE_CACHE.clear()
+    task = make_task(id="T-1", role="backend", title="Do something", description="Description.", owned_files=[])
+    templates_dir = tmp_path / "templates"
+    templates_dir.mkdir()
+    (tmp_path / ".sdd").mkdir()
+    (tmp_path / ".sdd" / "project.md").write_text("Top-level context.", encoding="utf-8")
+
+    with (
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+    ):
+        prompt = _render_prompt(
+            [task],
+            templates_dir=templates_dir,
+            workdir=tmp_path,
+            session_id="A-1",
+        )
+
+    assert "Top-level context." in prompt
+
+
 def test_render_prompt_includes_git_safety_protocol(tmp_path: Path, make_task: Any) -> None:
     """_render_prompt always injects the git safety protocol section."""
     _lesson_cache.clear()

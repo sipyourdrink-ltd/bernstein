@@ -12,9 +12,12 @@ import json
 import unicodedata
 from pathlib import Path
 from typing import Any
+from unittest import mock as unittest_mock
 
 import pytest
 
+from bernstein.adapters._contract import AdapterStrategy, SessionState
+from bernstein.core.defaults import JOURNAL_EVENT_PERSISTENT_AGENT_STEP
 from bernstein.core.evidence.bundle import EvidenceStore
 from bernstein.core.evidence.run_artifacts import (
     ArtifactPayload,
@@ -24,6 +27,7 @@ from bernstein.core.evidence.run_artifacts import (
     live_artifact_content_hashes,
     post_run_artifact,
     read_artifact_rows,
+    record_persistent_agent_step,
     verify_all_run_artifacts,
     verify_run_artifacts,
 )
@@ -805,3 +809,68 @@ class TestTaskIdPathContainment:
         results = verify_all_run_artifacts(tmp_path, hmac_key=_KEY)
         assert results, "a rewritten task id must not silently verify as an empty artifact set"
         assert all(not r.ok for r in results)
+
+
+class TestPersistentAgentStep:
+    """Recording and verification of persistent-agent adapter steps (#4290)."""
+
+    def test_stateless_adapter_records_nothing(self, tmp_path: Path) -> None:
+        sdd = _sdd(tmp_path)
+        record_persistent_agent_step(sdd, "task-1", "claude")
+        path = sdd / "runs" / "task-task-1" / "journal.jsonl"
+        assert not path.is_file(), "stateless adapter must not create a journal"
+
+    def test_persistent_adapter_records_event(self, tmp_path: Path) -> None:
+        sdd = _sdd(tmp_path)
+        with unittest_mock.patch(
+            "bernstein.adapters._contract.STRATEGY_MATRIX",
+            {"persistent-test": AdapterStrategy(session_state=SessionState.PERSISTENT_AGENT)},
+        ):
+            record_persistent_agent_step(sdd, "task-1", "persistent-test")
+        from bernstein.core.replay.journal import load_events
+
+        path = sdd / "runs" / "task-task-1" / "journal.jsonl"
+        assert path.is_file()
+        events = load_events(path).events
+        step_events = [r for r in events if str(r.get("event", "")) == JOURNAL_EVENT_PERSISTENT_AGENT_STEP]
+        assert len(step_events) == 1
+        assert step_events[0]["task_id"] == "task-1"
+        assert step_events[0]["adapter"] == "persistent-test"
+
+    def test_verify_overrides_journal_identity_to_unverifiable(self, tmp_path: Path) -> None:
+        sdd = _sdd(tmp_path)
+        post_run_artifact(
+            sdd_dir=sdd,
+            task_id="task-1",
+            key="report",
+            payload=ArtifactPayload.report("# Report"),
+            actor="worker",
+            hmac_key=_KEY,
+        )
+        with unittest_mock.patch(
+            "bernstein.adapters._contract.STRATEGY_MATRIX",
+            {"persistent-test": AdapterStrategy(session_state=SessionState.PERSISTENT_AGENT)},
+        ):
+            record_persistent_agent_step(sdd, "task-1", "persistent-test")
+        results = verify_run_artifacts(sdd, "task-1", hmac_key=_KEY)
+        assert len(results) == 1
+        assert results[0].ok, results[0].reason
+        assert results[0].journal_identity == "unverifiable"
+
+    def test_verify_keeps_identity_when_no_persistent_event(self, tmp_path: Path) -> None:
+        sdd = _sdd(tmp_path)
+        post_run_artifact(
+            sdd_dir=sdd,
+            task_id="task-1",
+            key="report",
+            payload=ArtifactPayload.report("# Report"),
+            actor="worker",
+            hmac_key=_KEY,
+        )
+        results = verify_run_artifacts(sdd, "task-1", hmac_key=_KEY)
+        assert len(results) == 1
+        assert results[0].ok, results[0].reason
+        # Without an external seal, identity is already "unverifiable", but the
+        # point is: no persistent-agent event, no override path is taken — the
+        # journal_result.identity.value is used verbatim.
+        assert results[0].journal_identity == "unverifiable"

@@ -27,7 +27,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -593,7 +593,7 @@ def _cost_from_dict(raw: dict[str, object]) -> CostBreakdown:
     except (TypeError, ValueError):
         total_usd = 0.0
     try:
-        total_tokens = int(raw.get("total_tokens", 0))  # type: ignore[arg-type]
+        total_tokens = int(cast(int, raw.get("total_tokens", 0)))
     except (TypeError, ValueError):
         total_tokens = 0
 
@@ -661,11 +661,11 @@ def _run_dir(root: Path, session_id: str | None) -> Path | None:
     for entry in runs_root.iterdir():
         if not entry.is_dir():
             continue
-        journal = contained_run_journal(runs_root, entry.name)
-        if journal is None:
+        found_journal = contained_run_journal(runs_root, entry.name)
+        if found_journal is None:
             continue
-        run_dir = journal.parent
-        if not (journal.exists() or (run_dir / _RUN_METADATA_FILENAME).exists()):
+        run_dir = found_journal.parent
+        if not (found_journal.exists() or (run_dir / _RUN_METADATA_FILENAME).exists()):
             continue
         try:
             mtime = run_dir.stat().st_mtime
@@ -830,7 +830,7 @@ def load_session_summary(
         # wrap-up cost block was written.
         cost = CostBreakdown(
             total_usd=float(live_session.get("cost_spent", 0.0) or 0.0),  # type: ignore[arg-type]
-            total_tokens=int(live_session.get("total_tokens", 0) or 0),  # type: ignore[arg-type]
+            total_tokens=int(cast(int, live_session.get("total_tokens", 0) or 0)),
             by_role={},
         )
 

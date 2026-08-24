@@ -32,24 +32,41 @@ __all__ = ["blocking_dependency", "unreachable_tasks"]
 def dependency_can_never_satisfy(dependency: Task) -> bool:
     """Can ``dependency``, in its recorded status, ever satisfy a dependent?
 
-    The single place this question is answered. Two schedulers ask it -
-    ``TaskStore._dependencies_satisfied`` when deciding whether a claim may
-    proceed, and ``DAGExecutor.resolve_edge`` when resolving an edge - and
-    before this they each carried their own copy of the status logic with
-    nothing keeping the two in step.
+    The single place this question is answered about a status. Three callers
+    ask it - ``TaskStore._dependencies_satisfied`` when deciding whether a
+    claim may proceed, ``DAGExecutor.resolve_edge`` when resolving an edge,
+    and ``blocking_dependency`` below - and before this they each carried
+    their own copy of the status logic with nothing keeping the three in step.
+
+    Status is all this answers. Whether a *retry* of the dependency is still
+    in flight is a question about the task table rather than about one status,
+    so ``blocking_dependency`` asks that separately.
     """
     return dependency.status in UNSUCCESSFUL_TERMINAL_STATUSES
+
+
+def _is_task_succeeded_or_retrying(dep_id: str, tasks: Mapping[str, Task]) -> bool:
+    """Return True if dep_id or a retry of dep_id is active or succeeded."""
+    for t in tasks.values():
+        if t.id == dep_id and t.status not in UNSUCCESSFUL_TERMINAL_STATUSES:
+            return True
+        if isinstance(t.metadata, dict):
+            orig = t.metadata.get("original_task_id")
+            retry_of = t.metadata.get("retry_of")
+            if (orig == dep_id or retry_of == dep_id) and t.status not in UNSUCCESSFUL_TERMINAL_STATUSES:
+                return True
+    return False
 
 
 def blocking_dependency(task: Task, tasks: Mapping[str, Task]) -> str | None:
     """Return the id of the dependency that strands *task*, if any.
 
     Only direct dependencies are considered, and only those already recorded
-    in an unsuccessful terminal status. A task stranded transitively is found
-    through its own direct dependency once that dependency has itself been
-    moved to a dependency-blocked status - which is what makes the recorded
-    cause of a transitive strand the nearest link in the chain rather than the
-    original failure.
+    in an unsuccessful terminal status with no active or succeeded retry. A
+    task stranded transitively is found through its own direct dependency once
+    that dependency has itself been moved to a dependency-blocked status - which
+    is what makes the recorded cause of a transitive strand the nearest link
+    in the chain rather than the original failure.
 
     With several stranded dependencies the lowest id wins, so the recorded
     cause does not depend on ``depends_on`` ordering.
@@ -57,7 +74,9 @@ def blocking_dependency(task: Task, tasks: Mapping[str, Task]) -> str | None:
     blockers = sorted(
         dep_id
         for dep_id in task.depends_on
-        if (dep := tasks.get(dep_id)) is not None and dependency_can_never_satisfy(dep)
+        if (dep := tasks.get(dep_id)) is not None
+        and dependency_can_never_satisfy(dep)
+        and not _is_task_succeeded_or_retrying(dep_id, tasks)
     )
     return blockers[0] if blockers else None
 

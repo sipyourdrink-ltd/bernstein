@@ -15,6 +15,7 @@ cover three guarantees:
 from __future__ import annotations
 
 from io import StringIO
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -22,7 +23,11 @@ from rich.console import Console
 
 from bernstein.adapters.base import (
     RATE_LIMIT_WINDOW_SECONDS,
+    CLIAdapter,
+    RateLimitError,
     RateLimitMeter,
+    SpawnResult,
+    StandingCapError,
     fold_rate_limit_events,
     get_rate_limit_meters,
     record_rate_limit_hit,
@@ -35,6 +40,7 @@ from bernstein.cli.status import (
     collect_rate_limit_snapshots,
     render_status,
 )
+from bernstein.core.orchestration.failure_taxonomy import classify_failure
 
 
 @pytest.fixture(autouse=True)
@@ -245,3 +251,65 @@ def test_render_status_shows_panel_when_meter_active() -> None:
     assert "Rate limits" in output
     assert "claude" in output
     assert "anthropic" in output
+
+
+# ---------------------------------------------------------------------------
+# 429 classifier integration in _probe_fast_exit
+# ---------------------------------------------------------------------------
+
+
+class _ProbeAdapter(CLIAdapter):
+    """Minimal adapter exposing the base fast-exit probe for testing."""
+
+    def name(self) -> str:
+        return "probe"
+
+    def spawn(self, **kwargs: Any) -> SpawnResult:  # pragma: no cover - unused
+        raise NotImplementedError
+
+
+class _FakeProc:
+    """WaitableProcess stand-in that exits with a fixed code."""
+
+    def __init__(self, exit_code: int) -> None:
+        self._exit_code = exit_code
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self._exit_code
+
+
+def _write_log(path: Path, text: str) -> None:
+    path.write_text(text, encoding="utf-8")
+
+
+def test_probe_fast_exit_retryable_429_records_hit_and_raises_rate_limit(tmp_path: Path) -> None:
+    adapter = _ProbeAdapter()
+    log_path = tmp_path / "agent.log"
+    _write_log(log_path, "HTTP 429: too many requests, slow down")
+
+    with pytest.raises(RateLimitError):
+        adapter._probe_fast_exit(_FakeProc(1), log_path, provider_name="probe")
+
+    meter = adapter.rate_limit_meter
+    assert meter.consecutive_429_count == 1
+    assert meter.hits_in_window() == 1
+
+
+def test_probe_fast_exit_standing_cap_raises_without_meter_hit(tmp_path: Path) -> None:
+    adapter = _ProbeAdapter()
+    log_path = tmp_path / "agent.log"
+    _write_log(log_path, "HTTP 429: maximum number of active sessions reached")
+
+    with pytest.raises(StandingCapError):
+        adapter._probe_fast_exit(_FakeProc(1), log_path, provider_name="probe")
+
+    # Standing caps must not consume the retry budget or touch the meter.
+    meter = adapter.rate_limit_meter
+    assert meter.consecutive_429_count == 0
+    assert meter.hits_in_window() == 0
+
+
+def test_standing_cap_error_classifies_as_standing_cap() -> None:
+    result = classify_failure(StandingCapError("probe hit a standing cap during startup"))
+    assert result.reason_code == "standing_cap"
+    assert result.transient is False

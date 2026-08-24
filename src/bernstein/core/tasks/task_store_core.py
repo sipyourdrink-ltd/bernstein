@@ -25,7 +25,6 @@ from bernstein.core.hook_events import HookEvent
 from bernstein.core.persistence.anchored_write import anchored_append
 from bernstein.core.persistence.durable_write import fsynced_write
 from bernstein.core.persistence.runtime_state import rotate_log_file
-from bernstein.core.persistence.store import role_mismatch_error
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.tasks.artifacts import ArtifactSpec
 from bernstein.core.tasks.errors import TaskDomainError
@@ -405,6 +404,7 @@ PANEL_GRACE_MS: int = 30_000
 
 # reason used when auto-failing a task due to empty result_summary.
 _EMPTY_COMPLETION_REASON = "completion missing summary"
+_ZERO_YIELD_PLANNING_REASON = "Planning task produced no child tasks"
 
 # rotate the per-task progress JSONL file once it exceeds 5 MiB.
 # Old rollovers become ``{task_id}.jsonl.1``; replay also reads them so no
@@ -1273,6 +1273,85 @@ class TaskStore:
                     next_frontier.add(candidate.id)
             frontier = next_frontier
 
+    async def _unblock_task(self, task: Task, unblocker_task_id: str) -> bool:
+        """Move *task* from ``BLOCKED_BY_FAILED_DEP`` back to ``OPEN``.
+
+        Returns ``True`` when the task moved, ``False`` otherwise.
+        """
+        reason = f"dependency {unblocker_task_id} completed"
+        snapshot = self._claim_snapshot(task)
+        self._index_remove(task)
+        try:
+            transition_task(task, TaskStatus.OPEN, actor="task_store", reason=reason)
+        except IllegalTransitionError:
+            self._index_add(task)
+            return False
+        task.result_summary = None
+        task.terminal_reason = None
+        if isinstance(task.metadata, dict):
+            task.metadata.pop("blocking_task_id", None)
+        task.version += 1
+        self._index_add(task)
+        await self._append_jsonl(self._task_to_record(task))
+        self._record_release_receipt(
+            task,
+            snapshot,
+            release_path="unblock_dependency_cascade",
+            reason=reason,
+        )
+        logger.info(
+            "Task %s unblocked by completed dependency %s",
+            sanitize_log(task.id),
+            sanitize_log(unblocker_task_id),
+        )
+        self._notify_task_updated(task)
+        return True
+
+    async def _cascade_unblock_dependency(self, *completed_task_ids: str) -> None:
+        """Unblock tasks that were stranded by failed dependencies now succeeded by *completed_task_ids*.
+
+        Propagation is transitive: unblocking a task allows its downstream
+        dependents to be unblocked on subsequent passes.
+
+        Must be called with ``self._lock`` held.
+        """
+        solved_blocker_ids = set(completed_task_ids)
+        for tid in completed_task_ids:
+            completed_task = self._tasks.get(tid)
+            if completed_task is None:
+                continue
+            if isinstance(completed_task.metadata, dict):
+                orig_id = completed_task.metadata.get("original_task_id")
+                retry_of = completed_task.metadata.get("retry_of")
+                if isinstance(orig_id, str) and orig_id:
+                    solved_blocker_ids.add(orig_id)
+                if isinstance(retry_of, str) and retry_of:
+                    solved_blocker_ids.add(retry_of)
+
+        frontier = set(completed_task_ids)
+        while frontier:
+            next_frontier: set[str] = set()
+            for candidate in sorted(self._tasks.values(), key=lambda t: t.id):
+                if candidate.status is not TaskStatus.BLOCKED_BY_FAILED_DEP:
+                    continue
+                blocker_id = (
+                    candidate.metadata.get("blocking_task_id") if isinstance(candidate.metadata, dict) else None
+                )
+                blocker = self._tasks.get(blocker_id) if blocker_id else None
+                blocker_unblocked = blocker is not None and blocker.status not in (
+                    TaskStatus.BLOCKED_BY_FAILED_DEP,
+                    TaskStatus.FAILED,
+                    TaskStatus.CANCELLED,
+                    TaskStatus.REFUSED,
+                )
+                blocker_cleared = bool(blocker_id and (blocker_id in solved_blocker_ids or blocker_unblocked))
+                if (blocker_cleared or self._dependencies_satisfied(candidate)) and await self._unblock_task(
+                    candidate, blocker_id or candidate.id
+                ):
+                    solved_blocker_ids.add(candidate.id)
+                    next_frontier.add(candidate.id)
+            frontier = next_frontier
+
     def _dependencies_satisfied(self, task: Task) -> bool:
         # A dependency is satisfied by either terminal-success status: tasks
         # move from "done" to "closed" once their agent is reaped and its
@@ -1283,6 +1362,14 @@ class TaskStore:
             self._by_status[TaskStatus.CLOSED].values()
         )
         done_ids = {done_task.id for done_task in completed_tasks}
+        for done_task in completed_tasks:
+            if isinstance(done_task.metadata, dict):
+                orig = done_task.metadata.get("original_task_id")
+                retry_of = done_task.metadata.get("retry_of")
+                if isinstance(orig, str) and orig:
+                    done_ids.add(orig)
+                if isinstance(retry_of, str) and retry_of:
+                    done_ids.add(retry_of)
 
         # A dependency that ended without delivering never satisfies its
         # dependents (#3452). The classification lives in one place so a path
@@ -2005,7 +2092,9 @@ class TaskStore:
                     f"Version conflict: task {task_id} is at version {task.version}, expected {expected_version}"
                 )
             if agent_role is not None and task.role != agent_role:
-                raise role_mismatch_error(task_id, task.role, agent_role)
+                raise ValueError(
+                    f"role mismatch: task {task_id} requires role '{task.role}', agent has role '{agent_role}'"
+                )
             if task.status != TaskStatus.OPEN:
                 # never silently re-return an already-claimed or
                 # terminal task - that enables double-claim. Raise so the
@@ -2171,6 +2260,38 @@ class TaskStore:
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
+
+            # Issue #4401: A planning/manager task that created zero child tasks has not
+            # accomplished any work. It must fail rather than falsely reporting success.
+            if task.role == "manager" and not any(t.id != task_id for t in self._tasks.values()):
+                snapshot = self._claim_snapshot(task)
+                self._index_remove(task)
+                transition_task(
+                    task,
+                    TaskStatus.FAILED,
+                    actor="task_store",
+                    reason=_ZERO_YIELD_PLANNING_REASON,
+                )
+                task.result_summary = _ZERO_YIELD_PLANNING_REASON
+                task.completed_at = time.time()
+                task.version += 1
+                self._index_add(task)
+                completed_at = task.completed_at
+                await self._append_jsonl(self._task_to_record(task))
+                await self._append_archive(task, completed_at)
+                self._record_release_receipt(
+                    task,
+                    snapshot,
+                    release_path="fail_zero_yield_planning",
+                    reason=_ZERO_YIELD_PLANNING_REASON,
+                )
+                logger.warning(
+                    "Planning task %s completed without creating child tasks; marked FAILED (%s).",
+                    sanitize_log(task_id),
+                    _ZERO_YIELD_PLANNING_REASON,
+                )
+                return task
+
             self._index_remove(task)
             transition_task(task, TaskStatus.DONE, actor="task_store", reason="complete")
             task.result_summary = result_summary
@@ -2187,6 +2308,7 @@ class TaskStore:
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
             await self._complete_parent_if_ready(task.parent_task_id)
+            await self._cascade_unblock_dependency(task_id)
         if completion is not None:
             self._audit_contract_outcome(task_id, outcome="valid")
         return task
@@ -2215,6 +2337,7 @@ class TaskStore:
             task.version += 1
             self._index_add(task)
             await self._append_jsonl(self._task_to_record(task))
+            await self._cascade_unblock_dependency(task_id)
             return task
 
     async def wait_for_subtasks(self, task_id: str, subtask_count: int) -> Task:

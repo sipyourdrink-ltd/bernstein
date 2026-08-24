@@ -74,6 +74,7 @@ FAILURE_REASON_CODES: Final[frozenset[str]] = frozenset(
         "merge_conflict",
         "compile_error",
         "context_miss",
+        "standing_cap",
         "unknown",
     }
 )
@@ -181,6 +182,7 @@ _EXCEPTION_TYPE_RULES: Final[dict[str, tuple[str, FailureCategory, float]]] = {
     "ConnectionResetError": ("network_error", FailureCategory.TIMEOUT, 0.8),
     "ConnectionRefusedError": ("network_error", FailureCategory.TIMEOUT, 0.8),
     "RateLimited": ("rate_limit", FailureCategory.TIMEOUT, 0.95),
+    "StandingCapError": ("standing_cap", FailureCategory.CONTEXT_MISS, 0.9),
     "PermissionError": ("sandbox_violation", FailureCategory.SCOPE_CREEP, 0.7),
     "ModuleNotFoundError": ("missing_dependency", FailureCategory.HALLUCINATION, 0.9),
     "ImportError": ("missing_dependency", FailureCategory.HALLUCINATION, 0.75),
@@ -212,6 +214,12 @@ _MESSAGE_SUBSTRING_RULES: Final[tuple[tuple[str, str, FailureCategory, float], .
     ("no module named", "missing_dependency", FailureCategory.HALLUCINATION, 0.9),
     ("syntaxerror", "syntax_error", FailureCategory.HALLUCINATION, 0.85),
     ("compile error", "compile_error", FailureCategory.HALLUCINATION, 0.8),
+    ("active sessions", "standing_cap", FailureCategory.CONTEXT_MISS, 0.8),
+    ("session cap", "standing_cap", FailureCategory.CONTEXT_MISS, 0.8),
+    ("spending limit", "standing_cap", FailureCategory.CONTEXT_MISS, 0.8),
+    ("daily limit", "standing_cap", FailureCategory.CONTEXT_MISS, 0.8),
+    ("budget exceeded", "standing_cap", FailureCategory.CONTEXT_MISS, 0.8),
+    ("concurrency limit", "standing_cap", FailureCategory.CONTEXT_MISS, 0.8),
 )
 
 
@@ -403,6 +411,7 @@ def _category_for_reason_code(reason_code: str) -> FailureCategory:
         "sandbox_violation": FailureCategory.SCOPE_CREEP,
         "merge_conflict": FailureCategory.CONFLICT,
         "context_miss": FailureCategory.CONTEXT_MISS,
+        "standing_cap": FailureCategory.CONTEXT_MISS,
         "unknown": FailureCategory.CONTEXT_MISS,
     }
     return fallback_map.get(reason_code, FailureCategory.CONTEXT_MISS)

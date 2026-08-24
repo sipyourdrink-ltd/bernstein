@@ -228,7 +228,7 @@ class TestRoleNarrowed:
         ok, reason = is_checkpoint_recoverable(cp, role_overrides={"backend": narrow})
         assert ok is False
         assert "grant mismatch" in reason
-        assert "narrowed" in reason
+        assert "permissions" in reason
 
     def test_refusal_before_worktree_access(self, tmp_path: Path) -> None:
         """Grant check fires even when worktree does not exist."""
@@ -270,11 +270,11 @@ class TestRoleNarrowed:
 class TestTaskReassigned:
     def test_different_task_id_refuses(self, tmp_path: Path) -> None:
         cp = _make_checkpoint(tmp_path, task_id="task-original")
-        # Simulate a checkpoint whose task_id was changed in storage
-        cp.task_id = "task-reassigned"
-        ok, reason = is_checkpoint_recoverable(cp)
+        # Call with a different current_task_id to simulate reassignment
+        ok, reason = is_checkpoint_recoverable(cp, current_task_id="task-reassigned")
         assert ok is False
         assert "grant mismatch" in reason
+        assert "task_id changed" in reason
 
     def test_same_task_id_passes(self, tmp_path: Path) -> None:
         cp = _make_checkpoint(tmp_path, task_id="task-same")
@@ -290,10 +290,11 @@ class TestTaskReassigned:
 class TestParentCancelled:
     def test_different_parent_run_id_refuses(self, tmp_path: Path) -> None:
         cp = _make_checkpoint(tmp_path, parent_run_id="run-original")
-        cp.parent_run_id = "run-replacement"  # simulates re-parenting
-        ok, reason = is_checkpoint_recoverable(cp)
+        # Call with a different current_parent_run_id to simulate re-parenting
+        ok, reason = is_checkpoint_recoverable(cp, current_parent_run_id="run-replacement")
         assert ok is False
         assert "grant mismatch" in reason
+        assert "parent_run_id changed" in reason
 
     def test_same_parent_run_id_passes(self, tmp_path: Path) -> None:
         cp = _make_checkpoint(tmp_path, parent_run_id="run-stable")
@@ -307,6 +308,14 @@ class TestParentCancelled:
 
 
 class TestResumeAfterCrash:
+    def test_different_chain_head_refuses(self, tmp_path: Path) -> None:
+        """Changing the chain head causes refusal."""
+        cp = _make_checkpoint(tmp_path, chain_head="old-head")
+        ok, reason = is_checkpoint_recoverable(cp, current_chain_head="new-head")
+        assert ok is False
+        assert "grant mismatch" in reason
+        assert "chain_head_at_suspend changed" in reason
+
     def test_missing_continuation_entry_is_new_run(self, tmp_path: Path) -> None:
         """Absence of ContinuationEntry means the resume never completed.
 
@@ -395,7 +404,7 @@ class TestAbsenceNotContinuity:
 
 
 class TestLegacyCheckpointNoGrantFields:
-    def test_no_grant_hash_skips_authority_check(self, tmp_path: Path) -> None:
+    def test_no_grant_hash_skips_authority_check(self, tmp_path: Path, caplog) -> None:
         """Checkpoints written before #3649 have empty grant_hash.
 
         They should fall through to the liveness checks unchanged so
@@ -416,6 +425,18 @@ class TestLegacyCheckpointNoGrantFields:
         ok, reason = is_checkpoint_recoverable(cp)
         assert ok is True
         assert "uncommitted" in reason
+        assert "no grant_hash" in caplog.text or "authority check skipped" in caplog.text
+
+    def test_hash_mismatch_without_current_values(self, tmp_path: Path) -> None:
+        """If hash mismatches but no current values are provided, return generic message."""
+        cp = _make_checkpoint(tmp_path)
+        # Narrow permissions via override
+        narrow = AgentPermissions(allowed_paths=("src/*",), denied_paths=())
+        ok, reason = is_checkpoint_recoverable(cp, role_overrides={"backend": narrow})
+        assert ok is False
+        assert "grant mismatch" in reason
+        assert "cannot determine which field changed (no current values provided)" in reason
+        assert "narrowed" not in reason
 
 
 # ---------------------------------------------------------------------------

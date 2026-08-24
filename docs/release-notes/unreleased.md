@@ -10,4 +10,4 @@ holds the page to that — an entry naming an issue or PR a tagged release page
 already documents fails the build. An entry that cites released work as context
 rather than as its own attribution is exempted by hand there, with the reason.
 
-Nothing yet: v3.17.1 was cut from this page.
+Nothing yet: v3.17.2 was cut from this page.

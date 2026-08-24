@@ -1,5 +1,11 @@
 name: "Bernstein CodeQL config"
 
+packs:
+  # A path, not a pack name: the pack lives in this repository and is never
+  # published, so resolving it by name sends CodeQL to the ghcr.io registry
+  # and the database init fails with 'not found in the registry'.
+  - ./.github/codeql/models
+
 paths-ignore:
   - "templates/adapter_plugin"
   - "templates/quality_gate_plugin"

@@ -64,8 +64,12 @@ class Admissible(Protocol):
     needs a category, a trigger and a producer, and nothing else.
     """
 
-    category: object
-    triggered_by: object
+    @property
+    def category(self) -> object: ...
+
+    @property
+    def triggered_by(self) -> object: ...
+
     produced_by: str
 
 

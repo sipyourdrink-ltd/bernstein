@@ -230,6 +230,42 @@ def _mark_claude_md_skip_worktree(worktree_path: Path) -> None:
         logger.debug("Failed to mark CLAUDE.md skip-worktree in %s: %s", worktree_path, exc)
 
 
+def restore_claude_md(worktree_path: Path) -> bool:
+    """Clear the skip-worktree bit on CLAUDE.md and restore it from HEAD.
+
+    Args:
+        worktree_path: Root of the agent worktree or repository.
+
+    Returns:
+        True if the restore succeeded, False otherwise.
+    """
+    try:
+        subprocess.run(
+            ["git", "update-index", "--no-skip-worktree", "CLAUDE.md"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_GIT_COMMAND_TIMEOUT_S,
+            check=False,
+        )
+        res = subprocess.run(
+            ["git", "checkout", "HEAD", "--", "CLAUDE.md"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_GIT_COMMAND_TIMEOUT_S,
+            check=False,
+        )
+        return res.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        logger.debug("Failed to restore CLAUDE.md in %s: %s", worktree_path, exc)
+        return False
+
+
 def _get_role_rules(role: str) -> list[str]:
     """Return behavioural rules specific to each role.
 

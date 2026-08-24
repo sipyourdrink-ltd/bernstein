@@ -27,6 +27,7 @@ from bernstein.adapters.registry import adapter_name_for_provider, get_adapter
 from bernstein.adapters.skills_injector import inject_skills
 from bernstein.agents.registry import AgentRegistry, get_registry
 from bernstein.bridges.base import AgentState, BridgeError, RuntimeBridge, SpawnRequest
+from bernstein.core.agents import project_context as _project_context
 from bernstein.core.agents.adapter_health import AdapterHealthMonitor
 from bernstein.core.agents.attachment_dispatch import (
     AttachmentDispatchError,
@@ -43,6 +44,7 @@ from bernstein.core.agents.context_attachments import (
 )
 from bernstein.core.agents.heartbeat import HeartbeatMonitor
 from bernstein.core.agents.in_process_agent import InProcessAgent
+from bernstein.core.agents.project_context import resolve_project_context
 from bernstein.core.agents.response_style import (
     ResponseStyleTemplateError,
     addendum_sha256,
@@ -137,6 +139,7 @@ if TYPE_CHECKING:
     from bernstein.adapters.base import CLIAdapter
     from bernstein.agents.catalog import CatalogAgent, CatalogRegistry
     from bernstein.core.agency_loader import AgencyAgent
+    from bernstein.core.agents.context_receipt import ContextReceipt
     from bernstein.core.agents.warm_pool import PoolSlot, WarmPool
     from bernstein.core.bulletin import BulletinBoard
     from bernstein.core.config.platform_compat import ProcessReapReceipt
@@ -154,8 +157,14 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Module-level file cache (mtime-keyed, automatically invalidates on change)
 # ---------------------------------------------------------------------------
-_FILE_CACHE: dict[str, tuple[float, str]] = {}
 _DIR_CACHE: dict[str, tuple[float, list[str]]] = {}
+
+# The implementation moved to ``project_context`` so this module and
+# ``spawn_prompt`` share one cache and one resolver. These names stay: the
+# warm pool reads role YAML through the reader, ``spawner.py`` re-exports
+# both, and tests reach for the cache to assert invalidation.
+_FILE_CACHE = _project_context._FILE_CACHE
+_read_cached = _project_context.read_cached
 
 # Serializes every sandbox lifecycle audit append across threads.
 #
@@ -168,29 +177,6 @@ _DIR_CACHE: dict[str, tuple[float, list[str]]] = {}
 # whole daily log. Module-level (not per-spawner) so multiple spawner
 # instances in one process share the same critical section.
 _SANDBOX_AUDIT_LOCK = threading.Lock()
-
-
-def _read_cached(path: Path) -> str:
-    """Return file contents, re-reading only when mtime changes.
-
-    Args:
-        path: File to read.
-
-    Returns:
-        File contents, or empty string if the file does not exist.
-    """
-    key = str(path)
-    try:
-        mtime = path.stat().st_mtime
-    except OSError:
-        _FILE_CACHE.pop(key, None)
-        return ""
-    cached = _FILE_CACHE.get(key)
-    if cached is not None and cached[0] == mtime:
-        return cached[1]
-    content = path.read_text(encoding="utf-8")
-    _FILE_CACHE[key] = (mtime, content)
-    return content
 
 
 def _list_subdirs_cached(path: Path) -> list[str]:
@@ -1088,7 +1074,7 @@ def _render_output_style(workdir: Path) -> str:
         return ""
 
 
-def _render_prompt(
+def _render_prompt_with_receipt(
     tasks: list[Task],
     templates_dir: Path,
     workdir: Path,
@@ -1103,7 +1089,8 @@ def _render_prompt(
     meta_messages: list[str] | None = None,
     max_turns: int | None = None,
     mailbox_section: str = "",
-) -> str:
+    model: str = "",
+) -> tuple[str, ContextReceipt]:
     """Build the full agent prompt from role template + tasks + context.
 
     Uses the Jinja2-style template renderer for proper variable substitution.
@@ -1140,9 +1127,11 @@ def _render_prompt(
             skipped in that case, not rendered with a placeholder.
 
     Returns:
-        Complete prompt string ready for the CLI adapter.
-        Cache block annotation is available via mark_cacheable_prefix()
-        vs dynamic, so adapters can apply provider-specific caching.
+        Tuple of ``(prompt, receipt)`` where *prompt* is the complete prompt
+        string ready for the CLI adapter (cache block annotation is available
+        via mark_cacheable_prefix() vs dynamic, so adapters can apply
+        provider-specific caching) and *receipt* is the per-section content
+        receipt for the context actually included.
     """
     role = tasks[0].role
 
@@ -1156,8 +1145,7 @@ def _render_prompt(
     task_block = "\n".join(task_lines)
 
     # Project context from .sdd/project.md if it exists
-    project_md = workdir / ".sdd" / "project.md"
-    project_context = _read_cached(project_md)
+    project_context = resolve_project_context(tasks, workdir)
 
     # Completion instructions use the first-class CLI (#3015), NOT a hand-built
     # curl. The command resolves the token and server port itself and retries a
@@ -1248,59 +1236,65 @@ def _render_prompt(
     # Assemble final prompt
     from bernstein.core.section_dedup import deduplicate_section
 
-    sections = [role_prompt]
+    named_sections: list[tuple[str, str]] = [("role", role_prompt)]
     if specialist_block:
-        sections.append(specialist_block)
-    sections.append(f"\n## Assigned tasks\n{task_block}")
+        named_sections.append(("specialists", specialist_block))
+    named_sections.append(("tasks", f"\n## Assigned tasks\n{task_block}"))
     if lesson_context:
-        sections.append(f"\n{lesson_context}\n")
+        named_sections.append(("lessons", f"\n{lesson_context}\n"))
     if persistent_memory_context:
-        sections.append(deduplicate_section(f"\n{persistent_memory_context}\n"))
+        named_sections.append(("persistent_memory", deduplicate_section(f"\n{persistent_memory_context}\n")))
     if smart_context:
-        sections.append(f"\n{smart_context}\n")
+        named_sections.append(("rag_context", f"\n{smart_context}\n"))
     if rich_context:
-        sections.append(f"\n{rich_context}\n")
+        named_sections.append(("rich_context", f"\n{rich_context}\n"))
     if file_scope_context:
-        sections.append(deduplicate_section(f"\n## File-scope context\n{file_scope_context}\n"))
+        named_sections.append(("file_scope", deduplicate_section(f"\n## File-scope context\n{file_scope_context}\n")))
     # Parent context inheritance: inject parent's context summary
     # when a task was created from decomposing a larger parent task.
     parent_ctx_parts = [t.parent_context for t in tasks if t.parent_context]
     if parent_ctx_parts:
-        sections.append(
-            "\n## Parent context (inherited)\n"
-            "This task was decomposed from a parent task. The parent agent gathered "
-            "the following context:\n" + "\n".join(parent_ctx_parts) + "\n"
+        named_sections.append(
+            (
+                "parent_context",
+                "\n## Parent context (inherited)\n"
+                "This task was decomposed from a parent task. The parent agent gathered "
+                "the following context:\n" + "\n".join(parent_ctx_parts) + "\n",
+            )
         )
     predecessor_ctx = _render_predecessor_context(tasks, task_graph)
     if predecessor_ctx:
-        sections.append(predecessor_ctx)
+        named_sections.append(("predecessor", predecessor_ctx))
     if bulletin_summary:
-        sections.append(
-            deduplicate_section(
-                f"\n## Team awareness\n"
-                f"Other agents are working in parallel. Recent activity:\n{bulletin_summary}\n\n"
-                f"If you need to create a shared utility, check if it already exists first.\n"
-                f"If you define an API endpoint, use consistent naming with existing endpoints.\n"
+        named_sections.append(
+            (
+                "team_awareness",
+                deduplicate_section(
+                    f"\n## Team awareness\n"
+                    f"Other agents are working in parallel. Recent activity:\n{bulletin_summary}\n\n"
+                    f"If you need to create a shared utility, check if it already exists first.\n"
+                    f"If you define an API endpoint, use consistent naming with existing endpoints.\n"
+                ),
             )
         )
     # Coordination mailbox (#2357): typed messages other workers addressed to
     # these tasks, rendered deterministically from the mailbox journal so
     # every adapter type receives byte-identical context.
     if mailbox_section and mailbox_section.strip():
-        sections.append(deduplicate_section(mailbox_section))
+        named_sections.append(("mailbox", deduplicate_section(mailbox_section)))
     try:
         rec_engine = RecommendationEngine(workdir)
         rec_engine.build()
         rec_section = rec_engine.render_for_prompt(role, max_chars=2000)
         if rec_section:
-            sections.append(f"\n{rec_section}\n")
+            named_sections.append(("recommendations", f"\n{rec_section}\n"))
     except Exception as exc:
         logger.debug("Recommendation rendering failed: %s", exc)
     if project_context:
-        sections.append(deduplicate_section(f"\n## Project context\n{project_context}\n"))
+        named_sections.append(("project_context", deduplicate_section(f"\n## Project context\n{project_context}\n")))
     output_style_prompt = _render_output_style(workdir)
     if output_style_prompt:
-        sections.append(deduplicate_section(f"\n## Output style\n{output_style_prompt}\n"))
+        named_sections.append(("output_style", deduplicate_section(f"\n## Output style\n{output_style_prompt}\n")))
     if token_budget > 0:
         if token_budget >= 1_000_000:
             budget_hint = f"~{token_budget // 1_000_000}M"
@@ -1308,32 +1302,38 @@ def _render_prompt(
             budget_hint = f"~{token_budget // 1_000}K"
         else:
             budget_hint = str(token_budget)
-        sections.append(
-            deduplicate_section(
-                f"\n## Token budget\n"
-                f"You have {budget_hint} tokens for this task. Plan your work accordingly - "
-                f"focus on the task, avoid unnecessary exploration, and wrap up promptly.\n"
+        named_sections.append(
+            (
+                "token_budget",
+                deduplicate_section(
+                    f"\n## Token budget\n"
+                    f"You have {budget_hint} tokens for this task. Plan your work accordingly - "
+                    f"focus on the task, avoid unnecessary exploration, and wrap up promptly.\n"
+                ),
             )
         )
-    sections.append(deduplicate_section(f"\n## Instructions\n{instructions}\n"))
+    named_sections.append(("instructions", deduplicate_section(f"\n## Instructions\n{instructions}\n")))
     if session_id:
         try:
             heartbeat_instructions = HeartbeatMonitor(workdir).inject_heartbeat_instructions(session_id)
-            sections.append(
-                deduplicate_section(
-                    "\n## Heartbeat (background)\n"
-                    "Run this in the background to report progress:\n"
-                    f"```bash\n{heartbeat_instructions}\n```\n"
+            named_sections.append(
+                (
+                    "heartbeat",
+                    deduplicate_section(
+                        "\n## Heartbeat (background)\n"
+                        "Run this in the background to report progress:\n"
+                        f"```bash\n{heartbeat_instructions}\n```\n"
+                    ),
                 )
             )
         except Exception as exc:
             logger.debug("Heartbeat instructions unavailable: %s", exc)
     if session_id:
-        sections.append(deduplicate_section(_render_signal_check(session_id)))
+        named_sections.append(("signal_check", deduplicate_section(_render_signal_check(session_id))))
 
     if meta_messages:
         nudges_block = "\n## Operational nudges\n" + "\n".join(f"- {m}" for m in meta_messages) + "\n"
-        sections.append(nudges_block)
+        named_sections.append(("meta_nudges", nudges_block))
 
     # Turn-budget nudge (work/bernstein/m27-nudge-plan.md, Approach C
     # MINIMAL): models spawned in tool-use loops (observed worst on MiniMax
@@ -1375,7 +1375,7 @@ def _render_prompt(
             "- You are re-reading files you already read with no new information to "
             "gain\n"
         )
-        sections.append(turn_budget_block)
+        named_sections.append(("turn_budget", turn_budget_block))
         logger.info(
             "Turn budget nudge injected for session=%s: max_turns=%d halfway=%d near_end=%d",
             session_id,
@@ -1392,6 +1392,29 @@ def _render_prompt(
             max_turns,
         )
 
+    # Build the per-section content receipt and extract the content strings
+    # for cache marking. The joined prompt must be byte-identical to the
+    # pre-receipt output, so the receipt is purely additive instrumentation.
+    from bernstein.core.agents.context_receipt import build_context_receipt
+
+    receipt = build_context_receipt(named_sections)
+
+    # Spawn-time prompt budget check (#4377). This is the prompt the adapter
+    # is actually handed, so the measurement belongs here rather than only in
+    # the batch renderer - a budget checked on a prompt nobody spawns reports
+    # nothing about a real run. Non-fatal: an over-budget prompt is a warning,
+    # not a refused spawn.
+    from bernstein.core.agents.spawn_prompt_budget import check_spawn_prompt_budget
+
+    try:
+        budget = check_spawn_prompt_budget(named_sections, model=model, session_id=session_id)
+        if budget.over_budget:
+            logger.warning(budget.warning_message)
+    except Exception:
+        logger.exception("Spawn prompt budget check failed for session=%s", session_id)
+
+    sections = [content for _, content in named_sections]
+
     # Annotate prompt sections with cache hints so adapters can apply
     # provider-specific caching (e.g. Anthropic's cache_control).
     cache_blocks = mark_cacheable_prefix(sections)
@@ -1400,7 +1423,19 @@ def _render_prompt(
     # for backward compatibility.  Callers that need cache hints can call
     # mark_cacheable_prefix(sections) separately.
     _ = cache_blocks  # computed for future use
-    return "".join(sections)
+    return "".join(sections), receipt
+
+
+def _render_prompt(*args: Any, **kwargs: Any) -> str:
+    """Build the agent prompt, discarding the context receipt.
+
+    The receipt was added for the spawner, which records it alongside the
+    run. Every other caller — the batch renderer, other modules, and the
+    prompt-shape tests — wants the prompt text, so the receipt is an
+    addition to the spawner's path rather than a change to this signature.
+    See :func:`_render_prompt_with_receipt` when the receipt is needed.
+    """
+    return _render_prompt_with_receipt(*args, **kwargs)[0]
 
 
 def _render_fallback(
@@ -4000,12 +4035,13 @@ class AgentSpawner:
             # Multi-task batches with mode=batch are unusual but we handle them by
             # using the first task's goal as the primary directive.
             prompt = _render_batch_prompt(tasks[0])
+            receipt = None
             logger.info(
                 "Batch execution mode: spawning single agent with /batch prompt for task %s",
                 tasks[0].id,
             )
         else:
-            prompt = _render_prompt(
+            prompt, receipt = _render_prompt_with_receipt(
                 tasks,
                 self._templates_dir,
                 self._workdir,
@@ -4019,6 +4055,7 @@ class AgentSpawner:
                 meta_messages=meta_messages,
                 max_turns=_effective_max_turns,
                 mailbox_section=mailbox_section,
+                model=model_config.model,
             )
 
         agent_source = catalog_agent.source if catalog_agent else "built-in"
@@ -4097,6 +4134,7 @@ class AgentSpawner:
             meta_messages=meta_messages,
             response_profile=style_resolution.style,
             profile_content_sha256=profile_content_sha,
+            context_receipt=receipt.to_dict()["entries"] if receipt else [],
         )
 
         # Zero-trust: issue a short-lived, task-scoped JWT for this agent.
@@ -4831,6 +4869,9 @@ class AgentSpawner:
                 log_path=session.log_path,
                 task_snapshots=task_snapshots,
             )
+            # Stamp the per-section context receipt on the trace so the
+            # persisted record carries the same fingerprint as the session.
+            trace.context_receipt = session.context_receipt
             self._traces[session_id] = trace
             try:
                 self._trace_store.write(trace)
@@ -5088,7 +5129,7 @@ class AgentSpawner:
             _resume_max_turns,
         )
 
-        prompt = _render_prompt(
+        prompt, receipt = _render_prompt_with_receipt(
             tasks,
             self._templates_dir,
             self._workdir,
@@ -5099,6 +5140,7 @@ class AgentSpawner:
             meta_messages=meta_messages,
             max_turns=_resume_max_turns,
             mailbox_section=self._render_mailbox_section(tasks),
+            model=model_config.model,
         )
         # Prepend crash recovery context
         prompt = resume_header + prompt
@@ -5109,6 +5151,7 @@ class AgentSpawner:
             task_ids=[t.id for t in tasks],
             model_config=model_config,
             status="starting",
+            context_receipt=receipt.to_dict()["entries"],
         )
 
         # Record declared context on resume exactly like a fresh spawn
