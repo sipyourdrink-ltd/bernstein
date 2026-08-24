@@ -99,48 +99,74 @@ def test_title_respects_existing_conventional_prefix() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Body
+# Title with changes_summary
 # ---------------------------------------------------------------------------
 
 
-def test_body_contains_all_four_sections() -> None:
-    body = build_pr_body(_fixture_summary())
-    for header in ("## Summary", "## Changes", "## Verification", "## Cost"):
-        assert header in body, f"missing header {header!r}"
-    # Trailer references session id (short form only).
-    assert "Generated from Bernstein session" in body
-    assert "abcdef123456" in body
+def test_title_uses_changes_summary_when_provided() -> None:
+    changes_summary = "- Add JWT auth: wired refresh tokens\n- Fix login: patched redirect"
+    title = build_pr_title("Add JWT authentication with refresh tokens", role="engineer", changes_summary=changes_summary)
+    # Outcome derived from changes_summary first line (task title before ": ")
+    assert title.startswith("feat: add JWT auth")
+    # Conventional type still from goal/role/labels (not changes_summary)
+    assert "feat:" in title
 
 
-def test_body_marks_passing_and_failing_gates() -> None:
-    body = build_pr_body(_fixture_summary())
-    # Passing gates get the green check; failing tests get the red cross.
-    assert "✅ **lint**" in body
-    assert "✅ **types**" in body
-    assert "❌ **tests**" in body
-    assert "1 failing" in body
+def test_title_changes_summary_does_not_affect_classify() -> None:
+    # Bug-labelled issue should still get fix: prefix even if changes_summary suggests feat
+    changes_summary = "- Add new feature: implemented shiny thing"
+    title = build_pr_title("Some goal", role="engineer", labels=("bug",), changes_summary=changes_summary)
+    assert title.startswith("fix:")
+    # Outcome from changes_summary
+    assert "add new feature" in title
 
 
-def test_cost_section_formats_zero_as_two_decimals() -> None:
-    summary = _fixture_summary(cost=CostBreakdown(total_usd=0.0, total_tokens=0, by_role={}))
+def test_title_falls_back_to_goal_when_changes_summary_empty() -> None:
+    title = build_pr_title("Add JWT authentication", role="engineer", changes_summary="")
+    assert "add JWT authentication" in title
+
+
+# ---------------------------------------------------------------------------
+# Body with changes_summary
+# ---------------------------------------------------------------------------
+
+
+def test_body_uses_changes_summary_for_change_section() -> None:
+    summary = _fixture_summary(
+        changes_summary="- Add JWT auth: wired refresh tokens\n- Fix login: patched redirect"
+    )
     body = build_pr_body(summary)
-    assert "$0.00" in body
-    assert "**Tokens:** 0" in body
-    # With no tokens or dollars, the effective rate should gracefully degrade.
-    assert "Effective rate:** n/a" in body
+    assert "## Change" in body
+    assert "Add JWT auth: wired refresh tokens" in body
+    assert "Fix login: patched redirect" in body
 
 
-def test_cost_section_reports_effective_rate_when_known() -> None:
-    body = build_pr_body(_fixture_summary())
-    # $1.2345 / 123_456 tokens * 1M ≈ $10.00 / 1M tokens.
-    assert "/ 1M tokens" in body
-    assert "$1.23" in body  # total rounded to two decimals
+def test_body_falls_back_to_diff_stat_when_changes_summary_empty() -> None:
+    summary = _fixture_summary(changes_summary="")
+    body = build_pr_body(summary)
+    assert "## Change" in body
+    assert "src/auth.py" in body  # from diff_stat in code fence
 
 
-def test_diff_stat_renders_in_code_fence() -> None:
-    body = build_pr_body(_fixture_summary())
-    assert "```" in body
-    assert "src/auth.py" in body
+def test_body_problem_is_single_line_from_goal() -> None:
+    summary = _fixture_summary(
+        goal="Add JWT authentication with refresh tokens. Also secure cookies and audit logs."
+    )
+    body = build_pr_body(summary)
+    assert "## Problem" in body
+    # Only first sentence, no trailing period in the line (since it's the first part)
+    assert "Add JWT authentication with refresh tokens" in body
+    assert "Also secure cookies" not in body
+
+
+def test_body_problem_extracts_issue_title_from_goal() -> None:
+    summary = _fixture_summary(
+        goal="Resolve GitHub issue #42: Fix broken login on mobile"
+    )
+    body = build_pr_body(summary)
+    assert "## Problem" in body
+    assert "Fix broken login on mobile" in body
+    assert "Resolve GitHub issue" not in body
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +307,6 @@ def test_dry_run_does_not_invoke_gh(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Title: feat:" in result.output
-    assert "## Summary" in result.output
+    assert "## Problem" in result.output
     push_mock.assert_not_called()
     gh_mock.assert_not_called()

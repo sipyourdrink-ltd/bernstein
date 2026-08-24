@@ -312,6 +312,7 @@ def pr_cmd(
         issue_title or summary.goal or summary.session_id,
         summary.primary_role,
         issue_labels,
+        changes_summary=summary.changes_summary,
     )
     body = build_pr_body(summary)
     if issue_number is not None:

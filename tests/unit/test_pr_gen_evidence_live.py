@@ -86,7 +86,7 @@ def test_live_pr_body_omits_evidence_when_no_bundle(tmp_path: Path) -> None:
     body = build_pr_body(summary)
     assert "## Evidence" not in body
     # Other sections remain present.
-    assert "## Summary" in body
+    assert "## Problem" in body
     assert "## Verification" in body
 
 

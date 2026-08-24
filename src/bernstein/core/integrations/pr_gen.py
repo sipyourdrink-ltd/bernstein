@@ -321,12 +321,48 @@ def _shape_outcome(goal: str) -> str:
     return cleaned[0].lower() + cleaned[1:]
 
 
-def build_pr_title(task_goal: str, role: str | None, labels: Iterable[str] = ()) -> str:
+def _outcome_from_changes_summary(changes_summary: str) -> str | None:
+    """Extract a short outcome from the first line of a changes summary.
+
+    The changes summary is a newline-separated list of ``- <task title>:
+    <result summary>`` lines.  The task title (the part before ``": "``) is
+    the cleanest description of what landed; when no separator is present
+    the whole line is used.
+
+    Args:
+        changes_summary: Multi-line string of formatted change bullets.
+
+    Returns:
+        The extracted outcome, or ``None`` when the summary is empty.
+    """
+    for line in changes_summary.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("- "):
+            line = line[2:]
+        title = line.split(": ", 1)[0]
+        return title.strip()
+    return None
+
+
+def build_pr_title(
+    task_goal: str,
+    role: str | None,
+    labels: Iterable[str] = (),
+    *,
+    changes_summary: str = "",
+) -> str:
     """Compose a conventional-commit pull-request title.
 
     The result is truncated to :data:`_TITLE_MAX_CHARS` characters with a
     trailing ellipsis when the cleaned goal is longer.  The shape is
     always ``"<type>: <outcome>"``.
+
+    When ``changes_summary`` is non-empty the outcome is derived from the
+    first change line (what landed) rather than the goal (what was asked).
+    The conventional-commit type still uses the goal, labels and role so a
+    ``bug``-labelled issue never opens a ``feat:`` PR regardless of wording.
 
     Args:
         task_goal: Session goal or first-task title.
@@ -335,12 +371,22 @@ def build_pr_title(task_goal: str, role: str | None, labels: Iterable[str] = ())
         labels: Labels on the linked issue. They outrank both the wording
             and the role, so a PR never announces a change type the issue
             it closes contradicts.
+        changes_summary: Newline-separated change bullets from the wrap-up.
+            When non-empty, the outcome is derived from the first line
+            instead of the goal.
 
     Returns:
         A title at most :data:`_TITLE_MAX_CHARS` characters long.
     """
     prefix = _classify(task_goal, role, labels)
-    outcome = _shape_outcome(task_goal)
+
+    outcome_source = task_goal
+    if changes_summary.strip():
+        extracted = _outcome_from_changes_summary(changes_summary)
+        if extracted:
+            outcome_source = extracted
+
+    outcome = _shape_outcome(outcome_source)
 
     full = f"{prefix}: {outcome}"
     if len(full) <= _TITLE_MAX_CHARS:
@@ -356,16 +402,27 @@ def build_pr_title(task_goal: str, role: str | None, labels: Iterable[str] = ())
 # ---------------------------------------------------------------------------
 
 
-def _summary_bullets(goal: str) -> list[str]:
-    """Split a goal into up to three bullet points.
+def _problem_line(goal: str) -> str:
+    """Reduce a goal to a single one-line problem statement.
 
-    Sentences separated by ``.``/``;`` become bullets; a single short
-    goal is returned as one bullet verbatim.
+    Only the first sentence (split on ``.`` or ``;``) is kept so the full
+    issue body is never pasted verbatim.  For a goal like ``Resolve GitHub
+    issue #N: <issue title>`` the title portion after the colon is returned.
+
+    Args:
+        goal: The raw goal string.
+
+    Returns:
+        A single-line problem statement.
     """
-    parts = [p.strip() for p in re.split(r"[.;]\s+", goal.strip()) if p.strip()]
-    if not parts:
-        return ["Automated session completed with no explicit goal."]
-    return parts[:3]
+    stripped = goal.strip()
+    if not stripped:
+        return "Automated session completed with no explicit goal."
+    first = re.split(r"[.;]\s+", stripped, maxsplit=1)[0].strip()
+    # A ``Resolve GitHub issue #N: <title>`` goal: the title is the problem.
+    if ": " in first:
+        first = first.split(": ", 1)[1].strip()
+    return first or stripped
 
 
 def _format_gates(gates: tuple[GateResult, ...]) -> str:
@@ -464,8 +521,8 @@ def build_pr_body(session: SessionSummary) -> str:
     """Render the full markdown body for a pull request.
 
     The output is structured so downstream reviewers (and tooling) can
-    reliably grep for section headers.  All four sections - Summary,
-    Changes, Verification and Cost - are always present even when the
+    reliably grep for section headers.  All core sections - Problem,
+    Change, Verification and Cost - are always present even when the
     underlying data is empty, so tests can rely on their presence.
 
     Args:
@@ -474,19 +531,20 @@ def build_pr_body(session: SessionSummary) -> str:
     Returns:
         A markdown string ready to pass to ``gh pr create --body``.
     """
-    bullets = "\n".join(f"- {line}" for line in _summary_bullets(session.goal))
-
     # The ``bernstein-session-id`` trailer is consumed by the autofix
     # daemon to claim ownership of PRs Bernstein opened - keeping it
     # on its own line lets ``gh pr view --json body`` callers parse it
     # with a single regex.
     short_id = session.session_id[:12] if session.session_id else "unknown"
+
+    change_block = session.changes_summary.strip() or _format_changes(session)
+
     parts: list[str] = [
-        "## Summary",
-        bullets,
+        "## Problem",
+        _problem_line(session.goal),
         "",
-        "## Changes",
-        _format_changes(session),
+        "## Change",
+        change_block,
         "",
         "## Verification",
         _format_gates(session.gates),

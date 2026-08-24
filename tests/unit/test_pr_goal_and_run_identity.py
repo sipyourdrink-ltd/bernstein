@@ -197,7 +197,7 @@ def test_merged_work_reaches_the_changes_section(tmp_path: Path) -> None:
     )
 
     body = build_pr_body(load_session_summary(None, workdir=tmp_path))
-    changes = body.split("## Changes", 1)[1].split("## Verification", 1)[0]
+    changes = body.split("## Change", 1)[1].split("## Verification", 1)[0]
 
     assert "T-42" in changes
     assert "+40/-3" in changes

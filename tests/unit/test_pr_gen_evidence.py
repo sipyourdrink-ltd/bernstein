@@ -59,5 +59,5 @@ def test_pr_body_without_evidence_omits_block() -> None:
     body = build_pr_body(_summary(None))
     assert "## Evidence" not in body
     # The other sections are still present.
-    assert "## Summary" in body
+    assert "## Problem" in body
     assert "## Verification" in body
