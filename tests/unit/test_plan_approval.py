@@ -238,3 +238,20 @@ def test_verify_rendering_hash_skips_legacy_plan(tmp_path: Path) -> None:
 
     assert approved is not None
     assert approved.status == PlanStatus.APPROVED
+
+
+def test_rendering_hash_survives_the_store_round_trip(tmp_path: Path) -> None:
+    """A plan reloaded from disk still verifies against the hash stored at creation.
+
+    The digest is recomputed from the plan object, so any serialisation that
+    does not round-trip exactly would refuse every approval after a restart.
+    """
+    sdd_dir = tmp_path / ".sdd"
+    PlanStore(sdd_dir).save_plan(create_plan("Persisted", [_task("T-hash-6", title="Do a thing")]))
+
+    reloaded = PlanStore(sdd_dir)
+    plan_id = reloaded.list_plans()[0].id
+    approved = reloaded.approve_plan(plan_id, "reviewed")
+
+    assert approved is not None
+    assert approved.status == PlanStatus.APPROVED

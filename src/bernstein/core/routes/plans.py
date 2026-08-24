@@ -14,12 +14,12 @@ from pydantic import BaseModel
 
 from bernstein.core.lifecycle import transition_task
 from bernstein.core.models import PlanStatus, TaskStatus
-from bernstein.core.plan_approval import PlanHashMismatchError
 from bernstein.core.routes._unconfigured import UNCONFIGURED_STATUS
 from bernstein.core.security.auth_middleware import enforce_agent_task_scope_for_ids
+from bernstein.core.security.plan_approval import PlanHashMismatchError
 
 if TYPE_CHECKING:
-    from bernstein.core.plan_approval import PlanStore
+    from bernstein.core.security.plan_approval import PlanStore
 
 router = APIRouter(prefix="/plans", tags=["plans"])
 

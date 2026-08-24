@@ -31,7 +31,7 @@ from bernstein.core.models import (
     TaskCostEstimate,
     TaskPlan,
 )
-from bernstein.core.plan_rendering import render_plan
+from bernstein.core.planning.plan_rendering import compute_plan_rendering
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -266,7 +266,7 @@ def create_plan(goal: str, tasks: list[Task]) -> TaskPlan:
         total_estimated_minutes=total_minutes,
         high_risk_tasks=high_risk,
     )
-    plan.rendering_hash = render_plan(plan).rendering_hash
+    plan.rendering_hash = compute_plan_rendering(plan).rendering_hash
     return plan
 
 
@@ -324,6 +324,10 @@ class PlanStore:
     def verify_rendering_hash(self, plan_id: str) -> None:
         """Verify a plan's current rendering matches the hash stored at creation.
 
+        This binds an approve/reject decision to the plan content that was
+        rendered for review: an edited goal, a re-priced estimate or an added
+        task changes the digest and the decision is refused.
+
         Plans created before the rendering-hash gate shipped carry an empty
         hash and are accepted without verification (backward compatibility).
 
@@ -334,10 +338,11 @@ class PlanStore:
         plan = self._plans.get(plan_id)
         if plan is None or not plan.rendering_hash:
             return
-        current = render_plan(plan).rendering_hash
+        current = compute_plan_rendering(plan).rendering_hash
         if current != plan.rendering_hash:
+            safe_id = plan_id.replace("\n", "\\n").replace("\r", "\\r")
             raise PlanHashMismatchError(
-                f"Plan {plan_id} rendering hash mismatch: stored {plan.rendering_hash}, current {current}"
+                f"Plan {safe_id} rendering hash mismatch: stored {plan.rendering_hash}, current {current}"
             )
 
     def approve_plan(self, plan_id: str, reason: str = "") -> TaskPlan | None:

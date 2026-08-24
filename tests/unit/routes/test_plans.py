@@ -62,7 +62,7 @@ def _create_planned_task(application: FastAPI, index: int, title: str) -> str:
 
 def _save_plan(application: FastAPI, task_id: str) -> str:
     """Persist a plan over *task_id* and return its id."""
-    from bernstein.core.plan_approval import create_plan
+    from bernstein.core.security.plan_approval import create_plan
 
     task = application.state.store.get_task(task_id)
     assert task is not None

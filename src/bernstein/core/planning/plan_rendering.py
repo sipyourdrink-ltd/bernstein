@@ -5,9 +5,11 @@ stable SHA-256 digest. The rendering is *order-invariant*: tasks are
 sorted by id before serialisation, so the same plan always yields the
 same hash regardless of the order tasks appear in ``plan.task_estimates``.
 
-The approval-gate binding (storing the hash on approve and verifying it
-on decision) is a follow-up in a later slice; this slice ships the
-rendering primitive only.
+``bernstein.core.security.plan_approval`` binds the digest into the
+approval decision: ``create_plan`` stores it on the plan, and
+``PlanStore.verify_rendering_hash`` recomputes it before a plan is
+approved or rejected, so a plan edited after it was rendered for review
+is refused instead of silently promoting tasks the operator never saw.
 """
 
 from __future__ import annotations
@@ -68,7 +70,7 @@ class PlanRendering:
         )
 
 
-def render_plan(
+def compute_plan_rendering(
     plan: TaskPlan,
     journal_head: str | None = None,
 ) -> PlanRendering:
@@ -82,7 +84,11 @@ def render_plan(
 
     Args:
         plan: The task execution plan to render.
-        journal_head: Optional Merkle head to bind into the hash.
+        journal_head: Optional Merkle head of the event journal to bind into
+            the hash. The approval gate renders without one, because the
+            digest it stores has to stay reproducible from the plan alone;
+            pass a head only where the caller also persists it and can
+            supply the same value when the rendering is recomputed.
 
     Returns:
         A frozen :class:`PlanRendering` with text, hash, and journal head.
