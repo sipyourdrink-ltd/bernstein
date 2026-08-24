@@ -149,6 +149,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `mock.py`                   | Mock CLI adapter for zero-API-key demos and testing |
 | `muse.py`                   | Muse Code CLI adapter for Bernstein |
 | `ollama.py`                 | Ollama / OpenAI-compatible local LLM adapter - run coding agents without cloud API keys |
+| `onboarding.py`             | Probe an installed CLI binary and capture its self-description as evidence |
 | `open_interpreter.py`       | Open Interpreter CLI adapter |
 | `openai_agents.py`          | OpenAI Agents SDK v2 adapter |
 | `openai_agents_builtins.py` | Opt-in builtin tools for the OpenAI Agents runner |
