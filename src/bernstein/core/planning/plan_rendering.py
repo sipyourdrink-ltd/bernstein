@@ -120,8 +120,7 @@ def render_plan(
         lines.append(
             f"  - {e.task_id}: {e.title} | role={e.role} model={e.model} "
             f"tokens={e.estimated_tokens} cost=${e.estimated_cost_usd:.6f} "
-            f"risk={e.risk_level}"
-            + (f" reasons={reasons}" if reasons else "")
+            f"risk={e.risk_level}" + (f" reasons={reasons}" if reasons else "")
         )
 
     lines.append("")
