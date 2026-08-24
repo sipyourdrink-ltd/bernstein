@@ -402,7 +402,7 @@ def test_mixed_v1_v2_chain_verifies(tmp_path: Path) -> None:
     )
 
     # Append a v2 entry through the normal API (chains from the v1 entry).
-    h2 = spine.record(
+    spine.record(
         artifact_path="src/v2.py",
         content=b"v2-content",
         actor="a",
