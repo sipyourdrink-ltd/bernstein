@@ -975,6 +975,7 @@ def park_task(
     role: str = "",
     permissions: AgentPermissions | None = None,
     parent_run_id: str = "",
+    model: str = "",
 ) -> ParkResult:
     """Durably park ``task_id``: row, receipt, releases, then ledger.
 
@@ -1006,6 +1007,8 @@ def park_task(
         role: Agent role name at suspend time.
         permissions: Live :class:`AgentPermissions` at suspend time.
         parent_run_id: Run that owns the task.
+        model: The *resolved* model string the adapter ran under at suspend
+            time (``auto`` captured as whatever it resolved to).
 
     Returns:
         A :class:`ParkResult` with the row, receipt hash, release outcome, and
@@ -1017,7 +1020,12 @@ def park_task(
             path would later refuse.
     """
     from bernstein.core.cost.budget_actions import compute_released_headroom
-    from bernstein.core.persistence.agent_checkpoint import AgentCheckpoint, compute_grant_hash, save_checkpoint
+    from bernstein.core.persistence.agent_checkpoint import (
+        AgentCheckpoint,
+        compute_grant_hash,
+        compute_interpreter_hash,
+        save_checkpoint,
+    )
     from bernstein.core.persistence.work_ledger import KIND_TASK_SUSPENDED
     from bernstein.core.security.audit_chain import record_task_suspension
 
@@ -1078,6 +1086,9 @@ def park_task(
         grant_hash=grant_hash,
         parent_run_id=parent_run_id,
         chain_head_at_suspend=suspend_row.event_hash,
+        adapter=adapter,
+        model=model,
+        interpreter_hash=compute_interpreter_hash(adapter, model) if adapter else "",
     )
     save_checkpoint(checkpoint, sdd_dir / "runtime")
 
@@ -1184,6 +1195,7 @@ def resume_task(
     requested_mode: RetryMode | str = RetryMode.WARM,
     ledger: WorkLedger | None = None,
     approval_ref: str = "",
+    override_interpreter: bool = False,
 ) -> ResumeResult:
     """Durably resume a parked task from its suspend row.
 
@@ -1201,6 +1213,10 @@ def resume_task(
         requested_mode: Operator-requested continuation mode (default warm).
         ledger: Optional work ledger to persist the RESUMED transition.
         approval_ref: Approval decision digest for an ``--until approval`` park.
+        override_interpreter: Whether the operator forced the resume past an
+            interpreter mismatch (``--override-interpreter``); recorded in the
+            continuation row so a later reader can tell an overridden resume
+            from a clean one.
 
     Returns:
         A :class:`ResumeResult` with the decision and both continuity anchors.
@@ -1300,7 +1316,11 @@ def resume_task(
             build_continuation_entry as _bce,
         )
 
-        _entry = _bce(_cp_for_cont, chain_head_at_resume=resume_event_hash)
+        _entry = _bce(
+            _cp_for_cont,
+            chain_head_at_resume=resume_event_hash,
+            interpreter_overridden=override_interpreter,
+        )
         journal.record(
             JOURNAL_EVENT_GRANT_CONTINUATION,
             task_id=suspend_row.task_id,
@@ -1308,6 +1328,8 @@ def resume_task(
             grant_hash=_entry.grant_hash,
             chain_head_at_suspend=_entry.chain_head_at_suspend,
             chain_head_at_resume=_entry.chain_head_at_resume,
+            interpreter_hash=_entry.interpreter_hash,
+            interpreter_overridden=_entry.interpreter_overridden,
         )
 
     receipt = record_task_resume(

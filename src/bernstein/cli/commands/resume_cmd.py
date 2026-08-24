@@ -77,6 +77,7 @@ def prepare_resume(
     task_id: str,
     *,
     hooks: HookRegistry | None = None,
+    override_interpreter: bool = False,
 ) -> ResumePlan:
     """Load + validate the checkpoint, bump ``resume_count``, fire the hook.
 
@@ -84,6 +85,9 @@ def prepare_resume(
         workdir: Project root containing ``.sdd/runtime/checkpoints``.
         task_id: Task to resume.
         hooks: Optional registry; ``task.resume`` fires on it when given.
+        override_interpreter: When ``True``, bypass the interpreter mismatch
+            check (``--override-interpreter``) so a resume proceeds even
+            though the adapter or resolved model moved.
 
     Returns:
         A :class:`ResumePlan` ready for the orchestrator.
@@ -95,19 +99,27 @@ def prepare_resume(
     """
     # Reading once before the bump gives us a clear error path: if the
     # file is corrupt we exit before incrementing the counter.
-    load_checkpoint(workdir, task_id)
+    checkpoint = load_checkpoint(workdir, task_id)
 
-    # --- Grant authority check (issue #3649) ---
+    # --- Grant + interpreter authority checks (issues #3649, #3852) ---
     # Look up the AgentCheckpoint for this task (written by the orchestrator
     # at suspend time).  Checkpoints are stored per agent, so the lookup
     # scans for the task rather than treating the task id as an agent id.
     # If the checkpoint carries a grant_hash we verify the current
     # configuration still matches before taking any side effect (bump,
-    # hook, signal); a stale grant refuses with the bindings named.
+    # hook, signal); a stale grant refuses with the bindings named.  The
+    # same pre-side-effect gate verifies the interpreter (adapter + resolved
+    # model) still matches, unless the operator overrides it.
     _runtime_dir = workdir / ".sdd" / "runtime"
     _agent_checkpoint = find_checkpoint_for_task(task_id, _runtime_dir)
     if _agent_checkpoint is not None:
-        _ok, _reason = is_checkpoint_recoverable(_agent_checkpoint, current_task_id=task_id)
+        _ok, _reason = is_checkpoint_recoverable(
+            _agent_checkpoint,
+            current_task_id=task_id,
+            current_adapter=checkpoint.adapter or None,
+            current_model=checkpoint.meta.get("model") or None,
+            override_interpreter=override_interpreter,
+        )
         if not _ok:
             raise GrantRefusedError(_reason)
 
@@ -205,7 +217,19 @@ def _render_plan(workdir: Path, plan: ResumePlan, *, output_json: bool) -> None:
     default=False,
     help="Validate + bump resume_count + print plan; do not re-spawn.",
 )
-def resume_cmd(task_id: str, workdir: Path | None, output_json: bool, dry_run: bool) -> None:
+@click.option(
+    "--override-interpreter",
+    is_flag=True,
+    default=False,
+    help="Resume even though the adapter or resolved model moved since suspend.",
+)
+def resume_cmd(
+    task_id: str,
+    workdir: Path | None,
+    output_json: bool,
+    dry_run: bool,
+    override_interpreter: bool,
+) -> None:
     """Pick up a paused/killed/crashed task from its last checkpoint.
 
     \b
@@ -218,7 +242,7 @@ def resume_cmd(task_id: str, workdir: Path | None, output_json: bool, dry_run: b
     """
     project_root = workdir or Path.cwd()
     try:
-        plan = prepare_resume(project_root, task_id)
+        plan = prepare_resume(project_root, task_id, override_interpreter=override_interpreter)
     except CheckpointMissingError as exc:
         console.print(f"[red]No checkpoint:[/red] {exc}")
         _hint_work_ledger(project_root, task_id)

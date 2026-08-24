@@ -11,7 +11,10 @@ import pytest
 
 from bernstein.core.persistence.agent_checkpoint import (
     AgentCheckpoint,
+    ContinuationEntry,
+    build_continuation_entry,
     build_resume_prompt,
+    compute_interpreter_hash,
     is_checkpoint_recoverable,
     load_checkpoint,
     save_checkpoint,
@@ -286,3 +289,132 @@ def test_build_resume_prompt_contains_instructions() -> None:
     # Must tell the agent NOT to restart from scratch
     assert "Do NOT restart" in prompt
     assert "Resuming from checkpoint" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Interpreter identity (issue #3852)
+# ---------------------------------------------------------------------------
+
+
+def test_compute_interpreter_hash_is_stable() -> None:
+    h1 = compute_interpreter_hash("claude_code", "claude-sonnet-4-5")
+    h2 = compute_interpreter_hash("claude_code", "claude-sonnet-4-5")
+    assert h1 == h2
+    assert len(h1) == 64  # SHA-256 hex
+
+
+def test_compute_interpreter_hash_sensitive_to_adapter_and_model() -> None:
+    base = compute_interpreter_hash("claude_code", "claude-sonnet-4-5")
+    assert compute_interpreter_hash("codex", "claude-sonnet-4-5") != base
+    assert compute_interpreter_hash("claude_code", "claude-opus-4-5") != base
+
+
+def test_compute_interpreter_hash_stable_across_processes() -> None:
+    import subprocess
+    import sys
+
+    code = (
+        "from bernstein.core.persistence.agent_checkpoint import compute_interpreter_hash; "
+        "print(compute_interpreter_hash('claude_code', 'claude-sonnet-4-5'))"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert out.stdout.strip() == compute_interpreter_hash("claude_code", "claude-sonnet-4-5")
+
+
+def test_resume_refuses_when_adapter_changed_before_side_effects(tmp_path: Path) -> None:
+    # Suspended under adapter A; resume would run under adapter B. The refusal
+    # must happen before any filesystem side effect, so the worktree path is
+    # deliberately missing: an interpreter-first check reports the mismatch,
+    # not "worktree missing".
+    checkpoint = AgentCheckpoint(
+        agent_id="agent-1",
+        task_id="task-1",
+        worktree_path=str(tmp_path / "does-not-exist"),
+        adapter="adapter_a",
+        model="model-x",
+        interpreter_hash=compute_interpreter_hash("adapter_a", "model-x"),
+    )
+    recoverable, reason = is_checkpoint_recoverable(
+        checkpoint,
+        current_adapter="adapter_b",
+        current_model="model-x",
+    )
+    assert recoverable is False
+    assert "interpreter mismatch" in reason
+    assert "adapter changed" in reason
+    assert "worktree missing" not in reason  # refused before liveness checks
+
+
+def test_resume_refuses_when_resolved_model_changed_alias(tmp_path: Path) -> None:
+    # Same adapter, same *requested* model string, but the resolved model
+    # moved. This is the case that separates recording the request from
+    # recording what actually ran.
+    checkpoint = AgentCheckpoint(
+        agent_id="agent-1",
+        task_id="task-1",
+        worktree_path=str(tmp_path / "does-not-exist"),
+        adapter="adapter_a",
+        model="resolved-model-1",
+        interpreter_hash=compute_interpreter_hash("adapter_a", "resolved-model-1"),
+    )
+    recoverable, reason = is_checkpoint_recoverable(
+        checkpoint,
+        current_adapter="adapter_a",
+        current_model="resolved-model-2",
+    )
+    assert recoverable is False
+    assert "interpreter mismatch" in reason
+    assert "model changed" in reason
+
+
+def test_older_checkpoint_without_interpreter_hash_loads_and_passes(tmp_path: Path) -> None:
+    # A checkpoint written before the interpreter field existed has an empty
+    # interpreter_hash. It must load without error and pass the recoverability
+    # check (the interpreter check is skipped, not silently treated as a
+    # clean match).
+    checkpoint = _make_checkpoint(worktree_path=str(tmp_path))
+    save_checkpoint(checkpoint, tmp_path)
+    loaded = load_checkpoint("agent-1", tmp_path)
+    assert loaded is not None
+    assert loaded.interpreter_hash == ""
+
+    _init_git_repo(tmp_path)
+    (tmp_path / "new_file.py").write_text("print('hi')\n")
+    recoverable, reason = is_checkpoint_recoverable(loaded)
+    assert recoverable is True
+    assert "uncommitted" in reason
+
+
+def test_override_interpreter_allows_resume_and_records_in_chain(tmp_path: Path) -> None:
+    # Suspended under adapter A, resume would run under adapter B, but the
+    # operator passes --override-interpreter. The resume is allowed and the
+    # continuation entry records the override so a later reader can tell an
+    # overridden resume from a clean one.
+    checkpoint = AgentCheckpoint(
+        agent_id="agent-1",
+        task_id="task-1",
+        worktree_path=str(tmp_path),
+        adapter="adapter_a",
+        model="model-x",
+        interpreter_hash=compute_interpreter_hash("adapter_a", "model-x"),
+    )
+    _init_git_repo(tmp_path)
+    (tmp_path / "new_file.py").write_text("print('hi')\n")
+
+    recoverable, _reason = is_checkpoint_recoverable(
+        checkpoint,
+        current_adapter="adapter_b",
+        current_model="model-x",
+        override_interpreter=True,
+    )
+    assert recoverable is True
+
+    entry = build_continuation_entry(checkpoint, interpreter_overridden=True)
+    assert isinstance(entry, ContinuationEntry)
+    assert entry.interpreter_hash == checkpoint.interpreter_hash
+    assert entry.interpreter_overridden is True

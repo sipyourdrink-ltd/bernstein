@@ -85,6 +85,29 @@ def compute_grant_hash(
     return hashlib.sha256(payload).hexdigest()
 
 
+def compute_interpreter_hash(adapter: str, model: str) -> str:
+    """Stable SHA-256 of the interpreter (adapter + resolved model).
+
+    Binds the adapter registry name and the *resolved* model identity -- not
+    the requested string -- so ``model: auto`` is captured as whatever it
+    resolved to, or the field proves nothing.  Stable across processes and
+    Python runs: the same inputs always produce the same hash.
+
+    Args:
+        adapter: Adapter registry name (e.g. ``"claude_code"``).
+        model: Resolved model identity the adapter ran under.
+
+    Returns:
+        Lowercase hex SHA-256 string.
+    """
+    payload = json.dumps(
+        {"adapter": adapter, "model": model},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
 def checkpoint_hash(checkpoint: AgentCheckpoint) -> str:
     """Stable SHA-256 fingerprint of an :class:`AgentCheckpoint`.
 
@@ -119,6 +142,13 @@ class ContinuationEntry:
         grant_hash: SHA-256 of the grant that was live at suspend time.
         chain_head_at_suspend: Journal Merkle-head at the moment of suspension.
         chain_head_at_resume: Journal Merkle-head at the moment of resumption.
+        interpreter_hash: SHA-256 of the interpreter (adapter + resolved
+            model) the suspended run ran under, so a verifier with no
+            filesystem access can tell the resumed run ran under the same
+            interpreter.
+        interpreter_overridden: Whether the operator forced the resume past an
+            interpreter mismatch (``--override-interpreter``). A later reader
+            can distinguish an overridden resume from a clean one.
         resumed_at: Unix timestamp of resumption.
     """
 
@@ -126,6 +156,8 @@ class ContinuationEntry:
     grant_hash: str
     chain_head_at_suspend: str
     chain_head_at_resume: str
+    interpreter_hash: str = ""
+    interpreter_overridden: bool = False
     resumed_at: float = field(default_factory=time.time)
 
 
@@ -168,6 +200,10 @@ class AgentCheckpoint:
     grant_hash: str = ""
     parent_run_id: str = ""
     chain_head_at_suspend: str = ""
+    # --- interpreter fields (issue #3852) ---
+    adapter: str = ""
+    model: str = ""
+    interpreter_hash: str = ""
 
 
 def save_checkpoint(checkpoint: AgentCheckpoint, runtime_dir: Path) -> Path:
@@ -298,6 +334,9 @@ def is_checkpoint_recoverable(
     current_task_id: str | None = None,
     current_parent_run_id: str | None = None,
     current_chain_head: str | None = None,
+    current_adapter: str | None = None,
+    current_model: str | None = None,
+    override_interpreter: bool = False,
 ) -> tuple[bool, str]:
     """Check if a checkpoint can be recovered.
 
@@ -318,10 +357,16 @@ def is_checkpoint_recoverable(
         current_task_id: The task id currently assigned.
         current_parent_run_id: The parent run id currently assigned.
         current_chain_head: The current journal chain head.
+        current_adapter: The adapter the task would resume under.
+        current_model: The resolved model the task would resume under.
+        override_interpreter: When ``True``, bypass the interpreter mismatch
+            check (``--override-interpreter``) so the resume proceeds even
+            though the adapter or resolved model moved.
 
     Returns:
-        ``(recoverable, reason)``. Recoverable if the grant still holds and
-        the worktree has uncommitted changes that can be resumed.
+        ``(recoverable, reason)``. Recoverable if the grant still holds, the
+        interpreter (when recorded) still matches, and the worktree has
+        uncommitted changes that can be resumed.
     """
     # --- Authority check (must happen before any side effect) ---
     if not checkpoint.grant_hash:
@@ -359,6 +404,34 @@ def is_checkpoint_recoverable(
                 )
             else:
                 reason = "grant mismatch — role permissions (allowed_paths/denied_paths) changed"
+            return False, reason
+
+    # --- Interpreter check (issue #3852) ---
+    # A checkpoint written before this field existed carries no interpreter
+    # identity. It loads without error and the check is skipped (with a
+    # warning) rather than silently treated as a clean match; the resume
+    # proceeds with liveness checks only.
+    if not checkpoint.interpreter_hash:
+        logger.warning(
+            "checkpoint for task %s has no interpreter_hash -- interpreter check skipped; "
+            "resume proceeds with liveness checks only",
+            checkpoint.task_id,
+        )
+    elif not override_interpreter:
+        current_hash = compute_interpreter_hash(
+            adapter=current_adapter if current_adapter is not None else checkpoint.adapter,
+            model=current_model if current_model is not None else checkpoint.model,
+        )
+        if current_hash != checkpoint.interpreter_hash:
+            changes = []
+            if current_adapter is not None and current_adapter != checkpoint.adapter:
+                changes.append("adapter changed")
+            if current_model is not None and current_model != checkpoint.model:
+                changes.append("model changed")
+            if changes:
+                reason = f"interpreter mismatch — {', '.join(changes)}"
+            else:
+                reason = "interpreter mismatch — resolved interpreter changed"
             return False, reason
 
     # --- Liveness checks (only reached when grant is valid or absent) ---
@@ -412,6 +485,7 @@ def build_continuation_entry(
     checkpoint: AgentCheckpoint,
     *,
     chain_head_at_resume: str = "",
+    interpreter_overridden: bool = False,
 ) -> ContinuationEntry:
     """Build the authenticated journal entry for a successful resume.
 
@@ -426,6 +500,9 @@ def build_continuation_entry(
     Args:
         checkpoint: The checkpoint that was verified and is now resuming.
         chain_head_at_resume: The journal Merkle-head at resumption time.
+        interpreter_overridden: Whether the operator forced the resume past an
+            interpreter mismatch (``--override-interpreter``). Recorded so a
+            later reader can tell an overridden resume from a clean one.
 
     Returns:
         A :class:`ContinuationEntry` ready to append to the journal.
@@ -435,6 +512,8 @@ def build_continuation_entry(
         grant_hash=checkpoint.grant_hash,
         chain_head_at_suspend=checkpoint.chain_head_at_suspend,
         chain_head_at_resume=chain_head_at_resume,
+        interpreter_hash=checkpoint.interpreter_hash,
+        interpreter_overridden=interpreter_overridden,
     )
 
 
