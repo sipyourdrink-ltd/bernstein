@@ -274,9 +274,7 @@ class TestDependencyFiltering:
         assert "C" not in spawned_task_ids
         assert "D" not in spawned_task_ids
 
-    def test_preexisting_cycle_still_schedules_every_task_after_deterministic_break(
-        self, tmp_path: Path
-    ) -> None:
+    def test_preexisting_cycle_still_schedules_every_task_after_deterministic_break(self, tmp_path: Path) -> None:
         """A board carrying a declared cycle drains instead of wedging (#4287).
 
         ``POST /tasks`` rejects a cycle-forming edge today, but legacy board

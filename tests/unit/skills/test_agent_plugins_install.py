@@ -189,10 +189,10 @@ def test_install_plugin_writes_lockfile_entries(
     content = lock_path.read_text(encoding="utf-8")
     resolved_root = plugin_dir.resolve()
     for name in ("alpha", "beta", "gamma"):
-        assert f"name = \"{name}\"" in content
+        assert f'name = "{name}"' in content
         # path names the skills/<name>/ directory the skill came from, not
         # the plugin root, so sync/drift can locate the individual tree.
-        assert f"path = \"{resolved_root}/skills/{name}\"" in content
+        assert f'path = "{resolved_root}/skills/{name}"' in content
 
 
 # ---------------------------------------------------------------------------
