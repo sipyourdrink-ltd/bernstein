@@ -32,8 +32,12 @@ pytestmark = pytest.mark.skipif(
 
 
 def _sdk_installed() -> bool:
-    """Return True when the optional ``openai-agents`` SDK is importable."""
-    return importlib.util.find_spec("agents") is not None
+    """Return True when the ``openai-agents`` SDK is importable AND has the required API surface."""
+    if importlib.util.find_spec("agents") is None:
+        return False
+    import agents  # type: ignore[import-not-found]
+
+    return hasattr(agents, "Agent") and hasattr(agents, "Runner")
 
 
 @pytest.mark.skipif(
