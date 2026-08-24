@@ -440,6 +440,7 @@ class Orchestrator:
         self._progress_stall_state = RunStallState()
         self._progress_stall_stopped: bool = False
         self._cached_critical_path_ids: set[str] = set()
+        self._cached_broken_deps: set[tuple[str, str]] = set()
         self._dependency_scanner = DependencyVulnerabilityScanner(
             workdir,
             enabled=config.dependency_scan_enabled,
@@ -1524,9 +1525,19 @@ class Orchestrator:
             len(tasks_by_status.get("failed", [])),
         )
 
+        # 1c. Build task graph and compute optimal parallelism
+        #     Graph analysis + dependency validation are expensive - gate behind
+        #     _run_normal. The all_tasks list and task ID cache are always needed.
+        all_tasks = list(itertools.chain.from_iterable(tasks_by_status.values()))
+        self._latest_tasks_by_id = {task.id: task for task in all_tasks}
+
+        task_graph = TaskGraph(all_tasks)
+        broken_deps = {(b.edge.target, b.edge.source) for b in task_graph.cycle_breaks}
+        self._cached_broken_deps = broken_deps
+
         # The server returns tasks matching the requested status; apply the
         # dependency filter here for "open" tasks.
-        done_tasks = tasks_by_status["done"]
+        done_tasks = tasks_by_status.get("done", [])
         # A dependency is satisfied by any terminal-success status, not just
         # "done": once a done task's agent is reaped and its branch merged,
         # the task moves to "closed" (the store soft-archives via status).
@@ -1537,8 +1548,8 @@ class Orchestrator:
         now = time.time()
         open_tasks = [
             t
-            for t in tasks_by_status["open"]
-            if all(dep in done_ids for dep in t.depends_on)
+            for t in tasks_by_status.get("open", [])
+            if all(dep in done_ids or (t.id, dep) in broken_deps for dep in t.depends_on)
             # Skip tasks with future created_at (retry backoff)
             and t.created_at <= now
         ]
@@ -1620,12 +1631,7 @@ class Orchestrator:
         # 1c. Build task graph and compute optimal parallelism
         #     Graph analysis + dependency validation are expensive - gate behind
         #     _run_normal. The all_tasks list and task ID cache are always needed.
-        all_tasks = list(itertools.chain.from_iterable(tasks_by_status.values()))
-        self._latest_tasks_by_id = {task.id: task for task in all_tasks}
-
-        task_graph: TaskGraph | None = None
         if _run_normal:
-            task_graph = TaskGraph(all_tasks)
             analysis = task_graph.analyse()
             dep_validator = DependencyValidator()
             dep_validation = dep_validator.validate(all_tasks)
@@ -1640,7 +1646,7 @@ class Orchestrator:
                 )
             for warning in dep_validation.warnings:
                 logger.warning("Dependency validation: %s", warning)
-            critical_path_ids = set(dep_validator.critical_path(all_tasks))
+            critical_path_ids = set(task_graph.critical_path())
             # Cache for use in fast ticks
             self._cached_critical_path_ids = critical_path_ids
 
@@ -1677,7 +1683,7 @@ class Orchestrator:
             # so reusing only the cache from the last normal tick left the
             # first spawn batch without the critical-path priority boost
             # and served stale boosts to tasks created between normal ticks.
-            critical_path_ids = set(DependencyValidator().critical_path(all_tasks))
+            critical_path_ids = set(task_graph.critical_path())
             self._cached_critical_path_ids = critical_path_ids
 
         # 3. Count alive agents, spawn if capacity (capped by graph parallel width)
