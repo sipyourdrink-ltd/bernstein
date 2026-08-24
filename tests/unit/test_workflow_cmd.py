@@ -88,9 +88,7 @@ def test_run_without_dry_run_on_dsl_manifest_names_the_working_invocation(
     assert "--dry-run" in result.output
 
 
-def test_run_still_resolves_spec_form_manifests_unchanged(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_run_still_resolves_spec_form_manifests_unchanged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The pre-existing WorkflowSpec `run` path is untouched by kind routing."""
     _write(
         tmp_path,
@@ -113,9 +111,7 @@ nodes:
     assert "only" in result.output
 
 
-def test_run_missing_workflow_reports_not_found_unchanged(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_run_missing_workflow_reports_not_found_unchanged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A name matching nothing on disk keeps the existing not-found message."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("HOME", str(tmp_path / "no-home"))
@@ -136,9 +132,7 @@ def test_list_renders_dsl_manifest_exactly_once(tmp_path: Path, monkeypatch: pyt
     _write(tmp_path, "two-phase", _DSL_MANIFEST)
     monkeypatch.chdir(tmp_path)
 
-    result = CliRunner().invoke(
-        cli, ["workflow", "list", "--dir", str(tmp_path / ".bernstein" / "workflows")]
-    )
+    result = CliRunner().invoke(cli, ["workflow", "list", "--dir", str(tmp_path / ".bernstein" / "workflows")])
 
     assert result.exit_code == 0, result.output
     assert "validation error" not in result.output.lower()
@@ -151,9 +145,7 @@ def test_list_broken_manifest_is_not_a_stack_trace(tmp_path: Path, monkeypatch: 
     _write(tmp_path, "broken", _BROKEN_MANIFEST)
     monkeypatch.chdir(tmp_path)
 
-    result = CliRunner().invoke(
-        cli, ["workflow", "list", "--dir", str(tmp_path / ".bernstein" / "workflows")]
-    )
+    result = CliRunner().invoke(cli, ["workflow", "list", "--dir", str(tmp_path / ".bernstein" / "workflows")])
 
     assert result.exit_code == 0, result.output
     assert "broken" in result.output

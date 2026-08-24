@@ -105,7 +105,9 @@ def test_title_respects_existing_conventional_prefix() -> None:
 
 def test_title_uses_changes_summary_when_provided() -> None:
     changes_summary = "- Add JWT auth: wired refresh tokens\n- Fix login: patched redirect"
-    title = build_pr_title("Add JWT authentication with refresh tokens", role="engineer", changes_summary=changes_summary)
+    title = build_pr_title(
+        "Add JWT authentication with refresh tokens", role="engineer", changes_summary=changes_summary
+    )
     # Outcome derived from changes_summary first line (task title before ": ")
     assert title.startswith("feat: add JWT auth")
     # Conventional type still from goal/role/labels (not changes_summary)
@@ -132,9 +134,7 @@ def test_title_falls_back_to_goal_when_changes_summary_empty() -> None:
 
 
 def test_body_uses_changes_summary_for_change_section() -> None:
-    summary = _fixture_summary(
-        changes_summary="- Add JWT auth: wired refresh tokens\n- Fix login: patched redirect"
-    )
+    summary = _fixture_summary(changes_summary="- Add JWT auth: wired refresh tokens\n- Fix login: patched redirect")
     body = build_pr_body(summary)
     assert "## Change" in body
     assert "Add JWT auth: wired refresh tokens" in body
@@ -149,9 +149,7 @@ def test_body_falls_back_to_diff_stat_when_changes_summary_empty() -> None:
 
 
 def test_body_problem_is_single_line_from_goal() -> None:
-    summary = _fixture_summary(
-        goal="Add JWT authentication with refresh tokens. Also secure cookies and audit logs."
-    )
+    summary = _fixture_summary(goal="Add JWT authentication with refresh tokens. Also secure cookies and audit logs.")
     body = build_pr_body(summary)
     assert "## Problem" in body
     # Only first sentence, no trailing period in the line (since it's the first part)
@@ -160,9 +158,7 @@ def test_body_problem_is_single_line_from_goal() -> None:
 
 
 def test_body_problem_extracts_issue_title_from_goal() -> None:
-    summary = _fixture_summary(
-        goal="Resolve GitHub issue #42: Fix broken login on mobile"
-    )
+    summary = _fixture_summary(goal="Resolve GitHub issue #42: Fix broken login on mobile")
     body = build_pr_body(summary)
     assert "## Problem" in body
     assert "Fix broken login on mobile" in body
@@ -251,9 +247,7 @@ def test_load_session_summary_reads_changes_summary(tmp_path: Path) -> None:
 
     summary = load_session_summary(None, workdir=tmp_path)
 
-    assert summary.changes_summary == (
-        "- Add JWT auth: wired refresh tokens\n- Fix login: patched redirect"
-    )
+    assert summary.changes_summary == ("- Add JWT auth: wired refresh tokens\n- Fix login: patched redirect")
 
 
 def test_load_session_summary_falls_back_to_live_session(tmp_path: Path) -> None:
