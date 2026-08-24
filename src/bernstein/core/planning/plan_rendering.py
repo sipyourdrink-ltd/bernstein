@@ -13,17 +13,13 @@ rendering primitive only.
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.cost.profile_report import canonical_json_bytes
+
 if TYPE_CHECKING:
     from bernstein.core.tasks.models import TaskPlan
-
-
-def _canonical_json(obj: Any) -> str:
-    """Compact canonical JSON serialisation (no whitespace)."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"))
 
 
 def _estimate_dict(e: Any) -> dict[str, Any]:
@@ -106,7 +102,7 @@ def render_plan(
     if journal_head is not None:
         payload["journal_head"] = journal_head
 
-    rendering_hash = hashlib.sha256(_canonical_json(payload).encode()).hexdigest()
+    rendering_hash = hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
 
     # Build the human-readable text.
     lines = [
