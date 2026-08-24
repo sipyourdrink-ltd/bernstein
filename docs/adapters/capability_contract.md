@@ -146,7 +146,7 @@ adapters at a glance.
 | `forge` | unsupported | unsupported | text-signals |
 | `gemini` | unsupported | cli-flag | stream-json |
 | `generic` | unsupported | unsupported | text-signals |
-| `goose` | unsupported | unsupported | text-signals |
+| `goose` | unsupported | env-var | stream-json |
 | `gptme` | unsupported | unsupported | text-signals |
 | `hermes` | unsupported | always-on | text-signals |
 | `iac` | unsupported | unsupported | text-signals |

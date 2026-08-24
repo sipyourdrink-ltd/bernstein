@@ -207,7 +207,7 @@ def test_continuation_optin_matches_the_resume_declaration() -> None:
 
 
 def test_acp_channel_adapters_declared() -> None:
-    for name in ("kilo", "goose"):
+    for name in ("kilo",):
         assert strategy_for(name).event_channel is EventChannel.ACP
 
 
