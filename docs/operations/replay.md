@@ -64,6 +64,28 @@ Canonical JSON: `json.dumps(..., sort_keys=True, separators=(",", ":"))`,
 UTF-8 encoding. A peer can re-derive any step hash by hand from these
 six fields without running our code.
 
+**Field-coverage contract.** `step_hash` authenticates the decision content
+of each row; the wall-clock envelope and row metadata are unauthenticated.
+Tampering with any authenticated field changes the recomputed `step_hash`
+and is caught at the exact step; tampering with an unauthenticated field is
+not. `effort` is folded in only when non-`None` (a legacy row omits the key
+and re-verifies byte-for-byte); `schema_version` is metadata, never hashed.
+
+| Field | Authenticated? | How it is covered |
+|---|---|---|
+| `prev_hash` | ✅ Yes | input to `step_hash` |
+| `input_hash` | ✅ Yes | input to `step_hash` |
+| `model` | ✅ Yes | input to `step_hash` |
+| `prompt` | ✅ Yes | input to `step_hash` |
+| `tool_call` | ✅ Yes | input to `step_hash` |
+| `tool_result` | ✅ Yes | input to `step_hash` |
+| `effort` (when recorded) | ✅ Yes | input to `step_hash`; omitted when `None` |
+| `seq` | ❌ No | row metadata; not in the hash pre-image |
+| `ts` | ❌ No | wall-clock envelope; not in the hash pre-image |
+| `blob_refs` | ❌ No | row metadata; not in the hash pre-image |
+| `schema_version` | ❌ No | row metadata; not in the hash pre-image |
+| `step_hash` | — | the Merkle output itself, not a covered field |
+
 This is a versioned contract; any change to the field set or the encoding
 is a `format_version` bump in the receipt manifest.
 

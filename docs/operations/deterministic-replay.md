@@ -126,6 +126,28 @@ sorted and fixed separators, and **excludes the wall-clock envelope** (`ts`,
 `elapsed_s`). The timing fields stay on the row for the operator timeline; they
 are skipped only in the hash.
 
+**Field-coverage contract.** The Merkle hash authenticates the
+decision-relevant content of each row and leaves the wall-clock envelope
+unauthenticated. Tampering with any authenticated field changes the recomputed
+`event_hash` and is caught at the exact step; tampering with an unauthenticated
+field is not.
+
+| Field | Authenticated? | How it is covered |
+|---|---|---|
+| `event` (event_type) | ✅ Yes | hashed directly into `event_hash` and folded into `payload_hash` |
+| decision-relevant payload fields | ✅ Yes | folded into `payload_hash` |
+| `prev_hash` | ✅ Yes | input to `event_hash` |
+| `index` | ✅ Yes | input to `event_hash` |
+| `payload_hash` | ✅ Yes | input to `event_hash` |
+| `ts` | ❌ No | wall-clock envelope; excluded from the hash, kept for the operator timeline |
+| `elapsed_s` | ❌ No | wall-clock envelope; excluded from the hash, kept for the operator timeline |
+
+`event_hash` is the Merkle output itself, not a covered field. The six envelope
+fields (`ts`, `elapsed_s`, `index`, `prev_hash`, `payload_hash`, `event_hash`)
+are all excluded from `payload_hash`; of these, only `ts` and `elapsed_s` are
+fully unauthenticated - `index`, `prev_hash`, and `payload_hash` are still
+authenticated because they are inputs to `event_hash`.
+
 The journal **head hash identifies the surviving journal state**. Because the
 timing envelope is excluded, two byte-identical executions chain to the
 **same** head even though their timestamps differ, so a recording and a
