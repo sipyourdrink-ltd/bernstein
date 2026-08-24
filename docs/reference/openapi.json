@@ -20870,6 +20870,18 @@
       },
       "TaskCreate": {
         "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
           "title": {
             "type": "string",
             "maxLength": 500,
@@ -22605,6 +22617,18 @@
       },
       "WebhookTaskCreate": {
         "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
           "title": {
             "type": "string",
             "maxLength": 500,

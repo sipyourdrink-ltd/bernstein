@@ -10,4 +10,7 @@ holds the page to that — an entry naming an issue or PR a tagged release page
 already documents fails the build. An entry that cites released work as context
 rather than as its own attribution is exempted by hand there, with the reason.
 
-Nothing yet: v3.17.2 was cut from this page.
+
+## Nightly dependency audit is green again
+
+The nightly full-closure audit runs `pip-audit --strict` over the dev closure and had failed since 2026-08-22 on `pip` 26.1.2 (PYSEC-2026-3721). A permanently red nightly hides the next real advisory behind it. `pip` is bumped to 26.2.1 in the lockfile.

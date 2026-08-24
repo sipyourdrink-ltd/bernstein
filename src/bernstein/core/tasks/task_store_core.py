@@ -1443,7 +1443,7 @@ class TaskStore:
         )
 
         task = Task(
-            id=uuid.uuid4().hex[:12],
+            id=getattr(req, "id", None) or uuid.uuid4().hex[:12],
             title=req.title,
             description=req.description,
             role=req.role,
@@ -1496,7 +1496,7 @@ class TaskStore:
                 cycle = self._detect_cycle(self._tasks, task)
                 if cycle is not None:
                     raise HTTPException(
-                        status_code=422,
+                        status_code=400,
                         detail="Circular dependency detected: " + " -> ".join(cycle),
                     )
             if task.depends_on_repo is not None:

@@ -134,6 +134,7 @@ class TaskCreate(BaseModel):
     """Body for POST /tasks."""
 
     # bounded string lengths prevent trivial memory exhaustion.
+    id: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
     title: str = Field(max_length=_MAX_TITLE_LEN)
     description: str = Field(max_length=_MAX_DESCRIPTION_LEN)
     role: str = Field(default="auto", max_length=_MAX_SHORT_STR_LEN)

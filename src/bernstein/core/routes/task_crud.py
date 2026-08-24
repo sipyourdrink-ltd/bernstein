@@ -1061,6 +1061,37 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
                 "present but empty" if seed_config is not None else "absent",
             )
 
+        # Validate dependency graph: reject cycle-forming edges before persistence (#4298)
+        if effective_body.depends_on:
+            from bernstein.core.models import Complexity, Scope, Task
+            from bernstein.core.quality.dep_validator import DependencyValidator
+
+            existing_tasks = store.list_tasks(tenant_id=effective_tenant)
+            candidate_id = effective_body.id or "__candidate__"
+            candidate_task = Task(
+                id=candidate_id,
+                title=effective_body.title,
+                description=effective_body.description,
+                role=effective_body.role,
+                priority=effective_body.priority,
+                scope=Scope(effective_body.scope),
+                complexity=Complexity(effective_body.complexity),
+                depends_on=list(effective_body.depends_on),
+                tenant_id=effective_tenant,
+            )
+            tasks_for_validation = [t for t in existing_tasks if t.id != candidate_id] + [candidate_task]
+            val_result = DependencyValidator().validate(tasks_for_validation)
+            if val_result.cycles:
+                cycle_str = "; ".join(" -> ".join(c) for c in val_result.cycles)
+                logger.warning(
+                    "Rejecting task create: dependency cycle detected: %s",
+                    cycle_str,
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Task dependency cycle detected: {cycle_str}",
+                )
+
         task = await store.create(effective_body)
         append_assessment_log(
             request.app.state.sdd_dir,
