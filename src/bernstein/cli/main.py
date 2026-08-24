@@ -1428,6 +1428,12 @@ from bernstein.cli.commands.ledger_cmd import ledger_group  # noqa: E402
 
 cli.add_command(ledger_group, "ledger")
 
+# Finished-run classification projected from the work ledger: which runs
+# opened a PR, which failed the gate, which were killed mid-flight (#4465).
+from bernstein.cli.commands.runs_cmd import runs_group  # noqa: E402
+
+cli.add_command(runs_group, "runs")
+
 # Ledger-projected missions: multi-day goals with phase gates + envelopes (#2509).
 from bernstein.cli.commands.mission_cmd import mission_group  # noqa: E402
 
