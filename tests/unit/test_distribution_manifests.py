@@ -384,9 +384,7 @@ def test_docker_mcp_catalog_source_commit_and_project_are_valid() -> None:
     """
     import yaml
 
-    catalog = yaml.safe_load(
-        (_REPO / "packaging" / "docker-mcp" / "server.yaml").read_text(encoding="utf-8")
-    )
+    catalog = yaml.safe_load((_REPO / "packaging" / "docker-mcp" / "server.yaml").read_text(encoding="utf-8"))
     commit = catalog["source"]["commit"]
     assert re.fullmatch(r"[0-9a-f]{40}", commit), (
         f"server.yaml source.commit {commit!r} is not a 40-char lowercase hex SHA"

@@ -983,8 +983,7 @@ class TestScalarFrontmatterTrifectaEnforcement:
         # Each listed tool is a full name, never a single character.
         for tool in manifest["tools"]:
             assert len(tool) > 1, (
-                f"Manifest tool {tool!r} is a single character — "
-                "scalar frontmatter was not split on comma"
+                f"Manifest tool {tool!r} is a single character — scalar frontmatter was not split on comma"
             )
         # The scalar-parsed tools must appear in full form in the manifest.
         # The spawner prepends the adapter tool, so the manifest has 4 entries.

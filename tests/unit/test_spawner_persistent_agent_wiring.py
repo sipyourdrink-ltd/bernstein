@@ -76,9 +76,7 @@ class TestPrimarySpawnWiring:
         journal_path = tmp_path / ".sdd" / "runs" / "task-T-001" / "journal.jsonl"
         assert journal_path.is_file(), "persistent-agent adapter must create a journal"
         events = load_events(journal_path).events
-        step_events = [
-            r for r in events if str(r.get("event", "")) == JOURNAL_EVENT_PERSISTENT_AGENT_STEP
-        ]
+        step_events = [r for r in events if str(r.get("event", "")) == JOURNAL_EVENT_PERSISTENT_AGENT_STEP]
         assert len(step_events) == 1
         assert step_events[0]["task_id"] == "T-001"
         assert step_events[0]["adapter"] == "persistent-test"
@@ -206,9 +204,7 @@ class TestResumeSpawnWiring:
             "bernstein.adapters._contract.STRATEGY_MATRIX",
             {"persistent-test": AdapterStrategy(session_state=SessionState.PERSISTENT_AGENT)},
         ):
-            session = spawner.spawn_for_resume(
-                [task], worktree_path=worktree_path, changed_files=[]
-            )
+            session = spawner.spawn_for_resume([task], worktree_path=worktree_path, changed_files=[])
 
         assert session.task_ids == ["T-R01"]
 
@@ -217,9 +213,7 @@ class TestResumeSpawnWiring:
         journal_path = tmp_path / ".sdd" / "runs" / "task-T-R01" / "journal.jsonl"
         assert journal_path.is_file(), "persistent-agent resume must create a journal"
         events = load_events(journal_path).events
-        step_events = [
-            r for r in events if str(r.get("event", "")) == JOURNAL_EVENT_PERSISTENT_AGENT_STEP
-        ]
+        step_events = [r for r in events if str(r.get("event", "")) == JOURNAL_EVENT_PERSISTENT_AGENT_STEP]
         assert len(step_events) == 1
         assert step_events[0]["task_id"] == "T-R01"
         assert step_events[0]["adapter"] == "persistent-test"
@@ -258,9 +252,7 @@ class TestResumeSpawnWiring:
             role="backend",
         )
 
-        session = spawner.spawn_for_resume(
-            [task], worktree_path=worktree_path, changed_files=[]
-        )
+        session = spawner.spawn_for_resume([task], worktree_path=worktree_path, changed_files=[])
 
         assert session.task_ids == ["T-R02"]
 
