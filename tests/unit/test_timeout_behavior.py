@@ -308,33 +308,34 @@ class TestCommandTimeout:
     def test_command_timeout_returns_failure(self, tmp_path: Path) -> None:
         from bernstein.core.quality_gates import _run_command
 
-        ok, output = _run_command("sleep 60", tmp_path, timeout_s=1)
+        ok, output, _exit_code = _run_command("sleep 60", tmp_path, timeout_s=1)
         assert ok is False
         assert "Timed out" in output
 
     def test_command_success_within_timeout(self, tmp_path: Path) -> None:
         from bernstein.core.quality_gates import _run_command
 
-        ok, output = _run_command("echo hello", tmp_path, timeout_s=10)
+        ok, output, _exit_code = _run_command("echo hello", tmp_path, timeout_s=10)
         assert ok is True
         assert "hello" in output
 
     def test_command_failure_is_not_timeout(self, tmp_path: Path) -> None:
         from bernstein.core.quality_gates import _run_command
 
-        ok, output = _run_command("exit 1", tmp_path, timeout_s=10)
+        ok, output, _exit_code = _run_command("exit 1", tmp_path, timeout_s=10)
         assert ok is False
         assert "Timed out" not in output
 
     def test_nonexistent_command(self, tmp_path: Path) -> None:
         from bernstein.core.quality_gates import _run_command
 
-        ok, _output = _run_command(
+        ok, _output, exit_code = _run_command(
             "definitely_not_a_real_command_12345",
             tmp_path,
             timeout_s=10,
         )
         assert ok is False
+        assert exit_code == 127
 
 
 # ---------------------------------------------------------------------------

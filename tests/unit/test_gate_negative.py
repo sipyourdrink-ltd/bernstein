@@ -62,14 +62,14 @@ class TestLintGateNegative:
             lint_command="ruff check bad_module.py",
             timeout_s=30,
         )
-        ok, _output = _run_command(config.lint_command, tmp_path, config.timeout_s)
+        ok, _output, _exit_code = _run_command(config.lint_command, tmp_path, config.timeout_s)
         assert ok is False  # ruff should flag unused imports
 
     def test_lint_passes_on_clean_code(self, tmp_path: Path) -> None:
         clean = tmp_path / "clean.py"
         clean.write_text('"""Clean module."""\n\nX = 1\n')
         config = QualityGatesConfig(lint_command="ruff check clean.py", timeout_s=30)
-        ok, _output = _run_command(config.lint_command, tmp_path, config.timeout_s)
+        ok, _output, _exit_code = _run_command(config.lint_command, tmp_path, config.timeout_s)
         assert ok is True
 
 
@@ -82,12 +82,12 @@ class TestCommandTimeoutGate:
     """Gate commands that exceed timeout are reported as failures."""
 
     def test_slow_command_times_out(self, tmp_path: Path) -> None:
-        ok, output = _run_command("sleep 60", tmp_path, timeout_s=1)
+        ok, output, _exit_code = _run_command("sleep 60", tmp_path, timeout_s=1)
         assert ok is False
         assert "Timed out" in output
 
     def test_fast_command_succeeds(self, tmp_path: Path) -> None:
-        ok, _output = _run_command("echo pass", tmp_path, timeout_s=10)
+        ok, _output, _exit_code = _run_command("echo pass", tmp_path, timeout_s=10)
         assert ok is True
 
 
@@ -322,6 +322,6 @@ class TestOutputTruncation:
         script = tmp_path / "long_output.sh"
         script.write_text("#!/bin/bash\npython3 -c \"print('x' * 3000)\"")
         script.chmod(0o755)
-        ok, output = _run_command(f"bash {script}", tmp_path, timeout_s=10)
+        ok, output, _exit_code = _run_command(f"bash {script}", tmp_path, timeout_s=10)
         if ok:
             assert len(output) <= 2100  # 2000 + truncation message

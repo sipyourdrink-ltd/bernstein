@@ -484,8 +484,7 @@ class GateRunner:
         from bernstein.core import quality_gates as qg
 
         result = await asyncio.to_thread(qg.run_command_sync, command, run_dir, timeout_s)
-        ok, detail = result[0], result[1]
-        exit_code = result[2] if len(result) == 3 else None
+        ok, detail, exit_code = result
         status: GateStatus
         blocked = False
         normalized_detail = detail
@@ -529,7 +528,7 @@ class GateRunner:
         if command is None:
             return self._skipped(step, "No impacted tests detected.")
 
-        ok, detail = await asyncio.to_thread(qg.run_command_sync, command, run_dir, self._config.timeout_s)
+        ok, detail, _exit_code = await asyncio.to_thread(qg.run_command_sync, command, run_dir, self._config.timeout_s)
         metadata: dict[str, Any] = {"command": command}
         if detail.startswith(_TIMED_OUT_PREFIX):
             return GateResult(
@@ -644,7 +643,7 @@ class GateRunner:
             return self._skipped(step, _NO_PYTHON_FILES)
 
         command = self._dead_code_command(step, python_files)
-        ok, vulture_detail = qg.run_command_sync(command, run_dir, self._config.timeout_s)
+        ok, vulture_detail, _exit_code = qg.run_command_sync(command, run_dir, self._config.timeout_s)
         if vulture_detail.startswith(_TIMED_OUT_PREFIX):
             return GateResult(
                 name=step.name,
@@ -764,8 +763,7 @@ class GateRunner:
             return self._skipped(step, _NO_PYTHON_FILES)
         if command is not None:
             result = self._run_command_and_capture(command, run_dir)
-            ok, detail = result[0], result[1]
-            exit_code = result[2] if len(result) == 3 else None
+            ok, detail, exit_code = result
             if ok:
                 return GateResult(
                     name=step.name,
@@ -818,8 +816,7 @@ class GateRunner:
         command = self._optional_command("coverage_delta", step.command_override)
         if command is not None:
             result = self._run_command_and_capture(command, run_dir)
-            ok, detail = result[0], result[1]
-            exit_code = result[2] if len(result) == 3 else None
+            ok, detail, exit_code = result
             if ok:
                 return GateResult(
                     name=step.name,
@@ -1278,7 +1275,7 @@ class GateRunner:
             metadata={"branch": branch, "base_ref": self._base_ref},
         )
 
-    def _run_command_and_capture(self, command: str, run_dir: Path) -> tuple[bool, str] | tuple[bool, str, int]:
+    def _run_command_and_capture(self, command: str, run_dir: Path) -> tuple[bool, str, int]:
         """Execute a command gate synchronously and capture its output."""
         from bernstein.core import quality_gates as qg
 
@@ -1347,8 +1344,7 @@ class GateRunner:
     def _measure_complexity_sync(self, command: str, cwd: Path) -> tuple[float | None, str]:
         """Execute a complexity command and parse its average score."""
         result = self._run_command_and_capture(command, cwd)
-        ok, detail = result[0], result[1]
-        exit_code = result[2] if len(result) == 3 else None
+        ok, detail, exit_code = result
         if exit_code == 127:
             return None, f"Command not found: {detail}"
         if not ok:

@@ -10,6 +10,12 @@ Exit code 127 is the shell's answer for "command not found", so it is the one
 signal that separates them. These tests pin both halves: that the code survives
 the return path at all, and that the gate runner turns it into a distinct status
 rather than a failure.
+
+The runner returns one shape, always ``(ok, detail, exit_code)``. Handing back
+two values for an ordinary failure and three for a 127 made every caller
+re-derive the shape before it could read anything, and the dead-code gate did
+not - it unpacked two and would have raised on the very exit code this change
+exists to report. One shape is what makes the signal safe to consume.
 """
 
 from __future__ import annotations
@@ -17,35 +23,41 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from bernstein.core.quality.quality_gates import _run_command
+from bernstein.core.quality.quality_gates import NO_EXIT_CODE, _run_command
 
 
 def test_missing_command_returns_its_exit_code(tmp_path: Path) -> None:
     """127 has to survive the return, or no caller can act on it."""
-    result = _run_command("definitely-not-a-real-binary-4548", tmp_path, 30)
-    assert len(result) == 3, "a missing command must carry its exit code back to the caller"
-    ok, _detail, exit_code = result
+    ok, _detail, exit_code = _run_command("definitely-not-a-real-binary-4548", tmp_path, 30)
     assert ok is False
     assert exit_code == 127
 
 
-def test_a_command_that_runs_and_fails_keeps_the_two_tuple(tmp_path: Path) -> None:
-    """The wider return shape must not disturb callers that unpack two values.
-
-    Every existing caller writes `ok, detail = run_command_sync(...)`. If an
-    ordinary failure started returning three values, all of them would break on
-    the next release -- so the third element is reserved for 127 alone.
-    """
-    result = _run_command("exit 3", tmp_path, 30)
-    assert len(result) == 2
-    ok, _detail = result
+def test_an_ordinary_failure_reports_its_own_exit_code(tmp_path: Path) -> None:
+    """A non-zero exit that is not 127 must be distinguishable from one that is."""
+    ok, _detail, exit_code = _run_command("exit 3", tmp_path, 30)
     assert ok is False
+    assert exit_code == 3, "an ordinary failure must carry its own code, not 127 and not a placeholder"
 
 
-def test_a_command_that_succeeds_keeps_the_two_tuple(tmp_path: Path) -> None:
-    result = _run_command("true", tmp_path, 30)
-    assert len(result) == 2
-    assert result[0] is True
+def test_a_command_that_succeeds_reports_zero(tmp_path: Path) -> None:
+    ok, _detail, exit_code = _run_command("true", tmp_path, 30)
+    assert ok is True
+    assert exit_code == 0
+
+
+def test_every_return_path_carries_an_exit_code(tmp_path: Path) -> None:
+    """Including the paths where no process ever reported one.
+
+    A timeout kill and an OS-level spawn failure have no exit code of their own.
+    They still return three values, because a caller that has to ask how many it
+    got is a caller that will one day forget to ask - which is exactly how the
+    dead-code gate ended up unpacking two.
+    """
+    ok, detail, exit_code = _run_command("sleep 5", tmp_path, 1)
+    assert ok is False
+    assert detail.startswith("Timed out")
+    assert exit_code == NO_EXIT_CODE
 
 
 def test_gate_runner_reports_a_missing_command_as_command_not_found(tmp_path: Path) -> None:
