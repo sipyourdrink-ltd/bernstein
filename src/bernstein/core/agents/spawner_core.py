@@ -1241,6 +1241,14 @@ def _render_prompt_with_receipt(
     if specialist_block:
         named_sections.append(("specialists", specialist_block))
     named_sections.append(("tasks", f"\n## Assigned tasks\n{task_block}"))
+    # Artifact contract (#4539): surface the kind/path/criteria an
+    # artifact-mode task is judged by. Empty for the git path, so a plain
+    # coding task's prompt is unchanged.
+    from bernstein.core.agents.spawn_prompt import render_artifact_contract
+
+    artifact_contract = render_artifact_contract(tasks)
+    if artifact_contract:
+        named_sections.append(("artifact_contract", f"\n{artifact_contract}"))
     if lesson_context:
         named_sections.append(("lessons", f"\n{lesson_context}\n"))
     if persistent_memory_context:

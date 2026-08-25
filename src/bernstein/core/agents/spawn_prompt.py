@@ -759,6 +759,58 @@ def _render_completion_instructions(tasks: list[Task]) -> str:
     return f"{header}{block}\nThen exit."
 
 
+def render_artifact_contract(tasks: list[Task]) -> str:
+    """Render the artifact contract section for artifact-mode tasks (#4539).
+
+    An artifact-mode task completes on a signed lineage receipt over its
+    produced artifact, not on a git SHA - but until now the spawn prompt never
+    surfaced the contract the completion side (:mod:`bernstein.core.tasks.artifact_completion`)
+    actually enforces. This helper closes that gap: the agent is shown the
+    exact kind, the exact output path the verifier reads, and every declared
+    acceptance criterion.
+
+    Reads the *same* ``task.artifact_spec`` object and the *same*
+    :func:`~bernstein.core.tasks.artifact_completion.artifact_output_path`
+    resolver as the completion path, so the prompt and the verifier cannot
+    drift - there is no second parse and no parallel rendering of the spec.
+
+    Returns ``""`` when every task completes through the git path
+    (``code_diff``), so the default coding-task prompt stays byte-unchanged.
+    """
+    from bernstein.core.tasks.artifact_completion import artifact_output_path, is_artifact_mode
+
+    artifact_tasks = [t for t in tasks if is_artifact_mode(t)]
+    if not artifact_tasks:
+        return ""
+
+    lines: list[str] = [
+        "## Artifact contract",
+        "",
+        "Your work is judged by the artifacts declared below, not by a source "
+        "diff. Produce exactly the declared artifact; when it is complete the "
+        "orchestrator records a signed lineage receipt over its canonical bytes.",
+    ]
+    for t in artifact_tasks:
+        spec = t.artifact_spec
+        out_path = artifact_output_path(t)
+        lines.extend(("", f"### {t.id}: {t.title}"))
+        lines.append(f"- **Kind**: `{spec.kind.value}`")
+        lines.append(f"- **Output path**: `{out_path}` (relative to the working directory)")
+        criteria = list(spec.criteria)
+        if criteria:
+            lines.append("- **Acceptance criteria** (every one must hold):")
+            for criterion in criteria:
+                lines.append(f"  - `{criterion.type}`: {criterion.value}")
+        else:
+            lines.append("- **Acceptance criteria**: none declared")
+        lines.append(
+            f"- Completion is judged by this contract. Write the artifact to `{out_path}` "
+            f"and leave it there; if you cannot satisfy a criterion, do not mark the "
+            f"task complete - report a typed refusal instead."
+        )
+    return "\n".join(lines) + "\n"
+
+
 def _render_prompt(
     tasks: list[Task],
     templates_dir: Path,
@@ -900,6 +952,12 @@ def _render_prompt(
         if memory_block:
             named_sections.append(("memory_lessons", memory_block))
     named_sections.append(("tasks", f"\n## Assigned tasks\n{task_block}"))
+    # Artifact contract (#4539): surface the kind/path/criteria an
+    # artifact-mode task is judged by. Empty for the git path, so a plain
+    # coding task's prompt is unchanged.
+    artifact_contract = render_artifact_contract(tasks)
+    if artifact_contract:
+        named_sections.append(("artifact contract", f"\n{artifact_contract}"))
     if lesson_context:
         named_sections.append(("lessons", f"\n{lesson_context}\n"))
     if rich_context:
