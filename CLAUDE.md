@@ -67,7 +67,7 @@ Top-level entry points exposed by the package:
 
 ## Git workflow
 
-Default branch: `main`.
+Default branch: `run-20260825T201809p3904124Z`.
 
 ## Agent roles
 
