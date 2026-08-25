@@ -792,7 +792,7 @@ def install_plugin_local(
     than aborting the whole plugin install.
 
     A skill whose name already holds a lock row from a *different* source -
-    ``bernstein-skills.toml``, or another plugin - is refused the same way,
+    ``bernstein-skills.toml`` - is refused the same way,
     naming the source it would have replaced. Overwriting it would delete an
     install the operator chose deliberately and silently flip that row's
     provenance to ``"plugin"``, letting a pack shadow a trusted skill. Pass
