@@ -236,10 +236,10 @@ def build_cose_sign1(head_sha256: str, key_id: str, sign) -> bytes:
         {1: -8, 3: "application/vnd.bernstein.audit-receipt+json", 4: key_id.encode()},
         canonical=True,
     )
-    payload = bytes.fromhex(head_sha256)          # raw 32 bytes
+    payload = bytes.fromhex(head_sha256)  # raw 32 bytes
     sig_structure = ["Signature1", protected, b"", payload]
     to_sign = cbor2.dumps(sig_structure, canonical=True)
-    signature = sign(to_sign)                     # Ed25519
+    signature = sign(to_sign)  # Ed25519
     cose = cbor2.CBORTag(18, [protected, {}, payload, signature])
     return cbor2.dumps(cose, canonical=True)
 ```
@@ -279,11 +279,7 @@ PAE(payload_type, payload) =
 def pae(payload_type: str, payload: bytes) -> bytes:
     t = payload_type.encode("utf-8")
     return (
-        b"DSSEv1 "
-        + str(len(t)).encode("ascii") + b" " + t
-        + b" "
-        + str(len(payload)).encode("ascii") + b" "
-        + payload
+        b"DSSEv1 " + str(len(t)).encode("ascii") + b" " + t + b" " + str(len(payload)).encode("ascii") + b" " + payload
     )
 ```
 
@@ -371,7 +367,7 @@ def merkle_root(leaves) -> str:
             if i + 1 < len(level):
                 nxt.append(combine_internal(level[i], level[i + 1]))
             else:
-                nxt.append(level[i])          # lone odd node promoted
+                nxt.append(level[i])  # lone odd node promoted
         level = nxt
     return level[0]
 ```
@@ -382,7 +378,7 @@ The signed tree head binds the Merkle root and the subject digest:
 
 ```python
 sth = {"tree_size": len(leaves), "root_hash": root, "subject_sha256": head_sha256}
-sth_signature = sign(canonical_json(sth))     # Ed25519
+sth_signature = sign(canonical_json(sth))  # Ed25519
 ```
 
 The `signature_b64` is the base64 of that signature. `subject_sha256` must
