@@ -7,7 +7,7 @@ from bernstein.cli.commands.schedule_cmd import schedule_group
 
 def test_schedule_group_has_routine_subcommand():
     # The schedule command group should have a subcommand named 'routine'
-    assert 'routine' in schedule_group.commands
+    assert "routine" in schedule_group.commands
 
 
 def test_schedule_add_valid_cron(tmp_path: Path):
@@ -19,6 +19,7 @@ def test_schedule_add_valid_cron(tmp_path: Path):
     try:
         # Change working directory
         import os
+
         os.chdir(tmp_path)
         runner = CliRunner()
         # Invoke schedule add with a simple cron
@@ -36,6 +37,7 @@ def test_schedule_add_invalid_cron(tmp_path: Path):
     cwd = Path.cwd()
     try:
         import os
+
         os.chdir(tmp_path)
         runner = CliRunner()
         result = runner.invoke(schedule_group, ["add", "--cron", "invalid", "--goal", "test"])
