@@ -122,3 +122,27 @@ def test_link_local_metadata_url_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(UrlSchemeError):
         fetcher.fetch()
     assert transport.calls == []
+
+
+def test_rebinding_hostname_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Simulate a hostname that resolves to a private address (rebinding attack)
+    def resolver(host: str) -> list[str]:
+        if host == "rebind.example":
+            # Return a private IP (loopback) and a public IP
+            return ["127.0.0.1", "93.184.216.34"]
+        return ["93.184.216.34"]  # default to public for any other host
+
+    monkeypatch.setattr(
+        "bernstein.core.security.url_allowlist._default_resolver",
+        resolver,
+    )
+
+    transport = _FakeTransport()
+    fetcher = _build_fetcher(
+        tmp_path,
+        transport,
+        primary_url="https://rebind.example/skills.json",
+    )
+    with pytest.raises(UrlSchemeError):
+        fetcher.fetch()
+    assert transport.calls == []
