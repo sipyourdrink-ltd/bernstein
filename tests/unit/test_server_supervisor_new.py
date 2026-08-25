@@ -9,13 +9,16 @@ import bernstein.core.server.server_supervisor as ss
 # Helper to monkey‑patch time.sleep to a no‑op for fast loops
 _original_sleep = ss.time.sleep
 
+
 def _no_sleep(seconds: float):
     # No actual sleeping – just a tiny yield to allow thread switching
     pass
 
+
 # ---------------------------------------------------------------------------
 # Test that a read timeout does NOT count as a health failure
 # ---------------------------------------------------------------------------
+
 
 def test_health_check_read_timeout_does_not_increment_failure_counter(tmp_path: Path):
     # Setup a minimal workdir (required by the state but not used here)
@@ -40,8 +43,10 @@ def test_health_check_read_timeout_does_not_increment_failure_counter(tmp_path: 
 
     # Patch httpx.get to raise a ReadTimeout exactly once
     original_get = httpx.get
+
     def _mock_get(url, timeout=None):
         raise httpx.ReadTimeout("simulated read timeout")
+
     httpx.get = _mock_get
 
     # Run a single iteration of the health loop in a thread and then stop
@@ -63,9 +68,11 @@ def test_health_check_read_timeout_does_not_increment_failure_counter(tmp_path: 
     # is explicitly ignored in the implementation.
     assert state.consecutive_health_failures == 0
 
+
 # ---------------------------------------------------------------------------
 # Test that a bind‑failure (EADDRINUSE) does NOT consume a restart budget slot
 # ---------------------------------------------------------------------------
+
 
 def test_bind_failure_does_not_consume_restart_budget(tmp_path: Path):
     # Create a temporary workdir with the expected runtime layout
@@ -95,9 +102,11 @@ def test_bind_failure_does_not_consume_restart_budget(tmp_path: Path):
 
     # Mock _launch_server – it should never be called for a bind‑failure branch
     launch_called = {"count": 0}
+
     def _mock_launch(state_arg):
         launch_called["count"] += 1
         return 11111
+
     ss._launch_server = _mock_launch
 
     # Run a single iteration of the supervisor loop in a thread
