@@ -263,7 +263,7 @@ def _supervisor_loop(state: _SupervisorState) -> None:
 def _health_check_loop(state: _SupervisorState) -> None:
     """Periodically check server health via HTTP."""
     import httpx
-from httpx import ConnectError, ReadTimeout
+    from httpx import ConnectError, ReadTimeout
 
     url = f"http://127.0.0.1:{state.port}/health"
 
