@@ -253,3 +253,72 @@ def test_install_plugin_raises_on_escaping_manifest(tmp_path: Path) -> None:
     # Nothing outside the root was walked or copied into scope.
     dest = scope_root(InstallScope.PROJECT, workdir=workdir)
     assert not dest.exists()
+
+
+def _write_pack_manifest(root: Path, name: str = "pack") -> None:
+    _write_manifest(root / "plugin.json", name=name, skills="skills")
+
+
+class TestSymlinksInsideThePack:
+    """The containment barrier one level below the manifest field.
+
+    ``_resolve_plugin_skills_dir`` proves the ``skills`` *field* stays inside
+    the plugin root, but the walk below it follows whatever the directory
+    entries point at. A pack is untrusted input: a symlink one level deeper
+    must not let the install read - or publish into the install scope -
+    anything outside the tree the operator inspected.
+    """
+
+    def test_skill_dir_symlinked_out_of_the_plugin_is_skipped_not_installed(self, tmp_path: Path) -> None:
+        outside = tmp_path / "outside-skill"
+        _write_skill(outside / "SKILL.md", "linked")
+
+        root = tmp_path / "pack"
+        (root / "skills").mkdir(parents=True)
+        _write_pack_manifest(root)
+        (root / "skills" / "linked").symlink_to(outside, target_is_directory=True)
+
+        workdir = tmp_path / "project"
+        workdir.mkdir()
+        result = install_plugin_local(root, scope=InstallScope.PROJECT, workdir=workdir)
+
+        assert [s.name for s in result.skipped] == ["linked"]
+        assert result.installed == []
+        assert not (scope_root(InstallScope.PROJECT, workdir=workdir) / "linked").exists()
+
+    def test_reference_bucket_symlinked_out_of_the_skill_leaks_nothing(self, tmp_path: Path) -> None:
+        secret_dir = tmp_path / "elsewhere"
+        secret_dir.mkdir()
+        (secret_dir / "secret.txt").write_text("s3cret", encoding="utf-8")
+
+        root = tmp_path / "pack"
+        _write_skill(root / "skills" / "good" / "SKILL.md", "good")
+        _write_pack_manifest(root)
+        (root / "skills" / "good" / "references").symlink_to(secret_dir, target_is_directory=True)
+
+        workdir = tmp_path / "project"
+        workdir.mkdir()
+        result = install_plugin_local(root, scope=InstallScope.PROJECT, workdir=workdir)
+
+        assert [s.name for s in result.skipped] == ["good"]
+        leaked = list(scope_root(InstallScope.PROJECT, workdir=workdir).rglob("secret.txt"))
+        assert leaked == []
+
+    def test_nested_file_symlinked_out_of_the_skill_leaks_nothing(self, tmp_path: Path) -> None:
+        secret = tmp_path / "cred"
+        secret.write_text("aws_secret", encoding="utf-8")
+
+        root = tmp_path / "pack"
+        _write_skill(root / "skills" / "good" / "SKILL.md", "good")
+        refs = root / "skills" / "good" / "references"
+        refs.mkdir()
+        (refs / "doc.md").symlink_to(secret)
+        _write_pack_manifest(root)
+
+        workdir = tmp_path / "project"
+        workdir.mkdir()
+        result = install_plugin_local(root, scope=InstallScope.PROJECT, workdir=workdir)
+
+        assert [s.name for s in result.skipped] == ["good"]
+        installed_root = scope_root(InstallScope.PROJECT, workdir=workdir)
+        assert not any(p.read_text() == "aws_secret" for p in installed_root.rglob("*") if p.is_file())
