@@ -744,11 +744,15 @@ def run_agent_test_mutation_gate_sync(
         )
         return passed, detail, score
 
-    # Could not parse - fall back to exit code
+    # Could not parse - fall back to exit code. A missing tool produces no
+    # score either, and "non-zero" would report it the same way a mutation run
+    # that genuinely scored badly is reported -- the exact confusion this gate
+    # change exists to remove. Name it instead.
     passed = _ok
+    exit_detail = "command not found (127)" if exit_code == 127 else ("0" if _ok else "non-zero")
     detail = (
         f"Could not parse agent mutation score (threshold {threshold:.1%}). "
-        f"Exit: {'0' if _ok else 'non-zero'}\n"
+        f"Exit: {exit_detail}\n"
         f"Test files: {', '.join(test_files)}\n"
         f"Source files: {', '.join(source_files)}\n{output}"
     )
