@@ -23,8 +23,10 @@ import subprocess
 import sys
 import threading
 import time
-from contextlib import suppress
 from typing import TYPE_CHECKING
+
+import httpx
+from httpx import ConnectError, ReadTimeout
 
 from bernstein.core.platform_compat import kill_process
 from bernstein.core.process_utils import is_process_alive
@@ -262,9 +264,6 @@ def _supervisor_loop(state: _SupervisorState) -> None:
 
 def _health_check_loop(state: _SupervisorState) -> None:
     """Periodically check server health via HTTP."""
-    import httpx
-    from httpx import ConnectError, ReadTimeout
-
     url = f"http://127.0.0.1:{state.port}/health"
 
     # Wait for initial startup
