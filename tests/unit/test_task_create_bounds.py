@@ -192,16 +192,18 @@ def test_task_create_rejects_artifact_spec_with_llm_judge() -> None:
     artifact_spec = {"kind": "report", "output_path": "x.md"}
     signals = [{"type": "llm_judge", "value": "check it"}]
     with pytest.raises(ValidationError, match="artifact_spec and an llm_judge completion signal"):
-        TaskCreate(title="ok", description="ok", artifact_spec=artifact_spec, completion_signals=signals) # type: ignore
+        TaskCreate(title="ok", description="ok", artifact_spec=artifact_spec, completion_signals=signals)  # type: ignore
+
 
 def test_task_create_artifact_spec_without_llm_judge() -> None:
     artifact_spec = {"kind": "report", "output_path": "x.md"}
     t = TaskCreate(title="ok", description="ok", artifact_spec=artifact_spec)
     assert t.artifact_spec is not None
 
+
 def test_task_create_llm_judge_without_artifact_spec() -> None:
     signals = [{"type": "llm_judge", "value": "check it"}]
-    t = TaskCreate(title="ok", description="ok", completion_signals=signals) # type: ignore
+    t = TaskCreate(title="ok", description="ok", completion_signals=signals)  # type: ignore
     assert any(s.type == "llm_judge" for s in t.completion_signals)
 
 
