@@ -71,6 +71,28 @@ Running the check against a **downloaded** artifact bundle instead is
 bounded by the receipts artifact's 30-day retention. The in-workflow step
 has no such limit; it never touches the artifact store.
 
+## The proposal carries only what the canary regenerates
+
+The regeneration reaches `main` through a long-lived pull request on
+`bot/adapter-canary-last-green`. That branch is rebuilt each night by
+`scripts/canary_propose_branch.py` on `origin/main` **as fetched at commit
+time**, not on the workflow checkout.
+
+The distinction matters because the checkout is taken before the matrix
+probes every adapter, and a night that regenerates nothing exits before
+pushing, so the branch can sit at an older commit across nights. Anything
+merged into `main` inside that window then appears in the proposal as a
+*revert* of work the canary never touched, and a squash merge would land it.
+That is #4496: `docs/security/receipt-format-spec.md` came back to a form
+predating the edits #4489 had landed.
+
+Rebuilding on the fetched base removes the drift; the script then asserts the
+staged changed-file set against the merge base and fails if it is anything
+other than `src/bernstein/adapters/last_green.json` and
+`docs/adapters/conformance-canary.md`. A stray path stops the proposal rather
+than being dropped with a warning - dropping it would let a genuine projection
+bug leave the tree unnoticed, which is the fault this check exists to surface.
+
 ## What `last_green.json` rows must look like
 
 `load_last_green` validates each row at the JSON boundary instead of

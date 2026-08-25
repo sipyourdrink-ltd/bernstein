@@ -239,9 +239,16 @@ jobs:
           git config user.email "canary@users.noreply.github.com"
           git config user.name "Bernstein Canary"
           BRANCH=bot/adapter-canary-last-green
-          git checkout -B "$BRANCH"
-          git add src/bernstein/adapters/last_green.json docs/adapters/conformance-canary.md
-          git commit -m "docs: regenerate adapter last-green table from canary receipts"
+          # Rebuild the branch on origin/main as fetched *now*, not on the
+          # workflow checkout: the checkout predates the matrix run, and a
+          # night that regenerates nothing exits before pushing, so the
+          # long-lived branch drifts behind main and anything merged in that
+          # window reads as a revert in the proposal (#4496). The script also
+          # asserts the staged set against the merge base and fails on a
+          # stray path rather than dropping it.
+          uv run python scripts/canary_propose_branch.py \
+            --branch "$BRANCH" \
+            --base-ref main
           git push --force -u origin "$BRANCH"
           EXISTING=$(gh pr list \
             --repo "${{ github.repository }}" \
