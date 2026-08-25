@@ -1,9 +1,7 @@
 import threading
 import time
-import sys
 from pathlib import Path
 
-import pytest
 import httpx
 
 # Import the module under test
