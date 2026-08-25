@@ -100,6 +100,72 @@ def _atomic_write(path: Path, payload: str) -> None:
         raise
 
 
+def _record_human_decision(
+    *,
+    base_dir: Path,
+    resolution: ResolvedApproval,
+    channel: str | None,
+) -> None:
+    """Append a human approval resolution to the HMAC-chained audit log.
+
+    The classifier's auto-verdicts were already recorded (``gate.py``'s
+    ``_record_classifier_decision``); a person's were not. That left the least
+    accountable decision source the most durably recorded, and the decision
+    most needing attribution -- a human permitting a gated action -- outside
+    the tamper-evident chain entirely (#4536).
+
+    Two events, not one: an ``ALWAYS`` resolution both allows this call and
+    changes what happens without asking next time, so the promotion is its own
+    recorded fact rather than an adjective on the allow.
+
+    Attribution is only what the system actually knows. ``channel`` names the
+    surface that replied (CLI, HTTP, TUI) when the caller passed one; there is
+    deliberately no user-identity field, because nothing here can fill one
+    truthfully and a chain entry asserting an identity it guessed would be
+    worse than one that stays quiet.
+
+    Ordering is apply-then-record, matching the classifier path. See
+    :meth:`ApprovalQueue.resolve` for why.
+    """
+    # Imported lazily so the approval queue does not pull in the audit
+    # subsystem (and its key material) unless a decision is being recorded.
+    from bernstein.core.security.audit import AuditLog
+
+    # base_dir is <root>/.sdd/runtime/approvals; the chain lives at
+    # <root>/.sdd/audit, the same root gate.py writes to.
+    root = base_dir.parent.parent
+    details: dict[str, Any] = {
+        "approval_id": resolution.approval_id,
+        "decision": resolution.decision.value,
+        "reason": resolution.reason,
+        "resolved_at": resolution.resolved_at,
+        "decision_source": "human",
+        "channel": channel or "unspecified",
+    }
+    try:
+        log = AuditLog(audit_dir=root / "audit")
+        log.log(
+            event_type="human_approval_decision",
+            actor="human",
+            resource_type="tool_call_approval",
+            resource_id=resolution.approval_id,
+            details=details,
+        )
+        if resolution.decision is ApprovalDecision.ALWAYS:
+            log.log(
+                event_type="always_allow_promotion",
+                actor="human",
+                resource_type="tool_call_approval",
+                resource_id=resolution.approval_id,
+                details={**details, "effect": "future matching calls skip the queue"},
+            )
+    except Exception as exc:  # pragma: no cover - filesystem/permission
+        logger.warning(
+            "Could not record human approval decision to audit log: %s",
+            exc,
+        )
+
+
 class ApprovalQueue:
     """Thread-safe, file-backed queue of pending tool-call approvals.
 
@@ -110,29 +176,11 @@ class ApprovalQueue:
     UI and the ``bernstein approve`` CLI) observe the same queue.
     """
 
-    def __init__(
-        self,
-        base_dir: Path | None = None,
-        *,
-        audit_dir: Path | None = None,
-        workdir: Path | None = None,
-    ) -> None:
+    def __init__(self, base_dir: Path | None = None) -> None:
         """Create a queue rooted at *base_dir* (defaults to cwd)."""
         if base_dir is None:
             base_dir = Path.cwd() / _RUNTIME_DIR
         self._base_dir = base_dir
-        if audit_dir is not None:
-            self._audit_dir = audit_dir
-        elif workdir is not None:
-            self._audit_dir = workdir / ".sdd" / "audit"
-        else:
-            sdd = None
-            curr = base_dir.resolve()
-            for parent in [curr, *curr.parents]:
-                if parent.name == ".sdd":
-                    sdd = parent
-                    break
-            self._audit_dir = (sdd / "audit") if sdd else (base_dir / "audit")
         self._lock = threading.RLock()
         self._pending: dict[str, PendingApproval] = {}
         self._resolved: dict[str, ResolvedApproval] = {}
@@ -148,11 +196,6 @@ class ApprovalQueue:
     def base_dir(self) -> Path:
         """Return the on-disk directory that backs this queue."""
         return self._base_dir
-
-    @property
-    def audit_dir(self) -> Path:
-        """Return the audit log directory for chain-recorded resolutions."""
-        return self._audit_dir
 
     def _member_path(self, approval_id: str, suffix: str) -> Path:
         """Return the queue-member path for *approval_id*, containment-checked.
@@ -273,7 +316,7 @@ class ApprovalQueue:
         *,
         reason: str = "",
         nonce: bytes | str | None = None,
-        source: str = "human",
+        channel: str | None = None,
     ) -> ResolvedApproval:
         """Record an operator decision for *approval_id*.
 
@@ -292,8 +335,19 @@ class ApprovalQueue:
                 Mismatches raise :class:`ApprovalNonceMismatch`; replays
                 or stale nonces against an already-resolved or expired
                 approval raise :class:`ApprovalNonceExpired`.
-            source: Resolving channel or identity attribution (e.g.
-                ``cli``, ``http``, ``tui``, or ``human``).
+            channel: Surface that supplied the decision ("cli", "http",
+                "tui"). Recorded in the audit chain as attribution. Only
+                what the caller actually knows -- omitted rather than
+                guessed.
+
+        The resolution is applied and made durable *before* the chain entry
+        is written, matching the classifier path in ``gate.py``. The
+        alternative -- recording first -- would let a chain entry assert a
+        decision that then failed to apply, and a chain cannot tell such an
+        entry from a true one. A missing entry is the safer failure: the
+        resolved file exists without a matching event, which is detectable,
+        and an unwritable audit directory never strands an operator who is
+        trying to reject something.
 
         Returns:
             The authoritative :class:`ResolvedApproval`.
@@ -346,15 +400,6 @@ class ApprovalQueue:
         except OSError as exc:
             logger.debug("Could not remove pending file for %s: %s", sanitize_log(approval_id), exc)
 
-        # Record human resolution and any always-allow promotion to the tamper-evident audit chain.
-        _record_human_approval_decision(
-            self._audit_dir,
-            approval=pending,
-            decision=decision,
-            reason=reason,
-            source=source,
-        )
-
         # Signal any awaiting wait_for(). Event.set() is thread-safe but
         # must be scheduled on the loop that created the Event.
         loop = self._loop
@@ -367,6 +412,7 @@ class ApprovalQueue:
             sanitize_log(approval_id),
             decision.value,
         )
+        _record_human_decision(base_dir=self._base_dir, resolution=resolution, channel=channel)
         return resolution
 
     def get_resolution(self, approval_id: str) -> ResolvedApproval | None:
@@ -577,68 +623,3 @@ def promote_to_always_allow(
     except (OSError, ValueError) as exc:
         logger.warning("Wrote rule but could not refresh always-allow manifest: %s", exc)
     return target
-
-
-def _record_human_approval_decision(
-    audit_dir: Path,
-    *,
-    approval: PendingApproval,
-    decision: ApprovalDecision,
-    reason: str = "",
-    source: str = "human",
-) -> None:
-    """Record a human/operator approval resolution and any promotion to the audit chain.
-
-    Persistence is best-effort, matching ``auto_approve_decision`` in
-    ``gate.py``: a write failure is logged and the resolution still stands,
-    because refusing to resolve an approval because its audit line could not
-    be appended would wedge the queue on a filesystem fault.
-
-    The payload mirrors that sibling event and records the extracted
-    ``command`` rather than the whole ``tool_args`` mapping. Two events in one
-    chain that disagree on how much of a call they retain is a difference an
-    auditor has to explain, and the mapping can carry argument values that
-    have no reason to live in a replayable log.
-    """
-    from bernstein.core.security.audit import AuditLog
-
-    cmd = str(approval.tool_args.get("command") or approval.tool_args.get("shell_cmd") or "")
-    details: dict[str, Any] = {
-        "approval_id": approval.id,
-        "decision": decision.value,
-        "tool": approval.tool_name,
-        "reason": reason,
-        "decision_source": source,
-        "session_id": approval.session_id,
-        "agent_role": approval.agent_role,
-    }
-    if cmd:
-        details["command"] = cmd
-    try:
-        log = AuditLog(audit_dir=audit_dir)
-        log.log(
-            event_type="human_approval_decision",
-            actor=source or "human",
-            resource_type="tool_call",
-            resource_id=approval.tool_name,
-            details=details,
-        )
-        if decision is ApprovalDecision.ALWAYS:
-            log.log(
-                event_type="always_allow_promotion",
-                actor=source or "human",
-                resource_type="always_allow_rule",
-                resource_id=approval.tool_name,
-                details={
-                    "approval_id": approval.id,
-                    "tool": approval.tool_name,
-                    "session_id": approval.session_id,
-                    "agent_role": approval.agent_role,
-                    "promoted_by": source,
-                },
-            )
-    except Exception as exc:  # pragma: no cover - filesystem/permission error
-        logger.warning(
-            "Could not record human approval decision to audit log: %s",
-            exc,
-        )
