@@ -22,7 +22,8 @@
         "strict_required_status_checks_policy": false,
         "do_not_enforce_on_create": true,
         "required_status_checks": [
-          { "context": "CI gate", "integration_id": 15368 }
+          { "context": "CI gate", "integration_id": 15368 },
+          { "context": "shipped bundle matches the lockfile", "integration_id": 15368 }
         ]
       }
     }

@@ -5,8 +5,12 @@ committed under ``src/bernstein/gui/static``. It is the only thing that
 notices a dependency bump which leaves the shipped UI behind, so the parts
 that make it work are pinned here rather than left to review:
 
-* it triggers on the paths that can move the bundle - a trigger that misses
-  ``web/**`` turns the gate off for exactly the change it exists to catch;
+* its ``push`` trigger covers the paths that can move the bundle - a trigger
+  that misses ``web/**`` turns the gate off for exactly the change it exists
+  to catch;
+* its ``pull_request`` trigger carries no filter at all, because this lane is
+  a required status check: a required context that only reports for some pull
+  requests leaves the rest permanently unmergeable;
 * it compares with ``--untracked-files=all``, because ``emptyOutDir`` writes
   the replacement asset under a new content hash and a plain ``git diff``
   would not see an untracked file;
@@ -18,9 +22,8 @@ that make it work are pinned here rather than left to review:
 * no job is named ``CI gate``, which the required-check canary allow-lists
   to exactly two workflows;
 * it triggers on ``merge_group`` with no filter, so it reports on a queued
-  ref and branch protection can require it. Being required is a separate,
-  later, maintainer-only change; this file pins the half that has to come
-  first, because the reverse order wedges the queue.
+  ref - the precondition for branch protection requiring it, which it now
+  does.
 """
 
 from __future__ import annotations
@@ -82,15 +85,41 @@ def test_workflow_exists() -> None:
     assert WORKFLOW.is_file(), f"{WORKFLOW} is missing"
 
 
-@pytest.mark.parametrize("event", ["pull_request", "push"])
 @pytest.mark.parametrize("path", REQUIRED_TRIGGER_PATHS)
-def test_trigger_covers_every_path_that_moves_the_bundle(event: str, path: str) -> None:
-    """A trigger that misses these paths silently disables the gate."""
-    trigger = _on().get(event)
-    assert isinstance(trigger, dict), f"{event} trigger must be a mapping"
+def test_push_trigger_covers_every_path_that_moves_the_bundle(path: str) -> None:
+    """A ``push`` trigger that misses these paths silently disables the gate.
+
+    Only ``push`` is filtered. ``push`` is not a required-context source, so
+    narrowing it costs nothing but runner time on ``main``; the
+    ``pull_request`` side is unfiltered for the reason the next test pins.
+    """
+    trigger = _on().get("push")
+    assert isinstance(trigger, dict), "push trigger must be a mapping"
     paths = trigger.get("paths")
-    assert isinstance(paths, list), f"{event} trigger must filter on paths"
-    assert path in paths, f"{event} trigger does not cover {path!r}"
+    assert isinstance(paths, list), "push trigger must filter on paths"
+    assert path in paths, f"push trigger does not cover {path!r}"
+
+
+def test_pull_request_trigger_carries_no_filter() -> None:
+    """A required context has to report on every pull request.
+
+    This lane is a required status check on ``main``. A required context only
+    reports for the events its trigger accepts, so a ``paths`` filter here
+    leaves every pull request outside the filter waiting on a run that never
+    happens. GitHub answers the enqueue attempt with ``Required status check
+    "shipped bundle matches the lockfile" is expected``, and nothing retries
+    or times out - the state is terminal. On 2026-08-25 that made every pull
+    request which did not touch ``web/`` permanently unmergeable.
+
+    The filter and the requirement have to move together, in that order. This
+    assertion pins the half that is cheap to lose by accident.
+    """
+    trigger = _on().get("pull_request", "__absent__")
+    assert trigger != "__absent__", "no `pull_request` trigger at all"
+    assert trigger in (None, {}), (
+        f"the `pull_request` trigger carries a filter ({trigger!r}). While this lane is a required "
+        "context, every pull request the filter skips can never merge."
+    )
 
 
 def test_pull_request_runs_cancel_superseded_ones() -> None:

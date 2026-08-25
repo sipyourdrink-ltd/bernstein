@@ -62,11 +62,6 @@ MATCH_ANYTHING = ("*", "**")
 #: `test_queue_reporting_web_lanes_can_actually_be_required` re-reads the
 #: workflow and fails if the trigger is missing or filtered.
 QUEUE_REPORTING_WEB_LANES = {
-    "spa-bundle-freshness.yml": (
-        "The bundle gate. #4010 merged with it red because the lane was advisory, and main "
-        "went red behind eleven queue entries. #4028 added the merge_group trigger so that "
-        "`shipped bundle matches the lockfile` can be made a required context."
-    ),
     "typecheck-ts.yml": (
         "`tsc --noEmit` over the TypeScript packages, `web/` among them. #4010's shape one "
         "directory over: ci.yml paths-ignores the TypeScript trees, `CI gate` is the only "
@@ -327,20 +322,24 @@ def test_emits_any_discriminates(tmp_path: Path) -> None:
     assert _emits_any(wf, {}, ("CI gate",)) is False
 
 
-def test_the_bundle_gate_is_not_exempt_as_a_gate_emitter(
+def test_the_bundle_gate_publishes_a_required_context(
     queue_required_contexts: tuple[str, ...],
 ) -> None:
-    """It is accounted for by the allow-list, not by publishing `CI gate`.
+    """It is accounted for by the gate itself now, not by the allow-list.
 
-    Pins the reason the lane is in the first dict. If it ever started
-    emitting a required context the entry would become dead weight, and
-    worse, the canary in
-    ``tests/unit/test_required_check_canary_workflow_yaml.py`` would already
-    be failing for a different reason.
+    The lane used to sit in ``QUEUE_REPORTING_WEB_LANES`` - requirable, not
+    required. It is required now, so that entry would be dead weight, and
+    this pins the replacement: the lane can fail on a ``web/**`` change *and*
+    publishes a context branch protection demands.
+
+    ``queue_required_contexts`` is read from
+    ``docs/operations/merge-queue-ruleset.json``, so this also fails if that
+    mirror drifts from the live ruleset again - which is how the lane spent
+    2026-08-25 required in production and unrequired in the tree.
     """
     path = WORKFLOWS / "spa-bundle-freshness.yml"
     assert _can_run_on_a_web_change(_load(path)) is True
-    assert _emits_any(path, _load(path), queue_required_contexts) is False
+    assert _emits_any(path, _load(path), queue_required_contexts) is True
 
 
 def test_no_web_triggerable_lane_is_advisory_only(

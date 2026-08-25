@@ -62,12 +62,13 @@ because the workflow declares `merge_group: {}` and `ci-gate` has
 
 ### Required-check coverage under `merge_group`
 
-The single required context also reports on a `merge_group` ref:
+Every required context also reports on a `merge_group` ref:
 
 | Required context | Emitting workflow | Runs on `merge_group`? |
 |------------------|-------------------|------------------------|
 | `CI gate` | `ci.yml` :: `ci-gate` | Yes - `merge_group: {}` |
 | `CI gate` | `ci-gate-stub.yml` :: `ci-gate` | No - `pull_request` only, and **correct** (see below) |
+| `shipped bundle matches the lockfile` | `spa-bundle-freshness.yml` :: `rebuild` | Yes - `merge_group: {}` |
 
 `ci-gate-stub.yml` deliberately has no `merge_group` trigger. It exists
 only because `ci.yml`'s `pull_request` trigger carries a `paths-ignore:`
@@ -90,7 +91,6 @@ required-context coverage by
 
 | Context | Emitting workflow | Runs on `merge_group`? | Required? |
 |---------|-------------------|------------------------|-----------|
-| `shipped bundle matches the lockfile` | `spa-bundle-freshness.yml` :: `rebuild` | Yes - `merge_group: {}` | **No - see below** |
 | `typecheck (sdk/typescript)` | `typecheck-ts.yml` :: `typecheck` | Yes - `merge_group: {}` | **No - see below** |
 | `typecheck (packages/vscode)` | `typecheck-ts.yml` :: `typecheck` | Yes - `merge_group: {}` | **No - see below** |
 | `typecheck (web)` | `typecheck-ts.yml` :: `typecheck` | Yes - `merge_group: {}` | **No - see below** |
@@ -114,8 +114,30 @@ entry; `main` went red and the repair landed at the back of an eleven-entry
 queue. The lane could only ever annotate the damage, never prevent it.
 
 #4028 added the trigger, which is the half that has to come first. The lane
-now reports on a queued ref, so the remaining step is safe to take and is
-**two flips, both maintainer-only**:
+now reports on a queued ref, so the remaining steps are safe to take - **once
+step 0 below holds**. The bundle gate went through all of them on 2026-08-25;
+step 0 was the one nobody had written down, and it had to be applied after the
+fact, with the repository stopped in between. That is why it is step 0:
+
+0. The emitting workflow's `pull_request` trigger must publish the context for
+   **every** pull request, not only the ones its `paths` filter accepts. A
+   required context only reports for the events its trigger accepts, so a
+   filtered trigger plus a required context leaves every pull request outside
+   the filter waiting on a run that will never start. GitHub answers the
+   enqueue attempt with `Required status check "<name>" is expected`, nothing
+   retries, nothing times out, and re-running checks cannot help - the run
+   does not exist. There are two ways to satisfy this, and the repo uses both:
+   drop the `paths` filter (what `spa-bundle-freshness.yml` does - it costs one
+   runner slot for a median of 28s per pull request), or add a stub workflow
+   that publishes the same context name for the skipped diffs (what
+   `ci-gate-stub.yml` does for `CI gate`, at the cost of a second file and a
+   second emitter to keep in step). Pick the stub when the real job is
+   expensive; drop the filter when it is not.
+
+   Skipping this step is not a slow merge, it is a stopped repository. On
+   2026-08-25 the flip landed at 15:18 with the filter still in place and
+   every pull request that did not touch `web/` became unmergeable until the
+   trigger was widened.
 
 1. Branch protection on `main`: add `shipped bundle matches the lockfile` to
    the required-status-checks list. This is what stops the pull request
@@ -128,11 +150,18 @@ now reports on a queued ref, so the remaining step is safe to take and is
 
 Do them in that order, and only while the queue is drained: editing required
 contexts invalidates every in-flight entry, so each one restarts a full-suite
-run. Until both are done the lane is exactly as advisory as it was before -
-the trigger alone changes nothing about whether a red bundle can merge.
+run. Until steps 1 and 2 are both done a lane is exactly as advisory as it was
+before - the trigger alone changes nothing about whether a red bundle can
+merge. Step 0 is the one with a blast radius beyond its own lane: get it wrong
+and nothing in the repository merges, not just this gate's subject.
 
-#4073 puts `typecheck-ts` in the same state for the same reason, and the two
-flips are the same two flips - with all four contexts from the table above,
+`typecheck-ts.yml` still filters its `pull_request` trigger on `paths`, so
+step 0 is outstanding for all four of its contexts. Flipping them before
+widening that trigger would wedge every pull request that touches no
+TypeScript - four times over.
+
+#4073 puts `typecheck-ts` in the same state for the same reason, and the
+flips are the same flips - with all four contexts from the table above,
 not one. Two things are worth doing before throwing that switch, neither of
 which applies to the bundle gate:
 
@@ -450,7 +479,8 @@ gh api -X PUT "repos/$REPO/rulesets/$RULESET_ID" --input - <<'JSON'
         "strict_required_status_checks_policy": false,
         "do_not_enforce_on_create": true,
         "required_status_checks": [
-          { "context": "CI gate", "integration_id": 15368 }
+          { "context": "CI gate", "integration_id": 15368 },
+          { "context": "shipped bundle matches the lockfile", "integration_id": 15368 }
         ]
       }
     }

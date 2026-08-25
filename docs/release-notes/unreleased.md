@@ -16,3 +16,12 @@ rather than as its own attribution is exempted by hand there, with the reason.
   every run, blocking merges for a reason no code change could fix. The seed now
   invokes ruff through `uv run`, and a test holds every gate command that names
   a venv-resident tool to that form. (#4547)
+
+- `shipped bundle matches the lockfile` became a required status check on
+  `main` while its `pull_request` trigger still filtered on `web/**`. A
+  required context only reports for the events its trigger accepts, so every
+  pull request outside that filter waited on a run that never started and
+  could not merge at all. The trigger no longer filters, the checked-in
+  ruleset mirror now matches the live one, and the merge-queue runbook carries
+  the trigger precondition as a numbered step so the next lane to be required
+  cannot repeat it. (#4556)
