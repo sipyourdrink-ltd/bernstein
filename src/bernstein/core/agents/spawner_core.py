@@ -1009,9 +1009,9 @@ def _load_persistent_memory(
 
 
 def _build_rag_context(tasks: list[Task], workdir: Path, spawner_config: Any | None) -> str:
-    """Build RAG-based smart context injection."""
+    """Build RAG-based smart context injection using snippet ranges."""
     try:
-        from bernstein.core.rag import CodebaseIndexer
+        from bernstein.core.knowledge.rag import CodebaseIndexer
         from bernstein.core.section_dedup import deduplicate_section
 
         indexer = CodebaseIndexer(workdir)
@@ -1020,25 +1020,34 @@ def _build_rag_context(tasks: list[Task], workdir: Path, spawner_config: Any | N
         query = " ".join(t.title for t in tasks)
         rag_cfg = getattr(spawner_config, "rag", None)
         max_files = rag_cfg.max_files if rag_cfg else 5
-        max_chars = (rag_cfg.max_tokens if rag_cfg else 50000) * 4
+        max_tokens = rag_cfg.max_tokens if rag_cfg else 50000
 
         results = indexer.search(query, limit=max_files)
         if not results:
             return ""
-        lines = ["## Relevant Code Context\nAutomatically identified relevant files via RAG:"]
-        total_chars = 0
+
+        lines = ["## Relevant Code Snippets (RAG)"]
+        total_tokens = 0
+
         for res in results:
-            if total_chars >= max_chars:
+            # Estimate tokens for this entry
+            entry = (
+                f"### {res.file_path} (lines {res.line_start}-{res.line_end})\n"
+                f"Symbols: {', '.join(res.symbols) if res.symbols else '(none)'}\n"
+                f"```\n{res.snippet}\n```\n"
+            )
+            entry_tokens = len(entry) // 4  # Rough estimation
+
+            if total_tokens + entry_tokens > max_tokens:
+                logger.info("Truncating RAG context: reached budget of %d tokens", max_tokens)
                 break
-            path = Path(res["path"])
-            if not path.exists():
-                continue
-            content = path.read_text(encoding="utf-8", errors="replace")
-            remaining = max_chars - total_chars
-            if len(content) > remaining:
-                content = content[:remaining] + "\n... (truncated)"
-            lines.append(f"### {res['path']} (score: {res['score']:.2f})\n```\n{content}\n```")
-            total_chars += len(content)
+
+            lines.append(entry)
+            total_tokens += entry_tokens
+
+        if len(lines) <= 1:  # Only header, no content
+            return ""
+
         return deduplicate_section("\n".join(lines) + "\n")
     except Exception as rag_exc:
         logger.debug("Smart context injection failed: %s", rag_exc)

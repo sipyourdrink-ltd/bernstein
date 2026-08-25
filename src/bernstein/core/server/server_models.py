@@ -224,6 +224,8 @@ class TaskCreate(BaseModel):
     # or very wide payloads from wedging the server at pydantic-validation time.
     def model_post_init(self, _context: Any) -> None:
         """Enforce serialized-size caps on dict fields and meta_messages entries."""
+        if self.artifact_spec is not None and any(s.type == "llm_judge" for s in self.completion_signals):
+            raise ValueError("Task cannot declare both an artifact_spec and an llm_judge completion signal")
         _enforce_dict_size(self.slack_context, field_name="slack_context")
         _enforce_dict_size(self.metadata, field_name="metadata")
         _enforce_dict_size(self.upgrade_details, field_name="upgrade_details")

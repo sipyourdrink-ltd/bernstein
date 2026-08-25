@@ -261,6 +261,127 @@ def test_build_rag_context_empty_index_returns_empty(tmp_path: Path, make_task: 
 
 
 # ---------------------------------------------------------------------------
+# RAG snippet-ranged context tests (TDD for #4524)
+# ---------------------------------------------------------------------------
+
+
+def test_rag_snippet_boundaries(make_task: Any) -> None:
+    """RAG context injection uses line-number ranges, not whole files."""
+    from unittest.mock import MagicMock, patch
+
+    # Mock CodebaseIndexer to return snippet results with line ranges
+    mock_result = MagicMock()
+    mock_result.file_path = "src/example.py"
+    mock_result.line_start = 10
+    mock_result.line_end = 20
+    mock_result.symbols = ["func_a", "ClassB"]
+    mock_result.snippet = "def func_a():\n    pass\n\nclass ClassB:\n    pass"
+
+    with patch("bernstein.core.knowledge.rag.CodebaseIndexer") as mock_indexer_class:
+        mock_indexer = MagicMock()
+        mock_indexer.file_count.return_value = 1
+        mock_indexer.search.return_value = [mock_result]
+        mock_indexer_class.return_value = mock_indexer
+
+        # Call with a mock spawner_config that has rag settings
+        mock_config = MagicMock()
+        mock_config.rag.max_files = 5
+        mock_config.rag.max_tokens = 1000
+
+        result = _build_rag_context([make_task(title="test")], Path("/tmp"), mock_config)
+
+        # Should contain line range info, not full file content
+        assert "src/example.py (lines 10-20)" in result
+        assert "Symbols: func_a, ClassB" in result
+        assert "```\ndef func_a():" in result
+        assert "class ClassB:" in result
+        # Should NOT contain the old-style format with score
+        assert "(score:" not in result
+
+
+def test_rag_token_budget(make_task: Any) -> None:
+    """RAG context respects token budget limits."""
+    from unittest.mock import MagicMock, patch
+
+    # Create mock results that would exceed budget if all included
+    mock_results = []
+    for i in range(3):
+        mock_result = MagicMock()
+        mock_result.file_path = f"src/file{i}.py"
+        mock_result.line_start = 1
+        mock_result.line_end = 50
+        mock_result.symbols = [f"func{i}"]
+        # Large snippet that would exceed token budget
+        mock_result.snippet = f"# File {i}\n" + "class LongClass:\n    " * 100 + "\n" * 10
+        mock_results.append(mock_result)
+
+    with patch("bernstein.core.knowledge.rag.CodebaseIndexer") as mock_indexer_class:
+        mock_indexer = MagicMock()
+        mock_indexer.file_count.return_value = 1
+        mock_indexer.search.return_value = mock_results
+        mock_indexer_class.return_value = mock_indexer
+
+        # Small token budget
+        mock_config = MagicMock()
+        mock_config.rag.max_files = 5
+        mock_config.rag.max_tokens = 100  # Very small budget
+
+        result = _build_rag_context([make_task(title="test")], Path("/tmp"), mock_config)
+
+        # Should truncate due to budget limit
+        assert "Truncating RAG context" in result or result.count("### src/file") < 3
+
+
+def test_rag_determinism(make_task: Any) -> None:
+    """RAG context injection produces deterministic output."""
+    from unittest.mock import MagicMock, patch
+
+    mock_result = MagicMock()
+    mock_result.file_path = "src/deterministic.py"
+    mock_result.line_start = 5
+    mock_result.line_end = 15
+    mock_result.symbols = ["deterministic_func"]
+    mock_result.snippet = "def deterministic_func():\n    return 42"
+
+    with patch("bernstein.core.knowledge.rag.CodebaseIndexer") as mock_indexer_class:
+        mock_indexer = MagicMock()
+        mock_indexer.file_count.return_value = 1
+        mock_indexer.search.return_value = [mock_result]
+        mock_indexer_class.return_value = mock_indexer
+
+        mock_config = MagicMock()
+        mock_config.rag.max_files = 5
+        mock_config.rag.max_tokens = 1000
+
+        # Call twice with same inputs
+        result1 = _build_rag_context([make_task(title="test")], Path("/tmp"), mock_config)
+        result2 = _build_rag_context([make_task(title="test")], Path("/tmp"), mock_config)
+
+        # Should be identical
+        assert result1 == result2
+
+
+def test_rag_empty_index_byte_identical(make_task: Any) -> None:
+    """Empty/unindexed RAG index returns byte-identical empty string."""
+    from unittest.mock import MagicMock, patch
+
+    with patch("bernstein.core.knowledge.rag.CodebaseIndexer") as mock_indexer_class:
+        mock_indexer = MagicMock()
+        mock_indexer.file_count.return_value = 0  # Empty index
+        mock_indexer_class.return_value = mock_indexer
+
+        mock_config = MagicMock()
+        mock_config.rag.max_files = 5
+        mock_config.rag.max_tokens = 1000
+
+        result = _build_rag_context([make_task(title="test")], Path("/tmp"), mock_config)
+
+        # Should be empty string, not None or whitespace
+        assert result == ""
+        assert result is not None
+
+
+# ---------------------------------------------------------------------------
 # AgentSpawner simple accessors / mutators
 # ---------------------------------------------------------------------------
 

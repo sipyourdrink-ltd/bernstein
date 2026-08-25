@@ -187,6 +187,26 @@ def test_task_create_max_turns_none_accepted() -> None:
     assert t.max_turns is None
 
 
+def test_task_create_rejects_artifact_spec_with_llm_judge() -> None:
+    """TaskCreate rejects both an artifact_spec and an llm_judge completion signal at parse time."""
+    artifact_spec = {"kind": "report", "output_path": "x.md"}
+    signals = [{"type": "llm_judge", "value": "check it"}]
+    with pytest.raises(ValidationError, match="artifact_spec and an llm_judge completion signal"):
+        TaskCreate(title="ok", description="ok", artifact_spec=artifact_spec, completion_signals=signals)  # type: ignore
+
+
+def test_task_create_artifact_spec_without_llm_judge() -> None:
+    artifact_spec = {"kind": "report", "output_path": "x.md"}
+    t = TaskCreate(title="ok", description="ok", artifact_spec=artifact_spec)
+    assert t.artifact_spec is not None
+
+
+def test_task_create_llm_judge_without_artifact_spec() -> None:
+    signals = [{"type": "llm_judge", "value": "check it"}]
+    t = TaskCreate(title="ok", description="ok", completion_signals=signals)  # type: ignore
+    assert any(s.type == "llm_judge" for s in t.completion_signals)
+
+
 def test_task_create_happy_path_still_works() -> None:
     """Normal-sized input still parses successfully."""
     t = TaskCreate(
