@@ -452,6 +452,11 @@ jobs:
           if [ -n "$CONFLICTS" ]; then
             exit 1
           fi
+      - name: Reject a UTF-8 BOM in a committed text file (#4500)
+        # Three fragments in a row (#4429, #4430, #4493) arrived BOM-prefixed
+        # and this job passed all three. Pure stdlib and git, so it runs here
+        # ahead of the bootstrap step rather than waiting on the toolchain.
+        run: python3 scripts/check_bom.py
       - name: Check Python syntax in scripts/
         run: |
           ERRORS=""
