@@ -440,6 +440,12 @@ jobs:
             printf '%s\n' "$TRACKED"
             exit 1
           fi
+      - name: Reject committed text files starting with a UTF-8 BOM
+        # A BOM is invisible in an editor and in a GitHub diff, so three PRs
+        # in a row (#4429, #4430, #4493) landed one in a release-notes
+        # fragment and review caught it each time. Paths .gitattributes marks
+        # -text are exempt: those are byte-exact signed fixtures.
+        run: python3 scripts/check_bom.py --repo-root .
       - name: Check for merge conflict markers in source files
         run: |
           CONFLICTS=""
