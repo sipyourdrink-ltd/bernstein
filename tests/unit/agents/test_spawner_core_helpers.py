@@ -277,7 +277,7 @@ def test_rag_snippet_boundaries(make_task: Any) -> None:
     mock_result.symbols = ["func_a", "ClassB"]
     mock_result.snippet = "def func_a():\n    pass\n\nclass ClassB:\n    pass"
 
-    with patch("bernstein.core.agents.spawner_core.CodebaseIndexer") as mock_indexer_class:
+    with patch("bernstein.core.knowledge.rag.CodebaseIndexer") as mock_indexer_class:
         mock_indexer = MagicMock()
         mock_indexer.file_count.return_value = 1
         mock_indexer.search.return_value = [mock_result]
@@ -315,7 +315,7 @@ def test_rag_token_budget(make_task: Any) -> None:
         mock_result.snippet = f"# File {i}\n" + "class LongClass:\n    " * 100 + "\n" * 10
         mock_results.append(mock_result)
 
-    with patch("bernstein.core.agents.spawner_core.CodebaseIndexer") as mock_indexer_class:
+    with patch("bernstein.core.knowledge.rag.CodebaseIndexer") as mock_indexer_class:
         mock_indexer = MagicMock()
         mock_indexer.file_count.return_value = 1
         mock_indexer.search.return_value = mock_results
@@ -343,7 +343,7 @@ def test_rag_determinism(make_task: Any) -> None:
     mock_result.symbols = ["deterministic_func"]
     mock_result.snippet = "def deterministic_func():\n    return 42"
 
-    with patch("bernstein.core.agents.spawner_core.CodebaseIndexer") as mock_indexer_class:
+    with patch("bernstein.core.knowledge.rag.CodebaseIndexer") as mock_indexer_class:
         mock_indexer = MagicMock()
         mock_indexer.file_count.return_value = 1
         mock_indexer.search.return_value = [mock_result]
@@ -365,7 +365,7 @@ def test_rag_empty_index_byte_identical(make_task: Any) -> None:
     """Empty/unindexed RAG index returns byte-identical empty string."""
     from unittest.mock import MagicMock, patch
 
-    with patch("bernstein.core.agents.spawner_core.CodebaseIndexer") as mock_indexer_class:
+    with patch("bernstein.core.knowledge.rag.CodebaseIndexer") as mock_indexer_class:
         mock_indexer = MagicMock()
         mock_indexer.file_count.return_value = 0  # Empty index
         mock_indexer_class.return_value = mock_indexer
