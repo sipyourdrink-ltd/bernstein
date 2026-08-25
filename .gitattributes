@@ -12,3 +12,8 @@ docs/assets/demo-run/demo.cast -text linguist-generated
 docs/assets/demo-run/demo.gif -text linguist-generated
 docs/assets/demo-run/run-receipt.json -text linguist-generated
 docs/assets/demo-run/run-receipt.pub.pem -text linguist-generated
+# Committed receipt test vectors: the same byte-exact rule. A signature is
+# over the bytes, so an EOL translation on checkout silently invalidates the
+# evidence that tests/unit/test_*_receipt_format_vectors.py compares against.
+tests/fixtures/receipt-vectors/*.json -text
+tests/fixtures/receipt-vectors/*.pem -text

@@ -1,13 +1,32 @@
 #!/usr/bin/env python3
-"""Build the audit receipt test vectors in this directory.
+"""Re-mint the audit-receipt test vectors in this directory (issue #4204).
 
-Generates a valid, signed audit receipt from a deterministic 3-event chain,
-then creates a tampered copy and extracts the public key. The result is
-byte-stable: rerunning this script with the same inputs produces identical
-output files.
+Run by hand from a source checkout, never by the test suite::
 
-Usage:
-    python tests/fixtures/receipt-vectors/_build_audit_receipt_vectors.py
+    uv run python tests/fixtures/receipt-vectors/_build_audit_receipt_vectors.py
+
+It seeds a throwaway HMAC audit chain with three events, projects the range
+into a receipt signed by the deterministic Ed25519 key pinned below, and
+writes the signed receipt, its public key, and a copy with one embedded event
+mutated.
+
+Why the vectors are committed rather than generated at test time
+----------------------------------------------------------------
+A generator that drifts along with the encoder cannot detect the drift.
+``tests/unit/test_audit_receipt_format_vectors.py`` re-signs the *committed*
+event range with today's encoder and requires byte-equality with the committed
+receipt, so a change to the canonical JSON, the event JSONL, the COSE headers,
+the DSSE pre-authentication encoding or the Merkle hashing fails CI instead of
+silently invalidating a receipt already handed to an auditor. Minting the
+vectors inside that test would move both sides of the comparison at once and
+prove nothing.
+
+Running this script is therefore a deliberate re-mint, not a reproduction.
+Audit events are stamped with the wall clock, so a fresh run yields new
+timestamps, hence new HMACs, a new chain head and new signatures: every output
+file changes, whether or not the format did. Re-mint only when the receipt
+format itself changed, and review the result as new evidence -- the diff
+cannot tell you which part of it was the encoder.
 """
 
 from __future__ import annotations

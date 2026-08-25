@@ -467,25 +467,28 @@ verification tiers:
 
 Pinning is what stops a swapped-key attack. Without a pin, verification
 establishes integrity only; with a pin, it establishes provenance. The
-`--require-provenance` flag turns an integrity-only pass into a failure (see
-[Exit-code contract](#exit-code-contract)).
+verifier names the tier it reached on the `public_key` line (`pinned-pem`,
+`pinned-jwk`, or `trust-on-first-use`), so a caller gating on provenance
+supplies the pin and reads that line rather than inferring it from the exit
+code (see [Exit-code contract](#exit-code-contract)).
 
 ## Exit-code contract
 
-The `bernstein verify receipt <path>` command returns:
+`bernstein audit receipt verify <path>` shells to
+`tools/verify_audit_receipt.py` and propagates its exit code, so the operator
+surface and the auditor's standalone surface share one contract:
 
 | Code | Meaning |
 |---|---|
-| `0` | **Verified** — all checks passed (either tier, unless `--require-provenance`). |
-| `1` | **Malformed** — the input is not a parseable receipt: unreadable file, JSON parse error, missing required fields, or no valid signing key. |
-| `2` | **Tamper** — the input is a valid receipt but verification failed: signature does not match, chain head does not match the signed subject, Merkle root mismatch, or inclusion proof invalid. |
-| `3` | `--require-provenance` was passed and only the integrity-only tier was reached. |
+| `0` | **Verified** — every enabled check passed (either tier). |
+| `1` | **Failed** — a check failed: unreadable or unparseable receipt body, missing or invalid signing key, embedded key that does not match the pin, recomputed head that does not match the signed subject, a signature that does not verify, a Merkle root or inclusion proof mismatch, or no recognised format present. |
+| `2` | **Bad arguments** — a path argument is missing or unreadable, or `--jwk` is not a JSON object. |
 
-> **Standalone tool note.** `tools/verify_audit_receipt.py` uses a different
-> convention: `0` = all checks passed, `1` = a check failed, `2` = bad
-> arguments or unreadable inputs. The CLI contract above is the normative
-> operator-facing contract; the standalone tool's `0/1/2` are its own
-> pass/fail/usage codes. Do not conflate the two.
+> **Not the run-receipt command.** `bernstein verify receipt <path>` verifies a
+> *run* receipt (`https://bernstein.run/attestations/run-receipt/v1`) — a
+> different document with its own `0/1/2/3` contract. Pointed at an audit
+> receipt it exits `1` (MALFORMED), because an audit receipt carries no
+> `run_id`. The two surfaces are not interchangeable.
 
 ## Worked example
 
@@ -495,16 +498,30 @@ Test vectors live at:
   embedded range is intact.
 - `tests/fixtures/receipt-vectors/tampered-receipt.json` — the same receipt
   with one embedded event mutated.
+- `tests/fixtures/receipt-vectors/valid-receipt-key.pem` — the Ed25519 public
+  key both were signed under.
+
+```console
+$ python tools/verify_audit_receipt.py \
+    --receipt tests/fixtures/receipt-vectors/valid-receipt.json \
+    --public-key tests/fixtures/receipt-vectors/valid-receipt-key.pem
+```
 
 Verifying `valid-receipt.json` must exit `0`: the recomputed head equals the
-signed subject, and every format's signature and binding check passes. With a
-pinned key it reaches the provenance tier; without one it reaches the
+signed subject, and every format's signature and binding check passes. With the
+key pinned as above it reaches the provenance tier; without one it reaches the
 integrity-only tier.
 
-Verifying `tampered-receipt.json` must exit `2` (TAMPER DETECTED): mutating one
-embedded event changes the recomputed head, which no longer matches the signed
-subject, so the subject-binding check and every format that binds it fail. The
-receipt does not merely lose a line — it stops verifying.
+Verifying `tampered-receipt.json` must exit `1`: mutating one embedded event
+changes the recomputed head, which no longer matches the signed subject, so the
+subject-binding check and every format that binds it fail. The receipt does not
+merely lose a line — it stops verifying.
+
+`tests/unit/test_audit_receipt_format_vectors.py` asserts both verdicts against
+these committed files on every push, and re-signs the frozen event range with
+the current encoder to assert byte-equality with the committed receipt — so a
+change to any encoding in this document fails CI instead of silently
+invalidating evidence already handed to an auditor.
 
 ## Determinism
 
