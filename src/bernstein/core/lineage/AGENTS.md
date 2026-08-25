@@ -29,8 +29,7 @@ single always-on Merkle+HMAC store that every adapter artifact write routes thro
 - A new `LineageEntry` field must be optional, default `None`, dropped from `_canonical_body`
   when `None`, and read back in `_entry_from_dict` (cf. `attachment_digests`) - that is what
   keeps every historical entry's bytes, HMAC and JWS valid.
-- `parent_hashes` is the artefact's ancestry only: tip projection reads
-  two or more as a *fork merge*, so other inputs need their own field.
+- `parent_hashes` is the artefact's ancestry only: tip projection reads two or more as a *fork merge*, so other inputs need their own field.
 - Design rationale: `docs/decisions/009-lineage-v1.md`.
 
 ## Testing
