@@ -956,7 +956,14 @@ async def run_janitor(
         )
     results: list[JanitorResult] = []
     for task in tasks:
-        if not task.completion_signals and lineage_gate_result is None:
+        # A task with no signals used to be dropped here, which made the
+        # empty-diff guard below unreachable for the case its own comment
+        # names: a crash-recovery orphan auto-completion is precisely a task
+        # nobody attached signals to, so it was recorded done with no evidence
+        # and produced no JanitorResult at all -- neither accepted nor
+        # rejected (#4562). Skip only when nothing whatsoever can be checked:
+        # no signals, no lineage gate, and no git repo to attribute work in.
+        if not task.completion_signals and lineage_gate_result is None and not _attribution_possible:
             continue
 
         judge_verdict: JudgeVerdict | None = None
