@@ -40,6 +40,18 @@ The janitor evaluates each `CompletionSignal` declared on the task
 | `llm_judge`      | Async LLM judge (`judge_task()`, `janitor.py:462`); used for ambiguous tasks. |
 | `schema_valid` / `criteria_match` / `hash_stable` / `figures_grounded` | Artifact-mode criteria over the produced artifact's canonical bytes. They fail closed on the filesystem path; only `evaluate_artifact_signals()`, called with the artifact in scope, can pass one. |
 
+A `test_passes` command is resolved against the tree before it runs. The path in
+the signal is written when the task is planned, not read off the suite, so the
+two drift: a plan mirroring `src/bernstein/core/security/` asks for
+`tests/unit/core/security/test_policy.py` while the file lives at
+`tests/unit/test_policy.py`. pytest then exits during collection without running
+anything, and the task is rejected over a path the agent never chose.
+`_resolve_test_path_command()` rewrites the command onto the file that exists,
+but only when exactly one file under the declared root carries that basename. A
+basename absent everywhere means the test was never written, and an ambiguous
+one means the janitor cannot tell which was meant; both keep the original path
+so the command fails honestly.
+
 Which evaluator runs is decided by the task's declared artifact kind.
 `verify_task_completion()` (`core/tasks/artifact_completion.py`) is the seam the
 completion paths call: a `code_diff` task falls through to `verify_task()`

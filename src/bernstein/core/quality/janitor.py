@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import subprocess
 import uuid
 from pathlib import Path
@@ -302,6 +303,7 @@ def evaluate_signal(
             )
         case "test_passes":
             command = _resolve_branch_check_command(signal.value, workdir)
+            command = _resolve_test_path_command(command, workdir)
             ok = _check_test_passes(command, workdir)
             return ok, "exit 0" if ok else "non-zero exit"
         case "file_contains":
@@ -2004,6 +2006,80 @@ def _resolve_branch_check_command(command: str, workdir: Path) -> str:
         branches,
     )
     return command
+
+
+def _resolve_test_path_command(command: str, workdir: Path) -> str:
+    """Rewrite a ``test_passes`` command onto the test files that actually exist.
+
+    A completion signal names its test by path, and that path is written by
+    whoever planned the task rather than read off the tree. When the two
+    disagree -- the plan mirrors the ``src`` layout
+    (``tests/unit/core/security/test_policy.py``) while the suite is flatter
+    (``tests/unit/test_policy.py``) -- pytest exits during collection without
+    running anything, and the janitor reads that exit as the agent's work
+    being wrong. The agent is then rejected over a path it never chose.
+
+    Only an unambiguous rename is followed: exactly one file with that
+    basename beneath the declared root. No match means the test genuinely is
+    not there -- the agent was asked to write it and did not -- and several
+    matches mean the janitor cannot tell which one was meant. Both keep the
+    original token, so the command still fails, honestly.
+
+    Args:
+        command: The ``test_passes`` shell command, after branch resolution.
+        workdir: Project root the command will run in.
+
+    Returns:
+        The original command, or the same command with every uniquely
+        resolvable missing test path replaced by the path that does exist.
+    """
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        # Unbalanced quotes: not the janitor's to repair. Run it verbatim.
+        return command
+
+    resolved_command = command
+    for token in tokens:
+        if token.startswith("-"):
+            continue
+        # ``path::node_id`` selects one test inside a file; only the path half
+        # is a filesystem claim, and the node id must survive the rewrite.
+        declared = token.split("::", 1)[0]
+        if not declared.endswith(".py") or (workdir / declared).exists():
+            continue
+        parts = Path(declared).parts
+        # Search only under the declared top-level directory (``tests``), never
+        # from the project root: a bare or dot-relative filename would walk the
+        # virtualenv and could match a file in an installed package.
+        if len(parts) < 2 or parts[0] in (".", "..") or Path(declared).is_absolute():
+            continue
+        root = workdir / parts[0]
+        if not root.is_dir():
+            continue
+        matches = sorted(p for p in root.rglob(Path(declared).name) if p.is_file())
+        if len(matches) != 1:
+            logger.info(
+                "janitor acceptance check: test path %r is absent from %s and "
+                "%d files share its name - verdict: will FAIL, running the "
+                "original command for an honest error",
+                declared,
+                workdir,
+                len(matches),
+            )
+            continue
+        actual = matches[0].relative_to(workdir).as_posix()
+        logger.info(
+            "janitor acceptance check: test path %r is absent from %s but %r "
+            "is the only file with that name - verdict: rewriting the command "
+            "onto it (the completion signal mirrors the src layout; the suite "
+            "does not)",
+            declared,
+            workdir,
+            actual,
+        )
+        resolved_command = resolved_command.replace(declared, actual)
+    return resolved_command
 
 
 def _check_test_passes(command: str, workdir: Path) -> bool:
