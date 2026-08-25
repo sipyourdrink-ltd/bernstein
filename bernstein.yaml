@@ -33,7 +33,7 @@ constraints:
 quality_gates:
   enabled: true
   lint: true
-  lint_command: ruff check .
+  lint_command: uv run ruff check .
   type_check: false
   tests: false
 context_files:
