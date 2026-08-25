@@ -25,7 +25,7 @@ class WorkflowFile(TypedDict, total=False):
 
 WORKFLOW = Path(".github/workflows/branch-protection-audit.yml")
 CANARY = Path(".github/workflows/required-check-canary.yml")
-REQUIRED_CONTEXTS = {"CI gate"}
+REQUIRED_CONTEXTS = {"CI gate", "shipped bundle matches the lockfile"}
 
 
 def _workflow_text() -> str:

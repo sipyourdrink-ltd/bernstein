@@ -29,7 +29,8 @@ MERGE_GATE = Path("docs/operations/merge-gate.md")
 
 # Mirrors repos/sipyourdrink-ltd/bernstein/branches/main/protection
 # -> required_status_checks.contexts (app_id 15368 == GitHub Actions).
-BRANCH_PROTECTION_CONTEXTS = ("CI gate",)
+# `shipped bundle matches the lockfile` joined the list on 2026-08-25.
+BRANCH_PROTECTION_CONTEXTS = ("CI gate", "shipped bundle matches the lockfile")
 ACTIONS_INTEGRATION_ID = 15368
 
 # Tunable -> the value the Enable payload must carry. Sourced from the

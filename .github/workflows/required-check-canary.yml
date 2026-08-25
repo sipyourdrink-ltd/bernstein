@@ -1,9 +1,11 @@
 name: Required-check name canary
 
-# Branch protection on `main` requires a single context, `CI gate`.
-# This workflow verifies the in-tree `CI gate` emitters. The scheduled
-# branch-protection audit reads `BRANCH_PROTECTION_CONTEXTS_JSON` below
-# and compares it with live repository settings.
+# Branch protection on `main` requires two contexts: `CI gate` and
+# `shipped bundle matches the lockfile`. This workflow verifies the in-tree
+# `CI gate` emitters. The scheduled branch-protection audit reads
+# `BRANCH_PROTECTION_CONTEXTS_JSON` below and compares it with live
+# repository settings, so that line is the tree's record of what protection
+# demands - it has to be updated in the same change as the setting itself.
 #
 # This canary fails the PR (and the weekly scheduled run) if any of the
 # locked invariants drifts. It is intentionally narrow: it does not try
@@ -23,9 +25,9 @@ name: Required-check name canary
 #
 # This canary used to also lock the `test-macos` job's `name:` to a
 # literal (non-templated) string, on the assumption that branch
-# protection's required context depended on it. It does not - the
-# repository ruleset requires exactly the single `CI gate` context
-# checked above - so `test-macos` is free to template its name the same
+# protection's required context depended on it. It does not - the required
+# contexts are the ones listed above, and `test-macos` is not among them -
+# so `test-macos` is free to template its name the same
 # way the `test` matrix job already does (e.g. to carry a shard index).
 #
 # Run modes:
@@ -68,7 +70,7 @@ jobs:
       - name: Verify required-check invariants
         env:
           REQUIRED_CONTEXT: "CI gate"
-          BRANCH_PROTECTION_CONTEXTS_JSON: '["CI gate"]'
+          BRANCH_PROTECTION_CONTEXTS_JSON: '["CI gate", "shipped bundle matches the lockfile"]'
           REQUIRED_JOB_KEY: "ci-gate"
           STUB_WORKFLOW: ".github/workflows/ci-gate-stub.yml"
         run: |

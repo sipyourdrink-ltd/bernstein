@@ -27,13 +27,16 @@ from check_branch_ruleset_audit import (
     read_required_contexts,
 )
 
-REQUIRED_CONTEXTS = ["CI gate"]
+# Mirrors the canary's BRANCH_PROTECTION_CONTEXTS_JSON, which is what the
+# audit actually reads; `test_required_contexts_come_from_the_canary` holds
+# the two together.
+REQUIRED_CONTEXTS = ["CI gate", "shipped bundle matches the lockfile"]
 
 # `gh api repos/sipyourdrink-ltd/bernstein/rules/branches/main`, captured
-# 2026-08-16 and trimmed to the fields the audit reads. One ruleset backs
+# 2026-08-25 and trimmed to the fields the audit reads. One ruleset backs
 # every rule; `pull_request` is present live but not audited here - see
 # the script docstring for which invariants are in scope.
-LIVE_RULES_2026_08_16: list[dict[str, Any]] = [
+LIVE_RULES_2026_08_25: list[dict[str, Any]] = [
     {
         "type": "merge_queue",
         "parameters": {
@@ -52,7 +55,10 @@ LIVE_RULES_2026_08_16: list[dict[str, Any]] = [
         "parameters": {
             "strict_required_status_checks_policy": False,
             "do_not_enforce_on_create": True,
-            "required_status_checks": [{"context": "CI gate", "integration_id": 15368}],
+            "required_status_checks": [
+                {"context": "CI gate", "integration_id": 15368},
+                {"context": "shipped bundle matches the lockfile", "integration_id": 15368},
+            ],
         },
         "ruleset_id": 16719298,
     },
@@ -85,7 +91,7 @@ def _details() -> dict[int, dict[str, Any]]:
 
 
 def _rules() -> list[dict[str, Any]]:
-    return json.loads(json.dumps(LIVE_RULES_2026_08_16))
+    return json.loads(json.dumps(LIVE_RULES_2026_08_25))
 
 
 def _rulesets() -> list[dict[str, Any]]:

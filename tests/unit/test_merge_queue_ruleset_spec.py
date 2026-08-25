@@ -45,7 +45,12 @@ SPEC = Path("docs/operations/merge-queue-ruleset.json")
 # Mirrors repos/sipyourdrink-ltd/bernstein/branches/main/protection
 # -> required_status_checks.contexts. A context required to ENTER the
 # queue but not to MERGE from it is a gate the queue silently drops.
-BRANCH_PROTECTION_CONTEXTS = ("CI gate",)
+#
+# `shipped bundle matches the lockfile` joined the list on 2026-08-25.
+# Every name here also has to report on every pull request, or the ones
+# it skips can never enter the queue at all - see the flip procedure in
+# the runbook, step 0.
+BRANCH_PROTECTION_CONTEXTS = ("CI gate", "shipped bundle matches the lockfile")
 
 # Floor for `check_response_timeout_minutes`, in minutes.
 #
@@ -238,7 +243,10 @@ def test_drift_carries_machine_readable_expected_and_actual(intended: dict[str, 
             rule["parameters"]["required_status_checks"] = []
     (drift,) = diff_ruleset(live, intended)
     assert drift.actual == []
-    assert drift.expected == ["CI gate"]
+    # Derived, not spelled out: this assertion is about the shape of the
+    # report, and hard-coding the contexts made it a second place to update
+    # every time the required set changes.
+    assert drift.expected == sorted(BRANCH_PROTECTION_CONTEXTS)
 
 
 def test_verifier_ignores_context_ordering(intended: dict[str, Any]) -> None:
