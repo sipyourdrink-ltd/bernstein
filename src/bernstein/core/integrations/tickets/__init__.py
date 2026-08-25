@@ -16,8 +16,10 @@ from urllib.parse import urlparse
 
 __all__ = [
     "TicketAuthError",
+    "TicketCircuitOpenError",
     "TicketParseError",
     "TicketPayload",
+    "TicketRateLimitError",
     "fetch_ticket",
 ]
 
@@ -44,6 +46,23 @@ class TicketAuthError(RuntimeError):
 
 class TicketParseError(RuntimeError):
     """Raised when a ticket URL cannot be parsed or the response is malformed."""
+
+
+class TicketRateLimitError(RuntimeError):
+    """Raised when a ticket provider rate-limits requests and retries are exhausted."""
+
+    def __init__(self, message: str, *, provider: str = "", retry_after_s: float | None = None) -> None:
+        super().__init__(message)
+        self.provider = provider
+        self.retry_after_s = retry_after_s
+
+
+class TicketCircuitOpenError(RuntimeError):
+    """Raised when requests to a ticket provider are fast-failed because its circuit is OPEN."""
+
+    def __init__(self, message: str, *, provider: str = "") -> None:
+        super().__init__(message)
+        self.provider = provider
 
 
 _LINEAR_WEB = re.compile(

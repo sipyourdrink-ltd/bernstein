@@ -25,3 +25,12 @@ rather than as its own attribution is exempted by hand there, with the reason.
   ruleset mirror now matches the live one, and the merge-queue runbook carries
   the trigger precondition as a numbered step so the next lane to be required
   cannot repeat it. (#4556)
+- A `test_passes` completion signal names its test by path, and that path is
+  written when the task is planned rather than read off the suite. A plan
+  mirroring `src/bernstein/core/security/` asked for
+  `tests/unit/core/security/test_policy.py` while the file lives at
+  `tests/unit/test_policy.py`, so pytest exited during collection and the
+  janitor rejected the task over a path the agent never chose. The command is
+  now resolved against the tree first, following only an unambiguous rename;
+  a basename that is absent everywhere or matches several files keeps the
+  original path so the command still fails honestly. (#4554)

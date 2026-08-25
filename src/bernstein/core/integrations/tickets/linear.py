@@ -7,15 +7,15 @@ import time), so this module is safe to import without credentials.
 
 from __future__ import annotations
 
-import json
 import re
-from typing import Any, cast
+from typing import Any
 
 from bernstein.core.integrations.tickets import (
     TicketAuthError,
     TicketParseError,
     TicketPayload,
 )
+from bernstein.core.integrations.tickets._http import http_post_json
 
 __all__ = ["fetch_linear"]
 
@@ -52,41 +52,15 @@ def _extract_key(url: str) -> str:
 def _post_graphql(api_key: str, query: str, variables: dict[str, Any]) -> dict[str, Any]:
     """POST a GraphQL request, returning the decoded JSON body."""
     body = {"query": query, "variables": variables}
-    try:
-        import httpx
-
-        headers = {"Authorization": api_key, "Content-Type": "application/json"}
-        resp = httpx.post(_LINEAR_ENDPOINT, json=body, headers=headers, timeout=_TIMEOUT_S)
-        if resp.status_code in (401, 403):
-            raise TicketAuthError(
-                f"Linear rejected the request (HTTP {resp.status_code}). Check the {_LINEAR_ENV} environment variable."
-            )
-        if resp.status_code >= 400:
-            raise TicketParseError(f"Linear API returned HTTP {resp.status_code}: {resp.text[:200]}")
-        return cast(dict[str, Any], resp.json())
-    except ImportError:  # pragma: no cover - httpx is a declared dependency
-        import urllib.error
-        import urllib.request
-
-        req = urllib.request.Request(
-            _LINEAR_ENDPOINT,
-            data=json.dumps(body).encode("utf-8"),
-            headers={"Authorization": api_key, "Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            # Internal-only: ``_LINEAR_ENDPOINT`` is a hard-coded module
-            # constant pointing at the Linear GraphQL API.
-            # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
-            with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as handle:
-                raw = handle.read().decode("utf-8")
-            return cast(dict[str, Any], json.loads(raw))
-        except urllib.error.HTTPError as exc:
-            if exc.code in (401, 403):
-                raise TicketAuthError(
-                    f"Linear rejected the request (HTTP {exc.code}). Check the {_LINEAR_ENV} environment variable."
-                ) from exc
-            raise TicketParseError(f"Linear API returned HTTP {exc.code}") from exc
+    headers = {"Authorization": api_key, "Content-Type": "application/json"}
+    return http_post_json(
+        url=_LINEAR_ENDPOINT,
+        headers=headers,
+        json_data=body,
+        provider_label="Linear",
+        auth_env_var=_LINEAR_ENV,
+        timeout=_TIMEOUT_S,
+    )
 
 
 def _extract_labels(issue: dict[str, Any]) -> tuple[str, ...]:

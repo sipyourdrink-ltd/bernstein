@@ -6062,7 +6062,7 @@
           "approvals"
         ],
         "summary": "List Approvals",
-        "description": "List all pending approval requests.",
+        "description": "List all pending approval requests across task-review and pre-spawn gates.",
         "operationId": "list_approvals_approvals_get",
         "responses": {
           "200": {
@@ -14821,7 +14821,7 @@
           "approvals"
         ],
         "summary": "List Approvals",
-        "description": "List all pending approval requests.",
+        "description": "List all pending approval requests across task-review and pre-spawn gates.",
         "operationId": "list_approvals_api_v1_approvals_get",
         "responses": {
           "200": {
@@ -20006,6 +20006,52 @@
             "type": "string",
             "title": "Test Summary",
             "default": ""
+          },
+          "mechanism": {
+            "type": "string",
+            "title": "Mechanism",
+            "default": "task_review"
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt",
+            "default": ""
+          },
+          "default_action": {
+            "type": "string",
+            "title": "Default Action",
+            "default": ""
+          },
+          "timeout_at_iso": {
+            "type": "string",
+            "title": "Timeout At Iso",
+            "default": ""
+          },
+          "created_iso": {
+            "type": "string",
+            "title": "Created Iso",
+            "default": ""
+          },
+          "timeout_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Seconds"
+          },
+          "unblocks": {
+            "type": "string",
+            "title": "Unblocks",
+            "default": "task completion and merge"
+          },
+          "resolution_endpoint": {
+            "type": "string",
+            "title": "Resolution Endpoint",
+            "default": ""
           }
         },
         "type": "object",
@@ -20015,7 +20061,7 @@
           "session_id"
         ],
         "title": "PendingApproval",
-        "description": "A single pending approval request."
+        "description": "A single pending approval request (task-level or pre-spawn)."
       },
       "PlanDecisionRequest": {
         "properties": {
