@@ -15,6 +15,7 @@ single always-on Merkle+HMAC store that every adapter artifact write routes thro
 | `coverage.py` | Anchors a `ToolCoverageRecord` (issue #3769) as a `"coverage"`-kind entry keyed by `tool_call_id` (issue #3770). Anchors a `content_hash` commitment only, not the record's bytes - a reader that cannot independently recover the payload must treat the claim as unverified, never fabricate a passing record from the entry alone |
 | `activity.py` | Active-set closure and provenance graph resolution over the receipt ledger |
 | `gate.py` | Lineage CI gate (ADR-009 §6.2) |
+| `run_graph.py` | Pairs each fan-out worktree branch with the spine that recorded it: `build_run_graph` returns one `RunGraphNode` per branch (`session_id`, `head_sha`, `run_id`, `spine_head_hash`) plus a deterministic root hash. Pure - it adds no storage and resolves `session_id -> run_id` from a caller-supplied mapping |
 
 ## Invariants
 
