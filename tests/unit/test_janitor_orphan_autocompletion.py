@@ -36,13 +36,20 @@ def _git(repo: Path, *args: str) -> None:
     subprocess.run(("git", *args), cwd=repo, capture_output=True, check=True)
 
 
-def _task(task_id: str, *, signals: list[CompletionSignal] | None = None) -> Task:
+def _task(
+    task_id: str,
+    *,
+    signals: list[CompletionSignal] | None = None,
+    parent: str | None = None,
+    role: str = "qa",
+) -> Task:
     return Task(
         id=task_id,
         title="Test task",
         description="A task for testing.",
-        role="qa",
+        role=role,
         completion_signals=signals or [],
+        parent_task_id=parent,
     )
 
 
@@ -124,3 +131,51 @@ async def test_orphan_alongside_a_real_task_does_not_mask_it(git_workdir: Path) 
     by_id = {r.task_id: r for r in results}
     assert set(by_id) == {"T-orphan", "T-ok"}
     assert by_id["T-orphan"].passed is False
+
+
+@pytest.mark.asyncio
+async def test_a_planner_that_decomposed_is_accepted_on_its_children(git_workdir: Path) -> None:
+    """A planning task's artefact is the task graph, not a commit.
+
+    Planning tasks are ``task_type == standard`` today, so before the skip was
+    narrowed they never reached the empty-diff guard. Reaching it must not turn
+    a silent false pass into a loud false failure: a planner that really planned
+    would be reopened every run and re-decompose work it had already done.
+    """
+    planner = _task("T-manager", role="manager")
+    child = _task("T-child", parent="T-manager", role="backend")
+
+    results = await run_janitor([planner, child], git_workdir)
+    by_id = {r.task_id: r for r in results}
+
+    assert by_id["T-manager"].passed is True
+    accepted = [desc for desc, passed, _ in by_id["T-manager"].signal_results if passed]
+    assert any("decomposed_children" in desc for desc in accepted), accepted
+
+
+@pytest.mark.asyncio
+async def test_a_planner_that_decomposed_nothing_still_fails(git_workdir: Path) -> None:
+    """The pairing that stops the exemption becoming a hole.
+
+    Without this, "planning task" would be a way to pass with no evidence at
+    all - which is the same silence #4562 closed, wearing a different label.
+    """
+    planner = _task("T-manager", role="manager")
+
+    results = await run_janitor([planner], git_workdir)
+
+    assert results[0].passed is False
+    failed = [desc for desc, passed, _ in results[0].signal_results if not passed]
+    assert any("empty_diff" in desc for desc in failed), failed
+
+
+@pytest.mark.asyncio
+async def test_children_of_another_parent_are_not_evidence(git_workdir: Path) -> None:
+    """Evidence must name *this* task, or any planner passes off any graph."""
+    planner = _task("T-manager", role="manager")
+    unrelated_child = _task("T-child", parent="T-someone-else", role="backend")
+
+    results = await run_janitor([planner, unrelated_child], git_workdir)
+    by_id = {r.task_id: r for r in results}
+
+    assert by_id["T-manager"].passed is False

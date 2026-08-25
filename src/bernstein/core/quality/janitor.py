@@ -132,6 +132,17 @@ ARTIFACT_SIGNAL_TYPES = frozenset({"schema_valid", "criteria_match", "hash_stabl
 _ARTIFACT_SIGNAL_TYPES = ARTIFACT_SIGNAL_TYPES
 
 
+def _decomposed_children(task: Task, tasks: list[Task]) -> list[str]:
+    """Ids of tasks in this pass naming ``task`` as their ``parent_task_id``.
+
+    A planning task's artefact is the task graph it produced, not a commit, so
+    an empty attributable diff is its *normal* shape. The children are that
+    artefact, and they are evidence in the same sense a changed file is: a
+    planner that decomposed nothing still has none, and still fails (#4562).
+    """
+    return [t.id for t in tasks if t.parent_task_id == task.id]
+
+
 def _has_nontrivial_passing_signal(task: Task, signal_results: list[tuple[str, bool, str]]) -> bool:
     """True if the task has at least one passing non-trivial completion signal.
 
@@ -1013,8 +1024,24 @@ async def run_janitor(
                 # test_passes / file_contains / llm_review / llm_judge). When
                 # such proof exists and all signals passed, downgrade to a
                 # warn-and-flag for review instead of failing the task.
+                decomposed = _decomposed_children(task, tasks)
                 has_nontrivial_pass = all_passed and _has_nontrivial_passing_signal(task, signal_results)
-                if has_nontrivial_pass:
+                if decomposed:
+                    # A planning task produced a task graph rather than a diff.
+                    # Accept on that evidence, and record which children it is
+                    # standing on so the acceptance is auditable rather than a
+                    # blanket exemption by task type.
+                    decomposed_detail = (
+                        f"no diff, but decomposed {len(decomposed)} task(s): {', '.join(sorted(decomposed))}"
+                    )
+                    signal_results.append(("attribution:decomposed_children", True, decomposed_detail))
+                    logger.info(
+                        "janitor ACCEPT (decomposition): task=%s children=%s -- no changed files, "
+                        "but the task graph it produced is its artefact",
+                        task.id,
+                        sorted(decomposed),
+                    )
+                elif has_nontrivial_pass:
                     warn_detail = f"empty diff but non-trivial completion signals passed: {attribution_reason}"
                     signal_results.append(("attribution:empty_diff_warn", True, warn_detail))
                     logger.warning(
