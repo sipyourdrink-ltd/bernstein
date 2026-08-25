@@ -780,6 +780,7 @@ def install_plugin_local(
     home: Path | None = None,
     strict_lint: bool = False,
     accept_risk: bool = False,
+    force: bool = False,
 ) -> PluginInstallResult:
     """Install every skill under an Agent Plugins directory layout.
 
@@ -789,6 +790,14 @@ def install_plugin_local(
     digest (``source="plugin"``) so a later ``sync`` can detect drift. An
     invalid individual skill is skipped with a diagnostic naming it rather
     than aborting the whole plugin install.
+
+    A skill whose name already holds a lock row from a *different* source -
+    ``bernstein-skills.toml``, or another plugin - is refused the same way,
+    naming the source it would have replaced. Overwriting it would delete an
+    install the operator chose deliberately and silently flip that row's
+    provenance to ``"plugin"``, letting a pack shadow a trusted skill. Pass
+    ``force=True`` to take the replacement anyway. A same-source reinstall
+    (drift heal, upgrade) is untouched and stays silent.
     """
     if not source.is_dir():
         raise SkillLifecycleError(
@@ -826,6 +835,11 @@ def install_plugin_local(
 
     installed: list[InstallResult] = []
     skipped: list[SkippedSkill] = []
+    # Read before the loop: the collision has to be caught *before*
+    # install_local writes, because that call already clobbers the target
+    # directory. Refusing only at lock-write time would leave the previous
+    # skill's tree destroyed with no row describing it.
+    existing_lock = {} if force else _read_lock(workdir / SKILLS_LOCK_FILENAME)
     for skill_dir in sorted(skills_dir.iterdir()):
         if not skill_dir.is_dir():
             continue
@@ -840,6 +854,12 @@ def install_plugin_local(
             # of the pack would install content the operator never saw.
             if _escapes(skills_dir, skill_dir):
                 raise SkillLifecycleError(f"{skill_dir}: skill directory resolves outside the plugin")
+            prior = existing_lock.get(name)
+            if prior is not None and prior.source != _PLUGIN_LOCK_SOURCE:
+                raise SkillLifecycleError(
+                    f"{name}: already installed from source {prior.source!r}; "
+                    f"installing this plugin would replace it. Re-run with --force to take the plugin's copy"
+                )
             parse_skill_md(skill_md)
             installed.append(
                 install_local(

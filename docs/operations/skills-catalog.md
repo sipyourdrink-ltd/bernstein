@@ -190,3 +190,17 @@ drift checks treat them like any other local install. A malformed skill
 inside the pack is skipped with a diagnostic naming it rather than
 aborting the whole install. No MCP server registration happens here -
 that is the sibling slice (#3540, out of scope for #3772).
+
+A skill whose name already holds a lock row from a **different** source -
+`bernstein-skills.toml`, or another plugin - is refused the same way, with
+the reason naming the source it would have replaced (#4503). Overwriting it
+would delete an install the operator chose deliberately and flip that row's
+provenance to `"plugin"`, letting a pack shadow a trusted skill without
+saying so. Pass `--force` to take the plugin's copy anyway:
+
+```
+bernstein skills install ./my-pack --force
+```
+
+A same-source reinstall - drift heal, or upgrading a pack already recorded as
+`source = "plugin"` - is unaffected and stays silent.

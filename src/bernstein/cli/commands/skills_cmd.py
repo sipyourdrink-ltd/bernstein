@@ -307,7 +307,16 @@ def skills_init(name: str, scope: str, description: str | None) -> None:
     default=False,
     help="Allow installs that require explicit risk acceptance.",
 )
-def skills_install(source: Path, scope: str, override_name: str | None, strict: bool, accept_risk: bool) -> None:
+@click.option(
+    "--force",
+    "force",
+    is_flag=True,
+    default=False,
+    help="Replace a same-named skill that was installed from a different source.",
+)
+def skills_install(
+    source: Path, scope: str, override_name: str | None, strict: bool, accept_risk: bool, force: bool
+) -> None:
     """Install a skill from a local path.
 
     \b
@@ -331,6 +340,7 @@ def skills_install(source: Path, scope: str, override_name: str | None, strict: 
                 workdir=Path.cwd(),
                 strict_lint=strict,
                 accept_risk=accept_risk,
+                force=force,
             )
             for result in plugin_result.installed:
                 console.print(
