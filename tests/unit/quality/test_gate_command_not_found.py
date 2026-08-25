@@ -62,9 +62,7 @@ def test_gate_runner_reports_a_missing_command_as_command_not_found(tmp_path: Pa
     runner = GateRunner(QualityGatesConfig(), tmp_path)
     step = GatePipelineStep(name="lint", required=True)
 
-    result = asyncio.run(
-        runner._run_command_gate(step, "definitely-not-a-real-binary-4548", tmp_path, 30)
-    )
+    result = asyncio.run(runner._run_command_gate(step, "definitely-not-a-real-binary-4548", tmp_path, 30))
 
     assert result.status == "command_not_found", (
         f"a gate whose tool is not installed reported {result.status!r}; "
