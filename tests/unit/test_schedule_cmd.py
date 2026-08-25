@@ -1,11 +1,8 @@
-import json
-import time
 from pathlib import Path
 
-import click
 from click.testing import CliRunner
 
-from bernstein.cli.commands.schedule_cmd import schedule_group, schedule_add, schedule_list, schedule_show, schedule_remove
+from bernstein.cli.commands.schedule_cmd import schedule_group
 
 
 def test_schedule_group_has_routine_subcommand():
