@@ -486,6 +486,8 @@ class TestLessonSpawnerIntegration:
 
         from bernstein.core.spawner import _render_prompt
 
+        from bernstein.core.tasks.artifacts import ArtifactSpec
+
         # File a lesson with a tag that will match
         file_lesson(
             sdd_dir=temp_sdd_dir,
@@ -506,6 +508,11 @@ class TestLessonSpawnerIntegration:
         task.mcp_servers = []
         task.parent_context = None
         task.depends_on = []
+        # The renderer reads the artifact contract to decide whether the task
+        # completes on a receipt or on a commit. A bare MagicMock answers that
+        # question with a Mock, which is not `code_diff`, so the prompt would
+        # try to render a contract for a task that has none.
+        task.artifact_spec = ArtifactSpec()
 
         workdir = temp_sdd_dir.parent
         templates_dir = workdir / "templates" / "roles"
@@ -525,6 +532,8 @@ class TestLessonSpawnerIntegration:
         from unittest.mock import MagicMock
 
         from bernstein.core.spawner import _render_prompt
+
+        from bernstein.core.tasks.artifacts import ArtifactSpec
 
         # File a lesson with unrelated tags
         file_lesson(
@@ -546,6 +555,11 @@ class TestLessonSpawnerIntegration:
         task.mcp_servers = []
         task.parent_context = None
         task.depends_on = []
+        # The renderer reads the artifact contract to decide whether the task
+        # completes on a receipt or on a commit. A bare MagicMock answers that
+        # question with a Mock, which is not `code_diff`, so the prompt would
+        # try to render a contract for a task that has none.
+        task.artifact_spec = ArtifactSpec()
 
         workdir = temp_sdd_dir.parent
         templates_dir = workdir / "templates" / "roles"
