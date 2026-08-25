@@ -13,30 +13,24 @@ configurable gate pipeline plus the janitor's claim verification.
 | `janitor.py` | Claim verification: did the agent do what its result claims |
 | `absence_coverage.py` | Absence-claim coverage verification: classifies a completion built on an absence claim (`glob_exists`/`file_contains` "not found", or a journal read) as `unverified` unless a coverage record backs it (#3650/#3769/#3770/#3771) |
 | `verifier_ladder.py` | Multi-tier verifier ladder with signed, re-derivable per-tier receipts (#2927) |
-| `review_pipeline/` | Fresh-context cross-model review gate, the ruleset a verdict is produced under (`ruleset.py`), and the bounded review -> fix -> re-check contour with one chained receipt per pass (`contour.py`, #4481) |
+| `review_pipeline/` | Fresh-context cross-model review gate, the ruleset a verdict is produced under (`review_pipeline/ruleset.py`), and the bounded review -> fix -> re-check contour with one chained receipt per pass (`review_pipeline/contour.py`, #4481) |
 | `formal_verification.py` | Z3/Lean4 checks over scalar task metadata |
 
 ## Invariants
 
-- Gate names are a closed set: a step name must be in `VALID_GATE_NAMES` or
-  come from a registered gate plugin; the runner rejects anything else
-  (`gate_runner.py`).
+- Gate names are a closed set: a step name must be in `VALID_GATE_NAMES` or come
+  from a registered gate plugin; anything else is rejected (`gate_runner.py`).
 - Defaults are deliberate: `lint`, `pii_scan`, `dlp_scan`, `run_config` on;
-  `tests`, `type_check`, heavier gates off (`quality_gates.py`); never flip one
-  as a side effect. `run_config` is a safety invariant (`../config/run_overlay.py`).
-- Blocking vs advisory semantics are per-gate; a new gate must declare
-  which it is.
-- No package-level `__getattr__` re-export magic in this package;
-  import submodules by full path (`__init__.py` explains why).
-- Absence-claim coverage fails closed: a coverage record that cannot be read
-  back (missing, malformed, or a dangling lineage reference) must classify as
-  no-coverage, never as a fabricated passing record (`absence_coverage.py`).
-- The review contour fails closed too: a spent budget, a missing fix runner, or
-  a fix pass that landed no commit ends in `needs-operator` with a non-zero
-  exit code, never in an approval (`review_pipeline/contour.py`).
-- An empty review ruleset must leave the reviewer prompt byte-identical to the
-  pre-ruleset prompt, so a repository without `.bernstein/review-rules.md`
-  reviews exactly as it did before (`review_pipeline/ruleset.py`).
+  `tests`, `type_check`, heavier gates off (`quality_gates.py`); never flip one as
+  a side effect. `run_config` is a safety invariant (`../config/run_overlay.py`).
+- Blocking vs advisory semantics are per-gate; a new gate declares which. No
+  package-level `__getattr__` re-export magic here (`__init__.py` explains why).
+- Absence-claim coverage fails closed: a coverage record that cannot be read back
+  classifies as no-coverage, never as a fabricated pass (`absence_coverage.py`).
+- The review contour fails closed too: a spent budget, a missing fix runner, or a
+  fix pass that landed no commit ends in `needs-operator` and a non-zero exit
+  code, never in an approval (`review_pipeline/contour.py`); an empty ruleset
+  leaves the reviewer prompt byte-identical (`review_pipeline/ruleset.py`).
 
 ## Testing
 
