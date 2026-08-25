@@ -19,6 +19,7 @@ from bernstein.core.security.audit import (
     AuditKeyPermissionError,
     _default_audit_key_path,
     _enforce_key_permissions,
+    expected_entry_hmac,
 )
 
 if TYPE_CHECKING:
@@ -113,15 +114,6 @@ def _count_all_entries(audit_dir: Path) -> int:
     return total
 
 
-def _compute_hmac(key: bytes, prev_hmac: str, entry: dict[str, Any]) -> str:
-    """Compute HMAC-SHA256 matching audit.py's _compute_hmac."""
-    import hashlib
-    import hmac
-
-    payload = prev_hmac + json.dumps(entry, sort_keys=True)
-    return hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
-
-
 def _load_audit_key(audit_dir: Path) -> bytes | None:
     """Load the HMAC key for integrity verification.
 
@@ -194,10 +186,12 @@ def _verify_entry_chain(
                 f"prev_hmac {entry_prev_hmac[:16]}... != expected {prev_hmac[:16]}..."
             )
 
-        payload = {k: v for k, v in entry.items() if k != "hmac"}
-        expected_hmac = _compute_hmac(key, entry_prev_hmac, payload)
-
-        if not _hmac.compare_digest(stored_hmac, expected_hmac):
+        # The scheme-to-key rule lives in audit.py. Recomputing it here is how
+        # this guard came to reject chains the log verifier accepted.
+        expected_hmac = expected_entry_hmac(key, entry_prev_hmac, entry)
+        if expected_hmac is None:
+            errors.append(f"{filename}:{line_no}: unsupported audit scheme {entry.get('scheme')!r}")
+        elif not _hmac.compare_digest(stored_hmac, expected_hmac):
             errors.append(
                 f"{filename}:{line_no}: HMAC mismatch - "
                 f"stored {stored_hmac[:16]}... != computed {expected_hmac[:16]}..."

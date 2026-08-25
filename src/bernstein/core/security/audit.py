@@ -356,6 +356,40 @@ class AuditEvent:
     scheme: int | None = None
 
 
+def _scheme_material(key: bytes, scheme: Any) -> tuple[bytes, str] | None:
+    """The MAC key and domain prefix a scheme authenticates with.
+
+    ``None`` means the scheme is unknown to this build. An unknown scheme is
+    never treated as v1: the verifier could not pick the right key, so it
+    cannot authenticate the record and must say so rather than guess.
+
+    Every verifier resolves the scheme through here. A scheme that
+    authenticates on one code path and not on another is indistinguishable
+    from tampering to whoever reads the result.
+    """
+    if scheme == SCHEME_V2:
+        return derive_store_key(key, DOMAIN_AUDIT), domain_tag(DOMAIN_AUDIT, SCHEME_V2)
+    if scheme == SCHEME_V1:
+        return key, ""
+    return None
+
+
+def expected_entry_hmac(key: bytes, prev_hmac: str, entry: dict[str, Any]) -> str | None:
+    """The HMAC *entry* must carry to be authentic, or ``None`` for an unknown scheme.
+
+    ``prev_hmac`` is the caller's, not the entry's: a chain verifier
+    authenticates against the head it has walked to, while a local record
+    check passes the predecessor the record itself names. Any ``hmac`` already
+    on *entry* is excluded from the preimage.
+    """
+    material = _scheme_material(key, entry.get("scheme", SCHEME_V1))
+    if material is None:
+        return None
+    verify_key, verify_prefix = material
+    body = {k: v for k, v in entry.items() if k != "hmac"}
+    return _compute_hmac(verify_key, prev_hmac, body, domain_prefix=verify_prefix)
+
+
 def _compute_hmac(key: bytes, prev_hmac: str, entry: dict[str, Any], domain_prefix: str = "") -> str:
     """Compute HMAC-SHA256 over the previous HMAC concatenated with the canonical JSON payload.
 
@@ -748,10 +782,8 @@ def _verify_log_bytes(
         # domain prefix. The scheme stays in the entry so the canonical-byte
         # check below and the HMAC computation both cover it.
         scheme = entry.get("scheme", SCHEME_V1)
-        if scheme not in (SCHEME_V1, SCHEME_V2):
-            # An unknown scheme must not silently fall back to v1: the verifier
-            # could not pick the right key, so it cannot authenticate the
-            # record. Surface it as a hard failure rather than guessing.
+        material = _scheme_material(key, scheme)
+        if material is None:
             _fail(
                 line_no,
                 line_offset,
@@ -790,12 +822,7 @@ def _verify_log_bytes(
                 f"{display_name}:{line_no}: prev_hmac mismatch (expected {prev_hmac[:16]}…, got {entry_prev[:16]}…)"
             )
 
-        if scheme == SCHEME_V2:
-            verify_key = derive_store_key(key, DOMAIN_AUDIT)
-            verify_prefix = domain_tag(DOMAIN_AUDIT, SCHEME_V2)
-        else:
-            verify_key = key
-            verify_prefix = ""
+        verify_key, verify_prefix = material
         expected_hmac = _compute_hmac(verify_key, prev_hmac, entry, domain_prefix=verify_prefix)
         if not _hmac.compare_digest(stored_hmac, expected_hmac):
             line_messages.append(
@@ -885,16 +912,11 @@ def _record_is_locally_valid(key: bytes, entry: dict[str, Any], scheme: int | No
     """
     if scheme is None:
         scheme = entry.get("scheme", SCHEME_V1)
-    if scheme not in (SCHEME_V1, SCHEME_V2):
-        # An unknown scheme cannot be authenticated (the verifier would not
-        # know which key/prefix to use), so it is never locally valid.
+    material = _scheme_material(key, scheme)
+    if material is None:
+        # An unknown scheme cannot be authenticated, so it is never valid.
         return False
-    if scheme == SCHEME_V2:
-        verify_key = derive_store_key(key, DOMAIN_AUDIT)
-        verify_prefix = domain_tag(DOMAIN_AUDIT, SCHEME_V2)
-    else:
-        verify_key = key
-        verify_prefix = ""
+    verify_key, verify_prefix = material
     body = {k: v for k, v in entry.items() if k != "hmac"}
     expected = _compute_hmac(verify_key, str(entry.get("prev_hmac", "")), body, domain_prefix=verify_prefix)
     return _hmac.compare_digest(str(entry.get("hmac", "")), expected)

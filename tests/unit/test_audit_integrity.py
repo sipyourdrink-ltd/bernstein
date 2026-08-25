@@ -13,6 +13,8 @@ from bernstein.core.audit_integrity import (
     verify_on_startup,
 )
 
+from bernstein.core.security.audit import AuditLog
+
 _GENESIS_HMAC = "0" * 64
 
 
@@ -187,3 +189,52 @@ class TestVerifyOnStartup:
         (audit_dir / "2026-04-05.jsonl").write_text("\n".join(lines) + "\n")
         result = verify_on_startup(sdd_dir, count=5)
         assert result.valid is False
+
+
+class TestAgreementWithTheLogVerifier:
+    """The runtime guard and ``AuditLog.verify`` must reach the same verdict.
+
+    ``verify_audit_integrity`` is what the orchestrator, the air-gap doctor and
+    the security-posture check call on startup. When it recomputed the entry
+    HMAC with a rule of its own, a log the writer had just produced read as
+    tampered - a false alarm indistinguishable from a real one.
+    """
+
+    def test_a_log_written_by_the_audit_log_passes_the_runtime_guard(self, audit_dir: Path, hmac_key: bytes) -> None:
+        log = AuditLog(audit_dir, key=hmac_key)
+        for i in range(3):
+            log.log("test.event", "actor", "task", f"task-{i}", {})
+
+        assert log.verify()[0] is True
+        result = verify_audit_integrity(audit_dir, count=10, key=hmac_key)
+        assert result.valid is True, result.errors
+        assert result.entries_checked == 3
+
+    def test_both_verifiers_reject_the_same_tampered_entry(self, audit_dir: Path, hmac_key: bytes) -> None:
+        log = AuditLog(audit_dir, key=hmac_key)
+        for i in range(3):
+            log.log("test.event", "actor", "task", f"task-{i}", {})
+
+        log_file = next(audit_dir.glob("*.jsonl"))
+        lines = log_file.read_text().splitlines()
+        entry = json.loads(lines[1])
+        entry["actor"] = "someone-else"
+        lines[1] = json.dumps(entry, sort_keys=True)
+        log_file.write_text("\n".join(lines) + "\n")
+
+        assert AuditLog(audit_dir, key=hmac_key).verify()[0] is False
+        assert verify_audit_integrity(audit_dir, count=10, key=hmac_key).valid is False
+
+    def test_an_unknown_scheme_is_rejected_rather_than_read_as_v1(self, audit_dir: Path, hmac_key: bytes) -> None:
+        """A future scheme must not be authenticated with today's key."""
+        log = AuditLog(audit_dir, key=hmac_key)
+        log.log("test.event", "actor", "task", "task-0", {})
+
+        log_file = next(audit_dir.glob("*.jsonl"))
+        entry = json.loads(log_file.read_text().splitlines()[0])
+        entry["scheme"] = 99
+        log_file.write_text(json.dumps(entry, sort_keys=True) + "\n")
+
+        result = verify_audit_integrity(audit_dir, count=10, key=hmac_key)
+        assert result.valid is False
+        assert any("unsupported audit scheme" in e for e in result.errors), result.errors
