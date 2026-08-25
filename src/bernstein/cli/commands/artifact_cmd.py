@@ -127,11 +127,18 @@ _workdir_option = click.option(
 )
 
 
-def _spine_hmac_key() -> bytes:
-    """Return the audit-chain key the lineage spine tags entries with."""
-    from bernstein.core.security.audit import load_or_create_audit_key
+def _spine_hmac_key() -> bytes | None:
+    """Return the audit-chain key the lineage spine tags entries with.
 
-    return load_or_create_audit_key()
+    Returns ``None`` when the audit key is missing; the HMAC leg of verification
+    is then skipped, matching the behaviour of :func:`load_audit_key`.
+    """
+    from bernstein.core.security.audit import load_audit_key, AuditKeyMissingError
+
+    try:
+        return load_audit_key()
+    except AuditKeyMissingError:
+        return None
 
 
 @artifact_group.command("list")
@@ -345,9 +352,10 @@ def _resolve_operator_secret(env_var: str) -> bytes | None:
     if secret:
         return secret.encode("utf-8")
     try:
-        from bernstein.core.security.audit import load_or_create_audit_key
-
-        return load_or_create_audit_key()
+        from bernstein.core.security.audit import load_audit_key, AuditKeyMissingError
+        return load_audit_key()
+    except AuditKeyMissingError:
+        return None
     except Exception:  # pragma: no cover - defensive: never block verification on key IO
         return None
 
