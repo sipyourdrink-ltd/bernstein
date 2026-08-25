@@ -518,11 +518,11 @@ def _run_command(command: str, cwd: Path, timeout_s: int) -> tuple[bool, str] | 
         output = (proc.stdout + proc.stderr).strip()
         if len(output) > 2000:
             output = output[:2000] + _TRUNCATED_SUFFIX
-        
+
         # Detect exit code 127 (command not found) and return distinct signal
         if proc.returncode == 127:
             return False, output or "(no output)", 127
-            
+
         return proc.returncode == 0, output or "(no output)"
     except subprocess.TimeoutExpired:
         return False, f"Timed out after {timeout_s}s"
