@@ -30,7 +30,7 @@ import dataclasses
 import pytest
 
 from bernstein.core.planning.plan_rendering import compute_plan_rendering
-from bernstein.core.tasks.models import TaskCostEstimate, TaskPlan
+from bernstein.core.tasks.models import PlanStatus, TaskCostEstimate, TaskPlan
 
 
 def _estimate(**overrides: object) -> TaskCostEstimate:
@@ -118,6 +118,45 @@ def test_every_estimate_field_is_exercised() -> None:
     declared = {f.name for f in dataclasses.fields(TaskCostEstimate)}
 
     assert declared == covered, f"unexercised estimate fields: {declared - covered}"
+
+
+LIFECYCLE_FIELDS = [
+    ("status", PlanStatus.APPROVED),
+    ("created_at", 1.0),
+    ("decided_at", 2.0),
+    ("decision_reason", "looks fine"),
+    ("rendering_hash", "sha256:tampered"),
+]
+
+
+@pytest.mark.parametrize(("field", "value"), LIFECYCLE_FIELDS, ids=[f for f, _ in LIFECYCLE_FIELDS])
+def test_lifecycle_fields_stay_out_of_the_digest(field: str, value: object) -> None:
+    """The digest has to survive the plan being approved.
+
+    Approval writes ``status``, ``decided_at``, ``decision_reason`` and
+    ``rendering_hash`` onto the plan; if any of them fed the hash, the act of
+    deciding would invalidate the digest the decision just bound to.
+    """
+    baseline = _plan()
+    mutated = _plan(**{field: value})
+
+    assert _digest(mutated) == _digest(baseline), f"lifecycle field {field} leaked into the digest"
+
+
+def test_every_plan_field_is_either_hashed_or_lifecycle() -> None:
+    """Every ``TaskPlan`` field is claimed by exactly one of the two suites.
+
+    A new field must be added either to ``PLAN_MUTATIONS`` (hashed) or to
+    ``LIFECYCLE_FIELDS`` (excluded) - forgetting both leaves it silently
+    unpinned, which is the gap this file exists to close.
+    """
+    # task_estimates is hashed too - its per-field sweep is the ESTIMATE suite.
+    hashed = {name for name, _ in PLAN_MUTATIONS} | {"task_estimates"}
+    lifecycle = {name for name, _ in LIFECYCLE_FIELDS}
+    declared = {f.name for f in dataclasses.fields(TaskPlan)}
+
+    assert not (hashed & lifecycle), f"claimed by both: {hashed & lifecycle}"
+    assert declared == hashed | lifecycle, f"unclaimed plan fields: {declared - hashed - lifecycle}"
 
 
 def test_cost_change_below_rounding_precision_is_ignored() -> None:
