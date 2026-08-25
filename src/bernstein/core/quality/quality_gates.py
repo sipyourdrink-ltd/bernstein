@@ -490,8 +490,8 @@ def run_intent_gate_sync(
 # ---------------------------------------------------------------------------
 
 
-def _run_command(command: str, cwd: Path, timeout_s: int) -> tuple[bool, str]:
-    """Run a shell command and return (success, output).
+def _run_command(command: str, cwd: Path, timeout_s: int) -> tuple[bool, str] | tuple[bool, str, int]:
+    """Run a shell command and return (success, output) or (success, output, exit_code).
 
     Args:
         command: Shell command to run.
@@ -499,7 +499,8 @@ def _run_command(command: str, cwd: Path, timeout_s: int) -> tuple[bool, str]:
         timeout_s: Timeout in seconds before the process is killed.
 
     Returns:
-        Tuple of (exit_code_zero, combined_stdout_stderr_output).
+        Tuple of (exit_code_zero, combined_stdout_stderr_output) for normal cases.
+        When exit code is 127 (command not found), returns (False, output, 127) to preserve the distinct signal.
     """
     try:
         # SECURITY: shell=True required because quality gate commands are admin-configured
@@ -517,6 +518,11 @@ def _run_command(command: str, cwd: Path, timeout_s: int) -> tuple[bool, str]:
         output = (proc.stdout + proc.stderr).strip()
         if len(output) > 2000:
             output = output[:2000] + _TRUNCATED_SUFFIX
+        
+        # Detect exit code 127 (command not found) and return distinct signal
+        if proc.returncode == 127:
+            return False, output or "(no output)", 127
+            
         return proc.returncode == 0, output or "(no output)"
     except subprocess.TimeoutExpired:
         return False, f"Timed out after {timeout_s}s"
@@ -524,7 +530,7 @@ def _run_command(command: str, cwd: Path, timeout_s: int) -> tuple[bool, str]:
         return False, f"Command error: {exc}"
 
 
-def run_command_sync(command: str, cwd: Path, timeout_s: int) -> tuple[bool, str]:
+def run_command_sync(command: str, cwd: Path, timeout_s: int) -> tuple[bool, str] | tuple[bool, str, int]:
     """Public sync wrapper used by the async gate runner."""
     return _run_command(command, cwd, timeout_s)
 
@@ -585,7 +591,9 @@ def _run_mutation_gate(config: QualityGatesConfig, run_dir: Path) -> tuple[bool,
         ``passed`` is True when the mutation score meets the threshold.
         ``score_or_None`` is the parsed float score, or None when unparseable.
     """
-    _ok, output = _run_command(config.mutation_command, run_dir, config.mutation_timeout_s)
+    result = _run_command(config.mutation_command, run_dir, config.mutation_timeout_s)
+    _ok, output = result[0], result[1]
+    exit_code = result[2] if len(result) == 3 else None
 
     score = _parse_mutation_score(output)
 
@@ -596,7 +604,8 @@ def _run_mutation_gate(config: QualityGatesConfig, run_dir: Path) -> tuple[bool,
         return passed, detail, score
 
     # Could not parse a numeric score - treat non-zero exit as failure.
-    passed = _ok
+    # Exit code 127 (command not found) is also treated as failure.
+    passed = _ok and exit_code != 127
     detail = (
         f"Could not parse mutation score (threshold {config.mutation_threshold:.1%}). "
         f"Exit: {'0' if _ok else 'non-zero'}\n{output}"

@@ -149,7 +149,9 @@ class GateRunnerCommandsMixin:
         if command is None:
             return self._skipped(step, "No impacted tests detected.")
 
-        ok, detail = await asyncio.to_thread(qg.run_command_sync, command, run_dir, self._config.timeout_s)
+        result = await asyncio.to_thread(qg.run_command_sync, command, run_dir, self._config.timeout_s)
+        ok, detail = result[0], result[1]
+        exit_code = result[2] if len(result) == 3 else None
         metadata: dict[str, Any] = {"command": command}
         if detail.startswith(TIMED_OUT_PREFIX):
             return GateResult(
@@ -158,8 +160,15 @@ class GateRunnerCommandsMixin:
                 required=step.required,
                 blocked=step.required,
                 cached=False,
+        if exit_code == 127:
+            return GateResult(
+                name=step.name,
+                status="command_not_found",
+                required=step.required,
+                blocked=step.required,
+                cached=False,
                 duration_ms=0,
-                details=detail,
+                details=f"Command not found: {detail}",
                 metadata=metadata,
             )
 
@@ -268,7 +277,9 @@ class GateRunnerCommandsMixin:
             return self._skipped(step, NO_PYTHON_FILES)
 
         command = self._dead_code_command(step, python_files)
-        ok, vulture_detail = qg.run_command_sync(command, run_dir, self._config.timeout_s)
+        result = qg.run_command_sync(command, run_dir, self._config.timeout_s)
+        ok, vulture_detail = result[0], result[1]
+        exit_code = result[2] if len(result) == 3 else None
         if vulture_detail.startswith(TIMED_OUT_PREFIX):
             return GateResult(
                 name=step.name,
@@ -278,6 +289,16 @@ class GateRunnerCommandsMixin:
                 cached=False,
                 duration_ms=0,
                 details=vulture_detail,
+                metadata={"command": command},
+        if exit_code == 127:
+            return GateResult(
+                name=step.name,
+                status="command_not_found",
+                required=step.required,
+                blocked=False,
+                cached=False,
+                duration_ms=0,
+                details=f"Command not found: {vulture_detail}",
                 metadata={"command": command},
             )
 
