@@ -109,7 +109,9 @@ def ensure_http_url(
             try:
                 internal = _is_internal(address)
             except ValueError as exc:
-                raise UrlSchemeError(_msg(source, f"host {host!r} resolved to an unparseable address {address!r}")) from exc
+                raise UrlSchemeError(
+                    _msg(source, f"host {host!r} resolved to an unparseable address {address!r}")
+                ) from exc
             if internal:
                 raise UrlSchemeError(
                     _msg(

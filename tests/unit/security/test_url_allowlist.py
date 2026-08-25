@@ -107,6 +107,7 @@ def test_error_message_includes_source_label() -> None:
 
 # --- ensure_http_url strict mode tests ---
 
+
 def test_strict_host_rejection_for_internal_address() -> None:
     with pytest.raises(UrlSchemeError, match="internal address"):
         ensure_http_url(
@@ -129,6 +130,7 @@ def test_strict_missing_host_is_rejected() -> None:
 def test_strict_unresolvable_host_is_rejected() -> None:
     def _fails(_host: str) -> list[str]:
         raise OSError("Name or service not known")
+
     with pytest.raises(UrlSchemeError, match="could not be resolved"):
         ensure_http_url("https://nx.example/entry.json", strict=True, resolver=_fails)
 
@@ -141,6 +143,7 @@ def test_strict_source_label_appears_in_error() -> None:
             strict=True,
             resolver=_resolves_to("127.0.0.1"),
         )
+
 
 #
 # The threat these pin: a URL read out of a *fetched* catalog index is chosen by
