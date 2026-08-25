@@ -40,11 +40,13 @@ _HTTP_AND_HTTPS: Final[frozenset[str]] = frozenset({"http", "https"})
 _LOCAL_HOSTS: Final[frozenset[str]] = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
-def ensure_http_url(  # NOSONAR python:S3516 - accept path returns input unchanged; rejection is via raise
+def ensure_http_url(
     url: str,
     *,
     allow_http: bool = False,
     source: str = "",
+    strict: bool = False,
+    resolver: HostResolver | None = None,
 ) -> str:
     """Validate that ``url`` has an http(s) scheme; return it unchanged.
 
@@ -91,6 +93,31 @@ def ensure_http_url(  # NOSONAR python:S3516 - accept path returns input unchang
                 f"URL scheme {scheme!r} is not permitted (allowed: {sorted(allowed)!r}); url={url!r}",
             )
         )
+    # Strict mode: reject internal destinations after hostname resolution.
+    if strict:
+        host = (parsed.hostname or "").lower()
+        if not host:
+            raise UrlSchemeError(_msg(source, f"URL has no host: {url!r}"))
+        resolve = resolver or _default_resolver
+        try:
+            addresses = list(resolve(host))
+        except OSError as exc:
+            raise UrlSchemeError(_msg(source, f"host {host!r} could not be resolved: {exc}; url={url!r}")) from exc
+        if not addresses:
+            raise UrlSchemeError(_msg(source, f"host {host!r} resolved to no addresses; url={url!r}"))
+        for address in addresses:
+            try:
+                internal = _is_internal(address)
+            except ValueError as exc:
+                raise UrlSchemeError(_msg(source, f"host {host!r} resolved to an unparseable address {address!r}")) from exc
+            if internal:
+                raise UrlSchemeError(
+                    _msg(
+                        source,
+                        f"host {host!r} resolves to internal address {address!r}, "
+                        f"which is not a permitted destination; url={url!r}",
+                    )
+                )
     return url
 
 
