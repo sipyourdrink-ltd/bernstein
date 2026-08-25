@@ -1,5 +1,4 @@
 import threading
-import time
 from pathlib import Path
 
 import httpx
