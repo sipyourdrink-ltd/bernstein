@@ -367,7 +367,7 @@ wheels = [
 
 [[package]]
 name = "bernstein"
-version = "3.17.2"
+version = "3.18.0"
 source = { editable = "." }
 dependencies = [
     { name = "asn1crypto" },
