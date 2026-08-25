@@ -1025,10 +1025,10 @@ def _build_rag_context(tasks: list[Task], workdir: Path, spawner_config: Any | N
         results = indexer.search(query, limit=max_files)
         if not results:
             return ""
-        
+
         lines = ["## Relevant Code Snippets (RAG)"]
         total_tokens = 0
-        
+
         for res in results:
             # Estimate tokens for this entry
             entry = (
@@ -1037,17 +1037,17 @@ def _build_rag_context(tasks: list[Task], workdir: Path, spawner_config: Any | N
                 f"```\n{res.snippet}\n```\n"
             )
             entry_tokens = len(entry) // 4  # Rough estimation
-            
+
             if total_tokens + entry_tokens > max_tokens:
                 logger.info("Truncating RAG context: reached budget of %d tokens", max_tokens)
                 break
-                
+
             lines.append(entry)
             total_tokens += entry_tokens
-        
+
         if len(lines) <= 1:  # Only header, no content
             return ""
-            
+
         return deduplicate_section("\n".join(lines) + "\n")
     except Exception as rag_exc:
         logger.debug("Smart context injection failed: %s", rag_exc)

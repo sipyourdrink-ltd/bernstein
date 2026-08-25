@@ -267,7 +267,7 @@ def test_build_rag_context_empty_index_returns_empty(tmp_path: Path, make_task: 
 
 def test_rag_snippet_boundaries(make_task: Any) -> None:
     """RAG context injection uses line-number ranges, not whole files."""
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock, patch
 
     # Mock CodebaseIndexer to return snippet results with line ranges
     mock_result = MagicMock()
@@ -301,7 +301,7 @@ def test_rag_snippet_boundaries(make_task: Any) -> None:
 
 def test_rag_token_budget(make_task: Any) -> None:
     """RAG context respects token budget limits."""
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock, patch
 
     # Create mock results that would exceed budget if all included
     mock_results = []
@@ -334,7 +334,7 @@ def test_rag_token_budget(make_task: Any) -> None:
 
 def test_rag_determinism(make_task: Any) -> None:
     """RAG context injection produces deterministic output."""
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock, patch
 
     mock_result = MagicMock()
     mock_result.file_path = "src/deterministic.py"
@@ -363,7 +363,7 @@ def test_rag_determinism(make_task: Any) -> None:
 
 def test_rag_empty_index_byte_identical(make_task: Any) -> None:
     """Empty/unindexed RAG index returns byte-identical empty string."""
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock, patch
 
     with patch("bernstein.core.agents.spawner_core.CodebaseIndexer") as mock_indexer_class:
         mock_indexer = MagicMock()
