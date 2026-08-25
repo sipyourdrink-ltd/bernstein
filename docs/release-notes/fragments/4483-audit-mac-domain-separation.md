@@ -6,4 +6,4 @@ the MAC key is HKDF-SHA256-derived per store and the preimage is domain-tagged.
 One place resolves what a scheme authenticates with, so the log verifier, the
 local record check and the runtime startup guard reach the same verdict; v1
 chains keep verifying unchanged, and an unknown scheme is a hard failure on
-every path rather than a silent fall back (#4478).
+every path rather than a silent fall back (#4212).
