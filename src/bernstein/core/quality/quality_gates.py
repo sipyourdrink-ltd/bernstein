@@ -727,7 +727,9 @@ def run_agent_test_mutation_gate_sync(
         )
 
     command = _build_agent_mutation_command(source_files, test_files)
-    _ok, output = _run_command(command, run_dir, config.agent_test_mutation_timeout_s)
+    result = _run_command(command, run_dir, config.agent_test_mutation_timeout_s)
+    _ok, output = result[0], result[1]
+    exit_code = result[2] if len(result) == 3 else None
 
     score = _parse_mutation_score(output)
     threshold = config.agent_test_mutation_threshold

@@ -153,13 +153,6 @@ class GateRunnerCommandsMixin:
         ok, detail = result[0], result[1]
         exit_code = result[2] if len(result) == 3 else None
         metadata: dict[str, Any] = {"command": command}
-        if detail.startswith(TIMED_OUT_PREFIX):
-            return GateResult(
-                name=step.name,
-                status="timeout",
-                required=step.required,
-                blocked=step.required,
-                cached=False,
         if exit_code == 127:
             return GateResult(
                 name=step.name,
@@ -169,6 +162,17 @@ class GateRunnerCommandsMixin:
                 cached=False,
                 duration_ms=0,
                 details=f"Command not found: {detail}",
+                metadata=metadata,
+            )
+        if detail.startswith(TIMED_OUT_PREFIX):
+            return GateResult(
+                name=step.name,
+                status="timeout",
+                required=step.required,
+                blocked=step.required,
+                cached=False,
+                duration_ms=0,
+                details=detail,
                 metadata=metadata,
             )
 
@@ -280,16 +284,6 @@ class GateRunnerCommandsMixin:
         result = qg.run_command_sync(command, run_dir, self._config.timeout_s)
         ok, vulture_detail = result[0], result[1]
         exit_code = result[2] if len(result) == 3 else None
-        if vulture_detail.startswith(TIMED_OUT_PREFIX):
-            return GateResult(
-                name=step.name,
-                status="timeout",
-                required=step.required,
-                blocked=False,
-                cached=False,
-                duration_ms=0,
-                details=vulture_detail,
-                metadata={"command": command},
         if exit_code == 127:
             return GateResult(
                 name=step.name,
@@ -299,6 +293,17 @@ class GateRunnerCommandsMixin:
                 cached=False,
                 duration_ms=0,
                 details=f"Command not found: {vulture_detail}",
+                metadata={"command": command},
+            )
+        if vulture_detail.startswith(TIMED_OUT_PREFIX):
+            return GateResult(
+                name=step.name,
+                status="timeout",
+                required=step.required,
+                blocked=False,
+                cached=False,
+                duration_ms=0,
+                details=vulture_detail,
                 metadata={"command": command},
             )
 
