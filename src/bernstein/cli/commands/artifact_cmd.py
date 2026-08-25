@@ -133,7 +133,7 @@ def _spine_hmac_key() -> bytes | None:
     Returns ``None`` when the audit key is missing; the HMAC leg of verification
     is then skipped, matching the behaviour of :func:`load_audit_key`.
     """
-    from bernstein.core.security.audit import load_audit_key, AuditKeyMissingError
+    from bernstein.core.security.audit import AuditKeyMissingError, load_audit_key
 
     try:
         return load_audit_key()
@@ -352,7 +352,8 @@ def _resolve_operator_secret(env_var: str) -> bytes | None:
     if secret:
         return secret.encode("utf-8")
     try:
-        from bernstein.core.security.audit import load_audit_key, AuditKeyMissingError
+        from bernstein.core.security.audit import AuditKeyMissingError, load_audit_key
+
         return load_audit_key()
     except AuditKeyMissingError:
         return None
