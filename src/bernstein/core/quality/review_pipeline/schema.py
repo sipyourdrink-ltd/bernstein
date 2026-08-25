@@ -10,6 +10,7 @@ Schema:
 
     version: 1
     pass_threshold: 0.66
+    rules: .bernstein/review-rules.md
     stages:
       - name: cheap-verifiers
         parallelism: 5
@@ -43,6 +44,8 @@ from typing import Any, Literal, cast
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
+from bernstein.core.quality.review_pipeline.ruleset import RulesSpec  # noqa: TC001 - Pydantic needs it at runtime
 
 # Aggregator strategy literals.  Mirrors the ticket spec:
 # any | all | majority | weighted.
@@ -155,6 +158,10 @@ class ReviewPipeline(BaseModel):
         block_on_fail: When True, a failing pipeline blocks the janitor /
             merge gate the same way the cross-model verifier does today.
         name: Optional pipeline name (audit / docs only).
+        rules: Where the review ruleset lives - a path to a rules file, or a
+            mapping with ``path`` / ``raise`` / ``guard``.  ``None`` falls back
+            to ``.bernstein/review-rules.md``, and a repository with no rules
+            file reviews exactly as it did before rulesets existed.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
@@ -164,6 +171,7 @@ class ReviewPipeline(BaseModel):
     stages: list[StageSpec] = Field(min_length=1)
     block_on_fail: bool = True
     name: str | None = None
+    rules: str | RulesSpec | None = None
 
     @field_validator("stages")
     @classmethod

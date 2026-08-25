@@ -155,6 +155,19 @@ def review_receipt_emit_cmd(
 @click.option("--issue", "issue_file", required=True, type=click.Path(exists=True, dir_okay=False))
 @click.option("--diff", "diff_file", required=True, type=click.Path(exists=True, dir_okay=False))
 @click.option(
+    "--chain",
+    is_flag=True,
+    default=False,
+    help="Verify every pass of a review contour, not just the single-pass receipt.",
+)
+@click.option(
+    "--rules",
+    "rules_file",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Rules file whose digest every pass must have been reviewed under (--chain only).",
+)
+@click.option(
     "--workdir",
     "-w",
     type=click.Path(file_okay=False, exists=True),
@@ -162,18 +175,31 @@ def review_receipt_emit_cmd(
     show_default=True,
     help="Project root containing .sdd/.",
 )
-def review_receipt_verify_cmd(pr_url: str, issue_file: str, diff_file: str, workdir: str) -> None:
+def review_receipt_verify_cmd(
+    pr_url: str,
+    issue_file: str,
+    diff_file: str,
+    chain: bool,
+    rules_file: str | None,
+    workdir: str,
+) -> None:
     """Prove offline that the PR's diff was reviewed against the issue.
 
     Recomputes ``issue_hash`` and ``diff_hash`` from the presented inputs and
-    checks the Ed25519 signature and spine anchor. Exit codes: 0 = verified,
-    1 = no receipt / bad input, 2 = mismatch (tamper).
+    checks the Ed25519 signature and spine anchor. With ``--chain`` the whole
+    fix-until-green sequence is walked: every pass must recompute, carry the
+    previous pass's anchor, and name the same ruleset, and ``--diff`` is
+    checked against the last pass. Exit codes: 0 = verified, 1 = no receipt /
+    bad input, 2 = mismatch (tamper).
     """
     from bernstein.core.review.receipt import verify_review_receipt
 
     root = Path(workdir).resolve()
     issue_body = Path(issue_file).read_text(encoding="utf-8")
     diff = Path(diff_file).read_bytes()
+
+    if chain:
+        _verify_chain(root, pr_url=pr_url, issue_body=issue_body, diff=diff, rules_file=rules_file)
 
     result = verify_review_receipt(
         workdir=root,
@@ -191,6 +217,46 @@ def review_receipt_verify_cmd(pr_url: str, issue_file: str, diff_file: str, work
         raise SystemExit(0)
     if result.receipt is None:
         console.print(f"[yellow]NO RECEIPT[/yellow] -- {result.reason}")
+        raise SystemExit(1)
+    console.print(f"[red]MISMATCH[/red] -- {result.reason}")
+    raise SystemExit(2)
+
+
+def _verify_chain(
+    root: Path,
+    *,
+    pr_url: str,
+    issue_body: str,
+    diff: bytes,
+    rules_file: str | None,
+) -> None:
+    """Walk every pass of a review contour and exit with its verdict."""
+    from bernstein.core.quality.review_pipeline.ruleset import parse_ruleset
+    from bernstein.core.review.receipt import verify_review_chain
+
+    digest = None
+    if rules_file is not None:
+        digest = parse_ruleset(Path(rules_file).read_text(encoding="utf-8"), source=rules_file).digest
+
+    result = verify_review_chain(
+        workdir=root,
+        lineage_root=_lineage_root(root),
+        hmac_key=_load_hmac_key(),
+        pr_url=pr_url,
+        issue_body=issue_body,
+        diff=diff,
+        ruleset_digest=digest,
+    )
+    console.print()
+    console.print(f"[bold]Review chain verify[/bold] pr={pr_url}")
+    console.print(f"  passes  {result.passes}")
+    if result.ok:
+        console.print(f"  verdict {result.verdict}")
+        console.print(f"  ruleset {result.ruleset_digest or '(none)'}")
+        console.print("[green]OK[/green] -- every pass recomputed and the chain holds.")
+        raise SystemExit(0)
+    if result.passes == 0:
+        console.print(f"[yellow]NO CHAIN[/yellow] -- {result.reason}")
         raise SystemExit(1)
     console.print(f"[red]MISMATCH[/red] -- {result.reason}")
     raise SystemExit(2)

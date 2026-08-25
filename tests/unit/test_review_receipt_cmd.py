@@ -121,3 +121,73 @@ def test_verify_no_receipt_exit_1(project: Path) -> None:
         ],
     )
     assert result.exit_code == 1, result.output
+
+
+# ---------------------------------------------------------------------------
+# ``verify --chain`` -- the fix-until-green contour's per-pass receipts (#4481)
+# ---------------------------------------------------------------------------
+
+_RULES = "## Guard\n\n- Do not flag the vendored parser.\n"
+_PASS_DIFFS = ("--- a/x\n+++ b/x\n-leak\n+redact\n", "--- a/x\n+++ b/x\n-leak\n+scrub\n")
+
+
+def _emit_chain(project: Path) -> str:
+    """Emit two contour passes and return the ruleset digest they used."""
+    from bernstein.core.quality.review_pipeline.contour import PassReceiptRequest, receipt_emitter
+    from bernstein.core.quality.review_pipeline.ruleset import parse_ruleset
+
+    (project / "issue.md").write_text(_ISSUE, encoding="utf-8")
+    (project / "rules.md").write_text(_RULES, encoding="utf-8")
+    digest = parse_ruleset(_RULES).digest
+    emit = receipt_emitter(workdir=project, pr_url=_PR_URL, repo="acme/widget", issue_body=_ISSUE, timestamp=1000)
+    previous = ""
+    for index, (diff, verdict) in enumerate(zip(_PASS_DIFFS, ("request_changes", "approve"), strict=True), start=1):
+        (project / "pr.diff").write_text(diff, encoding="utf-8")
+        previous = emit(
+            PassReceiptRequest(
+                pass_index=index,
+                diff=diff.encode("utf-8"),
+                verdict=verdict,
+                ruleset_digest=digest,
+                prev_entry_hash=previous,
+            )
+        )
+    return digest
+
+
+def _verify_chain(project: Path, *, rules: Path | None) -> object:
+    argv = [
+        "verify",
+        "--chain",
+        "--pr",
+        _PR_URL,
+        "--issue",
+        str(project / "issue.md"),
+        "--diff",
+        str(project / "pr.diff"),
+        "-w",
+        str(project),
+    ]
+    if rules is not None:
+        argv.extend(["--rules", str(rules)])
+    return CliRunner().invoke(review_receipt_group, argv)
+
+
+def test_verify_chain_accepts_every_pass_of_the_contour(project: Path) -> None:
+    _emit_chain(project)
+
+    result = _verify_chain(project, rules=project / "rules.md")
+
+    assert result.exit_code == 0, result.output
+    assert "passes  2" in result.output
+
+
+def test_verify_chain_rejects_a_ruleset_the_passes_were_not_reviewed_under(project: Path) -> None:
+    _emit_chain(project)
+    moved = project / "moved-rules.md"
+    moved.write_text("## Guard\n\n- Something else entirely.\n", encoding="utf-8")
+
+    result = _verify_chain(project, rules=moved)
+
+    assert result.exit_code == 2, result.output
+    assert "ruleset" in result.output

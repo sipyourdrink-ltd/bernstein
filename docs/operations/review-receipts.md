@@ -30,6 +30,34 @@ The tracker comment posted on a PR is a *projection* of the receipt — a
 short verdict plus the `verify` invocation a reviewer can run — never the
 receipt body itself.
 
+## Per-pass receipts from the review contour
+
+`bernstein review --pipeline ... --fix --until-checks-green` reviews a PR
+repeatedly until it approves with green checks or its budget is spent, and
+emits one receipt per pass. Those receipts additionally bind the pass index,
+the digest of the ruleset the verdict was produced under, and the previous
+pass's spine anchor, so the passes form a chain:
+
+```
+bernstein review-receipt verify --chain --pr <url> \
+    --issue <issue.md> --diff <pr.diff> [--rules <rules.md>] [--workdir DIR]
+```
+
+`--chain` walks every pass in order. Each one must recompute its issue hash,
+carry a valid Ed25519 signature over its own binding, re-anchor against the
+spine, and record the previous pass's anchor; all passes must name the same
+ruleset, and `--rules` checks that ruleset against the file presented. The
+`--diff` is checked against the last pass. Exit codes match the single-receipt
+form: `0` verified, `1` no chain found, `2` mismatch.
+
+Editing a stored `diff_hash` or `ruleset_digest` breaks that pass's signature,
+so a receipt cannot be re-pointed at a different diff or a laxer standard.
+A single-pass receipt keeps its historical path and binding — the three
+contour fields are omitted from the signed preimage while unset — so
+receipts emitted before the contour existed still verify unchanged.
+
+See [Review pipeline DSL](review-pipeline.md) for the loop that produces them.
+
 ## Autofix receipts
 
 An `AutofixReceipt` links a reviewer *finding* to the commit that fixed it
@@ -61,5 +89,8 @@ several other receipt families documented separately:
 ## Source
 
 `src/bernstein/core/review/receipt.py` (`ReviewReceipt`, `AutofixReceipt`,
-emit/verify logic), `src/bernstein/cli/commands/review_receipt_cmd.py`
-(`bernstein review-receipt`).
+`verify_review_chain`, emit/verify logic),
+`src/bernstein/cli/commands/review_receipt_cmd.py`
+(`bernstein review-receipt`),
+`src/bernstein/core/quality/review_pipeline/contour.py`
+(`receipt_emitter`, the per-pass emitter the contour wires).

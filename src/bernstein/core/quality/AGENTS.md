@@ -13,7 +13,7 @@ configurable gate pipeline plus the janitor's claim verification.
 | `janitor.py` | Claim verification: did the agent do what its result claims |
 | `absence_coverage.py` | Absence-claim coverage verification: classifies a completion built on an absence claim (`glob_exists`/`file_contains` "not found", or a journal read) as `unverified` unless a coverage record backs it (#3650/#3769/#3770/#3771) |
 | `verifier_ladder.py` | Multi-tier verifier ladder with signed, re-derivable per-tier receipts (#2927) |
-| `review_pipeline/` | Fresh-context cross-model review gate |
+| `review_pipeline/` | Fresh-context cross-model review gate, the ruleset a verdict is produced under (`ruleset.py`), and the bounded review -> fix -> re-check contour with one chained receipt per pass (`contour.py`, #4481) |
 | `formal_verification.py` | Z3/Lean4 checks over scalar task metadata |
 
 ## Invariants
@@ -31,6 +31,12 @@ configurable gate pipeline plus the janitor's claim verification.
 - Absence-claim coverage fails closed: a coverage record that cannot be read
   back (missing, malformed, or a dangling lineage reference) must classify as
   no-coverage, never as a fabricated passing record (`absence_coverage.py`).
+- The review contour fails closed too: a spent budget, a missing fix runner, or
+  a fix pass that landed no commit ends in `needs-operator` with a non-zero
+  exit code, never in an approval (`review_pipeline/contour.py`).
+- An empty review ruleset must leave the reviewer prompt byte-identical to the
+  pre-ruleset prompt, so a repository without `.bernstein/review-rules.md`
+  reviews exactly as it did before (`review_pipeline/ruleset.py`).
 
 ## Testing
 

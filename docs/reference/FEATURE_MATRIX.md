@@ -188,7 +188,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [Fleet dashboard](../operations/fleet.md) | Full | 3 | `bernstein fleet [--web HOST:PORT]` cross-session multi-instance view (`core/fleet/`) |
 | [Notification sinks](../operations/notifications.md) | Full | 3 | `bernstein notify test --sink <id>` pluggable notification backends (`core/notifications/`) |
 | [PR review responder](../operations/review-responder.md) | Full | 3 | `bernstein review-responder start/status/tick` auto-responds to PR review comments (`core/review_responder/`) |
-| [Review pipeline DSL](../operations/review-pipeline.md) | Full | 3 | `bernstein review --pipeline review.yaml` YAML-driven multi-phase review (`core/quality/review_pipeline/`) |
+| [Review pipeline DSL](../operations/review-pipeline.md) | Full | 3 | `bernstein review --pipeline review.yaml` YAML-driven multi-phase review, plus the bounded `--fix --until-checks-green` contour and its per-pass receipts (`core/quality/review_pipeline/`) |
 | [Plan archival](../operations/plan-archival.md) | Full | 3 | `bernstein plan ls/show` list and inspect archived plans (`core/planning/lifecycle.py`) |
 | [Slack integration](../operations/slack-webhooks.md) | Full | 3 | Slash commands and events API endpoints |
 | [Webhook ingestion](../integrations/automation-bridge.md) | Full | 3 | `POST /webhooks/` for external event routing |

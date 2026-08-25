@@ -40,6 +40,7 @@ from bernstein.core.quality.cross_model_verifier import (
     _parse_response,
     select_reviewer_model,
 )
+from bernstein.core.quality.review_pipeline.ruleset import EMPTY_RULESET, ReviewRuleset
 from bernstein.core.quality.review_pipeline.verdict import (
     AgentVerdict,
     PipelineVerdict,
@@ -50,6 +51,7 @@ from bernstein.core.quality.review_pipeline.verdict import (
 
 if TYPE_CHECKING:
     from bernstein.core.models import Task
+    from bernstein.core.quality.review_pipeline.contour import CheckRollup
     from bernstein.core.quality.review_pipeline.schema import (
         AgentSpec,
         ReviewPipeline,
@@ -80,6 +82,7 @@ class DiffSource:
         diff: Unified diff text.  Already truncated by the caller.
         pr_number: Optional PR number for audit / display.
         owned_files: Files in scope (used by the prompt builder).
+        pr_url: Optional PR url; the review receipt is keyed on it.
     """
 
     title: str
@@ -87,6 +90,7 @@ class DiffSource:
     diff: str
     pr_number: int | None = None
     owned_files: list[str] = field(default_factory=list[str])
+    pr_url: str = ""
 
 
 def diff_from_task(task: Task, worktree: Path, max_chars: int = _MAX_DIFF_CHARS) -> DiffSource:
@@ -106,6 +110,72 @@ def diff_from_task(task: Task, worktree: Path, max_chars: int = _MAX_DIFF_CHARS)
     )
 
 
+def gh_pr_view_json(
+    pr_number: int,
+    fields: str,
+    *,
+    repo_root: Path | None = None,
+    timeout: float = 30.0,
+) -> dict[str, object]:
+    """Read selected PR fields via ``gh pr view <N> --json <fields>``.
+
+    The single place the review surface talks to GitHub about a pull request:
+    the diff fetch, the receipt's PR url, and the check rollup all go through
+    it, so there is one auth story and no second HTTP layer.
+
+    Args:
+        pr_number: GitHub PR number.
+        fields: Comma-separated ``gh`` JSON field list.
+        repo_root: Repository working directory; defaults to ``cwd``.
+        timeout: Subprocess timeout in seconds.
+
+    Returns:
+        The decoded JSON object.
+
+    Raises:
+        RuntimeError: If ``gh`` is unavailable, errors, or returns non-JSON.
+    """
+    import subprocess
+
+    cwd = repo_root if repo_root is not None else Path.cwd()
+    try:
+        proc = subprocess.run(
+            ["gh", "pr", "view", str(pr_number), "--json", fields],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"gh pr view failed: {exc}") from exc
+    if proc.returncode != 0:
+        raise RuntimeError(f"gh pr view failed: {proc.stderr.strip()}")
+    try:
+        payload: object = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"gh pr view returned invalid JSON: {exc}") from exc
+    return cast("dict[str, object]", payload if isinstance(payload, dict) else {})
+
+
+def check_rollup_from_pr(pr_number: int, *, repo_root: Path | None = None) -> CheckRollup:
+    """Read a PR's aggregate check rollup through the same ``gh`` path.
+
+    Args:
+        pr_number: GitHub PR number.
+        repo_root: Repository working directory; defaults to ``cwd``.
+
+    Returns:
+        The parsed :class:`~bernstein.core.quality.review_pipeline.contour.CheckRollup`.
+
+    Raises:
+        RuntimeError: If ``gh`` is unavailable or the rollup cannot be read.
+    """
+    from bernstein.core.quality.review_pipeline.contour import rollup_from_payload
+
+    return rollup_from_payload(gh_pr_view_json(pr_number, "statusCheckRollup", repo_root=repo_root))
+
+
 def diff_from_pr(pr_number: int, *, repo_root: Path | None = None, max_chars: int = _MAX_DIFF_CHARS) -> DiffSource:
     """Fetch a PR's diff via ``gh pr diff <N>`` and wrap it as a :class:`DiffSource`.
 
@@ -123,24 +193,7 @@ def diff_from_pr(pr_number: int, *, repo_root: Path | None = None, max_chars: in
     import subprocess
 
     cwd = repo_root if repo_root is not None else Path.cwd()
-    try:
-        proc = subprocess.run(
-            ["gh", "pr", "view", str(pr_number), "--json", "title,body"],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise RuntimeError(f"gh pr view failed: {exc}") from exc
-    if proc.returncode != 0:
-        raise RuntimeError(f"gh pr view failed: {proc.stderr.strip()}")
-    try:
-        meta_obj: object = json.loads(proc.stdout or "{}")
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"gh pr view returned invalid JSON: {exc}") from exc
-    meta = cast("dict[str, object]", meta_obj if isinstance(meta_obj, dict) else {})
+    meta = gh_pr_view_json(pr_number, "title,body,url", repo_root=repo_root)
 
     try:
         proc = subprocess.run(
@@ -164,6 +217,7 @@ def diff_from_pr(pr_number: int, *, repo_root: Path | None = None, max_chars: in
         description=str(meta.get("body", "")),
         diff=diff,
         pr_number=pr_number,
+        pr_url=str(meta.get("url", "")),
     )
 
 
@@ -264,6 +318,7 @@ async def _run_one_agent(
     llm_caller: LLMCaller,
     provider: str,
     max_tokens: int,
+    ruleset: ReviewRuleset = EMPTY_RULESET,
 ) -> AgentVerdict:
     """Run a single agent and return its verdict.
 
@@ -273,7 +328,9 @@ async def _run_one_agent(
     # Cost-aware routing - if the spec pinned a model use it; otherwise let
     # the cascade pick one based on writer style ("low" effort → cheap).
     model = agent.model or select_reviewer_model("any", override=None)
-    prompt = _build_agent_prompt(diff_src, prior_stages)
+    # An empty ruleset renders to "", so a repository without a rules file
+    # sends exactly the prompt it sent before rulesets existed.
+    prompt = _build_agent_prompt(diff_src, prior_stages, extra=ruleset.to_prompt_section())
 
     started = time.monotonic()
     try:
@@ -329,6 +386,7 @@ async def _run_stage(
     max_tokens: int,
     bulletin: BulletinBoard | None,
     pipeline: ReviewPipeline,
+    ruleset: ReviewRuleset = EMPTY_RULESET,
 ) -> StageVerdict:
     """Run a single stage's agents (parallel, capped by ``parallelism``)."""
     sem = asyncio.Semaphore(stage.parallelism)
@@ -342,6 +400,7 @@ async def _run_stage(
                 llm_caller=llm_caller,
                 provider=provider,
                 max_tokens=max_tokens,
+                ruleset=ruleset,
             )
 
     started = time.monotonic()
@@ -401,6 +460,7 @@ async def run_pipeline(
     bulletin: BulletinBoard | None = None,
     audit_log: AuditLog | None = None,
     actor: str = "review_pipeline",
+    ruleset: ReviewRuleset | None = None,
 ) -> PipelineVerdict:
     """Execute *pipeline* against *diff_src* and return the final verdict.
 
@@ -418,11 +478,14 @@ async def run_pipeline(
         audit_log: When supplied, each stage and the final verdict are
             written as HMAC-chained events.
         actor: Audit ``actor`` field - defaults to ``review_pipeline``.
+        ruleset: The raise / guard rules every reviewer is held to.  ``None``
+            (or an empty ruleset) leaves the prompt untouched.
 
     Returns:
         :class:`PipelineVerdict`.
     """
     caller = llm_caller or _default_llm_caller
+    rules = ruleset if ruleset is not None else EMPTY_RULESET
     board = bulletin if bulletin is not None else BulletinBoard()
     pipeline_started = time.monotonic()
     pr_resource = f"pr-{diff_src.pr_number}" if diff_src.pr_number is not None else f"task:{diff_src.title[:60]}"
@@ -438,6 +501,7 @@ async def run_pipeline(
                     "pipeline_name": pipeline.name,
                     "stages": [s.name for s in pipeline.stages],
                     "block_on_fail": pipeline.block_on_fail,
+                    "ruleset_digest": rules.digest,
                 },
             )
 
@@ -452,6 +516,7 @@ async def run_pipeline(
             max_tokens=max_tokens,
             bulletin=board,
             pipeline=pipeline,
+            ruleset=rules,
         )
         stage_verdicts.append(sv)
         if audit_log is not None:
@@ -495,6 +560,7 @@ async def run_pipeline(
                     "stages_total": len(stage_verdicts),
                     "elapsed_sec": round(time.monotonic() - pipeline_started, 3),
                     "block_on_fail": final.block_on_fail,
+                    "ruleset_digest": rules.digest,
                 },
             )
     logger.info(

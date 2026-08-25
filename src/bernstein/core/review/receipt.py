@@ -18,6 +18,13 @@ Shapes
   over the receipt's canonical binding bytes.
 * :class:`AutofixReceipt` -- links a reviewer finding to the fix commit and the
   gate result (AC3), produced only after the fix ran in an isolated worktree.
+* A *chain* of :class:`ReviewReceipt` -- one per pass of a fix-until-green
+  review contour (#4481). Each pass additionally binds its ``pass_index``, the
+  ``ruleset_digest`` its verdict was produced under, and the previous pass's
+  anchor, so :func:`verify_review_chain` recomputes the whole sequence offline.
+  Those three fields are omitted from the signed binding while unset, so a
+  single-pass receipt is byte-identical to one emitted before the contour
+  existed.
 
 Determinism
 -----------
@@ -235,6 +242,12 @@ class ReviewReceipt:
             checks the signature against it offline.
         signature: Ed25519 detached signature over the canonical binding.
         journal_entry_hash: The review-spine entry hash anchoring the receipt.
+        pass_index: 1-based pass of a multi-pass review contour; ``0`` for a
+            single-pass review.
+        ruleset_digest: Digest of the ruleset the verdict was produced under;
+            empty when the review ran without one.
+        prev_entry_hash: The preceding pass's ``journal_entry_hash``, which is
+            what links one pass's receipt to the next.
     """
 
     pr_url: str
@@ -250,10 +263,18 @@ class ReviewReceipt:
     signer_public_key_pem: str = ""
     signature: str = ""
     journal_entry_hash: str = ""
+    pass_index: int = 0
+    ruleset_digest: str = ""
+    prev_entry_hash: str = ""
 
     def _binding(self) -> dict[str, Any]:
-        """Return the signed + anchored binding (no signature / anchor)."""
-        return {
+        """Return the signed + anchored binding (no signature / anchor).
+
+        The contour fields are omitted while unset so a single-pass receipt
+        binds -- and therefore recomputes -- byte-identically to one emitted
+        before multi-pass reviews existed.
+        """
+        binding: dict[str, Any] = {
             "v": REVIEW_SCHEMA_VERSION,
             "pr_url": self.pr_url,
             "repo": self.repo,
@@ -266,6 +287,13 @@ class ReviewReceipt:
             "task_id": self.task_id,
             "timestamp": self.timestamp,
         }
+        if self.pass_index:
+            binding["pass_index"] = self.pass_index
+        if self.ruleset_digest:
+            binding["ruleset_digest"] = self.ruleset_digest
+        if self.prev_entry_hash:
+            binding["prev_entry_hash"] = self.prev_entry_hash
+        return binding
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the binding to canonical JSON bytes (signed + spine-hashed)."""
@@ -295,17 +323,30 @@ class ReviewReceipt:
             signer_public_key_pem=str(row.get("signer_public_key_pem", "")),
             signature=str(row.get("signature", "")),
             journal_entry_hash=str(row.get("journal_entry_hash", "")),
+            pass_index=int(row.get("pass_index", 0)),
+            ruleset_digest=str(row.get("ruleset_digest", "")),
+            prev_entry_hash=str(row.get("prev_entry_hash", "")),
         )
 
 
-def receipt_path(workdir: Path, pr_url: str) -> Path:
-    """Return the on-disk review-receipt path for ``pr_url``."""
-    return workdir.joinpath(*_RECEIPT_SUBPATH, f"{_safe_pr_name(pr_url)}.json")
+def receipt_path(workdir: Path, pr_url: str, pass_index: int = 0) -> Path:
+    """Return the on-disk review-receipt path for ``pr_url``.
+
+    Args:
+        workdir: Project root.
+        pr_url: The pull request the receipt covers.
+        pass_index: 1-based contour pass; ``0`` is the single-pass receipt and
+            keeps the path it has always had.
+    """
+    name = _safe_pr_name(pr_url)
+    if pass_index > 0:
+        name = f"{name}-p{pass_index}"
+    return workdir.joinpath(*_RECEIPT_SUBPATH, f"{name}.json")
 
 
-def read_review_receipt(workdir: Path, pr_url: str) -> ReviewReceipt | None:
+def read_review_receipt(workdir: Path, pr_url: str, pass_index: int = 0) -> ReviewReceipt | None:
     """Return the review receipt for ``pr_url`` or ``None`` if absent."""
-    path = receipt_path(workdir, pr_url)
+    path = receipt_path(workdir, pr_url, pass_index)
     if not path.is_file():
         return None
     try:
@@ -313,6 +354,22 @@ def read_review_receipt(workdir: Path, pr_url: str) -> ReviewReceipt | None:
     except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         logger.warning("review: malformed receipt at %s", path)
         return None
+
+
+def read_review_chain(workdir: Path, pr_url: str) -> tuple[ReviewReceipt, ...]:
+    """Return the contour's per-pass receipts for ``pr_url``, in pass order.
+
+    The walk stops at the first missing pass, so a truncated chain is returned
+    as what is actually on disk rather than silently skipping a gap.
+    """
+    chain: list[ReviewReceipt] = []
+    index = 1
+    while True:
+        receipt = read_review_receipt(workdir, pr_url, pass_index=index)
+        if receipt is None:
+            return tuple(chain)
+        chain.append(receipt)
+        index += 1
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +394,9 @@ def emit_review_receipt(
     verdict: str,
     task_id: str,
     timestamp: int,
+    pass_index: int = 0,
+    ruleset_digest: str = "",
+    prev_entry_hash: str = "",
 ) -> ReviewReceipt:
     """Bind issue, plan, tool calls, and diff into a signed, anchored receipt.
 
@@ -363,6 +423,10 @@ def emit_review_receipt(
         verdict: The review verdict.
         task_id: The task the review is attributed to.
         timestamp: Integer timestamp for the receipt.
+        pass_index: 1-based pass of a multi-pass review contour; ``0`` emits
+            the single-pass receipt at its historical path and binding.
+        ruleset_digest: Digest of the ruleset the verdict was produced under.
+        prev_entry_hash: The preceding pass's ``journal_entry_hash``.
 
     Returns:
         The signed, anchored :class:`ReviewReceipt`.
@@ -378,17 +442,24 @@ def emit_review_receipt(
         verdict=verdict,
         task_id=task_id,
         timestamp=timestamp,
+        pass_index=pass_index,
+        ruleset_digest=ruleset_digest,
+        prev_entry_hash=prev_entry_hash,
     )
     payload = unsigned.to_canonical_bytes()
     signature = sign_payload(payload, private_key_pem)
 
     spine = LineageSpine(lineage_root, run_id=REVIEW_RUN_ID, hmac_key=hmac_key)
-    artifact_path = "/".join((*_RECEIPT_SUBPATH, f"{_safe_pr_name(pr_url)}.json"))
+    path = receipt_path(workdir, pr_url, pass_index)
+    artifact_path = "/".join((*_RECEIPT_SUBPATH, path.name))
+    # Two passes over an unchanged diff must still anchor distinctly, so the
+    # pass index rides along in the step id.
+    step_id = f"{unsigned.diff_hash}#p{pass_index}" if pass_index > 0 else unsigned.diff_hash
     anchor = spine.record(
         artifact_path=artifact_path,
         content=payload,
         actor=_REVIEW_ACTOR,
-        step_id=unsigned.diff_hash,
+        step_id=step_id,
         model=_REVIEW_MODEL,
         timestamp=timestamp,
     )
@@ -406,8 +477,10 @@ def emit_review_receipt(
         signer_public_key_pem=public_key_pem,
         signature=signature,
         journal_entry_hash=anchor,
+        pass_index=pass_index,
+        ruleset_digest=ruleset_digest,
+        prev_entry_hash=prev_entry_hash,
     )
-    path = receipt_path(workdir, pr_url)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(anchored.to_dict(), ensure_ascii=False, separators=(",", ":"), sort_keys=True),
@@ -514,6 +587,150 @@ def verify_review_receipt(
         )
 
     return ReviewVerifyResult(ok=True, reason="", receipt=receipt, verdict=receipt.verdict)
+
+
+# ---------------------------------------------------------------------------
+# Chain verify -- one receipt per pass of a fix-until-green contour (#4481)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ReviewChainVerifyResult:
+    """Outcome of :func:`verify_review_chain`.
+
+    Attributes:
+        ok: True only when every pass recomputed and every link held.
+        reason: Why the chain was rejected; empty when ``ok``.
+        passes: Number of per-pass receipts walked.
+        verdict: The last pass's verdict.
+        ruleset_digest: The ruleset digest every pass was produced under.
+    """
+
+    ok: bool
+    reason: str
+    passes: int = 0
+    verdict: str = ""
+    ruleset_digest: str = ""
+
+
+def _verify_one(
+    receipt: ReviewReceipt,
+    *,
+    spine: LineageSpine,
+    issue_body: str,
+) -> str:
+    """Return the rejection reason for one receipt, or ``""`` when it holds."""
+    if compute_issue_hash(issue_body) != receipt.issue_hash:
+        return "issue_hash mismatch: presented issue body differs from the reviewed ticket"
+    if not receipt.signature or not receipt.signer_public_key_pem:
+        return "receipt is unsigned"
+    outcome = verify_payload(
+        receipt.to_canonical_bytes(),
+        receipt.signature,
+        receipt.signer_public_key_pem,
+        allow_unverified=True,
+    )
+    if not outcome.verified:
+        return f"signature does not verify ({outcome.reason})"
+    recomputed = _recompute_anchor(spine, receipt.to_canonical_bytes())
+    if recomputed is None:
+        return "receipt is not anchored in the review spine"
+    if recomputed != receipt.journal_entry_hash:
+        return "recorded journal_entry_hash does not match the spine anchor over the receipt bytes"
+    return ""
+
+
+def verify_review_chain(
+    *,
+    workdir: Path,
+    lineage_root: Path,
+    hmac_key: bytes,
+    pr_url: str,
+    issue_body: str,
+    diff: bytes | None = None,
+    ruleset_digest: str | None = None,
+) -> ReviewChainVerifyResult:
+    """Prove offline that every pass of a review contour holds.
+
+    Walks the per-pass receipts in order and, for each, recomputes the issue
+    hash, checks the Ed25519 signature over the canonical binding, re-anchors
+    the receipt against the review spine, and checks that its recorded
+    ``prev_entry_hash`` is the previous pass's anchor. Because the binding
+    carries the reviewed diff hash and the ruleset digest, editing either one
+    on disk breaks that pass's signature; presenting a different diff or a
+    different ruleset breaks the comparison below.
+
+    Args:
+        workdir: Project root holding ``.sdd/reviews/receipts/``.
+        lineage_root: Spine root (``.sdd/lineage``).
+        hmac_key: The audit-chain HMAC key that tags spine entries.
+        pr_url: The pull request the chain covers.
+        issue_body: The issue body every pass was reviewed against.
+        diff: When supplied, checked against the *last* pass's ``diff_hash``.
+        ruleset_digest: When supplied, checked against every pass.
+
+    Returns:
+        A :class:`ReviewChainVerifyResult`.
+    """
+    chain = read_review_chain(workdir, pr_url)
+    if not chain:
+        return ReviewChainVerifyResult(ok=False, reason="no review chain found")
+
+    spine = LineageSpine(lineage_root, run_id=REVIEW_RUN_ID, hmac_key=hmac_key)
+    spine_result = spine.verify()
+    if not spine_result.ok:
+        return ReviewChainVerifyResult(
+            ok=False,
+            reason=f"review spine failed verification ({spine_result.status.value})",
+            passes=len(chain),
+        )
+
+    declared = chain[0].ruleset_digest
+    previous = ""
+    for expected, receipt in enumerate(chain, start=1):
+        if receipt.pass_index != expected:
+            return ReviewChainVerifyResult(
+                ok=False,
+                reason=f"pass {expected}: recorded pass_index {receipt.pass_index} breaks the chain order",
+                passes=len(chain),
+            )
+        if receipt.prev_entry_hash != previous:
+            return ReviewChainVerifyResult(
+                ok=False,
+                reason=f"pass {expected}: chain link does not match the previous pass's anchor",
+                passes=len(chain),
+            )
+        if receipt.ruleset_digest != declared:
+            return ReviewChainVerifyResult(
+                ok=False,
+                reason=f"pass {expected}: ruleset digest differs from the ruleset pass 1 was reviewed under",
+                passes=len(chain),
+            )
+        if ruleset_digest is not None and receipt.ruleset_digest != ruleset_digest:
+            return ReviewChainVerifyResult(
+                ok=False,
+                reason=f"pass {expected}: ruleset digest mismatch: presented ruleset differs from the reviewed one",
+                passes=len(chain),
+            )
+        reason = _verify_one(receipt, spine=spine, issue_body=issue_body)
+        if reason:
+            return ReviewChainVerifyResult(ok=False, reason=f"pass {expected}: {reason}", passes=len(chain))
+        previous = receipt.journal_entry_hash
+
+    if diff is not None and compute_diff_hash(diff) != chain[-1].diff_hash:
+        return ReviewChainVerifyResult(
+            ok=False,
+            reason="diff_hash mismatch: presented diff differs from the last reviewed diff",
+            passes=len(chain),
+        )
+
+    return ReviewChainVerifyResult(
+        ok=True,
+        reason="",
+        passes=len(chain),
+        verdict=chain[-1].verdict,
+        ruleset_digest=declared,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -823,6 +1040,7 @@ __all__ = [
     "AutofixReceipt",
     "AutofixVerifyResult",
     "Finding",
+    "ReviewChainVerifyResult",
     "ReviewReceipt",
     "ReviewVerifyResult",
     "autofix_receipt_path",
@@ -832,9 +1050,11 @@ __all__ = [
     "emit_review_receipt",
     "load_or_create_review_identity",
     "read_autofix_receipt",
+    "read_review_chain",
     "read_review_receipt",
     "receipt_path",
     "run_autofix_in_worktree",
     "verify_autofix_receipt",
+    "verify_review_chain",
     "verify_review_receipt",
 ]

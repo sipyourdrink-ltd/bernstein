@@ -421,12 +421,43 @@ def cancel(task_id: str, reason: str) -> None:
     default=False,
     help="Print the resolved pipeline without spawning agents or hitting any LLM.",
 )
+@click.option(
+    "--fix",
+    is_flag=True,
+    default=False,
+    help="Run a fix pass between review passes, fed the verdict and the failing checks' logs.",
+)
+@click.option(
+    "--until-checks-green",
+    "until_checks_green",
+    is_flag=True,
+    default=False,
+    help="Withhold approval until the PR's check rollup is green.",
+)
+@click.option(
+    "--max-passes",
+    "max_passes",
+    default=3,
+    show_default=True,
+    type=int,
+    help="Review budget; the contour stops with a needs-operator outcome once it is spent.",
+)
+@click.option(
+    "--fix-command",
+    "fix_command",
+    default=None,
+    help="Command the fix pass runs, given the rendered prompt's path as its last argument.",
+)
 def review_cmd(
     workdir: str,
     pipeline_path: str | None,
     pr_number: int | None,
     validate_only: bool,
     dry_run: bool,
+    fix: bool,
+    until_checks_green: bool,
+    max_passes: int,
+    fix_command: str | None,
 ) -> None:
     """Trigger a manager queue review or run a YAML review pipeline.
 
@@ -439,12 +470,18 @@ def review_cmd(
     verdict table.  ``--validate-only`` exits after schema validation;
     ``--dry-run`` prints the resolved pipeline without spawning any agent.
 
+    With ``--fix`` / ``--until-checks-green``: runs review, fix and re-check
+    in a loop bounded by ``--max-passes``, emits one chained review receipt
+    per pass, and exits non-zero with a ``needs-operator`` outcome rather
+    than an approval when the budget is spent.
+
     \b
     Examples:
       bernstein review
       bernstein review --pipeline review.yaml --validate-only
       bernstein review --pipeline review.yaml --pr 42 --dry-run
       bernstein review --pipeline templates/review/default-3-phase.yaml --pr 42
+      bernstein review --pipeline review.yaml --pr 42 --fix --until-checks-green --max-passes 3
     """
     if pipeline_path is not None or validate_only or dry_run or pr_number is not None:
         # Lazy import - keep the legacy fast path zero-cost.
@@ -456,6 +493,10 @@ def review_cmd(
             validate_only=validate_only,
             dry_run=dry_run,
             workdir=workdir,
+            fix=fix,
+            until_checks_green=until_checks_green,
+            max_passes=max_passes,
+            fix_command=fix_command,
         )
         raise SystemExit(exit_code)
 
