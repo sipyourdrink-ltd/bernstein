@@ -814,7 +814,7 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
         path = request.url.path
 
         # Opt-out: pass every request through unauthenticated.
-        if self._auth_disabled:
+        if auth_disabled_via_opt_out():
             # No credential is presented in this mode, so there is no
             # principal to derive a scope from and the caller's own
             # ``X-Tenant-Id`` is the only tenant signal that exists.  Honour
