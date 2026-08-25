@@ -1,7 +1,7 @@
 """Tests for artifact verify secret handling (key loading vs creation)."""
 
-from pathlib import Path
 import json
+from pathlib import Path
 
 from click.testing import CliRunner
 
@@ -10,8 +10,8 @@ from bernstein.core.lineage.artifact_record import record_artifact
 from bernstein.core.lineage.identity import AgentCard, generate_keypair
 from bernstein.core.lineage.signed_write import SignedLineageLog
 from bernstein.core.lineage.store import LineageStore
-from bernstein.core.tasks.artifacts import ArtifactKind
 from bernstein.core.security.audit import load_or_create_audit_key, load_audit_key, AuditKeyMissingError
+from bernstein.core.tasks.artifacts import ArtifactKind
 
 _SECRET = "s" * 64
 
@@ -44,7 +44,7 @@ def test_verify_without_key_file_skips_hmac_and_does_not_create_key(tmp_path: Pa
     try:
         # Determine default key path via load_audit_key (will raise)
         load_audit_key()
-    except AuditKeyMissingError as e:
+    except AuditKeyMissingError:
         # The exception contains the missing path in its message; extract it
         # Simple approach: use default function from module
         from bernstein.core.security.audit import _default_audit_key_path
