@@ -455,7 +455,20 @@ def schedule_run(interval: float, once: bool) -> None:
                 logger = __import__("logging").getLogger(__name__)
                 logger.exception("Trigger pipeline dispatch failed for %s", event.metadata)
 
-    supervisor = ScheduleSupervisor(store, _dispatch, audit_writer)
+    sla_monitor: Any | None = None
+    try:
+        from bernstein.core.orchestration.sla_monitor import build_monitor_from_sdd
+
+        sla_monitor = build_monitor_from_sdd(sdd)
+    except Exception as exc:  # pragma: no cover - defensive
+        click.echo(f"warning: SLA monitor unavailable ({exc}); SLAs will not evaluate", err=True)
+
+    supervisor = ScheduleSupervisor(
+        store,
+        _dispatch,
+        audit_writer,
+        sla_monitor=sla_monitor,
+    )
 
     if once:
         receipts = supervisor.tick()
