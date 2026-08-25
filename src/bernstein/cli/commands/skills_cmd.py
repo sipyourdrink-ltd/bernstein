@@ -109,7 +109,6 @@ def skills_list(no_plugins: bool, layered: bool) -> None:
         # Format SOURCE column to include the pack name if from a plugin
         source_display = skill.source_name
         if source_display.startswith("plugin:"):
-
             # Format as "plugin <packname>"
             pack_name = source_display.replace("plugin:", "", 1)
             source_display = f"plugin {pack_name}"
