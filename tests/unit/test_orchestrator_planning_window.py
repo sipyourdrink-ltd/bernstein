@@ -4,19 +4,19 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
 from bernstein.core.models import (
-    AgentSession,
     OrchestratorConfig,
     Task,
     TaskStatus,
 )
 from bernstein.core.orchestrator import Orchestrator
+
 from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.core.agents.spawner_core import AgentSpawner
 from bernstein.core.security.run_closure import RunClosureOutcome
 
 
@@ -140,10 +140,9 @@ def _build_orchestrator(
 class TestPlanningWindow:
     """Tests for the planning window functionality."""
 
-    def test_initial_empty_ledger_does_not_terminate(
-        self, tmp_path: Path
-    ) -> None:
+    def test_initial_empty_ledger_does_not_terminate(self, tmp_path: Path) -> None:
         """Orchestrator should not terminate on initial empty ledger (no tasks ever seen)."""
+
         # No tasks at all - initial state
         def handler(request: httpx.Request) -> httpx.Response:
             if request.method == "GET" and request.url.path == "/tasks":
@@ -161,19 +160,18 @@ class TestPlanningWindow:
 
         # Run multiple ticks - should not terminate
         for _ in range(10):
-            result = orch.tick()
+            orch.tick()
             assert orch._running is True, "Orchestrator should still be running"
             assert orch._closure_outcome == RunClosureOutcome.COMPLETED
             # Verify planning window state
             assert orch._ever_had_tasks is False
             assert orch._first_empty_ledger_ts is not None  # First empty ledger timestamp set
 
-    def test_planning_window_terminates_after_seeing_tasks_then_empty(
-        self, tmp_path: Path
-    ) -> None:
+    def test_planning_window_terminates_after_seeing_tasks_then_empty(self, tmp_path: Path) -> None:
         """Orchestrator should terminate after seeing tasks then empty ledger for planning_window_s."""
         # First return some tasks, then return empty
         task_call_count = 0
+
         def handler(request: httpx.Request) -> httpx.Response:
             nonlocal task_call_count
             if request.method == "GET" and request.url.path == "/tasks":
@@ -202,7 +200,7 @@ class TestPlanningWindow:
         # Run ticks until we've seen tasks and then empty for planning_window_s
         start_time = time.time()
         while orch._running and (time.time() - start_time) < 2.0:  # Safety timeout
-            result = orch.tick()
+            orch.tick()
             time.sleep(0.05)  # Small sleep to allow time to pass
 
         # Should have terminated due to planning window expiration
@@ -211,12 +209,11 @@ class TestPlanningWindow:
         assert orch._ever_had_tasks is True
         assert orch._first_empty_ledger_ts is not None
 
-    def test_seeing_tasks_resets_empty_ledger_timer(
-        self, tmp_path: Path
-    ) -> None:
+    def test_seeing_tasks_resets_empty_ledger_timer(self, tmp_path: Path) -> None:
         """Seeing tasks after empty ledger should reset the planning window timer."""
         # Pattern: empty -> tasks -> empty -> should not terminate yet
         call_count = 0
+
         def handler(request: httpx.Request) -> httpx.Response:
             nonlocal call_count
             if request.method == "GET" and request.url.path == "/tasks":
@@ -249,7 +246,7 @@ class TestPlanningWindow:
 
         # Run enough ticks to go through the sequence
         for i in range(20):  # Enough ticks at 50ms intervals = 1 second total
-            result = orch.tick()
+            orch.tick()
             assert orch._running is True, f"Should still be running after tick {i}"
             time.sleep(0.02)  # 20ms sleep
 
@@ -260,11 +257,10 @@ class TestPlanningWindow:
         assert orch._ever_had_tasks is True
         assert orch._first_empty_ledger_ts is not None
 
-    def test_planning_window_respected_when_tasks_appear_during_window(
-        self, tmp_path: Path
-    ) -> None:
+    def test_planning_window_respected_when_tasks_appear_during_window(self, tmp_path: Path) -> None:
         """If tasks appear during the planning window, timer should reset."""
         call_count = 0
+
         def handler(request: httpx.Request) -> httpx.Response:
             nonlocal call_count
             if request.method == "GET" and request.url.path == "/tasks":
@@ -292,7 +288,7 @@ class TestPlanningWindow:
         # Run for longer than planning window but with tasks appearing during it
         start_time = time.time()
         while orch._running and (time.time() - start_time) < 1.5:  # Run for 1.5 seconds
-            result = orch.tick()
+            orch.tick()
             time.sleep(0.05)
 
         # Should still be running because tasks appeared during the window
@@ -306,14 +302,14 @@ class TestPlanningWindow:
     ) -> None:
         """Planning window can be configured via BERNSTEIN_PLANNING_WINDOW_S env var."""
         monkeypatch.setenv("BERNSTEIN_PLANNING_WINDOW_S", "2.5")
-        
+
         # Reload defaults to pick up the env var
         from bernstein.core import defaults
         from bernstein.core.defaults import reset
-        
+
         reset()  # Clear any overrides
-        
+
         # Check that the default was picked up
         assert defaults.ORCHESTRATOR.planning_window_s == 2.5
-        
+
         reset()  # Clean up
