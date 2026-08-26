@@ -1,5 +1,6 @@
-import pytest
 from types import SimpleNamespace
+
+import pytest
 
 from bernstein.core.tasks.task_lifecycle import _create_approval_pr
 
