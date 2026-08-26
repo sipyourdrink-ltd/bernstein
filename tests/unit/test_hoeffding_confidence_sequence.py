@@ -144,12 +144,13 @@ class TestCanonicalRound:
 
     def test_round_half_even(self):
         """Test round-half-to-even behavior."""
-        # 0.5 rounds to nearest even (0)
-        assert canonical_round(0.5) == 0.0
-        # 1.5 rounds to nearest even (2)
-        assert canonical_round(1.5) == 2.0
-        # 2.5 rounds to nearest even (2)
-        assert canonical_round(2.5) == 2.0
+        # canonical_round quantises at `places` decimals, so half-even only
+        # shows at places=0; the default of 10 leaves these values untouched.
+        assert canonical_round(0.5, places=0) == 0.0
+        assert canonical_round(1.5, places=0) == 2.0
+        assert canonical_round(2.5, places=0) == 2.0
+        # At the default precision the value is preserved exactly.
+        assert canonical_round(0.5) == 0.5
 
     def test_negative_zero_normalized(self):
         """Negative zero should be normalized to positive zero."""
