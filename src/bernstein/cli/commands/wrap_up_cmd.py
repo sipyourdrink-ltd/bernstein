@@ -14,6 +14,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from bernstein.cli.helpers import console, require_server_reachable, server_get
+from bernstein.core.integrations.pr_gen import load_session_summary
 from bernstein.core.session import WrapUpBrief, save_wrapup
 
 
@@ -238,7 +239,13 @@ def wrap_up(do_stop: bool, timeout: int) -> None:
     git_diff_stat = _get_git_diff_stat(start_sha)
 
     # 5. Build brief fields
-    changes_summary = _build_changes_summary(done_tasks)
+    # If there are no completed tasks, fall back to the session summary's changes.
+    if done_tasks:
+        changes_summary = _build_changes_summary(done_tasks)
+    else:
+        # Load the most recent session summary as a fallback.
+        session_summary = load_session_summary(None, workdir=workdir)
+        changes_summary = session_summary.changes_summary or "No tasks completed this session."
     learnings = _extract_learnings(failed_tasks)
     next_session_brief = _build_next_session_brief(open_tasks)
 
