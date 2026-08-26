@@ -275,7 +275,14 @@ class PolicyEngine:
         policies_file = config_dir / "policies.yaml"
         if policies_file.exists():
             try:
-                engine = cls.from_yaml(policies_file)
+                with policies_file.open() as f:
+                    raw_data: object = yaml.safe_load(f)
+                data: dict[str, Any] = cast("dict[str, Any]", raw_data) if isinstance(raw_data, dict) else {}
+                # Remove pending_upgrades if present
+                if "pending_upgrades" in data:
+                    data.pop("pending_upgrades")
+                    logger.warning("Ignoring leftover pending_upgrades in %s", policies_file)
+                engine = cls.from_dict(data)
                 logger.info("Loaded policies from %s (%d policies)", policies_file, len(engine.policies))
                 return engine
             except Exception as exc:

@@ -448,6 +448,48 @@ class TestFastPathStats:
         assert stats.actions["ruff_fix"] == 5
 
 
+class TestLoadFastPathConfig:
+    """Tests for load_fast_path_config()."""
+
+    def setup_method(self) -> None:
+        self._orig_l0 = list(fast_path_module._l0_patterns)
+        self._orig_l1 = list(fast_path_module._l1_patterns)
+        self._orig_l1_model = fast_path_module._l1_model_config
+
+    def teardown_method(self) -> None:
+        fast_path_module._l0_patterns = self._orig_l0
+        fast_path_module._l1_patterns = self._orig_l1
+        fast_path_module._l1_model_config = self._orig_l1_model
+
+    def test_load_config_ignores_pending_upgrades(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        import logging
+
+        from bernstein.core.fast_path import load_fast_path_config
+
+        routing_yaml = tmp_path / "routing.yaml"
+        routing_yaml.write_text(
+            """
+fast_path:
+  enabled: true
+  l1_model: "claude-3-haiku"
+  l1_effort: "low"
+pending_upgrades:
+  - id: "legacy-pending"
+    title: "Old upgrade"
+    change: "Ignore me"
+""",
+            encoding="utf-8",
+        )
+
+        with caplog.at_level(logging.WARNING):
+            result = load_fast_path_config(routing_yaml)
+            assert result is True
+            assert any("pending_upgrades" in record.message for record in caplog.records)
+
+        assert fast_path_module._l1_model_config is not None
+        assert fast_path_module._l1_model_config.model == "claude-3-haiku"
+
+
 # --- L1 model config ---
 
 

@@ -12,7 +12,6 @@ import yaml
 
 from bernstein.evolution.admission import AdmissionPolicy
 from bernstein.evolution.proposals import UpgradeCategory, UpgradeProposal
-from bernstein.evolution.upgrade_targets import upgrade_target_paths
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -162,96 +161,36 @@ class FileUpgradeExecutor:
     # ------------------------------------------------------------------
 
     def _apply_policy_update(self, proposal: UpgradeProposal) -> bool:
-        """Apply a policy update to .sdd/config/policies.yaml."""
-        config_file = upgrade_target_paths(UpgradeCategory.POLICY_UPDATE, self.state_dir)[0]
-        self._backup_file(config_file.name)
+        """Apply a policy update to .sdd/config/policies.yaml.
 
-        data = self._read_yaml(config_file)
-
-        # Append a proposed-upgrade entry so the orchestrator can act on it
-        pending: list[dict[str, Any]] = data.get("pending_upgrades", [])
-        pending.append(
-            {
-                "id": proposal.id,
-                "title": proposal.title,
-                "change": proposal.proposed_change,
-                "confidence": proposal.confidence,
-                "applied_at": time.time(),
-            }
-        )
-        data["pending_upgrades"] = pending
-
-        self._atomic_write(config_file, data)
-        self._record_history(proposal, "applied")
-        return True
+        This category no longer has a valid sink, so the upgrade is not applied.
+        """
+        return False
 
     def _apply_routing_rules(self, proposal: UpgradeProposal) -> bool:
-        """Apply routing rule changes to .sdd/config/routing.yaml."""
-        config_file = upgrade_target_paths(UpgradeCategory.ROUTING_RULES, self.state_dir)[0]
-        self._backup_file(config_file.name)
+        """Apply routing rule changes to .sdd/config/routing.yaml.
 
-        data = self._read_yaml(config_file)
-
-        pending: list[dict[str, Any]] = data.get("pending_upgrades", [])
-        pending.append(
-            {
-                "id": proposal.id,
-                "title": proposal.title,
-                "change": proposal.proposed_change,
-                "confidence": proposal.confidence,
-                "applied_at": time.time(),
-            }
-        )
-        data["pending_upgrades"] = pending
-
-        self._atomic_write(config_file, data)
-        self._record_history(proposal, "applied")
-        return True
+        This category no longer has a valid sink, so the upgrade is not applied.
+        """
+        return False
 
     def _apply_model_routing(self, proposal: UpgradeProposal) -> bool:
-        """Apply model routing changes (stored in routing.yaml)."""
-        return self._apply_routing_rules(proposal)
+        """Apply model routing changes (stored in routing.yaml).
+
+        This category no longer has a valid sink, so the upgrade is not applied.
+        """
+        return False
 
     def _apply_provider_config(self, proposal: UpgradeProposal) -> bool:
-        """Apply provider configuration changes to .sdd/config/providers.yaml."""
-        config_file = upgrade_target_paths(UpgradeCategory.PROVIDER_CONFIG, self.state_dir)[0]
-        self._backup_file(config_file.name)
+        """Apply provider configuration changes to .sdd/config/providers.yaml.
 
-        data = self._read_yaml(config_file)
-
-        pending: list[dict[str, Any]] = data.get("pending_upgrades", [])
-        pending.append(
-            {
-                "id": proposal.id,
-                "title": proposal.title,
-                "change": proposal.proposed_change,
-                "confidence": proposal.confidence,
-                "applied_at": time.time(),
-            }
-        )
-        data["pending_upgrades"] = pending
-
-        self._atomic_write(config_file, data)
-        self._record_history(proposal, "applied")
-        return True
+        This category no longer has a valid sink, so the upgrade is not applied.
+        """
+        return False
 
     def _apply_role_template(self, proposal: UpgradeProposal) -> bool:
-        """Record a role template upgrade proposal in the templates directory."""
-        proposals_file = upgrade_target_paths(UpgradeCategory.ROLE_TEMPLATES, self.state_dir)[0]
-        proposals_file.parent.mkdir(parents=True, exist_ok=True)
-        with proposals_file.open("a") as f:
-            f.write(
-                json.dumps(
-                    {
-                        "id": proposal.id,
-                        "title": proposal.title,
-                        "change": proposal.proposed_change,
-                        "confidence": proposal.confidence,
-                        "applied_at": time.time(),
-                    }
-                )
-                + "\n"
-            )
+        """Record a role template upgrade proposal in the templates directory.
 
-        self._record_history(proposal, "applied")
-        return True
+        This category no longer has a valid sink, so the upgrade is not applied.
+        """
+        return False
