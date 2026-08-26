@@ -85,9 +85,9 @@ class TestHoeffdingConfidenceSequence:
 
         # Check that values are rounded (not too many decimal places)
         def count_decimal_places(x: float) -> int:
-            s = f"{x:.15f}".rstrip('0')
-            if '.' in s:
-                return len(s.split('.')[1])
+            s = f"{x:.15f}".rstrip("0")
+            if "." in s:
+                return len(s.split(".")[1])
             return 0
 
         # Canonically rounded values should have at most 10 decimal places
@@ -161,17 +161,17 @@ class TestCanonicalRound:
     def test_nan_raises(self):
         """NaN should raise ValueError."""
         with pytest.raises(ValueError, match="cannot canonically round non-finite"):
-            canonical_round(float('nan'))
+            canonical_round(float("nan"))
 
     def test_inf_raises(self):
         """Infinity should raise ValueError."""
         with pytest.raises(ValueError, match="cannot canonically round non-finite"):
-            canonical_round(float('inf'))
+            canonical_round(float("inf"))
 
     def test_negative_inf_raises(self):
         """Negative infinity should raise ValueError."""
         with pytest.raises(ValueError, match="cannot canonically round non-finite"):
-            canonical_round(float('-inf'))
+            canonical_round(float("-inf"))
 
     def test_precision(self):
         """Results should be precise to 10 decimal places."""

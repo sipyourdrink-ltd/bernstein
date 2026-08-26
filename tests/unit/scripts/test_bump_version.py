@@ -117,9 +117,7 @@ def test_bump_accepts_a_version_whose_notes_exist(
     bump_module.NOTES_DIR = notes
 
     calls: list[list[str]] = []
-    monkeypatch.setattr(
-        bump_module.subprocess, "run", lambda cmd, **kw: calls.append(list(cmd)) or None
-    )
+    monkeypatch.setattr(bump_module.subprocess, "run", lambda cmd, **kw: calls.append(list(cmd)) or None)
     assert bump_module.main(["3.4.5"]) == 0
     assert 'version = "3.4.5"' in pyproject.read_text(encoding="utf-8")
     assert len(calls) == 2, "the bump still regenerates the lockfile and the manifests"
