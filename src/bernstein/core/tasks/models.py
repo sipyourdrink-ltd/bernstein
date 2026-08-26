@@ -1169,6 +1169,7 @@ class AgentSession:
     provider: str | None = None  # Provider selected by TierAwareRouter
     agent_source: str = "built-in"  # "catalog", "agency", or "built-in"
     timeout_s: int | None = None  # Per-agent wall-clock timeout; None = use OrchestratorConfig default
+    timeout_timer: Any | None = None  # Armed watchdog timer, stashed at spawn for re-arm on extension (#4571)
     log_path: str = ""  # Path to agent log file for live streaming
     tokens_used: int = 0  # Running total of input+output tokens consumed by this agent
     token_budget: int = 0  # Per-task token budget computed from scope (0 = unlimited)

@@ -825,6 +825,10 @@ class CLIAdapter(ABC):
 
         Returns:
             The started Timer - caller should store it for cancellation.
+            The extension path re-arms it via :meth:`extend_timeout` by
+            cancelling and starting a fresh timer; a missed re-arm leaves the
+            original timer in place, so the agent is never left unguarded
+            (issue #4571).
         """
 
         def _kill_on_timeout() -> None:
@@ -856,6 +860,34 @@ class CLIAdapter(ABC):
         timer.name = f"timeout-watchdog-{session_id}"
         timer.start()
         return timer
+
+    def extend_timeout(
+        self,
+        timer: threading.Timer,
+        pid: int,
+        timeout_seconds: int,
+        session_id: str,
+    ) -> threading.Timer:
+        """Re-arm an active watchdog with a new deadline (issue #4571).
+
+        Cancels the current timer and starts a fresh one at ``timeout_seconds``
+        from now. If the timer has already fired, cancelling is a no-op and the
+        agent was already reaped; the caller should not extend a dead session.
+        A caller that *never* reaches this method (e.g. the orchestrator
+        stalled) leaves the original timer armed, which is the safe fallback:
+        the agent is still killed at the old deadline, never left unguarded.
+
+        Args:
+            timer: The currently-armed watchdog timer.
+            pid: Process ID the watchdog monitors.
+            timeout_seconds: New deadline in seconds from now.
+            session_id: Session identifier for structured logging.
+
+        Returns:
+            The newly-armed timer, which the caller should store back.
+        """
+        timer.cancel()
+        return self._start_timeout_watchdog(pid, timeout_seconds, session_id)
 
     @staticmethod
     def _read_last_lines(log_path: Path, n: int = 10) -> list[str]:

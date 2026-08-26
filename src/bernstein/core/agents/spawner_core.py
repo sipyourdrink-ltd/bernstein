@@ -17,7 +17,7 @@ from contextlib import suppress
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, cast
 
-from bernstein.adapters.base import RateLimitError, SpawnError, SpawnResult
+from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, RateLimitError, SpawnError, SpawnResult
 from bernstein.adapters.plugin_sdk import (
     SAMPLING_PARAM_KEYS,
     SamplingParamsRefusal,
@@ -3085,6 +3085,18 @@ class AgentSpawner:
                 else:
                     os.environ[_k] = _prev
 
+    @staticmethod
+    def _resolve_spawn_timeout(tasks: list[Task]) -> int:
+        """Resolve the wall-clock timeout bucket for a task batch (#4571).
+
+        Delegates to ``_batch_timeout_seconds`` so the value armed on the
+        adapter's watchdog is the same value ``reap_dead_agents`` reads back
+        from ``session.timeout_s`` - one source of truth for the timeout.
+        """
+        from bernstein.core.tasks.task_lifecycle import _batch_timeout_seconds
+
+        return _batch_timeout_seconds(tasks)
+
     def _apply_provider_availability(
         self,
         role_name: str,
@@ -4156,6 +4168,7 @@ class AgentSpawner:
             agent_source=agent_source,
             isolation=isolation_mode.value,
             token_budget=task_token_budget,
+            timeout_s=self._resolve_spawn_timeout(tasks),
             meta_messages=meta_messages,
             response_profile=style_resolution.style,
             profile_content_sha256=profile_content_sha,
@@ -4706,6 +4719,7 @@ class AgentSpawner:
                                 model_config=model_config,
                                 session_id=session_id,
                                 mcp_config=attempt_mcp,
+                                timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
                                 task_scope=max_scope,
                                 budget_multiplier=_budget_mult,
                                 system_addendum=style_addendum,
@@ -4850,6 +4864,8 @@ class AgentSpawner:
                 session.abort_reason = result.abort_reason
                 session.abort_detail = result.abort_detail
                 session.finish_reason = result.finish_reason
+                if result.timeout_timer is not None:
+                    session.timeout_timer = result.timeout_timer
                 if result.log_path:
                     session.log_path = str(result.log_path)
 
@@ -5248,6 +5264,7 @@ class AgentSpawner:
             workdir=worktree_path,
             model_config=model_config,
             session_id=session_id,
+            timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
             task_scope=resume_scope,
             system_addendum=_resume_addendum,
             **_resume_extra,
@@ -5256,6 +5273,8 @@ class AgentSpawner:
         session.abort_reason = result.abort_reason
         session.abort_detail = result.abort_detail
         session.finish_reason = result.finish_reason
+        if result.timeout_timer is not None:
+            session.timeout_timer = result.timeout_timer
 
         # Touch heartbeat on resume spawn (same rationale as main spawn path)
         self._touch_prespawn_heartbeat(session_id)
