@@ -44,6 +44,7 @@ def test_artifact_kind_membership() -> None:
         "action_log",
         "ops_result",
         "finding",
+        "blob",
     }
 
 
