@@ -4,7 +4,12 @@ from unittest.mock import patch
 from urllib.parse import quote
 
 from scripts import trunk_health_slo
-from scripts.trunk_health_slo import MIN_SAMPLE_SIZE, marker_should_open, score_runs
+from scripts.trunk_health_slo import (
+    MIN_SAMPLE_SIZE,
+    marker_should_open,
+    score_runs,
+    trunk_is_red_now,
+)
 
 
 def test_score_runs_counts_only_failures():
@@ -165,7 +170,7 @@ def test_one_red_run_does_not_hold_the_repo() -> None:
     the 24h window. At these sample sizes a percentage threshold below
     1/MIN_SAMPLE_SIZE is a zero-tolerance gate wearing a rate's clothes.
     """
-    assert marker_should_open(total=19, red=1, red_pct=5, threshold_pct=5) is False
+    assert marker_should_open(total=19, red=1, red_pct=5, threshold_pct=5, trunk_red_now=True) is False
 
 
 def test_a_second_red_run_does_hold_the_repo() -> None:
@@ -174,14 +179,58 @@ def test_a_second_red_run_does_hold_the_repo() -> None:
     Without this the test above is satisfied by a function that never opens
     a marker at all.
     """
-    assert marker_should_open(total=19, red=2, red_pct=10, threshold_pct=5) is True
+    assert marker_should_open(total=19, red=2, red_pct=10, threshold_pct=5, trunk_red_now=True) is True
 
 
 def test_reds_under_the_threshold_do_not_hold_the_repo() -> None:
     """Two reds are necessary, not sufficient - the rate still has to cross."""
-    assert marker_should_open(total=100, red=2, red_pct=2, threshold_pct=5) is False
+    assert marker_should_open(total=100, red=2, red_pct=2, threshold_pct=5, trunk_red_now=True) is False
 
 
 def test_a_thin_sample_never_holds_the_repo() -> None:
     """Below MIN_SAMPLE_SIZE there is no rate to speak of."""
-    assert marker_should_open(total=MIN_SAMPLE_SIZE - 1, red=MIN_SAMPLE_SIZE - 1, red_pct=100, threshold_pct=5) is False
+    assert marker_should_open(
+        total=MIN_SAMPLE_SIZE - 1,
+        red=MIN_SAMPLE_SIZE - 1,
+        red_pct=100,
+        threshold_pct=5,
+        trunk_red_now=True,
+    ) is False
+
+
+def _run(conclusion: str, created_at: str) -> dict[str, str]:
+    return {"conclusion": conclusion, "created_at": created_at}
+
+
+def test_latest_verdict_is_the_newest_completed_run() -> None:
+    runs = [
+        _run("success", "2026-08-26T20:00:00Z"),
+        _run("failure", "2026-08-26T11:00:00Z"),
+        _run("cancelled", "2026-08-26T21:00:00Z"),
+    ]
+    assert trunk_is_red_now(runs) is False
+
+
+def test_latest_verdict_reads_red_when_the_newest_completed_run_failed() -> None:
+    runs = [
+        _run("failure", "2026-08-26T20:00:00Z"),
+        _run("success", "2026-08-26T11:00:00Z"),
+    ]
+    assert trunk_is_red_now(runs) is True
+
+
+def test_marker_stays_shut_when_trunk_is_green_again() -> None:
+    """Two infrastructure failures held every merge in the repository for a
+    full day while main itself was green: the rate alone latches on history.
+    The andon exists to stop merges piling onto a broken main, so a main whose
+    newest run is green releases it.
+    """
+    assert marker_should_open(
+        total=27, red=2, red_pct=7, threshold_pct=5, trunk_red_now=False
+    ) is False
+
+
+def test_marker_opens_when_the_rate_is_over_and_trunk_is_red_now() -> None:
+    assert marker_should_open(
+        total=27, red=2, red_pct=7, threshold_pct=5, trunk_red_now=True
+    ) is True
