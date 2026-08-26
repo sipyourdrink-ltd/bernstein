@@ -53,6 +53,7 @@ def test_blob_artifact_roundtrips_declare_complete_verify():
 
         # Verify the artifact using the receipt
         from bernstein.core.lineage.artifact_record import verify_artifact
+
         sdd_dir = workdir / ".sdd"
         sink_root = sdd_dir / "artifacts"
         verification_result = verify_artifact(
@@ -98,6 +99,7 @@ def test_one_byte_mutation_fails_blob_verification():
 
         # Verify the artifact should fail
         from bernstein.core.lineage.artifact_record import verify_artifact
+
         sdd_dir = workdir / ".sdd"
         verification_result = verify_artifact(
             task_id=completion.receipt.task_id,
