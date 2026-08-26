@@ -1036,7 +1036,7 @@ class PluginManager:
             return 0
 
     def discover_entry_points(self) -> None:
-        """Load all plugins registered via the ``bernstein.plugins`` entry-point group."""
+        """Load hook plugins from the standard and reporter entry-point groups."""
         eps = entry_points(group="bernstein.plugins")
         for ep in eps:
             try:
@@ -1057,15 +1057,19 @@ class PluginManager:
                     stacklevel=1,
                 )
 
-        from bernstein.plugins.reporters import discover_reporters
-
-        discover_reporters(self._register_reporter)
-
-    def _register_reporter(self, reporter: object, name: str) -> None:
-        """Apply policy and register a discovered reporter hook plugin."""
-        check_plugin_allowed(name, self._policy)
-        self._pm.register(reporter, name=name)
-        self._registered_names.append(name)
+        for ep in entry_points(group="bernstein.reporters"):
+            try:
+                check_plugin_allowed(ep.name, self._policy)
+                reporter = ep.load()
+                if isinstance(reporter, type):
+                    reporter = reporter()
+                self._pm.register(reporter, name=ep.name)
+                self._registered_names.append(ep.name)
+                log.debug("Loaded reporter entry-point %r from %s", ep.name, ep.value)
+            except PluginPolicyViolation as exc:
+                log.warning("Reporter %r blocked by enterprise policy: %s", ep.name, exc.reason)
+            except Exception as exc:
+                log.warning("Failed to load reporter entry-point %r: %s", ep.name, exc)
 
     def discover_config_plugins(self, config_plugins: list[str]) -> None:
         """Load plugins listed in ``bernstein.yaml`` under the ``plugins:`` key.
