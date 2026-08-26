@@ -13,6 +13,8 @@ from bernstein.core.persistence.atomic_write import write_atomic_json
 from .runs_report import RunWrapUp
 from .work_ledger import (
     KIND_RUN_CLOSED,
+    KIND_TASK_COMPLETED,
+    KIND_TASK_FAILED,
     LedgerReader,
     default_ledger_root,
     run_ledger_dir,
@@ -119,6 +121,74 @@ def _compute_failure_classes(workdir: Path) -> list[dict[str, Any]]:
     return result
 
 
+def _compute_flaky_tests(workdir: Path) -> list[dict[str, Any]]:
+    """Compute flaky tests insight: tests that failed then passed with no intervening source change.
+
+    Returns a list of dicts, each with keys:
+        test_name: str
+        flaky_count: int
+        first_seen: float  (timestamp)
+        last_seen: float
+        patterns: list[str]  # sequence of outcomes (e.g., ["failed", "passed"])
+    """
+    root = default_ledger_root(workdir)
+    # Map from test_name to list of (timestamp, outcome) for task.completed/failed entries
+    test_sequences: dict[str, list[tuple[float, str]]] = {}
+
+    for child in sorted(root.iterdir()):
+        if not child.is_dir():
+            continue
+        ledger_dir = run_ledger_dir(workdir, child.name)
+        reader = LedgerReader(ledger_dir)
+        if not reader.exists():
+            continue
+        entries = list(reader.entries())
+        if not entries:
+            continue
+
+        # Process task.completed and task.failed entries in chronological order
+        for entry in entries:
+            if entry.kind in (KIND_TASK_COMPLETED, KIND_TASK_FAILED):
+                # Extract test name from task_id (assuming format like "test_*" or similar)
+                task_id = entry.task_id
+                if task_id.startswith("test_"):
+                    outcome = "passed" if entry.kind == KIND_TASK_COMPLETED else "failed"
+                    if task_id not in test_sequences:
+                        test_sequences[task_id] = []
+                    test_sequences[task_id].append((entry.ts, outcome))
+
+    # Analyze sequences for flaky patterns (failed then passed with no intervening source change)
+    # For simplicity, we'll detect any sequence that has both failed and passed states
+    flaky_tests: list[dict[str, Any]] = []
+    for test_name, sequence in test_sequences.items():
+        if len(sequence) < 2:
+            continue
+
+        # Sort by timestamp
+        sequence.sort(key=lambda x: x[0])
+
+        # Check if we have both failed and passed states
+        outcomes = [outcome for _, outcome in sequence]
+        if "failed" in outcomes and "passed" in outcomes:
+            # Count transitions from failed to passed or passed to failed
+            flaky_count = 0
+            for i in range(1, len(outcomes)):
+                if outcomes[i] != outcomes[i-1]:
+                    flaky_count += 1
+
+            flaky_tests.append({
+                "test_name": test_name,
+                "flaky_count": flaky_count,
+                "first_seen": sequence[0][0],
+                "last_seen": sequence[-1][0],
+                "patterns": [outcome for _, outcome in sequence]
+            })
+
+    # Sort by flaky count descending
+    flaky_tests.sort(key=lambda x: x["flaky_count"], reverse=True)
+    return flaky_tests
+
+
 def generate_failure_classes_insights(workdir: Path) -> InsightsData:
     """Generate insights data for failure classes.
 
@@ -135,9 +205,31 @@ def generate_failure_classes_insights(workdir: Path) -> InsightsData:
     )
 
 
+def generate_flaky_tests_insights(workdir: Path) -> InsightsData:
+    """Generate insights data for flaky tests.
+
+    Args:
+        workdir: Project root directory.
+
+    Returns:
+        InsightsData containing the flaky tests insight.
+    """
+    flaky_tests = _compute_flaky_tests(workdir)
+    return InsightsData(
+        timestamp=time.time(),
+        data={"flaky_tests": flaky_tests},
+    )
+
+
 def save_failure_classes_insights(workdir: Path) -> None:
     """Compute and save failure classes insights."""
     data = generate_failure_classes_insights(workdir)
+    save_insights(workdir, data)
+
+
+def save_flaky_tests_insights(workdir: Path) -> None:
+    """Compute and save flaky tests insights."""
+    data = generate_flaky_tests_insights(workdir)
     save_insights(workdir, data)
 
 

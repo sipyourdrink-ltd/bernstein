@@ -8,10 +8,14 @@ from pathlib import Path
 
 from bernstein.core.persistence.insights import (
     generate_failure_classes_insights,
+    generate_flaky_tests_insights,
     save_failure_classes_insights,
+    save_flaky_tests_insights,
 )
 from bernstein.core.persistence.work_ledger import (
     KIND_RUN_CLOSED,
+    KIND_TASK_COMPLETED,
+    KIND_TASK_FAILED,
     LedgerState,
     LedgerEntry,
     default_ledger_root,
@@ -58,7 +62,7 @@ def _make_run_closed_entry(
 
 def test_failure_classes_insights_empty(tmp_path: Path) -> None:
     """With no gate failures, the insight should be an empty list."""
-    # Setup a ledger directory for a fake run
+    # Setup a ledger a ledger directory for a fake run
     run_id = "test-run-001"
     ledger_dir = run_ledger_dir(tmp_path, run_id)
     ledger_dir.mkdir(parents=True)
@@ -67,6 +71,317 @@ def test_failure_classes_insights_empty(tmp_path: Path) -> None:
     # Generate insights
     insights = generate_failure_classes_insights(tmp_path)
     assert insights.data["failure_classes"] == []
+
+
+def test_flaky_tests_insights_empty(tmp_path: Path) -> None:
+    """With no flaky tests, the insight should be an empty list."""
+    run_id = "test-run-001"
+    ledger_dir = run_ledger_dir(tmp_path, run_id)
+    ledger_dir.mkdir(parents=True)
+    # No task.completed or task.failed entries
+    insights = generate_flaky_tests_insights(tmp_path)
+    assert insights.data["flaky_tests"] == []
+
+
+def test_flaky_tests_insights_single_test_only_passed(tmp_path: Path) -> None:
+    """A test that only passed should not be considered flaky."""
+    run_id = "test-run-001"
+    ledger_dir = run_ledger_dir(tmp_path, run_id)
+    ledger_dir.mkdir(parents=True)
+    # Add a task.completed entry for a test
+    entry = LedgerEntry(
+        seq=0,
+        prev_hash="0" * 64,
+        kind=KIND_TASK_COMPLETED,
+        task_id="test_example",
+        payload={},
+        entry_hash="0" * 64,
+        ts=time.time(),
+    )
+    (ledger_dir / "000000.jsonl").write_text(
+        json.dumps(entry.to_dict()) + "\n", encoding="utf-8"
+    )
+    insights = generate_flaky_tests_insights(tmp_path)
+    assert insights.data["flaky_tests"] == []
+
+
+def test_flaky_tests_insights_single_test_only_failed(tmp_path: Path) -> None:
+    """A test that only failed should not be considered flaky."""
+    run_id = "test-run-001"
+    ledger_dir = run_ledger_dir(tmp_path, run_id)
+    ledger_dir.mkdir(parents=True)
+    # Add a task.failed entry for a test
+    entry = LedgerEntry(
+        seq=0,
+        prev_hash="0" * 64,
+        kind=KIND_TASK_FAILED,
+        task_id="test_example",
+        payload={},
+        entry_hash="0" * 64,
+        ts=time.time(),
+    )
+    (ledger_dir / "000000.jsonl").write_text(
+        json.dumps(entry.to_dict()) + "\n", encoding="utf-8"
+    )
+    insights = generate_flaky_tests_insights(tmp_path)
+    assert insights.data["flaky_tests"] == []
+
+
+def test_flaky_tests_insights_test_failed_then_passed(tmp_path: Path) -> None:
+    """A test that failed then passed should be considered flaky."""
+    run_id = "test-run-001"
+    ledger_dir = run_ledger_dir(tmp_path, run_id)
+    ledger_dir.mkdir(parents=True)
+    ts_first = time.time()
+    ts_second = ts_first + 10.0
+    # First: test failed
+    entry_failed = LedgerEntry(
+        seq=0,
+        prev_hash="0" * 64,
+        kind=KIND_TASK_FAILED,
+        task_id="test_example",
+        payload={},
+        entry_hash="0" * 64,
+        ts=ts_first,
+    )
+    # Second: test passed
+    entry_passed = LedgerEntry(
+        seq=1,
+        prev_hash="0" * 64,
+        kind=KIND_TASK_COMPLETED,
+        task_id="test_example",
+        payload={},
+        entry_hash="0" * 64,
+        ts=ts_second,
+    )
+    (ledger_dir / "000000.jsonl").write_text(
+        json.dumps(entry_failed.to_dict()) + "\n" +
+        json.dumps(entry_passed.to_dict()) + "\n",
+        encoding="utf-8"
+    )
+    insights = generate_flaky_tests_insights(tmp_path)
+    flaky_tests = insights.data["flaky_tests"]
+    assert len(flaky_tests) == 1
+    assert flaky_tests[0]["test_name"] == "test_example"
+    assert flaky_tests[0]["flaky_count"] == 1  # One transition (failed -> passed)
+    assert flaky_tests[0]["first_seen"] == ts_first
+    assert flaky_tests[0]["last_seen"] == ts_second
+    assert flaky_tests[0]["patterns"] == ["failed", "passed"]
+
+
+def test_flaky_tests_insights_test_passed_then_failed_then_passed(tmp_path: Path) -> None:
+    """A test with multiple transitions should count all transitions."""
+    run_id = "test-run-001"
+    ledger_dir = run_ledger_dir(tmp_path, run_id)
+    ledger_dir.mkdir(parents=True)
+    ts_first = time.time()
+    ts_second = ts_first + 10.0
+    ts_third = ts_second + 10.0
+    # First: test passed
+    entry_passed1 = LedgerEntry(
+        seq=0,
+        prev_hash="0" * 64,
+        kind=KIND_TASK_COMPLETED,
+        task_id="test_example",
+        payload={},
+        entry_hash="0" * 64,
+        ts=ts_first,
+    )
+    # Second: test failed
+    entry_failed = LedgerEntry(
+        seq=1,
+        prev_hash="0" * 64,
+        kind=KIND_TASK_FAILED,
+        task_id="test_example",
+        payload={},
+        entry_hash="0" * 64,
+        ts=ts_second,
+    )
+    # Third: test passed again
+    entry_passed2 = LedgerEntry(
+        seq=2,
+        prev_hash="0" * 64,
+        kind=KIND_TASK_COMPLETED,
+        task_id="test_example",
+        payload={},
+        entry_hash="0" * 64,
+        ts=ts_third,
+    )
+    (ledger_dir / "000000.jsonl").write_text(
+        json.dumps(entry_passed1.to_dict()) + "\n" +
+        json.dumps(entry_failed.to_dict()) + "\n" +
+        json.dumps(entry_passed2.to_dict()) + "\n",
+        encoding="utf-8"
+    )
+    insights = generate_flaky_tests_insights(tmp_path)
+    flaky_tests = insights.data["flaky_tests"]
+    assert len(flaky_tests) == 1
+    assert flaky_tests[0]["test_name"] == "test_example"
+    assert flaky_tests[0]["flaky_count"] == 2  # Two transitions (passed->failed, failed->passed)
+    assert flaky_tests[0]["first_seen"] == ts_first
+    assert flaky_tests[0]["last_seen"] == ts_third
+    assert flaky_tests[0]["patterns"] == ["passed", "failed", "passed"]
+
+
+def test_flaky_tests_insights_non_test_tasks_ignored(tmp_path: Path) -> None:
+    """Non-test tasks (not starting with 'test_') should be ignored."""
+    run_id = "test-run-001"
+    ledger_dir = run_ledger_dir(tmp_path, run_id)
+    ledger_dir.mkdir(parents=True)
+    ts_first = time.time()
+    ts_second = ts_first + 10.0
+    # First: non-test task failed
+    entry_failed = LedgerEntry(
+        seq=0,
+        prev_hash="0" * 64,
+        kind=KIND_TASK_FAILED,
+        task_id="build_step",
+        payload={},
+        entry_hash="0" * 64,
+        ts=ts_first,
+    )
+    # Second: non-test task passed
+    entry_passed = LedgerEntry(
+        seq=1,
+        prev_hash="0" * 64,
+        kind=KIND_TASK_COMPLETED,
+        task_id="build_step",
+        payload={},
+        entry_hash="0" * 64,
+        ts=ts_second,
+    )
+    (ledger_dir / "000000.jsonl").write_text(
+        json.dumps(entry_failed.to_dict()) + "\n" +
+        json.dumps(entry_passed.to_dict()) + "\n",
+        encoding="utf-8"
+    )
+    insights = generate_flaky_tests_insights(tmp_path)
+    assert insights.data["flaky_tests"] == []
+
+
+def test_flaky_tests_insights_multiple_tests(tmp_path: Path) -> None:
+    """Multiple tests with flaky behavior should all be detected."""
+    run_id = "test-run-001"
+    ledger_dir = run_ledger_dir(tmp_path, run_id)
+    ledger_dir.mkdir(parents=True)
+    ts = time.time()
+    # Test 1: failed then passed
+    entry_t1_failed = LedgerEntry(
+        seq=0,
+        prev_hash="0" * 64,
+        kind=KIND_TASK_FAILED,
+        task_id="test_unit_foo",
+        payload={},
+        entry_hash="0" * 64,
+        ts=ts,
+    )
+    entry_t1_passed = LedgerEntry(
+        seq=1,
+        prev_hash="0" * 64,
+        kind=KIND_TASK_COMPLETED,
+        task_id="test_unit_foo",
+        payload={},
+        entry_hash="0" * 64,
+        ts=ts + 1.0,
+    )
+    # Test 2: passed then failed then passed (2 transitions)
+    entry_t2_passed1 = LedgerEntry(
+        seq=2,
+        prev_hash="0" * 64,
+        kind=KIND_TASK_COMPLETED,
+        task_id="test_integration_bar",
+        payload={},
+        entry_hash="0" * 64,
+        ts=ts + 2.0,
+    )
+    entry_t2_failed = LedgerEntry(
+        seq=3,
+        prev_hash="0" * 64,
+        kind=KIND_TASK_FAILED,
+        task_id="test_integration_bar",
+        payload={},
+        entry_hash="0" * 64,
+        ts=ts + 3.0,
+    )
+    entry_t2_passed2 = LedgerEntry(
+        seq=4,
+        prev_hash="0" * 64,
+        kind=KIND_TASK_COMPLETED,
+        task_id="test_integration_bar",
+        payload={},
+        entry_hash="0" * 64,
+        ts=ts + 4.0,
+    )
+    (ledger_dir / "000000.jsonl").write_text(
+        json.dumps(entry_t1_failed.to_dict()) + "\n" +
+        json.dumps(entry_t1_passed.to_dict()) + "\n" +
+        json.dumps(entry_t2_passed1.to_dict()) + "\n" +
+        json.dumps(entry_t2_failed.to_dict()) + "\n" +
+        json.dumps(entry_t2_passed2.to_dict()) + "\n",
+        encoding="utf-8"
+    )
+    insights = generate_flaky_tests_insights(tmp_path)
+    flaky_tests = insights.data["flaky_tests"]
+    assert len(flaky_tests) == 2
+    # Check that both tests are present
+    test_names = {t["test_name"] for t in flaky_tests}
+    assert test_names == {"test_unit_foo", "test_integration_bar"}
+    # Check transition counts
+    for t in flaky_tests:
+        if t["test_name"] == "test_unit_foo":
+            assert t["flaky_count"] == 1  # failed -> passed
+            assert t["patterns"] == ["failed", "passed"]
+        else:  # test_integration_bar
+            assert t["flaky_count"] == 2  # passed -> failed -> passed
+            assert t["patterns"] == ["passed", "failed", "passed"]
+
+
+def test_save_flaky_tests_insights_creates_file(tmp_path: Path) -> None:
+    """Saving the flaky tests insight creates the insights.json file."""
+    run_id = "test-run-001"
+    ledger_dir = run_ledger_dir(tmp_path, run_id)
+    ledger_dir.mkdir(parents=True)
+    ts_first = time.time()
+    ts_second = ts_first + 10.0
+    # First: test failed
+    entry_failed = LedgerEntry(
+        seq=0,
+        prev_hash="0" * 64,
+        kind=KIND_TASK_FAILED,
+        task_id="test_example",
+        payload={},
+        entry_hash="0" * 64,
+        ts=ts_first,
+    )
+    # Second: test passed
+    entry_passed = LedgerEntry(
+        seq=1,
+        prev_hash="0" * 64,
+        kind=KIND_TASK_COMPLETED,
+        task_id="test_example",
+        payload={},
+        entry_hash="0" * 64,
+        ts=ts_second,
+    )
+    (ledger_dir / "000000.jsonl").write_text(
+        json.dumps(entry_failed.to_dict()) + "\n" +
+        json.dumps(entry_passed.to_dict()) + "\n",
+        encoding="utf-8"
+    )
+    # Initially, no insights file
+    assert not (tmp_path / ".sdd" / "runtime" / "insights.json").exists()
+    save_flaky_tests_insights(tmp_path)
+    insights_path = tmp_path / ".sdd" / "runtime" / "insights.json"
+    assert insights_path.exists()
+    # Load and check content
+    from bernstein.core.persistence.insights import load_insights
+    loaded = load_insights(tmp_path)
+    assert loaded is not None
+    assert len(loaded.data["flaky_tests"]) == 1
+    assert loaded.data["flaky_tests"][0]["test_name"] == "test_example"
+    assert loaded.data["flaky_tests"][0]["flaky_count"] == 1
+    assert loaded.data["flaky_tests"][0]["first_seen"] == ts_first
+    assert loaded.data["flaky_tests"][0]["last_seen"] == ts_second
 
 
 def test_failure_classes_insights_single_gate_failure(tmp_path: Path) -> None:
