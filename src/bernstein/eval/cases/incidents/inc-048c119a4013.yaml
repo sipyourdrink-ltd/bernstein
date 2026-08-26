@@ -1,0 +1,14 @@
+id: inc-048c119a4013
+severity: P2
+source_incident: "dlq:52b661080f3f45a2"
+owner: backend
+created_at: 1787717527.197
+expected_outcome: "Agent should complete the task; flake-tolerant retry is acceptable. (root cause: max_retries_exceeded)"
+tags:
+  - max_retries_exceeded
+prompt: |
+  Reproduce and resolve the following terminal failure (role=backend).
+  Task: Fix _spine_hmac_key() to use load_or_create_audit_key() and return bytes
+  Failure reason: max_retries_exceeded
+  Last error (trimmed):
+  Agent backend-resume-4f12cffc died; no completion signals and no files modified
