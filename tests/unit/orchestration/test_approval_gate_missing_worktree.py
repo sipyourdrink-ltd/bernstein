@@ -12,7 +12,9 @@ def test_create_approval_pr_no_worktree(monkeypatch):
     dummy_orch._spawner.get_worktree_path = lambda session_id: None
     # Mock approval_gate.create_pr to raise if called
     dummy_orch._approval_gate = SimpleNamespace()
-    dummy_orch._approval_gate.create_pr = lambda *args, **kwargs: pytest.fail("create_pr should not be called when worktree missing")
+    dummy_orch._approval_gate.create_pr = lambda *args, **kwargs: pytest.fail(
+        "create_pr should not be called when worktree missing"
+    )
     # Mock config for pr_labels
     dummy_orch._config = SimpleNamespace(pr_labels=[])
     # Minimal task and session objects
