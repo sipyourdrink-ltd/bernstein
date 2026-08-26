@@ -1,21 +1,23 @@
+import tempfile
+from pathlib import Path
+
 import pytest
+
+from bernstein.core.tasks.artifact_completion import (
+    complete_artifact_task,
+    is_artifact_mode,
+)
 from bernstein.core.tasks.artifacts import (
     ArtifactKind,
     ArtifactSpec,
-    canonicalise_artifact,
     content_hash,
     parse_artifact_spec,
 )
-from bernstein.core.tasks.artifact_completion import (
-    ArtifactCompletion,
-    is_artifact_mode,
-    load_artifact,
-    complete_artifact_task,
-)
 from bernstein.core.tasks.models import Task
-from pathlib import Path
-import tempfile
-import os
+from bernstein.core.lineage.artifact_record import (
+    _BLOB_NAME,
+    _RECEIPT_NAME,
+)
 
 
 def test_blob_artifact_roundtrips_declare_complete_verify():
@@ -34,12 +36,10 @@ def test_blob_artifact_roundtrips_declare_complete_verify():
             title="Test Blob Task",
             description="Test blob artifact completion",
             role="backend",
-            spec={
-                "artifact_spec": {
-                    "kind": "blob",
-                    "output_path": "test_blob.bin",
-                }
-            },
+            artifact_spec=ArtifactSpec(
+                kind=ArtifactKind.BLOB,
+                output_path="test_blob.bin",
+            ),
         )
 
         # Verify the task is in artifact mode
@@ -53,13 +53,20 @@ def test_blob_artifact_roundtrips_declare_complete_verify():
         assert completion.receipt is not None
         # The receipt should contain the content hash of the blob
         expected_hash = content_hash(blob_content)
-        assert completion.receipt["content_hash"] == expected_hash
+        assert completion.receipt.content_hash == expected_hash
 
         # Verify the artifact using the receipt
         from bernstein.core.lineage.artifact_record import verify_artifact
         sdd_dir = workdir / ".sdd"
-        verification_result = verify_artifact(completion.receipt, sdd_dir)
-        assert verification_result.verified
+        sink_root = sdd_dir / "artifacts"
+        verification_result = verify_artifact(
+            task_id=completion.receipt.task_id,
+            sink_root=sink_root,
+            log_path=sdd_dir / "lineage" / "log",
+            cards_dir=sdd_dir / "agents",
+            operator_secret=None,
+        )
+        assert verification_result.ok
 
 
 def test_one_byte_mutation_fails_blob_verification():
@@ -77,12 +84,10 @@ def test_one_byte_mutation_fails_blob_verification():
             title="Test Blob Task Mutation",
             description="Test blob artifact completion with mutation",
             role="backend",
-            spec={
-                "artifact_spec": {
-                    "kind": "blob",
-                    "output_path": "test_blob.bin",
-                }
-            },
+            artifact_spec=ArtifactSpec(
+                kind=ArtifactKind.BLOB,
+                output_path="test_blob.bin",
+            ),
         )
 
         # Run artifact completion
@@ -98,8 +103,14 @@ def test_one_byte_mutation_fails_blob_verification():
         # Verify the artifact should fail
         from bernstein.core.lineage.artifact_record import verify_artifact
         sdd_dir = workdir / ".sdd"
-        verification_result = verify_artifact(completion.receipt, sdd_dir)
-        assert not verification_result.verified
+        verification_result = verify_artifact(
+            task_id=completion.receipt.task_id,
+            sink_root=workdir,
+            log_path=sdd_dir / "entry.log",
+            cards_dir=sdd_dir / "agents",
+            operator_secret=None,
+        )
+        assert not verification_result.ok
 
 
 def test_text_criteria_on_blob_kind_rejected_at_parse_time():
@@ -108,11 +119,9 @@ def test_text_criteria_on_blob_kind_rejected_at_parse_time():
     with pytest.raises(Exception) as exc_info:
         parse_artifact_spec(
             {
-                "artifact_spec": {
-                    "kind": "blob",
-                    "output_path": "test.bin",
-                    "criteria": [{"type": "schema_valid", "value": '{"type": "object"}'}],
-                }
+                "kind": "blob",
+                "output_path": "test.bin",
+                "criteria": [{"type": "schema_valid", "value": '{"type": "object"}'}],
             }
         )
     assert "schema_valid" in str(exc_info.value)
@@ -122,11 +131,9 @@ def test_text_criteria_on_blob_kind_rejected_at_parse_time():
     with pytest.raises(Exception) as exc_info:
         parse_artifact_spec(
             {
-                "artifact_spec": {
-                    "kind": "blob",
-                    "output_path": "test.bin",
-                    "criteria": [{"type": "criteria_match", "value": '[{"path": "test", "op": "exists"}]'}],
-                }
+                "kind": "blob",
+                "output_path": "test.bin",
+                "criteria": [{"type": "criteria_match", "value": '[{"path": "test", "op": "exists"}]'}],
             }
         )
     assert "criteria_match" in str(exc_info.value)
@@ -147,30 +154,28 @@ def test_blob_bytes_are_content_addressed_in_evidence_store():
         # Create two tasks that declare blob artifacts with same content but different paths
         task1 = Task(
             id="test-task-3",
-            name="Test Blob Task 1",
+            title="Test Blob Task 1",
+            description="Test blob artifact completion",
             role="backend",
-            spec={
-                "artifact_spec": {
-                    "kind": "blob",
-                    "output_path": "test_blob1.bin",
-                }
-            },
+            artifact_spec=ArtifactSpec(
+                kind=ArtifactKind.BLOB,
+                output_path="test_blob1.bin",
+            ),
         )
         task2 = Task(
             id="test-task-4",
-            name="Test Blob Task 2",
+            title="Test Blob Task 2",
+            description="Test blob artifact completion",
             role="backend",
-            spec={
-                "artifact_spec": {
-                    "kind": "blob",
-                    "output_path": "test_blob2.bin",
-                }
-            },
+            artifact_spec=ArtifactSpec(
+                kind=ArtifactKind.BLOB,
+                output_path="test_blob2.bin",
+            ),
         )
 
         # Run artifact completion for both
-        completion1 = run_artifact_completion(task1, workdir)
-        completion2 = run_artifact_completion(task2, workdir)
+        completion1 = complete_artifact_task(task1, workdir)
+        completion2 = complete_artifact_task(task2, workdir)
 
         assert completion1.ok
         assert completion2.ok
@@ -178,8 +183,8 @@ def test_blob_bytes_are_content_addressed_in_evidence_store():
         assert completion2.receipt is not None
 
         # The content hashes should be the same
-        assert completion1.receipt["content_hash"] == completion2.receipt["content_hash"]
+        assert completion1.receipt.content_hash == completion2.receipt.content_hash
         # And they should match the hash of the content
         expected_hash = content_hash(blob_content)
-        assert completion1.receipt["content_hash"] == expected_hash
-        assert completion2.receipt["content_hash"] == expected_hash
+        assert completion1.receipt.content_hash == expected_hash
+        assert completion2.receipt.content_hash == expected_hash
