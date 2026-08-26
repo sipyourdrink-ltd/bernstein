@@ -1,0 +1,14 @@
+id: inc-09f2a8b66c69
+severity: P2
+source_incident: "dlq:3c4ee7b87cbe44e4"
+owner: backend
+created_at: 1787780251.000
+expected_outcome: "Agent should complete the task; flake-tolerant retry is acceptable. (root cause: max_retries_exceeded)"
+tags:
+  - max_retries_exceeded
+prompt: |
+  Reproduce and resolve the following terminal failure (role=backend).
+  Task: Implement orchestrator checkpoint writer for task resume
+  Failure reason: max_retries_exceeded
+  Last error (trimmed):
+  Agent backend-e09f9e51 reaped (heartbeat timeout)
