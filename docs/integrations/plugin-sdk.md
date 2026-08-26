@@ -176,6 +176,46 @@ metrics = "my_package.hooks:MetricsPlugin"
 Entry points that point to a **class** are instantiated automatically.  Entry
 points that point to a **module** are registered as-is.
 
+### Reporters
+
+`bernstein.reporters` takes hook implementations in the same shape as
+`bernstein.plugins`, for plugins whose job is to emit run summaries.
+
+```toml
+[project.entry-points."bernstein.reporters"]
+slack = "my_package.reporters:SlackReporter"
+```
+
+Entry-point names are only unique inside their own group, so a reporter is
+registered under `reporters:<name>`.  A `slack` in both groups is fine: both
+load, and `PluginManager.registered_names` shows `slack` and `reporters:slack`.
+
+### Trigger sources
+
+`bernstein.triggers` takes classes implementing the
+`bernstein.core.trigger_sources.TriggerSource` protocol - a `normalize` method
+turning a raw event into a `TriggerEvent`.
+
+```toml
+[project.entry-points."bernstein.triggers"]
+jira = "my_package.triggers:JiraTriggerSource"
+```
+
+Installed sources are looked up by name alongside the built-ins:
+
+```python
+from bernstein.core.trigger_sources.registry import (
+    get_trigger_source,
+    list_trigger_source_names,
+)
+
+list_trigger_source_names()   # ['artifact', 'file_watch', 'jira', 'odata_poll']
+get_trigger_source("jira")    # the registered class
+```
+
+A malformed entry in either group is skipped with a warning naming it; it never
+takes down discovery for the rest.
+
 ---
 
 ## Error isolation
