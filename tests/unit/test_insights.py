@@ -18,7 +18,6 @@ from bernstein.core.persistence.work_ledger import (
     KIND_TASK_FAILED,
     LedgerState,
     LedgerEntry,
-    default_ledger_root,
     run_ledger_dir,
 )
 
@@ -67,7 +66,6 @@ def test_failure_classes_insights_empty(tmp_path: Path) -> None:
     ledger_dir = run_ledger_dir(tmp_path, run_id)
     ledger_dir.mkdir(parents=True)
     # No run.closed entry
-    state = LedgerState([])
     # Generate insights
     insights = generate_failure_classes_insights(tmp_path)
     assert insights.data["failure_classes"] == []
