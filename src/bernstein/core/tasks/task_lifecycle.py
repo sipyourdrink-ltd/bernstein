@@ -3709,9 +3709,10 @@ def _reap_and_cleanup_session(
     # and verify it against a detached run. Fail-open: never blocks completion.
     _capture_review_diff(orch, task, session)
 
-    # issue #4603: write task resume checkpoint after successful merge
-    # This captures the state so the task can be resumed later if needed
-    if janitor_passed and not skip_merge and merge_ok:
+    # issue #4603: write task resume checkpoint after successful task completion
+    # (agent spawn -> task completion). This captures state so the task can be
+    # resumed later if needed. Write even for approval-gated tasks that skip merge.
+    if janitor_passed:
         try:
             worktree_path = orch._spawner.get_worktree_path(session.id)
             _write_task_resume_checkpoint(
