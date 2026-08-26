@@ -133,6 +133,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `gemini.py`                 | Google Gemini / Antigravity CLI adapter |
 | `generic.py`                | Generic CLI adapter for arbitrary coding agent CLIs |
 | `goose.py`                  | Goose CLI adapter for Bernstein |
+| `goose_stream_parser.py`    | Parse Goose ``--output-format stream-json`` events |
 | `gptme.py`                  | gptme CLI adapter |
 | `hermes.py`                 | Hermes Agent (Nous Research) CLI adapter |
 | `hook_gate_render.py`       | Render in-process verification-gate hooks for capable adapters (issue #2360) |
