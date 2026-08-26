@@ -18,6 +18,17 @@ from urllib.request import Request, urlopen
 
 MIN_SAMPLE_SIZE = 10
 
+# A marker needs more than one red run behind it.
+#
+# The lookback window produces samples in the 10-30 range, so at the default
+# 5% threshold a single failure already crosses it: 1/19 is 5.26%. That makes
+# the gate zero-tolerance while reading like a rate, and one infra flake -
+# a timed-out docker probe, a runner that never picked the job up - holds
+# every merge in the repo until the run ages out of the window. The gate is
+# meant to catch a trunk that is actually red, which shows up as a second
+# failure, not as one.
+MIN_RED_RUNS = 2
+
 # A scheduled gate that blocks on a socket holds the runner until the job
 # timeout kills it, which reads as an infrastructure outage rather than as
 # the network call it actually is.
@@ -73,6 +84,18 @@ def score_runs(runs: list[dict]) -> tuple[int, int, int]:
     return total, red, red_pct
 
 
+def marker_should_open(total: int, red: int, red_pct: int, threshold_pct: int) -> bool:
+    """Whether this sample justifies holding every merge in the repo.
+
+    Kept as its own function because the andon decision is the only thing
+    this script does that anyone has to trust, and an expression inlined in
+    ``main`` is reachable only by driving argv and the network.
+    """
+    if total < MIN_SAMPLE_SIZE:
+        return False
+    return red >= MIN_RED_RUNS and red_pct >= threshold_pct
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", required=True)
@@ -91,7 +114,7 @@ def main() -> None:
     total, red, red_pct = score_runs(runs)
 
     insufficient = total < MIN_SAMPLE_SIZE
-    unstable = (not insufficient) and (red_pct >= args.threshold_pct)
+    unstable = marker_should_open(total, red, red_pct, args.threshold_pct)
 
     # Output for GitHub Actions
     github_output = os.environ.get("GITHUB_OUTPUT")

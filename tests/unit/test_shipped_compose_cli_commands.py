@@ -201,15 +201,27 @@ def _bernstein_invocations(compose_file: Path) -> list[tuple[str, list[str]]]:
 
 
 def _docker_compose_available() -> bool:
+    """Whether `docker compose` can be used here, for any reason it cannot.
+
+    A probe that does not answer within its patience is answering: on a
+    contended runner `docker compose version` has taken longer than ten
+    seconds, and the `TimeoutExpired` it raised propagated out of the probe
+    and failed the test as if a shipped compose file were malformed. The
+    availability question has one honest answer in that case, and it is the
+    same one as a missing binary.
+    """
     if shutil.which("docker") is None:
         return False
-    probe = subprocess.run(
-        ["docker", "compose", "version"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
+    try:
+        probe = subprocess.run(
+            ["docker", "compose", "version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
     return probe.returncode == 0
 
 
@@ -228,15 +240,19 @@ def test_shipped_compose_file_parses(compose_file: Path) -> None:
     if not _docker_compose_available():
         pytest.skip("docker compose CLI not available in this test environment")
 
-    result = subprocess.run(
-        ["docker", "compose", "-f", str(compose_file), "config", "-q"],
-        cwd=compose_file.parent,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        env={**os.environ, **_PLACEHOLDER_ENV},
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["docker", "compose", "-f", str(compose_file), "config", "-q"],
+            cwd=compose_file.parent,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={**os.environ, **_PLACEHOLDER_ENV},
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.skip("`docker compose config` did not answer within 30s; that is the daemon, not the file")
+
     assert result.returncode == 0, (
         f"`docker compose -f {compose_file.relative_to(REPO_ROOT)} config` failed:\n{result.stderr}"
     )
@@ -344,3 +360,47 @@ def test_guard_asserts_a_real_service_set_for_the_cli_driven_files() -> None:
         "the anti-vacuity guard must assert a real service set for every shipped "
         f"compose file whose services exec the bernstein CLI, found only {len(non_empty)}"
     )
+
+
+def test_a_slow_docker_probe_reads_as_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A contended runner must not look like a malformed compose file.
+
+    `docker compose version` took longer than the probe's ten seconds on a
+    busy CI host; the `TimeoutExpired` escaped `_docker_compose_available`
+    and failed this module on `main`, which held every merge in the repo
+    behind the trunk-health marker until the run aged out of the window.
+    """
+    monkeypatch.setattr(shutil, "which", lambda _cmd: "/usr/bin/docker")
+
+    def _timeout(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(cmd=["docker", "compose", "version"], timeout=10)
+
+    monkeypatch.setattr(subprocess, "run", _timeout)
+
+    assert _docker_compose_available() is False
+
+
+def test_an_unrunnable_docker_binary_reads_as_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`which` finding a path is not proof the binary can be executed."""
+    monkeypatch.setattr(shutil, "which", lambda _cmd: "/usr/bin/docker")
+
+    def _oserror(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise OSError("Exec format error")
+
+    monkeypatch.setattr(subprocess, "run", _oserror)
+
+    assert _docker_compose_available() is False
+
+
+def test_a_working_docker_probe_reads_as_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Positive control: the two tests above must not pass by never returning True."""
+    monkeypatch.setattr(shutil, "which", lambda _cmd: "/usr/bin/docker")
+
+    def _ok(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=["docker"], returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _ok)
+
+    assert _docker_compose_available() is True
