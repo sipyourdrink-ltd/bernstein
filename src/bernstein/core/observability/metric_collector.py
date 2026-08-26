@@ -2,6 +2,9 @@
 
 Collects time-series metrics for agent success rates, task completion times,
 API usage patterns, error rates, and cost efficiency.
+
+Dropped lines: permanently failing write targets are dropped after
+:_MAX_FLUSH_ATTEMPTS=3 retries to prevent unbounded buffer growth.
 """
 
 from __future__ import annotations
