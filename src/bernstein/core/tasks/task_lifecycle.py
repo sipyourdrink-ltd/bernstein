@@ -3627,11 +3627,7 @@ def _write_task_resume_checkpoint(
             worktree_path=worktree_path,
             scratchpad_path=scratchpad_path,
             scratchpad_sha256=scratchpad_sha,
-            meta=(
-                {"adapter_name": adapter}
-                if adapter and session is not None
-                else {}
-            ),
+            meta=({"adapter_name": adapter} if adapter and session is not None else {}),
         )
         save_checkpoint(workdir, checkpoint)
     except Exception:

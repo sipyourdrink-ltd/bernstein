@@ -30,9 +30,7 @@ def test_reap_and_cleanup_session_writes_checkpoint_on_janitor_pass_with_merge(
     )
 
     # Mock checkpoint writing to verify call
-    with patch(
-        "bernstein.core.tasks.task_lifecycle._write_task_resume_checkpoint"
-    ) as mock_write:
+    with patch("bernstein.core.tasks.task_lifecycle._write_task_resume_checkpoint") as mock_write:
         _cache_verified, _cache_diff, _merge_failed = _reap_and_cleanup_session(
             orch=orch,
             task=task,
@@ -68,9 +66,7 @@ def test_reap_and_cleanup_session_writes_checkpoint_on_janitor_pass_skip_merge(
         conflicting_files=[],
     )
 
-    with patch(
-        "bernstein.core.tasks.task_lifecycle._write_task_resume_checkpoint"
-    ) as mock_write:
+    with patch("bernstein.core.tasks.task_lifecycle._write_task_resume_checkpoint") as mock_write:
         _cache_verified, _cache_diff, _merge_failed = _reap_and_cleanup_session(
             orch=orch,
             task=task,
@@ -100,9 +96,7 @@ def test_reap_and_cleanup_session_skips_checkpoint_on_janitor_fail(
         conflicting_files=[],
     )
 
-    with patch(
-        "bernstein.core.tasks.task_lifecycle._write_task_resume_checkpoint"
-    ) as mock_write:
+    with patch("bernstein.core.tasks.task_lifecycle._write_task_resume_checkpoint") as mock_write:
         _cache_verified, _cache_diff, _merge_failed = _reap_and_cleanup_session(
             orch=orch,
             task=task,
@@ -169,9 +163,7 @@ def test_reap_and_cleanup_session_returns_correct_merge_failed_flag(
         error="Permission denied",
     )
 
-    with patch(
-        "bernstein.core.tasks.task_lifecycle._write_task_resume_checkpoint"
-    ):
+    with patch("bernstein.core.tasks.task_lifecycle._write_task_resume_checkpoint"):
         _cache_verified, _cache_diff, merge_failed = _reap_and_cleanup_session(
             orch=orch,
             task=task,
@@ -204,11 +196,10 @@ def test_reap_and_cleanup_session_preserves_worktree_when_merge_failed(
     )
 
     # Mock cleanup_worktree to verify it's NOT called
-    with patch(
-        "bernstein.core.tasks.task_lifecycle._write_task_resume_checkpoint"
-    ), patch.object(
-        orch._spawner, "cleanup_worktree"
-    ) as mock_cleanup:
+    with (
+        patch("bernstein.core.tasks.task_lifecycle._write_task_resume_checkpoint"),
+        patch.object(orch._spawner, "cleanup_worktree") as mock_cleanup,
+    ):
         _cache_verified, _cache_diff, merge_failed = _reap_and_cleanup_session(
             orch=orch,
             task=task,
@@ -267,4 +258,3 @@ def _make_session(session_id: str) -> AgentSession:
         id=session_id,
         role="backend",
     )
-
