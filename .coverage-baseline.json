@@ -1,8 +1,8 @@
 {
   "diff_coverage_floor_percent": 88,
-  "head_sha": "a6b0c3382eed7141b697bdeacaedd711aea0b17a",
-  "line_rate": 0.8414,
-  "run_id": "32774754848",
-  "total_coverage_percent": 84.14,
-  "updated_at": "2026-08-24T21:25:34+00:00"
+  "head_sha": "1320b8da47a20a35456e02d9790cbb53a7427514",
+  "line_rate": 0.842,
+  "run_id": "32970317478",
+  "total_coverage_percent": 84.2,
+  "updated_at": "2026-08-26T14:55:03+00:00"
 }
