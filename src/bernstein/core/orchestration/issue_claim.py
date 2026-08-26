@@ -14,8 +14,6 @@ from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003 - used at runtime for isoformat()
 
-import pytest  # noqa: F401 - used by downstream packages
-
 #: Marker embedded in claim comments to identify intake-run claims.
 CLAIM_MARKER: str = "<!-- bernstein:issue:intake -->"
 
