@@ -1,0 +1,1 @@
+`bernstein artifact verify` no longer mints a fresh audit key on a host that has none. It previously did, which recomputed every HMAC against the wrong key and reported clean receipts as TAMPERED; verification now fails with a message naming the missing key instead.
