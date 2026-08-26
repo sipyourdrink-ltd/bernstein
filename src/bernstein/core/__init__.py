@@ -89,7 +89,6 @@ _REDIRECT_MAP: dict[str, str] = {
     "cascade": "bernstein.core.routing.cascade",
     "cascade_router": "bernstein.core.routing.cascade_router",
     "cascading_failure_circuit_breaker": "bernstein.core.observability.cascading_failure_circuit_breaker",
-    "cascading_token_counter": "bernstein.core.tokens.cascading_token_counter",
     "changelog": "bernstein.core.git.changelog",
     "cheaper_retry": "bernstein.core.cost.planned.cheaper_retry",
     "checkpoint": "bernstein.core.persistence.checkpoint",
