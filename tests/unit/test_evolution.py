@@ -398,9 +398,14 @@ class TestFileUpgradeExecutor:
 
         result = executor.execute_upgrade(proposal)
 
-        assert result is True
+        # The category has no sink, so nothing was applied - but the decision
+        # is still trailed, under a status that says what actually happened.
+        assert result is False
         history_file = tmp_path / "upgrades" / "history.jsonl"
         assert history_file.exists()
+        record = json.loads(history_file.read_text().strip().splitlines()[-1])
+        assert record["proposal_id"] == "UPG-001"
+        assert record["status"] == "skipped_no_sink"
 
     def test_execute_upgrade_routing_rules(self, tmp_path: Path) -> None:
         executor = FileUpgradeExecutor(tmp_path)
@@ -421,7 +426,7 @@ class TestFileUpgradeExecutor:
 
         result = executor.execute_upgrade(proposal)
 
-        assert result is True
+        assert result is False
 
     def test_execute_upgrade_model_routing(self, tmp_path: Path) -> None:
         executor = FileUpgradeExecutor(tmp_path)
@@ -442,7 +447,7 @@ class TestFileUpgradeExecutor:
 
         result = executor.execute_upgrade(proposal)
 
-        assert result is True
+        assert result is False
 
     def test_execute_upgrade_provider_config(self, tmp_path: Path) -> None:
         executor = FileUpgradeExecutor(tmp_path)
@@ -463,7 +468,7 @@ class TestFileUpgradeExecutor:
 
         result = executor.execute_upgrade(proposal)
 
-        assert result is True
+        assert result is False
 
     def test_execute_upgrade_role_template(self, tmp_path: Path) -> None:
         executor = FileUpgradeExecutor(tmp_path)
@@ -484,7 +489,7 @@ class TestFileUpgradeExecutor:
 
         result = executor.execute_upgrade(proposal)
 
-        assert result is True
+        assert result is False
 
     def test_execute_upgrade_failure(self, tmp_path: Path) -> None:
         executor = FileUpgradeExecutor(tmp_path)
@@ -714,9 +719,11 @@ class TestEvolutionCoordinator:
 
         executed = coordinator.execute_pending_upgrades()
 
-        assert len(executed) == 1
-        assert executed[0].status == UpgradeStatus.APPLIED
-        assert len(coordinator._applied_upgrades) == 1
+        # The category has no sink, so the apply reports failure and the
+        # coordinator resolves the proposal instead of counting it applied.
+        assert executed == []
+        assert coordinator._applied_upgrades == []
+        assert proposal.status == UpgradeStatus.ROLLED_BACK
 
     def test_execute_pending_upgrades_skips_unapproved(self, tmp_path: Path) -> None:
         coordinator = EvolutionCoordinator(tmp_path)

@@ -160,37 +160,53 @@ class FileUpgradeExecutor:
     # Category-specific apply methods
     # ------------------------------------------------------------------
 
+    def _skip_no_sink(self, proposal: UpgradeProposal) -> bool:
+        """Record a no-sink category as skipped and report it as not applied.
+
+        Every category below resolves to a target nothing reads back: the three
+        config categories appended the proposal to a ``pending_upgrades:`` key
+        no subsystem consults, and role templates appended to a JSONL file
+        outside ``.sdd/`` with no reader either. Those writes still returned
+        ``True``, so both callers scored the proposal as a landed change and the
+        offline loop closed its tracker issue saying so. Until a category has a
+        real sink, the honest answer is that nothing was applied - but the
+        decision stays auditable in ``history.jsonl`` under a status that says
+        what actually happened.
+        """
+        self._record_history(proposal, "skipped_no_sink")
+        return False
+
     def _apply_policy_update(self, proposal: UpgradeProposal) -> bool:
         """Apply a policy update to .sdd/config/policies.yaml.
 
         This category no longer has a valid sink, so the upgrade is not applied.
         """
-        return False
+        return self._skip_no_sink(proposal)
 
     def _apply_routing_rules(self, proposal: UpgradeProposal) -> bool:
         """Apply routing rule changes to .sdd/config/routing.yaml.
 
         This category no longer has a valid sink, so the upgrade is not applied.
         """
-        return False
+        return self._skip_no_sink(proposal)
 
     def _apply_model_routing(self, proposal: UpgradeProposal) -> bool:
         """Apply model routing changes (stored in routing.yaml).
 
         This category no longer has a valid sink, so the upgrade is not applied.
         """
-        return False
+        return self._skip_no_sink(proposal)
 
     def _apply_provider_config(self, proposal: UpgradeProposal) -> bool:
         """Apply provider configuration changes to .sdd/config/providers.yaml.
 
         This category no longer has a valid sink, so the upgrade is not applied.
         """
-        return False
+        return self._skip_no_sink(proposal)
 
     def _apply_role_template(self, proposal: UpgradeProposal) -> bool:
         """Record a role template upgrade proposal in the templates directory.
 
         This category no longer has a valid sink, so the upgrade is not applied.
         """
-        return False
+        return self._skip_no_sink(proposal)

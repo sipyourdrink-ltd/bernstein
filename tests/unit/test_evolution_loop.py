@@ -33,11 +33,12 @@ def _make_proposal(
     id: str = "test-001",
     risk_level: str = "low",
     confidence: float = 0.95,
+    category: UpgradeCategory = UpgradeCategory.POLICY_UPDATE,
 ) -> UpgradeProposal:
     return UpgradeProposal(
         id=id,
         title="Test",
-        category=UpgradeCategory.POLICY_UPDATE,
+        category=category,
         description="desc",
         current_state="current",
         proposed_change="change",
@@ -1066,3 +1067,95 @@ def test_run_cycle_full_state_transition_pending_to_applied(tmp_path: Path) -> N
     data = json.loads(experiments_path.read_text().strip())
     assert data["accepted"] is True
     assert data["delta"] == pytest.approx(0.05)
+
+
+def _make_github_client_mock(issue_number: int = 4512) -> MagicMock:
+    """A GitHub client that hands the loop a real tracker issue to close."""
+    issue = MagicMock()
+    issue.number = issue_number
+    issue.title = "Test"
+    gh = MagicMock()
+    gh.available = True
+    gh.find_unclaimed.return_value = []
+    gh.find_by_hash.return_value = None
+    gh.create_issue.return_value = issue
+    gh.claim_issue.return_value = True
+    return gh
+
+
+# ---------------------------------------------------------------------------
+# A category with no sink must not close its tracker issue as applied
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("category", list(UpgradeCategory))
+def test_run_cycle_does_not_close_the_issue_for_a_category_with_no_sink(
+    category: UpgradeCategory, tmp_path: Path
+) -> None:
+    """An operator watching the tracker must not see a closed issue for nothing.
+
+    The executor is the real one here, not a mock: the point is that a live
+    category resolves to a target nothing reads, so ``execute_upgrade`` reports
+    it as not applied and ``run_cycle`` never reaches the close-with-success
+    comment. Mocking ``execute_upgrade`` would only re-test the loop's branch
+    and would stay green if a category quietly started claiming success again.
+    """
+    state_dir = tmp_path / ".sdd"
+    state_dir.mkdir()
+    loop = EvolutionLoop(state_dir, repo_root=tmp_path, github_sync=True)
+    proposal = _make_proposal(category=category)
+    gh_mock = _make_github_client_mock()
+
+    with (
+        patch.object(loop._aggregator, "run_full_analysis"),
+        patch.object(loop._detector, "identify_opportunities", return_value=[_make_opportunity()]),
+        patch.object(loop, "_run_baseline", return_value=1.0),
+        patch.object(loop._proposal_generator, "create_proposal", return_value=proposal),
+        patch.object(loop._breaker, "can_evolve", return_value=(True, "ok")),
+        patch.object(loop._gate, "route", return_value=_make_approval_decision(proposal_id=proposal.id)),
+        patch.object(loop._sandbox, "validate", return_value=_make_sandbox_result(proposal_id=proposal.id)),
+        patch.object(EvolutionLoop, "_gh", property(lambda _self: gh_mock)),
+    ):
+        result = loop.run_cycle()
+
+    assert result is not None
+    assert result.accepted is False
+    gh_mock.close_issue.assert_not_called()
+
+    # The apply reached the category helper rather than being turned away at
+    # the admission gate - otherwise this test would pass for the wrong reason.
+    history_file = state_dir / "upgrades" / "history.jsonl"
+    assert history_file.exists()
+    assert json.loads(history_file.read_text().strip().splitlines()[-1])["status"] == "skipped_no_sink"
+
+
+def test_run_cycle_does_close_the_issue_when_an_upgrade_really_lands(tmp_path: Path) -> None:
+    """Positive control for the test above: the close path is reachable.
+
+    Without this, a wiring mistake that made ``close_issue`` unreachable would
+    make the no-sink assertion vacuous.
+    """
+    state_dir = tmp_path / ".sdd"
+    state_dir.mkdir()
+    loop = EvolutionLoop(state_dir, repo_root=tmp_path, github_sync=True)
+    proposal = _make_proposal()
+    gh_mock = _make_github_client_mock()
+
+    with (
+        patch.object(loop._aggregator, "run_full_analysis"),
+        patch.object(loop._detector, "identify_opportunities", return_value=[_make_opportunity()]),
+        patch.object(loop, "_run_baseline", return_value=1.0),
+        patch.object(loop._proposal_generator, "create_proposal", return_value=proposal),
+        patch.object(loop._breaker, "can_evolve", return_value=(True, "ok")),
+        patch.object(loop._gate, "route", return_value=_make_approval_decision(proposal_id=proposal.id)),
+        patch.object(loop._sandbox, "validate", return_value=_make_sandbox_result(proposal_id=proposal.id)),
+        patch.object(loop._executor, "execute_upgrade", return_value=True),
+        patch.object(loop._breaker, "record_change"),
+        patch.object(EvolutionLoop, "_gh", property(lambda _self: gh_mock)),
+    ):
+        result = loop.run_cycle()
+
+    assert result is not None
+    assert result.accepted is True
+    gh_mock.close_issue.assert_called_once()
+    assert "applied automatically" in gh_mock.close_issue.call_args.kwargs["comment"]

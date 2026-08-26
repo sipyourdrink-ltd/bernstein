@@ -72,7 +72,9 @@ class TestFileUpgradeExecutorPolicyUpdate:
             config_file = Path(tmpdir) / "config" / "policies.yaml"
             assert not config_file.exists()
             history_file = Path(tmpdir) / "upgrades" / "history.jsonl"
-            assert not history_file.exists()
+            assert history_file.exists(), "the decision not to write must stay auditable"
+            record = json.loads(history_file.read_text().strip().splitlines()[-1])
+            assert record["status"] == "skipped_no_sink"
 
 
 class TestFileUpgradeExecutorRoutingRules:
@@ -87,7 +89,9 @@ class TestFileUpgradeExecutorRoutingRules:
             config_file = Path(tmpdir) / "config" / "routing.yaml"
             assert not config_file.exists()
             history_file = Path(tmpdir) / "upgrades" / "history.jsonl"
-            assert not history_file.exists()
+            assert history_file.exists(), "the decision not to write must stay auditable"
+            record = json.loads(history_file.read_text().strip().splitlines()[-1])
+            assert record["status"] == "skipped_no_sink"
 
     def test_model_routing_returns_false_and_no_file_change(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -98,7 +102,9 @@ class TestFileUpgradeExecutorRoutingRules:
             config_file = Path(tmpdir) / "config" / "routing.yaml"
             assert not config_file.exists()
             history_file = Path(tmpdir) / "upgrades" / "history.jsonl"
-            assert not history_file.exists()
+            assert history_file.exists(), "the decision not to write must stay auditable"
+            record = json.loads(history_file.read_text().strip().splitlines()[-1])
+            assert record["status"] == "skipped_no_sink"
 
     def test_multiple_routing_upgrades_all_false(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -126,7 +132,9 @@ class TestFileUpgradeExecutorProviderConfig:
             config_file = Path(tmpdir) / "config" / "providers.yaml"
             assert not config_file.exists()
             history_file = Path(tmpdir) / "upgrades" / "history.jsonl"
-            assert not history_file.exists()
+            assert history_file.exists(), "the decision not to write must stay auditable"
+            record = json.loads(history_file.read_text().strip().splitlines()[-1])
+            assert record["status"] == "skipped_no_sink"
 
     def test_preserves_existing_provider_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -167,7 +175,9 @@ class TestFileUpgradeExecutorRoleTemplate:
             proposals_file = Path(tmpdir) / "templates" / "roles" / "PROPOSED_UPGRADES.jsonl"
             assert not proposals_file.exists()
             history_file = sdd_dir / "upgrades" / "history.jsonl"
-            assert not history_file.exists()
+            assert history_file.exists(), "the decision not to write must stay auditable"
+            record = json.loads(history_file.read_text().strip().splitlines()[-1])
+            assert record["status"] == "skipped_no_sink"
 
 
 class TestFileUpgradeExecutorAtomicWrite:
