@@ -51,6 +51,7 @@ from bernstein.core.replay.review_board import (
     record_task_merged,
     store_task_diff,
 )
+from bernstein.core.persistence.task_resume import TaskResumeCheckpoint, save_checkpoint
 from bernstein.core.router import RouterError
 from bernstein.core.rule_enforcer import RulesConfig, load_rules_config, run_rule_enforcement
 from bernstein.core.spawn_analyzer import SpawnAnalyzer, SpawnFailureAnalysis
@@ -75,6 +76,8 @@ if TYPE_CHECKING:
 
     from bernstein.core.git_ops import MergeResult
     from bernstein.core.wal import WALWriter
+else:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -3569,6 +3572,72 @@ def _notify_approval_pr_failed(orch: Any, task: Task, *, reason: str) -> None:
     )
 
 
+def _write_task_resume_checkpoint(
+    workdir: Path,
+    task_id: str,
+    session: AgentSession | None,
+    worktree_path: str | None,
+    adapter_name: str | None = None,
+) -> None:
+    """Write a task resume checkpoint for a completed task.
+
+    This checkpoint captures the state after a successful step transition
+    (agent spawn -> task completion) so the task can be resumed later if
+    needed. The checkpoint is written atomically using a temp file and
+    rename to prevent corruption.
+
+    Args:
+        workdir: Project root directory.
+        task_id: Task identifier.
+        session: Completed agent session, if available.
+        worktree_path: Absolute path to the preserved worktree.
+        adapter_name: Optional adapter name override. If None, tries to
+            extract from session meta or uses empty string.
+    """
+    try:
+        # Extract adapter information
+        adapter = adapter_name or ""
+        adapter_session_id = ""
+        if session is not None:
+            adapter_session_id = session.id
+            # Try to extract adapter name from session meta if available
+            if hasattr(session, "meta") and isinstance(session.meta, dict):
+                adapter = session.meta.get("adapter_name", "") or adapter
+
+        # Get trace cursor (byte offset) - file size of trace JSONL
+        trace_cursor = 0
+        trace_path = workdir / ".sdd" / "traces" / f"{task_id}.jsonl"
+        if trace_path.exists():
+            with contextlib.suppress(OSError):
+                trace_cursor = trace_path.stat().st_size
+
+        # Get scratchpad info if available
+        scratchpad_path = None
+        scratchpad_sha = None
+        if worktree_path is not None:
+            scratchpad_path = str(worktree_path / ".scratchpad.md")
+            scratchpad_sha = scratchpad_sha256(Path(scratchpad_path))
+
+        checkpoint = TaskResumeCheckpoint(
+            task_id=task_id,
+            last_completed_step_id=task_id,  # task_id used as default step_id
+            trace_cursor=trace_cursor,
+            adapter=adapter,
+            adapter_session_id=adapter_session_id,
+            worktree_path=worktree_path,
+            scratchpad_path=scratchpad_path,
+            scratchpad_sha256=scratchpad_sha,
+            meta=(
+                {"adapter_name": adapter}
+                if adapter and session is not None
+                else {}
+            ),
+        )
+        save_checkpoint(workdir, checkpoint)
+    except Exception:
+        logger.debug("Failed to write task resume checkpoint for %s", task_id, exc_info=True)
+
+
 def _reap_and_cleanup_session(
     orch: Any,
     task: Task,
@@ -3639,6 +3708,19 @@ def _reap_and_cleanup_session(
     # journal so the diff identity is a journal fact and the board can serve
     # and verify it against a detached run. Fail-open: never blocks completion.
     _capture_review_diff(orch, task, session)
+
+    # issue #4603: write task resume checkpoint after successful merge
+    # This captures the state so the task can be resumed later if needed
+    if janitor_passed and not skip_merge and merge_ok:
+        try:
+            _write_task_resume_checkpoint(
+                orch._workdir,
+                task.id,
+                session=session,
+                worktree_path=worktree,
+            )
+        except Exception as exc:
+            logger.debug("Failed to write task resume checkpoint for %s: %s", task.id, exc)
 
     # issue #2792: a merge-back that failed for a *non-conflict* reason (an
     # untracked operator-tree file, the forbidden-path guard, unrelated
