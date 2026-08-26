@@ -585,6 +585,9 @@ class CommandHook:
         )
 
 
+REPORTER_NAME_PREFIX = "reporters:"
+
+
 class PluginManager:
     """Discovers, loads, and invokes Bernstein plugins.
 
@@ -1036,7 +1039,7 @@ class PluginManager:
             return 0
 
     def discover_entry_points(self) -> None:
-        """Load hook plugins from the standard and reporter entry-point groups."""
+        """Load all plugins registered via the ``bernstein.plugins`` entry-point group."""
         eps = entry_points(group="bernstein.plugins")
         for ep in eps:
             try:
@@ -1057,19 +1060,22 @@ class PluginManager:
                     stacklevel=1,
                 )
 
-        for ep in entry_points(group="bernstein.reporters"):
-            try:
-                check_plugin_allowed(ep.name, self._policy)
-                reporter = ep.load()
-                if isinstance(reporter, type):
-                    reporter = reporter()
-                self._pm.register(reporter, name=ep.name)
-                self._registered_names.append(ep.name)
-                log.debug("Loaded reporter entry-point %r from %s", ep.name, ep.value)
-            except PluginPolicyViolation as exc:
-                log.warning("Reporter %r blocked by enterprise policy: %s", ep.name, exc.reason)
-            except Exception as exc:
-                log.warning("Failed to load reporter entry-point %r: %s", ep.name, exc)
+        from bernstein.plugins.reporters import discover_reporters
+
+        discover_reporters(self._register_reporter)
+
+    def _register_reporter(self, reporter: object, name: str) -> None:
+        """Apply policy and register a discovered reporter hook plugin.
+
+        Registered under a group-qualified Pluggy name: entry-point names are only
+        unique within their own group, so a `slack` in both `bernstein.plugins` and
+        `bernstein.reporters` made Pluggy raise "Plugin name already registered"
+        and the reporter was dropped with nothing but a warning, which is the
+        silent-plugin failure this issue is about.
+        """
+        check_plugin_allowed(name, self._policy)
+        self._pm.register(reporter, name=f"{REPORTER_NAME_PREFIX}{name}")
+        self._registered_names.append(f"{REPORTER_NAME_PREFIX}{name}")
 
     def discover_config_plugins(self, config_plugins: list[str]) -> None:
         """Load plugins listed in ``bernstein.yaml`` under the ``plugins:`` key.

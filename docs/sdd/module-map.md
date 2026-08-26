@@ -294,6 +294,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `permission_explain.py` | Progressive disclosure for permission requests -- explain-before-approve mode |
 | `plugin_errors.py`      | Plugin error collection and reporting |
 | `plugin_trust.py`       | Plugin trust checking and risk scoring for Bernstein plugins |
+| `reporters.py`          | Reporter entry-point discovery for the pluggy plugin manager |
 | `security_review.py`    | Security review: regex-based pattern scanning for agent-produced diffs |
 
 ### `src/bernstein/tui/` - Textual TUI
