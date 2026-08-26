@@ -173,16 +173,18 @@ def _compute_flaky_tests(workdir: Path) -> list[dict[str, Any]]:
             # Count transitions from failed to passed or passed to failed
             flaky_count = 0
             for i in range(1, len(outcomes)):
-                if outcomes[i] != outcomes[i-1]:
+                if outcomes[i] != outcomes[i - 1]:
                     flaky_count += 1
 
-            flaky_tests.append({
-                "test_name": test_name,
-                "flaky_count": flaky_count,
-                "first_seen": sequence[0][0],
-                "last_seen": sequence[-1][0],
-                "patterns": [outcome for _, outcome in sequence]
-            })
+            flaky_tests.append(
+                {
+                    "test_name": test_name,
+                    "flaky_count": flaky_count,
+                    "first_seen": sequence[0][0],
+                    "last_seen": sequence[-1][0],
+                    "patterns": [outcome for _, outcome in sequence],
+                }
+            )
 
     # Sort by flaky count descending
     flaky_tests.sort(key=lambda x: x["flaky_count"], reverse=True)

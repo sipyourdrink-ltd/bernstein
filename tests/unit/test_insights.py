@@ -16,7 +16,6 @@ from bernstein.core.persistence.work_ledger import (
     KIND_RUN_CLOSED,
     KIND_TASK_COMPLETED,
     KIND_TASK_FAILED,
-    LedgerState,
     LedgerEntry,
     run_ledger_dir,
 )
@@ -96,9 +95,7 @@ def test_flaky_tests_insights_single_test_only_passed(tmp_path: Path) -> None:
         entry_hash="0" * 64,
         ts=time.time(),
     )
-    (ledger_dir / "000000.jsonl").write_text(
-        json.dumps(entry.to_dict()) + "\n", encoding="utf-8"
-    )
+    (ledger_dir / "000000.jsonl").write_text(json.dumps(entry.to_dict()) + "\n", encoding="utf-8")
     insights = generate_flaky_tests_insights(tmp_path)
     assert insights.data["flaky_tests"] == []
 
@@ -118,9 +115,7 @@ def test_flaky_tests_insights_single_test_only_failed(tmp_path: Path) -> None:
         entry_hash="0" * 64,
         ts=time.time(),
     )
-    (ledger_dir / "000000.jsonl").write_text(
-        json.dumps(entry.to_dict()) + "\n", encoding="utf-8"
-    )
+    (ledger_dir / "000000.jsonl").write_text(json.dumps(entry.to_dict()) + "\n", encoding="utf-8")
     insights = generate_flaky_tests_insights(tmp_path)
     assert insights.data["flaky_tests"] == []
 
@@ -153,9 +148,7 @@ def test_flaky_tests_insights_test_failed_then_passed(tmp_path: Path) -> None:
         ts=ts_second,
     )
     (ledger_dir / "000000.jsonl").write_text(
-        json.dumps(entry_failed.to_dict()) + "\n" +
-        json.dumps(entry_passed.to_dict()) + "\n",
-        encoding="utf-8"
+        json.dumps(entry_failed.to_dict()) + "\n" + json.dumps(entry_passed.to_dict()) + "\n", encoding="utf-8"
     )
     insights = generate_flaky_tests_insights(tmp_path)
     flaky_tests = insights.data["flaky_tests"]
@@ -206,10 +199,13 @@ def test_flaky_tests_insights_test_passed_then_failed_then_passed(tmp_path: Path
         ts=ts_third,
     )
     (ledger_dir / "000000.jsonl").write_text(
-        json.dumps(entry_passed1.to_dict()) + "\n" +
-        json.dumps(entry_failed.to_dict()) + "\n" +
-        json.dumps(entry_passed2.to_dict()) + "\n",
-        encoding="utf-8"
+        json.dumps(entry_passed1.to_dict())
+        + "\n"
+        + json.dumps(entry_failed.to_dict())
+        + "\n"
+        + json.dumps(entry_passed2.to_dict())
+        + "\n",
+        encoding="utf-8",
     )
     insights = generate_flaky_tests_insights(tmp_path)
     flaky_tests = insights.data["flaky_tests"]
@@ -249,9 +245,7 @@ def test_flaky_tests_insights_non_test_tasks_ignored(tmp_path: Path) -> None:
         ts=ts_second,
     )
     (ledger_dir / "000000.jsonl").write_text(
-        json.dumps(entry_failed.to_dict()) + "\n" +
-        json.dumps(entry_passed.to_dict()) + "\n",
-        encoding="utf-8"
+        json.dumps(entry_failed.to_dict()) + "\n" + json.dumps(entry_passed.to_dict()) + "\n", encoding="utf-8"
     )
     insights = generate_flaky_tests_insights(tmp_path)
     assert insights.data["flaky_tests"] == []
@@ -311,12 +305,17 @@ def test_flaky_tests_insights_multiple_tests(tmp_path: Path) -> None:
         ts=ts + 4.0,
     )
     (ledger_dir / "000000.jsonl").write_text(
-        json.dumps(entry_t1_failed.to_dict()) + "\n" +
-        json.dumps(entry_t1_passed.to_dict()) + "\n" +
-        json.dumps(entry_t2_passed1.to_dict()) + "\n" +
-        json.dumps(entry_t2_failed.to_dict()) + "\n" +
-        json.dumps(entry_t2_passed2.to_dict()) + "\n",
-        encoding="utf-8"
+        json.dumps(entry_t1_failed.to_dict())
+        + "\n"
+        + json.dumps(entry_t1_passed.to_dict())
+        + "\n"
+        + json.dumps(entry_t2_passed1.to_dict())
+        + "\n"
+        + json.dumps(entry_t2_failed.to_dict())
+        + "\n"
+        + json.dumps(entry_t2_passed2.to_dict())
+        + "\n",
+        encoding="utf-8",
     )
     insights = generate_flaky_tests_insights(tmp_path)
     flaky_tests = insights.data["flaky_tests"]
@@ -362,9 +361,7 @@ def test_save_flaky_tests_insights_creates_file(tmp_path: Path) -> None:
         ts=ts_second,
     )
     (ledger_dir / "000000.jsonl").write_text(
-        json.dumps(entry_failed.to_dict()) + "\n" +
-        json.dumps(entry_passed.to_dict()) + "\n",
-        encoding="utf-8"
+        json.dumps(entry_failed.to_dict()) + "\n" + json.dumps(entry_passed.to_dict()) + "\n", encoding="utf-8"
     )
     # Initially, no insights file
     assert not (tmp_path / ".sdd" / "runtime" / "insights.json").exists()
@@ -373,6 +370,7 @@ def test_save_flaky_tests_insights_creates_file(tmp_path: Path) -> None:
     assert insights_path.exists()
     # Load and check content
     from bernstein.core.persistence.insights import load_insights
+
     loaded = load_insights(tmp_path)
     assert loaded is not None
     assert len(loaded.data["flaky_tests"]) == 1
@@ -392,9 +390,7 @@ def test_failure_classes_insights_single_gate_failure(tmp_path: Path) -> None:
         gate_name="lint",
         failing_check="trailing-whitespace",
     )
-    (ledger_dir / "000000.jsonl").write_text(
-        json.dumps(entry.to_dict()) + "\n", encoding="utf-8"
-    )
+    (ledger_dir / "000000.jsonl").write_text(json.dumps(entry.to_dict()) + "\n", encoding="utf-8")
     insights = generate_failure_classes_insights(tmp_path)
     classes = insights.data["failure_classes"]
     assert len(classes) == 1
@@ -428,12 +424,8 @@ def test_failure_classes_insights_multiple_same_gate_failure(tmp_path: Path) -> 
         failing_check="test_timeout",
         ts=ts_b,
     )
-    (ledger_dir_a / "000000.jsonl").write_text(
-        json.dumps(entry_a.to_dict()) + "\n", encoding="utf-8"
-    )
-    (ledger_dir_b / "000000.jsonl").write_text(
-        json.dumps(entry_b.to_dict()) + "\n", encoding="utf-8"
-    )
+    (ledger_dir_a / "000000.jsonl").write_text(json.dumps(entry_a.to_dict()) + "\n", encoding="utf-8")
+    (ledger_dir_b / "000000.jsonl").write_text(json.dumps(entry_b.to_dict()) + "\n", encoding="utf-8")
     insights = generate_failure_classes_insights(tmp_path)
     classes = insights.data["failure_classes"]
     assert len(classes) == 1
@@ -460,15 +452,9 @@ def test_failure_classes_insights_different_gates_and_checks(tmp_path: Path) -> 
     entry_b = _make_run_closed_entry(run_id_b, gate_name="lint", failing_check="line-too-long", ts=time.time())
     # Run C: tests, test_timeout
     entry_c = _make_run_closed_entry(run_id_c, gate_name="tests", failing_check="test_timeout", ts=time.time())
-    (ledger_dir_a / "000000.jsonl").write_text(
-        json.dumps(entry_a.to_dict()) + "\n", encoding="utf-8"
-    )
-    (ledger_dir_b / "000000.jsonl").write_text(
-        json.dumps(entry_b.to_dict()) + "\n", encoding="utf-8"
-    )
-    (ledger_dir_c / "000000.jsonl").write_text(
-        json.dumps(entry_c.to_dict()) + "\n", encoding="utf-8"
-    )
+    (ledger_dir_a / "000000.jsonl").write_text(json.dumps(entry_a.to_dict()) + "\n", encoding="utf-8")
+    (ledger_dir_b / "000000.jsonl").write_text(json.dumps(entry_b.to_dict()) + "\n", encoding="utf-8")
+    (ledger_dir_c / "000000.jsonl").write_text(json.dumps(entry_c.to_dict()) + "\n", encoding="utf-8")
     insights = generate_failure_classes_insights(tmp_path)
     classes = insights.data["failure_classes"]
     # We expect three classes, sorted by count (all count=1) then by gate_name? Actually by count descending.
@@ -494,9 +480,7 @@ def test_save_failure_classes_insights_creates_file(tmp_path: Path) -> None:
         gate_name="lint",
         failing_check="trailing-whitespace",
     )
-    (ledger_dir / "000000.jsonl").write_text(
-        json.dumps(entry.to_dict()) + "\n", encoding="utf-8"
-    )
+    (ledger_dir / "000000.jsonl").write_text(json.dumps(entry.to_dict()) + "\n", encoding="utf-8")
     # Initially, no insights file
     assert not (tmp_path / ".sdd" / "runtime" / "insights.json").exists()
     save_failure_classes_insights(tmp_path)
@@ -504,6 +488,7 @@ def test_save_failure_classes_insights_creates_file(tmp_path: Path) -> None:
     assert insights_path.exists()
     # Load and check content
     from bernstein.core.persistence.insights import load_insights
+
     loaded = load_insights(tmp_path)
     assert loaded is not None
     assert loaded.data["failure_classes"][0]["gate_name"] == "lint"
