@@ -709,7 +709,6 @@ exclude = [
     "src/bernstein/core/server_middleware.py",
     "src/bernstein/core/server_app.py",
     "src/bernstein/adapters/conformance.py",
-    "src/bernstein/core/token_waste_report.py",
     "src/bernstein/core/workflow_importer.py",
     "src/bernstein/core/sbom.py",
     "src/bernstein/core/sigstore_attestation.py",
