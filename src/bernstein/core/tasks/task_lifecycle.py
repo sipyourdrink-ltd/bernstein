@@ -46,12 +46,12 @@ from bernstein.core.git.merge_preview import (
 from bernstein.core.hook_events import HookEvent
 from bernstein.core.janitor import run_janitor
 from bernstein.core.metrics import get_collector
+from bernstein.core.persistence.task_resume import TaskResumeCheckpoint, save_checkpoint, scratchpad_sha256
 from bernstein.core.replay.review_board import (
     record_task_diff_captured,
     record_task_merged,
     store_task_diff,
 )
-from bernstein.core.persistence.task_resume import TaskResumeCheckpoint, save_checkpoint
 from bernstein.core.router import RouterError
 from bernstein.core.rule_enforcer import RulesConfig, load_rules_config, run_rule_enforcement
 from bernstein.core.spawn_analyzer import SpawnAnalyzer, SpawnFailureAnalysis
@@ -3713,11 +3713,12 @@ def _reap_and_cleanup_session(
     # This captures the state so the task can be resumed later if needed
     if janitor_passed and not skip_merge and merge_ok:
         try:
+            worktree_path = orch._spawner.get_worktree_path(session.id)
             _write_task_resume_checkpoint(
                 orch._workdir,
                 task.id,
                 session=session,
-                worktree_path=worktree,
+                worktree_path=worktree_path,
             )
         except Exception as exc:
             logger.debug("Failed to write task resume checkpoint for %s: %s", task.id, exc)
