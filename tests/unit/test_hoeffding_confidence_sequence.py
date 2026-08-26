@@ -1,11 +1,10 @@
 """Tests for hoeffding_confidence_sequence."""
 
-import math
 import pytest
 
 from bernstein.core.quality.empirical_confidence import (
-    hoeffding_confidence_sequence,
     canonical_round,
+    hoeffding_confidence_sequence,
 )
 
 
@@ -44,11 +43,11 @@ class TestHoeffdingConfidenceSequence:
         """As n increases, the interval should narrow."""
         lower_10, upper_10 = hoeffding_confidence_sequence(5, 10, 0.05)
         lower_100, upper_100 = hoeffding_confidence_sequence(50, 100, 0.05)
-        
+
         # Both maintain same proportion
         assert abs((lower_10 + upper_10) / 2 - 0.5) < 0.001
         assert abs((lower_100 + upper_100) / 2 - 0.5) < 0.001
-        
+
         # But larger n has narrower interval
         width_10 = upper_10 - lower_10
         width_100 = upper_100 - lower_100
@@ -58,7 +57,7 @@ class TestHoeffdingConfidenceSequence:
         """Smaller alpha (lower error rate) gives wider interval."""
         lower_05, upper_05 = hoeffding_confidence_sequence(5, 10, 0.05)
         lower_01, upper_01 = hoeffding_confidence_sequence(5, 10, 0.01)
-        
+
         # Smaller alpha means more conservative (wider) interval
         width_05 = upper_05 - lower_05
         width_01 = upper_01 - lower_01
@@ -83,14 +82,14 @@ class TestHoeffdingConfidenceSequence:
     def test_canonical_rounding_applied(self):
         """Results should be canonically rounded to 10 decimal places."""
         lower, upper = hoeffding_confidence_sequence(7, 13, 0.05)
-        
+
         # Check that values are rounded (not too many decimal places)
         def count_decimal_places(x: float) -> int:
             s = f"{x:.15f}".rstrip('0')
             if '.' in s:
                 return len(s.split('.')[1])
             return 0
-        
+
         # Canonically rounded values should have at most 10 decimal places
         assert count_decimal_places(lower) <= 10
         assert count_decimal_places(upper) <= 10
@@ -118,9 +117,9 @@ class TestHoeffdingConfidenceSequence:
         # bound = sqrt(ln(2/alpha) / (2*n)) = sqrt(3.6888... / 40) ≈ 0.3036...
         # lower ≈ 0.5 - 0.3036 ≈ 0.1964
         # upper ≈ 0.5 + 0.3036 ≈ 0.8036
-        
+
         lower, upper = hoeffding_confidence_sequence(10, 20, 0.05)
-        
+
         # Verify approximate values (accounting for canonical rounding)
         assert 0.19 < lower < 0.20
         assert 0.80 < upper < 0.81
@@ -130,13 +129,12 @@ class TestHoeffdingConfidenceSequence:
         # Simulate accumulating observations
         # The bound should be valid at each n
         alpha = 0.05
-        true_p = 0.7  # Assume true success rate
-        
+
         # With many trials, the interval should contain true_p most of the time
         k = 70  # Observed successes
         n = 100  # Total trials
         lower, upper = hoeffding_confidence_sequence(k, n, alpha)
-        
+
         # p_hat = 0.7, the interval should contain 0.7
         assert lower <= 0.7 <= upper
 
@@ -179,7 +177,7 @@ class TestCanonicalRound:
         # A value with many decimal places
         x = 1.234567890123456789
         rounded = canonical_round(x)
-        
+
         # Should be rounded to 10 decimal places
         # The rounded value should be reproducible
         assert rounded == canonical_round(x)

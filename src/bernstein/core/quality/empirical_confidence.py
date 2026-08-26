@@ -5,7 +5,6 @@ This module provides:
 * :func:`confidence` - Sample-size-gated empirical confidence from outcome history.
 * :func:`hoeffding_confidence_sequence` - Time-uniform confidence bounds based on
   Hoeffding's inequality for binary outcomes.
-"""
 
 Records per-decision outcomes in an append-only SQLite table and exposes a
 sample-size-gated confidence query. The query refuses to return a value when
