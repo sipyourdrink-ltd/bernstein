@@ -3520,10 +3520,19 @@ def _create_approval_pr(
     session: AgentSession,
     completion_data: CompletionData | None,
 ) -> None:
-    """Create a PR for approval-gate PR mode."""
+    """Create a PR for approval-gate PR mode.
+
+    The caller has already decided to hold the merge; this PR is the surface
+    the operator approves on. If it cannot be created, the hold stands but the
+    approval can never arrive through the intended channel - so the failure is
+    surfaced as a notification naming the task, never just a log line. A task
+    silently waiting on a PR that does not exist looks exactly like a task
+    waiting on a reviewer.
+    """
     worktree_path = orch._spawner.get_worktree_path(session.id)
     if worktree_path is None:
-        logger.warning("Approval gate PR mode: no worktree for agent %s -- cannot create PR", session.id)
+        logger.error("Approval gate PR mode: no worktree for agent %s -- cannot create PR", session.id)
+        _notify_approval_pr_failed(orch, task, reason=f"no worktree for agent {session.id}")
         return
 
     task_m = get_collector(orch._workdir / ".sdd" / "metrics").task_metrics.get(task.id)
@@ -3543,6 +3552,21 @@ def _create_approval_pr(
     )
     if pr_url:
         logger.info("Approval gate: PR created for task %s: %s", task.id, pr_url)
+    else:
+        logger.error("Approval gate PR mode: create_pr returned nothing for task %s", task.id)
+        _notify_approval_pr_failed(orch, task, reason="create_pr returned no URL")
+
+
+def _notify_approval_pr_failed(orch: Any, task: Task, *, reason: str) -> None:
+    orch._notify(
+        event="task.approval_pr_failed",
+        title=f"Approval PR could not be created: {task.title}",
+        body=(
+            f"Task {task.id} is held for PR approval, but the PR was not created ({reason}). "
+            "The task will wait indefinitely unless approved another way or re-run."
+        ),
+        task_id=task.id,
+    )
 
 
 def _reap_and_cleanup_session(
