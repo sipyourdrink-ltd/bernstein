@@ -54,6 +54,26 @@ bernstein agents-md diff                # human-readable unified diff
 (plus `all` for `verify`/`diff`). All commands take `--workdir PATH`
 to operate on another repo.
 
+### Default branch resolution
+
+The "Git workflow" section names the repository's default branch, which
+is a property of the repository - not of the checkout you happen to be
+on. The generator resolves it in this order:
+
+1. `--default-branch NAME` (explicit pin, wins over everything;
+   also available as `GenerateOptions.default_branch` for library use).
+2. `origin/HEAD`'s symbolic target (`git remote set-head origin -a`
+   creates it).
+3. Conventional `main` / `master` refs, local or remote-tracking.
+4. The `gh-readonly-queue/<base>/pr-<n>-<sha>` merge-queue ref shape.
+
+The checked-out branch name is never used: on a feature branch, a
+detached HEAD, or a single-branch CI clone it is guaranteed wrong, and
+writing it silently corrupts the committed mirrors. When nothing
+resolves, `sync` (and every other verb) fails with exit code 3 and a
+message naming the escape hatches (`--default-branch`, `set-head`, or
+fetching the default ref) instead of writing a guess.
+
 ## Drift-and-reconcile demo
 
 The killer feature is closing the loop: notice when an agent file

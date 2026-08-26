@@ -229,3 +229,68 @@ class TestDiffSubcommand:
         # Unified-diff fence and our manual edit signature should both appear.
         assert "@@" in result.output
         assert "manual edit" in result.output
+
+
+# ---------------------------------------------------------------------------
+# default-branch resolution failure (issue #4578) - exit code 3
+# ---------------------------------------------------------------------------
+
+
+class TestUnresolvedDefaultBranch:
+    def test_sync_fails_with_clear_error_when_default_branch_unresolvable(self, tmp_path: Path) -> None:
+        """A feature-branch checkout with no origin must refuse, not write HEAD.
+
+        Regression for #4578: this used to write the checked-out branch name
+        into every mirror. The CLI contract now is a non-zero exit with a
+        message naming the escape hatches.
+        """
+        import subprocess
+
+        repo = tmp_path / "noorigin"
+        repo.mkdir()
+        (repo / "README.md").write_text("x\n")
+        subprocess.run(["git", "init", "-q", "-b", "feature/x"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            agents_md_cmd,
+            ["sync", "--workdir", str(repo), "--repo-name", "demo"],
+        )
+        assert result.exit_code == 3
+        assert "--default-branch" in result.output
+        # Nothing was written: refusing beats corrupting.
+        assert not (repo / "AGENTS.md").exists()
+
+    def test_default_branch_option_resolves_the_failure(self, tmp_path: Path) -> None:
+        """The escape hatch the error message points at actually works."""
+        import subprocess
+
+        repo = tmp_path / "pinned"
+        repo.mkdir()
+        (repo / "README.md").write_text("x\n")
+        subprocess.run(["git", "init", "-q", "-b", "feature/x"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            agents_md_cmd,
+            [
+                "sync",
+                "--workdir",
+                str(repo),
+                "--repo-name",
+                "demo",
+                "--default-branch",
+                "trunk",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        agents = (repo / "AGENTS.md").read_text()
+        assert "Default branch: `trunk`." in agents

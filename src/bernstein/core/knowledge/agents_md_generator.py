@@ -196,6 +196,18 @@ _DIRECTORY_CONTEXT_ROOTS: tuple[str, ...] = ("src", "tests")
 # ---------------------------------------------------------------------------
 
 
+class DefaultBranchUnresolvedError(RuntimeError):
+    """Raised when a git checkout's default branch cannot be determined.
+
+    The default branch is a property of the repository, not of the working
+    tree. When no probe (explicit config, ``origin/HEAD``, conventional
+    ``main``/``master`` refs, merge-queue ref shape) can resolve it, writing
+    anything -- including the current checkout's branch name -- would make
+    the generated context files depend on where the command happened to run.
+    Refusing to render is safer than rendering a wrong default branch.
+    """
+
+
 @dataclass(frozen=True)
 class GenerateOptions:
     """Knobs that control what :func:`generate` produces.
@@ -206,6 +218,11 @@ class GenerateOptions:
             layout where the table would mislead.
         include_git_workflow: When ``False``, skip git-derived workflow data.
             Useful when running outside a git working tree.
+        default_branch: Explicit default branch to render in the git-workflow
+            section. Consulted before any git probe; overrides
+            ``origin/HEAD`` and the conventional ``main``/``master`` refs.
+            Lets operators pin the value for CI clones that never fetch the
+            remote's ``HEAD`` ref (see :func:`_git_default_branch`).
         max_module_map_lines: Soft cap on rows per package table; when a
             package would render more rows than this it is summarised.
             ``0`` disables the cap.
@@ -215,6 +232,7 @@ class GenerateOptions:
 
     include_module_map: bool = True
     include_git_workflow: bool = True
+    default_branch: str | None = None
     max_module_map_lines: int = 0
     overlay_dir: str = _OVERLAY_DIR
 
@@ -250,7 +268,7 @@ def generate(repo_path: Path, options: GenerateOptions | None = None) -> list[Ag
         ("setup", _build_setup(repo_path)),
         ("architecture", _build_architecture(repo_path)),
         ("conventions", _build_conventions(repo_path, opts)),
-        ("git-workflow", _build_git_workflow(repo_path) if opts.include_git_workflow else None),
+        ("git-workflow", _build_git_workflow(repo_path, opts) if opts.include_git_workflow else None),
         ("roles", _build_roles(repo_path)),
         ("documentation-duty", _build_documentation_duty()),
     ]
@@ -751,7 +769,7 @@ def _build_conventions(repo_path: Path, opts: GenerateOptions) -> AgentsMdSectio
     )
 
 
-def _build_git_workflow(repo_path: Path) -> AgentsMdSection | None:
+def _build_git_workflow(repo_path: Path, opts: GenerateOptions) -> AgentsMdSection | None:
     """Default branch line, deterministic across environments.
 
     The previous version included ``git_context.hot_files`` output in
@@ -761,9 +779,25 @@ def _build_git_workflow(repo_path: Path) -> AgentsMdSection | None:
     different "hot files" tables in CI vs on a developer machine,
     causing ``bernstein agents-md verify`` to flag drift even after a
     fresh local sync. Returns ``None`` outside a git working tree.
+
+    Raises:
+        DefaultBranchUnresolvedError: Inside a git working tree when no
+            probe resolves the repository's default branch. Writing the
+            checked-out branch name would recreate the defect this
+            function exists to prevent (the branch you are on is a
+            working-tree property, the default branch is a repository
+            property).
     """
-    default_branch = _git_default_branch(repo_path)
+    default_branch = _git_default_branch(repo_path, opts.default_branch)
     if default_branch is None:
+        if (repo_path / ".git").exists():
+            raise DefaultBranchUnresolvedError(
+                "cannot determine the repository's default branch for "
+                f"{repo_path}; set one explicitly via --default-branch (or "
+                "GenerateOptions.default_branch), configure "
+                "`git remote set-head origin -a`, or fetch the default "
+                "branch ref (e.g. `git fetch origin main`)"
+            )
         return None
     return AgentsMdSection(
         key="git-workflow",
@@ -1123,29 +1157,41 @@ def _base_branch_of_merge_queue_ref(branch: str) -> str | None:
     return match.group("base") if match else None
 
 
-def _git_default_branch(repo_path: Path) -> str | None:
+def _git_default_branch(repo_path: Path, default_branch: str | None = None) -> str | None:
     """Return the default branch (``main``/``master``/...) or ``None``.
 
     Resolution order is deliberate so that the answer is *deterministic
     across environments* - local checkouts, CI shallow clones, detached
     HEADs, and worktrees must all agree:
 
-    1. ``git symbolic-ref refs/remotes/origin/HEAD`` - set when ``git
+    1. Explicit ``default_branch`` argument (when provided) - an operator
+       pin wins over every git probe. Useful for CI clones that never
+       fetch the remote's ``HEAD`` ref.
+    2. ``git symbolic-ref refs/remotes/origin/HEAD`` - set when ``git
        remote set-head origin -a`` ran. Authoritative on developer
        machines; usually absent on ``actions/checkout`` runners.
-    2. ``git rev-parse --verify main`` then ``master`` - recognises the
+    3. ``git rev-parse --verify main`` then ``master`` - recognises the
        conventional default-branch names. Works even in shallow clones
        and detached HEAD. This step is what keeps CI render output
        byte-stable against a freshly committed local sync.
-    3. ``git rev-parse --abbrev-ref HEAD`` - last resort. Returns the
-       current branch name when neither ``main`` nor ``master`` exists.
-       Skipped when HEAD is detached (returns the literal ``HEAD``)
-       because that would inject the PR-branch name into AGENTS.md.
-       A merge-queue ref is checked out *as a branch*, not detached, so
-       the detached-HEAD guard does not cover it; the base branch is
-       recovered from the ref's own shape instead (see
+    4. The merge-queue ref shape - ``gh-readonly-queue/<base>/pr-<n>-<sha>``
+       encodes the branch the queue group was built against. A merge-queue
+       ref is checked out *as a branch*, not detached, so the
+       detached-HEAD guard does not cover it; the base branch is recovered
+       from the ref's own shape instead (see
        ``_base_branch_of_merge_queue_ref``).
+
+    The current checkout's branch name is deliberately *never* used. The
+    default branch is a property of the repository; the branch you are on
+    is a property of the working tree. On a feature branch, a detached
+    HEAD, or a shallow CI clone of a non-``main`` PR, the checked-out
+    branch is guaranteed to be the wrong answer, and writing it silently
+    is what makes ``bernstein agents-md sync`` corrupt its own mirrors
+    (see issue #4578). When every probe comes up empty the function
+    returns ``None`` and the caller decides how to fail.
     """
+    if default_branch:
+        return default_branch
     try:
         result = subprocess.run(
             ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
@@ -1190,17 +1236,12 @@ def _git_default_branch(repo_path: Path) -> str | None:
             queue_base = _base_branch_of_merge_queue_ref(branch)
             if queue_base:
                 return queue_base
-            if branch and branch != "HEAD":
-                return branch
     except (subprocess.TimeoutExpired, OSError):
         return None
-    # Final fallback - only if we're inside a git checkout. ``main`` is
-    # the modern default; older repos that adopted ``master`` will have
-    # been resolved earlier in the chain. Keeps the rendered section
-    # deterministic across shallow CI clones, worktrees, and detached
-    # heads where every prior probe came up empty.
-    if (repo_path / ".git").exists():
-        return "main"
+    # Every probe failed. Deliberately no ``main``-as-last-resort: a repo
+    # whose default is ``trunk`` (or anything else non-conventional) would
+    # then get a wrong value written verbatim into committed context files,
+    # the same class of bug as writing the checked-out branch name.
     return None
 
 
