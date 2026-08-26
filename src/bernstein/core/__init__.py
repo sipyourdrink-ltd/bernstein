@@ -552,7 +552,6 @@ _REDIRECT_MAP: dict[str, str] = {
     "token_counter": "bernstein.core.tokens.token_counter",
     "token_estimation": "bernstein.core.tokens.token_estimation",
     "token_monitor": "bernstein.core.tokens.token_monitor",
-    "token_waste_report": "bernstein.core.tokens.token_waste_report",
     # tool_timing: removed - dead code, no production importers.
     "tool_use_context": "bernstein.core.agents.tool_use_context",
     # trace_correlation: removed - dead code, no production importers.
