@@ -1,4 +1,3 @@
-import pytest
 from bernstein.cli.commands.daemon_cmd import DEFAULT_COMMAND
 
 def test_default_command_includes_schedule_run():
