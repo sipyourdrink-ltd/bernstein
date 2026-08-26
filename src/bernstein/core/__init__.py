@@ -67,7 +67,6 @@ _REDIRECT_MAP: dict[str, str] = {
     "auth_middleware": "bernstein.core.security.auth_middleware",
     "auth_rate_limiter": "bernstein.core.security.auth_rate_limiter",
     "auto_approve": "bernstein.core.security.auto_approve",
-    "auto_distillation": "bernstein.core.tokens.auto_distillation",
     "auto_mode_classifier": "bernstein.core.routing.auto_mode_classifier",
     "backlog_parser": "bernstein.core.tasks.backlog_parser",
     "bandit_router": "bernstein.core.routing.bandit_router",
