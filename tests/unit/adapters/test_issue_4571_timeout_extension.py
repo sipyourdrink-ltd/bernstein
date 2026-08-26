@@ -19,9 +19,10 @@ not a mocked clock: the bug lives in the arming / re-arming.
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from bernstein.core.models import Complexity, Scope, Task
+from bernstein.core.models import AgentSession, Complexity, Scope, Task
 
 from bernstein.core.agents.spawner_core import AgentSpawner
 from bernstein.core.defaults import TASK
@@ -156,3 +157,90 @@ def test_rearm_uses_remaining_budget_not_absolute_budget() -> None:
         assert time.time() + timer.interval <= spawn_ts + _hard_cap_s + 60
 
     timer.cancel()
+
+
+def _make_reap_orch(tmp_path) -> SimpleNamespace:
+    """An orchestrator stub sufficient for one reap pass (issue #4610)."""
+    return SimpleNamespace(
+        _agents={},
+        _config=SimpleNamespace(max_agent_runtime_s=1800, heartbeat_timeout_s=120),
+        _spawner=None,
+        _workdir=tmp_path,
+    )
+
+
+class _RecordingAdapter:
+    """Stub adapter that records the timeout it is handed on extension."""
+
+    def __init__(self) -> None:
+        self.received: list[int] = []
+
+    def extend_timeout(self, timer: object, pid: int, timeout_seconds: int, session_id: str) -> object:
+        self.received.append(timeout_seconds)
+        return timer  # the tester does not need a real re-armed timer
+
+
+def test_reap_dead_agents_hands_down_remaining_budget(tmp_path) -> None:
+    """The caller (reap_dead_agents) must convert the absolute budget into the
+    remaining budget before re-arming. This is the layer where the #4571
+    defect actually lived; the adapter-contract test above would still pass
+    if this caller were reverted, so drive the caller itself.
+
+    A session spawned 5000s ago with a fresh heartbeat is extended: the value
+    handed to the adapter must be ``timeout_s - runtime`` floored at 60, never
+    the absolute ``timeout_s``.
+    """
+    from bernstein.core.agents.agent_lifecycle import reap_dead_agents
+
+    orch = _make_reap_orch(tmp_path)
+    adapter = _RecordingAdapter()
+    orch._spawner = SimpleNamespace(_adapter=adapter)
+
+    session = AgentSession(id="sess-caller", role="backend", task_ids=["T-1"], status="working")
+    session.pid = 12345
+    session.spawn_ts = time.time() - 5000
+    session.heartbeat_ts = time.time()  # fresh heartbeat -> the extension branch
+    session.timeout_s = 1800
+    session.timeout_timer = MagicMock()  # a non-None timer so the re-arm path runs
+    orch._agents[session.id] = session
+
+    reap_dead_agents(orch, SimpleNamespace(reaped=[]), {})
+
+    # The extension happened: the absolute budget advanced.
+    assert session.timeout_s > 1800, "extension did not happen (test would be vacuous)"
+    # The adapter received the remaining budget, not the absolute budget.
+    runtime = time.time() - session.spawn_ts  # ≈ 5000s
+    expected_remaining = max(60, int(session.timeout_s - runtime))
+    assert adapter.received == [expected_remaining]
+    # And it is definitely not the absolute budget (which would be past the cap).
+    assert adapter.received[0] < session.timeout_s
+
+
+def test_reap_dead_agents_floors_remaining_budget_at_60(tmp_path) -> None:
+    """When runtime exceeds the extended budget (a session that has already
+    overrun), ``max(60, ...)`` must clamp the remaining budget to 60s rather
+    than hand the adapter a negative or zero delay. Kept as a second test
+    because it exercises the clamp branch specifically, which is a distinct
+    decision from the ordinary conversion.
+    """
+    from bernstein.core.agents.agent_lifecycle import reap_dead_agents
+
+    orch = _make_reap_orch(tmp_path)
+    adapter = _RecordingAdapter()
+    orch._spawner = SimpleNamespace(_adapter=adapter)
+
+    session = AgentSession(id="sess-floor", role="backend", task_ids=["T-1"], status="working")
+    session.pid = 12346
+    # Runtime well past even the extended budget: after the +600 extension the
+    # absolute budget is 660s, but 2000s of runtime leaves a negative remaining
+    # budget, so max(60, ...) must clamp to 60s.
+    session.spawn_ts = time.time() - 2000
+    session.heartbeat_ts = time.time()
+    session.timeout_s = 60
+    session.timeout_timer = MagicMock()
+    orch._agents[session.id] = session
+
+    reap_dead_agents(orch, SimpleNamespace(reaped=[]), {})
+
+    assert session.timeout_s == 660, "extension did not happen (test would be vacuous)"
+    assert adapter.received == [60], "the floor of 60s must win when runtime exceeds the budget"
