@@ -880,7 +880,8 @@ class CLIAdapter(ABC):
         Args:
             timer: The currently-armed watchdog timer.
             pid: Process ID the watchdog monitors.
-            timeout_seconds: New deadline in seconds from now.
+            timeout_seconds: New deadline in seconds **from now** (a relative
+                delay, not an absolute budget measured from spawn).
             session_id: Session identifier for structured logging.
 
         Returns:
