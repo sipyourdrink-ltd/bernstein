@@ -1057,6 +1057,16 @@ class PluginManager:
                     stacklevel=1,
                 )
 
+        from bernstein.plugins.reporters import discover_reporters
+
+        discover_reporters(self._register_reporter)
+
+    def _register_reporter(self, reporter: object, name: str) -> None:
+        """Apply policy and register a discovered reporter hook plugin."""
+        check_plugin_allowed(name, self._policy)
+        self._pm.register(reporter, name=name)
+        self._registered_names.append(name)
+
     def discover_config_plugins(self, config_plugins: list[str]) -> None:
         """Load plugins listed in ``bernstein.yaml`` under the ``plugins:`` key.
 
