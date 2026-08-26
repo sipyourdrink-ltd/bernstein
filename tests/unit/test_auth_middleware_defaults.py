@@ -420,6 +420,38 @@ def test_auth_disabled_opt_out_passes_requests_through(
     assert response.status_code == 200
 
 
+def test_config_resolved_opt_out_survives_without_the_env_var() -> None:
+    """``auth_disabled=True`` from the factory must bypass the gate by itself.
+
+    The app factory resolves ``auth.enabled: false`` from configuration and
+    passes it here as a constructor argument; the environment variable is a
+    separate, process-level signal. A dispatch that consults only the
+    environment silently re-enables auth for config-opted-out deployments
+    while the constructor keeps resolving a flag nobody reads -- which is
+    exactly what shipped once, unnoticed, inside an unrelated change.
+    """
+    SSOAuthMiddleware._warned_disabled = False
+    client = _build_app(legacy_token="secret", auth_disabled=True)
+
+    response = client.post("/tasks")
+
+    assert response.status_code == 200
+
+
+def test_env_opt_out_set_after_construction_still_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The environment signal is read at dispatch time, not cached at init."""
+    monkeypatch.delenv("BERNSTEIN_AUTH_DISABLED", raising=False)
+    SSOAuthMiddleware._warned_disabled = False
+    client = _build_app(legacy_token="secret")
+    # Build the middleware stack (lazy) while auth is still on.
+    assert client.post("/tasks").status_code == 401
+
+    monkeypatch.setenv("BERNSTEIN_AUTH_DISABLED", "1")
+    assert client.post("/tasks").status_code == 200
+
+
 def test_auth_disabled_logs_loud_warning(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     """Opting out must emit a loud WARNING so operators notice."""
     monkeypatch.setenv("BERNSTEIN_AUTH_DISABLED", "1")
