@@ -52,7 +52,7 @@ class TestLintGateRegressions:
             encoding="utf-8",
         )
 
-        ok, output = _run_command(f"ruff check {bad_py}", tmp_path, timeout_s=30)
+        ok, output, _exit_code = _run_command(f"ruff check {bad_py}", tmp_path, timeout_s=30)
         assert not ok, f"Expected ruff to fail on undefined name, but it passed. Output: {output}"
 
     def test_unused_import_triggers_ruff(self, tmp_path: Path) -> None:
@@ -60,7 +60,7 @@ class TestLintGateRegressions:
         bad_py = tmp_path / "unused_import.py"
         bad_py.write_text("import os\nimport sys\n\nx = 1\n", encoding="utf-8")
 
-        ok, output = _run_command(f"ruff check {bad_py}", tmp_path, timeout_s=30)
+        ok, output, _exit_code = _run_command(f"ruff check {bad_py}", tmp_path, timeout_s=30)
         assert not ok, f"Expected ruff to fail on unused imports, but it passed. Output: {output}"
 
     def test_clean_python_passes_lint(self, tmp_path: Path) -> None:
@@ -71,7 +71,7 @@ class TestLintGateRegressions:
             encoding="utf-8",
         )
 
-        ok, _output = _run_command(f"ruff check {clean_py}", tmp_path, timeout_s=30)
+        ok, _output, _exit_code = _run_command(f"ruff check {clean_py}", tmp_path, timeout_s=30)
         assert ok, "Expected clean Python to pass ruff check"
 
     def test_syntax_error_in_python_blocks_lint_gate(self, tmp_path: Path) -> None:
@@ -79,7 +79,7 @@ class TestLintGateRegressions:
         bad_py = tmp_path / "syntax_error.py"
         bad_py.write_text("def broken(\n    # missing closing paren\nx = 1\n", encoding="utf-8")
 
-        ok, output = _run_command(f"ruff check {bad_py}", tmp_path, timeout_s=30)
+        ok, output, _exit_code = _run_command(f"ruff check {bad_py}", tmp_path, timeout_s=30)
         assert not ok, f"Expected ruff to fail on syntax error. Output: {output}"
 
     def test_lint_gate_failure_propagates_through_run_quality_gates(self, tmp_path: Path) -> None:

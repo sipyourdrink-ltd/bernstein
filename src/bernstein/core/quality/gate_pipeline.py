@@ -18,7 +18,7 @@ COMMAND_ERROR_PREFIX = "Command error: "
 if TYPE_CHECKING:
     from bernstein.core.quality.quality_gates import QualityGatesConfig
 
-GateStatus = Literal["pass", "fail", "warn", "timeout", "skipped", "bypassed", "inconclusive"]
+GateStatus = Literal["pass", "fail", "warn", "timeout", "skipped", "bypassed", "inconclusive", "command_not_found"]
 
 # Closed set of reason codes for the ``"inconclusive"`` verdict.
 #
@@ -46,6 +46,10 @@ INCONCLUSIVE_REASONS: frozenset[str] = frozenset(
         # the evaluator, subprocess killed by signal). Distinct from
         # "evidence unfavourable".
         "runner-died-before-output",
+        # The command specified for the gate was not found (exit code 127).
+        # Distinct from "evidence unfavourable" — no evidence was produced
+        # because the tool itself is missing.
+        "command-not-found",
     }
 )
 

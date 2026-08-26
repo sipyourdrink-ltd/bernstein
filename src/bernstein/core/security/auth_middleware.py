@@ -813,8 +813,15 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
     ) -> StarletteResponse:
         path = request.url.path
 
-        # Opt-out: pass every request through unauthenticated.
-        if self._auth_disabled:
+        # Opt-out: pass every request through unauthenticated. Two signals
+        # can switch auth off and dispatch must honour both: the flag the app
+        # factory resolved from configuration (``auth.enabled: false`` arrives
+        # here as ``auth_disabled=True``) and the process-level environment
+        # opt-out, read live so a variable exported after the middleware was
+        # constructed still counts. Reading only the environment here silently
+        # re-enabled auth for config-opted-out deployments: the constructor
+        # kept resolving ``self._auth_disabled`` and nothing read it.
+        if self._auth_disabled or auth_disabled_via_opt_out():
             # No credential is presented in this mode, so there is no
             # principal to derive a scope from and the caller's own
             # ``X-Tenant-Id`` is the only tenant signal that exists.  Honour

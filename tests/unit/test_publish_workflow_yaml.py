@@ -390,3 +390,45 @@ def test_copr_cli_install_is_proven_to_run_before_the_credential_is_written(
     # step that writes ~/.config/copr.
     steps = [step.get("name") for step in workflow["jobs"][COPR_JOB]["steps"] if isinstance(step, dict)]
     assert steps.index("Install rpmbuild and copr-cli") < steps.index("Write copr-cli configuration")
+
+
+RELEASE_JOB = "github-release"
+
+
+def test_release_body_carries_the_hand_written_notes_for_the_version(
+    workflow: dict[str, Any],
+) -> None:
+    """The release page must show ``docs/release-notes/<tag>.md``.
+
+    Every release until v3.18.1 shipped with only the generated changelog on
+    the page: the notes written for the version sat in the repository and had
+    to be pasted into the release by hand afterwards.
+    """
+    run = _step_run(workflow, RELEASE_JOB, "Create release")
+    assert "docs/release-notes/" in run, "the release body must be built from the notes file"
+    assert "--notes-file" in run, "gh release create must be given the composed body"
+
+
+def test_release_body_still_appends_the_generated_changelog(
+    workflow: dict[str, Any],
+) -> None:
+    """Contributor credits live in the generated changelog; keep it below the notes."""
+    run = _step_run(workflow, RELEASE_JOB, "Create release")
+    assert "releases/generate-notes" in run, (
+        "the generated changelog must be fetched and appended, not dropped"
+    )
+    notes_pos = run.find("docs/release-notes/")
+    generated_pos = run.find("releases/generate-notes")
+    assert notes_pos < generated_pos, "hand-written notes come first, changelog after"
+
+
+def test_release_creation_does_not_fall_back_to_generated_notes_only(
+    workflow: dict[str, Any],
+) -> None:
+    run = _step_run(workflow, RELEASE_JOB, "Create release")
+    commands = "\n".join(
+        line for line in run.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert "--generate-notes" not in commands, (
+        "--generate-notes publishes the machine changelog as the whole body"
+    )

@@ -28,11 +28,6 @@ S1172_TARGETS: tuple[ParameterTarget, ...] = (
     ),
     ParameterTarget(Path("src/bernstein/core/quality/review_pipeline/schema.py"), "_line_for_pointer", "data"),
     ParameterTarget(
-        Path("src/bernstein/core/tokens/auto_distillation.py"),
-        "AutoDistiller.collect_example",
-        "task_metrics",
-    ),
-    ParameterTarget(
         Path("src/bernstein/core/tokens/context_compression.py"),
         "DependencyGraph._resolve_module_paths",
         "source_file",

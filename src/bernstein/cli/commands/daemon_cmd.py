@@ -32,7 +32,7 @@ __all__ = ["daemon_group"]
 # (Sonar python:S1192).
 _UNSUPPORTED_INIT_ERR = "Unsupported init system (need systemd or launchd)."
 
-DEFAULT_COMMAND = "bernstein dashboard --headless"
+DEFAULT_COMMAND = "bernstein dashboard --headless && bernstein schedule run"
 
 
 def _parse_env_pairs(pairs: tuple[str, ...]) -> dict[str, str]:

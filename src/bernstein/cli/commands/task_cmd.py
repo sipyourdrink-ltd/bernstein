@@ -24,6 +24,7 @@ from bernstein.cli.helpers import (
     server_get,
     server_post,
 )
+from bernstein.core.tasks.artifacts import ArtifactKind
 
 # This will be populated by main.py after it creates the CLI group
 _cli: Any = None
@@ -203,7 +204,10 @@ def verify_claim(receipt_path: str, backlog_path: Path, audit_dir: Path) -> None
     "--artifact-kind",
     "artifact_kind",
     default=None,
-    type=click.Choice(["report", "dataset", "action_log", "ops_result"]),
+    # Every kind the shared parser accepts except ``code_diff`` - see the note
+    # below on why a task must never silently complete as one. Derived rather
+    # than listed: the literal list was two kinds behind ``ArtifactKind``.
+    type=click.Choice([k.value for k in ArtifactKind if k is not ArtifactKind.CODE_DIFF]),
     help=(
         "Declare the artifact contract this task produces (issue #3110). The "
         "task then completes on a signed lineage receipt instead of a git "

@@ -178,3 +178,11 @@ docs/_internal/*
 !docs/_internal/observability/
 docs/_internal/observability/*
 !docs/_internal/observability/snapshots/
+
+# Scratch written at the repo root by an orchestrated run: per-task
+# decomposition specs and review verdicts. They are inputs to a run, not part
+# of the tree, and two of them reached main through a pull request that used
+# `git add -A`. Ignored at the root only, so a real file with one of these
+# names elsewhere is unaffected.
+/task*.json
+/verdicts.json

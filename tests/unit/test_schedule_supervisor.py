@@ -1,7 +1,5 @@
 """Unit tests for the schedule supervisor (#1798).
-
 Covers:
-
 - Cron iteration math (``_next_fire_after``).
 - Supervisor tick: skip vs catch_up misfire policy.
 - Trigger source ``normalize_schedule_fire``.
@@ -175,7 +173,6 @@ class _StubAuditEvent:
 @dataclass
 class _StubAuditLog:
     """In-memory audit chain for tests.
-
     Mimics ``AuditLog.log`` and exposes a ``_prev_hmac`` attribute so the
     supervisor adapter reads the current tail.
     """
@@ -252,7 +249,6 @@ class TestSupervisorTickSkipPolicy:
     def test_skip_policy_collapses_missed_windows(self, tmp_path: Path) -> None:
         """Multiple missed windows under skip policy -> one fire +
         counterfactual receipt for the rest.
-
         Simulates a restart by seeding ``last_fire_at`` 10 minutes in the
         past so the supervisor sees 10 missed minute windows.
         """
@@ -336,7 +332,6 @@ class TestSupervisorAuditChain:
 
     def test_counterfactual_not_chained(self, tmp_path: Path) -> None:
         """Counterfactual receipts must NOT add audit chain entries.
-
         The chain captures fires that actually happened; including
         counterfactuals would defeat the byte-identical-sequence guarantee
         between two operators with the same fire history.
@@ -439,11 +434,9 @@ class TestResponseProfileProjectionFold:
         schedule = store.add(cron="* * * * *", goal="Nightly triage")
         sup = ScheduleSupervisor(store, lambda _e: None, _StubAuditLog())
         epoch = int(datetime(2030, 1, 1, 12, 0, 0, tzinfo=UTC).timestamp())
-
         plain = sup._fire(schedule, epoch, counterfactual=True)
         schedule.extra["response_profile"] = "terse"
         profiled = sup._fire(schedule, epoch, counterfactual=True)
-
         assert plain.projection_hash != profiled.projection_hash
 
     def test_unknown_profile_is_ignored(self, tmp_path: Path) -> None:
@@ -451,11 +444,9 @@ class TestResponseProfileProjectionFold:
         schedule = store.add(cron="* * * * *", goal="Nightly triage")
         sup = ScheduleSupervisor(store, lambda _e: None, _StubAuditLog())
         epoch = int(datetime(2030, 1, 1, 12, 0, 0, tzinfo=UTC).timestamp())
-
         plain = sup._fire(schedule, epoch, counterfactual=True)
         schedule.extra["response_profile"] = "shouty"
         ignored = sup._fire(schedule, epoch, counterfactual=True)
-
         assert plain.projection_hash == ignored.projection_hash
 
     def test_balanced_profile_still_folds_declared_identity(self, tmp_path: Path) -> None:
@@ -465,9 +456,7 @@ class TestResponseProfileProjectionFold:
         schedule = store.add(cron="* * * * *", goal="Nightly triage")
         sup = ScheduleSupervisor(store, lambda _e: None, _StubAuditLog())
         epoch = int(datetime(2030, 1, 1, 12, 0, 0, tzinfo=UTC).timestamp())
-
         plain = sup._fire(schedule, epoch, counterfactual=True)
         schedule.extra["response_profile"] = "balanced"
         profiled = sup._fire(schedule, epoch, counterfactual=True)
-
         assert plain.projection_hash != profiled.projection_hash

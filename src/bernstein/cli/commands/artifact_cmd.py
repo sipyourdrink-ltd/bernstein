@@ -128,7 +128,10 @@ _workdir_option = click.option(
 
 
 def _spine_hmac_key() -> bytes:
-    """Return the audit-chain key the lineage spine tags entries with."""
+    """Return the audit-chain key the lineage spine tags entries with.
+
+    This key is always present: ``load_or_create_audit_key`` creates it if missing.
+    """
     from bernstein.core.security.audit import load_or_create_audit_key
 
     return load_or_create_audit_key()
@@ -345,9 +348,11 @@ def _resolve_operator_secret(env_var: str) -> bytes | None:
     if secret:
         return secret.encode("utf-8")
     try:
-        from bernstein.core.security.audit import load_or_create_audit_key
+        from bernstein.core.security.audit import AuditKeyMissingError, load_audit_key
 
-        return load_or_create_audit_key()
+        return load_audit_key()
+    except AuditKeyMissingError:
+        return None
     except Exception:  # pragma: no cover - defensive: never block verification on key IO
         return None
 

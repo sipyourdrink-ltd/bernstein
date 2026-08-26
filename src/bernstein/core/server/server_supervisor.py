@@ -23,8 +23,10 @@ import subprocess
 import sys
 import threading
 import time
-from contextlib import suppress
 from typing import TYPE_CHECKING
+
+import httpx
+from httpx import ConnectError, ReadTimeout
 
 from bernstein.core.platform_compat import kill_process
 from bernstein.core.process_utils import is_process_alive
@@ -210,7 +212,19 @@ def _supervisor_loop(state: _SupervisorState) -> None:
         # Server died - attempt restart
         logger.warning("Server process %d died. Attempting restart...", pid)
 
-        # Check restart budget
+        # Check for bind failure (EADDRINUSE) without consuming restart budget
+        log_path = state.workdir / ".sdd" / "runtime" / "server.log"
+        try:
+            log_content = log_path.read_text()
+        except Exception:
+            log_content = ""
+        if "Address already in use" in log_content:
+            logger.info("Bind failure detected (EADDRINUSE); will retry without consuming restart budget.")
+            # Simple backoff before retry, similar to normal delay but not counted
+            time.sleep(RESTART_DELAY_S)
+            continue
+
+        # Normal restart budget handling
         now = time.monotonic()
         with state.lock:
             # Prune old timestamps outside window
@@ -250,8 +264,6 @@ def _supervisor_loop(state: _SupervisorState) -> None:
 
 def _health_check_loop(state: _SupervisorState) -> None:
     """Periodically check server health via HTTP."""
-    import httpx
-
     url = f"http://127.0.0.1:{state.port}/health"
 
     # Wait for initial startup
@@ -263,16 +275,35 @@ def _health_check_loop(state: _SupervisorState) -> None:
         if state.stopped:
             return
 
-        with suppress(Exception):
+        # Perform health check with explicit handling for ConnectError and ReadTimeout
+        try:
             resp = httpx.get(url, timeout=HEALTH_CHECK_TIMEOUT_S)
             if resp.status_code == 200:
+                # Successful health check, reset failure counter
                 with state.lock:
                     state.consecutive_health_failures = 0
                 continue
+            else:
+                # Non-200 response counts as a failure
+                raise Exception(f"Unexpected status {resp.status_code}")
+        except ConnectError as e:
+            # Connection error (e.g., server not listening) counts as a failure
+            logger.debug("Health check ConnectError: %s", e)
+            with state.lock:
+                state.consecutive_health_failures += 1
+        except ReadTimeout as e:
+            # Read timeout does NOT count as a failure; just log and continue
+            logger.debug("Health check ReadTimeout (ignored): %s", e)
+            # Do not increment failure counter
+            continue
+        except Exception as e:
+            # Any other exception counts as a failure
+            logger.debug("Health check exception: %s", e)
+            with state.lock:
+                state.consecutive_health_failures += 1
 
-        # Health check failed
+        # After handling, check if we exceeded consecutive failures
         with state.lock:
-            state.consecutive_health_failures += 1
             failures = state.consecutive_health_failures
 
         if failures >= MAX_CONSECUTIVE_FAILURES:

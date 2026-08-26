@@ -25,7 +25,10 @@ def _repo_on_branch(root: Path, branch: str) -> Path:
     """A git repo whose only branch is ``branch`` and which has no origin.
 
     No ``main``/``master`` ref and no ``origin/HEAD`` means resolution falls
-    through to the last-resort probe, which is the step under test.
+    through to the merge-queue-ref probe, which is the step under test. Any
+    ordinary branch name here is deliberately *not* a valid answer (issue
+    #4578): the default branch is a repository property, so an origin-less
+    single-branch checkout has none to report.
     """
     root.mkdir(parents=True, exist_ok=True)
     (root / "README.md").write_text("x\n", encoding="utf-8")
@@ -57,11 +60,19 @@ def test_a_queue_ref_against_a_slashed_base_keeps_the_whole_base(tmp_path: Path)
     assert _git_default_branch(root) == "release/v3"
 
 
-def test_an_ordinary_branch_is_still_returned_unchanged(tmp_path: Path) -> None:
-    """Positive control: without this, returning ``main`` always would pass above."""
+def test_an_ordinary_branch_without_repo_default_is_unresolved(tmp_path: Path) -> None:
+    """An ordinary (non queue-ref) branch name must NOT be used as the default.
+
+    Regression for #4578: this used to return ``trunk``, which made
+    ``bernstein agents-md sync`` write the checked-out branch into the
+    committed context files whenever the conventional ``main``/``master``
+    refs were absent (e.g. a single-branch CI clone). The default branch is
+    a repository property; a checkout on a feature branch has no standing to
+    answer for it, so ``None`` (unresolved) is the only correct outcome.
+    """
     root = _repo_on_branch(tmp_path / "ordinary", "trunk")
 
-    assert _git_default_branch(root) == "trunk"
+    assert _git_default_branch(root) is None
 
 
 @pytest.mark.parametrize(

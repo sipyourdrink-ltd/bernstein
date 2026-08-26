@@ -174,12 +174,17 @@ class TestEvolutionFeedbackLoopE2E:
         assert sandbox_result.passed is True, "L0 schema check must pass for non-empty diff"
         assert sandbox_result.tests_total == 1
 
-        # Step 7: FileUpgradeExecutor → apply change, write history.jsonl
+        # Step 7: FileUpgradeExecutor → no sink for this category, so the
+        # proposal is not applied - the pipeline reaches the executor and gets
+        # an honest answer instead of a write nothing reads back.
         executor = FileUpgradeExecutor(state_dir)
         applied = executor.execute_upgrade(proposal)
-        assert applied is True
+        assert applied is False
 
-        # Step 8: Verify change was applied and history recorded
+        for config_file in (state_dir / "config").rglob("*.yaml"):
+            assert "pending_upgrades" not in config_file.read_text()
+
+        # Step 8: Verify the decision is recorded, under its real status
         history_file = state_dir / "upgrades" / "history.jsonl"
         assert history_file.exists(), "executor must write history.jsonl"
 
@@ -187,7 +192,7 @@ class TestEvolutionFeedbackLoopE2E:
         assert len(history_lines) >= 1
         record = json.loads(history_lines[0])
         assert record["proposal_id"] == proposal.id
-        assert record["status"] == "applied"
+        assert record["status"] == "skipped_no_sink"
         assert "applied_at" in record
 
     def test_metrics_persist_and_reload(self, tmp_path: Path) -> None:
@@ -273,8 +278,8 @@ class TestEvolutionFeedbackLoopE2E:
         assert result.passed is False
         assert result.error is not None
 
-    def test_executor_writes_config_file(self, tmp_path: Path) -> None:
-        """FileUpgradeExecutor writes the appropriate config file for each category."""
+    def test_executor_leaves_the_category_config_file_alone(self, tmp_path: Path) -> None:
+        """FileUpgradeExecutor writes no config file: no category has a sink."""
         from bernstein.evolution.detector import UpgradeCategory
 
         state_dir = tmp_path / ".sdd"
@@ -304,10 +309,13 @@ class TestEvolutionFeedbackLoopE2E:
 
         executor = FileUpgradeExecutor(state_dir)
         success = executor.execute_upgrade(proposal)
-        assert success is True
+        assert success is False
 
-        # history.jsonl must exist and record the upgrade
+        for config_file in (state_dir / "config").rglob("*.yaml"):
+            assert "pending_upgrades" not in config_file.read_text()
+
+        # history.jsonl must exist and record the decision
         history_file = state_dir / "upgrades" / "history.jsonl"
         assert history_file.exists()
         record = json.loads(history_file.read_text().strip().splitlines()[0])
-        assert record["status"] == "applied"
+        assert record["status"] == "skipped_no_sink"

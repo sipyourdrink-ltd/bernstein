@@ -42,6 +42,7 @@ class ArtifactKind(StrEnum):
     ACTION_LOG = "action_log"
     OPS_RESULT = "ops_result"
     FINDING = "finding"
+    BLOB = "blob"
 
 
 #: Kinds whose canonical form is normalised UTF-8 *text*.
@@ -50,6 +51,8 @@ _TEXT_KINDS: frozenset[ArtifactKind] = frozenset({ArtifactKind.CODE_DIFF, Artifa
 _JSONL_KINDS: frozenset[ArtifactKind] = frozenset({ArtifactKind.DATASET, ArtifactKind.ACTION_LOG})
 #: Kinds whose canonical form is a single JCS-canonical JSON object.
 _JSON_OBJECT_KINDS: frozenset[ArtifactKind] = frozenset({ArtifactKind.OPS_RESULT})
+#: Kinds whose canonical form is raw bytes.
+_BYTE_KINDS: frozenset[ArtifactKind] = frozenset({ArtifactKind.BLOB})
 
 #: The three typed criteria that operate on artifact bytes (issue #2608).
 ARTIFACT_CRITERION_TYPES: frozenset[str] = frozenset({"schema_valid", "criteria_match", "hash_stable"})
@@ -197,6 +200,10 @@ def canonicalise_artifact(kind: ArtifactKind | str, raw: Any) -> bytes:
         return b"\n".join(_canonical_json_bytes(row) for row in rows)
     if k in _JSON_OBJECT_KINDS:
         return _canonical_json_bytes(raw)
+    if k in _BYTE_KINDS:
+        if isinstance(raw, bytes):
+            return raw
+        raise CanonicalisationError(f"blob artifact must be bytes, got {type(raw).__name__}")
     if k is ArtifactKind.FINDING:
         return _canonical_finding_bytes(raw)
     raise CanonicalisationError(f"no canonicaliser registered for kind {k!r}")
@@ -281,6 +288,10 @@ def _json_document_for(kind: ArtifactKind, artifact: Any) -> Any:
 def _eval_schema_valid(kind: ArtifactKind, artifact: Any, schema_text: str) -> tuple[bool, str]:
     import jsonschema
 
+    # Blob kind cannot be validated against JSON schema
+    if kind in _BYTE_KINDS:
+        return False, "criterion type 'schema_valid' is not supported for blob kind"
+
     try:
         schema = json.loads(schema_text)
     except json.JSONDecodeError as exc:
@@ -306,6 +317,10 @@ def _eval_schema_valid(kind: ArtifactKind, artifact: Any, schema_text: str) -> t
 
 
 def _eval_criteria_match(kind: ArtifactKind, artifact: Any, preds_text: str) -> tuple[bool, str]:
+    # Blob kind cannot be matched against JSON criteria
+    if kind in _BYTE_KINDS:
+        return False, "criterion type 'criteria_match' is not supported for blob kind"
+
     try:
         preds = json.loads(preds_text)
     except json.JSONDecodeError as exc:
@@ -611,6 +626,14 @@ def parse_artifact_spec(raw: object) -> ArtifactSpec:
         )
 
     criteria = _parse_declared_criteria(raw.get("criteria"), root=root)
+    # Blob kind only accepts hash_stable criterion; reject text-specific criteria at parse time
+    if kind is ArtifactKind.BLOB:
+        for criterion in criteria:
+            if criterion.type in ("schema_valid", "criteria_match"):
+                raise ArtifactSpecError(
+                    f"{root}.criteria",
+                    f"criterion type '{criterion.type}' is not supported for blob kind",
+                )
     return ArtifactSpec(kind=kind, canonicalisation=canonicalisation, criteria=criteria, output_path=output_path)
 
 

@@ -483,13 +483,19 @@ class GateRunner:
     ) -> GateResult:
         from bernstein.core import quality_gates as qg
 
-        ok, detail = await asyncio.to_thread(qg.run_command_sync, command, run_dir, timeout_s)
+        result = await asyncio.to_thread(qg.run_command_sync, command, run_dir, timeout_s)
+        ok, detail, exit_code = result
         status: GateStatus
         blocked = False
         normalized_detail = detail
         if detail.startswith(_TIMED_OUT_PREFIX):
             status = "timeout"
             blocked = step.required
+        elif exit_code == 127:
+            # Exit code 127 indicates command not found
+            status = "command_not_found"
+            blocked = step.required
+            normalized_detail = f"Command not found: {detail}"
         elif ok:
             status = "pass"
             normalized_detail = pass_detail or detail
@@ -522,7 +528,7 @@ class GateRunner:
         if command is None:
             return self._skipped(step, "No impacted tests detected.")
 
-        ok, detail = await asyncio.to_thread(qg.run_command_sync, command, run_dir, self._config.timeout_s)
+        ok, detail, _exit_code = await asyncio.to_thread(qg.run_command_sync, command, run_dir, self._config.timeout_s)
         metadata: dict[str, Any] = {"command": command}
         if detail.startswith(_TIMED_OUT_PREFIX):
             return GateResult(
@@ -637,7 +643,7 @@ class GateRunner:
             return self._skipped(step, _NO_PYTHON_FILES)
 
         command = self._dead_code_command(step, python_files)
-        ok, vulture_detail = qg.run_command_sync(command, run_dir, self._config.timeout_s)
+        ok, vulture_detail, _exit_code = qg.run_command_sync(command, run_dir, self._config.timeout_s)
         if vulture_detail.startswith(_TIMED_OUT_PREFIX):
             return GateResult(
                 name=step.name,
@@ -756,7 +762,8 @@ class GateRunner:
         if not python_files:
             return self._skipped(step, _NO_PYTHON_FILES)
         if command is not None:
-            ok, detail = self._run_command_and_capture(command, run_dir)
+            result = self._run_command_and_capture(command, run_dir)
+            ok, detail, exit_code = result
             if ok:
                 return GateResult(
                     name=step.name,
@@ -766,6 +773,17 @@ class GateRunner:
                     cached=False,
                     duration_ms=0,
                     details="no import cycles detected",
+                    metadata={"command": command},
+                )
+            if exit_code == 127:
+                return GateResult(
+                    name=step.name,
+                    status="command_not_found",
+                    required=step.required,
+                    blocked=step.required,
+                    cached=False,
+                    duration_ms=0,
+                    details=f"Command not found: {detail}",
                     metadata={"command": command},
                 )
             return self._command_failure_result(step, detail, command)
@@ -797,7 +815,8 @@ class GateRunner:
 
         command = self._optional_command("coverage_delta", step.command_override)
         if command is not None:
-            ok, detail = self._run_command_and_capture(command, run_dir)
+            result = self._run_command_and_capture(command, run_dir)
+            ok, detail, exit_code = result
             if ok:
                 return GateResult(
                     name=step.name,
@@ -807,6 +826,17 @@ class GateRunner:
                     cached=False,
                     duration_ms=0,
                     details=detail,
+                    metadata={"command": command},
+                )
+            if exit_code == 127:
+                return GateResult(
+                    name=step.name,
+                    status="command_not_found",
+                    required=step.required,
+                    blocked=step.required,
+                    cached=False,
+                    duration_ms=0,
+                    details=f"Command not found: {detail}",
                     metadata={"command": command},
                 )
             return self._command_failure_result(step, detail, command)
@@ -1245,7 +1275,7 @@ class GateRunner:
             metadata={"branch": branch, "base_ref": self._base_ref},
         )
 
-    def _run_command_and_capture(self, command: str, run_dir: Path) -> tuple[bool, str]:
+    def _run_command_and_capture(self, command: str, run_dir: Path) -> tuple[bool, str, int]:
         """Execute a command gate synchronously and capture its output."""
         from bernstein.core import quality_gates as qg
 
@@ -1313,7 +1343,10 @@ class GateRunner:
 
     def _measure_complexity_sync(self, command: str, cwd: Path) -> tuple[float | None, str]:
         """Execute a complexity command and parse its average score."""
-        ok, detail = self._run_command_and_capture(command, cwd)
+        result = self._run_command_and_capture(command, cwd)
+        ok, detail, exit_code = result
+        if exit_code == 127:
+            return None, f"Command not found: {detail}"
         if not ok:
             return None, detail
         score = self._parse_complexity_average(detail)

@@ -1432,6 +1432,10 @@ def load_providers_from_yaml(path: Path, router: TierAwareRouter) -> None:
         return
 
     data: dict[str, Any] = cast(_CAST_DICT_STR_ANY, data_raw)
+    # Remove pending_upgrades if present
+    if "pending_upgrades" in data:
+        data.pop("pending_upgrades")
+        logger.warning("Ignoring leftover pending_upgrades in %s", path)
     providers_data: Any = data["providers"]
     if not isinstance(providers_data, dict):
         return

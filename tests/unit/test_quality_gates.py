@@ -41,34 +41,37 @@ def _make_task(*, id: str = "T-001", role: str = "backend") -> Task:
 
 class TestRunCommand:
     def test_success_exit_zero(self, tmp_path: Path) -> None:
-        ok, output = _run_command("exit 0", tmp_path, timeout_s=5)
+        ok, output, _exit_code = _run_command("exit 0", tmp_path, timeout_s=5)
         assert ok
         assert isinstance(output, str)
 
     def test_failure_nonzero_exit(self, tmp_path: Path) -> None:
-        ok, _output = _run_command("exit 1", tmp_path, timeout_s=5)
+        ok, _output, _exit_code = _run_command("exit 1", tmp_path, timeout_s=5)
         assert not ok
 
     def test_captures_stdout(self, tmp_path: Path) -> None:
-        ok, output = _run_command("echo hello_world", tmp_path, timeout_s=5)
+        ok, output, _exit_code = _run_command("echo hello_world", tmp_path, timeout_s=5)
         assert ok
         assert "hello_world" in output
 
     def test_timeout_returns_failure(self, tmp_path: Path) -> None:
-        ok, output = _run_command("sleep 10", tmp_path, timeout_s=1)
+        ok, output, _exit_code = _run_command("sleep 10", tmp_path, timeout_s=1)
         assert not ok
         assert "Timed out" in output
 
     def test_truncates_long_output(self, tmp_path: Path) -> None:
         long_str = "x" * 3000
-        ok, output = _run_command(f"echo '{long_str}'", tmp_path, timeout_s=5)
+        ok, output, _exit_code = _run_command(f"echo '{long_str}'", tmp_path, timeout_s=5)
         assert ok
         assert len(output) <= 2050  # 2000 + "... (truncated)"
 
     def test_bad_command_returns_failure(self, tmp_path: Path) -> None:
         # Command that doesn't exist
-        ok, _output = _run_command("nonexistent_command_xyz_12345", tmp_path, timeout_s=5)
+        ok, _output, exit_code = _run_command("nonexistent_command_xyz_12345", tmp_path, timeout_s=5)
         assert not ok
+        # 127 is the shell's "command not found"; the gate runner reads it to
+        # separate a missing tool from a tool that ran and found problems.
+        assert exit_code == 127
 
 
 # ---------------------------------------------------------------------------

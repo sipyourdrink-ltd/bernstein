@@ -114,7 +114,7 @@ class TestDepAuditGateRunner:
         task = _make_task(owned_files=["pyproject.toml"])
 
         with patch(
-            "bernstein.core.quality.quality_gates._run_command", return_value=(True, "No vulnerabilities found")
+            "bernstein.core.quality.quality_gates._run_command", return_value=(True, "No vulnerabilities found", 0)
         ):
             report = asyncio.run(runner.run_all(task, tmp_path))
 
@@ -136,7 +136,7 @@ class TestDepAuditGateRunner:
 
         with patch(
             "bernstein.core.quality_gates._run_command",
-            return_value=(False, "Found 2 known vulnerabilities in 1 package"),
+            return_value=(False, "Found 2 known vulnerabilities in 1 package", 1),
         ):
             report = asyncio.run(runner.run_all(task, tmp_path))
 
@@ -157,7 +157,7 @@ class TestDepAuditGateRunner:
         runner = GateRunner(config, tmp_path)
         task = _make_task(owned_files=["src/app.py"])
 
-        with patch("bernstein.core.quality.quality_gates._run_command", return_value=(True, "ok")) as mock_cmd:
+        with patch("bernstein.core.quality.quality_gates._run_command", return_value=(True, "ok", 0)) as mock_cmd:
             report = asyncio.run(runner.run_all(task, tmp_path))
 
         result = next(r for r in report.results if r.name == "dep_audit")
@@ -180,7 +180,7 @@ class TestDepAuditGateRunner:
         def fake_run(command: str, _cwd: Path, _timeout_s: int) -> tuple[bool, str]:
             nonlocal captured_command
             captured_command = command
-            return True, "ok"
+            return True, "ok", 0
 
         with patch("bernstein.core.quality.quality_gates._run_command", side_effect=fake_run):
             asyncio.run(runner.run_all(task, tmp_path))
@@ -209,7 +209,7 @@ class TestDepAuditGateRunner:
         def fake_run(command: str, _cwd: Path, _timeout_s: int) -> tuple[bool, str]:
             nonlocal captured_command
             captured_command = command
-            return True, "ok"
+            return True, "ok", 0
 
         with patch("bernstein.core.quality.quality_gates._run_command", side_effect=fake_run):
             asyncio.run(runner.run_all(task, tmp_path))
@@ -228,7 +228,7 @@ class TestDepAuditGateRunner:
 
         with patch(
             "bernstein.core.quality_gates._run_command",
-            return_value=(False, "Found 1 vulnerability"),
+            return_value=(False, "Found 1 vulnerability", 1),
         ):
             report = asyncio.run(runner.run_all(task, tmp_path))
 

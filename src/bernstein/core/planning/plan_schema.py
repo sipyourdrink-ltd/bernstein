@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.tasks.artifacts import ArtifactKind
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -56,11 +58,16 @@ COMPLETION_SIGNAL_TYPES: list[str] = [
     "llm_judge",
 ]
 
-# Issue #3110: the declared artifact contract. Values mirror the closed sets
-# in ``bernstein.core.tasks.artifacts`` (ArtifactKind / ARTIFACT_CRITERION_TYPES);
-# the strict parser there is the behavioural source of truth and is exercised
-# by ``_validate_artifact_spec`` below, so the two cannot drift.
-ARTIFACT_KIND_VALUES: list[str] = ["code_diff", "report", "dataset", "action_log", "ops_result"]
+# Issue #3110: the declared artifact contract. The strict parser in
+# ``bernstein.core.tasks.artifacts`` is the behavioural source of truth and is
+# exercised by ``_validate_artifact_spec`` below.
+#
+# The kind list is derived from ``ArtifactKind`` rather than copied. The
+# hand-written copy claimed the two could not drift and had already fallen a
+# kind behind it - ``finding`` (#3659) never reached here, so a plan declaring
+# one was rejected by this schema and accepted by the parser it mirrors. Enum
+# declaration order is stable, so the emitted schema stays deterministic.
+ARTIFACT_KIND_VALUES: list[str] = [k.value for k in ArtifactKind]
 
 ARTIFACT_CRITERION_TYPE_VALUES: list[str] = ["criteria_match", "hash_stable", "schema_valid"]
 

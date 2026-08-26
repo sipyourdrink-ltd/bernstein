@@ -272,12 +272,31 @@ jobs:
           set -euo pipefail
 
           TAG="${RELEASE_TAG}"
+          NOTES_FILE="docs/release-notes/${TAG}.md"
+          BODY="${RUNNER_TEMP:-/tmp}/release-body.md"
+
+          # The release page carries the notes written for this version, with
+          # the generated changelog (and the contributor credits in it) below
+          # them. `--generate-notes` on its own publishes the machine changelog
+          # as the entire body, which is what every release shipped with until
+          # someone rewrote the page by hand after the tag was already public.
+          : > "$BODY"
+          if [ -f "$NOTES_FILE" ]; then
+            # The page already shows the tag, so drop the file's own H1.
+            awk 'NR == 1 && /^# / { next } { print }' "$NOTES_FILE" >> "$BODY"
+            printf '\n---\n\n' >> "$BODY"
+          else
+            echo "::warning::$NOTES_FILE is missing; the page will carry only the generated changelog"
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="$TAG" --jq .body >> "$BODY"
+
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/* --clobber
           else
             gh release create "$TAG" dist/* \
               --title "$TAG" \
-              --generate-notes
+              --notes-file "$BODY"
           fi
 
           asset_count=$(gh release view "$TAG" --json assets --jq '.assets | length')

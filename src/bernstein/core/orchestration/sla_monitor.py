@@ -29,7 +29,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
-from bernstein.core.observability.sla_eval import project_error_budget
+from bernstein.core.observability.sla_eval import any_breach, evaluate_all, project_error_budget
 from bernstein.core.orchestration.sla_receipt import (
     SLAViolationReceipt,
     build_receipt,
@@ -373,6 +373,13 @@ class SLAMonitor:
         self._trigger_sink = trigger_sink
         self._audit_window = audit_window
         self._evidence_provider = evidence_provider or default_evidence_provider(store.sdd_dir)
+        # Ongoing breaches, contract id -> breach shape. A contract stays here
+        # for as long as consecutive ticks judge the same axes breached, and
+        # leaves the moment a tick finds it clean - so a breach that resolves
+        # and recurs is attested again. Held in memory: the monitor lives for
+        # the supervisor process, and a restart re-attesting a still-open
+        # breach once is correct, not a duplicate.
+        self._active_breaches: dict[str, str] = {}
 
     def evaluate(self, now: int) -> list[SLAViolationReceipt]:
         """Evaluate every registered contract at ``now``; return emitted receipts.
@@ -402,6 +409,28 @@ class SLAMonitor:
         # head, so it stays outside the section that holds the chain.
         evidence = self._evidence_provider(contract, now)
 
+        # Deduplication runs before the chain section, on the same pure
+        # evaluation ``build_receipt`` performs. Without it, every tick of an
+        # unresolved breach signed a fresh receipt, appended a chain event and
+        # fired a trigger - a supervisor ticking at seconds turned one breach
+        # into thousands of attestations of the same fact (#4579 review, left
+        # unresolved at merge). The breach *shape* is the key: a new axis
+        # joining the breach is a new fact and is attested; the same axes still
+        # breached is the old fact and is not.
+        verdicts = evaluate_all(contract, evidence, now)
+        if not any_breach(verdicts):
+            self._active_breaches.pop(contract.id, None)
+            return None
+        shape = json.dumps(
+            {
+                "contract_hash": contract.contract_hash,
+                "breached_axes": sorted(str(v.axis) for v in verdicts if v.breached),
+            },
+            sort_keys=True,
+        )
+        if self._active_breaches.get(contract.id) == shape:
+            return None
+
         # The head is read per receipt, and inside the same section that appends
         # that receipt's chain event. A tick appends once per breach, so a head
         # captured once for the whole tick is already stale for the second
@@ -427,6 +456,7 @@ class SLAMonitor:
             if receipt is None:
                 return None
             signed = sign_receipt(receipt, signing_key=self._signing_key)
+            self._active_breaches[contract.id] = shape
             # ``write_receipt`` does not need the chain held, but it stays inside
             # and ahead of the append on purpose: the receipt file is the only
             # copy of the signed payload, while the chain event carries just its

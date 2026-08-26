@@ -33,6 +33,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 PYPROJECT = REPO / "pyproject.toml"
+NOTES_DIR = REPO / "docs" / "release-notes"
 GEN_MANIFESTS = REPO / "scripts" / "gen_distribution_manifests.py"
 
 # Matches only the top-level ``version = "..."`` line (column 0). Table-scoped
@@ -73,6 +74,18 @@ def main(argv: list[str] | None = None) -> int:
         version = _validate_version(args.version)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    # The release page is built from docs/release-notes/v<version>.md. A bump
+    # without that file cuts a tag whose page carries the generated changelog
+    # alone, and that is only visible once the release is public.
+    notes = NOTES_DIR / f"v{version}.md"
+    if not notes.exists():
+        print(
+            f"error: {notes.relative_to(REPO) if notes.is_relative_to(REPO) else notes} "
+            "does not exist; write the release notes before bumping",
+            file=sys.stderr,
+        )
         return 2
 
     original = PYPROJECT.read_text(encoding="utf-8")

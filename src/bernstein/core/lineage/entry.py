@@ -43,6 +43,7 @@ ARTEFACT_KINDS: frozenset[str] = frozenset(
         "external",
         "finding",
         "coverage",
+        "blob",
     }
 )
 

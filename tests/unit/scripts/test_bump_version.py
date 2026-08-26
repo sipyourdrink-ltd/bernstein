@@ -83,3 +83,43 @@ def test_script_never_hand_writes_oci_package_version(bump_module: ModuleType) -
     assert not hasattr(bump_module, "json")
     assert "import json" not in source
     assert "registryType" not in source
+
+
+def test_bump_refuses_a_version_with_no_release_notes(
+    bump_module: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No notes file, no bump.
+
+    The release page is built from ``docs/release-notes/v<version>.md``. When
+    the file is missing the release ships with the generated changelog alone,
+    which is only noticed after the tag is cut and the page is public.
+    """
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(_PYPROJECT, encoding="utf-8")
+    bump_module.PYPROJECT = pyproject
+    bump_module.NOTES_DIR = tmp_path / "docs" / "release-notes"
+
+    assert bump_module.main(["3.4.5"]) == 2
+    assert "release-notes" in capsys.readouterr().err
+    # The refusal must land before anything is written.
+    assert pyproject.read_text(encoding="utf-8") == _PYPROJECT
+
+
+def test_bump_accepts_a_version_whose_notes_exist(
+    bump_module: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(_PYPROJECT, encoding="utf-8")
+    notes = tmp_path / "docs" / "release-notes"
+    notes.mkdir(parents=True)
+    (notes / "v3.4.5.md").write_text("# v3.4.5\n\nreal notes\n", encoding="utf-8")
+    bump_module.PYPROJECT = pyproject
+    bump_module.NOTES_DIR = notes
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        bump_module.subprocess, "run", lambda cmd, **kw: calls.append(list(cmd)) or None
+    )
+    assert bump_module.main(["3.4.5"]) == 0
+    assert 'version = "3.4.5"' in pyproject.read_text(encoding="utf-8")
+    assert len(calls) == 2, "the bump still regenerates the lockfile and the manifests"

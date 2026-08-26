@@ -149,8 +149,20 @@ class GateRunnerCommandsMixin:
         if command is None:
             return self._skipped(step, "No impacted tests detected.")
 
-        ok, detail = await asyncio.to_thread(qg.run_command_sync, command, run_dir, self._config.timeout_s)
+        result = await asyncio.to_thread(qg.run_command_sync, command, run_dir, self._config.timeout_s)
+        ok, detail, exit_code = result
         metadata: dict[str, Any] = {"command": command}
+        if exit_code == 127:
+            return GateResult(
+                name=step.name,
+                status="command_not_found",
+                required=step.required,
+                blocked=step.required,
+                cached=False,
+                duration_ms=0,
+                details=f"Command not found: {detail}",
+                metadata=metadata,
+            )
         if detail.startswith(TIMED_OUT_PREFIX):
             return GateResult(
                 name=step.name,
@@ -268,7 +280,19 @@ class GateRunnerCommandsMixin:
             return self._skipped(step, NO_PYTHON_FILES)
 
         command = self._dead_code_command(step, python_files)
-        ok, vulture_detail = qg.run_command_sync(command, run_dir, self._config.timeout_s)
+        result = qg.run_command_sync(command, run_dir, self._config.timeout_s)
+        ok, vulture_detail, exit_code = result
+        if exit_code == 127:
+            return GateResult(
+                name=step.name,
+                status="command_not_found",
+                required=step.required,
+                blocked=False,
+                cached=False,
+                duration_ms=0,
+                details=f"Command not found: {vulture_detail}",
+                metadata={"command": command},
+            )
         if vulture_detail.startswith(TIMED_OUT_PREFIX):
             return GateResult(
                 name=step.name,
@@ -447,7 +471,7 @@ class GateRunnerCommandsMixin:
         if not python_files:
             return self._skipped(step, NO_PYTHON_FILES)
         if command is not None:
-            ok, detail = self._run_command_and_capture(command, run_dir)
+            ok, detail, _exit_code = self._run_command_and_capture(command, run_dir)
             if ok:
                 return GateResult(
                     name=step.name,
@@ -490,7 +514,7 @@ class GateRunnerCommandsMixin:
 
         command = self._optional_command("coverage_delta", step.command_override)
         if command is not None:
-            ok, detail = self._run_command_and_capture(command, run_dir)
+            ok, detail, _exit_code = self._run_command_and_capture(command, run_dir)
             if ok:
                 return GateResult(
                     name=step.name,
@@ -1003,7 +1027,7 @@ class GateRunnerCommandsMixin:
 
     def _measure_complexity_sync(self: Any, command: str, cwd: Path) -> tuple[float | None, str]:
         """Execute a complexity command and parse its average score."""
-        ok, detail = self._run_command_and_capture(command, cwd)
+        ok, detail, _exit_code = self._run_command_and_capture(command, cwd)
         if not ok:
             return None, detail
         score = self._parse_complexity_average(detail)

@@ -102,13 +102,23 @@ class TestEvolutionEndToEnd:
             p.status = UpgradeStatus.APPROVED
 
         executed = coordinator.execute_pending_upgrades()
-        assert len(executed) > 0
 
-        # Step 4: Verify upgrade was applied
-        applied = coordinator.get_applied_upgrades()
-        assert len(applied) > 0
-        assert applied[0].status == UpgradeStatus.APPLIED
-        assert applied[0].applied_at is not None
+        # Step 4: No category has a sink today, so the cycle produces
+        # proposals and applies none of them. The counters an operator reads
+        # must say that, rather than reporting a change no subsystem consumes.
+        assert executed == []
+        assert coordinator.get_applied_upgrades() == []
+        assert coordinator.get_pending_upgrades() == []
+
+        # Nothing grew a `pending_upgrades` key on the way through.
+        for config_file in (state_dir / "config").rglob("*.yaml"):
+            assert "pending_upgrades" not in config_file.read_text()
+
+        # The decision is still auditable.
+        history_file = state_dir / "upgrades" / "history.jsonl"
+        assert history_file.exists()
+        statuses = {json.loads(line)["status"] for line in history_file.read_text().strip().splitlines()}
+        assert statuses == {"skipped_no_sink"}
 
     def test_record_task_completion_persists_to_file(self, tmp_path: Path, make_task) -> None:
         """Verify task metrics are persisted to JSONL files."""
@@ -176,15 +186,18 @@ class TestEvolutionEndToEnd:
             p.status = UpgradeStatus.APPROVED
 
         executed = coordinator.execute_pending_upgrades()
-        assert len(executed) > 0
 
-        # Verify history was recorded
+        # Reaching the executor is the point; no category has a sink, so
+        # nothing is counted as applied.
+        assert executed == []
+
+        # Verify history was recorded, under the status that says what happened
         history_file = state_dir / "upgrades" / "history.jsonl"
         assert history_file.exists()
         lines = history_file.read_text().strip().split("\n")
         assert len(lines) >= 1
         record = json.loads(lines[0])
-        assert record["status"] == "applied"
+        assert record["status"] == "skipped_no_sink"
 
     def test_failed_execution_triggers_rollback(self, tmp_path: Path) -> None:
         """When executor.execute_upgrade fails, rollback is attempted."""

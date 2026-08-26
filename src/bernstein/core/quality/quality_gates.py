@@ -31,6 +31,10 @@ if TYPE_CHECKING:
 
 _TRUNCATED_SUFFIX = "\n... (truncated)"
 
+# A command that never reached a process - killed on timeout, or refused by
+# the OS - has no exit code to report. Distinct from 0 and from 127.
+NO_EXIT_CODE = -1
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -490,8 +494,8 @@ def run_intent_gate_sync(
 # ---------------------------------------------------------------------------
 
 
-def _run_command(command: str, cwd: Path, timeout_s: int) -> tuple[bool, str]:
-    """Run a shell command and return (success, output).
+def _run_command(command: str, cwd: Path, timeout_s: int) -> tuple[bool, str, int]:
+    """Run a shell command and return (success, output, exit_code).
 
     Args:
         command: Shell command to run.
@@ -499,7 +503,11 @@ def _run_command(command: str, cwd: Path, timeout_s: int) -> tuple[bool, str]:
         timeout_s: Timeout in seconds before the process is killed.
 
     Returns:
-        Tuple of (exit_code_zero, combined_stdout_stderr_output).
+        ``(exit_code_zero, combined_stdout_stderr_output, exit_code)``. The exit
+        code is always present so a caller can tell 127 (command not found) from
+        an ordinary non-zero exit without re-deriving the tuple shape.
+        ``NO_EXIT_CODE`` stands in when the process never reported one - a
+        timeout kill or an OS-level spawn failure.
     """
     try:
         # SECURITY: shell=True required because quality gate commands are admin-configured
@@ -517,14 +525,15 @@ def _run_command(command: str, cwd: Path, timeout_s: int) -> tuple[bool, str]:
         output = (proc.stdout + proc.stderr).strip()
         if len(output) > 2000:
             output = output[:2000] + _TRUNCATED_SUFFIX
-        return proc.returncode == 0, output or "(no output)"
+
+        return proc.returncode == 0, output or "(no output)", proc.returncode
     except subprocess.TimeoutExpired:
-        return False, f"Timed out after {timeout_s}s"
+        return False, f"Timed out after {timeout_s}s", NO_EXIT_CODE
     except OSError as exc:
-        return False, f"Command error: {exc}"
+        return False, f"Command error: {exc}", NO_EXIT_CODE
 
 
-def run_command_sync(command: str, cwd: Path, timeout_s: int) -> tuple[bool, str]:
+def run_command_sync(command: str, cwd: Path, timeout_s: int) -> tuple[bool, str, int]:
     """Public sync wrapper used by the async gate runner."""
     return _run_command(command, cwd, timeout_s)
 
@@ -585,7 +594,8 @@ def _run_mutation_gate(config: QualityGatesConfig, run_dir: Path) -> tuple[bool,
         ``passed`` is True when the mutation score meets the threshold.
         ``score_or_None`` is the parsed float score, or None when unparseable.
     """
-    _ok, output = _run_command(config.mutation_command, run_dir, config.mutation_timeout_s)
+    result = _run_command(config.mutation_command, run_dir, config.mutation_timeout_s)
+    _ok, output, exit_code = result
 
     score = _parse_mutation_score(output)
 
@@ -596,7 +606,8 @@ def _run_mutation_gate(config: QualityGatesConfig, run_dir: Path) -> tuple[bool,
         return passed, detail, score
 
     # Could not parse a numeric score - treat non-zero exit as failure.
-    passed = _ok
+    # Exit code 127 (command not found) is also treated as failure.
+    passed = _ok and exit_code != 127
     detail = (
         f"Could not parse mutation score (threshold {config.mutation_threshold:.1%}). "
         f"Exit: {'0' if _ok else 'non-zero'}\n{output}"
@@ -718,7 +729,8 @@ def run_agent_test_mutation_gate_sync(
         )
 
     command = _build_agent_mutation_command(source_files, test_files)
-    _ok, output = _run_command(command, run_dir, config.agent_test_mutation_timeout_s)
+    result = _run_command(command, run_dir, config.agent_test_mutation_timeout_s)
+    _ok, output, exit_code = result
 
     score = _parse_mutation_score(output)
     threshold = config.agent_test_mutation_threshold
@@ -733,11 +745,15 @@ def run_agent_test_mutation_gate_sync(
         )
         return passed, detail, score
 
-    # Could not parse - fall back to exit code
+    # Could not parse - fall back to exit code. A missing tool produces no
+    # score either, and "non-zero" would report it the same way a mutation run
+    # that genuinely scored badly is reported -- the exact confusion this gate
+    # change exists to remove. Name it instead.
     passed = _ok
+    exit_detail = "command not found (127)" if exit_code == 127 else ("0" if _ok else "non-zero")
     detail = (
         f"Could not parse agent mutation score (threshold {threshold:.1%}). "
-        f"Exit: {'0' if _ok else 'non-zero'}\n"
+        f"Exit: {exit_detail}\n"
         f"Test files: {', '.join(test_files)}\n"
         f"Source files: {', '.join(source_files)}\n{output}"
     )

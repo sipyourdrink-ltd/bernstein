@@ -61,115 +61,80 @@ def _make_proposal(
 class TestFileUpgradeExecutorPolicyUpdate:
     """Tests for _apply_policy_update."""
 
-    def test_creates_policies_yaml_if_missing(self) -> None:
+    def test_returns_false_and_no_file_change(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             executor = FileUpgradeExecutor(Path(tmpdir))
             proposal = _make_proposal(UpgradeCategory.POLICY_UPDATE)
 
             result = executor.execute_upgrade(proposal)
 
-            assert result is True
+            assert result is False
             config_file = Path(tmpdir) / "config" / "policies.yaml"
-            assert config_file.exists()
-
-    def test_writes_pending_upgrade_to_policies_yaml(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            executor = FileUpgradeExecutor(Path(tmpdir))
-            proposal = _make_proposal(
-                UpgradeCategory.POLICY_UPDATE,
-                proposal_id="POL-001",
-                title="Optimize free tier routing",
-                proposed_change="Route more tasks to free tier",
-            )
-
-            executor.execute_upgrade(proposal)
-
-            config_file = Path(tmpdir) / "config" / "policies.yaml"
-            with config_file.open() as f:
-                data = yaml.safe_load(f)
-
-            assert "pending_upgrades" in data
-            entry = data["pending_upgrades"][0]
-            assert entry["id"] == "POL-001"
-            assert entry["title"] == "Optimize free tier routing"
-            assert entry["change"] == "Route more tasks to free tier"
-
-    def test_preserves_existing_policies_yaml_content(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config_dir = Path(tmpdir) / "config"
-            config_dir.mkdir(parents=True)
-            existing_policies: dict[str, Any] = {"policies": [{"id": "existing-policy", "name": "Existing"}]}
-            with (config_dir / "policies.yaml").open("w") as f:
-                yaml.dump(existing_policies, f)
-
-            executor = FileUpgradeExecutor(Path(tmpdir))
-            executor.execute_upgrade(_make_proposal(UpgradeCategory.POLICY_UPDATE))
-
-            with (config_dir / "policies.yaml").open() as f:
-                data = yaml.safe_load(f)
-
-            # Original content preserved
-            assert data["policies"][0]["id"] == "existing-policy"
-            # Upgrade appended
-            assert len(data["pending_upgrades"]) == 1
-
-    def test_records_to_history_jsonl(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            executor = FileUpgradeExecutor(Path(tmpdir))
-            proposal = _make_proposal(UpgradeCategory.POLICY_UPDATE, proposal_id="POL-002")
-
-            executor.execute_upgrade(proposal)
-
+            assert not config_file.exists()
             history_file = Path(tmpdir) / "upgrades" / "history.jsonl"
-            assert history_file.exists()
-            lines = [json.loads(l) for l in history_file.read_text().splitlines() if l.strip()]
-            assert any(entry["proposal_id"] == "POL-002" for entry in lines)
-            assert any(entry["status"] == "applied" for entry in lines)
+            assert history_file.exists(), "the decision not to write must stay auditable"
+            record = json.loads(history_file.read_text().strip().splitlines()[-1])
+            assert record["status"] == "skipped_no_sink"
 
 
 class TestFileUpgradeExecutorRoutingRules:
     """Tests for _apply_routing_rules and _apply_model_routing."""
 
-    def test_creates_routing_yaml(self) -> None:
+    def test_returns_false_and_no_file_change(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             executor = FileUpgradeExecutor(Path(tmpdir))
             result = executor.execute_upgrade(_make_proposal(UpgradeCategory.ROUTING_RULES))
 
-            assert result is True
-            assert (Path(tmpdir) / "config" / "routing.yaml").exists()
+            assert result is False
+            config_file = Path(tmpdir) / "config" / "routing.yaml"
+            assert not config_file.exists()
+            history_file = Path(tmpdir) / "upgrades" / "history.jsonl"
+            assert history_file.exists(), "the decision not to write must stay auditable"
+            record = json.loads(history_file.read_text().strip().splitlines()[-1])
+            assert record["status"] == "skipped_no_sink"
 
-    def test_model_routing_writes_to_routing_yaml(self) -> None:
+    def test_model_routing_returns_false_and_no_file_change(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             executor = FileUpgradeExecutor(Path(tmpdir))
             result = executor.execute_upgrade(_make_proposal(UpgradeCategory.MODEL_ROUTING))
 
-            assert result is True
-            assert (Path(tmpdir) / "config" / "routing.yaml").exists()
+            assert result is False
+            config_file = Path(tmpdir) / "config" / "routing.yaml"
+            assert not config_file.exists()
+            history_file = Path(tmpdir) / "upgrades" / "history.jsonl"
+            assert history_file.exists(), "the decision not to write must stay auditable"
+            record = json.loads(history_file.read_text().strip().splitlines()[-1])
+            assert record["status"] == "skipped_no_sink"
 
-    def test_multiple_routing_upgrades_accumulate(self) -> None:
+    def test_multiple_routing_upgrades_all_false(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             executor = FileUpgradeExecutor(Path(tmpdir))
 
             for i in range(3):
-                executor.execute_upgrade(_make_proposal(UpgradeCategory.ROUTING_RULES, proposal_id=f"RT-{i:03d}"))
+                result = executor.execute_upgrade(
+                    _make_proposal(UpgradeCategory.ROUTING_RULES, proposal_id=f"RT-{i:03d}")
+                )
+                assert result is False
 
             config_file = Path(tmpdir) / "config" / "routing.yaml"
-            with config_file.open() as f:
-                data = yaml.safe_load(f)
-
-            assert len(data["pending_upgrades"]) == 3
+            assert not config_file.exists()
 
 
 class TestFileUpgradeExecutorProviderConfig:
     """Tests for _apply_provider_config."""
 
-    def test_creates_providers_yaml(self) -> None:
+    def test_returns_false_and_no_file_change(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             executor = FileUpgradeExecutor(Path(tmpdir))
             result = executor.execute_upgrade(_make_proposal(UpgradeCategory.PROVIDER_CONFIG))
 
-            assert result is True
-            assert (Path(tmpdir) / "config" / "providers.yaml").exists()
+            assert result is False
+            config_file = Path(tmpdir) / "config" / "providers.yaml"
+            assert not config_file.exists()
+            history_file = Path(tmpdir) / "upgrades" / "history.jsonl"
+            assert history_file.exists(), "the decision not to write must stay auditable"
+            record = json.loads(history_file.read_text().strip().splitlines()[-1])
+            assert record["status"] == "skipped_no_sink"
 
     def test_preserves_existing_provider_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -180,19 +145,23 @@ class TestFileUpgradeExecutorProviderConfig:
                 yaml.dump(existing, f)
 
             executor = FileUpgradeExecutor(Path(tmpdir))
-            executor.execute_upgrade(_make_proposal(UpgradeCategory.PROVIDER_CONFIG))
+            result = executor.execute_upgrade(_make_proposal(UpgradeCategory.PROVIDER_CONFIG))
 
+            # Upgrade should be rejected (no valid sink)
+            assert result is False
+            # Original file should be unchanged
             with (config_dir / "providers.yaml").open() as f:
                 data = yaml.safe_load(f)
 
             assert "openrouter_free" in data["providers"]
-            assert len(data["pending_upgrades"]) == 1
+            # No pending_upgrades should be added
+            assert "pending_upgrades" not in data
 
 
 class TestFileUpgradeExecutorRoleTemplate:
     """Tests for _apply_role_template."""
 
-    def test_creates_proposed_upgrades_file(self) -> None:
+    def test_returns_false_and_no_file_change(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Point state_dir to tmpdir/.sdd so templates land in tmpdir/templates
             sdd_dir = Path(tmpdir) / ".sdd"
@@ -202,11 +171,13 @@ class TestFileUpgradeExecutorRoleTemplate:
 
             result = executor.execute_upgrade(proposal)
 
-            assert result is True
+            assert result is False
             proposals_file = Path(tmpdir) / "templates" / "roles" / "PROPOSED_UPGRADES.jsonl"
-            assert proposals_file.exists()
-            lines = [json.loads(l) for l in proposals_file.read_text().splitlines() if l.strip()]
-            assert lines[0]["id"] == "TPL-001"
+            assert not proposals_file.exists()
+            history_file = sdd_dir / "upgrades" / "history.jsonl"
+            assert history_file.exists(), "the decision not to write must stay auditable"
+            record = json.loads(history_file.read_text().strip().splitlines()[-1])
+            assert record["status"] == "skipped_no_sink"
 
 
 class TestFileUpgradeExecutorAtomicWrite:
@@ -235,18 +206,20 @@ class TestFileUpgradeExecutorRollback:
 
             executor = FileUpgradeExecutor(Path(tmpdir))
             proposal = _make_proposal(UpgradeCategory.POLICY_UPDATE)
-            executor.execute_upgrade(proposal)
+            result = executor.execute_upgrade(proposal)
+            # Upgrade is not applied (no valid sink)
+            assert result is False
 
-            # File is now modified
+            # File remains unchanged
             with (config_dir / "policies.yaml").open() as f:
                 modified = yaml.safe_load(f)
-            assert "pending_upgrades" in modified
+            assert modified == original
 
-            # Rollback
+            # Rollback should still succeed (no-op)
             result = executor.rollback_upgrade(proposal)
             assert result is True
 
-            # File is restored
+            # File remains unchanged
             with (config_dir / "policies.yaml").open() as f:
                 restored = yaml.safe_load(f)
             assert restored == original

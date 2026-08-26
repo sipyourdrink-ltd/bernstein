@@ -287,6 +287,9 @@ def load_artifact(task: Task, workdir: Path) -> Any:
         except (json.JSONDecodeError, ValueError) as exc:
             raise ArtifactCompletionError(f"ops_result artifact is not valid JSON: {exc}") from exc
 
+    if kind is ArtifactKind.BLOB:
+        return raw
+
     # report: a figures bundle is loaded as a bundle so the sidecar is inside
     # the content hash (issue #2888); anything else is plain report text.
     from bernstein.core.tasks.figures import is_report_bundle, parse_report_bundle

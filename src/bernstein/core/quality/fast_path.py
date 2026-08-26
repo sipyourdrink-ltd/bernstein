@@ -574,6 +574,11 @@ def load_fast_path_config(routing_yaml: Path) -> bool:
     if not isinstance(data, dict):
         return False
 
+    # Remove pending_upgrades if present
+    if "pending_upgrades" in data:
+        data.pop("pending_upgrades")
+        logger.warning("Ignoring leftover pending_upgrades in %s", routing_yaml)
+
     data_dict: dict[str, object] = cast(_CAST_DICT_STR_OBJ, data)
     fp_cfg_raw: object = data_dict.get("fast_path")
     if not isinstance(fp_cfg_raw, dict):

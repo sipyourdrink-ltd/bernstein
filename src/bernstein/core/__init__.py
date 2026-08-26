@@ -67,7 +67,6 @@ _REDIRECT_MAP: dict[str, str] = {
     "auth_middleware": "bernstein.core.security.auth_middleware",
     "auth_rate_limiter": "bernstein.core.security.auth_rate_limiter",
     "auto_approve": "bernstein.core.security.auto_approve",
-    "auto_distillation": "bernstein.core.tokens.auto_distillation",
     "auto_mode_classifier": "bernstein.core.routing.auto_mode_classifier",
     "backlog_parser": "bernstein.core.tasks.backlog_parser",
     "bandit_router": "bernstein.core.routing.bandit_router",
@@ -90,7 +89,6 @@ _REDIRECT_MAP: dict[str, str] = {
     "cascade": "bernstein.core.routing.cascade",
     "cascade_router": "bernstein.core.routing.cascade_router",
     "cascading_failure_circuit_breaker": "bernstein.core.observability.cascading_failure_circuit_breaker",
-    "cascading_token_counter": "bernstein.core.tokens.cascading_token_counter",
     "changelog": "bernstein.core.git.changelog",
     "cheaper_retry": "bernstein.core.cost.planned.cheaper_retry",
     "checkpoint": "bernstein.core.persistence.checkpoint",
@@ -553,7 +551,6 @@ _REDIRECT_MAP: dict[str, str] = {
     "token_counter": "bernstein.core.tokens.token_counter",
     "token_estimation": "bernstein.core.tokens.token_estimation",
     "token_monitor": "bernstein.core.tokens.token_monitor",
-    "token_waste_report": "bernstein.core.tokens.token_waste_report",
     # tool_timing: removed - dead code, no production importers.
     "tool_use_context": "bernstein.core.agents.tool_use_context",
     # trace_correlation: removed - dead code, no production importers.

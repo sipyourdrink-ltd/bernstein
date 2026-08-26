@@ -55,12 +55,16 @@ def test_every_category_has_a_nonempty_path_shaped_mapping(category: UpgradeCate
 
 
 @pytest.mark.parametrize("category", ALL_CATEGORIES)
-def test_owned_files_match_what_the_applicator_actually_writes(category: UpgradeCategory, tmp_path: Path) -> None:
-    """The scope a task declares and the files an upgrade touches are one table.
+def test_the_applicator_writes_none_of_the_files_the_category_declares(
+    category: UpgradeCategory, tmp_path: Path
+) -> None:
+    """A category's declared scope is no longer what an apply writes.
 
-    Runs the real executor into a temp workdir and compares the files it
-    creates - excluding its own bookkeeping under ``upgrades/`` (backups,
-    history.jsonl) - against the mapping's resolution for the same category.
+    The mapping still resolves the files a task for this category *owns* -
+    that is what ``to_task`` declares - but no category has a sink any more,
+    so the executor writes nothing outside its own bookkeeping under
+    ``upgrades/``. Asserting the two sets are one table would re-assert the
+    behaviour that reported dead writes as applied changes.
     """
     state_dir = tmp_path / ".sdd"
     executor = FileUpgradeExecutor(state_dir)
@@ -70,14 +74,13 @@ def test_owned_files_match_what_the_applicator_actually_writes(category: Upgrade
         return {p for p in tmp_path.rglob("*") if p.is_file() and bookkeeping_dir not in p.parents}
 
     before = _files()
-    assert executor.execute_upgrade(_proposal(category)) is True
-    touched = _files() - before
+    assert executor.execute_upgrade(_proposal(category)) is False
+    assert _files() == before
 
-    expected = set(upgrade_target_paths(category, state_dir))
-    assert touched == expected
-
+    # The mapping itself stays intact - slices that add a real sink resolve
+    # their target through it, and task scope is declared from it today.
     declared = {tmp_path / rel for rel in upgrade_owned_files(category)}
-    assert declared == expected
+    assert declared == set(upgrade_target_paths(category, state_dir))
 
 
 @pytest.mark.parametrize("category", ALL_CATEGORIES)
