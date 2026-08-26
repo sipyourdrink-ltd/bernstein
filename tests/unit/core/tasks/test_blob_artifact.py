@@ -14,10 +14,6 @@ from bernstein.core.tasks.artifacts import (
     parse_artifact_spec,
 )
 from bernstein.core.tasks.models import Task
-from bernstein.core.lineage.artifact_record import (
-    _BLOB_NAME,
-    _RECEIPT_NAME,
-)
 
 
 def test_blob_artifact_roundtrips_declare_complete_verify():

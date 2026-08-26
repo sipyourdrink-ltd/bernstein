@@ -290,8 +290,8 @@ def _eval_schema_valid(kind: ArtifactKind, artifact: Any, schema_text: str) -> t
 
     # Blob kind cannot be validated against JSON schema
     if kind in _BYTE_KINDS:
-        return False, f"criterion type 'schema_valid' is not supported for blob kind"
-    
+        return False, "criterion type 'schema_valid' is not supported for blob kind"
+
     try:
         schema = json.loads(schema_text)
     except json.JSONDecodeError as exc:
@@ -319,8 +319,8 @@ def _eval_schema_valid(kind: ArtifactKind, artifact: Any, schema_text: str) -> t
 def _eval_criteria_match(kind: ArtifactKind, artifact: Any, preds_text: str) -> tuple[bool, str]:
     # Blob kind cannot be matched against JSON criteria
     if kind in _BYTE_KINDS:
-        return False, f"criterion type 'criteria_match' is not supported for blob kind"
-    
+        return False, "criterion type 'criteria_match' is not supported for blob kind"
+
     try:
         preds = json.loads(preds_text)
     except json.JSONDecodeError as exc:
