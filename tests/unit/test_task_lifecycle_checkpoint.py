@@ -5,17 +5,13 @@ Tests the checkpoint writing logic in _reap_and_cleanup_session.
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from bernstein.core.tasks.models import AgentSession, Task, TaskStatus
 from bernstein.core.tasks.task_lifecycle import (
     _reap_and_cleanup_session,
-    _write_task_resume_checkpoint,
 )
 
 
@@ -26,18 +22,18 @@ def test_reap_and_cleanup_session_writes_checkpoint_on_janitor_pass_with_merge(
     orch = _mock_orchestrator(tmp_path)
     task = _make_task("t-1")
     session = _make_session("s-1")
-    
+
     # Mock successful merge result
     orch._spawner.reap_completed_agent.return_value = SimpleNamespace(
         success=True,
         conflicting_files=[],
     )
-    
+
     # Mock checkpoint writing to verify call
     with patch(
         "bernstein.core.tasks.task_lifecycle._write_task_resume_checkpoint"
     ) as mock_write:
-        cache_verified, cache_diff, merge_failed = _reap_and_cleanup_session(
+        _cache_verified, _cache_diff, _merge_failed = _reap_and_cleanup_session(
             orch=orch,
             task=task,
             session=session,
@@ -48,14 +44,14 @@ def test_reap_and_cleanup_session_writes_checkpoint_on_janitor_pass_with_merge(
             cache_diff_lines=0,
             preserve_worktree=False,
         )
-    
+
     # Checkpoint should be written
     assert mock_write.call_count == 1
     call_args = mock_write.call_args
     assert call_args[0][0] == orch._workdir  # workdir
     assert call_args[0][1] == task.id  # task_id
-    assert call_args[0][2] == session  # session
-    assert call_args[0][3] == orch._spawner.get_worktree_path.return_value  # worktree_path
+    assert call_args[1]["session"] == session  # session
+    assert call_args[1]["worktree_path"] == orch._spawner.get_worktree_path.return_value  # worktree_path
 
 
 def test_reap_and_cleanup_session_writes_checkpoint_on_janitor_pass_skip_merge(
@@ -65,17 +61,17 @@ def test_reap_and_cleanup_session_writes_checkpoint_on_janitor_pass_skip_merge(
     orch = _mock_orchestrator(tmp_path)
     task = _make_task("t-1")
     session = _make_session("s-1")
-    
+
     # Mock reap_completed_agent with skip_merge
     orch._spawner.reap_completed_agent.return_value = SimpleNamespace(
         success=False,  # merge not attempted when skip_merge=True
         conflicting_files=[],
     )
-    
+
     with patch(
         "bernstein.core.tasks.task_lifecycle._write_task_resume_checkpoint"
     ) as mock_write:
-        cache_verified, cache_diff, merge_failed = _reap_and_cleanup_session(
+        _cache_verified, _cache_diff, _merge_failed = _reap_and_cleanup_session(
             orch=orch,
             task=task,
             session=session,
@@ -86,7 +82,7 @@ def test_reap_and_cleanup_session_writes_checkpoint_on_janitor_pass_skip_merge(
             cache_diff_lines=0,
             preserve_worktree=False,
         )
-    
+
     # Checkpoint should still be written (janitor_passed=True)
     assert mock_write.call_count == 1
 
@@ -98,16 +94,16 @@ def test_reap_and_cleanup_session_skips_checkpoint_on_janitor_fail(
     orch = _mock_orchestrator(tmp_path)
     task = _make_task("t-1")
     session = _make_session("s-1")
-    
+
     orch._spawner.reap_completed_agent.return_value = SimpleNamespace(
         success=True,
         conflicting_files=[],
     )
-    
+
     with patch(
         "bernstein.core.tasks.task_lifecycle._write_task_resume_checkpoint"
     ) as mock_write:
-        cache_verified, cache_diff, merge_failed = _reap_and_cleanup_session(
+        _cache_verified, _cache_diff, _merge_failed = _reap_and_cleanup_session(
             orch=orch,
             task=task,
             session=session,
@@ -118,7 +114,7 @@ def test_reap_and_cleanup_session_skips_checkpoint_on_janitor_fail(
             cache_diff_lines=0,
             preserve_worktree=False,
         )
-    
+
     # Checkpoint should NOT be written
     assert mock_write.call_count == 0
 
@@ -130,19 +126,19 @@ def test_reap_and_cleanup_session_handles_checkpoint_exception_gracefully(
     orch = _mock_orchestrator(tmp_path)
     task = _make_task("t-1")
     session = _make_session("s-1")
-    
+
     orch._spawner.reap_completed_agent.return_value = SimpleNamespace(
         success=True,
         conflicting_files=[],
     )
-    
+
     # Mock checkpoint writing to raise exception
     with patch(
         "bernstein.core.tasks.task_lifecycle._write_task_resume_checkpoint",
         side_effect=RuntimeError("Checkpoint write failed"),
     ) as mock_write:
         # Should not raise exception
-        cache_verified, cache_diff, merge_failed = _reap_and_cleanup_session(
+        _cache_verified, _cache_diff, _merge_failed = _reap_and_cleanup_session(
             orch=orch,
             task=task,
             session=session,
@@ -153,7 +149,7 @@ def test_reap_and_cleanup_session_handles_checkpoint_exception_gracefully(
             cache_diff_lines=0,
             preserve_worktree=False,
         )
-    
+
     # Checkpoint attempted but exception caught
     assert mock_write.call_count == 1
 
@@ -165,18 +161,18 @@ def test_reap_and_cleanup_session_returns_correct_merge_failed_flag(
     orch = _mock_orchestrator(tmp_path)
     task = _make_task("t-1")
     session = _make_session("s-1")
-    
+
     # Mock merge failure without conflicting files
     orch._spawner.reap_completed_agent.return_value = SimpleNamespace(
         success=False,
         conflicting_files=[],  # Non-conflict failure
         error="Permission denied",
     )
-    
+
     with patch(
         "bernstein.core.tasks.task_lifecycle._write_task_resume_checkpoint"
     ):
-        cache_verified, cache_diff, merge_failed = _reap_and_cleanup_session(
+        _cache_verified, _cache_diff, merge_failed = _reap_and_cleanup_session(
             orch=orch,
             task=task,
             session=session,
@@ -187,7 +183,7 @@ def test_reap_and_cleanup_session_returns_correct_merge_failed_flag(
             cache_diff_lines=0,
             preserve_worktree=False,
         )
-    
+
     # merge_failed should be True for non-conflict failure
     assert merge_failed is True
 
@@ -199,21 +195,21 @@ def test_reap_and_cleanup_session_preserves_worktree_when_merge_failed(
     orch = _mock_orchestrator(tmp_path)
     task = _make_task("t-1")
     session = _make_session("s-1")
-    
+
     # Mock merge failure without conflict
     orch._spawner.reap_completed_agent.return_value = SimpleNamespace(
         success=False,
         conflicting_files=[],
         error="Branch not found",
     )
-    
+
     # Mock cleanup_worktree to verify it's NOT called
     with patch(
         "bernstein.core.tasks.task_lifecycle._write_task_resume_checkpoint"
     ), patch.object(
         orch._spawner, "cleanup_worktree"
     ) as mock_cleanup:
-        cache_verified, cache_diff, merge_failed = _reap_and_cleanup_session(
+        _cache_verified, _cache_diff, merge_failed = _reap_and_cleanup_session(
             orch=orch,
             task=task,
             session=session,
@@ -224,7 +220,7 @@ def test_reap_and_cleanup_session_preserves_worktree_when_merge_failed(
             cache_diff_lines=0,
             preserve_worktree=False,
         )
-    
+
     # Worktree cleanup should NOT be called for non-conflict merge failure
     assert mock_cleanup.call_count == 0
     assert merge_failed is True
@@ -238,11 +234,11 @@ def _mock_orchestrator(workdir: Path) -> MagicMock:
     orch._spawner.cleanup_worktree = MagicMock()
     orch._spawner.get_worktree_path = MagicMock(return_value=str(workdir / "worktree"))
     orch._workdir = workdir
-    
+
     # Mock the other required functions
     orch._gate_coalescer = None
     orch._config = SimpleNamespace(server_url="http://server")
-    
+
     return orch
 
 
@@ -269,11 +265,6 @@ def _make_session(session_id: str) -> AgentSession:
     """Create minimal AgentSession instance."""
     return AgentSession(
         id=session_id,
-        task_id="t-1",
-        status="alive",
-        worktree_path="",
-        created_at=time.time() if 'time' in globals() else 0.0,
-        deadline=0.0,
-        model="",
-        meta={},
+        role="backend",
     )
+
