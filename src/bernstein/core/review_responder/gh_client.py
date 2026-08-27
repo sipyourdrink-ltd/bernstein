@@ -237,6 +237,90 @@ class GhClient:
         )
         return False
 
+    def resolve_review_thread(self, *, repo: str, thread_id: str) -> bool:
+        """Resolve a review thread using the GraphQL resolveReviewThread mutation.
+
+        This is the canonical GitHub path for resolving review threads.
+        The method is idempotent: if the thread is already resolved,
+        GitHub returns success without error.
+
+        Args:
+            repo: Repository slug (``owner/name``).
+            thread_id: GraphQL node ID of the review thread to resolve.
+
+        Returns:
+            ``True`` on success, ``False`` on failure.
+        """
+        # GraphQL mutation to resolve a review thread
+        mutation = """
+        mutation($input: ResolveReviewThreadInput!) {
+          resolveReviewThread(input: $input) {
+            thread {
+              id
+              isResolved
+            }
+          }
+        }
+        """
+        variables = json.dumps({"input": {"thread": thread_id}})
+        payload = json.dumps({"query": mutation, "variables": variables})
+
+        result = self.runner(
+            [
+                "api",
+                "graphql",
+                "--input",
+                "-",
+            ],
+            payload,
+        )
+        if result.returncode != 0:
+            logger.warning(
+                "Failed to resolve review thread %s: %s",
+                thread_id,
+                result.stderr.strip(),
+            )
+            return False
+
+        try:
+            data = json.loads(result.stdout or "{}")
+        except ValueError:
+            logger.warning(
+                "Failed to parse resolveReviewThread response for %s",
+                thread_id,
+            )
+            return False
+
+        # Check for errors in the GraphQL response
+        if "errors" in data:
+            logger.warning(
+                "GraphQL errors resolving thread %s: %s",
+                thread_id,
+                data["errors"],
+            )
+            return False
+
+        # Verify the thread was resolved
+        resolve_data = data.get("data", {}).get("resolveReviewThread", {})
+        if not resolve_data:
+            logger.warning(
+                "Missing resolveReviewThread data for thread %s",
+                thread_id,
+            )
+            return False
+
+        is_resolved = resolve_data.get("isResolved", False)
+        if is_resolved:
+            logger.info("Review thread %s resolved successfully", thread_id)
+            return True
+
+        logger.warning(
+            "Thread %s not resolved after call (isResolved=%s)",
+            thread_id,
+            is_resolved,
+        )
+        return False
+
 
 def _lines_in_patch(patch: str) -> set[int]:
     """Parse a unified-diff hunk string into the set of new-side line numbers.
