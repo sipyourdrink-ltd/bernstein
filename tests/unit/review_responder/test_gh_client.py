@@ -91,7 +91,9 @@ def test_react_to_comment_idempotent() -> None:
 
 def test_react_to_comment_failure() -> None:
     """Other non-zero return codes yield False and log a warning."""
-    client = GhClient(runner=lambda args, stdin: subprocess.CompletedProcess(
-        args=args, returncode=500, stdout="", stderr="Internal Server Error"
-    ))
+    client = GhClient(
+        runner=lambda args, stdin: subprocess.CompletedProcess(
+            args=args, returncode=500, stdout="", stderr="Internal Server Error"
+        )
+    )
     assert client.react_to_comment(repo="o/r", comment_id=42) is False
