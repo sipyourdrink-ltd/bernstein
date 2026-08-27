@@ -37,4 +37,4 @@ configurable gate pipeline plus the janitor's claim verification.
 Single files only, e.g. `uv run pytest tests/unit/test_quality_gates.py -x -q`;
 runner and pipeline behaviour lives in the `test_gate_*.py` files.
 
-<!-- Reviewed 2026-08-24 against this subtree; the notes above still hold. -->
+<!-- Reviewed 2026-08-27 against this subtree; the notes above still hold. -->

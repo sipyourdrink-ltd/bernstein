@@ -15,6 +15,7 @@ repeat. Coordination is plain Python, never an LLM (ADR-006).
 | `trigger_manager.py` | Evaluates `triggers.yaml` rules into `TriggerEvent`s (event and cron sources) |
 | `worker.py` | `bernstein-worker` process wrapper for spawned CLI agents |
 | `run_closure_owner.py` | Universal authenticated run closure owner |
+| `issue_claim.py` | Claim etiquette for coordinator-free issue intake: recognises a run's own claim, detects a stale one |
 
 Heavy lifting lives in siblings: `../tasks/task_lifecycle.py` (claim, spawn, retry,
 completion) and `../agents/` (spawner, heartbeat, crash detection, reaping).
@@ -22,8 +23,7 @@ completion) and `../agents/` (spawner, heartbeat, crash detection, reaping).
 ## Invariants
 
 - No LLM in any coordination path (`docs/decisions/006-no-embedded-llm.md`).
-- The tick loop is single-threaded by design; do not add concurrent
-  ticks without restoring a tick guard (`orchestrator.py` docstring).
+- The tick loop is single-threaded by design; do not add concurrent ticks without restoring a tick guard (`orchestrator.py`).
 - Replay is strict: a cache miss raises `ReplayMissError`, not a silent live call.
 - Prefer pure decision functions (`run_stall.py` is the model) so a
   criterion is testable without a tick loop, server, or real clock.
@@ -37,4 +37,4 @@ completion) and `../agents/` (spawner, heartbeat, crash detection, reaping).
 Single files only: `uv run pytest tests/unit/test_orchestrator.py -x -q`.
 Never run the full suite (see `tests/AGENTS.md`).
 
-<!-- Reviewed 2026-08-24 against this subtree; the notes above still hold. -->
+<!-- Reviewed 2026-08-27 against this subtree; the notes above still hold. -->

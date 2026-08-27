@@ -1,8 +1,7 @@
 # CLI agent adapters
 
-One adapter per upstream coding-agent CLI (claude, codex, gemini,
-aider, goose, and 40+ more). An adapter turns a task prompt into a CLI
-invocation and streams results back; flat layout, one module per tool.
+One adapter per upstream coding-agent CLI (claude, codex, gemini, aider, goose, 40+ more):
+a task prompt becomes a CLI invocation and results stream back. One module per tool.
 
 ## Key files
 
@@ -13,6 +12,7 @@ invocation and streams results back; flat layout, one module per tool.
 | `capability_profile.py` | Declarative adapter capability profiles and profile factory |
 | `skills_injector.py` | Copies sanitized skill markdown into the worktree at dispatch |
 | `canary.py` | Nightly conformance canary matrix over adapter contracts |
+| `goose_stream_parser.py` | Parses Goose `--output-format stream-json`; token accounting rides the terminal `envelope` event |
 | `http_429_classifier.py` | Classifies HTTP 429 errors into standing quotas vs. transient rate limits |
 | `onboarding.py` | Interactive probe and capability discovery for newly installed agent CLIs |
 | `mock.py` | Mock agent for zero-API-key demos; produces the same completion evidence real agents do (`Modified:` log lines plus a per-fix commit scoped to the mutated file) |
@@ -37,4 +37,4 @@ Both layouts are current; follow whichever one an adapter already uses, and
 run one file at a time. Contract checks live under `tests/contract/`;
 live-binary conformance is opt-in via the `--live` pytest flag.
 
-<!-- Reviewed 2026-08-24 against this subtree; the notes above still hold. -->
+<!-- Reviewed 2026-08-27 against this subtree; the notes above still hold. -->
