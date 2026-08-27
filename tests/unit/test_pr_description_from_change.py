@@ -255,7 +255,7 @@ def test_the_change_section_names_the_dominant_commit_and_its_files() -> None:
 
     assert "derive a per-store key with HKDF-SHA256" in change
     assert "src/bernstein/core/storage/keys.py" in change
-    assert "+120/-4" in change
+    assert "+120 / -4" in change
 
 
 def test_the_change_section_labels_housekeeping_rather_than_hiding_it() -> None:
@@ -438,3 +438,108 @@ def test_body_is_a_registered_pr_option() -> None:
     from bernstein.cli.commands.pr_cmd import pr_cmd
 
     assert "--body" in {param.opts[0] for param in pr_cmd.params}
+
+
+# ---------------------------------------------------------------------------
+# What a description may claim when git does not answer
+# ---------------------------------------------------------------------------
+
+
+def test_a_git_failure_is_not_reported_as_a_branch_that_changed_nothing() -> None:
+    """An unanswered query is not a negative answer.
+
+    ``git diff`` returning non-zero used to be indistinguishable from a
+    branch with no diff: both reached the body as an empty string, and the
+    body asserted the branch changed nothing. Nine of the ten fleet pull
+    requests open on 2026-08-27 said that about branches full of work.
+    """
+    body = build_pr_body(_summary(diff_stat="", commits=(), git_error="fatal: bad object main"))
+    change = body.split("## Change", 1)[1].split("## Verification", 1)[0]
+
+    assert "No changes recorded" not in change
+    assert "could not be read" in change
+    assert "fatal: bad object main" in change
+
+
+def test_a_description_never_carries_a_receipt_for_an_empty_diff() -> None:
+    """A digest of nothing is not provenance.
+
+    ``compute_diff_hash(b"")`` is a well-formed SHA-256, and printing it
+    beside ``review-receipt verify`` publishes a receipt no verifier can
+    honour. The section is omitted instead.
+    """
+    empty = build_provenance(diff=b"")
+    body = build_pr_body(_summary(provenance=empty))
+
+    assert "## Provenance" not in body
+    assert empty.diff_hash not in body
+
+
+def test_a_receipt_for_a_real_diff_is_still_published() -> None:
+    real = build_provenance(diff=b"diff --git a/x b/x\n+one line\n")
+    body = build_pr_body(_summary(provenance=real))
+
+    assert "## Provenance" in body
+    assert real.diff_hash in body
+
+
+def test_git_failures_reach_the_description_instead_of_being_swallowed(tmp_path: Path) -> None:
+    """Proven against real git, in a directory that is not a repository.
+
+    A mocked failure would prove the branch is written; only a real
+    non-zero git proves the failure survives the subprocess boundary.
+    """
+    from bernstein.cli.commands.pr_cmd import _enrich_summary_with_git
+
+    enriched = _enrich_summary_with_git(
+        _summary(diff_stat="", commits=(), provenance=None, branch="some-branch"),
+        tmp_path,
+    )
+
+    assert enriched.git_error
+    assert enriched.provenance is None
+    assert "No changes recorded" not in build_pr_body(enriched)
+
+
+# ---------------------------------------------------------------------------
+# What a reader sees first
+# ---------------------------------------------------------------------------
+
+
+def test_a_colon_lead_in_absorbs_the_block_it_introduces() -> None:
+    """"Two release tracks, going forward:" is the sentence before a problem."""
+    body = build_pr_body(
+        _summary(
+            issue_problem=(
+                "Two release tracks, going forward:\n"
+                "\n"
+                "- stable ships monthly\n"
+                "- edge ships nightly\n"
+            )
+        )
+    )
+    problem = body.split("## Problem", 1)[1].split("## Change", 1)[0]
+
+    assert "stable ships monthly" in problem
+    assert "edge ships nightly" in problem
+
+
+def test_the_body_opens_with_the_size_the_gates_and_the_cost() -> None:
+    body = build_pr_body(_summary(commits=(FEATURE_COMMIT,)))
+    headline = body.splitlines()[0]
+
+    assert headline.startswith(">")
+    assert "2 files" in headline
+    assert "+210 / -4" in headline
+    assert "2/2 gates passed" in headline
+    assert "$1.00" in headline
+
+
+def test_a_failed_gate_shows_in_the_headline() -> None:
+    body = build_pr_body(
+        _summary(gates=(GateResult(name="tests", passed=False, detail="3 failed"),))
+    )
+    headline = body.splitlines()[0]
+
+    assert "❌" in headline
+    assert "0/1 gates passed" in headline

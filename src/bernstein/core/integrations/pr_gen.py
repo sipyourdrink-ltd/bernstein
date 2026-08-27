@@ -198,6 +198,17 @@ _MAX_FILES_LISTED = 20
 # How much of the linked issue's body the Problem section quotes.
 _PROBLEM_MAX_CHARS = 600
 
+# SHA-256 of zero bytes. `compute_diff_hash(b"")` returns it, and it is a
+# well-formed digest of nothing: printed under "verify this" it is a receipt
+# no verifier can honour. Recognised here so no caller can publish one.
+_EMPTY_DIFF_HASH_SUFFIX = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+_DIFF_STAT_SUMMARY_RE = re.compile(
+    r"(?P<files>\d+)\s+files?\s+changed"
+    r"(?:,\s*(?P<added>\d+)\s+insertions?\(\+\))?"
+    r"(?:,\s*(?P<removed>\d+)\s+deletions?\(-\))?"
+)
+
 #: Verdict recorded on a receipt that attests a pull-request description
 #: rather than a code review, so the two are told apart on read-back.
 DESCRIPTION_VERDICT = "description"
@@ -383,6 +394,10 @@ class SessionSummary:
             :class:`ChangeProvenance`.
         provenance: The description's binding to the diff it describes, or
             ``None`` when no diff was available to hash.
+        git_error: Why git could not describe the branch, when it could
+            not.  A failed query and an empty answer look identical once
+            they reach this dataclass, so the reason travels with them and
+            the description reports it instead of claiming no changes.
     """
 
     session_id: str
@@ -400,6 +415,7 @@ class SessionSummary:
     commits: tuple[CommitRecord, ...] = ()
     journal_head: str = ""
     provenance: ChangeProvenance | None = None
+    git_error: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -821,16 +837,46 @@ def _first_paragraph(text: str) -> str:
     stripped = text.strip()
     if not stripped:
         return ""
-    for block in re.split(r"\n\s*\n", stripped):
-        lines = [line.strip() for line in block.splitlines()]
-        kept = [line for line in lines if line and not line.startswith("#")]
-        paragraph = " ".join(kept).strip()
+    blocks = re.split(r"\n\s*\n", stripped)
+    for index, block in enumerate(blocks):
+        paragraph = _flatten_block(block)
         if not paragraph:
             continue
-        if len(paragraph) > _PROBLEM_MAX_CHARS:
-            return paragraph[:_PROBLEM_MAX_CHARS].rstrip() + "…"
-        return paragraph
+        # "Two release tracks, going forward:" is not a problem statement, it
+        # is the sentence before one. A paragraph that ends on a colon
+        # introduces the block beneath it, so take that block too rather than
+        # publishing the lead-in alone.
+        if paragraph.endswith(":") and index + 1 < len(blocks):
+            continuation = _flatten_block(blocks[index + 1])
+            if continuation:
+                paragraph = f"{paragraph} {continuation}".strip()
+        return _cap(paragraph)
     return ""
+
+
+def _flatten_block(block: str) -> str:
+    """Flatten one markdown block to a single line of prose.
+
+    Headings are dropped; list markers and blockquote markers are stripped so
+    a bulleted block reads as a sentence rather than as broken markdown.
+    """
+    kept: list[str] = []
+    for raw in block.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        line = re.sub(r"^>\s*", "", line)
+        line = re.sub(r"^(?:[-*+]|\d+\.)\s+", "", line)
+        if line:
+            kept.append(line)
+    return " ".join(kept).strip()
+
+
+def _cap(text: str) -> str:
+    """Truncate ``text`` to the problem-statement budget, with an ellipsis."""
+    if len(text) > _PROBLEM_MAX_CHARS:
+        return text[:_PROBLEM_MAX_CHARS].rstrip() + "…"
+    return text
 
 
 def _format_gates(gates: tuple[GateResult, ...]) -> str:
@@ -867,11 +913,22 @@ def _format_cost(cost: CostBreakdown) -> str:
 
 
 def _format_diff_stat(diff_stat: str) -> str:
-    """Render the diff-stat in a fenced code block, or a fallback line."""
+    """Render the diff-stat, folded away, or a fallback line."""
     stripped = diff_stat.strip()
     if not stripped:
         return "_No changes recorded for this session._"
-    return f"```\n{stripped}\n```"
+    return "\n".join(
+        [
+            "<details>",
+            "<summary>Full diff-stat</summary>",
+            "",
+            "```",
+            stripped,
+            "```",
+            "",
+            "</details>",
+        ]
+    )
 
 
 def _format_merged_changes(merged: tuple[MergedChange, ...]) -> str:
@@ -890,10 +947,14 @@ def _format_merged_changes(merged: tuple[MergedChange, ...]) -> str:
 def _format_file_lines(files: Iterable[FileChange]) -> list[str]:
     """Render the files a commit touched, largest change first."""
     ordered = sorted(files, key=lambda f: (-f.churn, f.path))
-    lines = [f"- `{change.path}` (+{change.added}/-{change.removed})" for change in ordered[:_MAX_FILES_LISTED]]
-    remaining = len(ordered) - len(lines)
+    if not ordered:
+        return []
+    shown = ordered[:_MAX_FILES_LISTED]
+    lines = ["| File | Change |", "| --- | --- |"]
+    lines += [f"| `{change.path}` | +{change.added} / -{change.removed} |" for change in shown]
+    remaining = len(ordered) - len(shown)
     if remaining > 0:
-        lines.append(f"- _…and {remaining} more file(s)._")
+        lines.append(f"| _…and {remaining} more file(s)_ | |")
     return lines
 
 
@@ -957,6 +1018,11 @@ def _format_changes(session: SessionSummary) -> str:
     if session.merged_changes:
         blocks.append(_format_merged_changes(session.merged_changes))
     if not blocks:
+        if session.git_error:
+            return (
+                "> ⚠️ **The diff could not be read.** This description was composed without it.\n"
+                f"> git said: `{session.git_error}`"
+            )
         return _format_diff_stat("")
     return "\n\n".join(blocks)
 
@@ -992,6 +1058,73 @@ def _format_evidence(evidence: EvidenceSummary) -> str:
     )
 
 
+def _churn(session: SessionSummary) -> tuple[int, int, int] | None:
+    """Return ``(files, added, removed)`` for the branch, or ``None``.
+
+    The commits are the first source because they carry per-file numbers.
+    The diff-stat's summary line is the fallback for a session whose commits
+    were not parsed.  ``None`` means neither could say, which is the case a
+    headline must not invent a number for.
+    """
+    paths: dict[str, tuple[int, int]] = {}
+    for commit in session.commits:
+        if commit.is_merge:
+            continue
+        for change in commit.files:
+            added, removed = paths.get(change.path, (0, 0))
+            paths[change.path] = (added + change.added, removed + change.removed)
+    if paths:
+        return len(paths), sum(a for a, _ in paths.values()), sum(r for _, r in paths.values())
+
+    match = _DIFF_STAT_SUMMARY_RE.search(session.diff_stat)
+    if match:
+        return (
+            int(match.group("files")),
+            int(match.group("added") or 0),
+            int(match.group("removed") or 0),
+        )
+    return None
+
+
+def _format_headline(session: SessionSummary) -> str:
+    """Render the one-line summary that opens the body.
+
+    A reviewer opening a pull request asks three questions before any other:
+    how big is it, did the checks pass, what did it cost.  The line answers
+    all three above the fold so the rest of the description is optional
+    reading rather than a search.
+    """
+    segments: list[str] = []
+
+    churn = _churn(session)
+    if churn is not None:
+        files, added, removed = churn
+        plural = "" if files == 1 else "s"
+        segments.append(f"**{files} file{plural}** · +{added} / -{removed}")
+
+    failed = [gate for gate in session.gates if not gate.passed]
+    if session.gates:
+        passed = len(session.gates) - len(failed)
+        segments.append(f"**{passed}/{len(session.gates)} gates passed**")
+
+    if session.cost.total_usd > 0:
+        segments.append(f"**${session.cost.total_usd:.2f}**")
+
+    if session.git_error:
+        marker = "⚠️"
+        segments.append("**the diff could not be read**")
+    elif failed:
+        marker = "❌"
+    elif session.gates:
+        marker = "✅"
+    else:
+        marker = "📝"
+
+    if not segments:
+        return ""
+    return f"> {marker} " + " · ".join(segments)
+
+
 def build_pr_body(session: SessionSummary) -> str:
     """Render the full markdown body for a pull request.
 
@@ -1019,7 +1152,12 @@ def build_pr_body(session: SessionSummary) -> str:
     # with a single regex.
     short_id = session.session_id[:12] if session.session_id else "unknown"
 
-    parts: list[str] = [
+    parts: list[str] = []
+    headline = _format_headline(session)
+    if headline:
+        parts += [headline, ""]
+
+    parts += [
         "## Problem",
         _problem_statement(session),
         "",
@@ -1043,7 +1181,7 @@ def build_pr_body(session: SessionSummary) -> str:
     # any diff. The block below is what makes this one checkable: the diff it
     # was composed from and the journal head of the run that produced it, both
     # recomputable by ``review-receipt verify``.
-    if session.provenance is not None:
+    if session.provenance is not None and not session.provenance.diff_hash.endswith(_EMPTY_DIFF_HASH_SUFFIX):
         parts += [
             "## Provenance",
             _format_provenance(session.provenance),
