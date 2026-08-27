@@ -22,7 +22,7 @@ the RFC count as contributions too.
 
 ### Milestone triage and targeting
 
-Bernstein follows a **two-track release model**: patch releases (weekly) and minor releases (monthly or quarterly). Details in [docs/operations/release.md](docs/operations/release.md).
+Bernstein follows a **two-track release model**: patch releases (every 3 days) and minor releases (every 2 weeks). Details in [docs/operations/release.md](docs/operations/release.md).
 
 Issues are assigned to milestones to plan what ships in each release. A milestone is **not a parking lot** — every issue in a milestone should be on track to ship in that release.
 

@@ -5,7 +5,7 @@ Bernstein follows a **two-track release cadence**:
 - **Patch releases** (`vX.Y.Z`) are automated and ship approximately every 3 days when there are meaningful changes to ship. The `auto-release.yml` workflow tags releases automatically after CI passes on `main`.
 - **Minor releases** (`vX.Y.0`) are manual, operator-initiated cuts that happen approximately every 2 weeks. The `release-major-minor.yml` workflow bumps the version and opens a PR that goes through the merge queue.
 
-This ensures a predictable release schedule: patch fixes arrive weekly, while feature releases (minor and major) follow a planned milestone cadence.
+This ensures a predictable release schedule: patch fixes arrive every few days, while feature releases (minor and major) follow a planned milestone cadence.
 
 This page documents which GitHub Actions workflows own each release entrypoint.
 
