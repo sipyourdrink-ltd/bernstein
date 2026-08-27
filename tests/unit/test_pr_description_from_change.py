@@ -507,16 +507,9 @@ def test_git_failures_reach_the_description_instead_of_being_swallowed(tmp_path:
 
 
 def test_a_colon_lead_in_absorbs_the_block_it_introduces() -> None:
-    """"Two release tracks, going forward:" is the sentence before a problem."""
+    """ "Two release tracks, going forward:" is the sentence before a problem."""
     body = build_pr_body(
-        _summary(
-            issue_problem=(
-                "Two release tracks, going forward:\n"
-                "\n"
-                "- stable ships monthly\n"
-                "- edge ships nightly\n"
-            )
-        )
+        _summary(issue_problem=("Two release tracks, going forward:\n\n- stable ships monthly\n- edge ships nightly\n"))
     )
     problem = body.split("## Problem", 1)[1].split("## Change", 1)[0]
 
@@ -536,10 +529,31 @@ def test_the_body_opens_with_the_size_the_gates_and_the_cost() -> None:
 
 
 def test_a_failed_gate_shows_in_the_headline() -> None:
-    body = build_pr_body(
-        _summary(gates=(GateResult(name="tests", passed=False, detail="3 failed"),))
-    )
+    body = build_pr_body(_summary(gates=(GateResult(name="tests", passed=False, detail="3 failed"),)))
     headline = body.splitlines()[0]
 
     assert "❌" in headline
     assert "0/1 gates passed" in headline
+
+
+def test_a_run_without_a_journal_head_does_not_advertise_one() -> None:
+    """``Journal head: unrecorded`` reads as a lost recording, not an absent one."""
+    body = build_pr_body(_summary(provenance=build_provenance(diff=b"diff --git a/x b/x\n")))
+    provenance = body.split("## Provenance", 1)[1].split("## Cost", 1)[0]
+
+    assert "unrecorded" not in provenance
+    assert "Journal head" not in provenance
+
+
+def test_a_journal_head_is_shown_when_the_run_anchored_one() -> None:
+    body = build_pr_body(_summary(provenance=build_provenance(diff=b"diff --git a/x b/x\n", journal_head="deadbeef")))
+
+    assert "**Journal head:** `deadbeef`" in body
+
+
+def test_a_session_with_no_cost_says_so_in_one_line() -> None:
+    body = build_pr_body(_summary(cost=CostBreakdown()))
+    cost = body.split("## Cost", 1)[1].split("---", 1)[0]
+
+    assert "No cost was recorded" in cost
+    assert "Effective rate" not in cost

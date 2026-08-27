@@ -893,6 +893,9 @@ def _format_gates(gates: tuple[GateResult, ...]) -> str:
 
 def _format_cost(cost: CostBreakdown) -> str:
     """Render the cost section as a markdown list."""
+    if cost.total_usd == 0 and cost.total_tokens == 0:
+        return "- _No cost was recorded for this session._"
+
     lines: list[str] = [
         f"- **Total:** ${cost.total_usd:.2f}",
         f"- **Tokens:** {cost.total_tokens:,}",
@@ -1029,13 +1032,15 @@ def _format_changes(session: SessionSummary) -> str:
 
 def _format_provenance(provenance: ChangeProvenance) -> str:
     """Render the Provenance block binding the description to its diff."""
-    return "\n".join(
-        [
-            f"- **Diff:** `{provenance.diff_hash}`",
-            f"- **Journal head:** `{provenance.journal_head or 'unrecorded'}`",
-            "- **Verify:** `bernstein review-receipt verify --pr <this PR> --issue <issue.md> --diff <pr.diff>`",
-        ]
-    )
+    lines = [f"- **Diff:** `{provenance.diff_hash}`"]
+    # A run that left no journal head has nothing to say here. The word
+    # "unrecorded" beside a verify command reads as a missing recording
+    # rather than as a run that never anchored one, and it is the line
+    # readers ask about first.
+    if provenance.journal_head:
+        lines.append(f"- **Journal head:** `{provenance.journal_head}`")
+    lines.append("- **Verify:** `bernstein review-receipt verify --pr <this PR> --issue <issue.md> --diff <pr.diff>`")
+    return "\n".join(lines)
 
 
 def _format_evidence(evidence: EvidenceSummary) -> str:
