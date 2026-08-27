@@ -15,6 +15,7 @@ from bernstein.core.persistence.agent_checkpoint import (
     build_continuation_entry,
     build_resume_prompt,
     compute_interpreter_hash,
+    compute_observations_hash,
     is_checkpoint_recoverable,
     load_checkpoint,
     save_checkpoint,
@@ -31,6 +32,7 @@ def _make_checkpoint(
     last_output: str = "",
     step_count: int = 0,
     elapsed_seconds: float = 0.0,
+    observations: dict[str, str] | None = None,
 ) -> AgentCheckpoint:
     return AgentCheckpoint(
         agent_id=agent_id,
@@ -40,6 +42,7 @@ def _make_checkpoint(
         last_output=last_output,
         step_count=step_count,
         elapsed_seconds=elapsed_seconds,
+        observations=observations or {},
     )
 
 
@@ -418,3 +421,163 @@ def test_override_interpreter_allows_resume_and_records_in_chain(tmp_path: Path)
     assert isinstance(entry, ContinuationEntry)
     assert entry.interpreter_hash == checkpoint.interpreter_hash
     assert entry.interpreter_overridden is True
+
+
+# ---------------------------------------------------------------------------
+# observations field (new in commit bdbdf57)
+# ---------------------------------------------------------------------------
+
+
+def test_checkpoint_observations_default_empty_dict() -> None:
+    # The observations field must default to an empty dict, not None
+    checkpoint = _make_checkpoint()
+    assert checkpoint.observations == {}
+
+
+def test_checkpoint_observations_can_be_populated() -> None:
+    checkpoint = _make_checkpoint(
+        observations={"artifacts/doc.md": "sha256:abc123", "artifacts/fig.png": "sha256:def456"}
+    )
+    assert len(checkpoint.observations) == 2
+    assert checkpoint.observations["artifacts/doc.md"] == "sha256:abc123"
+
+
+def test_compute_observations_hash_is_stable() -> None:
+    obs = {"key_b": "value2", "key_a": "value1"}
+    h1 = compute_observations_hash(obs)
+    h2 = compute_observations_hash({"key_a": "value1", "key_b": "value2"})
+    assert h1 == h2
+    assert len(h1) == 64  # SHA-256 hex
+
+
+def test_compute_observations_hash_sensitive_to_content() -> None:
+    base = compute_observations_hash({"key": "value1"})
+    assert compute_observations_hash({"key": "value2"}) != base
+    assert compute_observations_hash({"key1": "value1"}) != base
+    assert compute_observations_hash({}) != base
+
+
+def test_compute_observations_hash_stable_across_processes() -> None:
+    import subprocess
+    import sys
+
+    code = (
+        "from bernstein.core.persistence.agent_checkpoint import compute_observations_hash; "
+        "print(compute_observations_hash({'a': '1', 'b': '2'}))"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert out.stdout.strip() == compute_observations_hash({"a": "1", "b": "2"})
+
+
+def test_save_and_load_checkpoint_with_observations(tmp_path: Path) -> None:
+    checkpoint = _make_checkpoint(
+        agent_id="obs-agent",
+        observations={
+            "src/file.py": "sha256:abc123",
+            "docs/readme.md": "sha256:def456",
+        },
+    )
+    save_checkpoint(checkpoint, tmp_path)
+    loaded = load_checkpoint("obs-agent", tmp_path)
+    assert loaded is not None
+    assert loaded.observations == checkpoint.observations
+
+
+def test_observations_roundtrip_preserves_keys() -> None:
+    checkpoint = _make_checkpoint(
+        agent_id="key-test",
+        observations={"a.py": "h1", "b.py": "h2", "c.py": "h3"},
+    )
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        save_checkpoint(checkpoint, tmp_path)
+        loaded = load_checkpoint("key-test", tmp_path)
+        assert set(loaded.observations.keys()) == {"a.py", "b.py", "c.py"}
+
+
+def test_observations_roundtrip_preserves_sha256_prefix() -> None:
+    # Values must be preserved exactly as provided (sha256: prefix)
+    checkpoint = _make_checkpoint(
+        agent_id="prefix-test",
+        observations={"artifact.txt": "sha256:deadbeef12345678"},
+    )
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        save_checkpoint(checkpoint, tmp_path)
+        loaded = load_checkpoint("prefix-test", tmp_path)
+        assert loaded.observations["artifact.txt"] == "sha256:deadbeef12345678"
+
+
+def test_checkpoint_hash_excludes_timing_but_includes_observations() -> None:
+    # checkpoint_hash should exclude checkpointed_at and elapsed_seconds
+    # but MUST include observations to ensure the hash reflects the actual content
+    from bernstein.core.persistence.agent_checkpoint import checkpoint_hash
+    import time
+    
+    cp1 = AgentCheckpoint(
+        agent_id="h-agent",
+        task_id="task-1",
+        worktree_path="/tmp/wt",
+        step_count=5,
+        observations={"a.txt": "sha256:xxx"},
+        checkpointed_at=1000.0,
+        elapsed_seconds=10.0,
+    )
+    cp2 = AgentCheckpoint(
+        agent_id="h-agent",
+        task_id="task-1",
+        worktree_path="/tmp/wt",
+        step_count=5,
+        observations={"a.txt": "sha256:xxx"},
+        checkpointed_at=2000.0,  # different timestamp
+        elapsed_seconds=20.0,  # different elapsed
+    )
+    h1 = checkpoint_hash(cp1)
+    h2 = checkpoint_hash(cp2)
+    assert h1 == h2, "Same observations should produce same hash despite timing differences"
+
+
+def test_checkpoint_hash_differs_when_observations_differ() -> None:
+    from bernstein.core.persistence.agent_checkpoint import checkpoint_hash
+    
+    cp1 = AgentCheckpoint(
+        agent_id="diff-agent",
+        task_id="task-1",
+        worktree_path="/tmp/wt",
+        step_count=1,
+        observations={"a.txt": "sha256:hash1"},
+    )
+    cp2 = AgentCheckpoint(
+        agent_id="diff-agent",
+        task_id="task-1",
+        worktree_path="/tmp/wt",
+        step_count=1,
+        observations={"a.txt": "sha256:hash2"},
+    )
+    h1 = checkpoint_hash(cp1)
+    h2 = checkpoint_hash(cp2)
+    assert h1 != h2, "Different observations must produce different hashes"
+
+
+def test_checkpoint_with_empty_observations_hash_stable() -> None:
+    checkpoint = _make_checkpoint(
+        agent_id="empty-obs",
+        observations={},
+    )
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        save_checkpoint(checkpoint, tmp_path)
+        loaded = load_checkpoint("empty-obs", tmp_path)
+        assert loaded.observations == {}
+        from bernstein.core.persistence.agent_checkpoint import checkpoint_hash
+        h1 = checkpoint_hash(checkpoint)
+        h2 = checkpoint_hash(loaded)
+        assert h1 == h2
