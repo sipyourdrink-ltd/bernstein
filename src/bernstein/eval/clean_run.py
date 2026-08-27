@@ -1426,6 +1426,41 @@ def _load_run_journal(workdir: Path, run_id: str) -> list[dict[str, Any]]:
     return load_events(path).events
 
 
+def _load_equivalence_journal(
+    workdir: Path, run_id: str, journal_type: str
+) -> list[dict[str, Any]]:
+    """Load an equivalence run's journal rows from disk; empty when unavailable.
+
+    For an equivalence attestation with run_id ``<task_id>-equivalence``, the
+    original journal is stored under ``<task_id>`` and the substituted journal
+    under ``<task_id>-equivalence``.
+
+    Args:
+        workdir: Project root.
+        run_id: The equivalence attestation run id (e.g. ``task-123-equivalence``).
+        journal_type: ``"original"`` or ``"substituted"``.
+
+    Returns:
+        The journal events, or an empty list if unavailable.
+    """
+    from bernstein.core.replay.journal import JournalPathError, load_events
+
+    try:
+        if journal_type == "original":
+            # Original journal lives under the base task run_id
+            base_run_id = run_id.rsplit("-equivalence", 1)[0]
+            path = run_journal_path(workdir / ".sdd", base_run_id)
+        else:
+            # Substituted journal lives under the equivalence run_id
+            path = run_journal_path(workdir / ".sdd", run_id)
+    except JournalPathError:
+        return []
+    try:
+        return load_events(path).events
+    except Exception:
+        return []
+
+
 # ---------------------------------------------------------------------------
 # Equivalence attestation
 # ---------------------------------------------------------------------------
@@ -1708,6 +1743,8 @@ def verify_equivalence_attestation(
     lineage_root: Path,
     hmac_key: bytes,
     attestation_hash: str,
+    original_journal_events: Sequence[Mapping[str, Any]] | None = None,
+    substituted_journal_events: Sequence[Mapping[str, Any]] | None = None,
 ) -> EquivalenceVerifyResult:
     """Re-verify the equivalence attestation for *attestation_hash* offline.
 
@@ -1716,8 +1753,24 @@ def verify_equivalence_attestation(
     * the stored bytes parse under exact-type strictness
       (:class:`CleanRunSchemaError` otherwise);
     * the attestation hash recomputes from the stored body;
+    * verify original journal chain matches stored original_journal_head;
+    * verify substituted journal chain matches stored substituted_journal_head;
+    * re-verify equivalence verdict matches the head comparison;
     * the lineage spine verifies and anchors the attestation's canonical
       bytes at the recorded entry hash.
+
+    Args:
+        workdir: Project root.
+        lineage_root: ``.sdd/lineage`` root for the spine.
+        hmac_key: Operator audit HMAC key.
+        attestation_hash: The attestation hash to verify.
+        original_journal_events: Optional original run journal events for
+            verification. If omitted, loaded from disk.
+        substituted_journal_events: Optional substituted run journal events
+            for verification. If omitted, loaded from disk.
+
+    Returns:
+        The verification result.
     """
     try:
         path = clean_run_attestation_path(workdir, attestation_hash)
@@ -1755,6 +1808,75 @@ def verify_equivalence_attestation(
         return EquivalenceVerifyResult(
             ok=False,
             reason="attestation_hash does not recompute from the stored body (tampered)",
+            attestation=attestation,
+        )
+
+    # Load original and substituted journal events for chain verification.
+    original_events = (
+        list(original_journal_events)
+        if original_journal_events is not None
+        else _load_equivalence_journal(workdir, attestation.run_id, "original")
+    )
+    if not original_events:
+        return EquivalenceVerifyResult(
+            ok=False,
+            reason="original run journal unavailable: cannot verify original_journal_head",
+            attestation=attestation,
+        )
+    chain_result = verify_events([dict(e) for e in original_events])
+    if not chain_result.chain_consistent:
+        detail = "; ".join(chain_result.errors) or "chain verification failed"
+        return EquivalenceVerifyResult(
+            ok=False,
+            reason=f"original run journal chain broken: {detail}",
+            attestation=attestation,
+        )
+    if str(original_events[-1].get("event_hash", "")) != attestation.original_journal_head:
+        return EquivalenceVerifyResult(
+            ok=False,
+            reason="original run journal does not chain to the recorded original_journal_head",
+            attestation=attestation,
+        )
+
+    substituted_events = (
+        list(substituted_journal_events)
+        if substituted_journal_events is not None
+        else _load_equivalence_journal(workdir, attestation.run_id, "substituted")
+    )
+    if not substituted_events:
+        return EquivalenceVerifyResult(
+            ok=False,
+            reason="substituted run journal unavailable: cannot verify substituted_journal_head",
+            attestation=attestation,
+        )
+    chain_result = verify_events([dict(e) for e in substituted_events])
+    if not chain_result.chain_consistent:
+        detail = "; ".join(chain_result.errors) or "chain verification failed"
+        return EquivalenceVerifyResult(
+            ok=False,
+            reason=f"substituted run journal chain broken: {detail}",
+            attestation=attestation,
+        )
+    if str(substituted_events[-1].get("event_hash", "")) != attestation.substituted_journal_head:
+        return EquivalenceVerifyResult(
+            ok=False,
+            reason="substituted run journal does not chain to the recorded substituted_journal_head",
+            attestation=attestation,
+        )
+
+    # Re-verify the equivalence verdict by comparing journal heads.
+    # EQUIVALENT iff original and substituted journal heads match and first_divergent_step is None.
+    heads_match = (
+        attestation.original_journal_head == attestation.substituted_journal_head
+        and attestation.first_divergent_step is None
+    )
+    expected_verdict = (
+        EquivalenceVerdict.EQUIVALENT.value if heads_match else EquivalenceVerdict.DIVERGED.value
+    )
+    if attestation.verdict != expected_verdict:
+        return EquivalenceVerifyResult(
+            ok=False,
+            reason=f"equivalence verdict mismatch: stored {attestation.verdict!r} but expected {expected_verdict!r}",
             attestation=attestation,
         )
 
@@ -1850,6 +1972,7 @@ __all__ = [
     "CounterfactualAuditRefusal",
     "EquivalenceAttestation",
     "EquivalenceVerdict",
+    "EquivalenceVerifyResult",
     "ScanMatch",
     "ScopeBoundary",
     "build_clean_run_attestation",
