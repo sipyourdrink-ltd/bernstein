@@ -95,9 +95,7 @@ class _UrllibTransport:
         # ``StrictHTTPRedirectHandler`` re-runs the strict check on every
         # ``Location`` URL and raises ``UrlSchemeError`` to abort.
         # TOCTOU (resolve-then-connect) is inherent without IP pinning.
-        opener = urllib.request.build_opener(
-            StrictHTTPRedirectHandler(allow_http=True, source="mcp_catalog.fetcher")
-        )
+        opener = urllib.request.build_opener(StrictHTTPRedirectHandler(allow_http=True, source="mcp_catalog.fetcher"))
         try:
             # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             with opener.open(request, timeout=15) as resp:

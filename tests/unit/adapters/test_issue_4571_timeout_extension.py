@@ -92,11 +92,19 @@ def test_timeout_fallback_follows_scope_bucket_not_literal_default() -> None:
     prove the value is computed, not defaulted)."""
 
     small = Task(
-        id="T-S", title="t", description="d", role="backend", scope=Scope.SMALL,
+        id="T-S",
+        title="t",
+        description="d",
+        role="backend",
+        scope=Scope.SMALL,
     )
     xl = Task(
-        id="T-XL", title="t", description="d", role="architect",
-        scope=Scope.LARGE, complexity=Complexity.HIGH,
+        id="T-XL",
+        title="t",
+        description="d",
+        role="architect",
+        scope=Scope.LARGE,
+        complexity=Complexity.HIGH,
     )
 
     small_timeout = AgentSpawner._resolve_spawn_timeout([small])

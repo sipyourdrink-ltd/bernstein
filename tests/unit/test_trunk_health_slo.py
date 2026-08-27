@@ -189,13 +189,16 @@ def test_reds_under_the_threshold_do_not_hold_the_repo() -> None:
 
 def test_a_thin_sample_never_holds_the_repo() -> None:
     """Below MIN_SAMPLE_SIZE there is no rate to speak of."""
-    assert marker_should_open(
-        total=MIN_SAMPLE_SIZE - 1,
-        red=MIN_SAMPLE_SIZE - 1,
-        red_pct=100,
-        threshold_pct=5,
-        trunk_red_now=True,
-    ) is False
+    assert (
+        marker_should_open(
+            total=MIN_SAMPLE_SIZE - 1,
+            red=MIN_SAMPLE_SIZE - 1,
+            red_pct=100,
+            threshold_pct=5,
+            trunk_red_now=True,
+        )
+        is False
+    )
 
 
 def _run(conclusion: str, created_at: str) -> dict[str, str]:
@@ -225,12 +228,8 @@ def test_marker_stays_shut_when_trunk_is_green_again() -> None:
     The andon exists to stop merges piling onto a broken main, so a main whose
     newest run is green releases it.
     """
-    assert marker_should_open(
-        total=27, red=2, red_pct=7, threshold_pct=5, trunk_red_now=False
-    ) is False
+    assert marker_should_open(total=27, red=2, red_pct=7, threshold_pct=5, trunk_red_now=False) is False
 
 
 def test_marker_opens_when_the_rate_is_over_and_trunk_is_red_now() -> None:
-    assert marker_should_open(
-        total=27, red=2, red_pct=7, threshold_pct=5, trunk_red_now=True
-    ) is True
+    assert marker_should_open(total=27, red=2, red_pct=7, threshold_pct=5, trunk_red_now=True) is True

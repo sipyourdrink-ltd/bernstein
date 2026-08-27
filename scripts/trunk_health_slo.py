@@ -94,18 +94,14 @@ def trunk_is_red_now(runs: list[dict]) -> bool:
     green. The andon exists to stop merges piling onto a broken main, and this
     is the question that actually answers.
     """
-    completed = [
-        r for r in runs if r.get("conclusion") not in ("cancelled", "skipped", None)
-    ]
+    completed = [r for r in runs if r.get("conclusion") not in ("cancelled", "skipped", None)]
     if not completed:
         return False
     newest = max(completed, key=lambda r: str(r.get("created_at", "")))
     return newest.get("conclusion") in ("failure", "timed_out")
 
 
-def marker_should_open(
-    total: int, red: int, red_pct: int, threshold_pct: int, *, trunk_red_now: bool
-) -> bool:
+def marker_should_open(total: int, red: int, red_pct: int, threshold_pct: int, *, trunk_red_now: bool) -> bool:
     """Whether this sample justifies holding every merge in the repo.
 
     Kept as its own function because the andon decision is the only thing
@@ -141,9 +137,7 @@ def main() -> None:
     total, red, red_pct = score_runs(runs)
 
     insufficient = total < MIN_SAMPLE_SIZE
-    unstable = marker_should_open(
-        total, red, red_pct, args.threshold_pct, trunk_red_now=trunk_is_red_now(runs)
-    )
+    unstable = marker_should_open(total, red, red_pct, args.threshold_pct, trunk_red_now=trunk_is_red_now(runs))
 
     # Output for GitHub Actions
     github_output = os.environ.get("GITHUB_OUTPUT")
