@@ -494,6 +494,7 @@ def test_observations_roundtrip_preserves_keys() -> None:
         observations={"a.py": "h1", "b.py": "h2", "c.py": "h3"},
     )
     import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         save_checkpoint(checkpoint, tmp_path)
@@ -508,6 +509,7 @@ def test_observations_roundtrip_preserves_sha256_prefix() -> None:
         observations={"artifact.txt": "sha256:deadbeef12345678"},
     )
     import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         save_checkpoint(checkpoint, tmp_path)
@@ -518,8 +520,8 @@ def test_observations_roundtrip_preserves_sha256_prefix() -> None:
 def test_checkpoint_hash_excludes_timing_but_includes_observations() -> None:
     # checkpoint_hash should exclude checkpointed_at and elapsed_seconds
     # but MUST include observations to ensure the hash reflects the actual content
+
     from bernstein.core.persistence.agent_checkpoint import checkpoint_hash
-    import time
 
     cp1 = AgentCheckpoint(
         agent_id="h-agent",
@@ -572,12 +574,14 @@ def test_checkpoint_with_empty_observations_hash_stable() -> None:
         observations={},
     )
     import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         save_checkpoint(checkpoint, tmp_path)
         loaded = load_checkpoint("empty-obs", tmp_path)
         assert loaded.observations == {}
         from bernstein.core.persistence.agent_checkpoint import checkpoint_hash
+
         h1 = checkpoint_hash(checkpoint)
         h2 = checkpoint_hash(loaded)
         assert h1 == h2
