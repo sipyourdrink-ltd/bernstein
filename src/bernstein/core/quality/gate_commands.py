@@ -471,7 +471,7 @@ class GateRunnerCommandsMixin:
         if not python_files:
             return self._skipped(step, NO_PYTHON_FILES)
         if command is not None:
-            ok, detail, _exit_code = self._run_command_and_capture(command, run_dir)
+            ok, detail, exit_code = self._run_command_and_capture(command, run_dir)
             if ok:
                 return GateResult(
                     name=step.name,
@@ -481,6 +481,17 @@ class GateRunnerCommandsMixin:
                     cached=False,
                     duration_ms=0,
                     details="no import cycles detected",
+                    metadata={"command": command},
+                )
+            if exit_code == 127:
+                return GateResult(
+                    name=step.name,
+                    status="command_not_found",
+                    required=step.required,
+                    blocked=step.required,
+                    cached=False,
+                    duration_ms=0,
+                    details=f"Command not found: {detail}",
                     metadata={"command": command},
                 )
             return self._command_failure_result(step, detail, command)
