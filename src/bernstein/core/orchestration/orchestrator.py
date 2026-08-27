@@ -96,6 +96,16 @@ from bernstein.core.models import (
 )
 from bernstein.core.notifications import NotificationManager, NotificationPayload, NotificationTarget
 from bernstein.core.orchestration.adaptive_parallelism import AdaptiveParallelism
+from bernstein.core.orchestration.controller_state import (
+    AdaptiveParallelismState,
+    ClaimConflictEntry,
+)
+from bernstein.core.orchestration.controller_state import (
+    load as _load_controller_state,
+)
+from bernstein.core.orchestration.controller_state import (
+    save as _save_controller_state,
+)
 from bernstein.core.orchestration.evolution import EvolutionCoordinator
 from bernstein.core.orchestration.run_stall import (
     ACTIVE_UNFINISHED_STATUSES,
@@ -885,7 +895,33 @@ class Orchestrator:
 
         # Adaptive parallelism: dynamically adjusts effective max_agents based
         # on error rate and CPU load.  See adaptive_parallelism.py.
-        self._adaptive_parallelism = AdaptiveParallelism(configured_max=config.max_agents)
+        # Sidecar persistence: try to restore state from the controllers
+        # sidecar; fall back to a fresh instance on any error.
+        _ap_state: AdaptiveParallelismState | None = None
+        _conflict_state: dict[str, ClaimConflictEntry] | None = None
+        try:
+            _ap_state_raw, _conflict_state = _load_controller_state(self._workdir)
+            _ap_state = _ap_state_raw
+        except Exception:  # best-effort: never let a bad sidecar break startup
+            logger.warning("Controller sidecar load failed — starting fresh", exc_info=True)
+        self._adaptive_parallelism = AdaptiveParallelism.from_dict(
+            _ap_state.to_dict() if _ap_state is not None else {},
+            configured_max=config.max_agents,
+        )
+        # Restore claim-conflict cooldowns (age-out is already applied in load).
+        self._claim_conflict_state: dict[str, tuple[int, float]] = {}
+        if _conflict_state is not None:
+            for _tid, _entry in _conflict_state.items():
+                self._claim_conflict_state[_tid] = (
+                    _entry.episode_count,
+                    _entry.backoff_until_epoch,
+                )
+            logger.info(
+                "Restored %d claim-conflict cooldown(s) from sidecar",
+                len(self._claim_conflict_state),
+            )
+        else:
+            self._claim_conflict_state = {}
 
         # Governed workflow mode: when config.workflow is set (e.g. "governed"),
         # the executor drives the run through deterministic phases, filtering
@@ -2089,6 +2125,26 @@ class Orchestrator:
                 adjusted_max if adjusted_max != self._config.max_agents else None
             )
 
+            # Persist controller sidecar: adaptive parallelism state and
+            # claim-conflict cooldowns so they survive restarts.
+            try:
+                _ap_state = AdaptiveParallelismState(
+                    configured_max=self._adaptive_parallelism.configured_max,
+                    current_max=self._adaptive_parallelism._current_max,
+                    slo_constrained_max=self._adaptive_parallelism._slo_constrained_max,
+                    last_adjustment_reason=self._adaptive_parallelism._last_adjustment_reason,
+                    low_error_since_epoch=self._adaptive_parallelism._low_error_since,
+                )
+                _conflict_entries: dict[str, ClaimConflictEntry] = {}
+                for _tid, (_ep, _until) in self._claim_conflict_state.items():
+                    _conflict_entries[_tid] = ClaimConflictEntry(
+                        episode_count=int(_ep),
+                        backoff_until_epoch=float(_until),
+                    )
+                _save_controller_state(self._workdir, _ap_state, _conflict_entries)
+            except Exception:
+                logger.warning("Controller sidecar save failed — continuing", exc_info=True)
+
             # Track consecutive failures for incident detection
             if result.verified:
                 self._consecutive_failures = 0
@@ -3153,6 +3209,9 @@ class Orchestrator:
                 return  # _restart calls os.execv, but just in case
 
         self._drain_before_cleanup()
+        # Persist controller state one last time before cleanup so a
+        # clean exit always leaves a usable sidecar for the next run.
+        self._persist_controller_sidecar()
         self._cleanup()
 
         # A5 fix: unconditionally regenerate the FINAL retrospective here, at
@@ -4872,6 +4931,30 @@ class Orchestrator:
         from bernstein.core.orchestration import orchestrator_cleanup
 
         orchestrator_cleanup.save_session_state(self)
+
+    def _persist_controller_sidecar(self) -> None:
+        """Persist the current adaptive-parallelism and claim-conflict state to the sidecar.
+
+        Best-effort: failures are logged and never raised so a broken
+        sidecar path cannot prevent a clean shutdown.
+        """
+        try:
+            _ap_state = AdaptiveParallelismState(
+                configured_max=self._adaptive_parallelism.configured_max,
+                current_max=self._adaptive_parallelism._current_max,
+                slo_constrained_max=self._adaptive_parallelism._slo_constrained_max,
+                last_adjustment_reason=self._adaptive_parallelism._last_adjustment_reason,
+                low_error_since_epoch=self._adaptive_parallelism._low_error_since,
+            )
+            _conflict_entries: dict[str, ClaimConflictEntry] = {}
+            for _tid, (_ep, _until) in self._claim_conflict_state.items():
+                _conflict_entries[_tid] = ClaimConflictEntry(
+                    episode_count=int(_ep),
+                    backoff_until_epoch=float(_until),
+                )
+            _save_controller_state(self._workdir, _ap_state, _conflict_entries)
+        except Exception:
+            logger.warning("Controller sidecar persist failed during shutdown", exc_info=True)
 
     def _cleanup(self) -> None:
         """Delegate to orchestrator_cleanup.cleanup."""
