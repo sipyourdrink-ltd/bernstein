@@ -1,5 +1,12 @@
 # Release Operations
 
+Bernstein follows a **two-track release cadence**:
+
+- **Patch releases** (`vX.Y.Z`) are automated and ship approximately every 3 days when there are meaningful changes to ship. The `auto-release.yml` workflow tags releases automatically after CI passes on `main`.
+- **Minor releases** (`vX.Y.0`) are manual, operator-initiated cuts that happen approximately every 2 weeks. The `release-major-minor.yml` workflow bumps the version and opens a PR that goes through the merge queue.
+
+This ensures a predictable release schedule: patch fixes arrive weekly, while feature releases (minor and major) follow a planned milestone cadence.
+
 This page documents which GitHub Actions workflows own each release entrypoint.
 
 Update this table whenever a release workflow is added, renamed, or moved.
@@ -11,11 +18,37 @@ Update this table whenever a release workflow is added, renamed, or moved.
 | `.github/workflows/post-ci-dispatcher.yml` | Post-CI dispatcher | `workflow_run` | Routes completed main-branch CI runs to release and recovery child workflows. | Calls `.github/workflows/auto-release.yml` when the upstream CI run targets `main`. |
 | `.github/workflows/auto-release.yml` | Auto-release | `workflow_call` | Decides whether a green main-branch CI run should create a release tag. | Pushes a `v*` tag; `.github/workflows/publish.yml` owns tag publish. |
 | `.github/workflows/publish.yml` | Publish | `push` | Builds release distributions, attests `dist/*`, publishes PyPI, npm and Copr RPM packages, and creates or updates the GitHub Release for a `v*` tag. | Dispatches the Docker, Homebrew, and SBOM follow-up workflows after creating the release, because a release created with `GITHUB_TOKEN` emits no `release: published` event. |
-| `.github/workflows/release-major-minor.yml` | Major/Minor Release | `workflow_dispatch` | Manually cuts major or minor releases: checks CI, then bumps the version with `scripts/bump_version.py`. | Opens an `auto/bump-vX.Y.Z` PR with auto-merge armed for the merge queue; `.github/workflows/auto-release.yml` tags the merge commit and `.github/workflows/publish.yml` builds, publishes, and creates the release from that tag -- the same chain patch releases use. |
+| `.github/workflows/release-major-minor.yml` | Major/Minor Release | `workflow_dispatch` | Manually cuts major or minor releases: checks CI, then bumps the version with `scripts/bump_version.py`. | Opens an `auto/bump-vX.Y.0` PR with auto-merge armed for the merge queue; `.github/workflows/auto-release.yml` tags the merge commit and `.github/workflows/publish.yml` builds, publishes, and creates the release from that tag -- the same chain patch releases use. |
 | `.github/workflows/reconcile-release.yml` | Reconcile release drift | `schedule`, `workflow_dispatch` | Compares `pyproject.toml` against PyPI, Copr, npm, the Homebrew tap, and GitHub Release assets (dist + SBOM) to detect missed publish work. | Opens or updates a `release-drift` issue naming the channels that are behind; fails the run and leaves open issues open when a channel could not be read. |
 | `.github/workflows/publish-docker.yml` | Publish Docker Image | `release`, `workflow_dispatch` | Publishes the GHCR image and image provenance for a released tag. | Dispatched by `publish.yml` after it creates the release; the `release` event covers releases created in the UI. |
 | `.github/workflows/publish-homebrew.yml` | Publish Homebrew Formula | `release`, `workflow_dispatch` | Updates the Homebrew tap formula for a released version. | Dispatched by `publish.yml` after it creates the release; the `release` event covers releases created in the UI. |
 | `.github/workflows/sbom.yml` | SBOM | `release`, `workflow_dispatch` | Generates SPDX + CycloneDX SBOMs and attaches them to the release that exists for the built ref. | Dispatched by `publish.yml` after it creates the release; the `release` event covers releases created in the UI. |
+
+## Release Milestones
+
+Bernstein uses GitHub milestones to plan minor and major releases. Patch releases do not get milestones; they ship from `main` as the `auto-release.yml` workflow determines they have meaningful changes.
+
+| Milestone | Target Date | Status |
+|---|---|---|
+| `v3.18.0` | 2026-09-05 | Planned |
+| `v3.19.0` | 2026-09-19 | Planned |
+| `v4.0.0` | TBD | Planned |
+
+### Triage guidance
+
+- **Small, high-priority issues** (bug fixes, minor improvements) target the **next imminent milestone** (e.g., v3.18.0 if we're two weeks before the date).
+- **Larger work** (new features, refactorings, breaking changes) targets the **subsequent milestone** (e.g., v3.19.0 when v3.18.0 is already planned).
+- **Major releases** (v4.0.0, etc.) are reserved for significant changes that justify a new major version. Open a discussion with maintainers before tagging major work for a major release milestone.
+
+### Patch releases
+
+Patch releases (`vX.Y.Z`) are automated by `auto-release.yml` and do **not** get milestones. They ship whenever:
+
+- CI passes on `main` with a green `CI gate` check run.
+- The triggering commit changes `pyproject.toml` version.
+- At least one meaningful file changed since the last release (`src/`, `tests/`, `templates/`, `scripts/`, `packaging/`, `infra/`, `sdk/`, `services/`, `Dockerfile*`, `requirements*`, or `pyproject.toml`).
+
+`auto-release.yml` decides per-run whether to tag; there is no manual intervention required. If the current version is already tagged, the workflow defers to the next bump PR opened via `release-major-minor.yml` or manual `scripts/bump_version.py` usage.
 
 ## Bumping the version
 
