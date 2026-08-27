@@ -52,7 +52,7 @@ def _fetch_via_gh(owner: str, repo: str, number: int) -> dict[str, Any]:
         "--repo",
         f"{owner}/{repo}",
         "--json",
-        "number,title,body,labels,assignees,url",
+        "number,title,body,labels,assignees,url,comments",
     ]
     try:
         proc = subprocess.run(
@@ -108,6 +108,37 @@ def _fetch_via_rest(owner: str, repo: str, number: int) -> dict[str, Any]:
     )
 
 
+def _fetch_comments_via_rest(owner: str, repo: str, number: int) -> list[dict[str, Any]]:
+    """Fetch comments for a GitHub issue via the REST API."""
+    from bernstein.core.security.vault.factory import open_vault_silent
+    from bernstein.core.security.vault.resolver import resolve_secret
+
+    resolution = resolve_secret(
+        "github",
+        vault=open_vault_silent(),
+    )
+    token = resolution.secret if resolution.found else os.environ.get(_GH_ENV, "")
+    if not token:
+        return []
+    endpoint = f"https://api.github.com/repos/{owner}/{repo}/issues/{number}/comments"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    try:
+        result = http_get_json(
+            url=endpoint,
+            headers=headers,
+            provider_label="GitHub",
+            auth_env_var=_GH_ENV,
+            timeout=_TIMEOUT_S,
+        )
+        return cast(list[dict[str, Any]], result)
+    except TicketParseError:
+        return []
+
+
 def _normalize_gh_cli(
     owner: str,
     repo: str,
@@ -123,6 +154,17 @@ def _normalize_gh_cli(
         first = assignees[0]
         assignee = first.get("login") or first.get("name")
     number = raw.get("number")
+    comments_raw = raw.get("comments") or []
+    comments: tuple[dict[str, str], ...] = tuple(
+        {
+            "body": str(c.get("body") or "").strip(),
+            "author": c.get("author", {}).get("login") or c.get("author", {}).get("name") or "",
+            "author_association": c.get("author_association", ""),
+            "created_at": c.get("created_at", ""),
+        }
+        for c in comments_raw
+        if isinstance(c, dict)
+    )
     return TicketPayload(
         id=f"{owner}/{repo}#{number}",
         title=str(raw.get("title") or "").strip(),
@@ -131,10 +173,16 @@ def _normalize_gh_cli(
         assignee=str(assignee) if assignee else None,
         url=str(raw.get("url") or ""),
         source="github",
+        comments=comments,
     )
 
 
-def _normalize_rest(owner: str, repo: str, raw: dict[str, Any]) -> TicketPayload:
+def _normalize_rest(
+    owner: str,
+    repo: str,
+    raw: dict[str, Any],
+    comments_raw: list[dict[str, Any]] | None = None,
+) -> TicketPayload:
     labels_raw = raw.get("labels") or []
     labels: tuple[str, ...] = ()
     collected: list[str] = []
@@ -155,6 +203,17 @@ def _normalize_rest(owner: str, repo: str, raw: dict[str, Any]) -> TicketPayload
             assignee = login
 
     number = raw.get("number")
+    comments_raw = comments_raw or []
+    comments: tuple[dict[str, str], ...] = tuple(
+        {
+            "body": str(c.get("body") or "").strip(),
+            "author": c.get("user", {}).get("login") or c.get("user", {}).get("name") or "",
+            "author_association": c.get("author_association", ""),
+            "created_at": c.get("created_at", ""),
+        }
+        for c in comments_raw
+        if isinstance(c, dict)
+    )
     return TicketPayload(
         id=f"{owner}/{repo}#{number}",
         title=str(raw.get("title") or "").strip(),
@@ -163,6 +222,7 @@ def _normalize_rest(owner: str, repo: str, raw: dict[str, Any]) -> TicketPayload
         assignee=assignee,
         url=str(raw.get("html_url") or ""),
         source="github",
+        comments=comments,
     )
 
 
@@ -177,4 +237,5 @@ def fetch_github_issue(url: str) -> TicketPayload:
         raw = _fetch_via_gh(owner, repo, number)
         return _normalize_gh_cli(owner, repo, raw)
     raw = _fetch_via_rest(owner, repo, number)
-    return _normalize_rest(owner, repo, raw)
+    comments_raw = _fetch_comments_via_rest(owner, repo, number)
+    return _normalize_rest(owner, repo, raw, comments_raw)

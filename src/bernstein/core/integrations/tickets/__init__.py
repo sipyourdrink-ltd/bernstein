@@ -38,6 +38,7 @@ class TicketPayload:
     assignee: str | None = None
     url: str = ""
     source: Provider = "github"
+    comments: tuple[dict[str, str], ...] = field(default_factory=tuple)
 
 
 class TicketAuthError(RuntimeError):

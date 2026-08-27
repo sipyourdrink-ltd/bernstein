@@ -146,6 +146,20 @@ def test_github_gh_cli_path_parses() -> None:
             "labels": [{"name": "docs"}],
             "assignees": [{"login": "alice"}],
             "url": "https://github.com/acme/widgets/issues/7",
+            "comments": [
+                {
+                    "body": "Nice work.",
+                    "author": {"login": "alice"},
+                    "author_association": "MEMBER",
+                    "created_at": "2024-01-01T00:00:00Z",
+                },
+                {
+                    "body": "LGTM.",
+                    "author": {"login": "bob"},
+                    "author_association": "CONTRIBUTOR",
+                    "created_at": "2024-01-02T00:00:00Z",
+                },
+            ],
         }
     )
 
@@ -163,6 +177,14 @@ def test_github_gh_cli_path_parses() -> None:
     assert payload.labels == ("docs",)
     assert payload.assignee == "alice"
     assert payload.source == "github"
+    assert len(payload.comments) == 2
+    assert payload.comments[0]["body"] == "Nice work."
+    assert payload.comments[0]["author"] == "alice"
+    assert payload.comments[0]["author_association"] == "MEMBER"
+    assert payload.comments[0]["created_at"] == "2024-01-01T00:00:00Z"
+    assert payload.comments[1]["body"] == "LGTM."
+    assert payload.comments[1]["author"] == "bob"
+    assert payload.comments[1]["author_association"] == "CONTRIBUTOR"
 
 
 def test_github_rest_fallback_parses(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -178,21 +200,57 @@ def test_github_rest_fallback_parses(monkeypatch: pytest.MonkeyPatch) -> None:
         "assignee": {"login": "bob"},
         "html_url": "https://github.com/acme/widgets/issues/11",
     }
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = rest_body
+    comments_body = [
+        {
+            "body": "Looks good to me.",
+            "user": {"login": "carol"},
+            "author_association": "CONTRIBUTOR",
+            "created_at": "2024-01-01T00:00:00Z",
+        },
+        {
+            "body": "Needs more tests.",
+            "user": {"login": "dave"},
+            "author_association": "MEMBER",
+            "created_at": "2024-01-02T00:00:00Z",
+        },
+    ]
+
+    call_count = 0
+
+    def mock_get(url: str, headers: dict[str, str], timeout: float) -> MagicMock:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = rest_body
+            resp.headers = {}
+        else:
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = comments_body
+            resp.headers = {}
+        return resp
 
     with (
         patch.object(github_issues, "_gh_available", return_value=False),
-        patch("httpx.get", return_value=mock_resp) as mock_get,
+        patch("httpx.get", side_effect=mock_get) as mock_get,
     ):
         payload = github_issues.fetch_github_issue("https://github.com/acme/widgets/issues/11")
 
-    mock_get.assert_called_once()
+    assert mock_get.call_count == 2
     assert payload.id == "acme/widgets#11"
     assert payload.title == "Refactor"
     assert payload.labels == ("backend", "refactor")
     assert payload.assignee == "bob"
+    assert len(payload.comments) == 2
+    assert payload.comments[0]["body"] == "Looks good to me."
+    assert payload.comments[0]["author"] == "carol"
+    assert payload.comments[0]["author_association"] == "CONTRIBUTOR"
+    assert payload.comments[0]["created_at"] == "2024-01-01T00:00:00Z"
+    assert payload.comments[1]["body"] == "Needs more tests."
+    assert payload.comments[1]["author"] == "dave"
+    assert payload.comments[1]["author_association"] == "MEMBER"
 
 
 def test_github_rest_missing_token_raises_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
