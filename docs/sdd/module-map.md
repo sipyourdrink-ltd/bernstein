@@ -174,6 +174,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `strict_schema.py`          | Strict structured-output validation and user-owned-field protection |
 | `use_cases.py`              | Per-adapter metadata for the ``bernstein integrations list`` command |
 | `ci/`                       | CI system adapters for log parsing and failure extraction |
+| `digest/`                   | digest/ sub-package |
 
 ### `src/bernstein/agents/` - agent catalog & discovery
 
@@ -263,6 +264,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `baseline.py`                      | Baseline tracking for eval-gated evolution |
 | `calibration.py`                   | Calibration log + Brier score for router and judge decisions |
 | `clean_run.py`                     | Clean-run attestation: prove task ground-truth was never fetched (#2930) |
+| `confidence_sequence.py`           | Exact-arithmetic time-uniform confidence sequences for eval statistics (#4184) |
 | `gate_receipt.py`                  | Signed verdict receipts for statistical eval gating (#2520) |
 | `golden.py`                        | Golden benchmark suite - curated tasks for eval |
 | `harness.py`                       | Eval harness - multiplicative scoring, LLM judge, failure taxonomy |
