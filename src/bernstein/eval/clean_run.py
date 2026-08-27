@@ -62,7 +62,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
-from bernstein.core.replay.journal import PATH_FIELDS, run_journal_path, verify_events
+from bernstein.core.replay.journal import (
+    PATH_FIELDS,
+    JournalPathError,
+    run_journal_path,
+    verify_events,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -1516,7 +1521,19 @@ def build_equivalence_attestation(
     # We replay the original run's activity but with different ground-truth.
     # If the original journal chain is broken, refuse with a machine-readable
     # reason rather than proceeding with unanchored activity.
-    journal_path = workdir / ".sdd" / "runs" / original_attestation.run_id / "journal.jsonl"
+    try:
+        journal_path = run_journal_path(workdir / ".sdd", original_attestation.run_id)
+    except JournalPathError as exc:
+        # A run id is attacker-reachable data: it arrives inside an
+        # attestation this function is being asked to audit. Building the
+        # path by hand let a crafted id address a journal outside the runs
+        # root, so the read is routed through the containment barrier like
+        # every other journal read in this module. A refusal is the right
+        # answer here rather than an exception escaping: the caller's
+        # contract is a machine-readable reason.
+        raise CounterfactualAuditRefusal(
+            f"original journal path is not addressable: {exc!s}",
+        ) from exc
     if not journal_path.exists():
         raise CounterfactualAuditRefusal(
             "original journal unavailable: cannot replay under substituted content",

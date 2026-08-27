@@ -543,3 +543,50 @@ def test_verify_equivalence_attestation_not_anchored_in_spine(tmp_path: Path) ->
 
     assert result.ok is False
     assert "not anchored" in result.reason
+
+
+def test_a_crafted_run_id_cannot_address_a_journal_outside_the_runs_root(tmp_path: Path) -> None:
+    """A run id that walks out of the runs root is refused, not followed.
+
+    The run id arrives inside the attestation being audited, so it is
+    attacker-reachable input to a path. Reading it as a path segment let a
+    crafted id point the "original journal" at any journal on disk, and the
+    replay would then compare against that one.
+    """
+    import dataclasses
+
+    from bernstein.eval.clean_run import CounterfactualAuditRefusal, build_equivalence_attestation
+    from tests.unit.test_eval_clean_run import _build
+
+    # A real Merkle-chained journal: _build refuses events that do not chain,
+    # so the raw row dicts are not enough to reach the code under test.
+    chained = _seed_journal("run-clean-1", tmp_path, _clean_rows())
+    original = _build(tmp_path, chained)
+
+    # A journal that exists, and that the crafted id resolves onto if the
+    # path is built by concatenation instead of containment.
+    outside = tmp_path / "elsewhere"
+    _seed_journal("planted", outside, _clean_rows())
+
+    escaped = dataclasses.replace(original, run_id="../../elsewhere/.sdd/runs/planted")
+
+    # Catch broadly on purpose: without containment the planted journal is
+    # found, accepted, and the replay proceeds until it dies of something
+    # unrelated. That failure is the escape being followed, so the assertion
+    # names it rather than letting an opaque traceback stand in for it.
+    try:
+        build_equivalence_attestation(
+            original_attestation=escaped,
+            workdir=tmp_path,
+            lineage_root=tmp_path / ".sdd" / "lineage",
+            hmac_key=_KEY,
+            substitution_content={"src/mathlib.py": "def add(a, b): return a * b"},
+            timestamp=_TS,
+        )
+    except Exception as exc:
+        assert isinstance(exc, CounterfactualAuditRefusal), (
+            f"the escaping run id was followed instead of refused; it got as far as {exc!r}"
+        )
+        assert "not addressable" in str(exc), f"refused, but for the wrong reason: {exc}"
+    else:
+        raise AssertionError("a run id escaping the runs root was accepted")
