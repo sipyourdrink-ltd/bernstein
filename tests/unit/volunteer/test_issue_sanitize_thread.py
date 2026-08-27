@@ -44,12 +44,13 @@ def test_ac1_maintainer_comment_included() -> None:
         _make_comment("This is the key insight from the maintainer", author="maintainer", association="OWNER", created_at="2026-01-02T00:00:00Z"),
     ]
 
-    block = build_filtered_comments_block(comments)
+    # Use a small budget that only fits the maintainer comment
+    block = build_filtered_comments_block(comments, token_budget=50)
 
     assert "key insight from the maintainer" in block
     assert "@maintainer" in block
-    # Non-maintainer comment should NOT be included in the filtered block
-    # (it's in the other_comments tier which has lower priority)
+    # Non-maintainer comment should NOT be included - budget exhausted by maintainer
+    assert "contributor" not in block
 
 
 def test_ac1_member_collaborator_comments_included() -> None:
@@ -60,10 +61,13 @@ def test_ac1_member_collaborator_comments_included() -> None:
         _make_comment("Collaborator found the bug", author="collab", association="COLLABORATOR", created_at="2026-01-03T00:00:00Z"),
     ]
 
-    block = build_filtered_comments_block(comments)
+    # Use a budget that only fits the priority comments (~215 chars)
+    # 55 tokens = 220 chars, enough for priority but not "other" (104 chars)
+    block = build_filtered_comments_block(comments, token_budget=55)
 
     assert "Team member" in block
     assert "Collaborator found" in block
+    # Non-maintainer comment should NOT be included - budget exhausted
     assert "random user" not in block
 
 
@@ -91,11 +95,14 @@ def test_ac2_comments_over_budget_dropped() -> None:
         for i in range(50)
     ]
 
-    # With default 2000 token budget and ~10 chars/token, this should filter
-    block = build_filtered_comments_block(comments)
+    # Use a small budget (100 tokens = 400 chars) to force dropping
+    # Each comment is ~90 chars, so only ~4 fit
+    block = build_filtered_comments_block(comments, token_budget=100)
 
     # Should have a bounded block, not all 50 comments
-    assert "Comment #0:" not in block or "Comment #49:" not in block
+    # Oldest comments should be dropped (sorted newest-first for fill tier)
+    assert "Comment #0:" not in block
+    assert "Comment #49:" in block  # Newest should be included
 
 
 # AC3: The block is capped - a thread with 100 comments produces a bounded block
@@ -237,12 +244,12 @@ def test_comments_ordered_by_priority() -> None:
     comments = [
         _make_comment("Other 1", association="NONE", created_at="2026-01-01T00:00:00Z"),
         _make_comment("Maintainer", association="OWNER", created_at="2026-01-02T00:00:00Z"),
-        _make_comment("Opt-in", association="NONE", created_at="2026-01-03T00:00:00Z", body="bernstein-context: important"),
+        _make_comment("bernstein-context: important", association="NONE", created_at="2026-01-03T00:00:00Z"),
     ]
 
     block = build_filtered_comments_block(comments)
 
     # All should be included due to their priority
     assert "Maintainer" in block
-    assert "Opt-in" in block
+    assert "bernstein-context: important" in block
     assert "Other 1" in block

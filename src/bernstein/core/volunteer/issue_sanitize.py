@@ -271,11 +271,30 @@ def build_filtered_comments_block(
     other_comments.sort(key=_created_at, reverse=True)
 
     # Build the filtered list
+    # First, count how many "other" comments fit after maintainer + opt-in
+    # (maintainer and opt-in are always included, regardless of budget)
+    priority_chars = sum(
+        len(c.get("body", "") or "") + 80
+        for c in maintainer_comments + opted_in_comments
+    )
+    remaining_budget = token_budget * 4 - priority_chars
+    
+    # Add other comments until we hit the budget
+    other_to_include: list[dict[str, Any]] = []
+    total_chars = 0
+    for c in other_comments:
+        body = c.get("body", "") or ""
+        comment_chars = len(body) + 80  # header overhead
+        if total_chars + comment_chars <= remaining_budget:
+            other_to_include.append(c)
+            total_chars += comment_chars
+        else:
+            break
+    
     filtered: list[dict[str, Any]] = []
     filtered.extend(maintainer_comments)
     filtered.extend(opted_in_comments)
-    # Add other comments until we hit the budget
-    filtered.extend(other_comments[:_estimate_comment_budget(other_comments, token_budget)])
+    filtered.extend(other_to_include)
 
     # Render the filtered block
     lines: list[str] = []
