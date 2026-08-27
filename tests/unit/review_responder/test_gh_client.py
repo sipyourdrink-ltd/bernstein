@@ -64,3 +64,34 @@ def test_patch_resolve_returns_false_on_failure() -> None:
     """A non-zero ``gh`` return code yields False so callers can fall back."""
     client = GhClient(runner=lambda args, stdin: _proc(1))
     assert client.patch_resolve_comment(repo="o/r", comment_id=10) is False
+
+
+def test_react_to_comment_success() -> None:
+    """Post an eyes reaction when the call succeeds (2xx)."""
+    captured: list[tuple[list[str], str | None]] = []
+
+    def runner(args: list[str], stdin: str | None) -> subprocess.CompletedProcess[str]:
+        captured.append((args, stdin))
+        return _proc(0)
+
+    client = GhClient(runner=runner)
+    assert client.react_to_comment(repo="o/r", comment_id=42) is True
+    assert captured, "runner was not invoked"
+    args, stdin = captured[0]
+    assert "POST" in args
+    assert "reactions" in " ".join(args)
+    assert stdin is not None and '"content": "eyes"' in stdin
+
+
+def test_react_to_comment_idempotent() -> None:
+    """A 422 Conflict (reaction already exists) is treated as success."""
+    client = GhClient(runner=lambda args, stdin: _proc(422))
+    assert client.react_to_comment(repo="o/r", comment_id=42) is True
+
+
+def test_react_to_comment_failure() -> None:
+    """Other non-zero return codes yield False and log a warning."""
+    client = GhClient(runner=lambda args, stdin: subprocess.CompletedProcess(
+        args=args, returncode=500, stdout="", stderr="Internal Server Error"
+    ))
+    assert client.react_to_comment(repo="o/r", comment_id=42) is False

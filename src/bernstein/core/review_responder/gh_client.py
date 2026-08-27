@@ -200,6 +200,43 @@ class GhClient:
             return False
         return True
 
+    def react_to_comment(self, *, repo: str, comment_id: int) -> bool:
+        """Post an eyes reaction to a comment to signal the pipeline read it.
+
+        Used on human review comments to provide visibility into which
+        comments the pipeline actually processed. The method is idempotent:
+        if the reaction already exists, GitHub returns 422 Conflict which
+        is treated as success.
+
+        Args:
+            repo: Repository slug.
+            comment_id: Review-comment id to react to.
+
+        Returns:
+            ``True`` on HTTP 2xx or 422 (conflict/idempotent), ``False`` otherwise.
+        """
+        payload = json.dumps({"content": "eyes"})
+        result = self.runner(
+            [
+                "api",
+                "-X",
+                "POST",
+                f"repos/{repo}/pulls/comments/{comment_id}/reactions",
+                "--input",
+                "-",
+            ],
+            payload,
+        )
+        # 2xx = success, 422 = conflict (reaction already exists) → treat as success
+        if result.returncode == 0 or result.returncode == 422:
+            return True
+        logger.warning(
+            "Failed to react to comment #%d: %s",
+            comment_id,
+            result.stderr.strip(),
+        )
+        return False
+
 
 def _lines_in_patch(patch: str) -> set[int]:
     """Parse a unified-diff hunk string into the set of new-side line numbers.
