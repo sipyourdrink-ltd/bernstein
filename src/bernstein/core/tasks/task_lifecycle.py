@@ -2910,8 +2910,14 @@ def claim_and_spawn_batches(
             # in the store that a supervisor ran here. Without this a
             # healthy run writes nothing and its readers cannot tell
             # "nothing parked" from "nobody was watching" (#3453).
-            with contextlib.suppress(Exception):
+            try:
                 _spawn_supervisor_for(orch).note_spawn_success(_park_key(batch_key))
+            except Exception:
+                logger.warning(
+                    "Could not record a clean spawn with the supervisor for task %s",
+                    batch[0].id,
+                    exc_info=True,
+                )
             _spawned_per_role[batch[0].role] += 1
             # Track spawn rate in convergence guard
             _convergence = getattr(orch, "_convergence_guard", None)
@@ -3045,21 +3051,33 @@ def claim_and_spawn_batches(
             # construction rather than by coincidence -- and the
             # supervisor's job here is to make the give-up visible to
             # `bernstein status`, the TUI and `agents resume` (#3453).
-            with contextlib.suppress(Exception):
+            try:
                 _spawn_supervisor_for(orch).record_spawn_failure(
                     _park_key(batch_key),
                     exc,
                     budget=_spawn_respawn_budget(orch),
+                )
+            except Exception:
+                logger.warning(
+                    "Could not record a spawn failure with the supervisor for task %s",
+                    batch[0].id,
+                    exc_info=True,
                 )
             should_retry, _ = spawn_analyzer.should_retry(batch_history, max_retries=orch._MAX_SPAWN_FAILURES)
             if new_count >= orch._MAX_SPAWN_FAILURES or not should_retry:
                 # The analyzer can call it quits before the budget is
                 # spent. Park explicitly so the two ways of giving up
                 # leave the same operator-visible state.
-                with contextlib.suppress(Exception):
+                try:
                     _spawn_supervisor_for(orch).park(
                         _park_key(batch_key),
                         reason=f"spawn failed {new_count} consecutive time(s): {exc}",
+                    )
+                except Exception:
+                    logger.warning(
+                        "Could not park task %s with the supervisor; the operator surfaces will not show it",
+                        batch[0].id,
+                        exc_info=True,
                     )
                 for task in batch:
                     try:

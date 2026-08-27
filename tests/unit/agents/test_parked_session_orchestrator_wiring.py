@@ -192,3 +192,46 @@ def test_supervisor_is_rooted_at_the_orchestrator_workdir(tmp_path: Path, make_t
     _tick(orch, [task])
 
     assert get_supervisor().store_path == tmp_path.joinpath(".sdd", "runtime", "spawn_supervisor", "parked.json")
+
+
+def test_an_unreachable_supervisor_is_reported_where_an_operator_looks(
+    tmp_path: Path,
+    make_task: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A supervisor that cannot be reached leaves a warning, not silence.
+
+    Reaching the supervisor is best-effort on purpose: supervision must
+    never take down a spawn. But the failure it guards against looks
+    exactly like the defect this wiring exists to fix -- every operator
+    surface reporting "nothing parked" unconditionally. Swallowed with no
+    trace, the two are indistinguishable, and the run that finds out is
+    the one where an operator needed the park and it was not there.
+
+    The spawn itself must still proceed: the assertion is a warning *and*
+    a tick that did not raise.
+    """
+    import logging
+
+    from bernstein.core.tasks import task_lifecycle
+
+    def _unreachable(_orch: Any) -> Any:
+        raise RuntimeError("supervisor state directory is read-only")
+
+    monkeypatch.setattr(task_lifecycle, "_spawn_supervisor_for", _unreachable)
+
+    orch = _orch(tmp_path)
+    task = make_task(id="T-unreachable", role="backend")
+    orch._spawner.spawn_for_tasks.side_effect = OSError("connection reset by peer")
+
+    with caplog.at_level(logging.WARNING, logger="bernstein.core.tasks.task_lifecycle"):
+        for _ in range(orch._MAX_SPAWN_FAILURES):
+            _tick(orch, [task])
+
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings, "an unreachable supervisor was swallowed without a word"
+    assert any("supervisor" in r.getMessage().lower() for r in warnings), (
+        f"warned, but not about the supervisor: {[r.getMessage() for r in warnings]}"
+    )
+    assert any(r.exc_info for r in warnings), "the warning carries no traceback to act on"
