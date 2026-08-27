@@ -209,8 +209,8 @@ from bernstein.core.trigger_sources.registry import (
     list_trigger_source_names,
 )
 
-list_trigger_source_names()   # ['artifact', 'file_watch', 'jira', 'odata_poll']
-get_trigger_source("jira")    # the registered class
+list_trigger_source_names()  # ['artifact', 'file_watch', 'jira', 'odata_poll']
+get_trigger_source("jira")  # the registered class
 ```
 
 A malformed entry in either group is skipped with a warning naming it; it never
