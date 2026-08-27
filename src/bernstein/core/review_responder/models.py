@@ -47,6 +47,7 @@ class ReviewComment:
         diff_hunk: Diff hunk snippet attached by GitHub, may be empty.
         created_at: ISO 8601 timestamp from GitHub.
         updated_at: ISO 8601 timestamp from GitHub.
+        thread_id: GitHub review-thread node id (GraphQL), for thread resolution.
         in_reply_to: ``comment_id`` of the parent comment, when threaded.
     """
 
@@ -63,6 +64,7 @@ class ReviewComment:
     diff_hunk: str
     created_at: str
     updated_at: str
+    thread_id: str = ""
     in_reply_to: int | None = None
 
     @property

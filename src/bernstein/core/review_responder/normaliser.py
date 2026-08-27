@@ -121,6 +121,7 @@ def _build_comment(
     comment: Mapping[str, Any],
     repo: str,
     pr_number: int,
+    thread_id: str = "",
 ) -> ReviewComment:
     """Materialise a :class:`ReviewComment` from a comment dict.
 
@@ -128,6 +129,7 @@ def _build_comment(
         comment: The ``"comment"`` sub-object (REST item or webhook inner).
         repo: ``owner/repo`` slug, already resolved.
         pr_number: PR number, already resolved.
+        thread_id: GitHub review-thread node id (GraphQL), for thread resolution.
 
     Returns:
         A :class:`ReviewComment` populated from ``comment``.
@@ -155,6 +157,7 @@ def _build_comment(
         diff_hunk=_str(comment, "diff_hunk"),
         created_at=_str(comment, "created_at"),
         updated_at=_str(comment, "updated_at") or _str(comment, "created_at"),
+        thread_id=thread_id,
         in_reply_to=int(in_reply) if isinstance(in_reply, int) else None,
     )
 
