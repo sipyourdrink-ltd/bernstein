@@ -71,6 +71,7 @@ DEFAULT_PART_ORDER = (
     "rich_context",
     "file_scope",
     "predecessor",
+    "team_awareness",
     "mailbox",
     "recommendations",
     "project_context",
