@@ -758,7 +758,7 @@ class DrainCoordinator:
             raw_pid = entry.get("pid", 0)
             pid = int(raw_pid) if isinstance(raw_pid, (int, str, float)) else 0
             worktree = str(entry.get("worktree_path", ""))
-            if session_id and pid:
+            if session_id and pid and _is_process_alive(pid):
                 self._agents.append(
                     AgentDrainStatus(
                         session_id=session_id,

@@ -34,3 +34,12 @@ rather than as its own attribution is exempted by hand there, with the reason.
   now resolved against the tree first, following only an unambiguous rename;
   a basename that is absent everywhere or matches several files keeps the
   original path so the command still fails honestly. (#4554)
+- `DrainCoordinator._discover_agents_from_agents_json` admitted every entry in
+  `agents.json` that had a session id and a pid, without checking whether that
+  pid was still alive, unlike its `_discover_agents_from_pid_files` sibling. If
+  a prior run crashed before its own cleanup phase deleted `agents.json`, the
+  next run's drain re-admitted that dead agent, found its still-on-disk
+  worktree branch genuinely ahead of main, and fed it to the post-drain merge
+  step: a foreign branch from a run that never spawned it. The legacy source
+  now requires the same liveness check the PID-file source already has.
+  (#4479)

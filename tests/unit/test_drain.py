@@ -163,3 +163,36 @@ async def test_phase_cleanup_stops_infrastructure_and_removes_draining_flag(tmp_
 
     mock_stop.assert_called_once()
     assert draining_flag.exists() is False
+
+
+def _write_agents_json(tmp_path: Path, pid: int) -> None:
+    runtime_dir = tmp_path / ".sdd" / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    (runtime_dir / "agents.json").write_text(
+        json.dumps([{"session_id": "s-1", "role": "backend", "pid": pid, "worktree_path": ""}]),
+        encoding="utf-8",
+    )
+
+
+def test_discover_agents_from_agents_json_skips_dead_pid(tmp_path: Path) -> None:
+    coordinator = DrainCoordinator(tmp_path)
+    _write_agents_json(tmp_path, pid=999999)
+
+    from bernstein.core import drain as drain_module
+
+    with patch.object(drain_module, "_is_process_alive", return_value=False):
+        coordinator._discover_agents_from_agents_json()  # pyright: ignore[reportPrivateUsage]
+
+    assert coordinator._agents == []  # pyright: ignore[reportPrivateUsage]
+
+
+def test_discover_agents_from_agents_json_admits_live_pid(tmp_path: Path) -> None:
+    coordinator = DrainCoordinator(tmp_path)
+    _write_agents_json(tmp_path, pid=123)
+
+    from bernstein.core import drain as drain_module
+
+    with patch.object(drain_module, "_is_process_alive", return_value=True):
+        coordinator._discover_agents_from_agents_json()  # pyright: ignore[reportPrivateUsage]
+
+    assert [a.session_id for a in coordinator._agents] == ["s-1"]  # pyright: ignore[reportPrivateUsage]
