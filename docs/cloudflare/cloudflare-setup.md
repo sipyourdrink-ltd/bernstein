@@ -105,18 +105,7 @@ D1 is Cloudflare's serverless SQLite. Bernstein uses it for usage metering, bill
 wrangler d1 create bernstein-analytics
 ```
 
-Note the `database_id` from the output. The schema is created automatically on first use via `D1AnalyticsClient.initialize_schema()`.
-
-```python
-from bernstein.core.cost.d1_analytics import D1Config
-
-config = D1Config(
-    account_id="abc123",
-    api_token="cf_token_...",
-    database_id="d1-uuid-from-create",
-    database_name="bernstein-analytics",  # human-readable name
-)
-```
+Note the `database_id` from the output. The schema is created automatically on first use.
 
 ---
 

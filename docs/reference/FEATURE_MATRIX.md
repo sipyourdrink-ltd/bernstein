@@ -56,7 +56,6 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [Fleet steering](../operations/fleet-steering.md) | Full | 3 | Pause, resume, guidance, redirect, and abort each land a signed steering receipt before any effect runs (`core/orchestration/steering.py`) |
 | [Detached run service](../operations/run-service.md) | Full | 3 | Submit a goal, disconnect, and reattach later against a supervised run service (`core/run_service/`) |
 | [Named resource pools](../operations/named-resource-pools.md) | Full | 3 | Lease-backed admission with chain-anchored grant and release receipts (`core/admission/`) |
-| Spec-to-graph compile | Full | 3 | `bernstein plan compile` runs the draft/approve/compile pipeline offline into a gated task graph with a chain-anchored receipt (`plan_compile_cmd.py`) |
 
 ## State and persistence
 
@@ -343,7 +342,6 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | Browser Rendering Bridge | Full | 2 | **Preview.** Hosted API (`api.bernstein.run`) is unreachable. `bridges/browser_rendering.py` screenshots, scraping, PDFs |
 | R2 Workspace Sync | Full | 2 | **Preview.** Hosted API (`api.bernstein.run`) is unreachable; R2 sync runs against your own Cloudflare account. `bridges/r2_sync.py` content-addressed delta sync |
 | Workers AI Provider (free LLMs) | Full | 2 | **Preview.** Hosted API (`api.bernstein.run`) is unreachable. `core/routing/cloudflare_ai.py` Llama, Mistral, Gemma, Qwen |
-| D1 Analytics & Billing | Full | 2 | **Preview.** Hosted API (`api.bernstein.run`) is unreachable; D1 runs against your own Cloudflare account. `core/cost/d1_analytics.py` usage metering, billing tiers |
 | MCP Remote Transport | Full | 2 | **Preview.** Hosted API (`api.bernstein.run`) is unreachable. `mcp/remote_transport.py` streamable HTTP for remote MCP |
 | Cloud CLI (`bernstein cloud`) | Full | 2 | **Preview.** `bernstein cloud login/run/status/runs/cost` report the service unreachable and exit non-zero. `cli/commands/cloud_cmd.py` login, run, status, cost, deploy |
 | Codex-on-Cloudflare Adapter | Brief | 1 | **Preview.** Targets a REST API that does not yet exist and refuses fast. `adapters/codex_cloudflare.py` experimental |
