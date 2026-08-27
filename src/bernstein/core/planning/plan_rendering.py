@@ -51,11 +51,13 @@ class PlanRendering:
         text: The canonical human-readable text representation.
         rendering_hash: SHA-256 hex digest of the canonical JSON payload.
         journal_head: Optional Merkle head of the event journal at render time.
+        journal_verified: Optional verification status of the journal chain.
     """
 
     text: str
     rendering_hash: str
     journal_head: str | None = None
+    journal_verified: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to a JSON-safe dict."""
@@ -63,6 +65,7 @@ class PlanRendering:
             "text": self.text,
             "rendering_hash": self.rendering_hash,
             "journal_head": self.journal_head,
+            "journal_verified": self.journal_verified,
         }
 
     @classmethod
@@ -72,12 +75,14 @@ class PlanRendering:
             text=d["text"],
             rendering_hash=d["rendering_hash"],
             journal_head=d.get("journal_head"),
+            journal_verified=d.get("journal_verified"),
         )
 
 
 def compute_plan_rendering(
     plan: TaskPlan,
     journal_head: str | None = None,
+    journal_verified: bool | None = None,
 ) -> PlanRendering:
     """Produce a deterministic rendering of *plan* and compute its SHA-256.
 
@@ -94,6 +99,8 @@ def compute_plan_rendering(
             digest it stores has to stay reproducible from the plan alone;
             pass a head only where the caller also persists it and can
             supply the same value when the rendering is recomputed.
+        journal_verified: Optional verification status of the journal chain
+            to bind into the canonical payload.
 
     Returns:
         A frozen :class:`PlanRendering` with text, hash, and journal head.
@@ -112,6 +119,8 @@ def compute_plan_rendering(
     }
     if journal_head is not None:
         payload["journal_head"] = journal_head
+    if journal_verified is not None:
+        payload["journal_verified"] = journal_verified
 
     rendering_hash = hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
 
@@ -142,4 +151,9 @@ def compute_plan_rendering(
     lines.append(f"Rendering hash: {rendering_hash}")
 
     text = "\n".join(lines)
-    return PlanRendering(text=text, rendering_hash=rendering_hash, journal_head=journal_head)
+    return PlanRendering(
+        text=text,
+        rendering_hash=rendering_hash,
+        journal_head=journal_head,
+        journal_verified=journal_verified,
+    )
