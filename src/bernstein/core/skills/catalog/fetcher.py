@@ -22,7 +22,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
-from bernstein.core.security.url_allowlist import ensure_public_http_url
+from bernstein.core.security.url_allowlist import (
+    StrictHTTPRedirectHandler,
+    ensure_public_http_url,
+)
 from bernstein.core.skills.catalog.manifest import (
     SkillCatalog,
     SkillCatalogValidationError,
@@ -94,9 +97,17 @@ class _UrllibTransport:
     def get(self, url: str, *, headers: dict[str, str]) -> HTTPResponse:
         ensure_public_http_url(url, allow_http=False, source="skills_catalog.fetcher")
         request = urllib.request.Request(url, headers=headers)
+        # ``urlopen`` follows redirects automatically; a public host that
+        # redirects to an internal address would otherwise be unchecked.
+        # ``StrictHTTPRedirectHandler`` re-runs the strict check on every
+        # ``Location`` URL and raises ``UrlSchemeError`` to abort.
+        # TOCTOU (resolve-then-connect) is inherent without IP pinning.
+        opener = urllib.request.build_opener(
+            StrictHTTPRedirectHandler(allow_http=False, source="skills_catalog.fetcher")
+        )
         try:
             # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
-            with urllib.request.urlopen(request, timeout=15) as resp:
+            with opener.open(request, timeout=15) as resp:
                 body = resp.read()
                 etag = resp.headers.get("ETag")
                 return HTTPResponse(status=resp.status, body=body, etag=etag)
