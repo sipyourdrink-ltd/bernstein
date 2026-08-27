@@ -160,7 +160,12 @@ def test_rearm_uses_remaining_budget_not_absolute_budget() -> None:
 
 
 def _make_reap_orch(tmp_path) -> SimpleNamespace:
-    """An orchestrator stub sufficient for one reap pass (issue #4610)."""
+    """An orchestrator stub sufficient for one reap pass (issue #4610).
+
+    Note: reap_dead_agents reads the 120s freshness threshold from the local
+    ``_time_since_heartbeat < 120`` literal, not from ``heartbeat_timeout_s``;
+    the config field exists only because the heartbeat-reap path touches it.
+    """
     return SimpleNamespace(
         _agents={},
         _config=SimpleNamespace(max_agent_runtime_s=1800, heartbeat_timeout_s=120),
@@ -182,13 +187,13 @@ class _RecordingAdapter:
 
 def test_reap_dead_agents_hands_down_remaining_budget(tmp_path) -> None:
     """The caller (reap_dead_agents) must convert the absolute budget into the
-    remaining budget before re-arming. This is the layer where the #4571
-    defect actually lived; the adapter-contract test above would still pass
-    if this caller were reverted, so drive the caller itself.
+    remaining budget before re-arming, off the clamp so the ordinary positive
+    conversion is what is asserted (rather than the floor, which the second
+    test covers).
 
-    A session spawned 5000s ago with a fresh heartbeat is extended: the value
-    handed to the adapter must be ``timeout_s - runtime`` floored at 60, never
-    the absolute ``timeout_s``.
+    A session that has only just overrun its 1800s budget is extended: the
+    value handed to the adapter must be the genuine remaining budget
+    (``timeout_s - runtime``), a positive quantity well above the 60s floor.
     """
     from bernstein.core.agents.agent_lifecycle import reap_dead_agents
 
@@ -196,24 +201,28 @@ def test_reap_dead_agents_hands_down_remaining_budget(tmp_path) -> None:
     adapter = _RecordingAdapter()
     orch._spawner = SimpleNamespace(_adapter=adapter)
 
+    # Pin spawn_ts so runtime is a fixed ~1900s, just past the 1800 budget.
+    spawn_ts = time.time() - 1900
     session = AgentSession(id="sess-caller", role="backend", task_ids=["T-1"], status="working")
     session.pid = 12345
-    session.spawn_ts = time.time() - 5000
-    session.heartbeat_ts = time.time()  # fresh heartbeat -> the extension branch
+    session.spawn_ts = spawn_ts
+    session.heartbeat_ts = spawn_ts + 1899  # fresh heartbeat -> the extension branch
     session.timeout_s = 1800
     session.timeout_timer = MagicMock()  # a non-None timer so the re-arm path runs
     orch._agents[session.id] = session
 
     reap_dead_agents(orch, SimpleNamespace(reaped=[]), {})
 
-    # The extension happened: the absolute budget advanced.
-    assert session.timeout_s > 1800, "extension did not happen (test would be vacuous)"
-    # The adapter received the remaining budget, not the absolute budget.
-    runtime = time.time() - session.spawn_ts  # ≈ 5000s
-    expected_remaining = max(60, int(session.timeout_s - runtime))
-    assert adapter.received == [expected_remaining]
-    # And it is definitely not the absolute budget (which would be past the cap).
-    assert adapter.received[0] < session.timeout_s
+    # The extension happened: the absolute budget advanced to 2400.
+    assert session.timeout_s == 2400, "extension did not happen (test would be vacuous)"
+    # The adapter received the remaining budget: ~500 (2400 - ~1900), a real
+    # conversion check well off the 60s floor. Assert within a small tolerance
+    # because reap_dead_agents recomputes `now` internally, so our runtime
+    # estimate can differ from the one the code used by the call duration.
+    received = adapter.received[0]
+    assert 300 < received < 600, f"expected remaining ~500, got {received}"
+    # And it is the remaining budget, never the absolute budget.
+    assert received < session.timeout_s
 
 
 def test_reap_dead_agents_floors_remaining_budget_at_60(tmp_path) -> None:
