@@ -3151,6 +3151,57 @@ def record_input_refusal(
     )
 
 
+#: Issue #XXXX -- emitted once per read-set admission refusal. The event
+#: anchors a signed refusal receipt into the HMAC chain so a read-set mismatch
+#: is provable offline. Only the task id, baseline commit, target branch, and
+#: the sealed receipt's content hash are recorded. The changed paths and commit
+#: hashes embedded in the receipt allow offline verification without repository
+#: access.
+EVENT_READ_SET_REFUSAL = "read_set.refusal_receipt"
+
+
+def record_read_set_refusal(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    base_commit: str,
+    target_branch: str,
+    receipt_hash: str,
+    actor: str = "read_set_admission",
+) -> AuditEvent:
+    """Append a ``read_set.refusal_receipt`` event into *chain*.
+
+    Anchors a signed read-set refusal receipt into the HMAC chain so a read-set
+    mismatch refused before any merge is provable offline. Only the task id,
+    baseline commit, target branch, and the sealed receipt's content hash are
+    recorded. The changed paths and commit hashes embedded in the receipt allow
+    offline verification without repository access.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        task_id: The task whose read-set admission was refused.
+        base_commit: The commit hash used as the baseline.
+        target_branch: The target branch that was checked.
+        receipt_hash: ``sha256:`` content hash of the sealed refusal receipt.
+        actor: Recorded actor; defaults to ``"read_set_admission"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_READ_SET_REFUSAL,
+        actor=actor,
+        resource_type="read_set_refusal",
+        resource_id=receipt_hash,
+        details={
+            "task_id": task_id,
+            "base_commit": base_commit,
+            "target_branch": target_branch,
+            "receipt_hash": receipt_hash,
+        },
+    )
+
+
 def record_context_capsule(
     *,
     chain: AuditChainStore,
@@ -8655,6 +8706,7 @@ __all__ = [
     "EVENT_PROVENANCE_QUARANTINE",
     "EVENT_PROVENANCE_TAINT_DECISION",
     "EVENT_PROVIDER_STATE_MUTATION",
+    "EVENT_READ_SET_REFUSAL",
     "EVENT_RECIPE_FIRE",
     "EVENT_RECIPE_FLEET_APPLY",
     "EVENT_RECIPE_LINEAGE_RESOLVE",
@@ -8797,6 +8849,7 @@ __all__ = [
     "record_process_reap_receipt",
     "record_provenance_quarantine",
     "record_provider_state_mutation",
+    "record_read_set_refusal",
     "record_recipe_fire",
     "record_recipe_fleet_apply",
     "record_recipe_lineage_resolve",
