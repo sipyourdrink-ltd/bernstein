@@ -441,6 +441,8 @@ def sdd_dir(tmp_path: Path) -> Path:
 class IntegrationMockAdapter(CLIAdapter):
     """A flexible mock adapter that executes python commands from task descriptions."""
 
+    default_model = "mock"
+
     def __init__(self, sdd_path: Path):
         self.sdd_path = sdd_path
 
@@ -568,6 +570,9 @@ def integration_sdd(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def test_app(integration_sdd: Path) -> FastAPI:
+    import os
+
+    os.environ.setdefault("BERNSTEIN_AUTH_DISABLED", "1")
     jsonl_path = integration_sdd / "runtime" / "tasks.jsonl"
     return create_app(jsonl_path=jsonl_path)
 
