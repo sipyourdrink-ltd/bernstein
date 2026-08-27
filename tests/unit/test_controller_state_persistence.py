@@ -54,11 +54,11 @@ def _make_ap_state(
 class TestLoad:
     def test_missing_sidecar_returns_naive_state(self, tmp_path: Path) -> None:
         _ap_state, conflict_state = load(tmp_path)
-        assert ap_state.configured_max == 0
-        assert ap_state.current_max == 0
-        assert ap_state.slo_constrained_max is None
-        assert ap_state.last_adjustment_reason == "initial"
-        assert ap_state.low_error_since_epoch is None
+        assert _ap_state.configured_max == 0
+        assert _ap_state.current_max == 0
+        assert _ap_state.slo_constrained_max is None
+        assert _ap_state.last_adjustment_reason == "initial"
+        assert _ap_state.low_error_since_epoch is None
         assert conflict_state == {}
 
     def test_valid_sidecar_restores_state(self, tmp_path: Path) -> None:
@@ -81,11 +81,11 @@ class TestLoad:
             },
         )
         _ap_state, conflict_state = load(tmp_path)
-        assert ap_state.configured_max == 8
-        assert ap_state.current_max == 6
-        assert ap_state.slo_constrained_max == 4
-        assert ap_state.last_adjustment_reason == "error_rate_high (25%)"
-        assert ap_state.low_error_since_epoch == pytest.approx(now - 100.0, abs=1.0)
+        assert _ap_state.configured_max == 8
+        assert _ap_state.current_max == 6
+        assert _ap_state.slo_constrained_max == 4
+        assert _ap_state.last_adjustment_reason == "error_rate_high (25%)"
+        assert _ap_state.low_error_since_epoch == pytest.approx(now - 100.0, abs=1.0)
         assert len(conflict_state) == 1
         assert conflict_state["task-A"].episode_count == 2
         assert conflict_state["task-A"].backoff_until_epoch == pytest.approx(now + 60.0, abs=1.0)
@@ -135,7 +135,7 @@ class TestLoadErrors:
         _sidecar_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
         _sidecar_path(tmp_path).write_text("{not valid json", encoding="utf-8")
         _ap_state, conflict_state = load(tmp_path)
-        assert ap_state.configured_max == 0
+        assert _ap_state.configured_max == 0
         assert conflict_state == {}
 
     def test_missing_version_returns_naive(self, tmp_path: Path) -> None:
