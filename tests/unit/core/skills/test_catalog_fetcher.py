@@ -146,3 +146,41 @@ def test_rebinding_hostname_is_rejected(tmp_path: Path, monkeypatch: pytest.Monk
     with pytest.raises(UrlSchemeError):
         fetcher.fetch()
     assert transport.calls == []
+
+
+@pytest.mark.parametrize(
+    "internal_ip",
+    [
+        "127.0.0.1",
+        "::1",
+        "169.254.169.254",
+        "10.0.0.5",
+        "192.168.1.100",
+        "fe80::1",
+        "fc00::1",
+    ],
+)
+def test_catalog_fetcher_rejects_internal_ip_addresses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, internal_ip: str
+) -> None:
+    """Skill catalog fetcher must reject catalog URLs pointing to internal addresses."""
+
+    def resolver(host: str) -> list[str]:
+        if host == "catalog.internal":
+            return [internal_ip]
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(
+        "bernstein.core.security.url_allowlist._default_resolver",
+        resolver,
+    )
+
+    transport = _FakeTransport()
+    fetcher = _build_fetcher(
+        tmp_path,
+        transport,
+        primary_url="https://catalog.internal/skills.json",
+    )
+    with pytest.raises(UrlSchemeError, match="internal address"):
+        fetcher.fetch()
+    assert transport.calls == []
