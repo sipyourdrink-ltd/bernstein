@@ -20,6 +20,21 @@ backlogs. It is greenfield, every sub-issue is sliced to be workable on
 its own with acceptance criteria written out, and design comments on
 the RFC count as contributions too.
 
+### Milestone triage and targeting
+
+Bernstein follows a **two-track release model**: patch releases (weekly) and minor releases (monthly or quarterly). Details in [docs/operations/release.md](docs/operations/release.md).
+
+Issues are assigned to milestones to plan what ships in each release. A milestone is **not a parking lot** — every issue in a milestone should be on track to ship in that release.
+
+**Triage rules:**
+
+- **Small issues** (size/xs, size/s) and **high priority** (P0, P1) land in the *nearest* milestone
+- **Larger** (size/m, size/l) or **lower priority** (P2, P3) issues move to the *next* milestone out
+- An open issue with **no milestone** is *untriaged* — say so on the issue so it gets attention
+- **Advanced-tier issues** (lineage/audit-chain/verifiability/replay) can ship in an earlier minor release once the underlying dependencies are mature and the feature is ready for early adopters
+
+The fastest path in is still `size/s` + `up-for-grabs` — those issues are sliced for quick completion and explicitly marked as beginner-friendly.
+
 Beyond that, three labelled queues cover the rest:
 
 - [good first issue](https://github.com/sipyourdrink-ltd/bernstein/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22)
