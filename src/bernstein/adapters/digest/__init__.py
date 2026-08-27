@@ -31,21 +31,21 @@ from bernstein.adapters.digest.rulesets import (
 )
 
 __all__ = [
-    # digesters
-    "Digester",
-    "default_digester",
-    "get_digester",
-    "list_families",
-    "pytest_digester",
-    "register_digester",
-    # models
-    "ByteCounts",
-    "TraceRecord",
     # rulesets
     "AVAILABLE_RULESETS",
     "GIT_RULESET_V1",
     "PYTEST_RULESET_V1",
+    # models
+    "ByteCounts",
+    # digesters
+    "Digester",
     "Ruleset",
+    "TraceRecord",
+    "default_digester",
+    "get_digester",
     "get_ruleset",
+    "list_families",
     "list_rulesets",
+    "pytest_digester",
+    "register_digester",
 ]
