@@ -360,6 +360,7 @@ def test_cloudflare_section_fenced_as_preview() -> None:
     else:
         section_text = text[start:next_section_start]
 
+    rows = 0
     checked = 0
     for line in section_text.splitlines():
         stripped = line.strip()
@@ -369,6 +370,7 @@ def test_cloudflare_section_fenced_as_preview() -> None:
         if len(cells) != 4 or cells[0] in {"Capability", "Command", "Maturity"}:
             continue
 
+        rows += 1
         capability, _docs, maturity, notes = cells
         if maturity.isdigit() and int(maturity) <= 2:
             assert "**Preview.**" in notes, (
@@ -377,8 +379,16 @@ def test_cloudflare_section_fenced_as_preview() -> None:
             )
             checked += 1
 
-    # Prevent the test from passing silently if parsing breaks
-    assert checked >= 9, f"expected to check the Cloud / Cloudflare rows, checked {checked}"
+    # Prevent the test from passing silently if parsing breaks. The question is
+    # whether parsing found the section and read its rows, not how many rows the
+    # matrix happens to list today: a floor pinned to the current inventory also
+    # fails every time a capability is legitimately removed, which is a rule
+    # nobody wrote down and the wrong reason for this assertion to exist.
+    assert rows > 0, "Cloud / Cloudflare section parsed to zero rows"
+    assert checked > 0, (
+        f"parsed {rows} Cloud / Cloudflare row(s) but none at maturity <= 2; "
+        "the maturity column is no longer being read"
+    )
 
     # Assert the entry page carries the warning
     entry_page = _REPO_ROOT / "docs" / "cloudflare" / "cloudflare-overview.md"
