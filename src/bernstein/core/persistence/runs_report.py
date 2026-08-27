@@ -33,6 +33,13 @@ process liveness. It is meant to run after a batch, so a run still actually
 in flight when invoked simply shows whatever its ledger holds so far -- the
 same "no run.closed entry yet" shape as a kill, which is the honest answer
 absent a heartbeat check.
+
+Failure-pattern analysis
+-------------------------
+The :func:`detect_failure_patterns` function groups failure runs by their
+semantic signature, compressing hundreds of similar failures into a handful
+of actionable patterns. Each pattern draft contains the fingerprint, count,
+and contributing run IDs for downstream triage or automated remediation.
 """
 
 from __future__ import annotations
@@ -280,11 +287,109 @@ def list_finished_runs(sdd_dir: Path, *, since: float | None = None) -> list[Fin
     return runs
 
 
+@dataclass(frozen=True)
+class FailurePatternDraft:
+    """One failure-pattern draft produced by :func:`detect_failure_patterns`.
+
+    Attributes:
+        title: Human-readable one-line title summarizing the pattern.
+        body: Detailed description including failure context and samples.
+        fingerprint: SHA-256 hex digest uniquely identifying this pattern.
+        occurrence_count: How many runs share this failure pattern.
+        most_recent_run_id: The run_id with the latest started_at timestamp.
+        contributing_run_ids: All run_ids that contributed to this pattern.
+    """
+
+    title: str
+    body: str
+    fingerprint: str
+    occurrence_count: int
+    most_recent_run_id: str
+    contributing_run_ids: list[str]
+
+
+def detect_failure_patterns(runs: list[FinishedRun]) -> list[FailurePatternDraft]:
+    """Group finished runs by failure signature and produce pattern drafts.
+
+    Only runs with outcome in {GATE_FAILED, INFRA_ERROR, WEDGED} are considered
+    candidates. Runs are grouped by a fingerprint key derived from the failure
+    type and the evidence string. Each pattern draft contains metadata needed
+    for triage or automated remediation.
+
+    Args:
+        runs: List of :class:`FinishedRun` records, typically from
+            :func:`list_finished_runs`.
+
+    Returns:
+        List of :class:`FailurePatternDraft` instances, sorted by occurrence
+        count descending (most frequent failure patterns first).
+
+    Example:
+        >>> runs = [
+        ...     FinishedRun("run-1", "fix/a", RunOutcome.GATE_FAILED, "lint: ruff", 1000.0),
+        ...     FinishedRun("run-2", "fix/b", RunOutcome.GATE_FAILED, "lint: ruff", 1010.0),
+        ...     FinishedRun("run-3", "fix/c", RunOutcome.INFRA_ERROR, "adapter: oom", 1020.0),
+        ... ]
+        >>> drafts = detect_failure_patterns(runs)
+        >>> len(drafts)
+        2
+        >>> drafts[0].occurrence_count
+        2
+    """
+    from hashlib import sha256
+
+    # Filter to failure runs only
+    failures = [
+        run
+        for run in runs
+        if run.outcome in (RunOutcome.GATE_FAILED, RunOutcome.INFRA_ERROR, RunOutcome.WEDGED)
+    ]
+
+    # Group by fingerprint key (outcome + evidence)
+    groups: dict[str, list[FinishedRun]] = {}
+    for run in failures:
+        key = f"{run.outcome.value}:{run.evidence}"
+        groups.setdefault(key, []).append(run)
+
+    drafts: list[FailurePatternDraft] = []
+    for key, group_runs in groups.items():
+        # Derive fingerprint from the key itself (outcome + evidence)
+        fingerprint = sha256(key.encode("utf-8")).hexdigest()
+
+        # Sort by started_at descending to get most recent
+        sorted_runs = sorted(group_runs, key=lambda r: (-r.started_at, r.run_id))
+        most_recent = sorted_runs[0]
+
+        # Build title and body
+        title = f"{most_recent.outcome.value.upper()}: {most_recent.evidence}"
+        body = (
+            f"Failure type: {most_recent.outcome.value}\n"
+            f"Evidence: {most_recent.evidence}\n"
+            f"Branch: {most_recent.branch}"
+        )
+
+        draft = FailurePatternDraft(
+            title=title,
+            body=body,
+            fingerprint=fingerprint,
+            occurrence_count=len(group_runs),
+            most_recent_run_id=most_recent.run_id,
+            contributing_run_ids=[r.run_id for r in sorted_runs],
+        )
+        drafts.append(draft)
+
+    # Sort by occurrence count descending
+    drafts.sort(key=lambda d: (-d.occurrence_count, d.fingerprint))
+    return drafts
+
+
 __all__ = [
+    "FailurePatternDraft",
     "FinishedRun",
     "RunOutcome",
     "RunWrapUp",
     "classify_ledger_dir",
     "classify_run",
+    "detect_failure_patterns",
     "list_finished_runs",
 ]
