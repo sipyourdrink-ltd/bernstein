@@ -156,7 +156,6 @@ Tracks per-agent token consumption in real time. Detects runaway token growth an
 | `core/observability/circuit_breaker.py` | Halts agents that repeatedly violate purpose or crash - sends SHUTDOWN signal |
 | `core/cost/cost_tracker.py` | Per-run cost budget tracking with threshold warnings |
 | `core/cost/cost_history.py` | Persisted cost history and alert logic |
-| `core/quality/cross_model_verifier.py` | Routes completed diffs to a different model for independent review |
 | `core/communication/bulletin.py` | Append-only bulletin board for cross-agent communication |
 | `core/agents/agent_discovery.py` | Auto-detect installed CLI agents, check login status, register capabilities |
 | `core/agents/agent_lifecycle.py` | Heartbeat monitoring, stall detection, crash reaping |
@@ -329,7 +328,6 @@ Bernstein can execute agents on Cloudflare's edge infrastructure in addition to 
 - **BrowserRenderingBridge** (`bridges/browser_rendering.py`) - headless web browsing for agents
 - **R2WorkspaceSync** (`bridges/r2_sync.py`) - content-addressed workspace file sync via R2
 - **WorkersAIProvider** (`core/routing/cloudflare_ai.py`) - free-tier LLM models for planning
-- **D1AnalyticsClient** (`core/cost/d1_analytics.py`) - usage metering and billing
 
 The cloud bridges implement the same `RuntimeBridge` interface as local execution, so the orchestrator remains agnostic to where agents run. See the [Cloudflare Overview](../cloudflare/cloudflare-overview.md) for architecture diagrams and setup instructions.
 
