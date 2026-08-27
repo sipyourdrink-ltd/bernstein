@@ -10,7 +10,6 @@ name: Auto-heal v2
 #
 #   * Bayesian per-class confidence              (autoheal-bayes.json)
 #   * Multi-arm-bandit strategy selection         (autoheal-bandit.json)
-#   * Flake vs real-fail distinguisher            (flake_detector)
 #   * Failure clustering / bucketize              (bucketize)
 #   * Shadow-mode quarantine for new strategies   (shadow_mode)
 #   * Cordon-zone enforcement (cordon)

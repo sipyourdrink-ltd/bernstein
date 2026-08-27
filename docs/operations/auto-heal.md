@@ -9,7 +9,7 @@ and lets standard branch protection decide.
 
 | Layer | What it does | Persisted state |
 |-------|--------------|-----------------|
-| Detection | Reads the failed run, buckets jobs, scores Bayesian confidence, judges flake-vs-real | `.sdd/autoheal-bayes.json` |
+| Detection | Reads the failed run, buckets jobs, scores Bayesian confidence | `.sdd/autoheal-bayes.json` |
 | Classification | Routes to safe / heuristic / risky / unknown | none |
 | Repair | Thompson-samples a strategy, applies it, runs a diff-aware self-test | `.sdd/autoheal-bandit.json`, `.sdd/autoheal-shadow.json` |
 | Safety | Cordon allowlist, blast-radius gate, cost circuit-breaker, kill switch | `.sdd/autoheal-disabled` |
@@ -28,9 +28,7 @@ flowchart LR
     ID -- yes --> S1
     ID -- no --> BUC[Bucketize jobs]
     BUC --> BAY[Bayesian confidence]
-    BAY --> FL[Flake detector]
-    FL -- flake --> RT[Retry, no patch]
-    FL -- real --> BANDIT[Bandit select strategy]
+    BAY --> BANDIT[Bandit select strategy]
     BANDIT --> APPLY[Apply strategy]
     APPLY --> CO[Cordon check]
     CO -- block --> S2[Abort]
@@ -49,7 +47,7 @@ shipped, workflow wiring deferred), `deferred` (planned for v3).
 | # | Capability | Status | Bernstein hook |
 |--:|-----------|--------|----------------|
 | 1 | Bayesian per-class confidence | shipped | `core.autoheal.bayesian` |
-| 2 | Flake vs real-fail distinguisher | shipped | `core.autoheal.flake_detector` |
+| 2 | Flake vs real-fail distinguisher | removed | unused, deleted in #4643 |
 | 3 | Diff-aware fail localisation | deferred | bisect helper to land in v3 |
 | 4 | Failure clustering (bucketize) | shipped | `core.autoheal.categorizer.bucketize` |
 | 5 | LLM-grounded categorisation | deferred | prompt path planned v3 |

@@ -25,7 +25,6 @@ _ALIASES: dict[str, str] = {
     "cordon": "bernstein.core.autoheal.cordon",
     "bandit": "bernstein.core.autoheal.bandit",
     "bayesian": "bernstein.core.autoheal.bayesian",
-    "flake_detector": "bernstein.core.autoheal.flake_detector",
     "shadow_mode": "bernstein.core.autoheal.shadow_mode",
     "kill_switch": "bernstein.core.autoheal.kill_switch",
     "audit_log": "bernstein.core.autoheal.audit_log",

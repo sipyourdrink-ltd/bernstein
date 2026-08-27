@@ -15,10 +15,6 @@ Modules
     Per-class Bayesian confidence: maintains a Beta prior per CI class
     name and updates it from observed heal outcomes.
 
-``flake_detector``
-    Distinguishes flake from genuine fail by counting non-adjacent
-    failures of the same test name across a sliding window of main
-    commits.
 
 ``shadow_mode``
     Quarantines new repair strategies until they accumulate evidence.
