@@ -192,6 +192,8 @@ dev = [
     # its own env. See docs/contributing/flake-handling.md.
     "pytest-xflaky>=1.0.3",
     "pytest-json-report>=1.5",
+    # TRACE 0.2 Trust Record emitter tests.
+    "agentrust-trace-tests>=0.5,<0.6",
     # Error-telemetry SDK for the operator-managed Sentry-protocol-compatible
     # error sink. Imported lazily in src/bernstein/cli/main.py and only
     # initialised when BERNSTEIN_TELEMETRY_DSN is set. Kept in dev so the
@@ -331,6 +333,10 @@ observability = [
 research-render = [
     "playwright>=1.62.0",
 ]
+# TRACE 0.2 Trust Record emitter (src/bernstein/core/observability/trust_record.py).
+# Optional so minimal installs stay dependency-free. Enable with:
+#   pip install 'bernstein[trace]'
+trace = ["agentrust-trace>=0.5,<0.6"]
 
 [project.scripts]
 bernstein = "bernstein.cli.main:cli"

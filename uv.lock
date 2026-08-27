@@ -3,12 +3,12 @@ revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
-    "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version == '3.14.*' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version < '3.13' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform != 'win32'",
+    "python_full_version < '3.13' and sys_platform == 'win32'",
     "python_full_version < '3.13' and sys_platform != 'win32'",
 ]
 conflicts = [[
@@ -18,6 +18,36 @@ conflicts = [[
     { package = "bernstein", extra = "modal" },
     { package = "bernstein", extra = "otel" },
 ]]
+
+[[package]]
+name = "agentrust-trace"
+version = "0.5.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "jsonschema" },
+    { name = "pydantic" },
+    { name = "rfc8785" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/97/1d/41415e430e8ffdcedd4ded1fcbdf04a4874575fb10cc6f7d5d338ae5fad1/agentrust_trace-0.5.1.tar.gz", hash = "sha256:93eb5579a3850c9277d4c669d3800b8d08acf12a86ee26805ebb86ff929bfd78", size = 148261, upload-time = "2026-07-28T18:31:24.824Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4e/29/255306936da4125be4d8bfb786844b9a121968590918e42025d8b4a47ab1/agentrust_trace-0.5.1-py3-none-any.whl", hash = "sha256:f5ce91d6c99964bb07ff0cfddcd53e4fd111fba97e4666efc75010ae3b79d18a", size = 21926, upload-time = "2026-07-28T18:31:23.438Z" },
+]
+
+[[package]]
+name = "agentrust-trace-tests"
+version = "0.5.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+    { name = "cryptography" },
+    { name = "jsonschema" },
+    { name = "rfc8785" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e8/ea/316b440c5b50b07e01cc5ed0257dbaefad5cb5f25a299a533d1228a1eaef/agentrust_trace_tests-0.5.1.tar.gz", hash = "sha256:79e9d98a7106ae1c47b8378c8808be26f1fa34a62779e9f7b0e954cf40a2a19c", size = 132419, upload-time = "2026-08-23T20:49:54.368Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4c/54/804f21e6dda302b5012e9391f677ce1f047f1cff76e03b0b6ce59fcd1a1e/agentrust_trace_tests-0.5.1-py3-none-any.whl", hash = "sha256:5c13421d41357a5b2e096eced457f5dee65d4921b253b25dac53684b3d31eeeb", size = 28494, upload-time = "2026-08-23T20:49:53.11Z" },
+]
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -411,6 +441,7 @@ azure = [
     { name = "azure-storage-blob" },
 ]
 dev = [
+    { name = "agentrust-trace-tests" },
     { name = "bandit" },
     { name = "beartype" },
     { name = "boto3-stubs" },
@@ -516,6 +547,9 @@ teams = [
 telegram = [
     { name = "python-telegram-bot" },
 ]
+trace = [
+    { name = "agentrust-trace" },
+]
 voice = [
     { name = "faster-whisper" },
     { name = "numpy" },
@@ -567,6 +601,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "agentrust-trace", marker = "extra == 'trace'", specifier = ">=0.5,<0.6" },
+    { name = "agentrust-trace-tests", marker = "extra == 'dev'", specifier = ">=0.5,<0.6" },
     { name = "aiohttp", marker = "extra == 'slack'", specifier = ">=3.9" },
     { name = "aiohttp", marker = "extra == 'teams'", specifier = ">=3.9" },
     { name = "asn1crypto", specifier = ">=1.5" },
@@ -670,7 +706,7 @@ requires-dist = [
     { name = "watchdog", specifier = ">=4.0" },
     { name = "websockets", specifier = ">=14.0" },
 ]
-provides-extras = ["dev", "grpc", "voice", "k8s", "spiffe", "ml", "browser", "graphics", "openai", "docker", "e2b", "modal", "s3", "gcs", "azure", "r2", "telegram", "slack", "discord", "teams", "eval", "gui", "otel", "observability", "research-render"]
+provides-extras = ["dev", "grpc", "voice", "k8s", "spiffe", "ml", "browser", "graphics", "openai", "docker", "e2b", "modal", "s3", "gcs", "azure", "r2", "telegram", "slack", "discord", "teams", "eval", "gui", "otel", "observability", "research-render", "trace"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3913,12 +3949,12 @@ version = "6.33.6"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
-    "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version == '3.14.*' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version < '3.13' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform != 'win32'",
+    "python_full_version < '3.13' and sys_platform == 'win32'",
     "python_full_version < '3.13' and sys_platform != 'win32'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/66/70/e908e9c5e52ef7c3a6c7902c9dfbb34c7e29c25d2f81ade3856445fd5c94/protobuf-6.33.6.tar.gz", hash = "sha256:a6768d25248312c297558af96a9f9c929e8c4cee0659cb07e780731095f38135", size = 444531, upload-time = "2026-03-18T19:05:00.988Z" }
@@ -3938,12 +3974,12 @@ version = "7.35.1"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
-    "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version == '3.14.*' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version < '3.13' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform != 'win32'",
+    "python_full_version < '3.13' and sys_platform == 'win32'",
     "python_full_version < '3.13' and sys_platform != 'win32'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/da/01/9ef0afd7999eb9badb3a768b4aedd78c86d4c65cfaf1958ab276199e76b4/protobuf-7.35.1.tar.gz", hash = "sha256:ce115a26fe0c39a2c29973d914d327e516a6455464489fe3cd1e51a1b354f81a", size = 458717, upload-time = "2026-06-11T21:55:40.257Z" }
@@ -4706,6 +4742,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/43/98/4e55c9c486404ec12373708d015ebce157966965a5ebe7f28ff2c784d41b/respx-0.23.1.tar.gz", hash = "sha256:242dcc6ce6b5b9bf621f5870c82a63997e8e82bc7c947f9ffe272b8f3dd5a780", size = 29243, upload-time = "2026-04-08T14:37:16.008Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1d/4a/221da6ca167db45693d8d26c7dc79ccfc978a440251bf6721c9aaf251ac0/respx-0.23.1-py2.py3-none-any.whl", hash = "sha256:b18004b029935384bccfa6d7d9d74b4ec9af73a081cc28600fffc0447f4b8c1a", size = 25557, upload-time = "2026-04-08T14:37:14.613Z" },
+]
+
+[[package]]
+name = "rfc8785"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/2f/fa1d2e740c490191b572d33dbca5daa180cb423c24396b856f5886371d8b/rfc8785-0.1.4.tar.gz", hash = "sha256:e545841329fe0eee4f6a3b44e7034343100c12b4ec566dc06ca9735681deb4da", size = 14321, upload-time = "2024-09-27T16:33:31.206Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4d/78/119878110660b2ad709888c8a1614fce7e2fab39080ab960656dc8605bf6/rfc8785-0.1.4-py3-none-any.whl", hash = "sha256:520d690b448ecf0703691c76e1a34a24ddcd4fc5bc41d589cb7c58ec651bcd48", size = 9240, upload-time = "2024-09-27T16:33:29.683Z" },
 ]
 
 [[package]]
