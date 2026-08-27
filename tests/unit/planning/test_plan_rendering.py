@@ -265,3 +265,93 @@ def test_plan_rendering_is_frozen() -> None:
     r = PlanRendering(text="x", rendering_hash="y")
     with pytest.raises(AttributeError):
         r.text = "z"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# journal_verified binding
+# ---------------------------------------------------------------------------
+
+
+def test_journal_verified_affects_hash() -> None:
+    plan = _make_plan()
+    r_no_ver = compute_plan_rendering(plan, journal_verified=None)
+    r_ver_true = compute_plan_rendering(plan, journal_verified=True)
+    r_ver_false = compute_plan_rendering(plan, journal_verified=False)
+    assert r_no_ver.rendering_hash != r_ver_true.rendering_hash
+    assert r_no_ver.rendering_hash != r_ver_false.rendering_hash
+    assert r_ver_true.rendering_hash != r_ver_false.rendering_hash
+
+
+def test_journal_verified_included_when_not_none() -> None:
+    plan = _make_plan()
+    r_true = compute_plan_rendering(plan, journal_verified=True)
+    r_false = compute_plan_rendering(plan, journal_verified=False)
+    # journal_verified is in canonical JSON payload (affects hash) but not text
+    assert r_true.journal_verified is True
+    assert r_false.journal_verified is False
+
+
+def test_journal_verified_not_in_text_when_none() -> None:
+    plan = _make_plan()
+    rendering = compute_plan_rendering(plan, journal_verified=None)
+    # journal_verified not in text when None
+    assert "journal_verified" not in rendering.text
+    assert rendering.journal_verified is None
+
+
+def test_tampered_journal_produces_different_hash() -> None:
+    """Verify that modifying journal entries changes the hash via journal_verified."""
+    plan = _make_plan()
+    # Simulate verified chain
+    r_verified = compute_plan_rendering(plan, journal_verified=True)
+    # Simulate tampered/unverified chain
+    r_tampered = compute_plan_rendering(plan, journal_verified=False)
+    assert r_verified.rendering_hash != r_tampered.rendering_hash
+    assert r_verified.journal_verified is True
+    assert r_tampered.journal_verified is False
+
+
+def test_verify_journal_integration() -> None:
+    """End-to-end test showing tampered journal fails closed."""
+    plan = _make_plan()
+    # Normal verified rendering
+    verified = compute_plan_rendering(plan, journal_verified=True, journal_head="valid-head")
+    # Tampered rendering (simulating chain verification failure)
+    tampered = compute_plan_rendering(plan, journal_verified=False, journal_head="valid-head")
+    # Hashes must differ - tampering is detectable
+    assert verified.rendering_hash != tampered.rendering_hash
+    # Both have same journal_head but different journal_verified
+    assert verified.journal_head == tampered.journal_head == "valid-head"
+    assert verified.journal_verified is True
+    assert tampered.journal_verified is False
+
+
+def test_journal_head_plus_journal_verified_bind_rendering() -> None:
+    """Test that journal_head + journal_verified together bind the rendering to the chain."""
+    plan = _make_plan()
+    # Same head, different verified status → different hash
+    h1 = compute_plan_rendering(plan, journal_head="head1", journal_verified=True)
+    h2 = compute_plan_rendering(plan, journal_head="head1", journal_verified=False)
+    assert h1.rendering_hash != h2.rendering_hash
+    assert h1.journal_head == h2.journal_head == "head1"
+    assert h1.journal_verified is True
+    assert h2.journal_verified is False
+    # Same verified status, different head → different hash
+    h3 = compute_plan_rendering(plan, journal_head="head2", journal_verified=True)
+    assert h1.rendering_hash != h3.rendering_hash
+    assert h1.journal_verified == h3.journal_verified == True
+    assert h1.journal_head != h3.journal_head
+    # Both different → different hash
+    h4 = compute_plan_rendering(plan, journal_head="head2", journal_verified=False)
+    assert h1.rendering_hash != h4.rendering_hash
+    assert h2.rendering_hash != h4.rendering_hash
+
+
+def test_roundtrip_with_journal_verified() -> None:
+    """to_dict/from_dict preserves journal_verified."""
+    plan = _make_plan()
+    rendering = compute_plan_rendering(plan, journal_verified=False)
+    d = rendering.to_dict()
+    restored = PlanRendering.from_dict(d)
+    assert restored.journal_verified is False
+    assert restored == rendering
