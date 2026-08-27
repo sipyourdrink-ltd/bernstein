@@ -215,6 +215,51 @@ class TestAiderAdapterSpawn:
             )
         assert result.log_path.name == "my-aider-session.log"
 
+    def test_analytics_log_path_uses_session_id(self, tmp_path: Path) -> None:
+        adapter = AiderAdapter()
+        proc_mock = _make_popen_mock(pid=524)
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
+                session_id="aider-analytics-1",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        analytics_idx = inner.index("--analytics-log")
+        analytics_path = inner[analytics_idx + 1]
+        assert analytics_path.endswith("analytics_aider-analytics-1.jsonl")
+
+    def test_concurrent_spawns_produce_distinct_analytics_logs(self, tmp_path: Path) -> None:
+        adapter = AiderAdapter()
+        proc_mock_1 = _make_popen_mock(pid=530)
+        proc_mock_2 = _make_popen_mock(pid=531)
+        with patch(
+            "bernstein.adapters.aider.subprocess.Popen",
+            side_effect=[proc_mock_1, proc_mock_2],
+        ) as popen:
+            adapter.spawn(
+                prompt="task A",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
+                session_id="worker-a-001",
+            )
+            adapter.spawn(
+                prompt="task B",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
+                session_id="worker-b-002",
+            )
+        cmd_1 = popen.call_args_list[0].args[0]
+        cmd_2 = popen.call_args_list[1].args[0]
+        inner_1 = _inner_cmd(cmd_1)
+        inner_2 = _inner_cmd(cmd_2)
+        analytics_1 = inner_1[inner_1.index("--analytics-log") + 1]
+        analytics_2 = inner_2[inner_2.index("--analytics-log") + 1]
+        assert analytics_1 != analytics_2
+        assert "analytics_worker-a-001.jsonl" in analytics_1
+        assert "analytics_worker-b-002.jsonl" in analytics_2
+
 
 # ---------------------------------------------------------------------------
 # AiderAdapter.name()
