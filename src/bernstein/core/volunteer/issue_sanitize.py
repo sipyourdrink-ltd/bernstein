@@ -78,6 +78,7 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
+from typing import Any
 
 __all__ = [
     "ISSUE_TEXT_FENCE_LABEL",
