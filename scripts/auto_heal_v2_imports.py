@@ -30,7 +30,6 @@ _ALIASES: dict[str, str] = {
     "kill_switch": "bernstein.core.autoheal.kill_switch",
     "audit_log": "bernstein.core.autoheal.audit_log",
     "idempotency": "bernstein.core.autoheal.idempotency",
-    "provenance": "bernstein.core.autoheal.provenance",
     "wire": "bernstein.core.autoheal.wire",
 }
 

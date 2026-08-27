@@ -49,10 +49,6 @@ Modules
     Cordon-zone enforcement: pre-commit hook that aborts if any staged
     file is outside the allowlist.
 
-``provenance``
-    Code-provenance check: was the offending line introduced in the
-    last 24h? Influences risk score downward when true.
-
 Public surface
 --------------
 This package is consumed by:

@@ -54,7 +54,7 @@ shipped, workflow wiring deferred), `deferred` (planned for v3).
 | 4 | Failure clustering (bucketize) | shipped | `core.autoheal.categorizer.bucketize` |
 | 5 | LLM-grounded categorisation | partial | cost-guard preflight in place; prompt path deferred |
 | 6 | Sibling-bug hunt | deferred | needs blame oracle, planned v3 |
-| 7 | Code-provenance check | shipped | `core.autoheal.provenance` |
+| 7 | Code-provenance check | removed | unused, deleted in #4643 |
 | 8 | Multi-arm-bandit strategy select | shipped | `core.autoheal.bandit` |
 | 9 | LLM-grounded fix synthesis | partial | cost-guard ready; prompt deferred |
 | 10 | Counter-example test injection | deferred | planned v3 |
@@ -75,7 +75,7 @@ shipped, workflow wiring deferred), `deferred` (planned for v3).
 | 25 | Cordon-zone enforcement (pre-commit) | partial | CLI + module shipped; pre-commit hook deferred to v3 |
 | 26 | Cost-aware degradation | shipped | `cost_guard.llm_globally_disabled` |
 
-Shipped: 16. Partial: 5. Deferred: 5. Total surface: 26.
+Shipped: 15. Partial: 5. Deferred: 5. Removed: 1. Total surface: 26.
 
 ## Forward-compat env knobs
 
