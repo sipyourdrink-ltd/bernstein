@@ -55,6 +55,7 @@ class AiderAdapter(CLIAdapter):
         self.refuse_multimodal_if_needed(multimodal_context)
         self.enforce_network_policy()
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
+        analytics_log_path = workdir / ".sdd" / "runtime" / f"analytics_{session_id}.jsonl"
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
         model_id = _MODEL_MAP.get(model_config.model, model_config.model)
@@ -70,6 +71,8 @@ class AiderAdapter(CLIAdapter):
             "--map-tokens",
             "2048",  # larger repo map for better codebase navigation
             "--no-auto-lint",  # lint is orchestrator's job, not each agent's
+            "--analytics-log",
+            str(analytics_log_path),
         ]
 
         # Wrap with bernstein-worker for process visibility
