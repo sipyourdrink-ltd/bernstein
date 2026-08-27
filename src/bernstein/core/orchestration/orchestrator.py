@@ -104,6 +104,7 @@ from bernstein.core.orchestration.run_stall import (
     evaluate_run_stall,
     resolve_grace_s,
     resolve_min_ticks,
+    resolve_planning_window_s,
 )
 from bernstein.core.orchestration.schedule_projection import (
     SCHEDULE_PROJECTION_REV,
@@ -405,12 +406,6 @@ class Orchestrator:
         self._agents: dict[str, AgentSession] = {}
         self._lock_manager = FileLockManager(workdir)
         self._file_ownership: dict[str, str] = {}  # filepath -> agent_id (legacy alias; use _lock_manager)
-        self._ever_had_tasks: bool = (
-            False  # tracks if we've ever seen any tasks (to distinguish initial empty state from planning-failed state)
-        )
-        self._first_empty_ledger_ts: float | None = (
-            None  # timestamp when we first observed an empty ledger (no tasks in any state)
-        )
         from bernstein.core.loop_detector import LoopDetector
 
         self._loop_detector = LoopDetector()
@@ -2155,38 +2150,6 @@ class Orchestrator:
         # check, the self-stop, and shutdown-final regeneration re-run on
         # every quiescent tick until confirmed.
         _raw_open = len(tasks_by_status.get("open", []))
-        # Track if we've ever seen tasks to distinguish initial empty state from planning-failed state
-        total_tasks = (
-            len(tasks_by_status.get("open", []))
-            + len(tasks_by_status.get("claimed", []))
-            + len(tasks_by_status.get("done", []))
-            + len(tasks_by_status.get("failed", []))
-        )
-        if total_tasks > 0:
-            self._ever_had_tasks = True
-            self._first_empty_ledger_ts = None  # reset if we see tasks again
-        elif self._first_empty_ledger_ts is None:
-            # First time seeing empty ledger
-            self._first_empty_ledger_ts = time.time()
-
-        # Check if we should terminate due to planning window expiration
-        # If we've ever had tasks (meaning planning ran) and now have an empty ledger
-        # that has persisted beyond the planning window, terminate the run
-        if (
-            self._ever_had_tasks
-            and total_tasks == 0
-            and self._first_empty_ledger_ts is not None
-            and time.time() - self._first_empty_ledger_ts >= self._config.planning_window_s
-        ):
-            logger.info(
-                "Planning window expired (%.1fs) with empty ledger after having seen tasks - "
-                "terminating run to prevent indefinite idling",
-                time.time() - self._first_empty_ledger_ts,
-            )
-            self._closure_outcome = RunClosureOutcome.FAILED
-            self._running = False
-            return result
-
         if not self._config.evolve_mode and result.open_tasks == result.active_agents == 0 and _raw_open == 0:
             refreshed_tasks_by_status = tasks_by_status
             try:
@@ -2611,6 +2574,7 @@ class Orchestrator:
             now=time.time(),
             grace_s=grace_s,
             min_ticks=min_ticks,
+            planning_window_s=resolve_planning_window_s(self._config.planning_window_s),
         )
         if not verdict.stalled:
             logger.debug(
@@ -2659,7 +2623,13 @@ class Orchestrator:
         _stuck_ids = sorted(
             str(task.id) for status, tasks in settled.items() if status in ACTIVE_UNFINISHED_STATUSES for task in tasks
         )
-        if not _stuck_ids:
+        # An empty ledger has no task to fail, and that absence IS the
+        # verdict rather than a reason to doubt it: the planning task never
+        # landed a graph, so there is nothing to mark stuck and nothing that
+        # can arrive. Treating "no stuck task" as "run continues" here is
+        # what left that run ticking to its wall-clock timeout.
+        _ledger_empty = not any(settled.values())
+        if not _stuck_ids and not _ledger_empty:
             logger.info(
                 "run_stall_check: no actively-unfinished task left after the %.1fs settle "
                 "window (tick #%d) - run continues",

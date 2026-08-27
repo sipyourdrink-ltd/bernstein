@@ -13,6 +13,11 @@ from bernstein.core.models import (
     Task,
     TaskStatus,
 )
+from bernstein.core.orchestration.run_stall import (
+    RunStallState,
+    evaluate_run_stall,
+    resolve_planning_window_s,
+)
 from bernstein.core.orchestrator import Orchestrator
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
@@ -137,179 +142,172 @@ def _build_orchestrator(
     return Orchestrator(cfg, spawner, tmp_path, client=client)
 
 
+def _empty_ledger() -> dict[str, list[Task]]:
+    """A ledger with no task in any status - the shape from the incident."""
+    return {"open": [], "claimed": [], "done": [], "failed": []}
+
+
 class TestPlanningWindow:
     """Tests for the planning window functionality."""
 
-    def test_initial_empty_ledger_does_not_terminate(self, tmp_path: Path) -> None:
-        """Orchestrator should not terminate on initial empty ledger (no tasks ever seen)."""
-
-        # No tasks at all - initial state
-        def handler(request: httpx.Request) -> httpx.Response:
-            if request.method == "GET" and request.url.path == "/tasks":
-                return httpx.Response(200, json=[])
-            return httpx.Response(404)
-
-        transport = httpx.MockTransport(handler)
-        config = OrchestratorConfig(
-            planning_window_s=1.0,  # 1 second for fast test
-            max_agents=1,
-            poll_interval_s=0.1,
-            server_url="http://testserver",
+    def test_empty_ledger_inside_the_window_is_not_a_stall(self) -> None:
+        """Planning is allowed to be slow; an empty ledger starts benign."""
+        state, verdict = evaluate_run_stall(
+            RunStallState(),
+            _empty_ledger(),
+            now=1000.0,
+            grace_s=1800.0,
+            min_ticks=1,
+            planning_window_s=300.0,
         )
-        orch = _build_orchestrator(tmp_path, transport, config=config)
+        assert verdict.stalled is False
+        assert "startup window" in verdict.reason
 
-        # Run multiple ticks - should not terminate
-        for _ in range(10):
-            orch.tick()
-            assert orch._running is True, "Orchestrator should still be running"
-            assert orch._closure_outcome == RunClosureOutcome.COMPLETED
-            # Verify planning window state
-            assert orch._ever_had_tasks is False
-            assert orch._first_empty_ledger_ts is not None  # First empty ledger timestamp set
-
-    def test_planning_window_terminates_after_seeing_tasks_then_empty(self, tmp_path: Path) -> None:
-        """Orchestrator should terminate after seeing tasks then empty ledger for planning_window_s."""
-        # First return some tasks, then return empty
-        task_call_count = 0
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            nonlocal task_call_count
-            if request.method == "GET" and request.url.path == "/tasks":
-                task_call_count += 1
-                if task_call_count <= 2:
-                    # First two calls return a task
-                    task = _make_task(id=f"T-{task_call_count}")
-                    return httpx.Response(200, json=[_task_as_dict(task)])
-                else:
-                    # Subsequent calls return empty
-                    return httpx.Response(200, json=[])
-            if request.method == "POST" and "/claim" in request.url.path:
-                return httpx.Response(200, json=_task_as_dict(_make_task()))
-            return httpx.Response(404)
-
-        transport = httpx.MockTransport(handler)
-        # Set planning window to 0.5 seconds for fast test
-        config = OrchestratorConfig(
-            planning_window_s=0.5,
-            max_agents=1,
-            poll_interval_s=0.1,
-            server_url="http://testserver",
+    def test_empty_ledger_past_the_window_is_a_stall(self) -> None:
+        """Past the bound an empty ledger is planning having failed, not startup."""
+        state, verdict = evaluate_run_stall(
+            RunStallState(),
+            _empty_ledger(),
+            now=1000.0,
+            grace_s=1800.0,
+            min_ticks=1,
+            planning_window_s=300.0,
         )
-        orch = _build_orchestrator(tmp_path, transport, config=config)
-
-        # Run ticks until we've seen tasks and then empty for planning_window_s
-        start_time = time.time()
-        while orch._running and (time.time() - start_time) < 2.0:  # Safety timeout
-            orch.tick()
-            time.sleep(0.05)  # Small sleep to allow time to pass
-
-        # Should have terminated due to planning window expiration
-        assert orch._running is False, "Orchestrator should have stopped"
-        assert orch._closure_outcome == RunClosureOutcome.FAILED
-        assert orch._ever_had_tasks is True
-        assert orch._first_empty_ledger_ts is not None
-
-    def test_seeing_tasks_resets_empty_ledger_timer(self, tmp_path: Path) -> None:
-        """Seeing tasks after empty ledger should reset the planning window timer."""
-        # Pattern: empty -> tasks -> empty -> should not terminate yet
-        call_count = 0
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            nonlocal call_count
-            if request.method == "GET" and request.url.path == "/tasks":
-                call_count += 1
-                if call_count == 1:
-                    # First call: empty
-                    return httpx.Response(200, json=[])
-                elif call_count == 2:
-                    # Second call: has tasks
-                    task = _make_task(id="T-1")
-                    return httpx.Response(200, json=[_task_as_dict(task)])
-                elif call_count == 3:
-                    # Third call: empty again
-                    return httpx.Response(200, json=[])
-                else:
-                    # Fourth call: empty again
-                    return httpx.Response(200, json=[])
-            if request.method == "POST" and "/claim" in request.url.path:
-                return httpx.Response(200, json=_task_as_dict(_make_task()))
-            return httpx.Response(404)
-
-        transport = httpx.MockTransport(handler)
-        config = OrchestratorConfig(
-            planning_window_s=0.3,  # 300ms
-            max_agents=1,
-            poll_interval_s=0.05,
-            server_url="http://testserver",
+        assert verdict.stalled is False, "the first tick only starts the clock"
+        state, verdict = evaluate_run_stall(
+            state,
+            _empty_ledger(),
+            now=1301.0,
+            grace_s=1800.0,
+            min_ticks=1,
+            planning_window_s=300.0,
         )
-        orch = _build_orchestrator(tmp_path, transport, config=config)
+        assert verdict.stalled is True
+        assert "planning never produced a task graph" in verdict.reason
 
-        # Run enough ticks to go through the sequence
-        for i in range(20):  # Enough ticks at 50ms intervals = 1 second total
-            orch.tick()
-            assert orch._running is True, f"Should still be running after tick {i}"
-            time.sleep(0.02)  # 20ms sleep
+    def test_empty_ledger_clock_accumulates_across_ticks(self) -> None:
+        """The clock must accumulate; resetting it each tick is the original defect."""
+        state = RunStallState()
+        verdict = None
+        for tick in range(6):
+            state, verdict = evaluate_run_stall(
+                state,
+                _empty_ledger(),
+                now=1000.0 + tick * 10.0,
+                grace_s=1800.0,
+                min_ticks=1,
+                planning_window_s=300.0,
+            )
+        assert verdict is not None
+        assert verdict.stalled is False
+        assert state.observed_ticks == 6, "each empty tick must count toward the window"
+        assert verdict.quiet_for_s == 50.0
 
-        # After seeing tasks again, the timer should be reset
-        # We've seen: empty(1) -> tasks(2) -> empty(3) -> empty(4+)
-        # The planning window should restart after seeing tasks at call_count=2
-        # So we should not have terminated yet
-        assert orch._ever_had_tasks is True
-        assert orch._first_empty_ledger_ts is not None
-
-    def test_planning_window_respected_when_tasks_appear_during_window(self, tmp_path: Path) -> None:
-        """If tasks appear during the planning window, timer should reset."""
-        call_count = 0
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            nonlocal call_count
-            if request.method == "GET" and request.url.path == "/tasks":
-                call_count += 1
-                if call_count <= 3:
-                    # First 3 calls: empty (starts planning window)
-                    return httpx.Response(200, json=[])
-                else:
-                    # After that: has tasks (should reset timer)
-                    task = _make_task(id=f"T-{call_count}")
-                    return httpx.Response(200, json=[_task_as_dict(task)])
-            if request.method == "POST" and "/claim" in request.url.path:
-                return httpx.Response(200, json=_task_as_dict(_make_task()))
-            return httpx.Response(404)
-
-        transport = httpx.MockTransport(handler)
-        config = OrchestratorConfig(
-            planning_window_s=0.4,  # 400ms
-            max_agents=1,
-            poll_interval_s=0.1,
-            server_url="http://testserver",
+    def test_empty_ledger_stall_still_needs_the_consecutive_tick_floor(self) -> None:
+        """A single time discontinuity must not end a run on its own."""
+        state, verdict = evaluate_run_stall(
+            RunStallState(),
+            _empty_ledger(),
+            now=1000.0,
+            grace_s=1800.0,
+            min_ticks=5,
+            planning_window_s=300.0,
         )
-        orch = _build_orchestrator(tmp_path, transport, config=config)
+        state, verdict = evaluate_run_stall(
+            state,
+            _empty_ledger(),
+            now=99999.0,
+            grace_s=1800.0,
+            min_ticks=5,
+            planning_window_s=300.0,
+        )
+        assert verdict.stalled is False, "2 ticks is under the 5-tick floor"
 
-        # Run for longer than planning window but with tasks appearing during it
-        start_time = time.time()
-        while orch._running and (time.time() - start_time) < 1.5:  # Run for 1.5 seconds
-            orch.tick()
-            time.sleep(0.05)
+    def test_a_task_appearing_clears_the_empty_ledger_clock(self) -> None:
+        """A slow planner that lands a graph must not inherit the empty clock."""
+        state, _ = evaluate_run_stall(
+            RunStallState(),
+            _empty_ledger(),
+            now=1000.0,
+            grace_s=1800.0,
+            min_ticks=1,
+            planning_window_s=300.0,
+        )
+        populated = _empty_ledger()
+        populated["open"] = [_make_task(id="T-001")]
+        state, verdict = evaluate_run_stall(
+            state,
+            populated,
+            now=1400.0,
+            grace_s=1800.0,
+            min_ticks=1,
+            planning_window_s=300.0,
+        )
+        assert verdict.stalled is False, "work exists; the empty-ledger bound no longer applies"
 
-        # Should still be running because tasks appeared during the window
-        # and reset the timer
-        assert orch._running is True
-        assert orch._closure_outcome == RunClosureOutcome.COMPLETED
-        assert orch._ever_had_tasks is True
+    def test_run_with_an_empty_ledger_stops_as_failed(self, tmp_path: Path) -> None:
+        """End to end: the tick loop terminates such a run, and says it failed.
+
+        This is the shape from the incident - the planning task never lands a
+        graph, so ``done``/``failed``/``open`` all stay empty and no agent can
+        ever be acquired. Driven with a zero-length window so the test does not
+        wait out a real one. ``tick()`` is called directly, so ``_running``
+        (which only ``run()`` raises) is not the signal here - the stall
+        backstop having stopped the run is.
+        """
+        monkey = pytest.MonkeyPatch()
+        monkey.setenv("BERNSTEIN_PLANNING_WINDOW_S", "0")
+        monkey.setenv("BERNSTEIN_STALLED_RUN_TICKS", "1")
+        monkey.setenv("BERNSTEIN_QUIESCENCE_SETTLE_S", "0")
+        try:
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                if request.method == "GET" and request.url.path == "/tasks":
+                    return httpx.Response(200, json=[])
+                return httpx.Response(200, json={})
+
+            orch = _build_orchestrator(
+                tmp_path,
+                httpx.MockTransport(handler),
+                config=OrchestratorConfig(
+                    max_agents=1,
+                    poll_interval_s=1,
+                    server_url="http://testserver",
+                ),
+            )
+            for _ in range(5):
+                orch.tick()
+
+            assert orch._run_stall_stopped is True, "an empty ledger must not tick forever"
+            assert orch._closure_outcome == RunClosureOutcome.FAILED, (
+                "a run that produced no task graph did not succeed"
+            )
+        finally:
+            monkey.undo()
 
     def test_planning_window_can_be_configured_via_env_var(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Planning window can be configured via BERNSTEIN_PLANNING_WINDOW_S env var."""
+        """BERNSTEIN_PLANNING_WINDOW_S overrides the configured window."""
         monkeypatch.setenv("BERNSTEIN_PLANNING_WINDOW_S", "2.5")
+        assert resolve_planning_window_s(300.0) == 2.5
 
-        # Reload defaults to pick up the env var
+    def test_planning_window_falls_back_to_config_without_env_var(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without the env var the configured value is used unchanged."""
+        monkeypatch.delenv("BERNSTEIN_PLANNING_WINDOW_S", raising=False)
+        assert resolve_planning_window_s(300.0) == 300.0
+
+    def test_planning_window_env_var_garbage_falls_back_to_config(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An unparseable env var must not crash the orchestrator tick."""
+        monkeypatch.setenv("BERNSTEIN_PLANNING_WINDOW_S", "not-a-number")
+        assert resolve_planning_window_s(300.0) == 300.0
+
+    def test_orchestrator_config_takes_planning_window_from_defaults(self) -> None:
+        """The config field is derived from the canonical defaults section."""
         from bernstein.core import defaults
-        from bernstein.core.defaults import reset
 
-        reset()  # Clear any overrides
-
-        # Check that the default was picked up
-        assert defaults.ORCHESTRATOR.planning_window_s == 2.5
-
-        reset()  # Clean up
+        assert OrchestratorConfig().planning_window_s == defaults.ORCHESTRATOR.planning_window_s

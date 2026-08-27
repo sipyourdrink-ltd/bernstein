@@ -142,7 +142,8 @@ class OrchestratorDefaults:
     # ran and failed). This prevents idling indefinitely when the planning
     # task fails and the ledger stays empty. Tunable via
     # ``tuning.orchestrator.planning_window_s`` or the
-    # ``BERNSTEIN_PLANNING_WINDOW_S`` env var (checked first).
+    # ``BERNSTEIN_PLANNING_WINDOW_S`` env var, which takes precedence and is
+    # read at the use site by ``run_stall.resolve_planning_window_s``.
     planning_window_s: float = 300.0  # 5 minutes
 
     max_dead_agents_kept: int = 20  # bounded dead-agent history for debugging
