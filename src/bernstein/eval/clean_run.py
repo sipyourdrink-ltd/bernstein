@@ -1669,6 +1669,113 @@ def build_equivalence_attestation(
 
 
 # ---------------------------------------------------------------------------
+# Equivalence attestation offline operations
+# ---------------------------------------------------------------------------
+
+
+def read_equivalence_attestation(workdir: Path, attestation_hash: str) -> EquivalenceAttestation | None:
+    """Return the stored equivalence attestation for *attestation_hash*, or ``None``."""
+    try:
+        path = clean_run_attestation_path(workdir, attestation_hash)
+    except ValueError:
+        return None
+    try:
+        raw = _read_leaf_text(path)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        logger.warning("eval: equivalence attestation leaf refused a no-follow open at %s", path)
+        return None
+    try:
+        return EquivalenceAttestation.from_dict(json.loads(raw))
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        logger.warning("eval: malformed equivalence attestation at %s", path)
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class EquivalenceVerifyResult:
+    """Outcome of an offline equivalence attestation verification."""
+
+    ok: bool
+    reason: str
+    attestation: EquivalenceAttestation | None
+
+
+def verify_equivalence_attestation(
+    *,
+    workdir: Path,
+    lineage_root: Path,
+    hmac_key: bytes,
+    attestation_hash: str,
+) -> EquivalenceVerifyResult:
+    """Re-verify the equivalence attestation for *attestation_hash* offline.
+
+    The stored verdict is never trusted. In order:
+
+    * the stored bytes parse under exact-type strictness
+      (:class:`CleanRunSchemaError` otherwise);
+    * the attestation hash recomputes from the stored body;
+    * the lineage spine verifies and anchors the attestation's canonical
+      bytes at the recorded entry hash.
+    """
+    try:
+        path = clean_run_attestation_path(workdir, attestation_hash)
+    except ValueError as exc:
+        return EquivalenceVerifyResult(ok=False, reason=str(exc), attestation=None)
+    try:
+        raw = _read_leaf_text(path)
+    except FileNotFoundError:
+        return EquivalenceVerifyResult(ok=False, reason=f"no attestation for {attestation_hash!r}", attestation=None)
+    except OSError as exc:
+        return EquivalenceVerifyResult(
+            ok=False,
+            reason=f"attestation leaf could not be opened without following links; refusing: {exc}",
+            attestation=None,
+        )
+    try:
+        attestation = EquivalenceAttestation.from_dict(json.loads(raw))
+    except json.JSONDecodeError:
+        return EquivalenceVerifyResult(ok=False, reason="stored attestation is not valid JSON", attestation=None)
+    except CleanRunSchemaError as exc:
+        return EquivalenceVerifyResult(
+            ok=False,
+            reason=f"stored attestation is schema-invalid: {exc}",
+            attestation=None,
+        )
+
+    if attestation.attestation_hash != attestation_hash:
+        return EquivalenceVerifyResult(
+            ok=False,
+            reason="attestation hash does not match request",
+            attestation=attestation,
+        )
+
+    if _hash_obj(attestation.body()) != attestation.attestation_hash:
+        return EquivalenceVerifyResult(
+            ok=False,
+            reason="attestation_hash does not recompute from the stored body (tampered)",
+            attestation=attestation,
+        )
+
+    # Verify the lineage spine anchor.
+    spine = LineageSpine(lineage_root, run_id=EVAL_CLEAN_RUN_RUN_ID, hmac_key=hmac_key)
+    content = attestation.canonical_bytes()
+    expected_content = content_hash_of(content)
+    anchored = any(
+        entry.entry_hash == attestation.journal_entry_hash and entry.content_hash == expected_content
+        for entry in spine.iter_entries()
+    )
+    if not anchored:
+        return EquivalenceVerifyResult(
+            ok=False,
+            reason="attestation is not anchored in the eval-clean-run spine",
+            attestation=attestation,
+        )
+    return EquivalenceVerifyResult(ok=True, reason="", attestation=attestation)
+
+
+# ---------------------------------------------------------------------------
 # Offline receipt projection
 # ---------------------------------------------------------------------------
 
@@ -1754,8 +1861,10 @@ __all__ = [
     "extract_activity",
     "project_clean_run_receipt",
     "read_clean_run_attestation",
+    "read_equivalence_attestation",
     "recompute_attestation_hash",
     "scan_activity",
     "scope_boundary",
     "verify_clean_run_attestation",
+    "verify_equivalence_attestation",
 ]
