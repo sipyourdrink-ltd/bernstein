@@ -189,12 +189,13 @@ class TestRunAgentTestMutationGateSync:
         original = qg._get_intent_diff
         try:
             qg._get_intent_diff = lambda *_: diff  # type: ignore[attr-defined]
-            passed, detail, score = run_agent_test_mutation_gate_sync(config, task, tmp_path)
+            passed, detail, score, evidence_status = run_agent_test_mutation_gate_sync(config, task, tmp_path)
         finally:
             qg._get_intent_diff = original
 
         assert passed is True
         assert score is None
+        assert evidence_status is None
         assert "No agent-written test files" in detail
 
     def test_returns_pass_when_no_source_inferred(self, tmp_path: Path) -> None:
@@ -208,12 +209,13 @@ class TestRunAgentTestMutationGateSync:
         original = qg._get_intent_diff
         try:
             qg._get_intent_diff = lambda *_: diff  # type: ignore[attr-defined]
-            passed, detail, score = run_agent_test_mutation_gate_sync(config, task, tmp_path)
+            passed, detail, score, evidence_status = run_agent_test_mutation_gate_sync(config, task, tmp_path)
         finally:
             qg._get_intent_diff = original
 
         assert passed is True
         assert score is None
+        assert evidence_status is None
         assert "Could not infer source files" in detail or "No agent-written test files" in detail
 
     def test_config_fields_exist(self) -> None:
