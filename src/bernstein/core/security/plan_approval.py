@@ -243,12 +243,23 @@ def _estimate_task_cost(task: Task) -> TaskCostEstimate:
 # ---------------------------------------------------------------------------
 
 
-def create_plan(goal: str, tasks: list[Task]) -> TaskPlan:
+def create_plan(
+    goal: str,
+    tasks: list[Task],
+    *,
+    journal_path: Path | None = None,
+) -> TaskPlan:
     """Create a TaskPlan from a list of planned tasks with cost/risk estimates.
+
+    When a journal path is provided, verifies the journal chain and binds the
+    verification result (head and verified status) into the plan rendering.
 
     Args:
         goal: The original goal that produced these tasks.
         tasks: Tasks to include in the plan (should have status=PLANNED).
+        journal_path: Optional path to the run journal for chain verification.
+            When provided, the journal is verified and the result is bound into
+            the plan rendering for tamper detection.
 
     Returns:
         A populated TaskPlan ready for human review.
@@ -266,7 +277,23 @@ def create_plan(goal: str, tasks: list[Task]) -> TaskPlan:
         total_estimated_minutes=total_minutes,
         high_risk_tasks=high_risk,
     )
-    plan.rendering_hash = compute_plan_rendering(plan).rendering_hash
+
+    # Verify journal if path provided
+    journal_head: str | None = None
+    journal_verified: bool | None = None
+    if journal_path is not None:
+        from bernstein.core.replay.journal import verify_journal
+
+        result = verify_journal(journal_path)
+        journal_head = result.head
+        # Journal is verified when chain is consistent and no discarded lines
+        journal_verified = result.chain_consistent and not result.discarded_line_indices
+
+    plan.rendering_hash = compute_plan_rendering(
+        plan,
+        journal_head=journal_head,
+        journal_verified=journal_verified,
+    ).rendering_hash
     return plan
 
 

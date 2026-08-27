@@ -339,7 +339,7 @@ def test_journal_head_plus_journal_verified_bind_rendering() -> None:
     # Same verified status, different head → different hash
     h3 = compute_plan_rendering(plan, journal_head="head2", journal_verified=True)
     assert h1.rendering_hash != h3.rendering_hash
-    assert h1.journal_verified == h3.journal_verified == True
+    assert h1.journal_verified is h3.journal_verified is True
     assert h1.journal_head != h3.journal_head
     # Both different → different hash
     h4 = compute_plan_rendering(plan, journal_head="head2", journal_verified=False)
