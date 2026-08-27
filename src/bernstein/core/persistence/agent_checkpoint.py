@@ -108,6 +108,27 @@ def compute_interpreter_hash(adapter: str, model: str) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def compute_observations_hash(observations: dict[str, str]) -> str:
+    """Stable SHA-256 hash of the observations mapping.
+
+    Observations are key-value pairs captured during agent execution.
+    This hash is stable across runs: the same observations always produce
+    the same digest regardless of the original dict key order.
+
+    Args:
+        observations: Mapping of observation keys to values.
+
+    Returns:
+        Lowercase hex SHA-256 string.
+    """
+    payload = json.dumps(
+        observations,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
 def checkpoint_hash(checkpoint: AgentCheckpoint) -> str:
     """Stable SHA-256 fingerprint of an :class:`AgentCheckpoint`.
 
