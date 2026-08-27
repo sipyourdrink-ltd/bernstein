@@ -230,6 +230,385 @@ class TestProducerPath:
         assert result.reason == "evidence-missing"
         assert result.blocked is False
 
+    def test_comment_quality_gate_plugin_exception_is_inconclusive(self, tmp_path: Path) -> None:
+        """When comment quality plugin throws, return inconclusive with runner-died-before-output."""
+        config = QualityGatesConfig(
+            pipeline=[
+                GatePipelineStep(name="custom_comment_quality", required=True, condition="python_changed"),
+            ],
+            cache_enabled=False,
+        )
+        runner = GateRunner(config, tmp_path)
+
+        def boom(_files, _run_dir, _title, _description):
+            raise RuntimeError("plugin crashed")
+
+        runner._plugin_registry = lambda: type(  # type: ignore[method-assign]
+            "FakeRegistry",
+            (),
+            {"get": lambda self, _name: type("P", (), {"run": staticmethod(boom)})()},
+        )()
+
+        import asyncio
+
+        from bernstein.core.models import Complexity, Scope, Task
+
+        task = Task(
+            id="T-comment-Boom",
+            title="t",
+            description="d",
+            role="backend",
+            scope=Scope.MEDIUM,
+            complexity=Complexity.MEDIUM,
+            owned_files=["src/a.py"],
+        )
+
+        result = asyncio.run(
+            runner._execute_plugin_gate(
+                GatePipelineStep(name="custom_comment_quality", required=True, condition="python_changed"),
+                task,
+                tmp_path,
+                ["src/a.py"],
+            )
+        )
+        assert result.status == "inconclusive"
+        assert result.reason == "runner-died-before-output"
+        assert result.blocked is True
+
+    def test_comment_quality_gate_plugin_exception_optional_is_inconclusive(self, tmp_path: Path) -> None:
+        """When comment quality plugin throws at optional gate, inconclusive doesn't block."""
+        config = QualityGatesConfig(
+            pipeline=[
+                GatePipelineStep(name="custom_comment_quality", required=False, condition="python_changed"),
+            ],
+            cache_enabled=False,
+        )
+        runner = GateRunner(config, tmp_path)
+
+        def boom(_files, _run_dir, _title, _description):
+            raise RuntimeError("plugin crashed")
+
+        runner._plugin_registry = lambda: type(  # type: ignore[method-assign]
+            "FakeRegistry",
+            (),
+            {"get": lambda self, _name: type("P", (), {"run": staticmethod(boom)})()},
+        )()
+
+        import asyncio
+
+        from bernstein.core.models import Complexity, Scope, Task
+
+        task = Task(
+            id="T-comment-Boom-Opt",
+            title="t",
+            description="d",
+            role="backend",
+            scope=Scope.MEDIUM,
+            complexity=Complexity.MEDIUM,
+            owned_files=["src/a.py"],
+        )
+
+        result = asyncio.run(
+            runner._execute_plugin_gate(
+                GatePipelineStep(name="custom_comment_quality", required=False, condition="python_changed"),
+                task,
+                tmp_path,
+                ["src/a.py"],
+            )
+        )
+        assert result.status == "inconclusive"
+        assert result.reason == "runner-died-before-output"
+        assert result.blocked is False
+
+    def test_integration_test_gen_gate_exception_is_inconclusive(self, tmp_path: Path, monkeypatch) -> None:
+        """When integration test generation crashes, return inconclusive with runner-died-before-output."""
+        config = QualityGatesConfig(
+            pipeline=[
+                GatePipelineStep(name="integration_test_gen", required=True, condition="python_changed"),
+            ],
+            cache_enabled=False,
+        )
+        runner = GateRunner(config, tmp_path)
+        import asyncio
+
+        from bernstein.core.models import Complexity, Scope, Task
+
+        task = Task(
+            id="T-integ-Boom",
+            title="t",
+            description="d",
+            role="backend",
+            scope=Scope.MEDIUM,
+            complexity=Complexity.MEDIUM,
+            owned_files=["src/a.py"],
+        )
+
+        async def boom(_task, _run_dir, _cfg):
+            raise RuntimeError("generator crashed")
+
+        monkeypatch.setattr("bernstein.core.quality.integration_test_gen.generate_and_run", boom)
+
+        result = asyncio.run(
+            runner._run_integration_test_gen_gate(
+                GatePipelineStep(name="integration_test_gen", required=True, condition="python_changed"),
+                task,
+                tmp_path,
+            )
+        )
+        assert result.status == "inconclusive"
+        assert result.reason == "runner-died-before-output"
+        assert result.blocked is True
+
+    def test_integration_test_gen_gate_optional_gate_is_inconclusive_not_blocking(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """When integration test generation crashes at optional gate, inconclusive doesn't block."""
+        config = QualityGatesConfig(
+            pipeline=[
+                GatePipelineStep(name="integration_test_gen", required=False, condition="python_changed"),
+            ],
+            cache_enabled=False,
+        )
+        runner = GateRunner(config, tmp_path)
+        import asyncio
+
+        from bernstein.core.models import Complexity, Scope, Task
+
+        task = Task(
+            id="T-integ-Boom-Opt",
+            title="t",
+            description="d",
+            role="backend",
+            scope=Scope.MEDIUM,
+            complexity=Complexity.MEDIUM,
+            owned_files=["src/a.py"],
+        )
+
+        async def boom(_task, _run_dir, _cfg):
+            raise RuntimeError("generator crashed")
+
+        monkeypatch.setattr("bernstein.core.quality.integration_test_gen.generate_and_run", boom)
+
+        result = asyncio.run(
+            runner._run_integration_test_gen_gate(
+                GatePipelineStep(name="integration_test_gen", required=False, condition="python_changed"),
+                task,
+                tmp_path,
+            )
+        )
+        assert result.status == "inconclusive"
+        assert result.reason == "runner-died-before-output"
+        assert result.blocked is False
+
+    def test_coverage_gate_evaluator_exception_is_inconclusive(self, tmp_path: Path, monkeypatch) -> None:
+        """When coverage gate evaluator crashes, return inconclusive with runner-died-before-output."""
+        config = QualityGatesConfig(
+            pipeline=[
+                GatePipelineStep(name="coverage_delta", required=True, condition="python_changed"),
+            ],
+            cache_enabled=False,
+        )
+        runner = GateRunner(config, tmp_path)
+        monkeypatch.setattr(
+            "bernstein.core.quality.coverage_gate.CoverageGate",
+            lambda *_w, _r, base_ref=None: (_ for _ in ()).throw(RuntimeError("coverage crashed")),
+        )
+        result = runner._run_coverage_delta_gate_sync(
+            GatePipelineStep(name="coverage_delta", required=True, condition="python_changed"),
+            tmp_path,
+            ["src/a.py"],
+        )
+        assert result.status == "inconclusive"
+        assert result.reason == "runner-died-before-output"
+        assert result.blocked is True
+
+    def test_coverage_gate_evaluator_optional_exception_is_inconclusive_not_blocking(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """When coverage evaluator crashes at optional gate, inconclusive doesn't block."""
+        config = QualityGatesConfig(
+            pipeline=[
+                GatePipelineStep(name="coverage_delta", required=False, condition="python_changed"),
+            ],
+            cache_enabled=False,
+        )
+        runner = GateRunner(config, tmp_path)
+        monkeypatch.setattr(
+            "bernstein.core.quality.coverage_gate.CoverageGate",
+            lambda *_w, _r, base_ref=None: (_ for _ in ()).throw(RuntimeError("coverage crashed")),
+        )
+        result = runner._run_coverage_delta_gate_sync(
+            GatePipelineStep(name="coverage_delta", required=False, condition="python_changed"),
+            tmp_path,
+            ["src/a.py"],
+        )
+        assert result.status == "inconclusive"
+        assert result.reason == "runner-died-before-output"
+        assert result.blocked is False
+
+    def test_benchmark_gate_missing_evaluation_is_inconclusive(self, tmp_path: Path, monkeypatch) -> None:
+        """When benchmark gate evaluator crashes, return inconclusive with runner-died-before-output."""
+        config = QualityGatesConfig(
+            pipeline=[
+                GatePipelineStep(name="benchmark", required=True, condition="always"),
+            ],
+            cache_enabled=False,
+        )
+        runner = GateRunner(config, tmp_path)
+        monkeypatch.setattr(
+            "bernstein.core.quality.benchmark_gate.BenchmarkGate",
+            lambda *_: (_ for _ in ()).throw(RuntimeError("benchmark crashed")),
+        )
+        result = runner._run_benchmark_gate_sync(
+            GatePipelineStep(name="benchmark", required=True, condition="always"),
+            tmp_path,
+        )
+        assert result.status == "inconclusive"
+        assert result.reason == "runner-died-before-output"
+        assert result.blocked is True
+
+    def test_benchmark_gate_optional_gate_exception_is_inconclusive_not_blocking(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """When benchmark evaluator crashes at optional gate, inconclusive doesn't block."""
+        config = QualityGatesConfig(
+            pipeline=[
+                GatePipelineStep(name="benchmark", required=False, condition="always"),
+            ],
+            cache_enabled=False,
+        )
+        runner = GateRunner(config, tmp_path)
+        monkeypatch.setattr(
+            "bernstein.core.quality.benchmark_gate.BenchmarkGate",
+            lambda *_: (_ for _ in ()).throw(RuntimeError("benchmark crashed")),
+        )
+        result = runner._run_benchmark_gate_sync(
+            GatePipelineStep(name="benchmark", required=False, condition="always"),
+            tmp_path,
+        )
+        assert result.status == "inconclusive"
+        assert result.reason == "runner-died-before-output"
+        assert result.blocked is False
+
+    def test_mutation_gate_missing_evidence_is_inconclusive(self, tmp_path: Path, monkeypatch) -> None:
+        """When mutation gate evidence missing, return inconclusive with evidence-missing."""
+        config = QualityGatesConfig(
+            pipeline=[
+                GatePipelineStep(name="mutation_testing", required=True, condition="python_changed"),
+            ],
+            cache_enabled=False,
+        )
+        runner = GateRunner(config, tmp_path)
+        monkeypatch.setattr(
+            "bernstein.core.quality_gates.run_mutation_gate_sync",
+            lambda *_: (None, "tool missing", None, "evidence-missing"),
+        )
+        import asyncio
+
+        from bernstein.core.models import Complexity, Scope, Task
+
+        task = Task(
+            id="T-mutation",
+            title="t",
+            description="d",
+            role="backend",
+            scope=Scope.MEDIUM,
+            complexity=Complexity.MEDIUM,
+            owned_files=["src/a.py"],
+        )
+
+        result = asyncio.run(
+            runner._execute_mutation_gate(
+                GatePipelineStep(name="mutation_testing", required=True, condition="python_changed"),
+                task,
+                tmp_path,
+                ["src/a.py"],
+            )
+        )
+        assert result.status == "inconclusive"
+        assert result.reason == "evidence-missing"
+        assert result.blocked is True
+
+    def test_mutation_gate_optional_gate_missing_evidence_is_inconclusive_not_blocking(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """When mutation evidence missing at optional gate, inconclusive doesn't block."""
+        config = QualityGatesConfig(
+            pipeline=[
+                GatePipelineStep(name="mutation_testing", required=False, condition="python_changed"),
+            ],
+            cache_enabled=False,
+        )
+        runner = GateRunner(config, tmp_path)
+        monkeypatch.setattr(
+            "bernstein.core.quality_gates.run_mutation_gate_sync",
+            lambda *_: (None, "tool missing", None, "evidence-missing"),
+        )
+        import asyncio
+
+        from bernstein.core.models import Complexity, Scope, Task
+
+        task = Task(
+            id="T-mutation",
+            title="t",
+            description="d",
+            role="backend",
+            scope=Scope.MEDIUM,
+            complexity=Complexity.MEDIUM,
+            owned_files=["src/a.py"],
+        )
+
+        result = asyncio.run(
+            runner._execute_mutation_gate(
+                GatePipelineStep(name="mutation_testing", required=False, condition="python_changed"),
+                task,
+                tmp_path,
+                ["src/a.py"],
+            )
+        )
+        assert result.status == "inconclusive"
+        assert result.reason == "evidence-missing"
+        assert result.blocked is False
+
+    def test_agent_test_mutation_gate_missing_evidence_is_inconclusive(self, tmp_path: Path, monkeypatch) -> None:
+        """When agent test mutation gate evidence missing, return inconclusive with evidence-missing."""
+        config = QualityGatesConfig(
+            pipeline=[
+                GatePipelineStep(name="agent_test_mutation", required=True, condition="tests_changed"),
+            ],
+            cache_enabled=False,
+        )
+        runner = GateRunner(config, tmp_path)
+        monkeypatch.setattr(
+            "bernstein.core.quality_gates.run_agent_test_mutation_gate_sync",
+            lambda *_: (None, "tool missing", None, "evidence-missing"),
+        )
+        import asyncio
+
+        from bernstein.core.models import Complexity, Scope, Task
+
+        task = Task(
+            id="T-agent-test",
+            title="t",
+            description="d",
+            role="backend",
+            scope=Scope.MEDIUM,
+            complexity=Complexity.MEDIUM,
+            owned_files=["tests/test_a.py"],
+        )
+
+        result = asyncio.run(
+            runner._execute_mutation_gate(
+                GatePipelineStep(name="agent_test_mutation", required=True, condition="tests_changed"),
+                task,
+                tmp_path,
+                ["tests/test_a.py"],
+            )
+        )
+        assert result.status == "inconclusive"
+        assert result.reason == "evidence-missing"
+        assert result.blocked is True
+
     def test_command_could_not_run_is_inconclusive(self, tmp_path: Path) -> None:
         """OSError from subprocess.run (tool could not start) is absent
         evidence: inconclusive + evidence-missing, not fail."""
