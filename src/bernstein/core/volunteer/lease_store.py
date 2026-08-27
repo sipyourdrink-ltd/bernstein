@@ -418,6 +418,14 @@ class LeaseStore:
                         LeaseRefusalReason.ALREADY_SUBMITTED,
                         f"task {task_id} already carries a submission from worker {existing.worker_id}",
                     )
+                # A worker whose lease was reaped: distinguish "you were too slow"
+                # (LEASE_REASSIGNED) from "someone else holds it now"
+                # (ALREADY_LEASED).  Same check as _holder_refusal.
+                if (task_id, worker_id) in self._reassigned:
+                    return LeaseRefusal(
+                        LeaseRefusalReason.LEASE_REASSIGNED,
+                        f"lease on task {task_id} was taken back from worker {worker_id}",
+                    )
                 if existing.worker_id != worker_id:
                     return LeaseRefusal(
                         LeaseRefusalReason.ALREADY_LEASED,
@@ -433,6 +441,12 @@ class LeaseStore:
                     ttl_seconds=ttl_seconds,
                 )
                 return self._store_lease(renewed)
+            # A worker whose lease was reaped but nobody else has claimed yet.
+            if (task_id, worker_id) in self._reassigned:
+                return LeaseRefusal(
+                    LeaseRefusalReason.LEASE_REASSIGNED,
+                    f"lease on task {task_id} was taken back from worker {worker_id}",
+                )
             # Generation counts *holds* of this task, whoever held them and
             # however each ended, so it is strictly increasing per task and a
             # worker can always tell a lease of its own from a later one.
