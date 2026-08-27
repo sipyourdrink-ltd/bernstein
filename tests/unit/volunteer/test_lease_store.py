@@ -202,8 +202,6 @@ async def test_an_expired_lease_is_reassigned_exactly_once_under_concurrent_clai
 
 
 @pytest.mark.asyncio
-
-
 async def test_operations_by_a_worker_whose_lease_was_reaped_are_refused_as_lease_reassigned(tmp_path: Path) -> None:
     # When a lease expires and is reassigned, the original holder must not be
     # able to operate on the task.  The refusal reason must be LEASE_REASSIGNED
