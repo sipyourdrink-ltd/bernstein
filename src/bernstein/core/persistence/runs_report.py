@@ -292,20 +292,22 @@ class FailurePatternDraft:
     """One failure-pattern draft produced by :func:`detect_failure_patterns`.
 
     Attributes:
+        fingerprint: SHA-256 hex digest uniquely identifying this pattern.
         title: Human-readable one-line title summarizing the pattern.
         body: Detailed description including failure context and samples.
-        fingerprint: SHA-256 hex digest uniquely identifying this pattern.
         occurrence_count: How many runs share this failure pattern.
         most_recent_run_id: The run_id with the latest started_at timestamp.
         contributing_run_ids: All run_ids that contributed to this pattern.
+        sample_evidence: Representative evidence string for the pattern.
     """
 
+    fingerprint: str
     title: str
     body: str
-    fingerprint: str
     occurrence_count: int
     most_recent_run_id: str
     contributing_run_ids: list[str]
+    sample_evidence: str
 
 
 def detect_failure_patterns(runs: list[FinishedRun]) -> list[FailurePatternDraft]:
@@ -369,12 +371,13 @@ def detect_failure_patterns(runs: list[FinishedRun]) -> list[FailurePatternDraft
         )
 
         draft = FailurePatternDraft(
+            fingerprint=fingerprint,
             title=title,
             body=body,
-            fingerprint=fingerprint,
             occurrence_count=len(group_runs),
             most_recent_run_id=most_recent.run_id,
             contributing_run_ids=[r.run_id for r in sorted_runs],
+            sample_evidence=most_recent.evidence,
         )
         drafts.append(draft)
 
