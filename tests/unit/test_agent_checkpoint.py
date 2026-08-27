@@ -520,7 +520,7 @@ def test_checkpoint_hash_excludes_timing_but_includes_observations() -> None:
     # but MUST include observations to ensure the hash reflects the actual content
     from bernstein.core.persistence.agent_checkpoint import checkpoint_hash
     import time
-    
+
     cp1 = AgentCheckpoint(
         agent_id="h-agent",
         task_id="task-1",
@@ -546,7 +546,7 @@ def test_checkpoint_hash_excludes_timing_but_includes_observations() -> None:
 
 def test_checkpoint_hash_differs_when_observations_differ() -> None:
     from bernstein.core.persistence.agent_checkpoint import checkpoint_hash
-    
+
     cp1 = AgentCheckpoint(
         agent_id="diff-agent",
         task_id="task-1",
