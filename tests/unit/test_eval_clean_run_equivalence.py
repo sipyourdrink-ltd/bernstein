@@ -543,4 +543,3 @@ def test_verify_equivalence_attestation_not_anchored_in_spine(tmp_path: Path) ->
 
     assert result.ok is False
     assert "not anchored" in result.reason
-

@@ -1426,9 +1426,7 @@ def _load_run_journal(workdir: Path, run_id: str) -> list[dict[str, Any]]:
     return load_events(path).events
 
 
-def _load_equivalence_journal(
-    workdir: Path, run_id: str, journal_type: str
-) -> list[dict[str, Any]]:
+def _load_equivalence_journal(workdir: Path, run_id: str, journal_type: str) -> list[dict[str, Any]]:
     """Load an equivalence run's journal rows from disk; empty when unavailable.
 
     For an equivalence attestation with run_id ``<task_id>-equivalence``, the
@@ -1584,9 +1582,7 @@ def build_equivalence_attestation(
     first_divergent_step: int | None = None
     if original_attestation.verdict != verdict.value or original_matches_set != new_matches_set:
         # Find the first journal index where the match sets differ.
-        all_indices = sorted(
-            {m.index for m in original_attestation.matches} | {m.index for m in matches}
-        )
+        all_indices = sorted({m.index for m in original_attestation.matches} | {m.index for m in matches})
         for idx in all_indices:
             orig_match = any(m.index == idx for m in original_attestation.matches)
             new_match = any(m.index == idx for m in matches)
@@ -1870,9 +1866,7 @@ def verify_equivalence_attestation(
         attestation.original_journal_head == attestation.substituted_journal_head
         and attestation.first_divergent_step is None
     )
-    expected_verdict = (
-        EquivalenceVerdict.EQUIVALENT.value if heads_match else EquivalenceVerdict.DIVERGED.value
-    )
+    expected_verdict = EquivalenceVerdict.EQUIVALENT.value if heads_match else EquivalenceVerdict.DIVERGED.value
     if attestation.verdict != expected_verdict:
         return EquivalenceVerifyResult(
             ok=False,
