@@ -62,6 +62,7 @@ from bernstein.core.tasks.models import (
     Task,
     TaskStatus,
 )
+from bernstein.core.tasks.swarm_migration import mark_chunk_complete, mark_chunk_failed, maybe_reduce_swarm
 from bernstein.core.team_state import TeamStateStore
 from bernstein.core.tick_pipeline import (
     CompletionData,
@@ -4900,6 +4901,31 @@ def _janitor_reopen_max() -> int:
     return max(0, value)
 
 
+def _record_swarm_chunk_outcome(orch: Any, task: Task, *, passed: bool, reason: str = "") -> None:
+    """Advance a swarm-migration checkpoint when one of its chunk tasks lands.
+
+    Issue #4541: ``mark_chunk_complete``/``reduce_swarm`` had no caller
+    anywhere in the tree, so a swarm migration's checkpoint never learned
+    that a chunk finished. Every terminal outcome for a task carrying
+    ``swarm_plan_id``/``swarm_chunk_hash`` metadata (stamped by
+    :func:`bernstein.core.tasks.swarm_migration.spawn_swarm`) routes through
+    here. A task with no such metadata is not part of a swarm migration and
+    this is a no-op.
+    """
+    plan_id = task.metadata.get("swarm_plan_id")
+    chunk_hash = task.metadata.get("swarm_chunk_hash")
+    if not plan_id or not chunk_hash:
+        return
+    repo_root = orch._workdir
+    if passed:
+        mark_chunk_complete(plan_id, chunk_hash, repo_root)
+    else:
+        mark_chunk_failed(plan_id, chunk_hash, repo_root, files=tuple(task.owned_files), reason=reason)
+    report = maybe_reduce_swarm(plan_id, repo_root)
+    if report is not None:
+        orch._post_bulletin("status", report.to_bulletin_content())
+
+
 def _apply_janitor_verdict_action(orch: Any, task: Task, janitor_passed: bool) -> None:
     """Act on the janitor verdict for a completed task.
 
@@ -4922,6 +4948,7 @@ def _apply_janitor_verdict_action(orch: Any, task: Task, janitor_passed: bool) -
     """
     if janitor_passed:
         logger.debug("janitor_verdict_action: task=%s verdict=PASS action=none", task.id)
+        _record_swarm_chunk_outcome(orch, task, passed=True)
         return
 
     server_url: str | None = getattr(orch._config, "server_url", None)
@@ -4987,6 +5014,9 @@ def _apply_janitor_verdict_action(orch: Any, task: Task, janitor_passed: bool) -
         logger.info(
             "janitor_verdict_action: task=%s verdict=FAIL action=permanent_fail reason=reopen_budget_exhausted",
             task.id,
+        )
+        _record_swarm_chunk_outcome(
+            orch, task, passed=False, reason="reopen_budget_exhausted: janitor verification failed"
         )
 
 
@@ -5070,6 +5100,9 @@ def _apply_merge_failure_action(orch: Any, task: Task) -> None:
         logger.error(
             "merge_failure_action: task=%s action=permanent_fail reason=merge_back_failed_budget_exhausted",
             task.id,
+        )
+        _record_swarm_chunk_outcome(
+            orch, task, passed=False, reason="merge_back_failed: non-conflict merge-back failed"
         )
 
 

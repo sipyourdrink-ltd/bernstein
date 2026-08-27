@@ -57,11 +57,18 @@ The fanout:
 2. `chunk_targets(targets, chunk_size)` partitions into chunks.
 3. `spawn_swarm(plan)` emits one task per chunk with role=`backend`,
    scope=`small`.
-4. `reduce_swarm(parent_id, child_results)` aggregates pass/fail per
-   chunk and posts a `SwarmReport` to the bulletin board.
+4. As each chunk task reaches a terminal state, the orchestrator
+   records it in the plan's checkpoint (completed, or failed once its
+   reopen budget is exhausted). Once every chunk has resolved,
+   `reduce_swarm` runs automatically, aggregating pass/fail per chunk;
+   the resulting `SwarmReport` is posted to the bulletin board and
+   written into the checkpoint alongside the chunk records.
 
-Re-running the same plan ID skips already-completed chunks
-(idempotent).
+Re-running the same plan ID skips only chunks **verified complete**
+in the checkpoint. A chunk that never ran, is still running, or
+permanently failed gets a fresh task, so a restart can always make
+progress on the chunks that did not finish rather than returning
+whatever task id was last recorded for them.
 
 ## Configuration
 
