@@ -15,9 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from src.bernstein.core.replay.read_paths import ReadPathSet
-
 
 # ------------------------------------------------------------------
 # Test helper fixtures
@@ -156,7 +154,7 @@ def test_journal_mutation_detection(tmp_path: Path) -> None:
 
     # Mock derive_read_paths to raise broken_chain error
     with (
-        patch("src.bernstein.core.git.git_basic.run_git") as mock_git,
+        patch("src.bernstein.core.git.git_basic.run_git"),
         patch(
             "src.bernstein.core.replay.read_paths.derive_read_paths"
         ) as mock_derive,
@@ -169,7 +167,6 @@ def test_journal_mutation_detection(tmp_path: Path) -> None:
         mock_derive.side_effect = Exception("Chain broken")
 
         from src.bernstein.core.git.read_set_admission import (
-            ReadSetAdmissionRefused,
             check_read_set_changed,
         )
 

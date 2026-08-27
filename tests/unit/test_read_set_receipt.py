@@ -11,12 +11,14 @@ Tests cover:
 from __future__ import annotations
 
 import dataclasses
-import hashlib
-import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from src.bernstein.core.git.read_set_receipt import ReadSetRefusalReceipt
 
 
 # ------------------------------------------------------------------
@@ -233,7 +235,7 @@ def test_offline_verification_fails_with_wrong_key(sample_receipt: ReadSetRefusa
     # Generate a different keypair
     from src.bernstein.core.lineage.identity import generate_keypair
 
-    wrong_private, wrong_public = generate_keypair()
+    _wrong_private, wrong_public = generate_keypair()
 
     # Replace the public key with the wrong one
     tampered = ReadSetRefusalReceipt(
@@ -255,7 +257,6 @@ def test_receipt_persists_and_round_trips(
 ) -> None:
     """Receipt writes to disk and reads back correctly."""
     from src.bernstein.core.git.read_set_receipt import (
-        ReadSetRefusalReceipt,
         build_refusal_receipt,
         read_refusal_receipt,
         write_refusal_receipt,
@@ -343,8 +344,6 @@ def test_receipt_from_dict_handles_missing_fields(sample_receipt: ReadSetRefusal
 
 def test_changed_path_dataclass(sample_changed_paths) -> None:
     """ChangedPath is properly frozen and hashable."""
-    from src.bernstein.core.git.read_set_receipt import ChangedPath
-
     cp = sample_changed_paths[0]
 
     assert cp.path == "src/config.py"
@@ -397,7 +396,6 @@ def test_verify_receipt_offline_no_matching_anchor(
             del sys.modules[mod_name]
 
     from src.bernstein.core.git.read_set_receipt import (
-        ReadSetRefusalReceipt,
         build_refusal_receipt,
         verify_receipt_offline,
     )

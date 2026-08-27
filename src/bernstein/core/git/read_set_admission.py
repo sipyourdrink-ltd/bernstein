@@ -7,11 +7,9 @@ the Bernstein orchestrator.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Set
 
 from src.bernstein.core.git.git_basic import run_git
-from src.bernstein.core.replay.read_paths import derive_read_paths, ReadPathDerivationError
-
+from src.bernstein.core.replay.read_paths import derive_read_paths
 
 NULL_COMMIT_HASH = "0000000000000000000000000000000000000000"
 
@@ -42,7 +40,7 @@ def check_read_set_changed(
     worktree_root: str,
     base_commit: str,
     target_branch: str,
-) -> List[ChangedPath]:
+) -> list[ChangedPath]:
     """Check if any paths in the run's read set have changed since base_commit.
 
     Args:
@@ -80,7 +78,7 @@ def check_read_set_changed(
         # treat this as a refusal if desired.
         changed_files = set()
 
-    changed_paths: List[ChangedPath] = []
+    changed_paths: list[ChangedPath] = []
     for path in read_paths:
         if path in changed_files:
             # Get the commit hash of the file at base_commit
