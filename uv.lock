@@ -21,7 +21,7 @@ conflicts = [[
 
 [[package]]
 name = "agentrust-trace"
-version = "0.5.1"
+version = "0.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
@@ -29,9 +29,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "rfc8785" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/97/1d/41415e430e8ffdcedd4ded1fcbdf04a4874575fb10cc6f7d5d338ae5fad1/agentrust_trace-0.5.1.tar.gz", hash = "sha256:93eb5579a3850c9277d4c669d3800b8d08acf12a86ee26805ebb86ff929bfd78", size = 148261, upload-time = "2026-07-28T18:31:24.824Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1b/af/17bfb45973e11636c50c25cc04a2bbac98cc3be701e9665ff1a01de088c1/agentrust_trace-0.9.0.tar.gz", hash = "sha256:efdf2016b9760648292eb6967044eccb592c76db622719390ca1eb7e89e7bb5a", size = 224268, upload-time = "2026-08-09T20:32:13.016Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4e/29/255306936da4125be4d8bfb786844b9a121968590918e42025d8b4a47ab1/agentrust_trace-0.5.1-py3-none-any.whl", hash = "sha256:f5ce91d6c99964bb07ff0cfddcd53e4fd111fba97e4666efc75010ae3b79d18a", size = 21926, upload-time = "2026-07-28T18:31:23.438Z" },
+    { url = "https://files.pythonhosted.org/packages/a7/96/d97aa32bbf343cc432f9bf2c7577c1dd99eb48fe20a4dfa56b10d6071ab7/agentrust_trace-0.9.0-py3-none-any.whl", hash = "sha256:9f9e6e1bd54ee816f13a42669dcff5cea6461bef40e38bda06b017209b63e1c5", size = 39403, upload-time = "2026-08-09T20:32:11.717Z" },
 ]
 
 [[package]]
@@ -601,7 +601,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agentrust-trace", marker = "extra == 'trace'", specifier = ">=0.5,<0.6" },
+    { name = "agentrust-trace", marker = "extra == 'trace'", specifier = ">=0.9,<0.10" },
     { name = "agentrust-trace-tests", marker = "extra == 'dev'", specifier = ">=0.5,<0.6" },
     { name = "aiohttp", marker = "extra == 'slack'", specifier = ">=3.9" },
     { name = "aiohttp", marker = "extra == 'teams'", specifier = ">=3.9" },
