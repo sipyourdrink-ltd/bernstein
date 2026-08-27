@@ -6,6 +6,7 @@ the Bernstein orchestrator.
 """
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Set
 
 from src.bernstein.core.git.git_basic import run_git
@@ -58,7 +59,8 @@ def check_read_set_changed(
         ReadPathDerivationError: If the journal cannot be read or parsed.
     """
     # Derive the set of paths read during the run
-    read_paths = derive_read_paths(journal_path)
+    read_paths_set = derive_read_paths(Path(journal_path), Path(worktree_root))
+    read_paths = read_paths_set.read_paths
 
     # Get the set of files that have changed between base_commit and target_branch
     try:
