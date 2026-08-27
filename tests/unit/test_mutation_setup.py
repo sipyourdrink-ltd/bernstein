@@ -173,14 +173,25 @@ class TestKeyMutationScenarios:
         finally:
             os.environ.pop("BERNSTEIN_SANDBOX", None)
 
-    def test_guardrails_no_relax_outside_sandbox(self) -> None:
-        """Outside a sandbox, DENY decisions must stay DENY (mutant might always relax)."""
-        import os
+    def test_guardrails_no_relax_outside_sandbox(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Outside a sandbox, DENY decisions must stay DENY (mutant might always relax).
 
+        ``BERNSTEIN_SANDBOX`` is only one of the signals ``is_sandboxed()``
+        reads; ``/.dockerenv`` and the cgroup markers are others. Clearing the
+        env var alone therefore does not describe "outside a sandbox" when the
+        suite itself runs in a container - which is how the fleet's own
+        verification gate runs it - and the test failed there for a reason
+        that had nothing to do with the code under test. Pinning
+        ``is_sandboxed`` states the precondition the assertion actually needs,
+        so the test means the same thing on a runner VM and in a container.
+        """
         from bernstein.core.guardrails import relax_sandboxed
         from bernstein.core.policy_engine import DecisionType, PermissionDecision
 
-        os.environ.pop("BERNSTEIN_SANDBOX", None)
+        from bernstein.core import guardrails
+
+        monkeypatch.delenv("BERNSTEIN_SANDBOX", raising=False)
+        monkeypatch.setattr(guardrails, "is_sandboxed", lambda: False)
         deny_decision = PermissionDecision(type=DecisionType.DENY, reason="outside sandbox")
         result = relax_sandboxed([deny_decision], check_name="file_permissions")
         # Without sandbox, no relaxation should occur

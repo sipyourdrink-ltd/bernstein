@@ -172,3 +172,78 @@ def test_a_successful_flush_writes_every_buffered_line(tmp_path: Path) -> None:
     assert _buffered(collector) == []
     written = [line for f in (tmp_path / "metrics").glob("*.jsonl") for line in f.read_text().splitlines() if line]
     assert len(written) == 2
+
+
+def test_healthy_target_unaffected_by_failing_target(tmp_path: Path) -> None:
+    """A healthy target in the same buffer is not dropped when another target fails repeatedly.
+
+    Two different targets share the same buffer. One target's writes fail until its lines
+    are dropped at the attempt bound. The other target's writes succeed and its lines
+    must not be affected by the failing target's retry count.
+    """
+    from contextlib import contextmanager
+
+    collector = MetricsCollector(metrics_dir=tmp_path / "metrics")
+
+    # Queue points for target A (queue_depth goes to queue_depth file)
+    collector._write_metric_point(MetricType.QUEUE_DEPTH, 1.0, {"target": "A"})
+    collector._write_metric_point(MetricType.QUEUE_DEPTH, 1.0, {"target": "A"})
+    collector._write_metric_point(MetricType.QUEUE_DEPTH, 1.0, {"target": "A"})
+    # Queue points for target B (api_usage goes to api_usage file)
+    collector._write_metric_point(MetricType.API_USAGE, 1.0, {"target": "B"})
+    collector._write_metric_point(MetricType.API_USAGE, 1.0, {"target": "B"})
+
+    assert len(_buffered(collector)) == 5
+
+    # Flush: A writes fail, B writes succeed (selective mock based on filename)
+    @contextmanager
+    def selective_append(directory, name, *args, **kwargs):
+        if name.startswith("queue_depth"):
+            raise OSError("ENOSPC")
+        # For api_usage files, write to the real file
+        real_path = directory.path / name
+        real_path.parent.mkdir(parents=True, exist_ok=True)
+        with real_path.open("a") as f:
+            yield f
+
+    with patch("bernstein.core.observability.metric_collector.anchored_append", side_effect=selective_append):
+        collector.flush()
+
+    # All 3 A lines re-queued with 1 failed attempt, 2 B lines written successfully
+    buffer_after = _buffered(collector)
+    assert len(buffer_after) == 3, f"only A lines should remain, got {len(buffer_after)}"
+    assert all(entry[3] == 1 for entry in buffer_after), "all A lines should have 1 failed attempt"
+
+    # Queue more points for both targets
+    collector._write_metric_point(MetricType.QUEUE_DEPTH, 1.0, {"target": "A"})
+    collector._write_metric_point(MetricType.API_USAGE, 1.0, {"target": "B"})
+
+    # Flush again: all A fails again (now attempts 2), B succeeds
+    with patch("bernstein.core.observability.metric_collector.anchored_append", side_effect=selective_append):
+        collector.flush()
+
+    buffer_after = _buffered(collector)
+    # 3 old A lines at attempt 2, 1 new A line at attempt 1, 1 new B line written
+    assert len(buffer_after) == 4, f"4 A lines should remain (old and new), got {len(buffer_after)}"
+    attempts = sorted(entry[3] for entry in buffer_after)
+    assert attempts == [1, 2, 2, 2], f"new A at attempt 1, old A at attempt 2, got {attempts}"
+
+    # Continue until the oldest A lines hit the bound (_MAX_FLUSH_ATTEMPTS = 3)
+    for _ in range(_MAX_FLUSH_ATTEMPTS - 2):
+        with patch("bernstein.core.observability.metric_collector.anchored_append", side_effect=selective_append):
+            collector.flush()
+
+    buffer_after = _buffered(collector)
+    assert len(buffer_after) >= 1, "at least one A line should remain"
+    assert all(entry[3] < _MAX_FLUSH_ATTEMPTS for entry in buffer_after), (
+        "remaining lines should not have hit the attempt bound"
+    )
+
+    # Verify B's lines were written
+    written_b = [
+        line
+        for f in (tmp_path / "metrics").glob("api_usage_*.jsonl")
+        for line in f.read_text().splitlines()
+        if line and '"target": "B"' in line
+    ]
+    assert len(written_b) >= 2, f"all B points should have been written, got {len(written_b)}"

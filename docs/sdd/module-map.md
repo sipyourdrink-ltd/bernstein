@@ -133,6 +133,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `gemini.py`                 | Google Gemini / Antigravity CLI adapter |
 | `generic.py`                | Generic CLI adapter for arbitrary coding agent CLIs |
 | `goose.py`                  | Goose CLI adapter for Bernstein |
+| `goose_stream_parser.py`    | Parse Goose ``--output-format stream-json`` events |
 | `gptme.py`                  | gptme CLI adapter |
 | `hermes.py`                 | Hermes Agent (Nous Research) CLI adapter |
 | `hook_gate_render.py`       | Render in-process verification-gate hooks for capable adapters (issue #2360) |
@@ -294,6 +295,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `permission_explain.py` | Progressive disclosure for permission requests -- explain-before-approve mode |
 | `plugin_errors.py`      | Plugin error collection and reporting |
 | `plugin_trust.py`       | Plugin trust checking and risk scoring for Bernstein plugins |
+| `reporters.py`          | Reporter entry-point discovery for the pluggy plugin manager |
 | `security_review.py`    | Security review: regex-based pattern scanning for agent-produced diffs |
 
 ### `src/bernstein/tui/` - Textual TUI

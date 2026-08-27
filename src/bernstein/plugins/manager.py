@@ -585,6 +585,9 @@ class CommandHook:
         )
 
 
+REPORTER_NAME_PREFIX = "reporters:"
+
+
 class PluginManager:
     """Discovers, loads, and invokes Bernstein plugins.
 
@@ -1056,6 +1059,23 @@ class PluginManager:
                     f"Failed to load bernstein plugin {ep.name!r} ({ep.value}): {exc}",
                     stacklevel=1,
                 )
+
+        from bernstein.plugins.reporters import discover_reporters
+
+        discover_reporters(self._register_reporter)
+
+    def _register_reporter(self, reporter: object, name: str) -> None:
+        """Apply policy and register a discovered reporter hook plugin.
+
+        Registered under a group-qualified Pluggy name: entry-point names are only
+        unique within their own group, so a `slack` in both `bernstein.plugins` and
+        `bernstein.reporters` made Pluggy raise "Plugin name already registered"
+        and the reporter was dropped with nothing but a warning, which is the
+        silent-plugin failure this issue is about.
+        """
+        check_plugin_allowed(name, self._policy)
+        self._pm.register(reporter, name=f"{REPORTER_NAME_PREFIX}{name}")
+        self._registered_names.append(f"{REPORTER_NAME_PREFIX}{name}")
 
     def discover_config_plugins(self, config_plugins: list[str]) -> None:
         """Load plugins listed in ``bernstein.yaml`` under the ``plugins:`` key.

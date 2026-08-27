@@ -15,6 +15,7 @@ from bernstein.core.replay.journal import EventJournal, load_events
 from bernstein.core.replay.review_board import (
     BOARD_COLUMNS,
     BOARD_SCHEMA_VERSION,
+    EVENT_PLAN_GRAPH_FULL,
     EVENT_TASK_DIFF_CAPTURED,
     EVENT_TASK_MERGED,
     EVENT_TASK_REVIEW_DECISION,
@@ -591,3 +592,52 @@ def test_reap_and_cleanup_captures_review_diff(tmp_path: Path, monkeypatch: Any)
     assert stored is not None
     assert stored[0] == _SAMPLE_DIFF
     assert recorder.verify().chain_consistent
+
+
+def test_plan_graph_full_populates_run_envelope(tmp_path: Path) -> None:
+    """A ``plan.graph.full`` row populates ``board['run']`` with goal + plan_nodes."""
+    events = [
+        {
+            "event": EVENT_PLAN_GRAPH_FULL,
+            "goal": "build a cli tool",
+            "nodes": [
+                {"id": "t2", "role": "coder", "title": "implement", "depends_on": ["t1"]},
+                {"id": "t1", "role": "manager", "title": "plan", "depends_on": []},
+            ],
+        },
+    ]
+    board = project_board(events)
+    assert board["run"]["goal"] == "build a cli tool"
+    nodes = board["run"]["plan_nodes"]
+    # Nodes sorted by id; depends_on sorted per node.
+    assert [n["id"] for n in nodes] == ["t1", "t2"]
+    assert nodes[0] == {"id": "t1", "role": "manager", "title": "plan", "depends_on": []}
+    assert nodes[1] == {"id": "t2", "role": "coder", "title": "implement", "depends_on": ["t1"]}
+
+
+def test_plan_graph_full_without_goal_leaves_no_plan_keys(tmp_path: Path) -> None:
+    """When no ``plan.graph.full`` row lands, the envelope has no plan keys."""
+    events = [
+        {"event": "run_started", "run_id": "r", "git_branch": "main", "git_sha": "abc"},
+    ]
+    board = project_board(events)
+    assert "goal" not in board["run"]
+    assert "plan_nodes" not in board["run"]
+
+
+def test_plan_graph_full_deterministic_across_replays(tmp_path: Path) -> None:
+    """Reversing the journal row order does not change the projected board bytes."""
+    events_a = [
+        {
+            "event": EVENT_PLAN_GRAPH_FULL,
+            "goal": "x",
+            "nodes": [
+                {"id": "t1", "role": "a", "title": "A", "depends_on": []},
+            ],
+        },
+    ]
+    events_b = list(events_a)  # same content
+    board_a = project_board(events_a)
+    board_b = project_board(events_b)
+    assert canonical_board_bytes(board_a) == canonical_board_bytes(board_b)
+    assert board_hash(board_a) == board_hash(board_b)

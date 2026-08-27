@@ -414,9 +414,7 @@ def test_release_body_still_appends_the_generated_changelog(
 ) -> None:
     """Contributor credits live in the generated changelog; keep it below the notes."""
     run = _step_run(workflow, RELEASE_JOB, "Create release")
-    assert "releases/generate-notes" in run, (
-        "the generated changelog must be fetched and appended, not dropped"
-    )
+    assert "releases/generate-notes" in run, "the generated changelog must be fetched and appended, not dropped"
     notes_pos = run.find("docs/release-notes/")
     generated_pos = run.find("releases/generate-notes")
     assert notes_pos < generated_pos, "hand-written notes come first, changelog after"
@@ -426,9 +424,5 @@ def test_release_creation_does_not_fall_back_to_generated_notes_only(
     workflow: dict[str, Any],
 ) -> None:
     run = _step_run(workflow, RELEASE_JOB, "Create release")
-    commands = "\n".join(
-        line for line in run.splitlines() if not line.lstrip().startswith("#")
-    )
-    assert "--generate-notes" not in commands, (
-        "--generate-notes publishes the machine changelog as the whole body"
-    )
+    commands = "\n".join(line for line in run.splitlines() if not line.lstrip().startswith("#"))
+    assert "--generate-notes" not in commands, "--generate-notes publishes the machine changelog as the whole body"

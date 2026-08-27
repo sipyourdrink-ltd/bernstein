@@ -82,6 +82,7 @@ def _drive(
     min_ticks: int,
     start: float = 1_000.0,
     step_s: float = 10.0,
+    planning_window_s: float = 300.0,
 ) -> tuple[RunStallState, Any]:
     """Evaluate the same snapshot ``ticks`` times on a synthetic clock."""
     state = RunStallState()
@@ -93,6 +94,7 @@ def _drive(
             now=start + i * step_s,
             grace_s=grace_s,
             min_ticks=min_ticks,
+            planning_window_s=planning_window_s,
         )
     return state, verdict
 
@@ -164,17 +166,35 @@ class TestStallCriterion:
         assert verdict.stalled is False
         assert "need 5" in verdict.reason
 
-    def test_empty_backlog_never_stalls(self) -> None:
+    def test_empty_backlog_does_not_stall_inside_the_planning_window(self) -> None:
         """Startup before the seed task is ingested is not a dead run.
 
         This is the case the original zero-terminal guard was written for,
-        and it must keep working.
+        and it must keep working: 50 quiescent ticks on an empty ledger are
+        still "planning has not landed a graph yet" while the planning window
+        has not elapsed, no matter how short the ordinary no-progress grace
+        is. The bound on the other side - an empty ledger *past* the window
+        being planning having failed rather than startup - is covered in
+        test_orchestrator_planning_window.py.
         """
-        _state, verdict = _drive(_snapshot(), ticks=50, grace_s=0.0, min_ticks=1)
+        _state, verdict = _drive(_snapshot(), ticks=50, grace_s=0.0, min_ticks=1, planning_window_s=10_000.0)
 
         assert verdict is not None
         assert verdict.stalled is False
         assert "startup window" in verdict.reason
+
+    def test_empty_backlog_stops_being_startup_once_the_window_passes(self) -> None:
+        """The startup window is a window, not a permanent exemption.
+
+        Before #4529 this branch reset its own clock on every tick, so an
+        empty ledger read as startup forever and a run whose planning task
+        failed ticked to its wall-clock timeout with nothing to do.
+        """
+        _state, verdict = _drive(_snapshot(), ticks=50, grace_s=0.0, min_ticks=1, planning_window_s=100.0)
+
+        assert verdict is not None
+        assert verdict.stalled is True
+        assert "planning never produced a task graph" in verdict.reason
 
     def test_progress_resets_the_window(self) -> None:
         """A task moving between statuses is forward motion, not a stall."""

@@ -355,6 +355,164 @@ class TestCrossModelVerifierConfigDefaults:
 
 
 # ---------------------------------------------------------------------------
+# Convention wiring tests
+# ---------------------------------------------------------------------------
+
+
+class TestConventionWiring:
+    @pytest.mark.asyncio
+    async def test_request_changes_files_convention_receipt(self, tmp_path: Path) -> None:
+        """When verify_with_cross_model returns request_changes with issues, file_review_correction() is called."""
+
+        # Initialize git repo in tmp_path so file_review_finding can get HEAD commit
+        (tmp_path / "placeholder.txt").write_text("placeholder\n", encoding="utf-8")
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True, capture_output=True)
+
+        task = _make_task()
+        config = CrossModelVerifierConfig(enabled=True)
+        diff_response = MagicMock(stdout="+dangerous_code()\n")
+        reject_json = json.dumps(
+            {
+                "verdict": "request_changes",
+                "feedback": "Dangerous call.",
+                "issues": ["Unvalidated input", "Hardcoded secret"],
+            }
+        )
+
+        with (
+            patch("subprocess.run", return_value=diff_response),
+            patch(
+                "bernstein.core.cross_model_verifier.call_llm",
+                new=AsyncMock(return_value=reject_json),
+            ),
+            patch("bernstein.core.quality.cross_model_verifier.file_review_finding") as mock_file_review_finding,
+        ):
+            verdict = await verify_with_cross_model(task, tmp_path, "claude-sonnet", config)
+
+        assert verdict.verdict == "request_changes"
+        assert verdict.issues == ["Unvalidated input", "Hardcoded secret"]
+        # file_review_finding should be called once per issue
+        assert mock_file_review_finding.call_count == 2
+        mock_file_review_finding.assert_any_call(
+            sdd_dir=tmp_path / ".sdd",
+            workdir=tmp_path,
+            task_id=task.id,
+            issue_text="Unvalidated input",
+            owned_files=task.owned_files,
+            decided_by="google/gemini-flash-1.5",
+        )
+        mock_file_review_finding.assert_any_call(
+            sdd_dir=tmp_path / ".sdd",
+            workdir=tmp_path,
+            task_id=task.id,
+            issue_text="Hardcoded secret",
+            owned_files=task.owned_files,
+            decided_by="google/gemini-flash-1.5",
+        )
+
+    @pytest.mark.asyncio
+    async def test_approve_does_not_file(self, tmp_path: Path) -> None:
+        """When verify_with_cross_model returns approve, no convention receipts are filed."""
+
+        task = _make_task()
+        config = CrossModelVerifierConfig(enabled=True)
+        diff_response = MagicMock(stdout="+print('hello')\n")
+        approve_json = json.dumps({"verdict": "approve", "feedback": "Fine", "issues": []})
+
+        with (
+            patch("subprocess.run", return_value=diff_response),
+            patch(
+                "bernstein.core.cross_model_verifier.call_llm",
+                new=AsyncMock(return_value=approve_json),
+            ),
+            patch(
+                "bernstein.core.knowledge.conventions.file_review_finding",
+            ) as mock_file_review_finding,
+        ):
+            verdict = await verify_with_cross_model(task, tmp_path, "claude-sonnet", config)
+
+        assert verdict.verdict == "approve"
+        mock_file_review_finding.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_active_conventions_injected_into_prompt(self, tmp_path: Path) -> None:
+        """When active conventions exist, they appear in the review prompt."""
+        from bernstein.core.knowledge.conventions import (
+            file_review_correction,
+        )
+
+        # Pre-file a convention receipt
+        sdd_dir = tmp_path / ".sdd"
+        sdd_dir.mkdir(parents=True)
+        src_file = tmp_path / "src" / "api.py"
+        src_file.parent.mkdir(parents=True)
+        src_file.write_text("def handle_request(): pass\n", encoding="utf-8")
+
+        file_review_correction(
+            sdd_dir=sdd_dir,
+            workdir=tmp_path,
+            rule_text="Always validate request payloads before dispatching",
+            subject_path="src/api.py",
+            base_commit_sha="1111222233334444555566667777888899990000",
+            filing_finding_id="review-pr-42",
+            decided_by="reviewer-bob",
+        )
+
+        task = _make_task()
+        config = CrossModelVerifierConfig(enabled=True)
+        approve_json = json.dumps({"verdict": "approve", "feedback": "OK", "issues": []})
+
+        diff_response = MagicMock(stdout="+code\n")
+        captured_prompt: list[str] = []
+
+        async def fake_llm(prompt: str, **kwargs: object) -> str:
+            captured_prompt.append(prompt)
+            return approve_json
+
+        with (
+            patch("subprocess.run", return_value=diff_response),
+            patch("bernstein.core.cross_model_verifier.call_llm", new=fake_llm),
+        ):
+            await verify_with_cross_model(task, tmp_path, "claude-sonnet", config)
+
+        prompt = captured_prompt[0]
+        assert "## Active conventions" in prompt
+        assert "Always validate request payloads before dispatching" in prompt
+        assert "file: src/api.py" in prompt
+        assert "version: 1" in prompt
+
+    @pytest.mark.asyncio
+    async def test_filing_failure_does_not_break_review(self, tmp_path: Path) -> None:
+        """If git fails in file_review_finding, the review verdict is still returned."""
+        task = _make_task()
+        config = CrossModelVerifierConfig(enabled=True)
+        reject_json = json.dumps(
+            {
+                "verdict": "request_changes",
+                "feedback": "Issue found",
+                "issues": ["Some issue"],
+            }
+        )
+
+        with (
+            patch("subprocess.run", side_effect=OSError("git not available")),
+            patch(
+                "bernstein.core.cross_model_verifier.call_llm",
+                new=AsyncMock(return_value=reject_json),
+            ),
+        ):
+            verdict = await verify_with_cross_model(task, tmp_path, "claude-sonnet", config)
+
+        # Even though convention filing failed, we still got the verdict
+        assert verdict.verdict == "request_changes"
+        assert verdict.issues == ["Some issue"]
+
+
+# ---------------------------------------------------------------------------
 # Multi-voter path (voting_config set)
 # ---------------------------------------------------------------------------
 

@@ -16,6 +16,7 @@ module pins the recording contract:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from bernstein.core.security.audit_chain import (
@@ -27,6 +28,8 @@ from bernstein.core.security.audit_chain import (
     record_capability_authorization,
     record_capability_delta,
 )
+from bernstein.core.security.capability_delta import compute_grant_delta
+from bernstein.core.security.permissions import AgentPermissions
 
 KEY = b"k" * 32
 
@@ -345,3 +348,106 @@ def test_clean_chain_verifies(tmp_path: Path) -> None:
     ok, errors = chain.verify()
     assert ok, errors
     assert errors == []
+
+
+# ---------------------------------------------------------------------------
+# Neutral delta behavior (unchanged)
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# The seam: a delta that was *computed* and then recorded
+# ---------------------------------------------------------------------------
+# Every test above hands ``record_capability_delta`` a literal ``is_widening``
+# and a literal ``changes_json``, so they pin the recorder against values it
+# was given rather than against a delta the system actually produced. The
+# interesting failure is at the seam: ``GrantDelta.is_widening`` is true when
+# *any* change widens, so a delta with real changes that only narrow is a
+# distinct case from a delta with no changes at all - and an auditor reading
+# the chain has only the recorded flag to tell a narrowing apart from a
+# widening, with no way to recompute it from the entry.
+
+
+def _permissions(*allowed: str) -> AgentPermissions:
+    """An ``AgentPermissions`` differing from another only in allowed paths."""
+    return AgentPermissions(allowed_paths=list(allowed))
+
+
+def test_a_computed_narrowing_only_delta_records_as_not_widening(tmp_path: Path) -> None:
+    """A delta whose changes all narrow reaches the chain as is_widening=False."""
+    chain = _create_chain(tmp_path)
+    delta = compute_grant_delta(
+        old=_permissions("src/**", "docs/**"),
+        new=_permissions("src/**"),
+        role="analyst",
+        run_id="run-narrowing",
+    )
+    # Not vacuous: the delta carries a change, and that change is not widening.
+    assert delta.changes, "expected the removed path to produce a change"
+    assert delta.is_widening is False
+
+    event = record_capability_delta(
+        chain=chain,
+        run_id=delta.run_id,
+        role=delta.role,
+        delta_hash=delta.delta_hash,
+        is_widening=delta.is_widening,
+        changes_json=json.dumps(
+            [
+                {
+                    "path": c.path,
+                    "direction": c.direction.value,
+                    "axis": c.axis,
+                    "old_value": c.old_value,
+                    "new_value": c.new_value,
+                }
+                for c in delta.changes
+            ],
+            separators=(",", ":"),
+        ),
+    )
+
+    assert event.details["is_widening"] is False
+    assert event.resource_id == delta.delta_hash
+    recorded = json.loads(event.details["changes_json"])
+    assert [c["direction"] for c in recorded] == ["NARROWING"]
+    ok, errors = chain.verify()
+    assert ok, errors
+
+
+def test_a_widening_delta_and_a_narrowing_delta_are_separate_entries(tmp_path: Path) -> None:
+    """Same role and run, opposite directions: two entries, two hashes."""
+    chain = _create_chain(tmp_path)
+    narrowing = compute_grant_delta(
+        old=_permissions("src/**", "docs/**"),
+        new=_permissions("src/**"),
+        role="analyst",
+        run_id="run-both",
+    )
+    widening = compute_grant_delta(
+        old=_permissions("src/**"),
+        new=_permissions("src/**", "docs/**"),
+        role="analyst",
+        run_id="run-both",
+    )
+    assert narrowing.is_widening is False
+    assert widening.is_widening is True
+    # The hash is what an auditor correlates on, so the two must not collide
+    # even though role and run are identical.
+    assert narrowing.delta_hash != widening.delta_hash
+
+    for delta in (narrowing, widening):
+        record_capability_delta(
+            chain=chain,
+            run_id=delta.run_id,
+            role=delta.role,
+            delta_hash=delta.delta_hash,
+            is_widening=delta.is_widening,
+            changes_json="[]",
+        )
+
+    events = [e for e in chain.scan_verified().events if e.event_type == EVENT_CAPABILITY_DELTA]
+    assert len(events) == 2
+    by_hash = {e.resource_id: e.details["is_widening"] for e in events}
+    assert by_hash[narrowing.delta_hash] is False
+    assert by_hash[widening.delta_hash] is True

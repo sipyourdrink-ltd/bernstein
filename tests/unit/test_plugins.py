@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import warnings
+from importlib import invalidate_caches
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -238,6 +239,91 @@ def test_discover_entry_points_bad_ep_warns(pm: PluginManager) -> None:
         assert any("bad_ep" in str(x.message) for x in w)
 
     assert "bad_ep" not in pm.registered_names
+
+
+def test_discover_reporter_entry_points_loads_installed_plugin(
+    pm: PluginManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reporter groups use installed metadata and the existing hook manager."""
+    (tmp_path / "fixture_reporter.py").write_text(
+        "from bernstein.plugins import hookimpl\n"
+        "calls = []\n"
+        "class SlackReporter:\n"
+        "    @hookimpl\n"
+        "    def on_task_completed(self, task_id, role, result_summary):\n"
+        "        calls.append((task_id, role, result_summary))\n",
+        encoding="utf-8",
+    )
+    dist_info = tmp_path / "fixture_reporter-0.0.dist-info"
+    dist_info.mkdir()
+    (dist_info / "entry_points.txt").write_text(
+        "[bernstein.reporters]\nslack = fixture_reporter:SlackReporter\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    invalidate_caches()
+
+    pm.discover_entry_points()
+    pm.fire_task_completed(task_id="t-1", role="qa", result_summary="passed")
+
+    import fixture_reporter
+
+    assert "reporters:slack" in pm.registered_names
+    assert fixture_reporter.calls == [("t-1", "qa", "passed")]
+
+
+def test_reporter_loads_alongside_a_plugin_of_the_same_name(
+    pm: PluginManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Entry-point names are unique per group, so both must register (#4531)."""
+    (tmp_path / "fixture_clash.py").write_text(
+        "from bernstein.plugins import hookimpl\n"
+        "seen = []\n"
+        "class Plain:\n"
+        "    @hookimpl\n"
+        "    def on_task_completed(self, task_id, role, result_summary):\n"
+        "        seen.append('plugin')\n"
+        "class Reporter:\n"
+        "    @hookimpl\n"
+        "    def on_task_completed(self, task_id, role, result_summary):\n"
+        "        seen.append('reporter')\n",
+        encoding="utf-8",
+    )
+    dist_info = tmp_path / "fixture_clash-0.0.dist-info"
+    dist_info.mkdir()
+    (dist_info / "entry_points.txt").write_text(
+        "[bernstein.plugins]\nslack = fixture_clash:Plain\n[bernstein.reporters]\nslack = fixture_clash:Reporter\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    invalidate_caches()
+
+    pm.discover_entry_points()
+    pm.fire_task_completed(task_id="t-1", role="qa", result_summary="passed")
+
+    import fixture_clash
+
+    assert "slack" in pm.registered_names
+    assert "reporters:slack" in pm.registered_names
+    assert sorted(fixture_clash.seen) == ["plugin", "reporter"]
+
+
+def test_discover_reporter_entry_points_skips_malformed_plugin(
+    pm: PluginManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    dist_info = tmp_path / "broken_reporter-0.0.dist-info"
+    dist_info.mkdir()
+    (dist_info / "entry_points.txt").write_text(
+        "[bernstein.reporters]\nbroken = missing_reporter:BrokenReporter\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    invalidate_caches()
+
+    pm.discover_entry_points()
+
+    assert "broken" not in pm.registered_names
+    assert "Failed to load reporter entry-point 'broken'" in caplog.text
 
 
 # ---------------------------------------------------------------------------

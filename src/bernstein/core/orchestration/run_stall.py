@@ -93,6 +93,7 @@ TERMINAL_STATUSES: frozenset[str] = frozenset({"done", "failed", "closed", "canc
 #: env var > yaml-tunable config field > ``core.defaults``.
 GRACE_ENV_VAR: str = "BERNSTEIN_STALLED_RUN_GRACE_S"
 MIN_TICKS_ENV_VAR: str = "BERNSTEIN_STALLED_RUN_TICKS"
+PLANNING_WINDOW_ENV_VAR: str = "BERNSTEIN_PLANNING_WINDOW_S"
 
 
 @dataclass(frozen=True)
@@ -167,6 +168,11 @@ def resolve_grace_s(config_value: float) -> float:
     return _resolve_float(GRACE_ENV_VAR, config_value)
 
 
+def resolve_planning_window_s(config_value: float) -> float:
+    """Resolve the planning window, env var taking precedence."""
+    return _resolve_float(PLANNING_WINDOW_ENV_VAR, config_value)
+
+
 def resolve_min_ticks(config_value: int) -> int:
     """Resolve the consecutive-tick floor, env var taking precedence."""
     raw = os.environ.get(MIN_TICKS_ENV_VAR)
@@ -195,6 +201,7 @@ def evaluate_run_stall(
     now: float,
     grace_s: float,
     min_ticks: int,
+    planning_window_s: float = 300.0,
 ) -> tuple[RunStallState, StallVerdict]:
     """Decide whether a zero-terminal quiescent run has stopped progressing.
 
@@ -236,12 +243,35 @@ def evaluate_run_stall(
     parked_ids.sort()
 
     # Condition 2a: no tasks at all is the pre-ingest startup window that
-    # the quiescence gate's zero-terminal guard exists to protect. Reset
-    # rather than accumulate, so the clock starts when work appears.
+    # the quiescence gate's zero-terminal guard exists to protect - but only
+    # for as long as planning could still land a graph. This used to reset the
+    # clock every tick, so the window had no end: a run whose planning task
+    # failed read as "startup" forever and ticked to its wall-clock timeout
+    # holding the workspace, with no open or claimed task to make it read as
+    # stalled either. The clock now accumulates, bounded by planning_window_s.
     if total == 0:
-        return RunStallState(), StallVerdict(
+        empty_fingerprint: tuple[tuple[str, str], ...] = ()
+        if prev.fingerprint != empty_fingerprint:
+            empty_state = RunStallState(fingerprint=empty_fingerprint, since_ts=now, observed_ticks=1)
+        else:
+            empty_state = replace(prev, observed_ticks=prev.observed_ticks + 1)
+        quiet_for_s = max(now - empty_state.since_ts, 0.0)
+        if empty_state.observed_ticks >= min_ticks and quiet_for_s >= planning_window_s:
+            return empty_state, StallVerdict(
+                stalled=True,
+                reason=(
+                    f"ledger empty for {quiet_for_s:.0f}s across "
+                    f"{empty_state.observed_ticks} quiescent tick(s) - planning never "
+                    "produced a task graph and no task can arrive"
+                ),
+                observed_ticks=empty_state.observed_ticks,
+                quiet_for_s=quiet_for_s,
+            )
+        return empty_state, StallVerdict(
             stalled=False,
-            reason="no tasks declared yet - startup window, not a stall",
+            reason=(f"no tasks declared yet - startup window ({quiet_for_s:.0f}s of {planning_window_s:.0f}s)"),
+            observed_ticks=empty_state.observed_ticks,
+            quiet_for_s=quiet_for_s,
         )
 
     # Condition 2b: only deliberately-parked tasks remain. Waiting on a

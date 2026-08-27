@@ -24,11 +24,19 @@ class _RecordingStore:
     def __init__(self) -> None:
         self.bodies: list[dict[str, Any]] = []
         self._counter = 0
+        # Ids this store considers still in flight. spawn_swarm consults it via
+        # is_task_active before respawning an unfinished chunk (issue #4624).
+        self.active_ids: set[str] = set()
 
     def create_sync(self, body: dict[str, Any]) -> str:
         self._counter += 1
         self.bodies.append(body)
-        return f"task-{self._counter:03d}"
+        task_id = f"task-{self._counter:03d}"
+        self.active_ids.add(task_id)
+        return task_id
+
+    def is_task_active(self, task_id: str) -> bool:
+        return task_id in self.active_ids
 
 
 def _make_repo(tmp_path: Path, files: list[str]) -> Path:
@@ -134,6 +142,51 @@ def test_spawn_swarm_idempotent_skips_completed_chunks(tmp_path: Path) -> None:
     second_ids = spawn_swarm(plan, second_store, repo)
     assert second_ids == first_ids
     assert second_store.bodies == []
+
+
+def test_inflight_chunk_is_reused_not_respawned(tmp_path: Path) -> None:
+    """A mid-swarm re-run must not hand a second task the same files (#4624).
+
+    Re-running ``bernstein migrate`` while chunks are still executing hits the
+    same persistent server, which still reports those tasks active. spawn_swarm
+    must reuse them rather than spawn duplicate owners of the same paths.
+    """
+    repo = _make_repo(tmp_path, [f"src/m{i}.py" for i in range(4)])
+    plan = MigrationPlan(id="inflight", glob="src/*.py", transform_prompt="convert", chunk_size=1)
+    store = _RecordingStore()
+
+    first_ids = spawn_swarm(plan, store, repo)
+    assert len(first_ids) == 4
+
+    # Nothing resolved: every task is still in flight on the same store.
+    second_ids = spawn_swarm(plan, store, repo)
+
+    assert second_ids == first_ids
+    assert len(store.bodies) == 4  # no chunk was respawned
+
+
+def test_dead_but_unmarked_chunk_respawns(tmp_path: Path) -> None:
+    """A task that died without a recorded failure is still respawned (#4624/#4541).
+
+    is_task_active gates the reuse: a chunk whose task the server no longer
+    reports active - a crash or out-of-band cancel that never reached
+    mark_chunk_failed - falls through to a fresh spawn, so #4541's "never a dead
+    id forever" guarantee survives the in-flight-reuse change.
+    """
+    repo = _make_repo(tmp_path, ["src/a.py", "src/b.py"])
+    plan = MigrationPlan(id="dead", glob="src/*.py", transform_prompt="convert", chunk_size=1)
+    store = _RecordingStore()
+
+    first_ids = spawn_swarm(plan, store, repo)
+    assert len(first_ids) == 2
+
+    # Chunk 0's task dies silently; chunk 1 stays in flight.
+    store.active_ids.discard(first_ids[0])
+    second_ids = spawn_swarm(plan, store, repo)
+
+    assert second_ids[0] != first_ids[0]  # dead task respawned
+    assert second_ids[1] == first_ids[1]  # live task reused
+    assert len(store.bodies) == 3  # exactly one respawn
 
 
 def test_reduce_swarm_aggregates_pass_fail() -> None:

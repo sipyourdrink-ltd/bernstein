@@ -19,9 +19,10 @@ not a mocked clock: the bug lives in the arming / re-arming.
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from bernstein.core.models import Complexity, Scope, Task
+from bernstein.core.models import AgentSession, Complexity, Scope, Task
 
 from bernstein.core.agents.spawner_core import AgentSpawner
 from bernstein.core.defaults import TASK
@@ -92,11 +93,19 @@ def test_timeout_fallback_follows_scope_bucket_not_literal_default() -> None:
     prove the value is computed, not defaulted)."""
 
     small = Task(
-        id="T-S", title="t", description="d", role="backend", scope=Scope.SMALL,
+        id="T-S",
+        title="t",
+        description="d",
+        role="backend",
+        scope=Scope.SMALL,
     )
     xl = Task(
-        id="T-XL", title="t", description="d", role="architect",
-        scope=Scope.LARGE, complexity=Complexity.HIGH,
+        id="T-XL",
+        title="t",
+        description="d",
+        role="architect",
+        scope=Scope.LARGE,
+        complexity=Complexity.HIGH,
     )
 
     small_timeout = AgentSpawner._resolve_spawn_timeout([small])
@@ -156,3 +165,99 @@ def test_rearm_uses_remaining_budget_not_absolute_budget() -> None:
         assert time.time() + timer.interval <= spawn_ts + _hard_cap_s + 60
 
     timer.cancel()
+
+
+def _make_reap_orch(tmp_path) -> SimpleNamespace:
+    """An orchestrator stub sufficient for one reap pass (issue #4610).
+
+    Note: reap_dead_agents reads the 120s freshness threshold from the local
+    ``_time_since_heartbeat < 120`` literal, not from ``heartbeat_timeout_s``;
+    the config field exists only because the heartbeat-reap path touches it.
+    """
+    return SimpleNamespace(
+        _agents={},
+        _config=SimpleNamespace(max_agent_runtime_s=1800, heartbeat_timeout_s=120),
+        _spawner=None,
+        _workdir=tmp_path,
+    )
+
+
+class _RecordingAdapter:
+    """Stub adapter that records the timeout it is handed on extension."""
+
+    def __init__(self) -> None:
+        self.received: list[int] = []
+
+    def extend_timeout(self, timer: object, pid: int, timeout_seconds: int, session_id: str) -> object:
+        self.received.append(timeout_seconds)
+        return timer  # the tester does not need a real re-armed timer
+
+
+def test_reap_dead_agents_hands_down_remaining_budget(tmp_path) -> None:
+    """The caller (reap_dead_agents) must convert the absolute budget into the
+    remaining budget before re-arming, off the clamp so the ordinary positive
+    conversion is what is asserted (rather than the floor, which the second
+    test covers).
+
+    A session that has only just overrun its 1800s budget is extended: the
+    value handed to the adapter must be the genuine remaining budget
+    (``timeout_s - runtime``), a positive quantity well above the 60s floor.
+    """
+    from bernstein.core.agents.agent_lifecycle import reap_dead_agents
+
+    orch = _make_reap_orch(tmp_path)
+    adapter = _RecordingAdapter()
+    orch._spawner = SimpleNamespace(_adapter=adapter)
+
+    # Pin spawn_ts so runtime is a fixed ~1900s, just past the 1800 budget.
+    spawn_ts = time.time() - 1900
+    session = AgentSession(id="sess-caller", role="backend", task_ids=["T-1"], status="working")
+    session.pid = 12345
+    session.spawn_ts = spawn_ts
+    session.heartbeat_ts = spawn_ts + 1899  # fresh heartbeat -> the extension branch
+    session.timeout_s = 1800
+    session.timeout_timer = MagicMock()  # a non-None timer so the re-arm path runs
+    orch._agents[session.id] = session
+
+    reap_dead_agents(orch, SimpleNamespace(reaped=[]), {})
+
+    # The extension happened: the absolute budget advanced to 2400.
+    assert session.timeout_s == 2400, "extension did not happen (test would be vacuous)"
+    # The adapter received the remaining budget: ~500 (2400 - ~1900), a real
+    # conversion check well off the 60s floor. Assert within a small tolerance
+    # because reap_dead_agents recomputes `now` internally, so our runtime
+    # estimate can differ from the one the code used by the call duration.
+    received = adapter.received[0]
+    assert 300 < received < 600, f"expected remaining ~500, got {received}"
+    # And it is the remaining budget, never the absolute budget.
+    assert received < session.timeout_s
+
+
+def test_reap_dead_agents_floors_remaining_budget_at_60(tmp_path) -> None:
+    """When runtime exceeds the extended budget (a session that has already
+    overrun), ``max(60, ...)`` must clamp the remaining budget to 60s rather
+    than hand the adapter a negative or zero delay. Kept as a second test
+    because it exercises the clamp branch specifically, which is a distinct
+    decision from the ordinary conversion.
+    """
+    from bernstein.core.agents.agent_lifecycle import reap_dead_agents
+
+    orch = _make_reap_orch(tmp_path)
+    adapter = _RecordingAdapter()
+    orch._spawner = SimpleNamespace(_adapter=adapter)
+
+    session = AgentSession(id="sess-floor", role="backend", task_ids=["T-1"], status="working")
+    session.pid = 12346
+    # Runtime well past even the extended budget: after the +600 extension the
+    # absolute budget is 660s, but 2000s of runtime leaves a negative remaining
+    # budget, so max(60, ...) must clamp to 60s.
+    session.spawn_ts = time.time() - 2000
+    session.heartbeat_ts = time.time()
+    session.timeout_s = 60
+    session.timeout_timer = MagicMock()
+    orch._agents[session.id] = session
+
+    reap_dead_agents(orch, SimpleNamespace(reaped=[]), {})
+
+    assert session.timeout_s == 660, "extension did not happen (test would be vacuous)"
+    assert adapter.received == [60], "the floor of 60s must win when runtime exceeds the budget"

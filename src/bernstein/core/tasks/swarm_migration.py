@@ -17,7 +17,15 @@ The flow is:
 Idempotency is provided via a checkpoint file under
 ``<repo_root>/.sdd/runtime/swarm/{plan_id}.json`` - re-running with the
 same ``plan.id`` skips chunks whose hash already appears in the
-checkpoint's ``completed_chunks`` set.
+checkpoint's ``completed_chunks`` set (verified done) and reuses the task
+of any chunk still in flight (issue #4624); a chunk recorded in
+``failed_chunks`` after its reopen budget was exhausted, or one whose task
+is gone, gets a fresh task on the next call instead of returning its old
+task id from memory. The orchestrator (``task_lifecycle.py``) calls
+:func:`mark_chunk_complete` / :func:`mark_chunk_failed` /
+:func:`maybe_reduce_swarm` as chunk tasks reach a terminal state; once every
+chunk has resolved, the aggregate :class:`SwarmReport` is written into the
+same checkpoint file under ``report``.
 
 The actual code-transformation logic is delegated to spawned agents
 exactly like any other task; this module only owns enumeration,
@@ -55,6 +63,20 @@ class _SwarmTaskStore(Protocol):
 
     def create_sync(self, body: dict[str, Any]) -> str:
         """Create a task and return its server-assigned id."""
+        ...
+
+    def is_task_active(self, task_id: str) -> bool:
+        """Report whether *task_id* still exists and may still be working.
+
+        "Active" means any non-terminal state - the task could still be
+        editing its ``owned_files`` right now. :func:`spawn_swarm` consults
+        this before respawning an unfinished chunk so a mid-swarm re-run of
+        ``bernstein migrate`` reuses the in-flight task instead of handing a
+        second task the same files (issue #4624). A store that cannot answer
+        - unreachable server, unknown id - returns ``False`` so the chunk
+        respawns exactly as it did before this method existed, preserving the
+        #4541 guarantee that a dead task id is never returned forever.
+        """
         ...
 
 
@@ -189,19 +211,24 @@ def _checkpoint_path(repo_root: Path, plan_id: str) -> Path:
     return repo_root / ".sdd" / "runtime" / "swarm" / f"{safe_id}.json"
 
 
+def _empty_checkpoint() -> dict[str, Any]:
+    return {"completed_chunks": [], "failed_chunks": {}, "task_ids": {}}
+
+
 def _load_checkpoint(path: Path) -> dict[str, Any]:
     if not path.exists():
-        return {"completed_chunks": [], "task_ids": {}}
+        return _empty_checkpoint()
     try:
         loaded: Any = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(loaded, dict):
             raise TypeError("checkpoint root must be an object")
         loaded.setdefault("completed_chunks", [])
+        loaded.setdefault("failed_chunks", {})
         loaded.setdefault("task_ids", {})
         return loaded
     except (OSError, ValueError, TypeError):
         logger.warning("swarm_migration: corrupt checkpoint at %s; ignoring", path)
-        return {"completed_chunks": [], "task_ids": {}}
+        return _empty_checkpoint()
 
 
 def _write_checkpoint(path: Path, data: dict[str, Any]) -> None:
@@ -264,9 +291,25 @@ def spawn_swarm(
 ) -> list[str]:
     """Enumerate, chunk, and fan out one task per chunk.
 
-    Idempotent: chunks whose hash is recorded as completed in the plan's
-    checkpoint are skipped, and previously-spawned task ids are returned
-    unchanged.
+    Idempotent on *verified completion only* (issue #4541): a chunk is
+    skipped and its task id reused once :func:`mark_chunk_complete` has
+    recorded it as done. A chunk that was *verified failed* via
+    :func:`mark_chunk_failed` once its reopen budget was exhausted, or that
+    never ran at all, gets a fresh task id, so a restart can always make
+    progress past a chunk that permanently failed instead of returning the
+    same dead id forever.
+
+    An unfinished chunk that still has a *live* task from an earlier call is
+    the one case that is **not** respawned (issue #4624): re-running
+    ``bernstein migrate`` while a swarm is still in flight would otherwise
+    create a second task owning the same files, and two agents editing the
+    same paths corrupt each other's work. Such a chunk is detected via
+    :meth:`_SwarmTaskStore.is_task_active` on its recorded id and its
+    existing task is reused; only when that id is gone or terminal (a crash
+    that never reached :func:`mark_chunk_failed`, an out-of-band cancel) does
+    the chunk respawn, so the #4541 guarantee still holds. The task-id memory
+    in the checkpoint (``task_ids``) is bookkeeping for the reduce step, not a
+    second idempotency key.
 
     Args:
         plan: Migration plan describing the glob and transform.
@@ -296,28 +339,43 @@ def spawn_swarm(
     cp_path = _checkpoint_path(repo_root, plan.id)
     checkpoint = _load_checkpoint(cp_path)
     completed: set[str] = set(checkpoint["completed_chunks"])
+    failed: dict[str, Any] = dict(checkpoint["failed_chunks"])
     known: dict[str, str] = dict(checkpoint["task_ids"])
 
+    respawned_a_failure = False
     ordered_ids: list[str] = []
     for idx, chunk in enumerate(chunks):
         chunk_hash = _chunk_hash(plan.id, chunk)
-        if chunk_hash in completed and chunk_hash in known:
+        if chunk_hash in completed:
             ordered_ids.append(known[chunk_hash])
             continue
-        if chunk_hash in known:
-            ordered_ids.append(known[chunk_hash])
+        prior_id = known.get(chunk_hash)
+        if prior_id is not None and chunk_hash not in failed and store.is_task_active(prior_id):
+            # Unfinished, but its earlier task is still in flight (issue #4624):
+            # reuse it rather than spawn a second owner of the same files. A
+            # verified failure (in ``failed``) is deliberately excluded - it is
+            # meant to respawn - as is a task the store no longer reports active.
+            ordered_ids.append(prior_id)
             continue
+        if chunk_hash in failed:
+            respawned_a_failure = True
         body = _build_task_body(plan, chunk, chunk_hash, repo_root, idx, len(chunks))
         task_id = store.create_sync(body)
         known[chunk_hash] = task_id
+        failed.pop(chunk_hash, None)
         ordered_ids.append(task_id)
 
     checkpoint["task_ids"] = known
     checkpoint["completed_chunks"] = sorted(completed)
+    checkpoint["failed_chunks"] = failed
     checkpoint["plan_id"] = plan.id
     checkpoint["chunk_count"] = len(chunks)
     checkpoint["effective_max_parallel"] = cap
     checkpoint["updated_at"] = time.time()
+    if respawned_a_failure:
+        # A stale report no longer describes the plan; let it reduce again.
+        checkpoint.pop("reduced", None)
+        checkpoint.pop("report", None)
     _write_checkpoint(cp_path, checkpoint)
     return ordered_ids
 
@@ -332,10 +390,88 @@ def mark_chunk_complete(plan_id: str, chunk_hash: str, repo_root: Path) -> None:
     checkpoint = _load_checkpoint(cp_path)
     completed: set[str] = set(checkpoint["completed_chunks"])
     completed.add(chunk_hash)
+    failed: dict[str, Any] = dict(checkpoint["failed_chunks"])
+    failed.pop(chunk_hash, None)
     checkpoint["completed_chunks"] = sorted(completed)
+    checkpoint["failed_chunks"] = failed
     checkpoint["plan_id"] = plan_id
     checkpoint["updated_at"] = time.time()
     _write_checkpoint(cp_path, checkpoint)
+
+
+def mark_chunk_failed(
+    plan_id: str,
+    chunk_hash: str,
+    repo_root: Path,
+    *,
+    files: tuple[str, ...] = (),
+    reason: str = "",
+) -> None:
+    """Record *chunk_hash* as permanently failed for *plan_id*.
+
+    Called by the orchestrator once a swarm task's reopen budget is
+    exhausted, so the chunk is distinguishable in the checkpoint from one
+    that never ran (issue #4541) and :func:`spawn_swarm` respawns it under a
+    fresh task id on the plan's next invocation instead of returning the
+    same dead id forever.
+    """
+    cp_path = _checkpoint_path(repo_root, plan_id)
+    checkpoint = _load_checkpoint(cp_path)
+    completed: set[str] = set(checkpoint["completed_chunks"])
+    completed.discard(chunk_hash)
+    failed: dict[str, Any] = dict(checkpoint["failed_chunks"])
+    failed[chunk_hash] = {"reason": reason, "files": list(files)}
+    checkpoint["completed_chunks"] = sorted(completed)
+    checkpoint["failed_chunks"] = failed
+    checkpoint["plan_id"] = plan_id
+    checkpoint["updated_at"] = time.time()
+    _write_checkpoint(cp_path, checkpoint)
+
+
+def maybe_reduce_swarm(plan_id: str, repo_root: Path) -> SwarmReport | None:
+    """Aggregate and durably record *plan_id*'s report once every chunk resolves.
+
+    Safe to call after every chunk completion or failure: a no-op until
+    ``completed_chunks`` and ``failed_chunks`` together account for every
+    chunk the plan was spawned with, and a no-op again afterwards - the
+    checkpoint's own ``reduced`` flag is checked and set in the same
+    load/write round trip used by every other checkpoint mutation in this
+    module, so two chunks landing back to back in the same orchestrator
+    tick cannot both trigger a second reduce. The report is written into the
+    same checkpoint file the chunk completions already live in (rather than
+    a separate run artifact) so a plan's full outcome - which chunks passed,
+    which failed and why - stays in the one durable place idempotency
+    already depends on.
+    """
+    cp_path = _checkpoint_path(repo_root, plan_id)
+    checkpoint = _load_checkpoint(cp_path)
+    chunk_count = checkpoint.get("chunk_count")
+    if not chunk_count or checkpoint.get("reduced"):
+        return None
+    completed: set[str] = set(checkpoint["completed_chunks"])
+    failed: dict[str, Any] = checkpoint["failed_chunks"]
+    if len(completed) + len(failed) < chunk_count:
+        return None
+
+    known: dict[str, str] = checkpoint["task_ids"]
+    child_results = [
+        SwarmChunkResult(task_id=known.get(h, ""), chunk_hash=h, files=(), passed=True) for h in sorted(completed)
+    ] + [
+        SwarmChunkResult(
+            task_id=known.get(h, ""),
+            chunk_hash=h,
+            files=tuple(info.get("files", ())),
+            passed=False,
+            summary=info.get("reason", ""),
+        )
+        for h, info in sorted(failed.items())
+    ]
+    report = reduce_swarm(plan_id, child_results)
+    checkpoint["reduced"] = True
+    checkpoint["report"] = report.to_dict()
+    checkpoint["updated_at"] = time.time()
+    _write_checkpoint(cp_path, checkpoint)
+    return report
 
 
 def reduce_swarm(plan_id: str, child_results: list[SwarmChunkResult]) -> SwarmReport:

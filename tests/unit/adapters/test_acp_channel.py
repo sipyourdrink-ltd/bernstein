@@ -37,14 +37,21 @@ def _lines(frames: list[dict]) -> list[bytes]:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", ["kilo", "goose"])
+@pytest.mark.parametrize("name", ["kilo"])
 def test_migrated_adapters_declare_acp_channel(name: str) -> None:
     assert strategy_for(name).event_channel is EventChannel.ACP
 
 
-@pytest.mark.parametrize("name", ["kilo", "goose"])
+@pytest.mark.parametrize("name", ["kilo"])
 def test_adapter_speaks_acp_true_for_migrated(name: str) -> None:
     assert adapter_speaks_acp(name) is True
+
+
+def test_goose_declares_stream_json_not_acp() -> None:
+    # goose is spawned as "goose run --text <prompt>" and emits its own
+    # stream, not ACP JSON-RPC lifecycle frames.
+    assert strategy_for("goose").event_channel is EventChannel.STREAM_JSON
+    assert adapter_speaks_acp("goose") is False
 
 
 def test_adapter_speaks_acp_false_for_text_signal_adapter() -> None:

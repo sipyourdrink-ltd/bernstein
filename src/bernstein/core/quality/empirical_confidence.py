@@ -1,5 +1,11 @@
 """Empirical confidence from outcome history.
 
+This module provides:
+
+* :func:`confidence` - Sample-size-gated empirical confidence from outcome history.
+* :func:`hoeffding_confidence_sequence` - Time-uniform confidence bounds based on
+  Hoeffding's inequality for binary outcomes.
+
 Records per-decision outcomes in an append-only SQLite table and exposes a
 sample-size-gated confidence query. The query refuses to return a value when
 the sample size is below a documented threshold; callers fall back to a
@@ -361,6 +367,82 @@ def confidence(agent_type: str, decision_key: str) -> Confidence:
     return _get_default_query().get(agent_type, decision_key)
 
 
+# ---------------------------------------------------------------------------
+# Hoeffding confidence sequence for binary outcomes
+# ---------------------------------------------------------------------------
+
+
+def hoeffding_confidence_sequence(k: int, n: int, alpha: float) -> tuple[float, float]:
+    """Return Hoeffding time-uniform confidence bound for k successes in n trials.
+
+    The Hoeffding bound is valid simultaneously at every sample size, so stopping
+    when the lower bound exceeds the threshold is legitimate at any n.
+
+    Args:
+        k: Number of successes
+        n: Total trials
+        alpha: Error level (target false-admission rate)
+
+    Returns:
+        (lower_bound, upper_bound) for the true success probability, canonically
+        rounded to 10 decimal places for byte-stable reproducibility.
+
+    Raises:
+        ValueError: If k > n, n < 0, or k < 0.
+    """
+    if n < 0:
+        msg = f"n must be non-negative, got {n}"
+        raise ValueError(msg)
+    if k < 0:
+        msg = f"k must be non-negative, got {k}"
+        raise ValueError(msg)
+    if k > n:
+        msg = f"k cannot exceed n ({k} > {n})"
+        raise ValueError(msg)
+
+    if n == 0:
+        return (0.0, 1.0)
+
+    p_hat = k / n
+
+    # Hoeffding bound: lower_bound = p_hat - sqrt(ln(2/delta)/(2*n))
+    # where delta is the error level (alpha)
+    # Compute ln(2/delta) using math.log, then canonical_round it before using
+    import math
+
+    ln_term = math.log(2.0 / alpha)
+    ln_term_canonical = canonical_round(ln_term)
+
+    bound = math.sqrt(ln_term_canonical / (2.0 * n))
+    bound_canonical = canonical_round(bound)
+
+    lower_bound = p_hat - bound_canonical
+    upper_bound = p_hat + bound_canonical
+
+    # Clamp to [0, 1]
+    lower_clamped = max(0.0, lower_bound)
+    upper_clamped = min(1.0, upper_bound)
+
+    return (canonical_round(lower_clamped), canonical_round(upper_clamped))
+
+
+def canonical_round(value: float, places: int = 10) -> float:
+    """Round value to places decimals with round-half-to-even.
+
+    This is a simplified copy of the canonical_round function from significance.py
+    to avoid circular imports and keep this module dependency-free.
+    """
+    import math
+    from decimal import ROUND_HALF_EVEN, Decimal
+
+    if math.isnan(value) or math.isinf(value):
+        msg = f"cannot canonically round non-finite value {value!r}"
+        raise ValueError(msg)
+    quantum = Decimal(1).scaleb(-places)
+    quantised = Decimal(value).quantize(quantum, rounding=ROUND_HALF_EVEN)
+    return float(quantised) + 0.0
+
+
 __all__ = [
     "DEFAULT_MIN_SAMPLES",
     "DEFAULT_PRIOR",
@@ -368,6 +450,7 @@ __all__ = [
     "ConfidenceQuery",
     "confidence",
     "default_db_path",
+    "hoeffding_confidence_sequence",
     "record_outcome",
     "reset_default_query",
 ]

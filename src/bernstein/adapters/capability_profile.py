@@ -1158,8 +1158,13 @@ _PROFILE_LIST: tuple[AdapterCapabilityProfile, ...] = (
             prompt_flag="--text",
         ),
         mcp_client=True,
-        event_channel=EventChannel.ACP,
-        notes="Goose (AAIF). Speaks ACP natively; model flag is optional and module-supplied.",
+        event_channel=EventChannel.STREAM_JSON,
+        dangerous_mode=DangerousModeStrategy.ENV_VAR,
+        notes=(
+            "Goose (AAIF). Spawned as `goose run --text` and parsed from its own "
+            "stream; autonomy is set through GOOSE_MODE. Model flag is optional "
+            "and module-supplied."
+        ),
     ),
 )
 

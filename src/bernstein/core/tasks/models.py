@@ -41,6 +41,18 @@ def _default_stalled_manager_threshold_s() -> float:
     return float(_defaults.ORCHESTRATOR.stalled_manager_threshold_s)
 
 
+def _default_planning_window_s() -> float:
+    """Return the current canonical planning window.
+
+    Reads from :mod:`bernstein.core.defaults` each call (same pattern as
+    :func:`_default_poll_interval_s`) so that ``tuning.orchestrator.
+    planning_window_s`` overrides from ``bernstein.yaml`` are honoured. The
+    ``BERNSTEIN_PLANNING_WINDOW_S`` env var is applied at the use site by
+    ``core.orchestration.run_stall.resolve_planning_window_s``.
+    """
+    return float(_defaults.ORCHESTRATOR.planning_window_s)
+
+
 def _default_max_agent_runtime_s() -> int:
     """Return the current canonical agent wall-clock kill starting value.
 
@@ -1606,6 +1618,10 @@ class OrchestratorConfig:
     # ``tuning.orchestrator.stalled_manager_threshold_s`` overrides actually
     # change the manager-stall deadline. See core.orchestration.stalled_manager.
     stalled_manager_threshold_s: float = field(default_factory=_default_stalled_manager_threshold_s)
+    # Derived from ORCHESTRATOR.planning_window_s (canonical). Bounds how long
+    # the run may sit on an empty ledger after planning has already produced
+    # tasks at least once; see core.orchestration.orchestrator.
+    planning_window_s: float = field(default_factory=_default_planning_window_s)
     max_tasks_per_agent: int = 2  # batch 2 same-role tasks per agent to reduce context overhead
     server_url: str = "http://localhost:8052"
     evolution_enabled: bool = True

@@ -2,6 +2,9 @@
 
 Collects time-series metrics for agent success rates, task completion times,
 API usage patterns, error rates, and cost efficiency.
+
+Dropped lines: permanently failing write targets are dropped after
+``_MAX_FLUSH_ATTEMPTS=3`` retries to prevent unbounded buffer growth.
 """
 
 from __future__ import annotations
@@ -1066,7 +1069,7 @@ class MetricsCollector:
             from bernstein.plugins.manager import get_plugin_manager
 
             pm = get_plugin_manager()
-            pm.hook.on_metric_record(metric_type=metric_type, value=value, labels=labels)  # type: ignore[union-attr]
+            pm.hook.on_metric_record(metric_type=metric_type, value=value, labels=labels)  # type: ignore[attr-defined]
         except Exception:
             logger.debug("Plugin hook on_metric_record failed (swallowed)", exc_info=True)
 

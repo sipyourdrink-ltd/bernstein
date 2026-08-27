@@ -10,11 +10,13 @@ can never mask a regression that turns the guard into an always-allow.
 
 from __future__ import annotations
 
+import urllib.request
 from collections.abc import Callable
 
 import pytest
 
 from bernstein.core.security.url_allowlist import (
+    StrictHTTPRedirectHandler,
     UrlSchemeError,
     ensure_http_url,
     ensure_public_http_url,
@@ -239,3 +241,106 @@ def test_source_label_appears_in_strict_rejection() -> None:
             source="skills_catalog.fetcher",
             resolver=_resolves_to("127.0.0.1"),
         )
+
+
+# --- StrictHTTPRedirectHandler: redirect-aware strict URL guard ---
+
+
+class _FakeFP:
+    """Minimal file-like stub for ``redirect_request`` signature."""
+
+    def read(self) -> bytes:
+        return b""
+
+    def close(self) -> None:
+        pass
+
+
+class _FakeHeaders(dict):
+    """Minimal ``HTTPMessage`` stand-in (``dict`` subclass is sufficient)."""
+
+
+def _redirect_handler(
+    *,
+    allow_http: bool = False,
+    source: str = "",
+    resolver: Callable[[str], list[str]] | None = None,
+) -> StrictHTTPRedirectHandler:
+    return StrictHTTPRedirectHandler(allow_http=allow_http, source=source, resolver=resolver)
+
+
+def test_redirect_to_internal_address_is_rejected() -> None:
+    """A 302 ``Location`` pointing at loopback must abort before connecting."""
+    handler = _redirect_handler(resolver=_resolves_to("127.0.0.1"))
+    req = urllib.request.Request("https://example.com/page")
+    with pytest.raises(UrlSchemeError, match="internal address"):
+        handler.redirect_request(req, _FakeFP(), 302, "Found", _FakeHeaders(), "https://127.0.0.1/inner")
+
+
+def test_redirect_to_link_local_is_rejected() -> None:
+    """Cloud-metadata link-local address via redirect must be blocked."""
+    handler = _redirect_handler(resolver=_resolves_to("169.254.169.254"))
+    req = urllib.request.Request("https://example.com/page")
+    with pytest.raises(UrlSchemeError, match="internal address"):
+        handler.redirect_request(req, _FakeFP(), 302, "Found", _FakeHeaders(), "https://169.254.169.254/meta-data/")
+
+
+def test_redirect_to_private_range_is_rejected() -> None:
+    """A ``192.168.x.x`` redirect target is a private-range SSRF vector."""
+    handler = _redirect_handler(resolver=_resolves_to("192.168.1.5"))
+    req = urllib.request.Request("https://example.com/page")
+    with pytest.raises(UrlSchemeError, match="internal address"):
+        handler.redirect_request(req, _FakeFP(), 302, "Found", _FakeHeaders(), "https://192.168.1.5/internal")
+
+
+def test_redirect_to_public_address_succeeds() -> None:
+    """A benign public→public redirect is allowed through."""
+    handler = _redirect_handler(resolver=_resolves_to("93.184.216.34"))
+    req = urllib.request.Request("https://example.com/page")
+    result = handler.redirect_request(req, _FakeFP(), 302, "Found", _FakeHeaders(), "https://other.example.com/ok")
+    assert result is not None
+    assert result.full_url == "https://other.example.com/ok"
+
+
+def test_redirect_http_allowed_when_opted_in_for_public_host() -> None:
+    """``allow_http=True`` permits ``http://`` redirects to public hosts."""
+    handler = _redirect_handler(allow_http=True, resolver=_resolves_to("93.184.216.34"))
+    req = urllib.request.Request("https://example.com/page")
+    result = handler.redirect_request(req, _FakeFP(), 302, "Found", _FakeHeaders(), "http://other.example.com/ok")
+    assert result is not None
+    assert result.full_url == "http://other.example.com/ok"
+
+
+def test_redirect_http_internal_rejected_even_with_allow_http() -> None:
+    """``allow_http=True`` still rejects ``http://127.0.0.1`` redirect targets."""
+    handler = _redirect_handler(allow_http=True, resolver=_resolves_to("127.0.0.1"))
+    req = urllib.request.Request("https://example.com/page")
+    with pytest.raises(UrlSchemeError, match="internal address"):
+        handler.redirect_request(req, _FakeFP(), 302, "Found", _FakeHeaders(), "http://127.0.0.1/internal")
+
+
+def test_redirect_rebinding_answer_with_mixed_addresses_is_rejected() -> None:
+    """One public + one private answer: which one the client picks is not ours to decide."""
+    handler = _redirect_handler(resolver=_resolves_to("93.184.216.34", "10.0.0.5"))
+    req = urllib.request.Request("https://example.com/page")
+    with pytest.raises(UrlSchemeError, match="internal address"):
+        handler.redirect_request(req, _FakeFP(), 302, "Found", _FakeHeaders(), "https://rebind.example/ok")
+
+
+def test_redirect_source_label_appears_in_error() -> None:
+    """The ``source`` kwarg is forwarded into the rejection message."""
+    handler = _redirect_handler(
+        source="volunteer.registry",
+        resolver=_resolves_to("127.0.0.1"),
+    )
+    req = urllib.request.Request("https://example.com/page")
+    with pytest.raises(UrlSchemeError, match="volunteer.registry"):
+        handler.redirect_request(req, _FakeFP(), 302, "Found", _FakeHeaders(), "https://evil.example/x")
+
+
+def test_redirect_non_http_scheme_rejected() -> None:
+    """A ``file://`` redirect target is rejected at the scheme gate."""
+    handler = _redirect_handler(resolver=_resolves_to("127.0.0.1"))
+    req = urllib.request.Request("https://example.com/page")
+    with pytest.raises(UrlSchemeError, match="scheme"):
+        handler.redirect_request(req, _FakeFP(), 302, "Found", _FakeHeaders(), "file:///etc/passwd")

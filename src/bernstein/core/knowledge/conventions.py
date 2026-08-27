@@ -50,6 +50,7 @@ import fnmatch
 import hashlib
 import json
 import logging
+import subprocess
 import time
 import uuid
 from dataclasses import dataclass
@@ -604,6 +605,73 @@ def file_review_correction(
     return signed_new
 
 
+def file_review_finding(
+    sdd_dir: Path,
+    workdir: Path,
+    task_id: str,
+    issue_text: str,
+    owned_files: list[str],
+    decided_by: str,
+    subject_symbol: str = "",
+) -> ConventionReceipt | None:
+    """File a review finding as a convention receipt, never breaking the caller.
+
+    Convenience wrapper mapping cross-model review-finding data onto
+    :func:`file_review_correction`. Derives ``base_commit_sha`` from the
+    workdir's HEAD and a ``subject_path`` from ``owned_files`` (the single file,
+    a brace-glob for several, ``*`` when none). Any filing failure (missing
+    git, conflict, I/O) is logged and swallowed so the review pipeline is never
+    interrupted by convention filing.
+
+    Args:
+        sdd_dir: Path to project .sdd directory.
+        workdir: Working directory of the codebase (used for git HEAD).
+        task_id: Identifier of the task whose review produced the finding.
+        issue_text: The review issue text, used as the rule text.
+        owned_files: Files the task owned; derive the subject path from these.
+        decided_by: Reviewer identity that decided the rule.
+        subject_symbol: Optional class/function symbol name in the subject path.
+
+    Returns:
+        The filed :class:`ConventionReceipt`, or ``None`` if filing failed.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+        base_commit_sha = result.stdout.strip()
+        if not base_commit_sha:
+            raise ValueError("git rev-parse returned an empty commit SHA")
+
+        if len(owned_files) == 1:
+            subject_path = owned_files[0]
+        elif len(owned_files) > 1:
+            subject_path = "{" + ",".join(owned_files) + "}"
+        else:
+            subject_path = "*"
+
+        return file_review_correction(
+            sdd_dir=sdd_dir,
+            workdir=workdir,
+            rule_text=issue_text,
+            subject_path=subject_path,
+            base_commit_sha=base_commit_sha,
+            subject_symbol=subject_symbol,
+            filing_finding_id=task_id,
+            decided_by=decided_by,
+            assertion_ref=None,
+        )
+    except Exception as exc:
+        logger.warning("file_review_finding: convention filing failed: %s", exc)
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Retirement
 # ---------------------------------------------------------------------------
@@ -948,6 +1016,7 @@ __all__ = [
     "detect_assertion_conflict",
     "expire_convention_receipt",
     "file_review_correction",
+    "file_review_finding",
     "get_active_conventions",
     "paths_overlap",
     "retire_convention_receipt",

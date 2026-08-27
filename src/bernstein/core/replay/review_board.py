@@ -33,6 +33,10 @@ Journal event                 Board transition
 ``task_review_decision``      attaches the operator verdict; ``merge`` moves
                               the card to ``merged``
 ``run_started``/``completed`` populate the board's run envelope
+``plan.graph.full``           populates the board's run envelope with the
+                              run's goal and every task's title, role, and
+                              dependency edges (see
+                              :func:`record_plan_graph_full`).
 ============================  =============================================
 
 Unknown event types are ignored so future journal vocabulary cannot break
@@ -55,6 +59,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -71,7 +76,7 @@ from bernstein.core.security.path_containment import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
     from pathlib import Path
 
     from bernstein.core.replay.journal import EventJournal
@@ -102,6 +107,12 @@ EVENT_TASK_DIFF_CAPTURED = "task_diff_captured"
 #: :func:`record_review_decision`). The signed, principal-named receipt is
 #: mirrored onto the audit chain by the action endpoint.
 EVENT_TASK_REVIEW_DECISION = "task_review_decision"
+
+#: Journal event recorded when the plan's structure changes, carrying the run's
+#: goal and each task's title, role, and dependencies. Added by
+#: :func:`record_plan_graph_full` (in ``src/bernstein/core/orchestration/orchestrator.py``)
+#: to enable a whole-task-graph view on the review board.
+EVENT_PLAN_GRAPH_FULL = "plan.graph.full"
 
 #: Board action an operator can take on a card. ``merge`` moves the card into
 #: the ``merged`` column; ``approve`` / ``request_changes`` annotate the card
@@ -154,6 +165,9 @@ def _fold_event(cards: dict[str, dict[str, Any]], run: dict[str, Any], index: in
         run["completed"] = True
         ticks = row.get("ticks")
         run["ticks"] = int(ticks) if isinstance(ticks, (int, float)) else 0
+        return
+    if event == EVENT_PLAN_GRAPH_FULL:
+        _fold_plan_graph_full(run, row)
         return
 
     task_id = row.get("task_id")
@@ -228,6 +242,39 @@ def _fold_event(cards: dict[str, dict[str, Any]], run: dict[str, Any], index: in
         # Unknown / non-task event: ignore (forward compatibility).
         return
     card["last_event_index"] = index
+
+
+def _fold_plan_graph_full(run: dict[str, Any], row: Mapping[str, Any]) -> None:
+    """Fold a ``plan.graph.full`` row into the run envelope.
+
+    The row carries the run's goal and a list of task nodes, each with
+    ``id``, ``role``, ``title`` and ``depends_on``. This is the closest
+    thing the journal has to a whole-task-graph view: an operator reviewing
+    a completed or detached run can see what was planned, not just which
+    tasks executed.
+
+    Pure function: only the fields named below are read, so two folds over
+    the same journal are byte-identical under :func:`canonical_board_bytes`.
+    """
+    goal = row.get("goal")
+    if isinstance(goal, str):
+        run["goal"] = goal
+    nodes = row.get("nodes")
+    if not isinstance(nodes, list):
+        return
+    run["plan_nodes"] = sorted(
+        [
+            {
+                "id": str(node.get("id", "")),
+                "role": str(node.get("role", "")),
+                "title": str(node.get("title", "")),
+                "depends_on": sorted(str(d) for d in node.get("depends_on", []) if isinstance(d, str)),
+            }
+            for node in nodes
+            if isinstance(node, Mapping)
+        ],
+        key=lambda n: str(n["id"]),
+    )
 
 
 def project_board(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -580,6 +627,7 @@ def record_review_decision(
 __all__ = [
     "BOARD_COLUMNS",
     "BOARD_SCHEMA_VERSION",
+    "EVENT_PLAN_GRAPH_FULL",
     "EVENT_TASK_DIFF_CAPTURED",
     "EVENT_TASK_MERGED",
     "EVENT_TASK_REVIEW_DECISION",

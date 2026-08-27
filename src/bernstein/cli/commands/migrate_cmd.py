@@ -15,7 +15,12 @@ from typing import Any
 
 import click
 
-from bernstein.cli.helpers import SERVER_URL, console, server_post
+from bernstein.cli.helpers import SERVER_URL, console, server_get, server_post
+from bernstein.core.tasks.lifecycle import (
+    SUCCESSFUL_TASK_STATUSES,
+    TERMINAL_TASK_STATUSES,
+    UNSUCCESSFUL_TERMINAL_STATUSES,
+)
 from bernstein.core.tasks.swarm_migration import (
     MigrationPlan,
     chunk_targets,
@@ -25,6 +30,31 @@ from bernstein.core.tasks.swarm_migration import (
 )
 
 _DRY_RUN_PREVIEW_LIMIT = 10
+
+# A swarm chunk whose task reports one of these has stopped touching its files,
+# so re-running the plan must respawn it rather than wait on it forever.
+# Anything else - open, claimed, in progress, blocked, awaiting approval - may
+# still be editing the chunk, so the plan reuses it rather than spawning a
+# duplicate owner (issue #4624).
+#
+# Three lifecycle sets are unioned because each answers a different question and
+# neither one alone covers every status that has stopped:
+#
+# * SUCCESSFUL/UNSUCCESSFUL_TERMINAL answer "will this dependency ever deliver".
+#   DONE, FAILED and ORPHANED keep a recovery edge back to OPEN, so they are
+#   absent from TERMINAL_TASK_STATUSES while having certainly stopped editing.
+# * TERMINAL_TASK_STATUSES answers "can this status transition at all". SUSPENDED
+#   is in it and in neither of the others: it has no outgoing transition, so a
+#   chunk left in it would report active forever and never respawn - #4541's
+#   "never return a dead id forever" bug, reintroduced through a status neither
+#   dependency set names.
+#
+# A status absent from all three still defaults to "still active", which is the
+# safe side of the duplicate-owner bug. test_terminal_status_values_covers_every
+# _unresumable_status pins that gap shut for statuses added to only one set.
+_TERMINAL_STATUS_VALUES = frozenset(
+    s.value for s in (SUCCESSFUL_TASK_STATUSES | UNSUCCESSFUL_TERMINAL_STATUSES | TERMINAL_TASK_STATUSES)
+)
 
 
 class _ServerTaskStore:
@@ -38,6 +68,20 @@ class _ServerTaskStore:
         if not isinstance(task_id, str):
             raise click.ClickException(f"Task server returned no task id: {resp!r}")
         return task_id
+
+    def is_task_active(self, task_id: str) -> bool:
+        """Return ``True`` while the server still reports *task_id* non-terminal.
+
+        A ``404`` or an unreachable server yields ``None`` from
+        :func:`server_get`; both are treated as "not active" so the chunk
+        respawns, matching the pre-#4624 behaviour when the task is genuinely
+        gone. Only a live, non-terminal status suppresses the respawn.
+        """
+        resp = server_get(f"/tasks/{task_id}")
+        if resp is None:
+            return False
+        status = resp.get("status")
+        return isinstance(status, str) and status not in _TERMINAL_STATUS_VALUES
 
 
 def _slugify(value: str) -> str:

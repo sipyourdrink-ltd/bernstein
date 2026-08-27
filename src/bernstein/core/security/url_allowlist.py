@@ -16,11 +16,20 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import urllib.request
 from collections.abc import Callable, Iterable
-from typing import Final
+from typing import IO, TYPE_CHECKING, Final
 from urllib.parse import urlparse
 
-__all__ = ["UrlSchemeError", "ensure_http_url", "ensure_public_http_url"]
+if TYPE_CHECKING:
+    from http.client import HTTPMessage
+
+__all__ = [
+    "StrictHTTPRedirectHandler",
+    "UrlSchemeError",
+    "ensure_http_url",
+    "ensure_public_http_url",
+]
 
 # Resolves a hostname to a list of textual IP addresses. Injectable so tests can
 # feed hostile answers without depending on DNS.
@@ -231,3 +240,57 @@ def ensure_public_http_url(
             )
 
     return url
+
+
+class StrictHTTPRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """``HTTPRedirectHandler`` that rejects redirects to internal destinations.
+
+    ``urllib.request.urlopen`` follows ``Location`` redirects automatically. A
+    strict pre-fetch check via :func:`ensure_public_http_url` is therefore
+    insufficient: a public host can answer ``302 Location: http://127.0.0.1/``
+    and still reach the client unchecked. This handler re-runs the strict
+    validation on every redirect target and raises :class:`UrlSchemeError` to
+    abort the redirect.
+
+    TOCTOU note: this is a resolve-then-connect check. A name that is
+    re-resolved by the HTTP client between this validation and the TCP
+    connection can answer differently the second time (DNS rebinding). That
+    race is inherent without connection-time IP pinning and is not mitigated
+    here; the pre-fetch + per-redirect check is the required defence layer.
+
+    Args:
+        allow_http: Whether plain ``http://`` redirect targets are permitted.
+            Must match the initial fetch's ``allow_http``. Loopback is still
+            rejected even when ``allow_http`` is True.
+        source: Human-readable label for error messages.
+        resolver: Optional host resolver for tests.
+    """
+
+    def __init__(
+        self,
+        *,
+        allow_http: bool = False,
+        source: str = "",
+        resolver: HostResolver | None = None,
+    ) -> None:
+        super().__init__()
+        self._allow_http = allow_http
+        self._source = source
+        self._resolver = resolver
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        ensure_public_http_url(
+            newurl,
+            allow_http=self._allow_http,
+            source=self._source,
+            resolver=self._resolver,
+        )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)

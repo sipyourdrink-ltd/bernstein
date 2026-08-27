@@ -178,6 +178,11 @@ def seal_cmd(anchor_git: bool, allow_broken_chain: bool) -> None:
 
     seal_path = save_seal(seal, MERKLE_DIR)
 
+    # Generate content-addressed hash tiles for audit segments
+    from bernstein.core.persistence.tiles import generate_tiles
+
+    tile_paths = generate_tiles(AUDIT_DIR, seal)
+
     checkpoint = None
     if not allow_broken_chain:
         try:
@@ -209,6 +214,7 @@ def seal_cmd(anchor_git: bool, allow_broken_chain: bool) -> None:
     table.add_row("Entries", str(seal.get("entry_count", "-")))
     table.add_row("Sealed at", str(seal["sealed_at_iso"]))
     table.add_row("Seal file", str(seal_path))
+    table.add_row("Tiles", str(len(tile_paths)))
     if checkpoint is not None:
         extended = "extends previous" if checkpoint.get("extends_prev", True) else "acknowledged divergence"
         table.add_row("Checkpoint", f"pinned at {checkpoint.get('entry_count', '-')} entries ({extended})")

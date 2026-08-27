@@ -30,6 +30,9 @@ auth:
 required_flags:
   - "--text"
   - "--model"
+  - "--output-format"
+  - "--no-session"
+  - "--max-turns"
 required_subcommands:
   - "run"
 # Goose sub-flags live under ``goose run --help``.

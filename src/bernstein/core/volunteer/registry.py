@@ -21,7 +21,12 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Protocol
 
-from bernstein.core.security.url_allowlist import ensure_http_url
+from bernstein.core.security.url_allowlist import (
+    StrictHTTPRedirectHandler,
+    UrlSchemeError,
+    ensure_http_url,
+    ensure_public_http_url,
+)
 from bernstein.core.volunteer.manifest import (
     VolunteerManifest,
     VolunteerManifestError,
@@ -64,11 +69,17 @@ class HTTPTransport(Protocol):
 
 class _UrllibTransport:
     def get(self, url: str, *, headers: dict[str, str]) -> HTTPResponse:
-        ensure_http_url(url, allow_http=False, source="volunteer.registry")
+        ensure_public_http_url(url, allow_http=False, source="volunteer.registry")
         request = urllib.request.Request(url, headers=headers)
+        # ``urlopen`` follows redirects automatically; a public host that
+        # redirects to an internal address would otherwise be unchecked.
+        # ``StrictHTTPRedirectHandler`` re-runs the strict check on every
+        # ``Location`` URL and raises ``UrlSchemeError`` to abort.
+        # TOCTOU (resolve-then-connect) is inherent without IP pinning.
+        opener = urllib.request.build_opener(StrictHTTPRedirectHandler(allow_http=False, source="volunteer.registry"))
         try:
             # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
-            with urllib.request.urlopen(request, timeout=15) as resp:
+            with opener.open(request, timeout=15) as resp:
                 body = resp.read()
                 etag = resp.headers.get("ETag")
                 return HTTPResponse(status=resp.status, body=body, etag=etag)
@@ -103,13 +114,30 @@ class DroppedEntry:
     reason: str
 
 
-def _validate_url(url: str) -> tuple[bool, str | None]:
-    """Validate URL is HTTPS before any transport call."""
+def _validate_index_url(url: str) -> tuple[bool, str | None]:
+    """Validate an operator-configured index URL (permissive, scheme-only)."""
     try:
         ensure_http_url(url, allow_http=False, source="volunteer.registry")
         return True, None
     except Exception as exc:
         return False, str(exc)
+
+
+def _validate_manifest_url(url: str) -> tuple[bool, str | None]:
+    """Validate a third-party-derived manifest URL (strict, internal rejected)."""
+    try:
+        ensure_public_http_url(url, allow_http=False, source="volunteer.registry")
+        return True, None
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _validate_url(url: str) -> tuple[bool, str | None]:
+    """Validate URL is HTTPS before any transport call.
+
+    Kept for backwards compatibility; delegates to the index (permissive) path.
+    """
+    return _validate_index_url(url)
 
 
 def _parse_index(body: bytes, source_url: str) -> list[IndexEntry]:
@@ -169,13 +197,13 @@ def _fetch_manifest(
 ) -> tuple[VolunteerManifest | None, str | None]:
     """Fetch and validate the project's volunteer manifest."""
     url = _manifest_url_for(entry)
-    ok, err = _validate_url(url)
+    ok, err = _validate_manifest_url(url)
     if not ok:
         return None, f"manifest URL rejected: {err}"
 
     try:
         response = transport.get(url, headers=headers)
-    except (TimeoutError, OSError) as exc:
+    except (TimeoutError, OSError, UrlSchemeError) as exc:
         return None, f"fetch failed: {exc}"
 
     if response.status >= 400:
@@ -236,14 +264,14 @@ def browse_indexes(
     dropped: list[DroppedEntry] = []
 
     for index_url in index_urls:
-        ok, err = _validate_url(index_url)
+        ok, err = _validate_index_url(index_url)
         if not ok:
             dropped.append(DroppedEntry(repo_url=index_url, reason=f"URL scheme rejected: {err}"))
             continue
 
         try:
             response = transport.get(index_url, headers=headers)
-        except (TimeoutError, OSError) as exc:
+        except (TimeoutError, OSError, UrlSchemeError) as exc:
             dropped.append(DroppedEntry(repo_url=index_url, reason=f"index fetch failed: {exc}"))
             continue
 
