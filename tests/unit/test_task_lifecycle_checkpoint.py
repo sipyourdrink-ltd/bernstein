@@ -9,9 +9,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from bernstein.adapters._contract import strategy_for
+from bernstein.core.persistence.task_resume import load_checkpoint
 from bernstein.core.tasks.models import AgentSession, Task, TaskStatus
 from bernstein.core.tasks.task_lifecycle import (
     _reap_and_cleanup_session,
+    _write_task_resume_checkpoint,
 )
 
 
@@ -223,7 +226,11 @@ def _mock_orchestrator(workdir: Path) -> MagicMock:
     orch._spawner = MagicMock()
     orch._spawner.reap_completed_agent = MagicMock()
     orch._spawner.cleanup_worktree = MagicMock()
-    orch._spawner.get_worktree_path = MagicMock(return_value=str(workdir / "worktree"))
+    # ``AgentSpawner.get_worktree_path`` returns ``Path | None``; the mock
+    # has to return the same type or these tests pass on a shape the
+    # orchestrator never sees.
+    orch._spawner.get_worktree_path = MagicMock(return_value=workdir / "worktree")
+    orch._spawner.default_adapter_name = "claude"
     orch._workdir = workdir
 
     # Mock the other required functions
@@ -258,3 +265,78 @@ def _make_session(session_id: str) -> AgentSession:
         id=session_id,
         role="backend",
     )
+
+
+# ---------------------------------------------------------------------------
+# The tests above patch ``_write_task_resume_checkpoint`` out, so they assert
+# that the call happens and nothing about what it writes. These run the real
+# body and read the result back with the loader ``bernstein resume`` uses.
+# Without them a checkpoint that fails validation on every single task looks
+# exactly like a checkpoint that works.
+# ---------------------------------------------------------------------------
+
+
+def test_checkpoint_written_for_a_path_worktree_is_readable(tmp_path: Path) -> None:
+    """The spawner hands out a ``Path``; the checkpoint field is a ``str``."""
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    (worktree / ".scratchpad.md").write_text("progress so far\n", encoding="utf-8")
+
+    _write_task_resume_checkpoint(
+        tmp_path,
+        "t-path",
+        session=_make_session("s-path"),
+        worktree_path=worktree,
+        adapter_name="claude",
+    )
+
+    cp = load_checkpoint(tmp_path, "t-path")
+    assert cp is not None, "no checkpoint was written"
+    assert cp.worktree_path == str(worktree)
+    assert cp.scratchpad_path == str(worktree / ".scratchpad.md")
+    assert cp.scratchpad_sha256, "scratchpad digest missing"
+    assert cp.adapter_session_id == "s-path"
+
+
+def test_checkpoint_carries_the_adapter_resume_reads(tmp_path: Path) -> None:
+    """``bernstein resume`` picks its strategy from ``checkpoint.adapter``."""
+    _write_task_resume_checkpoint(
+        tmp_path,
+        "t-adapter",
+        session=None,
+        worktree_path=None,
+        adapter_name="claude",
+    )
+
+    cp = load_checkpoint(tmp_path, "t-adapter")
+    assert cp is not None
+    assert cp.adapter == "claude"
+    # An empty adapter still loads, so the value only matters where resume
+    # reads it: the name has to resolve to a real strategy.
+    assert strategy_for(cp.adapter).resume is not None
+
+
+def test_reap_and_cleanup_session_records_a_resumable_checkpoint(tmp_path: Path) -> None:
+    """End to end through the reaper, with nothing about the write mocked."""
+    orch = _mock_orchestrator(tmp_path)
+    orch._spawner.reap_completed_agent.return_value = SimpleNamespace(
+        success=True,
+        conflicting_files=[],
+    )
+
+    _reap_and_cleanup_session(
+        orch=orch,
+        task=_make_task("t-e2e"),
+        session=_make_session("s-e2e"),
+        result=None,
+        janitor_passed=True,
+        skip_merge=False,
+        _completion_data=None,
+        cache_diff_lines=0,
+        preserve_worktree=False,
+    )
+
+    cp = load_checkpoint(tmp_path, "t-e2e")
+    assert cp is not None, "the reaper wrote no checkpoint"
+    assert cp.adapter, "checkpoint names no adapter; resume cannot pick a strategy"
+    assert cp.worktree_path == str(tmp_path / "worktree")

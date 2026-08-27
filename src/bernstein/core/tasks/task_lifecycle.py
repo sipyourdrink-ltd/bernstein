@@ -3576,7 +3576,7 @@ def _write_task_resume_checkpoint(
     workdir: Path,
     task_id: str,
     session: AgentSession | None,
-    worktree_path: str | None,
+    worktree_path: Path | None,
     adapter_name: str | None = None,
 ) -> None:
     """Write a task resume checkpoint for a completed task.
@@ -3586,52 +3586,52 @@ def _write_task_resume_checkpoint(
     needed. The checkpoint is written atomically using a temp file and
     rename to prevent corruption.
 
+    Raises rather than swallowing: the caller owns the fail-open decision, so
+    a failure gets logged once, at a level an operator sees.
+
     Args:
         workdir: Project root directory.
         task_id: Task identifier.
         session: Completed agent session, if available.
         worktree_path: Absolute path to the preserved worktree.
-        adapter_name: Optional adapter name override. If None, tries to
-            extract from session meta or uses empty string.
+        adapter_name: Adapter that ran the session. ``bernstein resume`` reads
+            its resume strategy off this name (``resume_cmd.py``), so a
+            checkpoint written without one is readable but not resumable.
     """
-    try:
-        # Extract adapter information
-        adapter = adapter_name or ""
-        adapter_session_id = ""
-        if session is not None:
-            adapter_session_id = session.id
-            # Try to extract adapter name from session meta if available
-            if hasattr(session, "meta") and isinstance(session.meta, dict):
-                adapter = session.meta.get("adapter_name", "") or adapter
+    adapter = adapter_name or ""
+    adapter_session_id = session.id if session is not None else ""
 
-        # Get trace cursor (byte offset) - file size of trace JSONL
-        trace_cursor = 0
-        trace_path = workdir / ".sdd" / "traces" / f"{task_id}.jsonl"
-        if trace_path.exists():
-            with contextlib.suppress(OSError):
-                trace_cursor = trace_path.stat().st_size
+    # Get trace cursor (byte offset) - file size of trace JSONL
+    trace_cursor = 0
+    trace_path = workdir / ".sdd" / "traces" / f"{task_id}.jsonl"
+    if trace_path.exists():
+        with contextlib.suppress(OSError):
+            trace_cursor = trace_path.stat().st_size
 
-        # Get scratchpad info if available
-        scratchpad_path = None
-        scratchpad_sha = None
-        if worktree_path is not None:
-            scratchpad_path = str(worktree_path / ".scratchpad.md")
-            scratchpad_sha = scratchpad_sha256(Path(scratchpad_path))
+    # Get scratchpad info if available
+    scratchpad_path = None
+    scratchpad_sha = None
+    if worktree_path is not None:
+        scratchpad_path = str(worktree_path / ".scratchpad.md")
+        scratchpad_sha = scratchpad_sha256(Path(scratchpad_path))
 
-        checkpoint = TaskResumeCheckpoint(
-            task_id=task_id,
-            last_completed_step_id=task_id,  # task_id used as default step_id
-            trace_cursor=trace_cursor,
-            adapter=adapter,
-            adapter_session_id=adapter_session_id,
-            worktree_path=worktree_path,
-            scratchpad_path=scratchpad_path,
-            scratchpad_sha256=scratchpad_sha,
-            meta=({"adapter_name": adapter} if adapter and session is not None else {}),
-        )
-        save_checkpoint(workdir, checkpoint)
-    except Exception:
-        logger.debug("Failed to write task resume checkpoint for %s", task_id, exc_info=True)
+    checkpoint = TaskResumeCheckpoint(
+        task_id=task_id,
+        last_completed_step_id=task_id,  # task_id used as default step_id
+        trace_cursor=trace_cursor,
+        adapter=adapter,
+        adapter_session_id=adapter_session_id,
+        # ``TaskResumeCheckpoint.worktree_path`` is a ``str`` and the model
+        # forbids anything else; the spawner hands out a ``Path``. Passing the
+        # Path straight through raised a validation error that the old
+        # try/except here then swallowed at debug level, so no checkpoint was
+        # ever written and nothing said so.
+        worktree_path=str(worktree_path) if worktree_path is not None else None,
+        scratchpad_path=scratchpad_path,
+        scratchpad_sha256=scratchpad_sha,
+        meta=({"adapter_name": adapter} if adapter else {}),
+    )
+    save_checkpoint(workdir, checkpoint)
 
 
 def _reap_and_cleanup_session(
@@ -3710,15 +3710,31 @@ def _reap_and_cleanup_session(
     # resumed later if needed. Write even for approval-gated tasks that skip merge.
     if janitor_passed:
         try:
+            from bernstein.adapters.registry import adapter_name_for_provider
+
             worktree_path = orch._spawner.get_worktree_path(session.id)
+            # The session records the provider and model it actually ran on,
+            # and the registry maps that pair back to the adapter - the one
+            # field ``bernstein resume`` needs to pick a resume strategy. Fall
+            # back to the run-level adapter when the pair is not registered.
+            adapter_name = (
+                adapter_name_for_provider(session.provider, session.model_config.model)
+                or orch._spawner.default_adapter_name
+            )
             _write_task_resume_checkpoint(
                 orch._workdir,
                 task.id,
                 session=session,
                 worktree_path=worktree_path,
+                adapter_name=adapter_name,
             )
-        except Exception as exc:
-            logger.debug("Failed to write task resume checkpoint for %s: %s", task.id, exc)
+        except Exception:
+            # Fail-open like the review-diff capture above: a missing
+            # checkpoint must not block completion. Warning, not debug -
+            # nothing else reports it, and the operator would otherwise only
+            # find out at the next ``bernstein resume``, which would simply
+            # say there is nothing to resume from.
+            logger.warning("Failed to write task resume checkpoint for %s", task.id, exc_info=True)
 
     # issue #2792: a merge-back that failed for a *non-conflict* reason (an
     # untracked operator-tree file, the forbidden-path guard, unrelated
