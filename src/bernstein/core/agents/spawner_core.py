@@ -42,6 +42,7 @@ from bernstein.core.agents.context_attachments import (
     collect_declared_context_files,
     resolve_context_attachments,
 )
+from bernstein.core.agents.context_receipt import build_context_receipt
 from bernstein.core.agents.heartbeat import HeartbeatMonitor
 from bernstein.core.agents.in_process_agent import InProcessAgent
 from bernstein.core.agents.project_context import resolve_project_context
@@ -1100,7 +1101,7 @@ def _render_prompt_with_receipt(
     max_turns: int | None = None,
     mailbox_section: str = "",
     model: str = "",
-    context_policy: dict[str, str] | None = None,
+    context_policy: Any = None,
 ) -> tuple[str, ContextReceipt]:
     """Build the full agent prompt from role template + tasks + context.
 
@@ -1411,17 +1412,46 @@ def _render_prompt_with_receipt(
             max_turns,
         )
 
-    # Build the per-section content receipt and extract the content strings
-    # for cache marking. The joined prompt must be byte-identical to the
-    # pre-receipt output, so the receipt is purely additive instrumentation.
-    from bernstein.core.agents.context_receipt import build_context_receipt
-
-    # Build policy dict from context_policy parameter
-    policy: dict[str, str] = {}
+    # Apply context policy filtering if a policy is provided
+    # The policy determines which parts to include and their order
     if context_policy is not None:
-        policy_id = context_policy.get("policy_id", "")
-        policy_version = context_policy.get("policy_version", "")
-        policy = {"policy_id": policy_id, "policy_version": policy_version}
+        # Check if context_policy is a ContextPolicy object or a dict
+        from bernstein.core.agents.context_policy import ContextPolicy
+
+        if isinstance(context_policy, ContextPolicy):
+            # Use ContextPolicy.select_parts to determine which parts to include
+            # select_parts returns list of (part_id, content) tuples
+            policy_parts = context_policy.select_parts(tasks, workdir)
+            policy_dict = {
+                "policy_id": context_policy.policy_id,
+                "policy_version": context_policy.policy_version,
+            }
+
+            # Filter named_sections based on policy's part_order
+            # Keep only sections whose part_id is in the policy's part_order
+            policy_part_ids = set(part_id for part_id, _ in policy_parts)
+            filtered_sections = [(label, content) for label, content in named_sections if label in policy_part_ids]
+
+            # Reorder sections according to policy's part_order
+            ordered_sections = sorted(
+                filtered_sections,
+                key=lambda x: (
+                    context_policy.part_order.index(x[0])
+                    if x[0] in context_policy.part_order
+                    else len(context_policy.part_order)
+                ),
+            )
+            named_sections = ordered_sections
+            policy = policy_dict
+        else:
+            # Backward compatibility: context_policy is a dict with policy_id/policy_version
+            policy_dict = {
+                "policy_id": context_policy.get("policy_id", ""),
+                "policy_version": context_policy.get("policy_version", ""),
+            }
+            policy = policy_dict
+    else:
+        policy = {}
 
     receipt = build_context_receipt(named_sections, policy=policy)
 
@@ -1603,6 +1633,7 @@ class AgentSpawner:
         self._availability_probe_cache = ProbeCache(ttl_seconds=ttl_minutes * 60.0)
         # Context policy system
         from bernstein.core.agents.context_policy import ContextPolicy
+
         self._context_policy = ContextPolicy.from_config(context_policy_config)
         self._workspace = workspace
         self._bulletin = bulletin
