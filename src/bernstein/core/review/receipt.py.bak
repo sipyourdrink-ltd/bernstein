@@ -752,10 +752,6 @@ class AutofixReceipt:
         signer_public_key_pem: The install's Ed25519 public key.
         signature: Ed25519 detached signature over the canonical binding.
         journal_entry_hash: The autofix-spine entry hash anchoring the receipt.
-        thread_id: GraphQL node ID of the review thread (optional).
-        thread_resolved: Whether the thread was resolved (optional).
-        resolution_reply: Text posted to resolve the thread (optional).
-        declined_reason: Reason the fix was not applied (optional).
     """
 
     finding_hash: str
@@ -767,13 +763,9 @@ class AutofixReceipt:
     signer_public_key_pem: str = ""
     signature: str = ""
     journal_entry_hash: str = ""
-    thread_id: str | None = None
-    thread_resolved: bool | None = None
-    resolution_reply: str | None = None
-    declined_reason: str | None = None
 
     def _binding(self) -> dict[str, Any]:
-        binding: dict[str, Any] = {
+        return {
             "v": REVIEW_SCHEMA_VERSION,
             "finding_hash": self.finding_hash,
             "fix_commit_hash": self.fix_commit_hash,
@@ -782,25 +774,16 @@ class AutofixReceipt:
             "task_id": self.task_id,
             "timestamp": self.timestamp,
         }
-        if self.thread_id is not None:
-            binding["thread_id"] = self.thread_id
-        if self.thread_resolved is not None:
-            binding["thread_resolved"] = self.thread_resolved
-        if self.resolution_reply is not None:
-            binding["resolution_reply"] = self.resolution_reply
-        if self.declined_reason is not None:
-            binding["declined_reason"] = self.declined_reason
-        return binding
 
     def to_canonical_bytes(self) -> bytes:
         return _canonical_bytes(self._binding())
 
     def to_dict(self) -> dict[str, Any]:
-        base = self._binding()
-        base["signer_public_key_pem"] = self.signer_public_key_pem
-        base["signature"] = self.signature
-        base["journal_entry_hash"] = self.journal_entry_hash
-        return base
+        return self._binding() | {
+            "signer_public_key_pem": self.signer_public_key_pem,
+            "signature": self.signature,
+            "journal_entry_hash": self.journal_entry_hash,
+        }
 
     @classmethod
     def from_bytes(cls, raw: bytes) -> AutofixReceipt:
@@ -815,10 +798,6 @@ class AutofixReceipt:
             signer_public_key_pem=str(row.get("signer_public_key_pem", "")),
             signature=str(row.get("signature", "")),
             journal_entry_hash=str(row.get("journal_entry_hash", "")),
-            thread_id=str(row["thread_id"]) if "thread_id" in row else None,
-            thread_resolved=bool(row["thread_resolved"]) if "thread_resolved" in row else None,
-            resolution_reply=str(row["resolution_reply"]) if "resolution_reply" in row else None,
-            declined_reason=str(row["declined_reason"]) if "declined_reason" in row else None,
         )
 
 
