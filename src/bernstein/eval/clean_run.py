@@ -158,6 +158,149 @@ class CleanRunVerdict(Enum):
 
 
 # ---------------------------------------------------------------------------
+# Counterfactual audit errors
+# ---------------------------------------------------------------------------
+
+
+class CounterfactualAuditError(Exception):
+    """Base error for counterfactual replay audit failures."""
+
+
+class CounterfactualAuditRefusal(CounterfactualAuditError):
+    """Refuses with a machine-readable reason.
+
+    Raised when a substitution policy rejects a replay attempt because
+    the substitution does not satisfy the policy constraints. The
+    ``reason`` field is a deterministic label that can be used to
+    construct a structured refusal without exposing internal state.
+    """
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+    def to_dict(self) -> dict[str, str]:
+        return {"error": "CounterfactualAuditRefusal", "reason": self.reason}
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> CounterfactualAuditRefusal:
+        """Parse with exact-type strictness; never coerce."""
+        if not isinstance(raw, Mapping):
+            raise CleanRunSchemaError("CounterfactualAuditRefusal must be a mapping")
+        reason = raw.get("reason")
+        if not isinstance(reason, str):
+            raise CleanRunSchemaError("CounterfactualAuditRefusal reason must be a string")
+        return cls(reason=reason)
+
+
+# ---------------------------------------------------------------------------
+# Equivalence verdict
+# ---------------------------------------------------------------------------
+
+
+class EquivalenceVerdict(Enum):
+    """Outcome of a counterfactual equivalence comparison."""
+
+    EQUIVALENT = "equivalent"
+    DIVERGED = "diverged"
+    REFUSED = "refused"
+
+
+# ---------------------------------------------------------------------------
+# Equivalence attestation
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class EquivalenceAttestation:
+    """A sealed equivalence attestation for counterfactual replay comparison.
+
+    Mirrors the structure of :class:`CleanRunAttestation` but records the
+    result of comparing an original run against a substituted run. The
+    attestation binds both journals, records the substitution label, and
+    carries the equivalence verdict.
+
+    ``first_divergent_step`` is ``None`` when ``verdict == EQUIVALENT``;
+    otherwise it names the first journal index where the two runs produced
+    different outputs. When ``verdict == REFUSED``, the substitution was
+    rejected by policy before comparison, so ``first_divergent_step`` is
+    ``None``.
+
+    The attestation binds the **journal heads only**. The audit-chain mirror
+    carries this attestation's hash, so by construction it cannot sit inside
+    the sealed bytes; it is verified separately.
+    """
+
+    schema_version: int
+    run_id: str
+    original_journal_head: str
+    substituted_journal_head: str
+    first_divergent_step: int | None
+    substitution_label: str
+    verdict: str
+    timestamp: int
+    attestation_hash: str
+    journal_entry_hash: str = ""
+
+    def body(self) -> dict[str, Any]:
+        """The hashed body: every field except the hash and the anchor."""
+        return {
+            "schema_version": self.schema_version,
+            "run_id": self.run_id,
+            "original_journal_head": self.original_journal_head,
+            "substituted_journal_head": self.substituted_journal_head,
+            "first_divergent_step": self.first_divergent_step,
+            "substitution_label": self.substitution_label,
+            "verdict": self.verdict,
+            "timestamp": self.timestamp,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = self.body()
+        payload["attestation_hash"] = self.attestation_hash
+        payload["journal_entry_hash"] = self.journal_entry_hash
+        return payload
+
+    def canonical_bytes(self) -> bytes:
+        """Canonical bytes sealed into the lineage spine (body + hash).
+
+        The spine anchor is excluded: it is the one field assigned by the
+        seal itself, so the cross-machine byte-equality contract covers
+        everything else.
+        """
+        payload = self.body()
+        payload["attestation_hash"] = self.attestation_hash
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> EquivalenceAttestation:
+        """Parse with exact-type strictness; never coerce.
+
+        Raises:
+            CleanRunSchemaError: A field is missing or carries the wrong
+                exact type (``bool`` is rejected as an int subclass).
+        """
+        first_divergent_step_raw = _require(raw, "first_divergent_step")
+        if first_divergent_step_raw is not None:
+            first_divergent_step = _require_int(raw, "first_divergent_step")
+        else:
+            first_divergent_step = None
+
+        return cls(
+            schema_version=_require_int(raw, "schema_version"),
+            run_id=_require_str(raw, "run_id"),
+            original_journal_head=_require_str(raw, "original_journal_head"),
+            substituted_journal_head=_require_str(raw, "substituted_journal_head"),
+            first_divergent_step=first_divergent_step,
+            substitution_label=_require_str(raw, "substitution_label"),
+            verdict=_require_str(raw, "verdict"),
+            timestamp=_require_int(raw, "timestamp"),
+            attestation_hash=_require_str(raw, "attestation_hash"),
+            journal_entry_hash=_optional_str(raw, "journal_entry_hash"),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Sealing helpers
 # ---------------------------------------------------------------------------
 
@@ -1354,6 +1497,10 @@ __all__ = [
     "CleanRunVerdict",
     "CleanRunVerifyResult",
     "ContrabandSet",
+    "CounterfactualAuditError",
+    "CounterfactualAuditRefusal",
+    "EquivalenceAttestation",
+    "EquivalenceVerdict",
     "ScanMatch",
     "ScopeBoundary",
     "build_clean_run_attestation",
