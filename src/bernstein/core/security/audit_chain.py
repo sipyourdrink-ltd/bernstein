@@ -948,6 +948,16 @@ EVENT_CONVENTION_RECEIPT = "convention.receipt"
 #: Records the receipt ID, retiring actor, rationale, and superseding receipt ID.
 EVENT_CONVENTION_RETIRED = "convention.retired"
 
+#: Issue #2930 (extended) -- emitted whenever an equivalence attestation is
+#: sealed (:mod:`bernstein.eval.clean_run`). Mirrors the equivalence
+#: attestation's identity into the HMAC chain: the attestation hash, the
+#: verdict (EQUIVALENT/DIVERGED/REFUSED), the original and substituted journal
+#: heads, the first divergent step (if any), and the lineage-spine anchor --
+#: hashes and metadata only, never the ground-truth content. A tampered
+#: attestation fails ``bernstein audit verify`` exactly like any tampered
+#: chain entry.
+EVENT_EQUIVALENCE_ATTESTATION = "eval.equivalence_attestation"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -3788,6 +3798,65 @@ def record_clean_run_attestation(
             "verdict": verdict,
             "task_commitment": task_commitment,
             "journal_head": journal_head,
+            "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
+def record_equivalence_attestation(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    attestation_hash: str,
+    equivalence_verdict: str,
+    original_journal_head: str,
+    substituted_journal_head: str,
+    first_divergent_step: int | None,
+    substitution_label: str,
+    journal_entry_hash: str,
+    actor: str = "eval_clean_run",
+) -> AuditEvent:
+    """Append an ``eval.equivalence_attestation`` event into *chain*.
+
+    Mirrors a sealed, spine-anchored equivalence attestation into the
+    HMAC-chained audit log so an operator can prove, from the chain alone,
+    that a counterfactual replay comparison was performed and what the
+    equivalence verdict was. Only the attestation hash, the verdict, the
+    original and substituted journal heads, the first divergent step (if any),
+    and the spine anchor are recorded -- never the plaintext ground-truth,
+    the read contents, or the match spans.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The original eval run the attestation was sealed for.
+        attestation_hash: ``sha256:`` hash of the canonical attestation body.
+        equivalence_verdict: ``"equivalent"``, ``"diverged"``, or ``"refused"``.
+        original_journal_head: Merkle head of the original run journal.
+        substituted_journal_head: Merkle head of the substituted run journal
+            (usually identical to the original when replaying the same journal).
+        first_divergent_step: The first journal index where the two runs
+            produced different outputs, or ``None`` when verdict is EQUIVALENT.
+        substitution_label: Human-readable label describing the substitution.
+        journal_entry_hash: The eval-clean-run spine entry hash.
+        actor: Recorded actor; defaults to ``"eval_clean_run"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_EQUIVALENCE_ATTESTATION,
+        actor=actor,
+        resource_type="equivalence_attestation",
+        resource_id=run_id,
+        details={
+            "run_id": run_id,
+            "attestation_hash": attestation_hash,
+            "equivalence_verdict": equivalence_verdict,
+            "original_journal_head": original_journal_head,
+            "substituted_journal_head": substituted_journal_head,
+            "first_divergent_step": first_divergent_step,
+            "substitution_label": substitution_label,
             "journal_entry_hash": journal_entry_hash,
         },
     )

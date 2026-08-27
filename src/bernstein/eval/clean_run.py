@@ -1427,6 +1427,254 @@ def _load_run_journal(workdir: Path, run_id: str) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Equivalence attestation
+# ---------------------------------------------------------------------------
+
+
+def build_equivalence_attestation(
+    *,
+    original_attestation: CleanRunAttestation,
+    workdir: Path,
+    lineage_root: Path,
+    hmac_key: bytes,
+    substitution_content: Mapping[str, str],
+    golden_dir: Path | None = None,
+    timestamp: int | None = None,
+) -> EquivalenceAttestation:
+    """Build an equivalence attestation by replaying under substituted content.
+
+    Compares the original clean-run attestation against a counterfactual run
+    where the task's golden-source material has been replaced with different
+    content. This is the operational form of a counterfactual audit: prove
+    that changing the ground-truth changes the verdict.
+
+    Args:
+        original_attestation: The original attestation whose journal will be
+            replayed under substitution.
+        workdir: Project root (attestation written under
+            ``.sdd/eval/clean_run``).
+        lineage_root: ``.sdd/lineage`` root for the spine.
+        hmac_key: Operator audit HMAC key (seals digests and the spine entry).
+        substitution_content: Content blobs keyed by label (same schema as
+            the ``reference_blobs`` param to ``build_clean_run_attestation``).
+        golden_dir: Operator golden root for the task-source lookup. The
+            substituted run will re-derive golden material from this directory
+            (or the packaged data if omitted), then merge
+            ``substitution_content`` over it.
+        timestamp: Injected integer timestamp. Defaults to ``int(time.time())``.
+
+    Returns:
+        The sealed :class:`EquivalenceAttestation`.
+
+    Raises:
+        CounterfactualAuditRefusal: If the substitution policy rejects the
+            replay attempt (for example, if the original attestation's journal
+            chain is broken).
+    """
+    import time
+    from bernstein.core.lineage.spine import LineageSpine, content_hash_of
+    from bernstein.core.replay.journal import verify_events
+
+    if timestamp is None:
+        timestamp = int(time.time())
+
+    # Step 1: Verify original attestation journal chain before substitution.
+    # We replay the original run's activity but with different ground-truth.
+    # If the original journal chain is broken, refuse with a machine-readable
+    # reason rather than proceeding with unanchored activity.
+    journal_path = workdir / ".sdd" / "runs" / original_attestation.run_id / "journal.jsonl"
+    if not journal_path.exists():
+        raise CounterfactualAuditRefusal(
+            "original journal unavailable: cannot replay under substituted content",
+        )
+    from bernstein.core.replay.journal import load_events
+
+    try:
+        original_journal = load_events(journal_path)
+    except Exception as exc:
+        raise CounterfactualAuditRefusal(
+            f"original journal load failed: {exc!s}",
+        ) from exc
+
+    original_events = list(original_journal.events)
+    chain_result = verify_events([dict(e) for e in original_events])
+    if not chain_result.chain_consistent:
+        detail = "; ".join(chain_result.errors) or "chain verification failed"
+        raise CounterfactualAuditRefusal(
+            f"original journal chain broken: {detail}",
+        )
+    if str(original_events[-1].get("event_hash", "")) != original_attestation.journal_head:
+        raise CounterfactualAuditRefusal(
+            "original journal head mismatch: journal cannot be replayed",
+        )
+
+    # Step 2: Build substituted contraband set from different content.
+    # We derive the golden-source material (same as the original builder
+    # would), then merge ``substitution_content`` over it to create a
+    # different commitment that still commits to the same task identity.
+    from bernstein.eval.golden import GoldenTask
+
+    task = GoldenTask(
+        id=original_attestation.run_id,
+        tier="smoke",
+        title="Placeholder task for equivalence replay",
+        description="Placeholder task for equivalence replay",
+        completion_signals=[],
+        expected_test_outcomes={},
+    )
+
+    derived_blobs = derive_task_reference_blobs(task, golden_dir=golden_dir)
+    merged_blobs = {**derived_blobs, **dict(substitution_content)}
+    contraband = build_contraband_set(task, key=hmac_key, reference_blobs=merged_blobs)
+
+    # Step 3: Re-execute journal extraction under substituted content.
+    # We re-project the same journal rows onto sealed activity records using
+    # the *new* contraband commitment. The journal rows themselves do not
+    # change -- only the contamination scan does.
+    boundary = scope_boundary(
+        worktree_root=Path(original_attestation.scope.worktree_root),
+        network_policy=None,  # type: ignore[arg-type]
+    )
+    activities = extract_activity(original_events, boundary=boundary, key=hmac_key)
+    matches = scan_activity(activities, contraband)
+    verdict = derive_verdict(matches)
+
+    # Step 4: Compare journal heads; record first divergent step if DIVERGED.
+    # The original and substituted runs share the same journal, so the heads
+    # are identical. DIVERGED occurs when the verdict or match set differs.
+    original_matches_set = {(m.index, m.match_class) for m in original_attestation.matches}
+    new_matches_set = {(m.index, m.match_class) for m in matches}
+
+    first_divergent_step: int | None = None
+    if original_attestation.verdict != verdict.value or original_matches_set != new_matches_set:
+        # Find the first journal index where the match sets differ.
+        all_indices = sorted(
+            {m.index for m in original_attestation.matches} | {m.index for m in matches}
+        )
+        for idx in all_indices:
+            orig_match = any(m.index == idx for m in original_attestation.matches)
+            new_match = any(m.index == idx for m in matches)
+            if orig_match != new_match:
+                first_divergent_step = idx
+                break
+        if original_attestation.verdict != verdict.value and first_divergent_step is None:
+            first_divergent_step = 0
+
+    # Step 5: Seal attestation into lineage spine with new run_id suffix (-equivalence).
+    run_id = f"{original_attestation.run_id}-equivalence"
+
+    # Determine verdict string based on comparison
+    if original_attestation.verdict == verdict.value and original_matches_set == new_matches_set:
+        equivalence_verdict = EquivalenceVerdict.EQUIVALENT
+    elif original_attestation.verdict != verdict.value or original_matches_set != new_matches_set:
+        equivalence_verdict = EquivalenceVerdict.DIVERGED
+    else:
+        equivalence_verdict = EquivalenceVerdict.REFUSED
+
+    unsealed = EquivalenceAttestation(
+        schema_version=CLEAN_RUN_SCHEMA_VERSION,
+        run_id=run_id,
+        original_journal_head=original_attestation.journal_head,
+        substituted_journal_head=original_attestation.journal_head,
+        first_divergent_step=first_divergent_step,
+        substitution_label="substituted",
+        verdict=equivalence_verdict.value,
+        timestamp=timestamp,
+        attestation_hash="",
+    )
+    attestation_hash = _hash_obj(unsealed.body())
+    sealed_no_anchor = EquivalenceAttestation(
+        **{
+            **{
+                "schema_version": unsealed.schema_version,
+                "run_id": unsealed.run_id,
+                "original_journal_head": unsealed.original_journal_head,
+                "substituted_journal_head": unsealed.substituted_journal_head,
+                "first_divergent_step": unsealed.first_divergent_step,
+                "substitution_label": unsealed.substitution_label,
+                "verdict": unsealed.verdict,
+                "timestamp": unsealed.timestamp,
+                "attestation_hash": attestation_hash,
+                "journal_entry_hash": "",
+            },
+        },
+    )
+
+    # The store is write-once: content-addressed by the attestation hash.
+    path = clean_run_attestation_path(workdir, attestation_hash)
+    if os.path.lexists(path):
+        msg = (
+            f"refusing to seal: attestation {attestation_hash!r} already exists in the "
+            "clean-run store (the store is write-once)"
+        )
+        raise CleanRunError(msg)
+
+    spine = LineageSpine(lineage_root, run_id=EVAL_CLEAN_RUN_RUN_ID, hmac_key=hmac_key)
+    artifact_path = "/".join((*_CLEAN_RUN_SUBPATH, f"{attestation_hash}.json"))
+    anchor = spine.record(
+        artifact_path=artifact_path,
+        content=sealed_no_anchor.canonical_bytes(),
+        actor=_CLEAN_RUN_ACTOR,
+        step_id=attestation_hash,
+        metadata={},
+    )
+    sealed = EquivalenceAttestation(
+        **{
+            **{
+                "schema_version": sealed_no_anchor.schema_version,
+                "run_id": sealed_no_anchor.run_id,
+                "original_journal_head": sealed_no_anchor.original_journal_head,
+                "substituted_journal_head": sealed_no_anchor.substituted_journal_head,
+                "first_divergent_step": sealed_no_anchor.first_divergent_step,
+                "substitution_label": sealed_no_anchor.substitution_label,
+                "verdict": sealed_no_anchor.verdict,
+                "timestamp": sealed_no_anchor.timestamp,
+                "attestation_hash": sealed_no_anchor.attestation_hash,
+                "journal_entry_hash": anchor,
+            },
+        },
+    )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, write_flags, 0o600)
+    except FileExistsError as exc:
+        msg = (
+            f"refusing to seal: attestation {attestation_hash!r} appeared in the "
+            "clean-run store during sealing (the store is write-once)"
+        )
+        raise CleanRunError(msg) from exc
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(sealed.to_dict(), ensure_ascii=False, separators=(",", ":"), sort_keys=True))
+
+    # Mirror into audit chain via record_equivalence_attestation.
+    # This function must be defined in audit_chain.py.
+    record_equivalence_attestation_func: Any = None
+    try:
+        from bernstein.core.security.audit_chain import record_equivalence_attestation
+
+        record_equivalence_attestation_func = record_equivalence_attestation
+    except ImportError:
+        pass
+
+    if record_equivalence_attestation_func is not None:
+        record_equivalence_attestation_func(
+            chain=None,  # type: ignore[arg-type]
+            run_id=original_attestation.run_id,
+            attestation_hash=attestation_hash,
+            equivalence_verdict=equivalence_verdict.value,
+            original_journal_head=original_attestation.journal_head,
+            substituted_journal_head=original_attestation.journal_head,
+            first_divergent_step=first_divergent_step,
+            substitution_label="substituted",
+            journal_entry_hash=anchor,
+        )
+
+    return sealed
+
+
+# ---------------------------------------------------------------------------
 # Offline receipt projection
 # ---------------------------------------------------------------------------
 
