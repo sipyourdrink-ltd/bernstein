@@ -18,6 +18,7 @@ import click
 from bernstein.cli.helpers import SERVER_URL, console, server_get, server_post
 from bernstein.core.tasks.lifecycle import (
     SUCCESSFUL_TASK_STATUSES,
+    TERMINAL_TASK_STATUSES,
     UNSUCCESSFUL_TERMINAL_STATUSES,
 )
 from bernstein.core.tasks.swarm_migration import (
@@ -30,13 +31,30 @@ from bernstein.core.tasks.swarm_migration import (
 
 _DRY_RUN_PREVIEW_LIMIT = 10
 
-# A swarm chunk whose task reports one of these has stopped touching its files:
-# it either delivered (DONE/CLOSED) or ended unsuccessfully. Anything else -
-# open, claimed, in progress, blocked, awaiting approval - may still be editing
-# the chunk, so re-running the plan must reuse it rather than spawn a duplicate
-# owner (issue #4624). Built from the exhaustive lifecycle partition so a new
-# status defaults to "still active", the safe side of the duplicate-owner bug.
-_TERMINAL_STATUS_VALUES = frozenset(s.value for s in (SUCCESSFUL_TASK_STATUSES | UNSUCCESSFUL_TERMINAL_STATUSES))
+# A swarm chunk whose task reports one of these has stopped touching its files,
+# so re-running the plan must respawn it rather than wait on it forever.
+# Anything else - open, claimed, in progress, blocked, awaiting approval - may
+# still be editing the chunk, so the plan reuses it rather than spawning a
+# duplicate owner (issue #4624).
+#
+# Three lifecycle sets are unioned because each answers a different question and
+# neither one alone covers every status that has stopped:
+#
+# * SUCCESSFUL/UNSUCCESSFUL_TERMINAL answer "will this dependency ever deliver".
+#   DONE, FAILED and ORPHANED keep a recovery edge back to OPEN, so they are
+#   absent from TERMINAL_TASK_STATUSES while having certainly stopped editing.
+# * TERMINAL_TASK_STATUSES answers "can this status transition at all". SUSPENDED
+#   is in it and in neither of the others: it has no outgoing transition, so a
+#   chunk left in it would report active forever and never respawn - #4541's
+#   "never return a dead id forever" bug, reintroduced through a status neither
+#   dependency set names.
+#
+# A status absent from all three still defaults to "still active", which is the
+# safe side of the duplicate-owner bug. test_terminal_status_values_covers_every
+# _unresumable_status pins that gap shut for statuses added to only one set.
+_TERMINAL_STATUS_VALUES = frozenset(
+    s.value for s in (SUCCESSFUL_TASK_STATUSES | UNSUCCESSFUL_TERMINAL_STATUSES | TERMINAL_TASK_STATUSES)
+)
 
 
 class _ServerTaskStore:
