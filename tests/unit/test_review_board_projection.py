@@ -597,10 +597,14 @@ def test_reap_and_cleanup_captures_review_diff(tmp_path: Path, monkeypatch: Any)
 def test_plan_graph_full_populates_run_envelope(tmp_path: Path) -> None:
     """A ``plan.graph.full`` row populates ``board['run']`` with goal + plan_nodes."""
     events = [
-        {"event": EVENT_PLAN_GRAPH_FULL, "goal": "build a cli tool", "nodes": [
-            {"id": "t2", "role": "coder", "title": "implement", "depends_on": ["t1"]},
-            {"id": "t1", "role": "manager", "title": "plan", "depends_on": []},
-        ]},
+        {
+            "event": EVENT_PLAN_GRAPH_FULL,
+            "goal": "build a cli tool",
+            "nodes": [
+                {"id": "t2", "role": "coder", "title": "implement", "depends_on": ["t1"]},
+                {"id": "t1", "role": "manager", "title": "plan", "depends_on": []},
+            ],
+        },
     ]
     board = project_board(events)
     assert board["run"]["goal"] == "build a cli tool"
@@ -624,9 +628,13 @@ def test_plan_graph_full_without_goal_leaves_no_plan_keys(tmp_path: Path) -> Non
 def test_plan_graph_full_deterministic_across_replays(tmp_path: Path) -> None:
     """Reversing the journal row order does not change the projected board bytes."""
     events_a = [
-        {"event": EVENT_PLAN_GRAPH_FULL, "goal": "x", "nodes": [
-            {"id": "t1", "role": "a", "title": "A", "depends_on": []},
-        ]},
+        {
+            "event": EVENT_PLAN_GRAPH_FULL,
+            "goal": "x",
+            "nodes": [
+                {"id": "t1", "role": "a", "title": "A", "depends_on": []},
+            ],
+        },
     ]
     events_b = list(events_a)  # same content
     board_a = project_board(events_a)

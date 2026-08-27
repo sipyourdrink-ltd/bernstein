@@ -111,7 +111,7 @@ EVENT_TASK_REVIEW_DECISION = "task_review_decision"
 #: Journal event recorded when the plan's structure changes, carrying the run's
 #: goal and each task's title, role, and dependencies. Added by
 #: :func:`record_plan_graph_full` (in ``src/bernstein/core/orchestration/orchestrator.py``)
-#: to enable a whole‑task‑graph view on the review board.
+#: to enable a whole-task-graph view on the review board.
 EVENT_PLAN_GRAPH_FULL = "plan.graph.full"
 
 #: Board action an operator can take on a card. ``merge`` moves the card into
@@ -249,12 +249,12 @@ def _fold_plan_graph_full(run: dict[str, Any], row: Mapping[str, Any]) -> None:
 
     The row carries the run's goal and a list of task nodes, each with
     ``id``, ``role``, ``title`` and ``depends_on``. This is the closest
-    thing the journal has to a whole‑task‑graph view: an operator reviewing
+    thing the journal has to a whole-task-graph view: an operator reviewing
     a completed or detached run can see what was planned, not just which
     tasks executed.
 
     Pure function: only the fields named below are read, so two folds over
-    the same journal are byte‑identical under :func:`canonical_board_bytes`.
+    the same journal are byte-identical under :func:`canonical_board_bytes`.
     """
     goal = row.get("goal")
     if isinstance(goal, str):
