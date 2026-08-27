@@ -205,6 +205,12 @@ class AgentCheckpoint:
         grant_hash: SHA-256 of the live grant at suspend time.
         parent_run_id: Run that owns the task.
         chain_head_at_suspend: Journal Merkle-head at the moment of suspension.
+        observations: Mapping of artifact paths to their content hashes at
+            suspend time. Each key is a repo-relative artifact path, each value
+            is the ``sha256:``-prefixed content hash.
+        adapter: Adapter registry name (e.g. ``"claude_code"``).
+        model: Resolved model identity the adapter ran under.
+        interpreter_hash: SHA-256 of the interpreter (adapter + resolved model).
     """
 
     agent_id: str
@@ -221,6 +227,8 @@ class AgentCheckpoint:
     grant_hash: str = ""
     parent_run_id: str = ""
     chain_head_at_suspend: str = ""
+    # --- observations (new) ---
+    observations: dict[str, str] = field(default_factory=dict)
     # --- interpreter fields (issue #3852) ---
     adapter: str = ""
     model: str = ""
