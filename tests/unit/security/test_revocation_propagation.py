@@ -43,6 +43,7 @@ def _mk(
 def _h(seed: str) -> str:
     """Return a deterministic sha256: hash for a given seed string."""
     import hashlib
+
     hex_digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
     return "sha256:" + hex_digest
 
