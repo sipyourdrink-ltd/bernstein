@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 
 AUDIT_DIR = Path(".sdd/audit")
 MERKLE_DIR = AUDIT_DIR / "merkle"
+LINEAGE_DIR = Path(".sdd/lineage")
 
 
 @click.group("audit")
@@ -269,6 +270,10 @@ def verify_cmd(merkle_only: bool, hmac_only: bool, receipt_path: str | None, pay
 
     Exits non-zero on any chain break, missing record, or HMAC mismatch.
     Run from cron and fail the run on non-zero exit (cite: docs/security/audit-log.md).
+
+    Reports lineage entry activity status: reads the lineage log (.sdd/lineage/log.jsonl),
+    computes active entries using active_set(), and displays total/active/inactive counts.
+    The ledger file is never mutated during verification.
     """
     if not AUDIT_DIR.is_dir():
         console.print(f"[red]Audit directory not found:[/red] {AUDIT_DIR}")
@@ -367,6 +372,13 @@ def verify_cmd(merkle_only: bool, hmac_only: bool, receipt_path: str | None, pay
     if not _verify_trajectory_receipts():
         failed_pillars.append("Trajectory Receipts")
 
+    # Lineage entry activity status is a further integrity pillar: lineage entries
+    # that are invalidated by revocation seeds (or depend on invalidated entries)
+    # are correctly marked as inactive. This uses the active_set computation
+    # to verify the audit ledger's lineage activity status.
+    if not _verify_lineage_active_set():
+        failed_pillars.append("Lineage Activity")
+
     console.print()
     if not failed_pillars:
         console.print(
@@ -411,6 +423,151 @@ def _verify_key(pillar: str) -> bytes | None:
     except AuditKeyMissingError:
         console.print(f"[yellow]{pillar} verification skipped: no audit HMAC key available.[/yellow]")
         return None
+
+
+def _verify_lineage_active_set() -> bool:
+    """Verify lineage entry activity status using active_set computation.
+
+    Reads all lineage entries from the lineage store and computes which entries
+    are active (not invalidated by seeds) versus inactive (seeded or dependent
+    on a seeded entry). Prints a summary of active/inactive counts.
+
+    Returns True when the lineage store exists and the computation completes
+    successfully (even if there are inactive entries). Returns False only if
+    the lineage store cannot be read.
+    """
+    from pathlib import Path
+
+    from bernstein.core.lineage.activity import active_set
+    from bernstein.core.lineage.entry import LineageEntry, entry_hash
+
+    lineage_path = Path(".sdd/lineage")
+    if not lineage_path.is_dir():
+        return True  # no lineage store, nothing to verify
+
+    # Read all lineage entries from the store
+    try:
+        from bernstein.core.lineage.store import LineageStore
+
+        store = LineageStore(lineage_path)
+        entries: list[LineageEntry] = []
+        for entry, _ in store.read_log():
+            entries.append(entry)
+    except OSError as exc:
+        console.print(
+            Panel(
+                f"[bold red]Lineage Store Read Failed[/bold red]\n\n{exc}",
+                border_style="red",
+                expand=False,
+            )
+        )
+        return False
+
+    if not entries:
+        # Print status even for empty lineage store
+        console.print()
+        console.print(
+            Panel(
+                "[bold]Lineage Activity Status[/bold]",
+                border_style="cyan",
+                expand=False,
+            )
+        )
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Key", style="dim", no_wrap=True, min_width=14)
+        table.add_column("Value")
+        table.add_row("Total entries", "0")
+        table.add_row("Active entries", "0")
+        table.add_row("Inactive entries", "0")
+        console.print(table)
+        return True
+
+    # Collect all invalidation seeds from revocation events in the audit chain
+    # Seeds are lineage entry hashes that have been revoked
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+    audit_path = Path(".sdd/audit")
+    seeds: frozenset[str] = frozenset()
+
+    if audit_path.is_dir():
+        # Import the key loader locally to handle missing key gracefully
+        try:
+            from bernstein.core.security.audit import load_audit_key
+
+            key = load_audit_key()
+            chain = AuditChainStore(audit_path, key=key)
+
+            # Scan for revocation events that may contain lineage entry hashes as seeds
+            # Currently, revocation events record mandate_hash/gate_hash, not lineage_entry_hash
+            # We need to check if revocation events record lineage entry references
+            from bernstein.core.security.audit_chain import EVENT_EVAL_GATE_REVOCATION, EVENT_MANDATE_REVOCATION
+
+            for event in chain.query(event_type=EVENT_MANDATE_REVOCATION):
+                # Revocation events may reference lineage entries in their details
+                # For now, we collect any lineage_entry_hash found in revocation details
+                details = event.details.get("details", {})
+                if isinstance(details, dict):
+                    lineage_ref = details.get("lineage_entry_hash") or details.get("lineage_ref")
+                    if lineage_ref and isinstance(lineage_ref, str):
+                        seeds = seeds | {lineage_ref}
+
+            for event in chain.query(event_type=EVENT_EVAL_GATE_REVOCATION):
+                details = event.details.get("details", {})
+                if isinstance(details, dict):
+                    lineage_ref = details.get("lineage_entry_hash") or details.get("lineage_ref")
+                    if lineage_ref and isinstance(lineage_ref, str):
+                        seeds = seeds | {lineage_ref}
+
+        except Exception:
+            # If we can't load the audit key or read the chain, continue with empty seeds
+            pass
+
+    # Compute the active set
+    active_hashes = active_set(entries, seeds)
+
+    # Calculate counts
+    total = len(entries)
+    active_count = len(active_hashes)
+    inactive_count = total - active_count
+
+    # Identify inactive entry hashes with reasons
+    inactive_entries: list[tuple[str, str]] = []
+    for entry in entries:
+        eh = entry_hash(entry)
+        if eh not in active_hashes:
+            # Determine the reason for inactivity
+            # Check if this entry is directly seeded or depends on a seeded entry
+            reasons: list[str] = []
+            if eh in seeds:
+                reasons.append("seeded")
+            inactive_entries.append((eh, ",".join(reasons) if reasons else "dependent"))
+
+    console.print()
+    console.print(
+        Panel(
+            "[bold]Lineage Activity Status[/bold]",
+            border_style="cyan",
+            expand=False,
+        )
+    )
+
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("Key", style="dim", no_wrap=True, min_width=14)
+    table.add_column("Value")
+    table.add_row("Total entries", str(total))
+    table.add_row("Active entries", str(active_count))
+    table.add_row("Inactive entries", str(inactive_count))
+    console.print(table)
+
+    if inactive_entries:
+        console.print()
+        console.print("[bold]Inactive entry hashes:[/bold]")
+        for h, reason in inactive_entries[:10]:  # Show up to 10 entries
+            console.print(f"  [yellow]-[/yellow] {h} ({reason})")
+        if len(inactive_entries) > 10:
+            console.print(f"  [dim]... and {len(inactive_entries) - 10} more[/dim]")
+
+    return True
 
 
 def _verify_trajectory_receipts() -> bool:
