@@ -342,9 +342,7 @@ def detect_failure_patterns(runs: list[FinishedRun]) -> list[FailurePatternDraft
 
     # Filter to failure runs only
     failures = [
-        run
-        for run in runs
-        if run.outcome in (RunOutcome.GATE_FAILED, RunOutcome.INFRA_ERROR, RunOutcome.WEDGED)
+        run for run in runs if run.outcome in (RunOutcome.GATE_FAILED, RunOutcome.INFRA_ERROR, RunOutcome.WEDGED)
     ]
 
     # Group by fingerprint key (outcome + evidence)
@@ -365,9 +363,7 @@ def detect_failure_patterns(runs: list[FinishedRun]) -> list[FailurePatternDraft
         # Build title and body
         title = f"{most_recent.outcome.value.upper()}: {most_recent.evidence}"
         body = (
-            f"Failure type: {most_recent.outcome.value}\n"
-            f"Evidence: {most_recent.evidence}\n"
-            f"Branch: {most_recent.branch}"
+            f"Failure type: {most_recent.outcome.value}\nEvidence: {most_recent.evidence}\nBranch: {most_recent.branch}"
         )
 
         draft = FailurePatternDraft(

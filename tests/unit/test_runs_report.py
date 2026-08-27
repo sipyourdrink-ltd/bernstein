@@ -334,12 +334,9 @@ class TestDetectFailurePatterns:
         assert draft.contributing_run_ids == ["run-1"]
 
 
-
 def _open_run_state(run_id: str = "run-a") -> LedgerState:
     """A minimal closed-run state with no open tasks (the common case)."""
     state = LedgerState(run_id=run_id)
     state.run_open = True
     state.run_closed = True
     return state
-
-
