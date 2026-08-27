@@ -568,7 +568,8 @@ def agents_sandbox_backends() -> None:
 
 
 @agents_group.command("parked")
-def agents_parked() -> None:
+@click.option("--workdir", default=".", show_default=True, type=click.Path(), help="Project root (parent of .sdd/).")
+def agents_parked(workdir: str) -> None:
     """List sessions parked after exhausting their respawn budget.
 
     \b
@@ -577,10 +578,17 @@ def agents_parked() -> None:
       bernstein agents resume <id>
     """
     from bernstein.core.agents.spawn_supervisor import get_supervisor
+    from bernstein.core.orchestration.supervisor_aggregator import observed_parked_sessions
 
-    parked = get_supervisor().parked_sessions()
+    root = Path(workdir).resolve()
+    state = observed_parked_sessions(root, in_process=get_supervisor(root).parked_sessions())
+    parked = sorted(state.session_ids)
     if not parked:
-        console.print("[green]No parked sessions.[/green]")
+        if state.available:
+            console.print("[green]No parked sessions.[/green]")
+        else:
+            console.print("[yellow]Parked state unavailable.[/yellow]")
+            console.print(f"[dim]No supervisor has written to {root}; this is not a report of zero.[/dim]")
         return
 
     console.print(f"[bold yellow]Parked sessions ({len(parked)}):[/bold yellow]")
@@ -591,7 +599,8 @@ def agents_parked() -> None:
 
 @agents_group.command("resume")
 @click.argument("session_id")
-def agents_resume(session_id: str) -> None:
+@click.option("--workdir", default=".", show_default=True, type=click.Path(), help="Project root (parent of .sdd/).")
+def agents_resume(session_id: str, workdir: str) -> None:
     """Resume a parked agent session, resetting its respawn budget.
 
     \b
@@ -599,11 +608,20 @@ def agents_resume(session_id: str) -> None:
       bernstein agents resume worker-3
     """
     from bernstein.core.agents.spawn_supervisor import get_supervisor
+    from bernstein.core.orchestration.supervisor_aggregator import load_parked_sessions
 
-    if get_supervisor().resume(session_id):
+    root = Path(workdir).resolve()
+    supervisor = get_supervisor(root)
+    # The session was parked by the orchestrator's process, not this one,
+    # so resume has to clear the on-disk store rather than only the
+    # in-memory record this process happens to hold (#3453).
+    if supervisor.resume(session_id) or supervisor.clear_parked(session_id):
         console.print(f"[green]Resumed session '{session_id}'; respawn budget reset.[/green]")
-    else:
-        console.print(f"[yellow]No tracked session '{session_id}'.[/yellow]")
+        return
+    if session_id in load_parked_sessions(root):
+        console.print(f"[yellow]Session '{session_id}' is parked but could not be cleared.[/yellow]")
+        return
+    console.print(f"[yellow]No tracked session '{session_id}'.[/yellow]")
 
 
 @agents_group.command("trust")

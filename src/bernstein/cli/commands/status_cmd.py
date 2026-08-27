@@ -425,20 +425,44 @@ def ps_cmd(as_json: bool, pid_dir: str) -> None:
                 known_pids.add(value)
     agents.extend(_scan_live_agent_rows(_ps_scan_workdir(pid_path), known_pids))
 
+    # Read the on-disk store as well as this process's supervisor: the
+    # orchestrator that parks a session runs elsewhere, so an in-process
+    # read alone is empty by construction (#3453).
     from bernstein.core.agents.spawn_supervisor import get_supervisor
+    from bernstein.core.orchestration.supervisor_aggregator import observed_parked_sessions
 
-    parked = get_supervisor().parked_sessions()
+    parked_state = observed_parked_sessions(
+        _ps_scan_workdir(pid_path),
+        in_process=get_supervisor().parked_sessions(),
+    )
+    parked = sorted(parked_state.session_ids)
 
     if as_json or is_json():
-        print_json({"agents": agents, "parked": parked} if parked else agents)
+        # Shape is load-bearing and stays exactly as it was: a bare list
+        # unless something is parked, an object when something is. Making
+        # it unconditionally an object would break every existing reader
+        # of `ps --json-output` (tests/unit/test_status_cmd_openclaw_bridge
+        # asserts payload[0]), so the availability flag rides along inside
+        # the object form rather than forcing one.
+        if parked:
+            payload: dict[str, Any] = {
+                "agents": agents,
+                "parked": parked,
+                "parked_available": parked_state.available,
+            }
+            print_json(payload)
+        else:
+            print_json(agents)
         return
 
     if not agents and not parked:
         console.print("[dim]No running agents.[/dim]")
+        _print_parked_unavailable(parked_state.available)
         return
 
     if not agents:
         _print_parked(parked)
+        _print_parked_unavailable(parked_state.available)
         return
 
     table = Table(title="Bernstein Agents", show_lines=False, header_style="bold cyan")
@@ -478,6 +502,18 @@ def _print_parked(parked: list[str]) -> None:
     for session_id in parked:
         console.print(f"  [yellow]parked[/yellow]  [cyan]{session_id}[/cyan]")
     console.print("[dim]Resume with: bernstein agents resume <id>[/dim]")
+
+
+def _print_parked_unavailable(available: bool) -> None:
+    """Say so when nothing can vouch for the parked state.
+
+    "No parked sessions" and "no supervisor ever wrote here" are
+    different claims, and rendering them identically is what let this
+    surface reassure for its whole life (#3453).
+    """
+    if available:
+        return
+    console.print("[dim]parked state unavailable (no supervisor has written to this workspace)[/dim]")
 
 
 # ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ crash loop into a single, auditable failure mode.
 | Window reset | Rolling | Respawns older than the window fall out of the count |
 | On exhaustion | Session is parked | `AgentStartupExhausted` event published |
 | Recovery | Operator-driven only | `bernstein agents resume <id>` |
+| Where parks live | `.sdd/runtime/spawn_supervisor/parked.json` | Read by the CLI, the TUI and `bernstein fleet` |
 
 ## How the budget works
 
@@ -44,15 +45,60 @@ The park reason is always `respawn_budget_exhausted`. The persistent
 crash loop almost always means a real fault: a missing adapter binary,
 bad configuration, or an expired token. Read `last_error` first.
 
+## Where parked state is kept
+
+Parks are written to `.sdd/runtime/spawn_supervisor/parked.json` under
+the project root, and that file — not process memory — is what the
+operator surfaces read.
+
+This matters because the process that parks a session is the
+orchestrator, and `bernstein agents parked` is a different process that
+starts with an empty supervisor. Reading only in-memory state made the
+surfaces report "nothing parked" unconditionally, whatever had happened
+(#3453).
+
+The store is rewritten on every supervision state change, including a
+clean spawn. That is deliberate: it lets a reader tell the two zeros
+apart.
+
+| What you see | What it means |
+|---|---|
+| `No parked sessions.` | The store exists and is empty — a measured zero |
+| `Parked state unavailable.` | No supervisor has ever written to this workspace — not a report of zero |
+
+A supervisor is authoritative only for the sessions it knows about, so
+writing the store merges rather than overwrites: a second process
+holding its own supervisor cannot erase parks it did not make.
+
 ## Inspecting parked sessions
 
 ```
 bernstein agents parked      # list parked sessions
+bernstein agents parked --workdir /path/to/project
 bernstein ps                 # running agents, with a parked footer
 ```
 
-Both surface the same set of parked session ids backed by the
-process-wide supervisor.
+Both read the on-disk store unioned with the calling process's own
+supervisor, so they agree.
+
+`bernstein ps --json-output` keeps its existing shape — a bare agent
+list, or an object when something is parked — and the object now carries
+`parked_available` alongside `parked`. The unavailable-versus-empty
+distinction is therefore on the human surfaces and on `bernstein agents
+parked`; `ps --json` cannot express it without changing its top-level
+type, which would break existing readers.
+
+## What gets parked, and under what id
+
+The supervisor budgets *respawns*, so its key has to survive the retries
+it is counting. A spawn session id cannot: the spawner mints a fresh
+`<role>-<uuid>` per attempt, and a retry mints a new task id as well
+(#2806), so either would make every failure look like a first failure
+and nothing would ever reach exhaustion.
+
+Parks made by the orchestrator are therefore keyed on the batch's
+lineage — the same key its own consecutive-failure counter uses — and
+render as `batch:<lineage-ids>`. Pass that id verbatim to `resume`.
 
 ## Resuming a session
 
@@ -60,13 +106,15 @@ After fixing the root cause, reset the budget and clear the parked
 state:
 
 ```
-bernstein agents resume <id>
+bernstein agents resume batch:T-1234
 ```
 
 Resume is the only recovery path. There is no automatic remediation on
 park; that is intentional, so an operator confirms the fault is gone
 before the session is allowed to spawn again. Resuming clears the
-respawn window, so the session starts again with a full budget.
+respawn window, so the session starts again with a full budget, and
+removes the id from the on-disk store — including when the parking
+process has already exited.
 
 ## Tuning the budget
 

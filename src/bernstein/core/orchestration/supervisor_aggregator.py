@@ -43,7 +43,7 @@ from bernstein.core.orchestration.supervisor_receipt import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterable, Iterator
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,7 @@ __all__ = [
     "load_heartbeat",
     "load_parked_sessions",
     "load_recent_failures",
+    "observed_parked_sessions",
     "snapshot_to_dict",
 ]
 
@@ -231,6 +232,38 @@ def load_parked_sessions(workdir: Path) -> ParkedSessions:
                                 available = True
                                 parked.add(sid)
     return ParkedSessions(available=available, session_ids=frozenset(parked))
+
+
+def observed_parked_sessions(
+    workdir: Path,
+    *,
+    in_process: Iterable[str] | None = None,
+) -> ParkedSessions:
+    """Union the on-disk parked store with this process's own supervisor.
+
+    A CLI invocation is not the process that parked anything: the
+    orchestrator parks, exits or keeps running, and ``bernstein status``
+    starts fresh. Reading only the in-process supervisor therefore
+    reports an empty set by construction, which is the defect behind
+    #3453. Reading only the store misses a park made moments ago by a
+    supervisor in *this* process (an embedded orchestrator, or a test).
+    Callers want both.
+
+    Args:
+        workdir: Project root holding ``.sdd/runtime/spawn_supervisor``.
+        in_process: Session ids the caller's own supervisor considers
+            parked, if it has one.
+
+    Returns:
+        The union, with ``available`` True when either source was able to
+        speak for this workspace.
+    """
+    stored = load_parked_sessions(workdir)
+    live = frozenset(in_process or ())
+    return ParkedSessions(
+        available=stored.available or bool(live),
+        session_ids=stored.session_ids | live,
+    )
 
 
 def load_recent_failures(

@@ -2209,6 +2209,55 @@ def _batch_lineage_key(batch: list[Task]) -> frozenset[str]:
     return frozenset(_lineage_id(t) for t in batch)
 
 
+def _park_key(batch_key: frozenset[str]) -> str:
+    """Render a lineage key as the stable id the spawn supervisor parks on.
+
+    The supervisor budgets *respawns*, so its key has to survive the
+    retries it is counting. A spawn session id cannot: ``spawner_core``
+    mints a fresh ``f"{role}-{uuid4}"`` per attempt, so a session-keyed
+    budget would see every failure as a new session and never reach
+    exhaustion. The lineage key already solves exactly this problem for
+    the orchestrator's own consecutive-failure counter (#2806), so the
+    park reuses it rather than inventing a second notion of identity.
+
+    Sorted so the same batch always renders the same id, and prefixed so
+    an operator reading ``bernstein agents parked`` can tell a parked
+    work-unit from a live agent session id.
+    """
+    return "batch:" + ",".join(sorted(batch_key))
+
+
+def _spawn_supervisor_for(orch: Any) -> Any:
+    """Return the process supervisor, rooted at this orchestrator's workdir.
+
+    Rooting it is what makes a park survive the orchestrator process and
+    reach ``bernstein status`` and ``bernstein agents resume``, which run
+    separately (#3453).
+    """
+    from bernstein.core.agents.spawn_supervisor import get_supervisor
+
+    return get_supervisor(workdir=orch._workdir)
+
+
+def _spawn_respawn_budget(orch: Any) -> Any:
+    """Budget mirroring the orchestrator's own consecutive-failure ceiling.
+
+    ``max_respawns`` is one less than ``_MAX_SPAWN_FAILURES`` because the
+    supervisor parks on the failure that *exhausts* the budget, while the
+    orchestrator gives up on the ``_MAX_SPAWN_FAILURES``-th failure: with
+    a ceiling of 3, failures 1 and 2 consume budget and failure 3 parks.
+    The window matches the backoff ceiling that
+    ``agent_lifecycle`` uses to expire ``_spawn_failures``, so a batch
+    cannot age out of one counter while still counting against the other.
+    """
+    from bernstein.core.agents.spawn_supervisor import RespawnBudget
+
+    return RespawnBudget(
+        max_respawns=max(int(orch._MAX_SPAWN_FAILURES) - 1, 0),
+        window_seconds=float(orch._SPAWN_BACKOFF_MAX_S),
+    )
+
+
 def claim_and_spawn_batches(
     orch: Any,  # Orchestrator instance (avoids circular import)
     batches: list[list[Task]],
@@ -2854,6 +2903,12 @@ def claim_and_spawn_batches(
             session.heartbeat_ts = time.time()
             orch._spawn_failures.pop(batch_key, None)
             spawn_failure_history.pop(batch_key, None)
+            # Tell the supervisor the batch recovered, and leave evidence
+            # in the store that a supervisor ran here. Without this a
+            # healthy run writes nothing and its readers cannot tell
+            # "nothing parked" from "nobody was watching" (#3453).
+            with contextlib.suppress(Exception):
+                _spawn_supervisor_for(orch).note_spawn_success(_park_key(batch_key))
             _spawned_per_role[batch[0].role] += 1
             # Track spawn rate in convergence guard
             _convergence = getattr(orch, "_convergence_guard", None)
@@ -2981,8 +3036,28 @@ def claim_and_spawn_batches(
                 continue
             new_count = fail_count + 1
             orch._spawn_failures[batch_key] = (new_count, time.time())
+            # Consume one respawn against the supervisor's budget. The
+            # orchestrator stays the authority on when to give up -- the
+            # budget is built from _MAX_SPAWN_FAILURES so the two agree by
+            # construction rather than by coincidence -- and the
+            # supervisor's job here is to make the give-up visible to
+            # `bernstein status`, the TUI and `agents resume` (#3453).
+            with contextlib.suppress(Exception):
+                _spawn_supervisor_for(orch).record_spawn_failure(
+                    _park_key(batch_key),
+                    exc,
+                    budget=_spawn_respawn_budget(orch),
+                )
             should_retry, _ = spawn_analyzer.should_retry(batch_history, max_retries=orch._MAX_SPAWN_FAILURES)
             if new_count >= orch._MAX_SPAWN_FAILURES or not should_retry:
+                # The analyzer can call it quits before the budget is
+                # spent. Park explicitly so the two ways of giving up
+                # leave the same operator-visible state.
+                with contextlib.suppress(Exception):
+                    _spawn_supervisor_for(orch).park(
+                        _park_key(batch_key),
+                        reason=f"spawn failed {new_count} consecutive time(s): {analysis.error_type}",
+                    )
                 for task in batch:
                     try:
                         fail_task(

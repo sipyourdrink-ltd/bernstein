@@ -22,19 +22,62 @@ The supervisor is deliberately transport-agnostic: callers supply a
 spawn callable and the supervisor owns only the budget accounting,
 backoff schedule, parking, and event publication. This keeps it usable
 standalone in tests without dragging in the full spawner.
+
+Two call shapes, and the difference is where the retry loop lives
+--------------------------------------------------------------------
+
+:meth:`SpawnSupervisor.spawn` owns its retry loop: it calls the spawn
+callable, sleeps the backoff, and retries in-call until the budget is
+spent. That suits a caller that can afford to block.
+
+The orchestrator cannot. It retries a failed batch on a *later tick*,
+so a blocking backoff inside :meth:`spawn` would stall the tick loop
+and add a second retry schedule on top of the one the tick already
+provides. :meth:`SpawnSupervisor.record_spawn_failure` is the
+non-blocking counterpart for that caller: it consumes one respawn,
+parks on exhaustion, and returns immediately.
+
+Why the store exists
+--------------------
+
+Supervision state used to live only in process memory, and
+:func:`get_supervisor`'s docstring claimed the orchestrator and the CLI
+``resume`` command "share this instance". They do not: ``bernstein
+status`` and ``bernstein agents parked`` run in their own process, so
+they consulted a supervisor that had by construction never supervised
+anything and reported "nothing parked" unconditionally. Parks are now
+persisted to :data:`PARKED_STORE_RELPATH` -- the path
+:func:`bernstein.core.orchestration.supervisor_aggregator.load_parked_sessions`
+already reads -- so a park made by the orchestrator is visible to a
+later CLI invocation, and an operator resume clears it for both.
+
+The store is written on every supervision state change, including a
+clean spawn. That is what lets a reader tell "no session is parked"
+(store present, list empty) from "no supervisor ran here" (store
+absent) instead of collapsing both into a silent zero.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+#: Location of the parked-session store, relative to the workdir. Must
+#: stay in step with ``supervisor_aggregator.load_parked_sessions``,
+#: which is the reader on the other side of this file.
+PARKED_STORE_RELPATH: tuple[str, ...] = (".sdd", "runtime", "spawn_supervisor", "parked.json")
 
 #: Default maximum respawns inside the rolling window (initial spawn excluded).
 DEFAULT_MAX_RESPAWNS: int = 3
@@ -196,6 +239,10 @@ class SpawnSupervisor:
             None, a logging fallback is used.
         sleep: Backoff sleep function. Defaults to :func:`time.sleep`.
         monotonic: Monotonic clock. Defaults to :func:`time.monotonic`.
+        workdir: Project root under which the parked-session store is
+            written. When None the store is disabled and supervision
+            stays in-process only, which is what standalone unit tests
+            want.
     """
 
     def __init__(
@@ -205,6 +252,7 @@ class SpawnSupervisor:
         publisher: BusPublisher | None = None,
         sleep: Callable[[float], None] | None = None,
         monotonic: Callable[[], float] | None = None,
+        workdir: Path | None = None,
     ) -> None:
         self._default_budget = budget or RespawnBudget()
         self._publisher = publisher or _default_publisher
@@ -212,6 +260,131 @@ class SpawnSupervisor:
         self._monotonic = monotonic or time.monotonic
         self._lock = threading.RLock()
         self._sessions: dict[str, _SessionRecord] = {}
+        self._workdir = workdir
+
+    # ------------------------------------------------------------------ store
+
+    @property
+    def store_path(self) -> Path | None:
+        """Absolute path of the parked-session store, or None when disabled."""
+        if self._workdir is None:
+            return None
+        return self._workdir.joinpath(*PARKED_STORE_RELPATH)
+
+    def _read_store_ids(self, path: Path) -> set[str]:
+        """Return the parked ids currently on disk (empty when unreadable)."""
+        try:
+            payload_any: Any = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return set()
+        if not isinstance(payload_any, dict):
+            return set()
+        ids = cast("dict[str, Any]", payload_any).get("session_ids")
+        if not isinstance(ids, list):
+            return set()
+        return {i for i in cast("list[Any]", ids) if isinstance(i, str)}
+
+    def _write_store(self, path: Path, session_ids: set[str], entries: dict[str, Any]) -> None:
+        """Atomically replace the store with ``session_ids``/``entries``."""
+        payload = {
+            "session_ids": sorted(session_ids),
+            "updated_at": time.time(),
+            "entries": entries,
+        }
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+            os.replace(str(tmp), str(path))
+        except OSError:
+            logger.warning("Could not persist parked-session store at %s", path, exc_info=True)
+
+    def _persist(self) -> None:
+        """Merge this supervisor's view into the store the aggregator reads.
+
+        A merge rather than an overwrite, and the distinction matters: a
+        second process holding its own supervisor (an embedded run, a
+        test, a future multi-orchestrator layout) would otherwise erase
+        every park it had not made itself the first time it wrote. This
+        supervisor is authoritative only for the sessions it *knows
+        about*; ids it has never heard of are carried through untouched.
+
+        Best-effort by design: supervision must not fail because a disk
+        is full or read-only, and the in-process state stays correct
+        either way. The write is atomic (``tmp`` + :func:`os.replace`)
+        so a concurrent reader never observes a half-written file.
+        """
+        path = self.store_path
+        if path is None:
+            return
+        with self._lock:
+            known = set(self._sessions)
+            parked_here = {sid for sid, rec in self._sessions.items() if rec.state == SupervisorState.PARKED}
+            entries: dict[str, Any] = {
+                sid: {
+                    "state": rec.state.value,
+                    "last_error": rec.last_error,
+                    "total_respawns": rec.total_respawns,
+                }
+                for sid, rec in sorted(self._sessions.items())
+            }
+        existing = self._read_store_ids(path) if path.exists() else set()
+        self._write_store(path, (existing - known) | parked_here, entries)
+
+    def clear_parked(self, session_id: str) -> bool:
+        """Remove ``session_id`` from the on-disk store.
+
+        The resume path for a session this process never supervised: the
+        orchestrator parked it and exited, so there is no in-memory
+        record for :meth:`resume` to reset, and the only thing standing
+        between the operator and a clean surface is the file.
+
+        Args:
+            session_id: Session to clear.
+
+        Returns:
+            True if the id was present on disk and has been removed.
+        """
+        path = self.store_path
+        if path is None or not path.exists():
+            return False
+        existing = self._read_store_ids(path)
+        if session_id not in existing:
+            return False
+        existing.discard(session_id)
+        with self._lock:
+            entries: dict[str, Any] = {
+                sid: {
+                    "state": rec.state.value,
+                    "last_error": rec.last_error,
+                    "total_respawns": rec.total_respawns,
+                }
+                for sid, rec in sorted(self._sessions.items())
+                if sid != session_id
+            }
+        self._write_store(path, existing, entries)
+        logger.info("Cleared parked session '%s' from %s", session_id, path)
+        return True
+
+    def attach_workdir(self, workdir: Path) -> None:
+        """Point an as-yet-unrooted supervisor at ``workdir``.
+
+        A no-op once a workdir is set: the first caller that knows the
+        workspace wins, so a later caller in the same process cannot
+        silently repoint the store at a different tree.
+        """
+        with self._lock:
+            if self._workdir is None:
+                self._workdir = workdir
+
+    def mark_active(self) -> None:
+        """Record that a supervisor ran in this workspace, parking nothing.
+
+        Lets a reader distinguish "no session is parked" from "no
+        supervisor ever ran", which is the difference between a claim
+        the run can support and a reassuring default.
+        """
+        self._persist()
 
     # ------------------------------------------------------------------ queries
 
@@ -262,6 +435,7 @@ class SpawnSupervisor:
             record.respawn_times.clear()
             record.state = SupervisorState.HEALTHY
             record.last_error = ""
+        self._persist()
         if was_parked:
             logger.info("Resumed parked session '%s'; respawn budget reset", session_id)
         return True
@@ -269,7 +443,95 @@ class SpawnSupervisor:
     def forget(self, session_id: str) -> None:
         """Drop all supervision state for ``session_id``."""
         with self._lock:
-            self._sessions.pop(session_id, None)
+            existed = self._sessions.pop(session_id, None) is not None
+        if existed:
+            self._persist()
+
+    # ------------------------------------------------------------- non-blocking
+
+    def record_spawn_failure(
+        self,
+        session_id: str,
+        error: Exception | str,
+        *,
+        budget: RespawnBudget | None = None,
+    ) -> bool:
+        """Consume one respawn for ``session_id`` without blocking.
+
+        The non-blocking counterpart to :meth:`spawn`, for a caller that
+        owns its own retry schedule and must not be slept inside. No
+        backoff is applied here: the caller's next attempt is its own to
+        time. On exhaustion the session is parked, the exhaustion event
+        is published, and the store is written, exactly as :meth:`spawn`
+        does.
+
+        Args:
+            session_id: Opaque session identifier. Must be stable across
+                the retries it is meant to budget -- see the note in
+                :func:`bernstein.core.tasks.task_lifecycle` about why a
+                per-attempt spawn id cannot be used here.
+            error: The failure to record, for operator-facing detail.
+            budget: Per-call budget override, applied on first sight of
+                the session.
+
+        Returns:
+            True while respawn budget remains, False once the session has
+            been parked.
+        """
+        record = self._record_for(session_id, budget)
+        with self._lock:
+            if record.state == SupervisorState.PARKED:
+                return False
+        exc = error if isinstance(error, Exception) else RuntimeError(str(error))
+        if not self._consume_respawn(record, exc):
+            with self._lock:
+                attempts = record.total_respawns
+            self._park(session_id, record, attempts)
+            return False
+        self._persist()
+        return True
+
+    def park(self, session_id: str, *, reason: str = "") -> bool:
+        """Park ``session_id`` outright, whatever budget it has left.
+
+        For a caller whose own policy decided to stop retrying before the
+        respawn budget ran out -- the orchestrator's failure analyzer can
+        classify a batch as hopeless after one failure. Parking through
+        the same door keeps both ways of giving up rendering identically
+        to an operator.
+
+        Args:
+            session_id: Opaque session identifier.
+            reason: Operator-facing detail recorded as the last error.
+
+        Returns:
+            True if this call parked the session, False if it was already
+            parked.
+        """
+        record = self._record_for(session_id, None)
+        with self._lock:
+            if record.state == SupervisorState.PARKED:
+                return False
+            if reason:
+                record.last_error = reason
+            attempts = record.total_respawns
+        self._park(session_id, record, attempts)
+        return True
+
+    def note_spawn_success(self, session_id: str) -> None:
+        """Clear the failure record for a session that spawned cleanly.
+
+        Also writes the store, so a run in which nothing ever failed
+        still leaves evidence that a supervisor was present and the
+        empty parked set is a measured zero rather than a default.
+        """
+        with self._lock:
+            record = self._sessions.get(session_id)
+            if record is not None:
+                record.respawn_times.clear()
+                record.state = SupervisorState.HEALTHY
+                record.last_error = ""
+        self._persist()
 
     # ------------------------------------------------------------------ spawn
 
@@ -370,6 +632,7 @@ class SpawnSupervisor:
             budget.window_seconds,
             last_error or "<none>",
         )
+        self._persist()
         self._publish_exhausted(session_id, attempts, last_error, budget)
 
     def _publish_exhausted(
@@ -433,16 +696,31 @@ _global_supervisor: SpawnSupervisor | None = None
 _global_lock = threading.Lock()
 
 
-def get_supervisor() -> SpawnSupervisor:
+def get_supervisor(workdir: Path | None = None) -> SpawnSupervisor:
     """Return the process-wide supervisor, creating it on first use.
 
-    The orchestrator and the CLI ``resume`` command share this instance
-    so an operator's resume reaches the same budget the spawner consults.
+    The instance is per *process*, not per workspace. The orchestrator
+    and ``bernstein agents resume`` run in different processes, so they
+    do not share in-memory state and never did; what they share is the
+    on-disk store under :data:`PARKED_STORE_RELPATH`, which is why the
+    supervisor needs a workdir to be useful across a process boundary.
+
+    Args:
+        workdir: Project root for the parked-session store. Applied only
+            when the process-wide supervisor is created, or when an
+            existing one has no workdir yet -- so the first caller that
+            knows the workspace wins and later callers cannot silently
+            repoint the store at a different tree.
+
+    Returns:
+        The process-wide supervisor.
     """
     global _global_supervisor
     with _global_lock:
         if _global_supervisor is None:
-            _global_supervisor = SpawnSupervisor()
+            _global_supervisor = SpawnSupervisor(workdir=workdir)
+        elif workdir is not None:
+            _global_supervisor.attach_workdir(workdir)
         return _global_supervisor
 
 
