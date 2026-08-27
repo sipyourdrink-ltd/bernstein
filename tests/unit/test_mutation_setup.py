@@ -185,9 +185,10 @@ class TestKeyMutationScenarios:
         ``is_sandboxed`` states the precondition the assertion actually needs,
         so the test means the same thing on a runner VM and in a container.
         """
-        from bernstein.core import guardrails
         from bernstein.core.guardrails import relax_sandboxed
         from bernstein.core.policy_engine import DecisionType, PermissionDecision
+
+        from bernstein.core import guardrails
 
         monkeypatch.delenv("BERNSTEIN_SANDBOX", raising=False)
         monkeypatch.setattr(guardrails, "is_sandboxed", lambda: False)
