@@ -16,9 +16,9 @@ The implementation follows the Hoeffding-based construction:
 with a union bound (peeling) over n to achieve time-uniform coverage.
 The width shrinks as O(sqrt(log n / n)) and is monotone via running intersection.
 
-All arithmetic is exact rational (fractions.Fraction) until the canonical rounding
-step; no SciPy, no external dependencies. The construction is conservative,
-trading some tightness for computational simplicity and exact arithmetic.
+All arithmetic is float-based, with canonical rounding applied at the API
+boundary; no SciPy, no external dependencies. The construction is conservative,
+trading some tightness for computational simplicity.
 
 Reference:
     Howard, S. R., Ramdas, A., McAuliffe, J., & Sekhon, J. (2021).
