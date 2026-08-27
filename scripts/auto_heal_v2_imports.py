@@ -15,7 +15,6 @@ import importlib
 import sys
 
 _ALIASES: dict[str, str] = {
-    "cost_guard": "bernstein.core.autoheal.cost_guard",
     "blast_radius": "bernstein.core.quality.blast_radius",
     "decision_log": "bernstein.core.observability.decision_log",
     "calibration": "bernstein.eval.calibration",
