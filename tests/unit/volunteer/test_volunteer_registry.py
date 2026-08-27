@@ -55,6 +55,11 @@ NO_LOCAL_MANIFEST = json.dumps(
 ).encode()
 
 
+def _resolves_to(*addresses: str):
+    """A resolver that answers with fixed addresses, so no DNS is needed."""
+    return lambda _host: list(addresses)
+
+
 class _FakeTransport:
     """Test double for HTTPTransport that returns canned responses."""
 
@@ -319,6 +324,69 @@ def test_browse_rejects_rebinding_repo_url(monkeypatch: pytest.MonkeyPatch, inte
 
     transport = _FakeTransport()
     repo = "https://rebind.example/repo"
+
+    transport.responses["https://index.test/index.json"] = HTTPResponse(
+        status=200,
+        body=_make_index(
+            [{"repo_url": repo, "default_branch": "main", "topics": [], "license": "MIT", "local_ok": True}]
+        ),
+        etag=None,
+    )
+
+    joinable, dropped = browse_indexes(
+        ["https://index.test/index.json"],
+        transport=transport,
+    )
+
+    assert len(joinable) == 0
+    assert len(dropped) == 1
+    assert dropped[0].repo_url == repo
+    assert "internal address" in dropped[0].reason
+
+
+def test_browse_rejects_internal_index_url_via_resolver() -> None:
+    """browse_indexes must reject index URLs pointing to internal addresses."""
+    from bernstein.core.volunteer.registry import _UrllibTransport
+
+    transport = _UrllibTransport()
+
+    joinable, dropped = browse_indexes(
+        ["https://127.0.0.1/index.json"],
+        transport=transport,
+    )
+
+    assert len(joinable) == 0
+    assert len(dropped) == 1
+    assert "internal address" in dropped[0].reason
+
+
+@pytest.mark.parametrize(
+    "internal_ip",
+    [
+        "10.0.0.5",
+        "172.16.0.100",
+        "192.168.1.1",
+        "fe80::1",
+        "fc00::1",
+    ],
+)
+def test_browse_rejects_index_with_internal_repo_various_ranges(
+    monkeypatch: pytest.MonkeyPatch, internal_ip: str
+) -> None:
+    """browse_indexes must reject various internal IP ranges in repo URLs."""
+
+    def resolver(host: str) -> list[str]:
+        if host == "private.repo":
+            return [internal_ip]
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(
+        "bernstein.core.security.url_allowlist._default_resolver",
+        resolver,
+    )
+
+    transport = _FakeTransport()
+    repo = "https://private.repo/repo"
 
     transport.responses["https://index.test/index.json"] = HTTPResponse(
         status=200,
