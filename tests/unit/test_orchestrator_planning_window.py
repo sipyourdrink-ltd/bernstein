@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -13,15 +12,15 @@ from bernstein.core.models import (
     Task,
     TaskStatus,
 )
+from bernstein.core.orchestrator import Orchestrator
+
+from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.core.agents.spawner_core import AgentSpawner
 from bernstein.core.orchestration.run_stall import (
     RunStallState,
     evaluate_run_stall,
     resolve_planning_window_s,
 )
-from bernstein.core.orchestrator import Orchestrator
-
-from bernstein.adapters.base import CLIAdapter, SpawnResult
-from bernstein.core.agents.spawner_core import AgentSpawner
 from bernstein.core.security.run_closure import RunClosureOutcome
 
 
@@ -152,7 +151,7 @@ class TestPlanningWindow:
 
     def test_empty_ledger_inside_the_window_is_not_a_stall(self) -> None:
         """Planning is allowed to be slow; an empty ledger starts benign."""
-        state, verdict = evaluate_run_stall(
+        _state, verdict = evaluate_run_stall(
             RunStallState(),
             _empty_ledger(),
             now=1000.0,
@@ -285,23 +284,17 @@ class TestPlanningWindow:
         finally:
             monkey.undo()
 
-    def test_planning_window_can_be_configured_via_env_var(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_planning_window_can_be_configured_via_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """BERNSTEIN_PLANNING_WINDOW_S overrides the configured window."""
         monkeypatch.setenv("BERNSTEIN_PLANNING_WINDOW_S", "2.5")
         assert resolve_planning_window_s(300.0) == 2.5
 
-    def test_planning_window_falls_back_to_config_without_env_var(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_planning_window_falls_back_to_config_without_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Without the env var the configured value is used unchanged."""
         monkeypatch.delenv("BERNSTEIN_PLANNING_WINDOW_S", raising=False)
         assert resolve_planning_window_s(300.0) == 300.0
 
-    def test_planning_window_env_var_garbage_falls_back_to_config(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_planning_window_env_var_garbage_falls_back_to_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """An unparseable env var must not crash the orchestrator tick."""
         monkeypatch.setenv("BERNSTEIN_PLANNING_WINDOW_S", "not-a-number")
         assert resolve_planning_window_s(300.0) == 300.0

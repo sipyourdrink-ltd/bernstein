@@ -177,9 +177,7 @@ class TestStallCriterion:
         being planning having failed rather than startup - is covered in
         test_orchestrator_planning_window.py.
         """
-        _state, verdict = _drive(
-            _snapshot(), ticks=50, grace_s=0.0, min_ticks=1, planning_window_s=10_000.0
-        )
+        _state, verdict = _drive(_snapshot(), ticks=50, grace_s=0.0, min_ticks=1, planning_window_s=10_000.0)
 
         assert verdict is not None
         assert verdict.stalled is False
@@ -192,9 +190,7 @@ class TestStallCriterion:
         empty ledger read as startup forever and a run whose planning task
         failed ticked to its wall-clock timeout with nothing to do.
         """
-        _state, verdict = _drive(
-            _snapshot(), ticks=50, grace_s=0.0, min_ticks=1, planning_window_s=100.0
-        )
+        _state, verdict = _drive(_snapshot(), ticks=50, grace_s=0.0, min_ticks=1, planning_window_s=100.0)
 
         assert verdict is not None
         assert verdict.stalled is True
