@@ -80,9 +80,7 @@ class ConfidenceSequence:
         if self.alpha <= 0.0 or self.alpha >= 1.0:
             raise ValueError(f"alpha must be in (0,1), got {self.alpha}")
         if self.lower_bound >= self.upper_bound:
-            raise ValueError(
-                f"lower_bound ({self.lower_bound}) must be < upper_bound ({self.upper_bound})"
-            )
+            raise ValueError(f"lower_bound ({self.lower_bound}) must be < upper_bound ({self.upper_bound})")
 
         # Set derived values
         object.__setattr__(self, "_alpha", float(self.alpha))

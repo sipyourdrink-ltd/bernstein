@@ -152,9 +152,7 @@ def test_wilson_interval_violates_error_rate_under_peeking() -> None:
 
     # The Wilson interval should show a higher violation rate due to peeking.
     # ConfidenceSequence should be at or below nominal alpha.
-    assert cs_rate <= alpha + 0.05, (
-        f"ConfidenceSequence error rate {cs_rate:.3f} exceeds nominal alpha={alpha}."
-    )
+    assert cs_rate <= alpha + 0.05, f"ConfidenceSequence error rate {cs_rate:.3f} exceeds nominal alpha={alpha}."
     # Wilson should be inflated (this is the point of the test).
     # Allow generous margin since we're approximating k.
     assert wilson_rate >= cs_rate, (
@@ -193,8 +191,8 @@ def test_determinism_identical_sequences_produce_identical_bounds() -> None:
         seq_b.update(obs)
         low_a, high_a = seq_a.bounds()
         low_b, high_b = seq_b.bounds()
-        assert low_a == low_b, f"Lower bounds differ at step {i+1}"
-        assert high_a == high_b, f"Upper bounds differ at step {i+1}"
+        assert low_a == low_b, f"Lower bounds differ at step {i + 1}"
+        assert high_a == high_b, f"Upper bounds differ at step {i + 1}"
 
 
 # ---------------------------------------------------------------------------
@@ -221,13 +219,9 @@ def test_monotonicity_bounds_shrink_or_stay_same_over_time() -> None:
         low_curr, high_curr = bounds_history[i]
 
         # Lower bound should be >= previous lower bound
-        assert low_curr >= low_prev, (
-            f"Lower bound widened at step {i}: {low_prev:.6f} -> {low_curr:.6f}"
-        )
+        assert low_curr >= low_prev, f"Lower bound widened at step {i}: {low_prev:.6f} -> {low_curr:.6f}"
         # Upper bound should be <= previous upper bound
-        assert high_curr <= high_prev, (
-            f"Upper bound widened at step {i}: {high_prev:.6f} -> {high_curr:.6f}"
-        )
+        assert high_curr <= high_prev, f"Upper bound widened at step {i}: {high_prev:.6f} -> {high_curr:.6f}"
 
 
 # ---------------------------------------------------------------------------
@@ -310,9 +304,7 @@ def test_single_observation_has_wider_interval_than_many() -> None:
     width_one = seq_one.bounds()[1] - seq_one.bounds()[0]
     width_many = seq_many.bounds()[1] - seq_many.bounds()[0]
 
-    assert width_one > width_many, (
-        f"Single obs width {width_one:.6f} should exceed many obs width {width_many:.6f}"
-    )
+    assert width_one > width_many, f"Single obs width {width_one:.6f} should exceed many obs width {width_many:.6f}"
 
 
 def test_negative_observation_bounds() -> None:
@@ -399,8 +391,7 @@ def test_coverage_under_extreme_values() -> None:
     assert low <= high
     # True mean is 0.5, so interval should contain it with high probability
     assert low <= 0.5 <= high or seq.n < 10, (
-        f"Interval [{low:.4f}, {high:.4f}] excludes true mean 0.5 "
-        f"after {seq.n} observations"
+        f"Interval [{low:.4f}, {high:.4f}] excludes true mean 0.5 after {seq.n} observations"
     )
 
 
@@ -417,6 +408,5 @@ def test_large_alpha_gives_wider_intervals() -> None:
     width_loose = seq_loose.bounds()[1] - seq_loose.bounds()[0]
 
     assert width_tight > width_loose, (
-        f"alpha=0.01 should give wider interval than alpha=0.1: "
-        f"{width_tight:.6f} vs {width_loose:.6f}"
+        f"alpha=0.01 should give wider interval than alpha=0.1: {width_tight:.6f} vs {width_loose:.6f}"
     )
