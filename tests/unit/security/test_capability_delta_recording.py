@@ -19,8 +19,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from bernstein.core.security.capability_delta import compute_grant_delta
-from bernstein.core.security.permissions import AgentPermissions
 from bernstein.core.security.audit_chain import (
     EVENT_CAPABILITY_AUTHORIZATION,
     EVENT_CAPABILITY_DELTA,
@@ -30,6 +28,8 @@ from bernstein.core.security.audit_chain import (
     record_capability_authorization,
     record_capability_delta,
 )
+from bernstein.core.security.capability_delta import compute_grant_delta
+from bernstein.core.security.permissions import AgentPermissions
 
 KEY = b"k" * 32
 
