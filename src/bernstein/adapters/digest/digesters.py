@@ -8,12 +8,8 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable
-from typing import TYPE_CHECKING
 
 from bernstein.adapters.digest.models import ByteCounts
-
-if TYPE_CHECKING:
-    pass
 
 Digester = Callable[[bytes], tuple[bytes, ByteCounts]]
 

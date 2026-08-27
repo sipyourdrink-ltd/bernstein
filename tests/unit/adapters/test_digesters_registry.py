@@ -11,16 +11,13 @@ import hashlib
 import pytest
 
 from bernstein.adapters.digest.digesters import (
-    Digester,
     default_digester,
     get_digester,
     list_families,
     pytest_digester,
-    register_digester,
 )
-from bernstein.adapters.digest.models import ByteCounts, TraceRecord
+from bernstein.adapters.digest.models import TraceRecord
 from bernstein.adapters.digest.rulesets import (
-    AVAILABLE_RULESETS,
     GIT_RULESET_V1,
     PYTEST_RULESET_V1,
     Ruleset,
