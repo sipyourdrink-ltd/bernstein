@@ -623,6 +623,7 @@ def record_review_decision(
 __all__ = [
     "BOARD_COLUMNS",
     "BOARD_SCHEMA_VERSION",
+    "EVENT_PLAN_GRAPH_FULL",
     "EVENT_TASK_DIFF_CAPTURED",
     "EVENT_TASK_MERGED",
     "EVENT_TASK_REVIEW_DECISION",

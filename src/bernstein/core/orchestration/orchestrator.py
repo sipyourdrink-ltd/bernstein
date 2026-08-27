@@ -147,7 +147,7 @@ from bernstein.core.runtime_state import (
 from bernstein.core.security.audit import load_or_create_audit_key
 from bernstein.core.security.run_closure import RunClosureOutcome
 from bernstein.core.security.sanitize import sanitize_log
-from bernstein.core.seed import resolve_seed_path
+from bernstein.core.seed import parse_seed, resolve_seed_path
 from bernstein.core.semantic_cache import ResponseCacheManager
 from bernstein.core.signals import read_unresolved_pivots
 from bernstein.core.skills.provenance import record_usage
@@ -729,6 +729,25 @@ class Orchestrator:
         # until the first normal tick records one. Held on the instance so a
         # 60-tick run whose graph never moves writes one row, not sixty.
         self._last_graph_digest: str = ""
+
+        # Run goal resolved from the seed config. Stored once at init so
+        # ``_record_plan_graph_full`` can bind the goal to the full-graph
+        # journal row without needing a fresh config parse each tick.
+        # Empty string when no seed/goal was supplied.
+        try:
+            _seed_path = resolve_seed_path(workdir)
+            _seed = parse_seed(_seed_path) if _seed_path.exists() else None
+            self._goal: str = (_seed.goal or "").strip() if _seed else ""
+        except Exception as exc:
+            logger.debug("Failed to resolve run goal from seed: %s", exc)
+            self._goal = ""
+
+        # Last ``plan.graph.full`` digest appended this run (issue #3613).
+        # Same "graph-changed" cadence as ``_last_graph_digest``: structural
+        # digests match means no new row; reworded titles do NOT emit a new
+        # full event because the digest only covers ``(task_id, role,
+        # sorted(depends_on))``.
+        self._last_full_graph_digest: str = ""
 
         # Live OTLP export of the journal projection : each
         # appended journal entry streams its journal-anchored span to the
@@ -1433,6 +1452,75 @@ class Orchestrator:
 
         self._last_graph_digest = digest
 
+    def _record_plan_graph_full(self, all_tasks: list[Task]) -> None:
+        """Append a ``plan.graph.full`` event when the executed graph changes.
+
+        Mirrors :meth:`_record_plan_graph_digest` but records every task's
+        title alongside the structural digest so a detached run or a review
+        board can render the whole graph with human-readable labels (issue
+        #3613 follow-on).
+
+        The digest is computed over the same structural triple
+        ``(task_id, role, sorted(depends_on))`` as ``plan.graph`` so the
+        two events share a single "graph changed" cadence: a reworded
+        title is ignored by both (neither emits a new row), and both
+        dedup on digest, so a 60-tick run whose graph never moves writes
+        one row each, not sixty. A failed append leaves
+        ``_last_full_graph_digest`` untouched so the next normal tick
+        retries, and the failure never propagates out of the tick.
+
+        The run goal is bound into the row so the review board (see
+        :func:`~bernstein.core.replay.review_board._fold_plan_graph_full`)
+        has the full picture without touching live state. The goal is never
+        logged at warning level (it may contain secrets); it is only written
+        to the journal row alongside the task list.
+
+        Args:
+            all_tasks: Every task in the graph built for this tick.
+        """
+        try:
+            digest = canonical_graph_digest(
+                [
+                    TaskNode(
+                        task_id=task.id,
+                        role=task.role,
+                        title="",
+                        description="",
+                        depends_on=tuple(task.depends_on),
+                    )
+                    for task in all_tasks
+                ]
+            )
+        except Exception as exc:
+            logger.debug("Failed to compute plan.graph.full digest: %s", exc)
+            return
+
+        if digest == self._last_full_graph_digest:
+            return
+
+        try:
+            self._recorder.record(
+                "plan.graph.full",
+                goal=self._goal,
+                nodes=[
+                    {
+                        "id": task.id,
+                        "role": task.role,
+                        "title": task.title,
+                        "depends_on": sorted(task.depends_on),
+                    }
+                    for task in all_tasks
+                ],
+                digest=digest,
+                rev=SCHEDULE_PROJECTION_REV,
+                task_count=len(all_tasks),
+            )
+        except Exception as exc:
+            logger.debug("Failed to record plan.graph.full: %s", exc)
+            return
+
+        self._last_full_graph_digest = digest
+
     def _tick_internal(self) -> TickResult:
         """Actual tick implementation (previously tick())."""
         result = TickResult()
@@ -1698,6 +1786,7 @@ class Orchestrator:
             # identity. Bind the graph that produced it to this run by
             # appending its digest to the journal.
             self._record_plan_graph_digest(all_tasks)
+            self._record_plan_graph_full(all_tasks)
         else:
             # Fast tick: skip the expensive graph analysis, validation and
             # snapshot persistence, but still recompute the critical path -
