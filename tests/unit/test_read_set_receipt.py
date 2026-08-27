@@ -252,9 +252,7 @@ def test_offline_verification_fails_with_wrong_key(sample_receipt: ReadSetRefusa
     assert not verify_refusal_receipt(tampered)
 
 
-def test_receipt_persists_and_round_trips(
-    sample_receipt: ReadSetRefusalReceipt, keys: dict, tmp_path: Path
-) -> None:
+def test_receipt_persists_and_round_trips(sample_receipt: ReadSetRefusalReceipt, keys: dict, tmp_path: Path) -> None:
     """Receipt writes to disk and reads back correctly."""
     from src.bernstein.core.git.read_set_receipt import (
         build_refusal_receipt,
@@ -362,8 +360,6 @@ def test_changed_path_dataclass(sample_changed_paths) -> None:
 # ------------------------------------------------------------------
 # Offline verification tests (mocked)
 # ------------------------------------------------------------------
-
-
 
 
 def test_verify_receipt_offline_malformed_bytes(tmp_path: Path) -> None:

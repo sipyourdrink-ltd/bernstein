@@ -63,6 +63,7 @@ class ChangedPath:
         new_commit: The commit hash of the file at the target branch (or null hash
             if the file does not exist at target branch).
     """
+
     path: str
     old_commit: str
     new_commit: str

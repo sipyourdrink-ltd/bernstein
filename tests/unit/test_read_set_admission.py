@@ -155,9 +155,7 @@ def test_journal_mutation_detection(tmp_path: Path) -> None:
     # Mock derive_read_paths to raise broken_chain error
     with (
         patch("src.bernstein.core.git.git_basic.run_git"),
-        patch(
-            "src.bernstein.core.replay.read_paths.derive_read_paths"
-        ) as mock_derive,
+        patch("src.bernstein.core.replay.read_paths.derive_read_paths") as mock_derive,
     ):
         mock_derive.side_effect = ReadPathSet(
             read_paths=frozenset(),
@@ -232,10 +230,7 @@ def test_deterministic_receipt_serialization(tmp_path: Path) -> None:
                 target_branch="main",
             )
 
-        return [
-            {"path": c.path, "old_commit": c.old_commit, "new_commit": c.new_commit}
-            for c in result
-        ]
+        return [{"path": c.path, "old_commit": c.old_commit, "new_commit": c.new_commit} for c in result]
 
     # First invocation
     result1 = build_result()

@@ -25,6 +25,7 @@ class ChangedPath:
         new_commit: The commit hash of the file at the target branch (or null hash
             if the file does not exist at target branch).
     """
+
     path: str
     old_commit: str
     new_commit: str
@@ -32,6 +33,7 @@ class ChangedPath:
 
 class ReadSetAdmissionRefused(Exception):
     """Exception raised when the read set has changed and admission is refused."""
+
     pass
 
 
@@ -67,11 +69,7 @@ def check_read_set_changed(
             cwd=worktree_root,
         )
         # Split output into lines and filter out empty lines
-        changed_files = set(
-            line.strip()
-            for line in diff_result.stdout.splitlines()
-            if line.strip()
-        )
+        changed_files = set(line.strip() for line in diff_result.stdout.splitlines() if line.strip())
     except Exception:
         # If we cannot compute the diff, assume no changes to avoid blocking
         # the orchestrator on a temporary failure. The caller can decide to
