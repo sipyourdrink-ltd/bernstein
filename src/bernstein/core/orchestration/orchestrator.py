@@ -1509,7 +1509,7 @@ class Orchestrator:
                         "title": task.title,
                         "depends_on": sorted(task.depends_on),
                     }
-                    for task in all_tasks
+                    for task in sorted(all_tasks, key=lambda t: t.id)
                 ],
                 digest=digest,
                 rev=SCHEDULE_PROJECTION_REV,

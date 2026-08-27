@@ -59,6 +59,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -75,7 +76,7 @@ from bernstein.core.security.path_containment import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
     from pathlib import Path
 
     from bernstein.core.replay.journal import EventJournal
@@ -261,16 +262,19 @@ def _fold_plan_graph_full(run: dict[str, Any], row: Mapping[str, Any]) -> None:
     nodes = row.get("nodes")
     if not isinstance(nodes, list):
         return
-    run["plan_nodes"] = [
-        {
-            "id": str(node.get("id", "")),
-            "role": str(node.get("role", "")),
-            "title": str(node.get("title", "")),
-            "depends_on": sorted(str(d) for d in node.get("depends_on", []) if isinstance(d, str)),
-        }
-        for node in nodes
-        if isinstance(node, Mapping)
-    ]
+    run["plan_nodes"] = sorted(
+        [
+            {
+                "id": str(node.get("id", "")),
+                "role": str(node.get("role", "")),
+                "title": str(node.get("title", "")),
+                "depends_on": sorted(str(d) for d in node.get("depends_on", []) if isinstance(d, str)),
+            }
+            for node in nodes
+            if isinstance(node, Mapping)
+        ],
+        key=lambda n: str(n["id"]),
+    )
 
 
 def project_board(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
