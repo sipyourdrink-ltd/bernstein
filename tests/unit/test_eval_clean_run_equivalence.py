@@ -5,23 +5,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
-from bernstein.core.lineage.spine import LineageSpine, content_hash_of
-from bernstein.core.replay.journal import EventJournal, JournalPathError, load_events
+from bernstein.core.lineage.spine import LineageSpine
+from bernstein.core.replay.journal import EventJournal, load_events
 from bernstein.eval.clean_run import (
+    EVAL_CLEAN_RUN_RUN_ID,
     EquivalenceAttestation,
     EquivalenceVerdict,
-    EVAL_CLEAN_RUN_RUN_ID,
     _hash_obj,
     _load_equivalence_journal,
-    build_equivalence_attestation,
     clean_run_attestation_path,
     verify_equivalence_attestation,
 )
-from bernstein.eval.golden import GoldenTask
-from tests.unit.test_eval_clean_run import _KEY, _task
-
+from tests.unit.test_eval_clean_run import _KEY
 
 _TS = 1_700_000_000
 _RUN_ID = "golden-fib-001-equivalence"
@@ -138,7 +133,6 @@ def test_verify_equivalence_attestation_intact_equivalent_verifies_ok(tmp_path: 
         "verdict": EquivalenceVerdict.EQUIVALENT.value,
         "timestamp": _TS,
     }
-    body_json = json.dumps(body, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
     attestation_hash = _hash_obj(body)
 
     attestation = EquivalenceAttestation(
@@ -187,7 +181,6 @@ def test_verify_equivalence_attestation_original_journal_unavailable(tmp_path: P
         "verdict": EquivalenceVerdict.DIVERGED.value,
         "timestamp": _TS,
     }
-    body_json = json.dumps(body, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
     attestation_hash = _hash_obj(body)
 
     attestation = EquivalenceAttestation(
@@ -270,7 +263,6 @@ def test_verify_equivalence_attestation_original_head_mismatch(tmp_path: Path) -
     original_events = _seed_journal(_ORIGINAL_RUN_ID, tmp_path, [dict(r) for r in rows])
     substituted_events = _seed_journal(_RUN_ID, tmp_path, [dict(r) for r in rows])
 
-    original_head = original_events[-1]["event_hash"]
     substituted_head = substituted_events[-1]["event_hash"]
 
     body = {
@@ -412,7 +404,6 @@ def test_verify_equivalence_attestation_substituted_head_mismatch(tmp_path: Path
     substituted_events = _seed_journal(_RUN_ID, tmp_path, [dict(r) for r in rows])
 
     original_head = original_events[-1]["event_hash"]
-    substituted_head = substituted_events[-1]["event_hash"]
 
     body = {
         "schema_version": 1,
@@ -552,3 +543,4 @@ def test_verify_equivalence_attestation_not_anchored_in_spine(tmp_path: Path) ->
 
     assert result.ok is False
     assert "not anchored" in result.reason
+
