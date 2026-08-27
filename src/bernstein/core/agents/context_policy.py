@@ -32,30 +32,32 @@ DEFAULT_POLICY_ID = "bernstein/default/v1"
 
 #: Built-in context parts available for selection.
 #: Each part has a unique ID and a specification of what it contains.
-BUILTIN_PARTS = frozenset({
-    "role",
-    "specialists",
-    "tasks",
-    "artifact_contract",
-    "lessons",
-    "persistent_memory",
-    "rag_context",
-    "rich_context",
-    "file_scope",
-    "parent_context",
-    "predecessor",
-    "team_awareness",
-    "mailbox",
-    "recommendations",
-    "project_context",
-    "output_style",
-    "token_budget",
-    "instructions",
-    "heartbeat",
-    "signal_check",
-    "meta_nudges",
-    "turn_budget",
-})
+BUILTIN_PARTS = frozenset(
+    {
+        "role",
+        "specialists",
+        "tasks",
+        "artifact_contract",
+        "lessons",
+        "persistent_memory",
+        "rag_context",
+        "rich_context",
+        "file_scope",
+        "parent_context",
+        "predecessor",
+        "team_awareness",
+        "mailbox",
+        "recommendations",
+        "project_context",
+        "output_style",
+        "token_budget",
+        "instructions",
+        "heartbeat",
+        "signal_check",
+        "meta_nudges",
+        "turn_budget",
+    }
+)
 
 #: Default part order that reproduces current behavior.
 #: This is the exact order used by _render_prompt_with_receipt in spawner_core.py.
