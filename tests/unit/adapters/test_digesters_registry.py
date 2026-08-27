@@ -6,6 +6,7 @@ and trace records carry all metadata for replay verification.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 
 import pytest
@@ -153,8 +154,8 @@ def test_trace_record_is_frozen() -> None:
         digest_bytes=32,
     )
 
-    with pytest.raises(Exception):  # dataclasses.FrozenInstanceError
-        record.ruleset_id = "changed"
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        record.ruleset_id = "changed"  # type: ignore[misc]
 
 
 def test_trace_record_to_dict_round_trip() -> None:
