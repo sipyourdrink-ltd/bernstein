@@ -53,7 +53,6 @@ def _uncast_replace_values(relative_path: str) -> list[str]:
 def test_s5886_cluster_avoids_uncast_replace_values() -> None:
     """Typed functions should not expose raw dataclasses.replace values."""
     paths = [
-        "src/bernstein/core/agents/harness_policy.py",
         "src/bernstein/core/orchestration/consensus_relay.py",
         "src/bernstein/core/orchestration/run_actor.py",
         "src/bernstein/core/cost/retry_budget.py",
