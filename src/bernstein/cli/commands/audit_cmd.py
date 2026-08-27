@@ -498,13 +498,11 @@ def _verify_lineage_active_set() -> bool:
             chain = AuditChainStore(audit_path, key=key)
 
             # Scan for revocation events that may contain lineage entry hashes as seeds
-            # Currently, revocation events record mandate_hash/gate_hash, not lineage_entry_hash
             # We need to check if revocation events record lineage entry references
             from bernstein.core.security.audit_chain import EVENT_EVAL_GATE_REVOCATION, EVENT_MANDATE_REVOCATION
 
             for event in chain.query(event_type=EVENT_MANDATE_REVOCATION):
                 # Revocation events may reference lineage entries in their details
-                # For now, we collect any lineage_entry_hash found in revocation details
                 details = event.details.get("details", {})
                 if isinstance(details, dict):
                     lineage_ref = details.get("lineage_entry_hash") or details.get("lineage_ref")
@@ -551,6 +549,26 @@ def _verify_lineage_active_set() -> bool:
         )
     )
 
+    # Verification output format with required fields
+    console.print()
+    console.print("[bold]Lineage Entry Activity Report[/bold]")
+    console.print()
+
+    # Report counts
+    console.print(f"Total entries: {total}")
+    console.print(f"Active entries: {active_count}")
+    console.print(f"Inactive entries: {inactive_count}")
+    console.print()
+
+    # List inactive entry hashes with reasons
+    if inactive_entries:
+        console.print("[bold]Inactive entry hashes (with reasons):[/bold]")
+        for h, reason in inactive_entries:
+            console.print(f"  {h} ({reason})")
+    else:
+        console.print("[dim]No inactive entries found.[/dim]")
+
+    # Also show in table format for additional context
     table = Table(show_header=False, box=None, padding=(0, 2))
     table.add_column("Key", style="dim", no_wrap=True, min_width=14)
     table.add_column("Value")
@@ -561,8 +579,8 @@ def _verify_lineage_active_set() -> bool:
 
     if inactive_entries:
         console.print()
-        console.print("[bold]Inactive entry hashes:[/bold]")
-        for h, reason in inactive_entries[:10]:  # Show up to 10 entries
+        console.print("[bold]Inactive entry hashes (up to 10 shown):[/bold]")
+        for h, reason in inactive_entries[:10]:
             console.print(f"  [yellow]-[/yellow] {h} ({reason})")
         if len(inactive_entries) > 10:
             console.print(f"  [dim]... and {len(inactive_entries) - 10} more[/dim]")
