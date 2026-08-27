@@ -248,6 +248,50 @@ async def test_operations_by_a_worker_whose_lease_was_reaped_are_refused_as_leas
     assert isinstance(await store.submit(TASK_ID, new_holder, "sha256:bundle", "s3://bundles/bundle"), Lease)
 
 async def test_a_re_claim_by_the_holder_extends_the_lease_and_keeps_the_generation(tmp_path: Path) -> None:
+
+
+@pytest.mark.asyncio
+async def test_operations_by_a_worker_whose_lease_was_reaped_are_refused_as_lease_reassigned(tmp_path: Path) -> None:
+    # When a lease expires and is reassigned, the original holder must not be
+    # able to operate on the task.  The refusal reason must be LEASE_REASSIGNED
+    # (distinct from NOT_LEASE_HOLDER) so callers can distinguish "you were too
+    # slow" from "this was never yours" and apply their own grace policy.
+    clock = _FakeClock()
+    store = _store(tmp_path, clock)
+    original = await _worker(store)
+    new_holder = await _worker(store)
+
+    # Original worker claims the task
+    first = await store.claim(TASK_ID, original, TTL)
+    assert isinstance(first, Lease)
+
+    # Lease expires
+    clock.advance(TTL + 1)
+
+    # New holder claims it (triggers reassignment inline)
+    second = await store.claim(TASK_ID, new_holder, TTL)
+    assert isinstance(second, Lease)
+    assert second.worker_id == new_holder
+    assert second.generation == first.generation + 1
+
+    # Original worker tries to heartbeat - should get LEASE_REASSIGNED
+    hb_refusal = await store.heartbeat(TASK_ID, original)
+    assert isinstance(hb_refusal, LeaseRefusal)
+    assert hb_refusal.reason is LeaseRefusalReason.LEASE_REASSIGNED
+
+    # Original worker tries to claim again - should get LEASE_REASSIGNED
+    claim_refusal = await store.claim(TASK_ID, original, TTL)
+    assert isinstance(claim_refusal, LeaseRefusal)
+    assert claim_refusal.reason is LeaseRefusalReason.LEASE_REASSIGNED
+
+    # Original worker tries to submit - should get LEASE_REASSIGNED
+    submit_refusal = await store.submit(TASK_ID, original, "sha256:bundle", "s3://bundles/bundle")
+    assert isinstance(submit_refusal, LeaseRefusal)
+    assert submit_refusal.reason is LeaseRefusalReason.LEASE_REASSIGNED
+
+    # The new holder can still operate normally
+    assert isinstance(await store.heartbeat(TASK_ID, new_holder), Lease)
+    assert isinstance(await store.submit(TASK_ID, new_holder, "sha256:bundle", "s3://bundles/bundle"), Lease)
     # A worker that retries its own claim (a restarted run resuming its own task)
     # is not a competitor.  Re-granting is idempotent: the window moves, the
     # generation does not, so nobody downstream reads this as a reassignment.
