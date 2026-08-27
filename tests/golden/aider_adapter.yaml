@@ -15,6 +15,13 @@ steps:
       - "--map-tokens"
       - "2048"
       - "--no-auto-lint"
+      - "--analytics-log"
+      # Per-session path under the worktree, so it is not reproducible
+      # across runs. Named below so the comparison strips the argument
+      # and asserts only that the flag is still emitted.
+      - "<per-session path>"
+    required_json_flags:
+      - "--analytics-log"
     env_extra_keys:
       - "ANTHROPIC_API_KEY"
       - "OPENAI_API_KEY"
