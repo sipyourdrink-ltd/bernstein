@@ -260,4 +260,4 @@ def test_the_module_reaches_neither_a_shell_nor_the_environment_nor_the_network(
         "urllib",
     }
     assert not imported & reachable_side_effects
-    assert imported == {"__future__", "hashlib", "re", "unicodedata"}
+    assert imported == {"__future__", "hashlib", "re", "typing", "unicodedata"}

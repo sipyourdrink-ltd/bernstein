@@ -253,10 +253,7 @@ def build_filtered_comments_block(
 
         association = (c.get("author_association") or "").upper()
         is_maintainer = association in {"OWNER", "MEMBER", "COLLABORATOR"}
-        has_opt_in = any(
-            line.strip().lower().startswith("bernstein-context:")
-            for line in body.splitlines()
-        )
+        has_opt_in = any(line.strip().lower().startswith("bernstein-context:") for line in body.splitlines())
 
         if is_maintainer:
             maintainer_comments.append(c)
@@ -274,12 +271,9 @@ def build_filtered_comments_block(
     # Build the filtered list
     # First, count how many "other" comments fit after maintainer + opt-in
     # (maintainer and opt-in are always included, regardless of budget)
-    priority_chars = sum(
-        len(c.get("body", "") or "") + 80
-        for c in maintainer_comments + opted_in_comments
-    )
+    priority_chars = sum(len(c.get("body", "") or "") + 80 for c in maintainer_comments + opted_in_comments)
     remaining_budget = token_budget * 4 - priority_chars
-    
+
     # Add other comments until we hit the budget
     other_to_include: list[dict[str, Any]] = []
     total_chars = 0
@@ -291,7 +285,7 @@ def build_filtered_comments_block(
             total_chars += comment_chars
         else:
             break
-    
+
     filtered: list[dict[str, Any]] = []
     filtered.extend(maintainer_comments)
     filtered.extend(opted_in_comments)

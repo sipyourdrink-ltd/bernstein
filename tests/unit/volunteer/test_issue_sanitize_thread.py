@@ -11,13 +11,7 @@ Each test is named after an AC (acceptance criterion) from issue #4516.
 
 from __future__ import annotations
 
-import pytest
-
-from bernstein.core.volunteer.issue_sanitize import (
-    build_filtered_comments_block,
-    normalize_untrusted_text,
-    sanitize_issue_text,
-)
+from bernstein.core.volunteer.issue_sanitize import build_filtered_comments_block
 
 
 def _make_comment(
@@ -41,7 +35,12 @@ def test_ac1_maintainer_comment_included() -> None:
     """Maintainer comments (OWNER, MEMBER, COLLABORATOR) are always included."""
     comments = [
         _make_comment("Regular comment from contributor", association="CONTRIBUTOR", created_at="2026-01-01T00:00:00Z"),
-        _make_comment("This is the key insight from the maintainer", author="maintainer", association="OWNER", created_at="2026-01-02T00:00:00Z"),
+        _make_comment(
+            "This is the key insight from the maintainer",
+            author="maintainer",
+            association="OWNER",
+            created_at="2026-01-02T00:00:00Z",
+        ),
     ]
 
     # Use a small budget that only fits the maintainer comment
@@ -57,8 +56,12 @@ def test_ac1_member_collaborator_comments_included() -> None:
     """MEMBER and COLLABORATOR association comments are included."""
     comments = [
         _make_comment("Comment from random user", association="NONE", created_at="2026-01-01T00:00:00Z"),
-        _make_comment("Team member says check the PR", author="team", association="MEMBER", created_at="2026-01-02T00:00:00Z"),
-        _make_comment("Collaborator found the bug", author="collab", association="COLLABORATOR", created_at="2026-01-03T00:00:00Z"),
+        _make_comment(
+            "Team member says check the PR", author="team", association="MEMBER", created_at="2026-01-02T00:00:00Z"
+        ),
+        _make_comment(
+            "Collaborator found the bug", author="collab", association="COLLABORATOR", created_at="2026-01-03T00:00:00Z"
+        ),
     ]
 
     # Use a budget that only fits the priority comments (~215 chars)
@@ -77,7 +80,12 @@ def test_ac2_bernstein_context_opt_in_included() -> None:
     """Comments with bernstein-context: marker are always included regardless of author."""
     comments = [
         _make_comment("Regular comment from stranger", association="NONE", created_at="2026-01-01T00:00:00Z"),
-        _make_comment("bernstein-context: this comment has the root cause", author="newuser", association="NONE", created_at="2026-01-02T00:00:00Z"),
+        _make_comment(
+            "bernstein-context: this comment has the root cause",
+            author="newuser",
+            association="NONE",
+            created_at="2026-01-02T00:00:00Z",
+        ),
     ]
 
     block = build_filtered_comments_block(comments)
@@ -91,7 +99,11 @@ def test_ac2_comments_over_budget_dropped() -> None:
     """When token budget is exhausted, non-priority comments are dropped."""
     # Create many non-maintainer comments that would exceed budget
     comments = [
-        _make_comment(f"Comment #{i}: regular non-maintainer comment that adds some context", association="NONE", created_at=f"2026-01-{i+1:02d}T00:00:00Z")
+        _make_comment(
+            f"Comment #{i}: regular non-maintainer comment that adds some context",
+            association="NONE",
+            created_at=f"2026-01-{i + 1:02d}T00:00:00Z",
+        )
         for i in range(50)
     ]
 
@@ -110,7 +122,11 @@ def test_ac3_thread_cap_works() -> None:
     """Large threads are capped at token budget."""
     # Create 100 comments
     comments = [
-        _make_comment(f"Comment number {i} with some text to fill space", association="NONE", created_at=f"2026-01-{i+1:02d}T00:00:00Z")
+        _make_comment(
+            f"Comment number {i} with some text to fill space",
+            association="NONE",
+            created_at=f"2026-01-{i + 1:02d}T00:00:00Z",
+        )
         for i in range(100)
     ]
 
