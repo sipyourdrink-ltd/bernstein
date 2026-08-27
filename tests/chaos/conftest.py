@@ -1,7 +1,5 @@
 """Shared fixtures for chaos tests."""
 
-import os
-
 import pytest
 
 
