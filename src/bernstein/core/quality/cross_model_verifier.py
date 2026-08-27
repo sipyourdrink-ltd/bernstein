@@ -13,8 +13,13 @@ import json
 import logging
 import subprocess
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from bernstein.core.knowledge.conventions import (
+    file_review_finding,
+    get_active_conventions,
+)
 from bernstein.core.llm import call_llm
 from bernstein.core.persistence.fingerprint import default_store, memoize_persistent
 
@@ -108,7 +113,7 @@ dataclasses/TypedDict instead of raw dicts, ruff for lint/format.
 5. Scope - did the diff change files or behaviour clearly outside the task's \
 stated scope? Flag only clear overreach, not incidental changes.
 
-Output a JSON object with exactly these fields:
+{conventions_block}Output a JSON object with exactly these fields:
 {{
   "verdict": "approve | request_changes",
   "feedback": "One or two sentence summary",
@@ -209,11 +214,15 @@ def _get_diff(worktree_path: Path, owned_files: list[str]) -> str:
         return "(failed to get git diff)"
 
 
-def _build_prompt(task: Task, diff: str) -> str:
+def _build_prompt(task: Task, diff: str, conventions_block: str = "") -> str:
+    # ``conventions_block`` is pre-rendered by the caller and already ends
+    # in a blank line when non-empty, so an empty one leaves the prompt
+    # byte-identical to what it was before conventions existed.
     return _REVIEW_PROMPT_TEMPLATE.format(
         title=task.title,
         description=task.description[:2000],
         diff=diff,
+        conventions_block=conventions_block,
     )
 
 
@@ -324,7 +333,26 @@ async def verify_with_cross_model(
     if len(diff) > config.max_diff_chars:
         diff = diff[: config.max_diff_chars] + "\n... (truncated)"
 
-    prompt = _build_prompt(task, diff)
+    # Build conventions block for prompt injection
+    try:
+        # A worktree lives at .sdd/worktrees/<slug>, so the receipts sit one
+        # level up. A checkout that is not a worktree keeps its own .sdd.
+        parent_sdd = worktree_path.parent / ".sdd"
+        sdd_dir = parent_sdd if parent_sdd.exists() else worktree_path / ".sdd"
+        active_receipts, _ = get_active_conventions(sdd_dir, workdir=worktree_path)
+        if active_receipts:
+            conventions_block = (
+                "## Active conventions\n"
+                + "\n".join(f"- {r.rule_text} (file: {r.subject_path}, version: {r.version})" for r in active_receipts)
+                + "\n\n"
+            )
+        else:
+            conventions_block = ""
+    except Exception as exc:
+        logger.debug("cross_model_verifier: failed to load active conventions: %s", exc)
+        conventions_block = ""
+
+    prompt = _build_prompt(task, diff, conventions_block)
     logger.info(
         "cross_model_verifier: task=%s writer=%s reviewer=%s diff_chars=%d",
         task.id,
@@ -360,6 +388,22 @@ async def verify_with_cross_model(
         verdict.verdict,
         len(verdict.issues),
     )
+
+    # File convention receipts for request_changes verdicts (never break the pipeline on filing failure)
+    if verdict.verdict == "request_changes" and verdict.issues:
+        for issue in verdict.issues:
+            try:
+                file_review_finding(
+                    sdd_dir=sdd_dir,
+                    workdir=worktree_path,
+                    task_id=task.id,
+                    issue_text=issue,
+                    owned_files=task.owned_files,
+                    decided_by=verdict.reviewer_model,
+                )
+            except Exception as exc:
+                logger.warning("cross_model_verifier: convention filing failed for issue %r: %s", issue, exc)
+
     _record_rework_sample(task=task, worktree_path=worktree_path, writer_model=writer_model, verdict=verdict)
     return verdict
 

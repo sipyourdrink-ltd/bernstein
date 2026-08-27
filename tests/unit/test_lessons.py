@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 from typing import TYPE_CHECKING
 
@@ -1138,3 +1139,68 @@ class TestConventionReceipts:
         # The expiry is a clean chain transition, not a tamper signal.
         audit_res = verify_conventions_audit(sdd_dir)
         assert audit_res.valid, audit_res.errors
+
+
+class TestFileReviewFinding:
+    def test_file_review_finding_returns_none_on_git_failure(self, tmp_path: Path) -> None:
+        """If git rev-parse fails, file_review_finding returns None."""
+        from bernstein.core.knowledge.conventions import file_review_finding
+
+        sdd_dir = tmp_path / ".sdd"
+        sdd_dir.mkdir(parents=True)
+        # Create a directory without git repo
+        workdir = tmp_path / "no-git"
+        workdir.mkdir()
+
+        result = file_review_finding(
+            sdd_dir=sdd_dir,
+            workdir=workdir,
+            task_id="task-123",
+            issue_text="Test issue",
+            owned_files=["src/test.py"],
+            decided_by="test-reviewer",
+        )
+
+        assert result is None
+
+    def test_file_review_finding_creates_receipt_on_success(self, tmp_path: Path) -> None:
+        """On successful git rev-parse, file_review_finding creates a convention receipt."""
+        from bernstein.core.knowledge.conventions import file_review_finding, get_active_conventions
+
+        sdd_dir = tmp_path / ".sdd"
+        sdd_dir.mkdir(parents=True)
+        # Initialize git repo
+        (tmp_path / "placeholder.txt").write_text("placeholder\n", encoding="utf-8")
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True, capture_output=True)
+
+        workdir = tmp_path
+        result = file_review_finding(
+            sdd_dir=sdd_dir,
+            workdir=workdir,
+            task_id="task-456",
+            issue_text="Always validate user input",
+            owned_files=["src/input.py"],
+            decided_by="test-reviewer",
+        )
+
+        assert result is not None
+        assert result.rule_text == "Always validate user input"
+        assert result.subject_path == "src/input.py"
+        assert result.filing_finding_id == "task-456"
+        assert result.decided_by == "test-reviewer"
+        assert result.version == 1
+        assert result.status == "active"
+
+        # Verify it appears in active conventions
+        active, _ = get_active_conventions(sdd_dir, workdir=workdir)
+        assert len(active) == 1
+        assert active[0].receipt_id == result.receipt_id
+
+
+# ---------------------------------------------------------------------------
+# Convention receipts: review corrections & audit chain (Issue #3750)
+# ---------------------------------------------------------------------------
