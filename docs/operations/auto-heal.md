@@ -52,15 +52,15 @@ shipped, workflow wiring deferred), `deferred` (planned for v3).
 | 2 | Flake vs real-fail distinguisher | shipped | `core.autoheal.flake_detector` |
 | 3 | Diff-aware fail localisation | deferred | bisect helper to land in v3 |
 | 4 | Failure clustering (bucketize) | shipped | `core.autoheal.categorizer.bucketize` |
-| 5 | LLM-grounded categorisation | partial | cost-guard preflight in place; prompt path deferred |
+| 5 | LLM-grounded categorisation | deferred | prompt path planned v3 |
 | 6 | Sibling-bug hunt | deferred | needs blame oracle, planned v3 |
 | 7 | Code-provenance check | removed | unused, deleted in #4643 |
 | 8 | Multi-arm-bandit strategy select | shipped | `core.autoheal.bandit` |
-| 9 | LLM-grounded fix synthesis | partial | cost-guard ready; prompt deferred |
+| 9 | LLM-grounded fix synthesis | deferred | prompt path planned v3 |
 | 10 | Counter-example test injection | deferred | planned v3 |
 | 11 | Diff-aware self-test | partial | workflow runs ruff check / format / typos; blast-radius mapping deferred |
 | 12 | Permission-profile enforcement | shipped | `core.autoheal.cordon` + cordon CLI |
-| 13 | Cost circuit-breaker | shipped | `core.autoheal.cost_guard` |
+| 13 | Cost circuit-breaker | shipped | `BERNSTEIN_AUTOHEAL_BUDGET_USD` env var |
 | 14 | Adversarial pre-merge test | deferred | adversary role exists, wiring v3 |
 | 15 | Blast-radius gate | partial | import-guarded in workflow; threshold tuning v3 |
 | 16 | Lineage v2 attestation | shipped | `core.autoheal.lineage_writer` (extensible `meta` channel) |
@@ -73,7 +73,7 @@ shipped, workflow wiring deferred), `deferred` (planned for v3).
 | 23 | One-button kill switch | shipped | `.sdd/autoheal-disabled` + `core.autoheal.kill_switch` |
 | 24 | Idempotency (content hash dedupe) | shipped | `core.autoheal.idempotency` + branch name |
 | 25 | Cordon-zone enforcement (pre-commit) | partial | CLI + module shipped; pre-commit hook deferred to v3 |
-| 26 | Cost-aware degradation | shipped | `cost_guard.llm_globally_disabled` |
+| 26 | Cost-aware degradation | shipped | `BERNSTEIN_AUTOHEAL_DISABLE_LLM` env var |
 
 Shipped: 15. Partial: 5. Deferred: 5. Removed: 1. Total surface: 26.
 
@@ -150,7 +150,7 @@ workflows directory.
 | Flake handling | None | non-adjacent-failure heuristic |
 | State | `.sdd/` not used | `.sdd/autoheal-*.json{,l}` |
 | Cordon | YAML regex | Python module (also pre-commit) |
-| Cost guard | None | `cost_guard` with budget cap |
+| Cost guard | None | Budget cap via env var |
 | LLM path | None | Optional, behind cost-guard |
 | Lineage | None | Lineage v2 child body |
 | Decision log | None | Per-action entry |

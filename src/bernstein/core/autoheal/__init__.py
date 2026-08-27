@@ -33,10 +33,6 @@ Modules
     File-based emergency disable: workflow first-thing checks
     ``.sdd/autoheal-disabled`` for an unexpired flag and bails if set.
 
-``cost_guard``
-    Thin wrapper over ``core/cost/cost_tracker`` that exposes a single
-    function the workflow can call before any LLM-grounded path.
-
 ``lineage_writer``
     Writes one ``ChildBody`` per heal action under
     ``.sdd/lineage/v2/children/`` so operators can replay heal history.
