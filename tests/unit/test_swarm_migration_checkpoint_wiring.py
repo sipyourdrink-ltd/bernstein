@@ -61,11 +61,20 @@ class _RecordingStore:
     def __init__(self) -> None:
         self.bodies: list[dict[str, Any]] = []
         self._counter = 0
+        # Ids this store still reports in flight (issue #4624). A fresh store
+        # knows none, which models a crash-restart where the server lost the
+        # task; the same store re-queried models a mid-swarm re-run.
+        self.active_ids: set[str] = set()
 
     def create_sync(self, body: dict[str, Any]) -> str:
         self._counter += 1
         self.bodies.append(body)
-        return f"task-{self._counter:03d}"
+        task_id = f"task-{self._counter:03d}"
+        self.active_ids.add(task_id)
+        return task_id
+
+    def is_task_active(self, task_id: str) -> bool:
+        return task_id in self.active_ids
 
 
 def _make_repo(tmp_path: Path, files: list[str]) -> Path:
@@ -148,12 +157,17 @@ def test_restart_respawns_only_unverified_chunks(tmp_path: Path) -> None:
     _apply_janitor_verdict_action(orch, task_a, janitor_passed=True)  # verified complete
     _apply_janitor_verdict_action(orch, task_b, janitor_passed=False)  # verified failed
 
+    # A fresh store models a crash-restart: the server lost its in-memory task
+    # state, so no earlier task is reported active and every unfinished chunk
+    # respawns. (The mid-swarm re-run where the tasks ARE still live is covered
+    # by test_inflight_chunk_is_reused_not_respawned in test_swarm_migration.)
     second_store = _RecordingStore()
     second_ids = spawn_swarm(plan, second_store, repo)
 
     # Chunk A is verified complete: its id is unchanged and it is not respawned.
     assert second_ids[0] == first_ids[0]
-    # B (failed) and C (never resolved) are both "unfinished", so both respawn.
+    # B (failed) and C (never resolved, its task gone with the crash) are both
+    # "unfinished with no live task", so both respawn.
     assert second_ids[1] != first_ids[1]
     assert second_ids[2] != first_ids[2]
     respawned_files = {tuple(b["owned_files"]) for b in second_store.bodies}

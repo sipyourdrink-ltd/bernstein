@@ -64,10 +64,12 @@ The fanout:
    the resulting `SwarmReport` is posted to the bulletin board and
    written into the checkpoint alongside the chunk records.
 
-Re-running the same plan ID skips only chunks **verified complete**
-in the checkpoint. A chunk that never ran, is still running, or
-permanently failed gets a fresh task, so a restart can always make
-progress on the chunks that did not finish rather than returning
+Re-running the same plan ID skips chunks **verified complete** in the
+checkpoint, and reuses the existing task of any chunk still **in flight** on
+the server so a mid-swarm re-run never hands a second agent the same files.
+A chunk that never ran, permanently failed, or whose task is gone (a crash
+that never recorded a failure) gets a fresh task, so a restart can always
+make progress on the chunks that did not finish rather than returning
 whatever task id was last recorded for them.
 
 ## Configuration

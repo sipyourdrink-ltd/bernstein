@@ -16,10 +16,11 @@ The flow is:
 
 Idempotency is provided via a checkpoint file under
 ``<repo_root>/.sdd/runtime/swarm/{plan_id}.json`` - re-running with the
-same ``plan.id`` skips only chunks whose hash already appears in the
-checkpoint's ``completed_chunks`` set (verified done); every other chunk,
-including one recorded in ``failed_chunks`` after its reopen budget was
-exhausted, gets a fresh task on the next call instead of returning its old
+same ``plan.id`` skips chunks whose hash already appears in the
+checkpoint's ``completed_chunks`` set (verified done) and reuses the task
+of any chunk still in flight (issue #4624); a chunk recorded in
+``failed_chunks`` after its reopen budget was exhausted, or one whose task
+is gone, gets a fresh task on the next call instead of returning its old
 task id from memory. The orchestrator (``task_lifecycle.py``) calls
 :func:`mark_chunk_complete` / :func:`mark_chunk_failed` /
 :func:`maybe_reduce_swarm` as chunk tasks reach a terminal state; once every
@@ -62,6 +63,20 @@ class _SwarmTaskStore(Protocol):
 
     def create_sync(self, body: dict[str, Any]) -> str:
         """Create a task and return its server-assigned id."""
+        ...
+
+    def is_task_active(self, task_id: str) -> bool:
+        """Report whether *task_id* still exists and may still be working.
+
+        "Active" means any non-terminal state - the task could still be
+        editing its ``owned_files`` right now. :func:`spawn_swarm` consults
+        this before respawning an unfinished chunk so a mid-swarm re-run of
+        ``bernstein migrate`` reuses the in-flight task instead of handing a
+        second task the same files (issue #4624). A store that cannot answer
+        - unreachable server, unknown id - returns ``False`` so the chunk
+        respawns exactly as it did before this method existed, preserving the
+        #4541 guarantee that a dead task id is never returned forever.
+        """
         ...
 
 
@@ -277,14 +292,24 @@ def spawn_swarm(
     """Enumerate, chunk, and fan out one task per chunk.
 
     Idempotent on *verified completion only* (issue #4541): a chunk is
-    skipped and its task id reused only once :func:`mark_chunk_complete` has
-    recorded it as done. A chunk that was never completed - whether it never
-    ran, is still running, or *verified failed* via :func:`mark_chunk_failed`
-    once its reopen budget was exhausted - gets a fresh task id on every
-    call, so a restart can always make progress past a chunk that
-    permanently failed instead of returning the same dead id forever. The
-    task-id memory in the checkpoint (``task_ids``) is bookkeeping for the
-    reduce step, not a second idempotency key.
+    skipped and its task id reused once :func:`mark_chunk_complete` has
+    recorded it as done. A chunk that was *verified failed* via
+    :func:`mark_chunk_failed` once its reopen budget was exhausted, or that
+    never ran at all, gets a fresh task id, so a restart can always make
+    progress past a chunk that permanently failed instead of returning the
+    same dead id forever.
+
+    An unfinished chunk that still has a *live* task from an earlier call is
+    the one case that is **not** respawned (issue #4624): re-running
+    ``bernstein migrate`` while a swarm is still in flight would otherwise
+    create a second task owning the same files, and two agents editing the
+    same paths corrupt each other's work. Such a chunk is detected via
+    :meth:`_SwarmTaskStore.is_task_active` on its recorded id and its
+    existing task is reused; only when that id is gone or terminal (a crash
+    that never reached :func:`mark_chunk_failed`, an out-of-band cancel) does
+    the chunk respawn, so the #4541 guarantee still holds. The task-id memory
+    in the checkpoint (``task_ids``) is bookkeeping for the reduce step, not a
+    second idempotency key.
 
     Args:
         plan: Migration plan describing the glob and transform.
@@ -323,6 +348,14 @@ def spawn_swarm(
         chunk_hash = _chunk_hash(plan.id, chunk)
         if chunk_hash in completed:
             ordered_ids.append(known[chunk_hash])
+            continue
+        prior_id = known.get(chunk_hash)
+        if prior_id is not None and chunk_hash not in failed and store.is_task_active(prior_id):
+            # Unfinished, but its earlier task is still in flight (issue #4624):
+            # reuse it rather than spawn a second owner of the same files. A
+            # verified failure (in ``failed``) is deliberately excluded - it is
+            # meant to respawn - as is a task the store no longer reports active.
+            ordered_ids.append(prior_id)
             continue
         if chunk_hash in failed:
             respawned_a_failure = True

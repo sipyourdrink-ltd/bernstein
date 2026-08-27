@@ -15,7 +15,11 @@ from typing import Any
 
 import click
 
-from bernstein.cli.helpers import SERVER_URL, console, server_post
+from bernstein.cli.helpers import SERVER_URL, console, server_get, server_post
+from bernstein.core.tasks.lifecycle import (
+    SUCCESSFUL_TASK_STATUSES,
+    UNSUCCESSFUL_TERMINAL_STATUSES,
+)
 from bernstein.core.tasks.swarm_migration import (
     MigrationPlan,
     chunk_targets,
@@ -25,6 +29,14 @@ from bernstein.core.tasks.swarm_migration import (
 )
 
 _DRY_RUN_PREVIEW_LIMIT = 10
+
+# A swarm chunk whose task reports one of these has stopped touching its files:
+# it either delivered (DONE/CLOSED) or ended unsuccessfully. Anything else -
+# open, claimed, in progress, blocked, awaiting approval - may still be editing
+# the chunk, so re-running the plan must reuse it rather than spawn a duplicate
+# owner (issue #4624). Built from the exhaustive lifecycle partition so a new
+# status defaults to "still active", the safe side of the duplicate-owner bug.
+_TERMINAL_STATUS_VALUES = frozenset(s.value for s in (SUCCESSFUL_TASK_STATUSES | UNSUCCESSFUL_TERMINAL_STATUSES))
 
 
 class _ServerTaskStore:
@@ -38,6 +50,20 @@ class _ServerTaskStore:
         if not isinstance(task_id, str):
             raise click.ClickException(f"Task server returned no task id: {resp!r}")
         return task_id
+
+    def is_task_active(self, task_id: str) -> bool:
+        """Return ``True`` while the server still reports *task_id* non-terminal.
+
+        A ``404`` or an unreachable server yields ``None`` from
+        :func:`server_get`; both are treated as "not active" so the chunk
+        respawns, matching the pre-#4624 behaviour when the task is genuinely
+        gone. Only a live, non-terminal status suppresses the respawn.
+        """
+        resp = server_get(f"/tasks/{task_id}")
+        if resp is None:
+            return False
+        status = resp.get("status")
+        return isinstance(status, str) and status not in _TERMINAL_STATUS_VALUES
 
 
 def _slugify(value: str) -> str:
