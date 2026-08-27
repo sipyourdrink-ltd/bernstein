@@ -32,6 +32,7 @@ from bernstein.core.volunteer.claim import (
 )
 from bernstein.core.volunteer.issue_sanitize import (
     ISSUE_TEXT_FENCE_LABEL,
+    build_filtered_comments_block,
     normalize_untrusted_text,
     sanitize_issue_text,
     strip_html_comments,

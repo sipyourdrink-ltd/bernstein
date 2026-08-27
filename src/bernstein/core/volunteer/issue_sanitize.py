@@ -81,6 +81,7 @@ import unicodedata
 
 __all__ = [
     "ISSUE_TEXT_FENCE_LABEL",
+    "build_filtered_comments_block",
     "normalize_untrusted_text",
     "sanitize_issue_text",
     "strip_html_comments",
@@ -212,3 +213,126 @@ def _fence_token(payload: str) -> str:
         token += digest[:_FENCE_TOKEN_CHUNK]
         counter += 1
     return token
+
+
+def build_filtered_comments_block(
+    comments: list[dict[str, Any]],
+    token_budget: int = 2000,
+) -> str:
+    """Build a sanitized block of filtered issue comments.
+
+    Selection rules:
+    *   Comments by maintainers/collaborators (association ``OWNER``, ``MEMBER``,
+        ``COLLABORATOR``) are always included.
+    *   Any comment with a ``bernstein-context:`` marker is always included.
+    *   Remaining budget is filled with newest other comments, newest first.
+
+    Args:
+        comments: Raw GitHub comment list from the issues API.
+        token_budget: Approximate token cap for the filtered block.
+
+    Returns:
+        A formatted block of sanitized comments, or an empty string if no
+        comments.
+    """
+    if not comments:
+        return ""
+
+    # Separate comments into tiers
+    maintainer_comments: list[dict[str, Any]] = []
+    opted_in_comments: list[dict[str, Any]] = []
+    other_comments: list[dict[str, Any]] = []
+
+    for c in comments:
+        if not isinstance(c, dict):
+            continue
+        body = c.get("body", "") or ""
+        if not isinstance(body, str):
+            continue
+
+        association = (c.get("author_association") or "").upper()
+        is_maintainer = association in {"OWNER", "MEMBER", "COLLABORATOR"}
+        has_opt_in = any(
+            line.strip().lower().startswith("bernstein-context:")
+            for line in body.splitlines()
+        )
+
+        if is_maintainer:
+            maintainer_comments.append(c)
+        elif has_opt_in:
+            opted_in_comments.append(c)
+        else:
+            other_comments.append(c)
+
+    # Sort other comments by created_at (newest first)
+    def _created_at(c: dict[str, Any]) -> str:
+        return c.get("created_at") or "1970-01-01T00:00:00Z"
+
+    other_comments.sort(key=_created_at, reverse=True)
+
+    # Build the filtered list
+    filtered: list[dict[str, Any]] = []
+    filtered.extend(maintainer_comments)
+    filtered.extend(opted_in_comments)
+    # Add other comments until we hit the budget
+    filtered.extend(other_comments[:_estimate_comment_budget(other_comments, token_budget)])
+
+    # Render the filtered block
+    lines: list[str] = []
+    lines.append("----- BEGIN GITHUB ISSUE COMMENT THREAD (FILTERED) -----")
+    lines.append("Filtered by: maintainer/collaborator comments + bernstein-context: opt-ins + newest fill")
+    lines.append("")
+
+    for c in filtered:
+        body = c.get("body", "") or ""
+        if not isinstance(body, str):
+            continue
+        author = c.get("user", {}).get("login") or c.get("user", {}).get("name") or "unknown"
+        created = c.get("created_at") or ""
+        # Sanitize the body using the existing normalizer
+        sanitized = normalize_untrusted_text(body)
+        lines.append(f"{created} @{author}:")
+        lines.append("")
+        lines.append(sanitized)
+        lines.append("")
+
+    lines.append("----- END GITHUB ISSUE COMMENT THREAD -----")
+
+    return "\n".join(lines)
+
+
+def _estimate_comment_budget(
+    comments: list[dict[str, Any]],
+    token_budget: int,
+) -> int:
+    """Estimate how many comments fit within the token budget.
+
+    This is a rough estimate based on average token length. It's better to
+    include slightly more than to truncate in the middle of a comment.
+
+    Args:
+        comments: Sorted list of comments (newest first).
+        token_budget: Target token count.
+
+    Returns:
+        Number of comments to include.
+    """
+    if not comments:
+        return 0
+
+    # Rough estimate: ~4 chars per token
+    chars_budget = token_budget * 4
+
+    total_chars = 0
+    count = 0
+    for c in comments:
+        body = c.get("body", "") or ""
+        if not isinstance(body, str):
+            continue
+        # Add body length + header overhead
+        total_chars += len(body) + 80  # header overhead per comment
+        if total_chars > chars_budget:
+            break
+        count += 1
+
+    return count
