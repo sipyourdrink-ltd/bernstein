@@ -1100,6 +1100,7 @@ def _render_prompt_with_receipt(
     max_turns: int | None = None,
     mailbox_section: str = "",
     model: str = "",
+    context_policy: dict[str, str] | None = None,
 ) -> tuple[str, ContextReceipt]:
     """Build the full agent prompt from role template + tasks + context.
 
@@ -1415,7 +1416,14 @@ def _render_prompt_with_receipt(
     # pre-receipt output, so the receipt is purely additive instrumentation.
     from bernstein.core.agents.context_receipt import build_context_receipt
 
-    receipt = build_context_receipt(named_sections)
+    # Build policy dict from context_policy parameter
+    policy: dict[str, str] = {}
+    if context_policy is not None:
+        policy_id = context_policy.get("policy_id", "")
+        policy_version = context_policy.get("policy_version", "")
+        policy = {"policy_id": policy_id, "policy_version": policy_version}
+
+    receipt = build_context_receipt(named_sections, policy=policy)
 
     # Spawn-time prompt budget check (#4377). This is the prompt the adapter
     # is actually handed, so the measurement belongs here rather than only in
@@ -1540,6 +1548,7 @@ class AgentSpawner:
         provider_availability: dict[str, Any] | None = None,
         availability_prober: Callable[[ChainElement], ProbeResult] | None = None,
         adapter_pinned: bool = False,
+        context_policy_config: dict[str, Any] | None = None,
     ) -> None:
         self._enable_caching = enable_caching
         # True when the run-level adapter was explicitly selected by the
@@ -1592,6 +1601,9 @@ class AgentSpawner:
         self._availability_prober = availability_prober
         ttl_minutes = self._availability_config.probe_ttl_minutes if self._availability_config else 5
         self._availability_probe_cache = ProbeCache(ttl_seconds=ttl_minutes * 60.0)
+        # Context policy system
+        from bernstein.core.agents.context_policy import ContextPolicy
+        self._context_policy = ContextPolicy.from_config(context_policy_config)
         self._workspace = workspace
         self._bulletin = bulletin
         self._context_builder = TaskContextBuilder(workdir)
@@ -4093,6 +4105,7 @@ class AgentSpawner:
                 max_turns=_effective_max_turns,
                 mailbox_section=mailbox_section,
                 model=model_config.model,
+                context_policy=self._context_policy,
             )
 
         agent_source = catalog_agent.source if catalog_agent else "built-in"
@@ -5186,6 +5199,7 @@ class AgentSpawner:
             max_turns=_resume_max_turns,
             mailbox_section=self._render_mailbox_section(tasks),
             model=model_config.model,
+            context_policy=self._context_policy,
         )
         # Prepend crash recovery context
         prompt = resume_header + prompt

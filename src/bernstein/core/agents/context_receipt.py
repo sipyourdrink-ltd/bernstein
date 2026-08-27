@@ -63,12 +63,15 @@ class ContextReceipt:
         total_token_estimate: Sum of all ``entry.token_estimate``.
         total_chars: Sum of all ``entry.char_count``.
         section_count: Number of entries.
+        policy: Policy metadata identifying which context policy was used
+            (policy_id and policy_version).
     """
 
     entries: list[ContextReceiptEntry]
     total_token_estimate: int
     total_chars: int
     section_count: int
+    policy: dict[str, str]
 
     @property
     def total_tokens(self) -> int:
@@ -88,10 +91,13 @@ class ContextReceipt:
             total_token_estimate=d["total_token_estimate"],
             total_chars=d["total_chars"],
             section_count=d["section_count"],
+            policy=d.get("policy", {}),
         )
 
 
-def build_context_receipt(named_sections: list[tuple[str, str]]) -> ContextReceipt:
+def build_context_receipt(
+    named_sections: list[tuple[str, str]], policy: dict[str, str] | None = None
+) -> ContextReceipt:
     """Build a receipt from ``(label, content)`` pairs.
 
     For each pair, computes the SHA-256 content hash, token estimate, and
@@ -101,6 +107,8 @@ def build_context_receipt(named_sections: list[tuple[str, str]]) -> ContextRecei
     Args:
         named_sections: Ordered ``(label, content)`` pairs, one per section
             actually included in the context prompt.
+        policy: Optional policy metadata (policy_id and policy_version).
+            Defaults to empty dict if not provided.
 
     Returns:
         A :class:`ContextReceipt` with one entry per section.
@@ -120,4 +128,5 @@ def build_context_receipt(named_sections: list[tuple[str, str]]) -> ContextRecei
         total_token_estimate=sum(e.token_estimate for e in entries),
         total_chars=sum(e.char_count for e in entries),
         section_count=len(entries),
+        policy=policy or {},
     )

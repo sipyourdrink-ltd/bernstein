@@ -6858,6 +6858,8 @@ if __name__ == "__main__":
             # state - adapter_name is guaranteed non-empty by the fatal
             # check above.
             adapter_pinned=adapter_name != "auto",
+            # Context policy configuration (loads from bernstein.yaml context: section)
+            context_policy_config=getattr(seed, "context", None) if seed else None,
         )
         run_config_budget_usd: float | None = None
         dry_run = False
