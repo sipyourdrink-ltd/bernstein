@@ -419,9 +419,7 @@ def test_browse_rejects_index_with_internal_repo_various_ranges(
         "fc00::1",
     ],
 )
-def test_browse_rejects_internal_manifest_url_via_repo(
-    monkeypatch: pytest.MonkeyPatch, internal_ip: str
-) -> None:
+def test_browse_rejects_internal_manifest_url_via_repo(monkeypatch: pytest.MonkeyPatch, internal_ip: str) -> None:
     """browse_indexes must reject manifest URLs when repo resolves to internal address."""
 
     def resolver(host: str) -> list[str]:

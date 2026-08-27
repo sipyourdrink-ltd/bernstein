@@ -51,9 +51,7 @@ def _resolves_to(*addresses: str):
     return lambda _host: list(addresses)
 
 
-def test_mcp_catalog_fetcher_rejects_loopback_address(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_mcp_catalog_fetcher_rejects_loopback_address(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """CatalogFetcher must reject catalog URLs pointing to loopback."""
     cache_path = tmp_path / "mcp-catalog.json"
 
@@ -79,9 +77,7 @@ def test_mcp_catalog_fetcher_rejects_loopback_address(
     assert transport.calls == []
 
 
-def test_mcp_catalog_fetcher_rejects_link_local_address(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_mcp_catalog_fetcher_rejects_link_local_address(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """CatalogFetcher must reject catalog URLs pointing to link-local."""
     cache_path = tmp_path / "mcp-catalog.json"
 
@@ -107,9 +103,7 @@ def test_mcp_catalog_fetcher_rejects_link_local_address(
     assert transport.calls == []
 
 
-def test_mcp_catalog_fetcher_rejects_private_v4_address(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_mcp_catalog_fetcher_rejects_private_v4_address(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """CatalogFetcher must reject catalog URLs pointing to private IPv4."""
     cache_path = tmp_path / "mcp-catalog.json"
 
@@ -135,9 +129,7 @@ def test_mcp_catalog_fetcher_rejects_private_v4_address(
     assert transport.calls == []
 
 
-def test_mcp_catalog_fetcher_rejects_private_v6_address(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_mcp_catalog_fetcher_rejects_private_v6_address(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """CatalogFetcher must reject catalog URLs pointing to private IPv6."""
     cache_path = tmp_path / "mcp-catalog.json"
 
@@ -163,9 +155,7 @@ def test_mcp_catalog_fetcher_rejects_private_v6_address(
     assert transport.calls == []
 
 
-def test_mcp_catalog_fetcher_rejects_rebinding_hostname(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_mcp_catalog_fetcher_rejects_rebinding_hostname(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """CatalogFetcher must reject hostnames resolving to mixed public+internal."""
     cache_path = tmp_path / "mcp-catalog.json"
 
@@ -191,9 +181,7 @@ def test_mcp_catalog_fetcher_rejects_rebinding_hostname(
     assert transport.calls == []
 
 
-def test_mcp_catalog_fetcher_allows_public_host(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_mcp_catalog_fetcher_allows_public_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """CatalogFetcher must allow public catalog URLs."""
     cache_path = tmp_path / "mcp-catalog.json"
 
@@ -208,11 +196,13 @@ def test_mcp_catalog_fetcher_allows_public_host(
     )
 
     transport = _FakeTransport()
-    catalog_body = json.dumps({
-        "version": 1,
-        "generated_at": "2026-05-21T00:00:00Z",
-        "entries": [],
-    }).encode()
+    catalog_body = json.dumps(
+        {
+            "version": 1,
+            "generated_at": "2026-05-21T00:00:00Z",
+            "entries": [],
+        }
+    ).encode()
     transport.push(HTTPResponse(status=200, body=catalog_body, etag=None))
 
     fetcher = CatalogFetcher(
