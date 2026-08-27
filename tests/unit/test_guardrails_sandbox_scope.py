@@ -137,8 +137,19 @@ def test_file_permissions_relaxation_preserved(tmp_path: Path) -> None:
     assert "[SANDBOX RELAXED]" in result[0].reason
 
 
-def test_non_sandboxed_path_unchanged() -> None:
+def test_non_sandboxed_path_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
     """Outside a sandbox, nothing is relaxed regardless of check."""
+    # State the premise instead of inheriting it. The sibling tests above set
+    # BERNSTEIN_SANDBOX=1 to say "sandboxed"; this one said "not sandboxed" by
+    # saying nothing, and the autouse fixture only clears the environment
+    # variables. is_sandboxed() also reads /.dockerenv and the cgroup markers,
+    # so the premise silently inverts whenever the suite itself runs inside a
+    # container -- the test then asserts the opposite of what it means and
+    # fails for a reason that has nothing to do with the code under test.
+    monkeypatch.setattr(
+        "bernstein.core.security.guardrails.is_sandboxed",
+        lambda: False,
+    )
     ask = [PermissionDecision(type=DecisionType.ASK, reason="file outside task scope")]
     assert relax_sandboxed(ask, "scope_enforcement", scoped_mount=True)[0].type == DecisionType.ASK
     assert relax_sandboxed(ask, "file_permissions")[0].type == DecisionType.ASK
