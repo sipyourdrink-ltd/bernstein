@@ -161,9 +161,12 @@ def read_hash_tile(audit_dir: Path, segment_name: str) -> dict[str, Any] | None:
     """
     path = tile_hash_path(audit_dir, segment_name)
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        parsed: object = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+    if not isinstance(parsed, dict):
+        return None
+    return parsed
 
 
 def generate_tiles(audit_dir: Path, seal: dict[str, Any]) -> list[Path]:
@@ -229,18 +232,6 @@ def generate_tiles(audit_dir: Path, seal: dict[str, Any]) -> list[Path]:
 
         dest = tile_hash_path(audit_dir, segment)
 
-        if dest.is_file():
-            try:
-                existing: dict[str, Any] = json.loads(dest.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
-                msg = f"Existing tile is not valid JSON: {dest}"
-                raise ValueError(msg) from exc
-            existing_hash = existing.get("leaf_hash")
-            if existing_hash == leaf_hash:
-                continue
-            msg = f"Tile exists with different leaf_hash: {dest} (existing={existing_hash!r} new={leaf_hash!r})"
-            raise ValueError(msg)
-
         byte_len_raw = leaf.get("byte_len")
         byte_len: int | None = None
         if isinstance(byte_len_raw, int) and not isinstance(byte_len_raw, bool) and byte_len_raw >= 0:
@@ -273,6 +264,29 @@ def generate_tiles(audit_dir: Path, seal: dict[str, Any]) -> list[Path]:
             "algorithm": "sha256",
             "scheme": scheme,
         }
+
+        if dest.is_file():
+            try:
+                existing: dict[str, Any] = json.loads(dest.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                msg = f"Existing tile is not valid JSON: {dest}"
+                raise ValueError(msg) from exc
+            if existing.get("leaf_hash") == leaf_hash and existing.get("byte_len") == tile_byte_len:
+                # Same prefix, same hash: the tile already is what this seal
+                # would write.
+                continue
+            if existing.get("byte_len") == tile_byte_len:
+                # The same bytes hashing two ways is the one thing a tile
+                # exists to catch, so it stays fatal.
+                msg = (
+                    f"Tile exists for the same {tile_byte_len} bytes with a different "
+                    f"leaf_hash: {dest} (existing={existing.get('leaf_hash')!r} new={leaf_hash!r})"
+                )
+                raise ValueError(msg)
+            # Different length: the live segment grew between seals, which is
+            # what a live segment does. Refusing that failed the second seal
+            # of a run outright. The tile describes the prefix this seal
+            # covers, so the newer seal replaces it.
 
         tmp_path = dest.parent / (dest.name + ".tmp")
         tmp_path.write_text(json.dumps(tile_obj, indent=2, sort_keys=True) + "\n", encoding="utf-8")

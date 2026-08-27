@@ -218,33 +218,55 @@ def test_naming_no_conflicts_lowercase_tile_suffix(tmp_path: Path) -> None:
         assert tn not in segment_names, f"Tile filename {tn} collides with a segment filename"
 
 
-def test_conflicting_leaf_hash_raises_value_error(tmp_path: Path) -> None:
-    """A tile with a different leaf_hash must raise ValueError, not silently rewrite."""
+def test_same_prefix_hashing_two_ways_raises_value_error(tmp_path: Path) -> None:
+    """The same byte range under two different leaf hashes is tampering, not a re-seal."""
     segments = [("2026-08-24.jsonl", b'{"event":"a"}\n')]
     _write_segments(tmp_path, segments)
-
     seal1 = _make_seal(segments)
     generate_tiles(tmp_path, seal1)
 
-    # Build a seal with a different leaf_hash for the same segment
+    # Same segment, same covered length, a leaf hash that does not match: the
+    # bytes under an already-written tile cannot hash two ways.
     import hashlib
 
-    different_content = b'{"event":"different"}\n'
-    different_hash = hashlib.sha256(b"\x00" + different_content).hexdigest()
+    covered = len(segments[0][1])
     seal2 = {
         "root_hash": "fake-root-2",
         "algorithm": "sha256",
         "scheme": 2,
         "leaf_count": 1,
-        "leaves": [{"file": "2026-08-24.jsonl", "hash": different_hash, "byte_len": len(different_content)}],
+        "leaves": [
+            {
+                "file": "2026-08-24.jsonl",
+                "hash": hashlib.sha256(b"\x00not-the-same").hexdigest(),
+                "byte_len": covered,
+            }
+        ],
         "origin": "",
         "entry_count": 0,
         "sealed_at": 0.0,
         "sealed_at_iso": "2026-08-24T00:00:00Z",
     }
-
-    with pytest.raises(ValueError, match="different leaf_hash"):
+    with pytest.raises(ValueError, match="different"):
         generate_tiles(tmp_path, seal2)
+
+
+def test_sealing_again_after_the_segment_grew_replaces_the_tile(tmp_path: Path) -> None:
+    """A live segment gains events between seals; the second seal must not fail."""
+    first = b'{"event":"a"}\n'
+    _write_segments(tmp_path, [("2026-08-24.jsonl", first)])
+    generate_tiles(tmp_path, _make_seal([("2026-08-24.jsonl", first)]))
+
+    # The segment is append-only and keeps growing while the run continues.
+    grown = first + b'{"event":"b"}\n'
+    _write_segments(tmp_path, [("2026-08-24.jsonl", grown)])
+    written = generate_tiles(tmp_path, _make_seal([("2026-08-24.jsonl", grown)]))
+
+    assert len(written) == 1
+    tile = read_hash_tile(tmp_path, "2026-08-24.jsonl")
+    assert tile is not None
+    # The tile describes the prefix the newer seal covers, not the older one.
+    assert tile["byte_len"] == len(grown)
 
 
 def test_generate_tiles_creates_tiles_dir(tmp_path: Path) -> None:
