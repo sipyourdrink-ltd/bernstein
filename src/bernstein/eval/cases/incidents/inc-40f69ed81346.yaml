@@ -1,0 +1,14 @@
+id: inc-40f69ed81346
+severity: P2
+source_incident: "dlq:6c3df772416a48fb"
+owner: backend
+created_at: 1787819596.407
+expected_outcome: "Agent should complete the task; flake-tolerant retry is acceptable. (root cause: max_retries_exceeded)"
+tags:
+  - max_retries_exceeded
+prompt: |
+  Reproduce and resolve the following terminal failure (role=backend).
+  Task: Add audit_chain support for equivalence attestation
+  Failure reason: max_retries_exceeded
+  Last error (trimmed):
+  Agent backend-9465ee4e died; deferred death judgment re-evaluated and no liveness signal advanced past the pid-exit snapshot

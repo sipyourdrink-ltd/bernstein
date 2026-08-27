@@ -1472,7 +1472,8 @@ def build_equivalence_attestation(
             chain is broken).
     """
     import time
-    from bernstein.core.lineage.spine import LineageSpine, content_hash_of
+
+    from bernstein.core.lineage.spine import LineageSpine
     from bernstein.core.replay.journal import verify_events
 
     if timestamp is None:
@@ -1584,20 +1585,16 @@ def build_equivalence_attestation(
     )
     attestation_hash = _hash_obj(unsealed.body())
     sealed_no_anchor = EquivalenceAttestation(
-        **{
-            **{
-                "schema_version": unsealed.schema_version,
-                "run_id": unsealed.run_id,
-                "original_journal_head": unsealed.original_journal_head,
-                "substituted_journal_head": unsealed.substituted_journal_head,
-                "first_divergent_step": unsealed.first_divergent_step,
-                "substitution_label": unsealed.substitution_label,
-                "verdict": unsealed.verdict,
-                "timestamp": unsealed.timestamp,
-                "attestation_hash": attestation_hash,
-                "journal_entry_hash": "",
-            },
-        },
+        schema_version=unsealed.schema_version,
+        run_id=unsealed.run_id,
+        original_journal_head=unsealed.original_journal_head,
+        substituted_journal_head=unsealed.substituted_journal_head,
+        first_divergent_step=unsealed.first_divergent_step,
+        substitution_label=unsealed.substitution_label,
+        verdict=unsealed.verdict,
+        timestamp=unsealed.timestamp,
+        attestation_hash=attestation_hash,
+        journal_entry_hash="",
     )
 
     # The store is write-once: content-addressed by the attestation hash.
@@ -1616,23 +1613,20 @@ def build_equivalence_attestation(
         content=sealed_no_anchor.canonical_bytes(),
         actor=_CLEAN_RUN_ACTOR,
         step_id=attestation_hash,
-        metadata={},
+        model="",
+        timestamp=timestamp,
     )
     sealed = EquivalenceAttestation(
-        **{
-            **{
-                "schema_version": sealed_no_anchor.schema_version,
-                "run_id": sealed_no_anchor.run_id,
-                "original_journal_head": sealed_no_anchor.original_journal_head,
-                "substituted_journal_head": sealed_no_anchor.substituted_journal_head,
-                "first_divergent_step": sealed_no_anchor.first_divergent_step,
-                "substitution_label": sealed_no_anchor.substitution_label,
-                "verdict": sealed_no_anchor.verdict,
-                "timestamp": sealed_no_anchor.timestamp,
-                "attestation_hash": sealed_no_anchor.attestation_hash,
-                "journal_entry_hash": anchor,
-            },
-        },
+        schema_version=sealed_no_anchor.schema_version,
+        run_id=sealed_no_anchor.run_id,
+        original_journal_head=sealed_no_anchor.original_journal_head,
+        substituted_journal_head=sealed_no_anchor.substituted_journal_head,
+        first_divergent_step=sealed_no_anchor.first_divergent_step,
+        substitution_label=sealed_no_anchor.substitution_label,
+        verdict=sealed_no_anchor.verdict,
+        timestamp=sealed_no_anchor.timestamp,
+        attestation_hash=sealed_no_anchor.attestation_hash,
+        journal_entry_hash=anchor,
     )
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1753,6 +1747,7 @@ __all__ = [
     "ScopeBoundary",
     "build_clean_run_attestation",
     "build_contraband_set",
+    "build_equivalence_attestation",
     "clean_run_attestation_path",
     "derive_task_reference_blobs",
     "derive_verdict",
