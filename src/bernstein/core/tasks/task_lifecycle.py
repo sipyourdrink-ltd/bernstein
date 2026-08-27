@@ -3056,7 +3056,7 @@ def claim_and_spawn_batches(
                 with contextlib.suppress(Exception):
                     _spawn_supervisor_for(orch).park(
                         _park_key(batch_key),
-                        reason=f"spawn failed {new_count} consecutive time(s): {analysis.error_type}",
+                        reason=f"spawn failed {new_count} consecutive time(s): {exc}",
                     )
                 for task in batch:
                     try:

@@ -328,7 +328,7 @@ class SpawnSupervisor:
                 }
                 for sid, rec in sorted(self._sessions.items())
             }
-        existing = self._read_store_ids(path) if path.exists() else set()
+        existing = self._read_store_ids(path) if path.exists() else set[str]()
         self._write_store(path, (existing - known) | parked_here, entries)
 
     def clear_parked(self, session_id: str) -> bool:
