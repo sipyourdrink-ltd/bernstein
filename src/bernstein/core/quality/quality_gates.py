@@ -582,7 +582,7 @@ def _parse_mutation_score(output: str) -> float | None:
     return None
 
 
-def _run_mutation_gate(config: QualityGatesConfig, run_dir: Path) -> tuple[bool, str, float | None]:
+def _run_mutation_gate(config: QualityGatesConfig, run_dir: Path) -> tuple[bool, str, float | None, str | None]:
     """Run mutation testing and compare score against the configured threshold.
 
     Args:
@@ -590,9 +590,11 @@ def _run_mutation_gate(config: QualityGatesConfig, run_dir: Path) -> tuple[bool,
         run_dir: Directory to run the mutation command in.
 
     Returns:
-        Tuple of (passed, detail_message, score_or_None).
+        Tuple of (passed, detail_message, score_or_None, evidence_status).
         ``passed`` is True when the mutation score meets the threshold.
         ``score_or_None`` is the parsed float score, or None when unparseable.
+        ``evidence_status`` is None when evidence exists, or a reason string
+        like ``evidence-missing`` when the gate cannot run.
     """
     result = _run_command(config.mutation_command, run_dir, config.mutation_timeout_s)
     _ok, output, exit_code = result
@@ -603,20 +605,42 @@ def _run_mutation_gate(config: QualityGatesConfig, run_dir: Path) -> tuple[bool,
         passed = score >= config.mutation_threshold
         status = "\u2265" if passed else "<"
         detail = f"Mutation score: {score:.1%} ({status} threshold {config.mutation_threshold:.1%})\n{output}"
-        return passed, detail, score
+        return passed, detail, score, None
+
+    # Could not parse a numeric score - check for missing evidence.
+    # Exit code 127 (command not found) indicates missing tool/evidence.
+    if exit_code == 127:
+        detail = (
+            f"Could not parse mutation score (threshold {config.mutation_threshold:.1%}). "
+            f"Tool missing (exit 127)\n{output}"
+        )
+        return False, detail, None, "evidence-missing"
+
+    # Subprocess died before producing output (timeout or other error).
+    if exit_code == NO_EXIT_CODE or not _ok:
+        detail = (
+            f"Could not parse mutation score (threshold {config.mutation_threshold:.1%}). "
+            f"Runner died before output\n{output}"
+        )
+        return False, detail, None, "runner-died-before-output"
 
     # Could not parse a numeric score - treat non-zero exit as failure.
-    # Exit code 127 (command not found) is also treated as failure.
     passed = _ok and exit_code != 127
     detail = (
         f"Could not parse mutation score (threshold {config.mutation_threshold:.1%}). "
         f"Exit: {'0' if _ok else 'non-zero'}\n{output}"
     )
-    return passed, detail, None
+    return passed, detail, None, None
 
 
-def run_mutation_gate_sync(config: QualityGatesConfig, run_dir: Path) -> tuple[bool, str, float | None]:
-    """Public sync wrapper used by the async gate runner."""
+def run_mutation_gate_sync(config: QualityGatesConfig, run_dir: Path) -> tuple[bool, str, float | None, str | None]:
+    """Public sync wrapper used by the async gate runner.
+
+    Returns:
+        Tuple of (passed, detail_message, score_or_None, evidence_status).
+        ``evidence_status`` is None when evidence exists, or a reason string
+        like ``evidence-missing`` when the gate cannot run.
+    """
     return _run_mutation_gate(config, run_dir)
 
 
@@ -695,7 +719,7 @@ def run_agent_test_mutation_gate_sync(
     config: QualityGatesConfig,
     task: Task,
     run_dir: Path,
-) -> tuple[bool, str, float | None]:
+) -> tuple[bool, str, float | None, str | None]:
     """Verify that agent-written tests actually catch bugs via targeted mutation testing.
 
     Extracts test files from the agent's git diff, infers the corresponding
@@ -713,18 +737,21 @@ def run_agent_test_mutation_gate_sync(
         run_dir: Repository root for running commands.
 
     Returns:
-        Tuple of (passed, detail_message, score_or_None).
+        Tuple of (passed, detail_message, score_or_None, evidence_status).
+        ``evidence_status`` is None when evidence exists, or a reason string
+        like ``evidence-missing`` when the gate cannot run.
     """
     diff = _get_intent_diff(run_dir, task.owned_files or [])
     test_files = _extract_agent_test_files(diff)
     if not test_files:
-        return True, "No agent-written test files detected in diff - skipping agent mutation gate.", None
+        return True, "No agent-written test files detected in diff - skipping agent mutation gate.", None, None
 
     source_files = _infer_source_files(test_files, run_dir)
     if not source_files:
         return (
             True,
             f"Could not infer source files for tests: {test_files} - skipping agent mutation gate.",
+            None,
             None,
         )
 
@@ -743,12 +770,30 @@ def run_agent_test_mutation_gate_sync(
             f"Test files: {', '.join(test_files)}\n"
             f"Source files: {', '.join(source_files)}\n{output}"
         )
-        return passed, detail, score
+        return passed, detail, score, None
 
-    # Could not parse - fall back to exit code. A missing tool produces no
-    # score either, and "non-zero" would report it the same way a mutation run
-    # that genuinely scored badly is reported -- the exact confusion this gate
-    # change exists to remove. Name it instead.
+    # Could not parse - check for missing evidence.
+    # Exit code 127 (command not found) indicates missing tool/evidence.
+    if exit_code == 127:
+        detail = (
+            f"Could not parse agent mutation score (threshold {threshold:.1%}). "
+            f"Tool missing (exit 127)\n"
+            f"Test files: {', '.join(test_files)}\n"
+            f"Source files: {', '.join(source_files)}\n{output}"
+        )
+        return False, detail, None, "evidence-missing"
+
+    # Subprocess died before producing output (timeout or other error).
+    if exit_code == NO_EXIT_CODE or not _ok:
+        detail = (
+            f"Could not parse agent mutation score (threshold {threshold:.1%}). "
+            f"Runner died before output\n"
+            f"Test files: {', '.join(test_files)}\n"
+            f"Source files: {', '.join(source_files)}\n{output}"
+        )
+        return False, detail, None, "runner-died-before-output"
+
+    # Could not parse - fall back to exit code.
     passed = _ok
     exit_detail = "command not found (127)" if exit_code == 127 else ("0" if _ok else "non-zero")
     detail = (
@@ -757,7 +802,7 @@ def run_agent_test_mutation_gate_sync(
         f"Test files: {', '.join(test_files)}\n"
         f"Source files: {', '.join(source_files)}\n{output}"
     )
-    return passed, detail, None
+    return passed, detail, None, None
 
 
 # ---------------------------------------------------------------------------

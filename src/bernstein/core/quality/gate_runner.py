@@ -312,14 +312,31 @@ class GateRunner:
         from bernstein.core import quality_gates as qg
 
         if step.name == "agent_test_mutation":
-            ok, detail, score = await asyncio.to_thread(
+            ok, detail, score, evidence_status = await asyncio.to_thread(
                 qg.run_agent_test_mutation_gate_sync,
                 self._config,
                 task,
                 run_dir,
             )
         else:
-            ok, detail, score = await asyncio.to_thread(qg.run_mutation_gate_sync, self._config, run_dir)
+            ok, detail, score, evidence_status = await asyncio.to_thread(
+                qg.run_mutation_gate_sync, self._config, run_dir
+            )
+
+        # If evidence is missing (tool missing, subprocess died), return inconclusive.
+        if evidence_status is not None:
+            return GateResult(
+                name=step.name,
+                status="inconclusive",
+                reason=evidence_status,
+                required=step.required,
+                blocked=step.required,
+                cached=False,
+                duration_ms=0,
+                details=detail,
+                metadata={"mutation_score": score} if score is not None else {},
+            )
+
         return GateResult(
             name=step.name,
             status="pass" if ok else "fail",
