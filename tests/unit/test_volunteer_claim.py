@@ -340,3 +340,23 @@ class TestConstants:
     def test_schema_version_matches_body(self, sample_claim: Claim) -> None:
         """schema_version in to_canonical_dict matches the module constant."""
         assert sample_claim.to_canonical_dict()["schema_version"] == CLAIM_SCHEMA_VERSION
+
+
+# ---------------------------------------------------------------------------
+# Conformance
+# ---------------------------------------------------------------------------
+
+
+def test_conformance_harness(sample_claim: Claim) -> None:
+    """Full conformance test using the harness."""
+    from bernstein.core.protocols.volunteer.conformance import ConformanceHarness
+
+    harness = ConformanceHarness()
+    harness.register(
+        name="Claim",
+        to_canonical_dict=lambda c: c.to_canonical_dict(),
+        from_canonical_dict=lambda d: Claim(**d),
+    )
+
+    result = harness.check("Claim", sample_claim)
+    assert result.ok
