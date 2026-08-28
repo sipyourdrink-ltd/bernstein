@@ -16,6 +16,11 @@ build/
 .env
 .env.*
 .env.local
+# ...but checked-in templates must stay trackable: `.env.*` above also matches
+# `.env.example`, so every template written so far was silently dropped while
+# the compose files and docs kept telling people to copy one.
+!.env.example
+!**/.env.example
 
 # A2A v1.0 agent-card signing keys — minted on first run, must NEVER be committed.
 .bernstein/keys/
