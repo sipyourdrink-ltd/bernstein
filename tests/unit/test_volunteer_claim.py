@@ -175,7 +175,9 @@ class TestCanonicalDict:
         d = sample_claim.to_canonical_dict()
         keys = list(d.keys())
         # schema_version is first, then the three data fields
-        assert keys == ["schema_version", "worker_id", "task_id", "claimed_at"], f"field order {keys} does not match canonical dict definition"
+        assert keys == ["schema_version", "worker_id", "task_id", "claimed_at"], (
+            f"field order {keys} does not match canonical dict definition"
+        )
 
     def test_digest_stable(self, sample_claim: Claim) -> None:
         """digest() returns the SHA-256 of canonical_bytes."""
@@ -196,9 +198,7 @@ class TestCanonicalBytesDelegation:
         """Claims constructed with same values produce identical canonical bytes."""
         c1 = Claim(worker_id="a", task_id="b", claimed_at="2024-01-01T00:00:00Z")
         c2 = Claim(task_id="b", claimed_at="2024-01-01T00:00:00Z", worker_id="a")
-        assert canonical_bytes(c1.to_canonical_dict()) == canonical_bytes(
-            c2.to_canonical_dict()
-        )
+        assert canonical_bytes(c1.to_canonical_dict()) == canonical_bytes(c2.to_canonical_dict())
 
 
 # ---------------------------------------------------------------------------
@@ -209,9 +209,7 @@ class TestCanonicalBytesDelegation:
 class TestClaimEnvelopeRoundTrip:
     """build_claim_envelope → verify_claim_envelope."""
 
-    def test_correct_key_passes(
-        self, signing_key: Ed25519PrivateKey, sample_claim: Claim
-    ) -> None:
+    def test_correct_key_passes(self, signing_key: Ed25519PrivateKey, sample_claim: Claim) -> None:
         envelope = build_claim_envelope(sample_claim, signing_key)
         result = verify_claim_envelope(envelope, signing_key.public_key())
         assert result.ok is True
@@ -229,9 +227,7 @@ class TestClaimEnvelopeRoundTrip:
         assert result.ok is False
         assert len(result.errors) > 0
 
-    def test_tampered_payload_fails(
-        self, signing_key: Ed25519PrivateKey, sample_claim: Claim
-    ) -> None:
+    def test_tampered_payload_fails(self, signing_key: Ed25519PrivateKey, sample_claim: Claim) -> None:
         envelope = build_claim_envelope(sample_claim, signing_key)
         payload_b64 = envelope.payload_b64
         flipped = "A" if payload_b64[0] != "A" else "B"
@@ -243,9 +239,7 @@ class TestClaimEnvelopeRoundTrip:
         result = verify_claim_envelope(tampered, signing_key.public_key())
         assert result.ok is False
 
-    def test_persisted_envelope_roundtrips(
-        self, signing_key: Ed25519PrivateKey, sample_claim: Claim
-    ) -> None:
+    def test_persisted_envelope_roundtrips(self, signing_key: Ed25519PrivateKey, sample_claim: Claim) -> None:
         """Envelope serialised to JSON and re-parsed still verifies."""
         envelope = build_claim_envelope(sample_claim, signing_key)
         raw = envelope.to_json()
@@ -263,9 +257,7 @@ class TestClaimEnvelopeRoundTrip:
 class TestClaimEnvelopeDeterminism:
     """Same Claim + same Ed25519 key → byte-identical envelope."""
 
-    def test_deterministic(
-        self, signing_key: Ed25519PrivateKey, sample_claim: Claim
-    ) -> None:
+    def test_deterministic(self, signing_key: Ed25519PrivateKey, sample_claim: Claim) -> None:
         env_a = build_claim_envelope(sample_claim, signing_key)
         env_b = build_claim_envelope(sample_claim, signing_key)
         assert env_a.to_json() == env_b.to_json()

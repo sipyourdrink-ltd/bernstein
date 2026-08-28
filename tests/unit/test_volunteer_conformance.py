@@ -69,7 +69,7 @@ class TestHubProjection:
 
     def test_non_object_raises(self) -> None:
         with pytest.raises(ValueError, match="expected object"):
-            from_hub_projection(b'42')
+            from_hub_projection(b"42")
 
     def test_non_dict_non_bytes_raises(self) -> None:
         with pytest.raises(ValueError, match="must be bytes or dict"):
@@ -144,6 +144,7 @@ class TestGitHubProjection:
     def test_invalid_json_after_decode_raises(self) -> None:
         """Valid base64 that decodes to non-JSON raises."""
         import base64
+
         bad_json = b"not json at all"
         bad_proj = f"""{GITHUB_MARKER}
 ```json
