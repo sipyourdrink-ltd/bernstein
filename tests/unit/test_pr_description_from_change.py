@@ -90,7 +90,7 @@ FORMAT_COMMIT = _commit(
     "style: reformat storage package",
     [("src/bernstein/core/storage/store.py", 40, 40)],
 )
-WIP_COMMIT = _commit("dddddddddddd", "[WIP] key derivation", [("src/bernstein/core/storage/keys.py", 10, 0)])
+WIP_COMMIT = _commit("dddddddddddd", "[WIP] key derivation", [("notes/scratch.md", 10, 0)])
 MERGE_COMMIT = _commit("eeeeeeeeeeee", "Merge branch 'main' into agent/run-1", is_merge=True)
 CONTEXT_SYNC_COMMIT = _commit("ffffffffffff", "docs: refresh agent context", [("AGENTS.md", 12, 3)])
 
@@ -162,7 +162,7 @@ def test_a_docs_only_run_still_gets_a_real_title() -> None:
     ("commit", "why"),
     [
         (MERGE_COMMIT, "merge commit"),
-        (WIP_COMMIT, "work-in-progress marker"),
+        (WIP_COMMIT, "work-in-progress marker over no source change"),
         (FORMAT_COMMIT, "style: type"),
         (LINT_COMMIT, "lint-repair wording under a fix: type"),
         (CONTEXT_SYNC_COMMIT, "generated agent-context file only"),
@@ -557,3 +557,56 @@ def test_a_session_with_no_cost_says_so_in_one_line() -> None:
 
     assert "No cost was recorded" in cost
     assert "Effective rate" not in cost
+
+
+# ---------------------------------------------------------------------------
+# A WIP marker is not a claim about what the commit did
+# ---------------------------------------------------------------------------
+
+
+WIP_FEATURE_COMMIT = _commit(
+    "dddddddddddd",
+    "[WIP] feat(review): add ApprovalBinding data model and emit/verify functions",
+    files=(("src/bernstein/core/review/receipt.py", 227, 0),),
+)
+TEST_FIX_COMMIT = _commit(
+    "ffffffffffff",
+    "fix(tests): detect real openai-agents SDK in _sdk_installed()",
+    files=(("tests/integration/adapters/test_openai_agents_smoke.py", 23, 1),),
+)
+
+
+def test_a_wip_commit_that_adds_source_can_still_name_the_pull_request() -> None:
+    """The incident: 227 lines of new source were filed under housekeeping.
+
+    Folding an agent worktree in commits substantive work behind a ``[WIP]``
+    prefix. Classifying on the marker dropped that commit from the ranking
+    entirely, so the description named the branch after a test fix that came
+    after it and listed the feature under "not what this pull request is
+    about" - while the header's own file count said six files and 300 lines.
+    """
+    assert is_housekeeping_commit(WIP_FEATURE_COMMIT) is False
+
+    ranked = rank_commits((TEST_FIX_COMMIT, WIP_FEATURE_COMMIT))
+
+    assert ranked[0] is WIP_FEATURE_COMMIT
+
+
+def test_a_wip_commit_that_touches_no_source_is_still_housekeeping() -> None:
+    """The marker keeps its meaning for the checkpoints it was written for."""
+    assert is_housekeeping_commit(WIP_COMMIT) is True
+
+
+def test_rebase_markers_are_housekeeping_whatever_they_touch() -> None:
+    """``fixup!`` names a commit destined to be squashed into another one.
+
+    Unlike ``[WIP]`` it says what will happen to the commit, not when it was
+    written, so churn does not redeem it.
+    """
+    fixup = _commit(
+        "cccccccccccc",
+        "fixup! feat(storage): derive a per-store key with HKDF-SHA256",
+        files=(("src/bernstein/core/storage/keys.py", 140, 12),),
+    )
+
+    assert is_housekeeping_commit(fixup) is True

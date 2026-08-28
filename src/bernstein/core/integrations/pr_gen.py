@@ -149,7 +149,8 @@ _HOUSEKEEPING_TYPES = frozenset({"style", "chore"})
 _CC_SUBJECT_RE = re.compile(r"^(?P<type>[a-z]+)(?:\([^)]*\))?!?:\s", re.IGNORECASE)
 
 # Markers for a commit that was never meant to describe anything.
-_WIP_SUBJECT_RE = re.compile(r"^\s*(?:\[wip\]|wip\b|fixup!|squash!|amend!)", re.IGNORECASE)
+_REBASE_MARKER_RE = re.compile(r"^\s*(?:fixup!|squash!|amend!)", re.IGNORECASE)
+_WIP_MARKER_RE = re.compile(r"^\s*(?:\[wip\]|wip\b)", re.IGNORECASE)
 
 # The wording a repair commit uses whatever conventional-commit type it
 # claims. ``fix: resolve lint gate failures`` is typed ``fix`` and is still
@@ -440,8 +441,11 @@ def is_housekeeping_commit(commit: CommitRecord) -> bool:
     A commit is housekeeping when any of the following holds:
 
     * it is a merge commit, or it touches no files at all;
-    * its subject is a work-in-progress or rebase marker (``[WIP]``,
-      ``fixup!``, ``squash!``, ``amend!``);
+    * its subject is a rebase marker (``fixup!``, ``squash!``, ``amend!``);
+    * its subject carries a work-in-progress marker (``[WIP]``, ``wip``) *and*
+      it changes nothing under ``src/`` - the marker records when the commit
+      was made, not that it is upkeep, and a worktree fold routinely lands
+      real work behind it;
     * its conventional-commit type is ``style`` or ``chore``;
     * its subject names a formatter, a linter or a regeneration - the wording
       a repair commit uses whatever type it claims, which is how ``fix:
@@ -463,7 +467,16 @@ def is_housekeeping_commit(commit: CommitRecord) -> bool:
         return True
 
     subject = commit.subject.strip()
-    if not subject or _WIP_SUBJECT_RE.match(subject):
+    if not subject or _REBASE_MARKER_RE.match(subject):
+        return True
+
+    # A WIP marker records when the commit was made, not that it is upkeep.
+    # Folding an agent worktree in lands substantive work behind that prefix
+    # as a matter of course, so classifying on the marker alone drops the one
+    # commit that touched src/ out of the ranking entirely and hands the pull
+    # request's name to whatever small follow-up came after it. Judge it by
+    # what it changed: a WIP commit that alters no source is a checkpoint.
+    if _WIP_MARKER_RE.match(subject) and commit.src_churn == 0:
         return True
 
     conventional = _CC_SUBJECT_RE.match(subject)
