@@ -1251,6 +1251,18 @@ def _render_prompt_with_receipt(
     named_sections: list[tuple[str, str]] = [("role", role_prompt)]
     if specialist_block:
         named_sections.append(("specialists", specialist_block))
+    # Consensus relay section (issue #4678): inject prior cycle decisions for
+    # manager-role spawns only. read_file from the file store; omit the section
+    # entirely when the store is absent, empty, or chain verification fails.
+    if role == "manager":
+        try:
+            from bernstein.core.orchestration.consensus_relay import build_spawn_section
+
+            relay_block = build_spawn_section(relay_root=workdir / ".sdd" / "runtime" / "consensus")
+            if relay_block:
+                named_sections.append(("consensus_relay", relay_block))
+        except Exception:
+            pass
     named_sections.append(("tasks", f"\n## Assigned tasks\n{task_block}"))
     # Artifact contract (#4539): surface the kind/path/criteria an
     # artifact-mode task is judged by. Empty for the git path, so a plain

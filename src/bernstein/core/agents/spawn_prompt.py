@@ -944,6 +944,19 @@ def _render_prompt(
     ]
     if specialist_block:
         named_sections.append(("specialists", specialist_block))
+    # Consensus relay section (issue #4678): inject prior cycle decisions for
+    # manager-role spawns only. read_file from the file store; omit the section
+    # entirely when the store is absent, empty, or chain verification fails.
+    if role == "manager":
+        try:
+            from bernstein.core.orchestration.consensus_relay import build_spawn_section
+
+            relay_block = build_spawn_section(relay_root=workdir / ".sdd" / "runtime" / "consensus")
+            if relay_block:
+                named_sections.append(("consensus relay", relay_block))
+        except Exception:
+            # Never block a spawn because of relay problems.
+            pass
     # KV-cache locality: lessons go AFTER the stable header (role,
     # git_safety, specialists) but BEFORE the variable goal/task body
     # so the cacheable prefix stays byte-stable across spawns.
