@@ -190,9 +190,7 @@ def test_clean_room_cleans_up_worktree_even_on_gate_failure(tmp_path: Path) -> N
     assert not hasattr(result, "bundle"), "gate failure must produce a refusal, not a bundle"
 
     # The worktree is gone even though the gate refused
-    assert not worktree_path.exists(), (
-        "finish_volunteer_task must remove the worktree even when gates fail"
-    )
+    assert not worktree_path.exists(), "finish_volunteer_task must remove the worktree even when gates fail"
 
 
 def test_clean_room_cleans_up_worktree_even_on_scope_refusal(tmp_path: Path) -> None:
@@ -326,6 +324,4 @@ def test_clean_room_cleans_up_worktree_on_profile_mismatch(tmp_path: Path) -> No
     )
 
     assert not hasattr(result, "bundle"), "profile mismatch must produce a refusal"
-    assert not worktree_path.exists(), (
-        "finish_volunteer_task must remove the worktree even on profile mismatch"
-    )
+    assert not worktree_path.exists(), "finish_volunteer_task must remove the worktree even on profile mismatch"
