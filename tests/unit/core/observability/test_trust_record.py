@@ -143,7 +143,6 @@ def _emitter_with_known_key(*, install_rev: str = "aaaaaaaaaaaaaaaa") -> TrustRe
 def _canonical_body_bytes(doc: dict[str, Any]) -> bytes:
     """Rebuild the exact bytes ``_sign_record`` signed from a parsed record."""
     body = {field: doc[field] for field in _SIGNED_BODY_FIELDS}
-    from bernstein.core.security.agent_card_signer import canonicalize_jcs
     return canonicalize_jcs(body)
 
 
@@ -1139,6 +1138,81 @@ class TestCoreInstallWithoutTraceExtra:
 # ---------------------------------------------------------------------------
 # Module docstring states the seal boundary (issue #4692 acceptance criterion)
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Signing pre-image: JCS edge cases (non-ASCII run_id, float exponent range)
+# --------------------------------------------------------------------------
+
+
+class TestSigningPreImageJCS:
+    """Verify the signing pre-image equals JCS output byte-for-byte.
+
+    These regression tests protect against accidental re-introduction of
+    ``json.dumps(sort_keys=True)`` (RFC 8259) as the signing pre-image.
+    JCS (RFC 8785) and JSON differ in three key ways that affect these
+    edge cases:
+    - Non-ASCII property names / string values: JSON must escape them
+      to \\uXXXX; JCS encodes them as raw UTF-8.
+    - Float representation: JSON and JCS can emit different decimal strings
+      for the same IEEE 754 value (e.g. 1e-7 vs 9.999999999999999e-8).
+    """
+
+    def test_non_ascii_run_id_signing_pre_image_matches_jcs(self, tmp_path: Path) -> None:
+        """Prove JCS encodes the non-ASCII run_id as UTF-8, not \\u-escaped JSON."""
+        emitter = _emitter_with_known_key()
+        journal = _create_journal(tmp_path, [{"type": "run_start", "ts": 1.0}])
+        output = emitter.emit_trust_record(journal, "прогон-1")
+        doc = json.loads(output)
+
+        body = {field: doc[field] for field in _SIGNED_BODY_FIELDS}
+        jcs_bytes = canonicalize_jcs(body)
+
+        assert jcs_bytes == _canonical_body_bytes(doc)
+        assert b"\\u04" not in jcs_bytes  # No \u-escaped Cyrillic
+
+    def test_non_ascii_run_id_proves_jcs_differs_from_old_json_dumps(self, tmp_path: Path) -> None:
+        """Prove the test is meaningful: old json.dumps produces different bytes."""
+        emitter = _emitter_with_known_key()
+        journal = _create_journal(tmp_path, [{"type": "run_start", "ts": 1.0}])
+        output = emitter.emit_trust_record(journal, "прогон-1")
+        doc = json.loads(output)
+
+        body = {field: doc[field] for field in _SIGNED_BODY_FIELDS}
+        jcs_bytes = canonicalize_jcs(body)
+        old_json_bytes = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+        assert jcs_bytes != old_json_bytes
+        # The difference is exactly the \u-escaping: JSON UTF-8 encoded the
+        # Cyrillic 'п' (U+043F) as \\u043F (6 bytes), JCS as п (2 bytes).
+        assert len(jcs_bytes) < len(old_json_bytes)
+
+    def test_float_1e7_exponent_signing_pre_image_matches_jcs(self, tmp_path: Path) -> None:
+        """Prove a 1e-7 float claim serialises identically under JCS and Python json."""
+        emitter = _emitter_with_known_key()
+        journal = _create_journal(tmp_path, [{"type": "run_start", "ts": 1e-7}])
+        output = emitter.emit_trust_record(journal, "run-float-exponent")
+        doc = json.loads(output)
+
+        body = {field: doc[field] for field in _SIGNED_BODY_FIELDS}
+        jcs_bytes = canonicalize_jcs(body)
+
+        assert jcs_bytes == _canonical_body_bytes(doc)
+
+    def test_non_ascii_run_id_and_1e7_exponent_combined(self, tmp_path: Path) -> None:
+        """Both edge cases active at once: must still match JCS, not old json.dumps."""
+        emitter = _emitter_with_known_key()
+        journal = _create_journal(tmp_path, [{"type": "run_start", "ts": 1e-7}])
+        output = emitter.emit_trust_record(journal, "прогон-float-1")
+        doc = json.loads(output)
+
+        body = {field: doc[field] for field in _SIGNED_BODY_FIELDS}
+        jcs_bytes = canonicalize_jcs(body)
+
+        assert jcs_bytes == _canonical_body_bytes(doc)
+
+        old_json_bytes = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        assert jcs_bytes != old_json_bytes
 
 
 class TestModuleDocstringStatesTheSealBoundary:
