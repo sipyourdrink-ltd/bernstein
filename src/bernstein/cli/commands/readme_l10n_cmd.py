@@ -86,10 +86,10 @@ def _report_owner(lang: str, owners: dict[str, str]) -> None:
     """
     handle = owners.get(lang)
     if handle:
-        click.echo(f"OWNER    README.{lang}.md is kept current by {handle}", err=True)
+        click.echo(f"OWNER    docs/i18n/README.{lang}.md is kept current by {handle}", err=True)
     else:
         click.echo(
-            f"OWNER    README.{lang}.md has no owner in [tool.bernstein.readme-l10n.owners]; "
+            f"OWNER    docs/i18n/README.{lang}.md has no owner in [tool.bernstein.readme-l10n.owners]; "
             "see docs/playbooks/readme-l10n.md",
             err=True,
         )
@@ -153,18 +153,18 @@ def readme_l10n_verify(workdir: Path) -> None:
 
     drift_total = 0
     for lang in languages:
-        tpath = workdir / f"README.{lang}.md"
+        tpath = workdir / f"docs/i18n/README.{lang}.md"
         if not tpath.is_file():
-            click.echo(f"MISSING  README.{lang}.md (configured but not present)", err=True)
+            click.echo(f"MISSING  docs/i18n/README.{lang}.md (configured but not present)", err=True)
             _report_owner(lang, owners)
             drift_total += 1
             continue
         result = verify_language(sections, lang, tpath.read_text(encoding="utf-8"))
         if result.ok:
-            click.echo(f"OK       README.{lang}.md")
+            click.echo(f"OK       docs/i18n/README.{lang}.md")
             continue
         for err in result.errors:
-            click.echo(f"DRIFT    README.{lang}.md: {err}", err=True)
+            click.echo(f"DRIFT    docs/i18n/README.{lang}.md: {err}", err=True)
         _report_owner(lang, owners)
         drift_total += len(result.errors)
 
@@ -208,9 +208,9 @@ def readme_l10n_sync(workdir: Path) -> None:
 
     updated = 0
     for lang in languages:
-        tpath = workdir / f"README.{lang}.md"
+        tpath = workdir / f"docs/i18n/README.{lang}.md"
         if not tpath.is_file():
-            click.echo(f"MISSING  README.{lang}.md (configured but not present)", err=True)
+            click.echo(f"MISSING  docs/i18n/README.{lang}.md (configured but not present)", err=True)
             continue
         text = tpath.read_text(encoding="utf-8")
 
@@ -220,7 +220,7 @@ def readme_l10n_sync(workdir: Path) -> None:
             section = by_heading.get(en)
             if section is None:
                 click.echo(
-                    f'WARN     README.{lang}.md binds unknown section "{en}" (no such heading in README.md)',
+                    f'WARN     docs/i18n/README.{lang}.md binds unknown section "{en}" (no such heading in README.md)',
                     err=True,
                 )
                 return match.group(0)
@@ -232,7 +232,7 @@ def readme_l10n_sync(workdir: Path) -> None:
         new_text = BINDING_RE.sub(_rehash, text)
         if new_text != text:
             tpath.write_text(new_text, encoding="utf-8")
-            click.echo(f"SYNCED   README.{lang}.md")
+            click.echo(f"SYNCED   docs/i18n/README.{lang}.md")
 
         # Report bindings that are missing entirely (translated sections
         # that never declared their English source).
@@ -240,7 +240,7 @@ def readme_l10n_sync(workdir: Path) -> None:
         for heading in prose_headings:
             if heading not in bound:
                 click.echo(
-                    f"MISSING  README.{lang}.md has no binding for section "
+                    f"MISSING  docs/i18n/README.{lang}.md has no binding for section "
                     f'"{heading}"; add a binding line under the translated '
                     "heading, then run sync",
                     err=True,

@@ -202,3 +202,10 @@ docs/_internal/observability/*
 # Per-run review scratch. These are written into the work tree by the review
 # pass and are not part of any change.
 REVIEW-*.md
+
+# Working notes agents write at the repository root while resolving an
+# issue. All three shapes have been committed by runs; none is ever part
+# of a change.
+/IMPLEMENTATION_PLAN.md
+/pr-body-*.md
+/test.txt

@@ -1,7 +1,7 @@
 """README translation drift gate (issue #3425).
 
 Splits the English ``README.md`` into sections, binds every translated
-``README.<ietf-tag>.md`` section to a content hash of the English section
+``docs/i18n/README.<ietf-tag>.md`` section to a content hash of the English section
 it mirrors, and verifies the bindings, code-block fidelity, and
 verbatim header/footer on demand.
 
