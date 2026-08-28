@@ -1,0 +1,19 @@
+{
+  "plan": [
+    {
+      "id": "b6f9b5f91822",
+      "title": "Plan and decompose goal into tasks",
+      "status": "completed",
+      "description": "Decompose the volunteer publish goal into specific, actionable tasks",
+      "created_at": 1787921992.330901
+    },
+    {
+      "id": "ace696d3d606",
+      "title": "volunteer publish: interactive manifest-init wizard",
+      "status": "in_progress",
+      "description": "Build the interactive manifest-init wizard for `bernstein volunteer publish`",
+      "created_at": 1787921992.330901
+    }
+  ],
+  "last_updated": 1787921992.330901
+}

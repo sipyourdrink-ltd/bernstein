@@ -1,0 +1,12 @@
+{
+  "title": "volunteer manifest: status field for pause/resume",
+  "role": "backend",
+  "description": "Add a `status` field to the volunteer manifest to support pause/resume.\n\nThe manifest currently has fields: version, license, gates, allowed_paths, egress_allowlist, sandbox, max_wall_clock_minutes, task_label, local_ok.\n\nAdd a new `status` field with values \"active\" (default) and \"paused\". When status is \"paused\", the manifest still loads/validates/digests normally but the index (browse) should skip it, and the publish wizard should be able to set it.\n\nChanges needed in `src/bernstein/core/volunteer/manifest.py`:\n- Add `status: str` to the `VolunteerManifest` dataclass (default \"active\")\n- Add `status` to `_KNOWN_FIELDS`\n- Add `_load_status()` validator: must be \"active\" or \"paused\"; defaults to \"active\" if absent\n- Add `status` to `to_canonical_dict()`\n- Add a `MAX_STATUS_LENGTH` or just validate the two values\n\nAlso add a `is_active` property or update `browse_indexes` in `registry.py` to skip manifests where `status == \"paused\"`.\n\nUpdate docs: `docs/reference/volunteer-manifest.md` to document the new `status` field.\n\nAcceptance:\n- Manifest with `status: \"paused\"` loads and validates\n- Manifest with `status: \"active\"` loads and validates\n- Manifest with `status: \"vibes\"` raises VolunteerManifestError\n- Manifest without `status` defaults to \"active\"\n- A paused manifest digests differently from an active one (so policy can't change under the same digest)\n- The loader warns about known-but-unrecognized status values appropriately\n\nTests: add to `tests/unit/volunteer/test_volunteer_manifest.py`",
+  "priority": 2,
+  "scope": "medium",
+  "complexity": "medium",
+  "owned_files": ["src/bernstein/core/volunteer/manifest.py", "src/bernstein/core/volunteer/registry.py", "docs/reference/volunteer-manifest.md"],
+  "completion_signals": [
+    {"type": "test_passes", "value": "uv run pytest tests/unit/volunteer/test_volunteer_manifest.py -x -q -k status"}
+  ]
+}
