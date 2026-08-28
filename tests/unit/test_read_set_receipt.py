@@ -26,23 +26,6 @@ if TYPE_CHECKING:
 # ------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def _clear_module_cache():
-    """Clear module cache before each test to ensure fresh imports."""
-    import sys
-
-    mods_to_delete = [
-        "bernstein.core.git.read_set_admission",
-        "bernstein.core.git.read_set_receipt",
-        "bernstein.core.security.audit_chain",
-        "bernstein.core.security.input_refusal",
-        "bernstein.core.lineage.identity",
-    ]
-    for mod_name in mods_to_delete:
-        if mod_name in sys.modules:
-            del sys.modules[mod_name]
-
-
 @pytest.fixture
 def sample_changed_paths():
     """Return sample ChangedPath entries."""
@@ -384,13 +367,6 @@ def test_verify_receipt_offline_no_matching_anchor(
     sample_receipt: ReadSetRefusalReceipt, keys: dict, tmp_path: Path
 ) -> None:
     """Offline verification fails when receipt is not anchored in chain."""
-    import sys
-
-    # Re-import after clearing cache
-    for mod_name in list(sys.modules.keys()):
-        if mod_name.startswith("bernstein.core.git.read_set_receipt"):
-            del sys.modules[mod_name]
-
     from bernstein.core.git.read_set_receipt import (
         build_refusal_receipt,
         verify_receipt_offline,

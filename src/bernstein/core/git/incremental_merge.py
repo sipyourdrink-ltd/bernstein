@@ -435,10 +435,23 @@ def incremental_merge_files(
             except ReadSetAdmissionRefused:
                 raise
             except Exception as exc:
-                logger.warning(
-                    "Read-set admission check failed for task %s: %s",
+                # Same contract as the refusal above: this branch only runs
+                # for a task that declared a journal for admission, and an
+                # admission question that could not be answered refuses
+                # rather than admitting by default.
+                logger.error(
+                    "Read-set admission check could not run for task %s: %s",
                     task_id,
                     exc,
+                )
+                return IncrementalMergeResult(
+                    success=False,
+                    merged_files=[],
+                    skipped_already_merged=[],
+                    uncommitted_files=[],
+                    conflicting_files=[],
+                    commit_sha="",
+                    error=f"Read-set admission check could not run: {exc}",
                 )
 
         # Load current state to find already-merged files

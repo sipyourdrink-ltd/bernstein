@@ -23,22 +23,6 @@ from bernstein.core.replay.read_paths import ReadPathSet
 # ------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def _clear_module_cache():
-    """Clear module cache before each test to ensure fresh imports."""
-    import sys
-
-    mods_to_delete = [
-        "bernstein.core.git.read_set_admission",
-        "bernstein.core.git.read_set_receipt",
-        "bernstein.core.git.git_basic",
-        "bernstein.core.replay.read_paths",
-    ]
-    for mod_name in mods_to_delete:
-        if mod_name in sys.modules:
-            del sys.modules[mod_name]
-
-
 # ------------------------------------------------------------------
 # Tests
 # ------------------------------------------------------------------
@@ -66,9 +50,9 @@ def test_happy_path_no_changes(tmp_path: Path) -> None:
     mock_git_result.stdout = ""  # No changed files in diff
 
     with (
-        patch("bernstein.core.git.git_basic.run_git", return_value=mock_git_result),
+        patch("bernstein.core.git.read_set_admission.run_git", return_value=mock_git_result),
         patch(
-            "bernstein.core.replay.read_paths.derive_read_paths",
+            "bernstein.core.git.read_set_admission.derive_read_paths",
             return_value=mock_read_path_set,
         ),
     ):
@@ -121,9 +105,9 @@ def test_failure_path_changed(tmp_path: Path) -> None:
         return result
 
     with (
-        patch("bernstein.core.git.git_basic.run_git", side_effect=mock_run_git),
+        patch("bernstein.core.git.read_set_admission.run_git", side_effect=mock_run_git),
         patch(
-            "bernstein.core.replay.read_paths.derive_read_paths",
+            "bernstein.core.git.read_set_admission.derive_read_paths",
             return_value=mock_read_path_set,
         ),
     ):
@@ -155,8 +139,8 @@ def test_journal_mutation_detection(tmp_path: Path) -> None:
 
     # Mock derive_read_paths to raise broken_chain error
     with (
-        patch("bernstein.core.git.git_basic.run_git"),
-        patch("bernstein.core.replay.read_paths.derive_read_paths") as mock_derive,
+        patch("bernstein.core.git.read_set_admission.run_git"),
+        patch("bernstein.core.git.read_set_admission.derive_read_paths") as mock_derive,
     ):
         mock_derive.side_effect = ReadPathSet(
             read_paths=frozenset(),
@@ -216,9 +200,9 @@ def test_deterministic_receipt_serialization(tmp_path: Path) -> None:
             return result
 
         with (
-            patch("bernstein.core.git.git_basic.run_git", side_effect=mock_run_git),
+            patch("bernstein.core.git.read_set_admission.run_git", side_effect=mock_run_git),
             patch(
-                "bernstein.core.replay.read_paths.derive_read_paths",
+                "bernstein.core.git.read_set_admission.derive_read_paths",
                 return_value=mock_read_path_set,
             ),
         ):
@@ -280,9 +264,9 @@ def test_offline_verification(tmp_path: Path) -> None:
         return result
 
     with (
-        patch("bernstein.core.git.git_basic.run_git", side_effect=mock_run_git),
+        patch("bernstein.core.git.read_set_admission.run_git", side_effect=mock_run_git),
         patch(
-            "bernstein.core.replay.read_paths.derive_read_paths",
+            "bernstein.core.git.read_set_admission.derive_read_paths",
             return_value=mock_read_path_set,
         ),
     ):
@@ -340,9 +324,9 @@ def test_disjoint_write_sets_no_conflict(tmp_path: Path) -> None:
         return result
 
     with (
-        patch("bernstein.core.git.git_basic.run_git", side_effect=mock_run_git),
+        patch("bernstein.core.git.read_set_admission.run_git", side_effect=mock_run_git),
         patch(
-            "bernstein.core.replay.read_paths.derive_read_paths",
+            "bernstein.core.git.read_set_admission.derive_read_paths",
             return_value=mock_read_path_set,
         ),
     ):
@@ -387,9 +371,9 @@ def test_multiple_changed_paths(tmp_path: Path) -> None:
         return result
 
     with (
-        patch("bernstein.core.git.git_basic.run_git", side_effect=mock_run_git),
+        patch("bernstein.core.git.read_set_admission.run_git", side_effect=mock_run_git),
         patch(
-            "bernstein.core.replay.read_paths.derive_read_paths",
+            "bernstein.core.git.read_set_admission.derive_read_paths",
             return_value=mock_read_path_set,
         ),
     ):
@@ -406,3 +390,56 @@ def test_multiple_changed_paths(tmp_path: Path) -> None:
         assert len(result) == 2
         paths = {c.path for c in result}
         assert paths == {"src/A.py", "src/B.py"}
+
+
+def test_an_unanswerable_admission_question_refuses_the_merge(tmp_path: Path) -> None:
+    """When the admission check itself cannot run -- unreadable journal,
+    broken tree -- the merge is refused with the reason, not admitted with a
+    warning. A gate that fails open admits exactly the runs it exists to
+    stop, in the one situation where it has no idea what happened."""
+    from unittest.mock import patch
+
+    from bernstein.core.git.git_pr import merge_with_conflict_detection
+
+    with patch(
+        "bernstein.core.git.git_pr.check_read_set_changed",
+        side_effect=RuntimeError("journal unreadable"),
+    ):
+        result = merge_with_conflict_detection(
+            cwd=tmp_path,
+            branch="work",
+            message="m",
+            task_id="T-1",
+            journal_path=str(tmp_path / "journal.jsonl"),
+            worktree_root=str(tmp_path),
+        )
+
+    assert result.success is False
+    assert "could not run" in (result.error or "")
+    assert "journal unreadable" in (result.error or "")
+
+
+def test_an_unanswerable_admission_question_refuses_the_incremental_merge(
+    tmp_path: Path,
+) -> None:
+    """The incremental path holds the same contract as the full merge."""
+    from unittest.mock import patch
+
+    from bernstein.core.git.incremental_merge import incremental_merge_files
+
+    with patch(
+        "bernstein.core.git.incremental_merge.check_read_set_changed",
+        side_effect=RuntimeError("journal unreadable"),
+    ):
+        result = incremental_merge_files(
+            workdir=tmp_path,
+            runtime_dir=tmp_path / "runtime",
+            session_id="S-1",
+            files=["a.py"],
+            task_id="T-1",
+            journal_path=str(tmp_path / "journal.jsonl"),
+            worktree_root=str(tmp_path),
+        )
+
+    assert result.success is False
+    assert "could not run" in (result.error or "")

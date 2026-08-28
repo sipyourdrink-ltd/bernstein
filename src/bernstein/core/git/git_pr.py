@@ -356,10 +356,21 @@ def merge_with_conflict_detection(
         except ReadSetAdmissionRefused:
             raise
         except Exception as exc:
-            logger.warning(
-                "Read-set admission check failed for task %s: %s",
+            # The admission question could not be answered -- the journal or
+            # the tree was unreadable. This gate exists to refuse a merge
+            # whose read-set drifted; a check that could not run does not
+            # know that nothing drifted, and proceeding would turn every
+            # such failure into an admission. An unanswered question
+            # refuses, and names the reason instead of the drift.
+            logger.error(
+                "Read-set admission check could not run for task %s: %s",
                 task_id,
                 exc,
+            )
+            return MergeResult(
+                success=False,
+                conflicting_files=[],
+                error=f"Read-set admission check could not run: {exc}",
             )
 
     with start_span("task.merge_with_conflict_detection", {"branch": branch}):
