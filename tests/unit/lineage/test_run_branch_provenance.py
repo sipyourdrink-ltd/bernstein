@@ -9,6 +9,7 @@ nothing the run produced.
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from pathlib import Path
 
@@ -176,11 +177,17 @@ def test_every_row_names_the_branch_head_it_was_read_at(repo: Path) -> None:
     assert all(r.step_id == f"{RUN_BRANCH_STEP_PREFIX}{head}" for r in _rows(repo))
 
 
-def test_the_range_falls_back_when_no_trunk_ref_exists(tmp_path: Path) -> None:
-    """A clone with no trunk ref must still produce a usable range.
+def test_no_trunk_ref_reports_an_unknown_range_rather_than_the_whole_tree(tmp_path: Path) -> None:
+    """A clone with no trunk ref must not attribute every file to the run.
 
-    Returning nothing here would be the silent-empty failure this module
-    exists to remove, so the fallback records the whole branch instead.
+    Diffing from the empty tree makes the range the entire repository, so a
+    shallow or single-branch clone - which has no ``origin/main`` and is the
+    normal shape in CI - would record one spine row per tracked file and
+    claim the run produced all of them. That is a false provenance record,
+    not a conservative one, and it costs a lock-guarded write per file.
+
+    Silence is still the thing to avoid: the range comes back empty and the
+    caller logs why, rather than returning nothing quietly.
     """
     root = tmp_path / "orphan"
     root.mkdir()
@@ -192,4 +199,28 @@ def test_the_range_falls_back_when_no_trunk_ref_exists(tmp_path: Path) -> None:
     base, head = run_branch_range(root, default_branch="main")
 
     assert head == _git(root, "rev-parse", "HEAD")
-    assert base and base != head
+    assert base == ""
+
+
+def test_an_unknown_range_records_nothing_and_says_so(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """The caller must leave a reason, so an empty spine is not a mystery."""
+    root = tmp_path / "orphan-caller"
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "run-only")
+    _git(root, "config", "user.email", "t@example.com")
+    _git(root, "config", "user.name", "T")
+    _commit(root, "only.txt", "x\n", "sole commit")
+
+    with caplog.at_level(logging.WARNING):
+        result = record_run_branch_artifacts(
+            worktree_root=root,
+            actor="orchestrator",
+            lineage_root=root / ".sdd" / "lineage",
+            run_id="run-unknown-range",
+            hmac_key=b"k" * 32,
+            default_branch="main",
+        )
+
+    assert result.unknown_range is True
+    assert result.recorded == []
+    assert "not knowable" in caplog.text

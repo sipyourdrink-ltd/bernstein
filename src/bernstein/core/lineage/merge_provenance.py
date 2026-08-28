@@ -76,6 +76,8 @@ class MergeProvenanceResult:
     recorded: list[str] = field(default_factory=list[str])
     skipped_oversize: list[str] = field(default_factory=list[str])
     unreadable: list[str] = field(default_factory=list[str])
+    unknown_range: bool = False
+    """No trunk reference resolved, so what the branch added is not knowable."""
 
     @property
     def total_seen(self) -> int:
@@ -255,11 +257,15 @@ def run_branch_range(worktree_root: Path, *, default_branch: str = "") -> tuple[
             continue
         if base:
             return base, head
-    # No trunk to diff against: an empty tree hash makes the range the whole
-    # branch rather than nothing. Recording too much is recoverable; recording
-    # silently nothing is the defect this module exists to remove.
-    empty_tree = _git_bytes(["hash-object", "-t", "tree", "/dev/null"], worktree_root)
-    return empty_tree.decode("utf-8", "replace").strip(), head
+    # No trunk to diff against. Diffing from the empty tree would make the
+    # range the entire repository and attribute every tracked file to this
+    # run -- a shallow or single-branch clone has no `origin/main`, so this
+    # is the common case there, not a corner. Recording too much is not the
+    # conservative choice: it is a false claim about what the run produced,
+    # and it costs one spine write per file in the tree. Return no base; the
+    # caller reports the range as unknown rather than recording either a
+    # fiction or a silent nothing.
+    return "", head
 
 
 def record_run_branch_artifacts(
@@ -294,6 +300,14 @@ def record_run_branch_artifacts(
     from bernstein.core.lineage.spine import LineageSpine, content_hash_of
 
     base_sha, head_sha = run_branch_range(worktree_root, default_branch=default_branch)
+    if not base_sha:
+        logger.warning(
+            "run-branch provenance: no trunk ref for %r under %s, so what the branch "
+            "added is not knowable; recording nothing rather than the whole tree",
+            default_branch or "main",
+            worktree_root,
+        )
+        return MergeProvenanceResult(unknown_range=True)
     if base_sha == head_sha:
         return MergeProvenanceResult()
 
