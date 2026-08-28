@@ -105,6 +105,7 @@ def _overlap_stub(
         _file_ownership=file_ownership or {},
         _agents=agents or {},
         _lock_manager=lock_manager,
+        _loop_detector=MagicMock(),
     )
     stub._check_file_overlap = MethodType(
         Orchestrator._check_file_overlap,  # type: ignore[arg-type]
@@ -147,7 +148,7 @@ def test_check_file_overlap_dead_agent_does_not_block() -> None:
 
 
 def test_check_file_overlap_persistent_lock_returns_true() -> None:
-    lock = SimpleNamespace(agent_id="ghost", task_id="T-old")
+    lock = SimpleNamespace(agent_id="ghost", task_id="T-old", locked_at=100.0)
     stub = _overlap_stub(lock_conflicts=[("src/locked.py", lock)])
     assert stub._check_file_overlap([_task_with_files("T-1", ["src/locked.py"])]) is True
     stub._lock_manager.check_conflicts.assert_called_once_with(["src/locked.py"])

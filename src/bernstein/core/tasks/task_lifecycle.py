@@ -2637,9 +2637,8 @@ def claim_and_spawn_batches(
                             if task.parent_task_id in session.task_ids:
                                 waiting_agent = session.id
                                 break
-                    if not waiting_agent:
-                        waiting_agent = task.id
-                    detector.clear_wait(waiting_agent)
+                    if waiting_agent:
+                        detector.clear_wait(waiting_agent)
             except httpx.TransportError as exc:
                 logger.error(
                     "Server unreachable claiming task %s: %s -- aborting spawn",

@@ -57,10 +57,19 @@ async def test_deadlock_cycle_breaker_integration() -> None:
         orch._check_file_overlap([task4])
         
         # Tick the deadlock detection
+        detections = loop_detector.detect_deadlocks(lock_mgr)
+        assert len(detections) == 1, f"Expected exactly 1 deadlock cycle, got {len(detections)}"
+
         from bernstein.core.agents.agent_lifecycle import check_loops_and_deadlocks
         
         # The oldest lock is A-1's lock on file1.py. It should be released.
         check_loops_and_deadlocks(orch)
+        
+        # Simulate the orchestrator cleaning up agent wait states after tick
+        loop_detector.clear_wait("A-1")
+        loop_detector.clear_wait("A-2")
+        
+        assert len(loop_detector._wait_for) == 0, "wait_for graph should be completely empty after clear_wait() runs"
         
         locks = lock_mgr.all_locks()
         locked_files = [lock.file_path for lock in locks]
