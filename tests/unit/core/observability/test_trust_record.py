@@ -143,7 +143,8 @@ def _emitter_with_known_key(*, install_rev: str = "aaaaaaaaaaaaaaaa") -> TrustRe
 def _canonical_body_bytes(doc: dict[str, Any]) -> bytes:
     """Rebuild the exact bytes ``_sign_record`` signed from a parsed record."""
     body = {field: doc[field] for field in _SIGNED_BODY_FIELDS}
-    return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    from bernstein.core.security.agent_card_signer import canonicalize_jcs
+    return canonicalize_jcs(body)
 
 
 def _rebuild_detached_jws(signature: dict[str, str]) -> str:

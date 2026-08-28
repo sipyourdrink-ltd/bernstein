@@ -342,12 +342,10 @@ class TrustRecordEmitter:
             "claims": record.claims,
         }
 
-        # Canonical bytes: sorted keys, minimal separators
-        canonical_bytes = json.dumps(
-            body,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
+        # Canonical bytes: use JCS per RFC 8785 (UTF-16 code-unit sorting for property names)
+        from bernstein.core.security.agent_card_signer import canonicalize_jcs
+
+        canonical_bytes = canonicalize_jcs(body)
 
         # Sign using existing infrastructure (Ed25519 via sign_detached_jws_over_canonical)
         private_key_pem = self._get_private_key_pem()
