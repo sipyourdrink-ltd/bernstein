@@ -1121,10 +1121,6 @@ class TestCronEvaluation:
 # ---------------------------------------------------------------------------
 # Trigger source tests
 # ---------------------------------------------------------------------------
-
-
-
-
 class TestSlackSource:
     def test_verify_slack_signature(self) -> None:
         from bernstein.core.trigger_sources.slack import verify_slack_signature

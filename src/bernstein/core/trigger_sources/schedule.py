@@ -3,8 +3,8 @@
 The schedule supervisor invokes ``normalize_schedule_fire`` whenever a
 registered schedule is due. The returned TriggerEvent flows through the
 existing trigger pipeline so resulting tasks land in the regular
-orchestrator loop, identical to how routine webhooks land via
-``trigger_sources.routine``.
+orchestrator loop, the same way the other configured sources in this
+package land.
 """
 
 from __future__ import annotations

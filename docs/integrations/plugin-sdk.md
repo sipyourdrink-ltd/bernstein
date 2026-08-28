@@ -201,6 +201,17 @@ turning a raw event into a `TriggerEvent`.
 jira = "my_package.triggers:JiraTriggerSource"
 ```
 
+Installed sources are looked up by name alongside the built-ins:
+
+```python
+from bernstein.core.trigger_sources.registry import (
+    get_trigger_source,
+    list_trigger_source_names,
+)
+
+list_trigger_source_names()  # ['artifact', 'file_watch', 'jira', 'odata_poll']
+get_trigger_source("jira")  # the registered class
+```
 
 A malformed entry in either group is skipped with a warning naming it; it never
 takes down discovery for the rest.
