@@ -1,5 +1,5 @@
 import pytest
-import time
+import asyncio
 import tempfile
 from types import SimpleNamespace
 
@@ -38,7 +38,7 @@ async def test_deadlock_cycle_breaker_integration() -> None:
         # Agent 1 holds file 1 (older lock)
         lock_mgr.acquire(["src/file1.py"], agent_id="A-1", task_id="T-1")
         # Ensure lock timestamps are different
-        time.sleep(0.01)
+        await asyncio.sleep(0.01)
         # Agent 2 holds file 2 (newer lock)
         lock_mgr.acquire(["src/file2.py"], agent_id="A-2", task_id="T-2")
         

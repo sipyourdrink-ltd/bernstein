@@ -4902,7 +4902,6 @@ class Orchestrator:
                     lock.task_id,
                 )
                 held_by[fpath] = lock.agent_id
-                import time
                 lock_timestamps[lock.agent_id] = getattr(lock, "locked_at", time.time())
                 conflict = True
 
@@ -4928,31 +4927,6 @@ class Orchestrator:
 
         return False
 
-        # In-memory ownership check - filters out dead agents explicitly.
-        for fpath in all_files:
-            owner_id = self._file_ownership.get(fpath)
-            if owner_id:
-                session = self._agents.get(owner_id)
-                if session and session.status == "working":
-                    logger.debug(
-                        "File %s owned by active agent %s, deferring batch",
-                        fpath,
-                        owner_id,
-                    )
-                    return True
-
-        # Persistent lock check (survives crashes via FileLockManager TTL).
-        conflicts = self._lock_manager.check_conflicts(all_files)
-        if conflicts:
-            for fpath, lock in conflicts:
-                logger.debug(
-                    "File %s locked by agent %s (task %s), deferring batch",
-                    fpath,
-                    lock.agent_id,
-                    lock.task_id,
-                )
-            return True
-        return False
 
     def _should_auto_decompose(self, task: Task) -> bool:
         """Delegate to task_lifecycle.should_auto_decompose."""
