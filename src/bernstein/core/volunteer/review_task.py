@@ -125,11 +125,7 @@ def create_volunteer_review_task(
     url = (server_url or _resolve_server_url()).rstrip("/")
     token = auth_token or _resolve_auth_token()
 
-    issue_ref = (
-        f"#{bundle.task.issue_number}"
-        if bundle.task.issue_number
-        else f"commit {bundle.task.commit_sha[:12]}"
-    )
+    issue_ref = f"#{bundle.task.issue_number}" if bundle.task.issue_number else f"commit {bundle.task.commit_sha[:12]}"
     task_title = f"[volunteer review] {issue_ref} — {bundle.task.repo.split('/')[-1]}"
 
     task_description = "\n".join(
