@@ -891,7 +891,7 @@ class TestBuildSpawnSection:
         assert section == ""
 
     def test_wrong_key_omits_section(self, tmp_path: Path) -> None:
-        from bernstein.core.orchestration.consensus_relay import RelayDecision, RelayStore, build_spawn_section
+        from bernstein.core.orchestration.consensus_relay import RelayStore, build_spawn_section
 
         store = RelayStore(tmp_path / "relay", key=b"k" * 32)
         store.append(cycle_id="c1", phase="plan", next_action="ok")
