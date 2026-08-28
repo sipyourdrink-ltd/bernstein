@@ -1,15 +1,10 @@
-"""Unit tests for the team-hub schema + convention loader.
+"""Unit tests for the team-hub manifest schema.
 
 Covers the smallest viable surface:
 
 - :class:`TeamHubManifest` accepts a well-formed manifest dict
 - traversal / absolute-path entries are rejected at schema time
 - :func:`parse_team_hub_yaml` round-trips a real on-disk fixture
-- :func:`load_team_hub` returns ``None`` when the convention dirs are absent
-- :func:`load_team_hub` resolves declared paths and orders them
-  ``agents → skills → rules``
-- a manifest entry pointing at a missing path raises
-  :class:`TeamHubLoaderError`
 """
 
 from __future__ import annotations
@@ -18,11 +13,6 @@ from pathlib import Path
 
 import pytest
 
-from bernstein.core.plugins_core.team_hub_loader import (
-    LoadedTeamHub,
-    TeamHubLoaderError,
-    load_team_hub,
-)
 from bernstein.core.plugins_core.team_hub_manifest import (
     TeamHubManifest,
     TeamHubManifestError,
@@ -180,78 +170,3 @@ def test_parse_team_hub_yaml_rejects_oversize(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------- loader ----
-
-
-def test_load_team_hub_missing_root_is_noop(tmp_path: Path) -> None:
-    """A path that doesn't exist returns ``None`` - no exception."""
-    assert load_team_hub(tmp_path / "does-not-exist") is None
-
-
-def test_load_team_hub_missing_manifest_is_noop(tmp_path: Path) -> None:
-    """An empty directory returns ``None`` - operator hasn't initialised yet."""
-    (tmp_path / "team").mkdir()
-    assert load_team_hub(tmp_path) is None
-
-
-def test_load_team_hub_missing_team_dir_is_noop(tmp_path: Path) -> None:
-    """Manifest without the ``team/`` convention dir is treated as not-yet-populated."""
-    (tmp_path / "team-hub.yaml").write_text(
-        "name: x\nversion: '1'\ncompatibility:\n  bernstein: '>=1'\n",
-        encoding="utf-8",
-    )
-    assert load_team_hub(tmp_path) is None
-
-
-def test_load_team_hub_resolves_entries(tmp_path: Path) -> None:
-    """A populated hub yields entries in the canonical ``agents → skills → rules`` order."""
-    manifest_text = (
-        "name: acmecorp-shared\n"
-        "version: '1.0'\n"
-        "ships:\n"
-        "  agents:\n"
-        "    - team/agents/reviewer/\n"
-        "  skills:\n"
-        "    - team/skills/deploy-prod/\n"
-        "  rules:\n"
-        "    - team/rules/no-print.md\n"
-        "compatibility:\n"
-        "  bernstein: '>=1.10'\n"
-    )
-    hub = _write_hub(tmp_path / "hub", manifest_yaml=manifest_text)
-
-    loaded = load_team_hub(hub)
-
-    assert isinstance(loaded, LoadedTeamHub)
-    assert [(e.bucket, e.relative, e.is_directory) for e in loaded.entries] == [
-        ("agents", "team/agents/reviewer", True),
-        ("skills", "team/skills/deploy-prod", True),
-        ("rules", "team/rules/no-print.md", False),
-    ]
-    # ``by_bucket`` filters but preserves source order.
-    assert loaded.by_bucket("agents") == (loaded.entries[0],)
-    assert loaded.by_bucket("rules") == (loaded.entries[2],)
-    # All resolved paths live inside the hub root.
-    real_root = hub.resolve()
-    for entry in loaded.entries:
-        assert entry.absolute.resolve().is_relative_to(real_root)
-
-
-def test_load_team_hub_missing_entry_raises(tmp_path: Path) -> None:
-    """Manifest claims a file that isn't on disk → :class:`TeamHubLoaderError`."""
-    manifest_text = (
-        "name: acmecorp-shared\n"
-        "version: '1.0'\n"
-        "ships:\n"
-        "  rules:\n"
-        "    - team/rules/missing.md\n"
-        "compatibility:\n"
-        "  bernstein: '>=1.10'\n"
-    )
-    hub = _write_hub(tmp_path / "hub", manifest_yaml=manifest_text)
-    # Remove the file the schema check can't catch - the path is structurally valid.
-    (hub / "team" / "rules" / "no-print.md").unlink()
-
-    with pytest.raises(TeamHubLoaderError) as exc:
-        load_team_hub(hub)
-
-    assert "missing path" in exc.value.detail

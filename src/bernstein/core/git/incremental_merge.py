@@ -44,10 +44,14 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.git.git_basic import run_git
+from bernstein.core.git.read_set_admission import ReadSetAdmissionRefused, check_read_set_changed
+from bernstein.core.git.read_set_receipt import refuse_read_set
 from bernstein.core.quality.run_config_gate import check_paths
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from bernstein.core.security.audit_chain import AuditChainStore
 
 logger = logging.getLogger(__name__)
 
@@ -329,6 +333,10 @@ def incremental_merge_files(
     message: str = "",
     *,
     merge_lock: threading.Lock | None = None,
+    task_id: str = "",
+    journal_path: str = "",
+    worktree_root: str = "",
+    audit_chain: AuditChainStore | None = None,
 ) -> IncrementalMergeResult:
     """Merge specific committed files from an agent's branch into the current branch.
 
@@ -353,6 +361,10 @@ def incremental_merge_files(
         merge_lock: Optional external lock to hold during the git operations.
             Pass the :class:`MergeQueue`'s ``merge_lock`` to serialise all
             merge activity (incremental + final) across sessions.
+        task_id: Task ID for admission control and refusal receipt.
+        journal_path: Path to the run's event journal for read-set derivation.
+        worktree_root: Worktree root for git operations.
+        audit_chain: Audit chain store for anchoring refusal receipts.
 
     Returns:
         :class:`IncrementalMergeResult` describing what was merged.
@@ -372,6 +384,76 @@ def incremental_merge_files(
     branch = f"agent/{session_id}"
 
     with session_lock:
+        # Read-set admission check: refuse merge if read-set paths have changed
+        if task_id and journal_path and worktree_root:
+            try:
+                base_commit = "HEAD"
+                changed_paths = check_read_set_changed(
+                    journal_path=journal_path,
+                    worktree_root=worktree_root,
+                    base_commit=base_commit,
+                    target_branch=branch,
+                )
+                if changed_paths:
+                    # Emit refusal receipt
+                    if audit_chain:
+                        # Get audit chain key for signing
+
+                        from bernstein.core.security.audit import AuditLog
+                        from bernstein.core.security.audit_chain import AuditChainStore
+
+                        sdd_dir = runtime_dir.parent
+                        audit_log = AuditLog.load_from_file(str(sdd_dir / "runtime" / "audit.log"))
+                        chain = AuditChainStore(audit_log)
+                        # Sign and persist the refusal receipt
+                        receipt = refuse_read_set(
+                            chain=chain,
+                            sdd_dir=sdd_dir,
+                            task_id=task_id,
+                            base_commit=base_commit,
+                            target_branch=branch,
+                            changed_paths=changed_paths,
+                            private_key_pem="",
+                            public_key_pem="",
+                        )
+                        receipt_str = json.dumps(receipt.to_dict())
+                        logger.error(
+                            "Read-set admission refused for task %s: %d path(s) changed. Refusal receipt: %s",
+                            task_id,
+                            len(changed_paths),
+                            receipt_str,
+                        )
+                    else:
+                        logger.error(
+                            "Read-set admission refused for task %s: %d path(s) changed",
+                            task_id,
+                            len(changed_paths),
+                        )
+                    raise ReadSetAdmissionRefused(
+                        f"Read-set changed: {len(changed_paths)} path(s) modified since base commit {base_commit}"
+                    )
+            except ReadSetAdmissionRefused:
+                raise
+            except Exception as exc:
+                # Same contract as the refusal above: this branch only runs
+                # for a task that declared a journal for admission, and an
+                # admission question that could not be answered refuses
+                # rather than admitting by default.
+                logger.error(
+                    "Read-set admission check could not run for task %s: %s",
+                    task_id,
+                    exc,
+                )
+                return IncrementalMergeResult(
+                    success=False,
+                    merged_files=[],
+                    skipped_already_merged=[],
+                    uncommitted_files=[],
+                    conflicting_files=[],
+                    commit_sha="",
+                    error=f"Read-set admission check could not run: {exc}",
+                )
+
         # Load current state to find already-merged files
         state = _load_state(runtime_dir, session_id)
         already_merged = set(state.merged_files)

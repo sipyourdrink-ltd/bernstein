@@ -89,7 +89,8 @@ def _write_fixture(tmp_path: Path, *, zh: str | None = None) -> Path:
         encoding="utf-8",
     )
     if zh is not None:
-        (tmp_path / "README.zh-Hans.md").write_text(zh, encoding="utf-8")
+        (tmp_path / "docs" / "i18n").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "docs" / "i18n" / "README.zh-Hans.md").write_text(zh, encoding="utf-8")
     return tmp_path
 
 
@@ -116,7 +117,7 @@ class TestVerify:
         result = _run("verify", "--workdir", str(repo))
         assert result.exit_code == 1, result.output
         # The failure must name the language and the exact section.
-        assert "README.zh-Hans.md" in result.output
+        assert "docs/i18n/README.zh-Hans.md" in result.output
         assert "install in 30 seconds" in result.output
 
     def test_translated_code_block_fails(self, tmp_path: Path) -> None:

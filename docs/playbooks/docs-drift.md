@@ -94,7 +94,7 @@ been moved, renamed, deleted, or its public surface changed."
 | `spec-as-test.md` | `src/bernstein/core/planning/spec_assertions.py`, `src/bernstein/core/orchestration/drain.py`, `src/bernstein/cli/run_cmd.py` | Spec-assertion schema change, drain-hook signature change | `manual-prose` |
 | `swarm-migration.md` | `src/bernstein/core/tasks/swarm_migration.py`, `src/bernstein/cli/commands/migrate_cmd.py` | Migration entry point change, CLI flag change | `manual-prose` |
 | `task-budgets.md` | `src/bernstein/core/cost/budget_countdown.py` | Budget-format function renamed | `manual-prose` |
-| `team-hub.md` | `src/bernstein/core/plugins_core/team_hub_loader.py`, `src/bernstein/core/plugins_core/team_hub_manifest.py` | Manifest schema change | `manual-prose` |
+| `team-hub.md` | `src/bernstein/core/plugins_core/team_hub_manifest.py` | Manifest schema change | `manual-prose` |
 | `wiki-build.md` | `src/bernstein/cli/commands/wiki_cmd.py`, `src/bernstein/core/knowledge/ast_symbol_graph.py`, `src/bernstein/core/knowledge/wiki_renderer.py` | Wiki-build CLI flag change, renderer output schema change | `manual-prose` |
 
 ### `docs/gui/`

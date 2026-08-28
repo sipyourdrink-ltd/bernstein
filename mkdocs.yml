@@ -688,3 +688,4 @@ exclude_docs: |
   /templates/
   _internal/
   /assets/*.md
+  /i18n/

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import py_compile
@@ -17,6 +18,9 @@ from typing import TYPE_CHECKING
 
 from bernstein.core.config.run_overlay import RUN_CONFIG_PATHS
 from bernstein.core.git.git_basic import GitResult, run_git
+from bernstein.core.git.read_set_admission import ReadSetAdmissionRefused, check_read_set_changed
+from bernstein.core.git.read_set_receipt import refuse_read_set
+from bernstein.core.security.audit_chain import AuditChainStore
 from bernstein.core.telemetry import start_span
 
 if TYPE_CHECKING:
@@ -278,6 +282,10 @@ def merge_with_conflict_detection(
     branch: str,
     *,
     message: str | None = None,
+    task_id: str = "",
+    journal_path: str = "",
+    worktree_root: str = "",
+    audit_chain: AuditChainStore | None = None,
 ) -> MergeResult:
     """Merge a branch with explicit conflict detection and safe abort on failure.
 
@@ -289,10 +297,82 @@ def merge_with_conflict_detection(
         cwd: Repository root.
         branch: Branch to merge into the current HEAD.
         message: Commit message when the merge is clean.
+        task_id: Task ID for admission control and refusal receipt.
+        journal_path: Path to the run's event journal for read-set derivation.
+        worktree_root: Worktree root for git operations.
+        audit_chain: Audit chain store for anchoring refusal receipts.
 
     Returns:
         MergeResult indicating success or listing conflicting files.
     """
+    # Read-set admission check: refuse merge if read-set paths have changed
+    if task_id and journal_path and worktree_root:
+        base_commit = "HEAD"
+        try:
+            changed_paths = check_read_set_changed(
+                journal_path=journal_path,
+                worktree_root=worktree_root,
+                base_commit=base_commit,
+                target_branch=branch,
+            )
+            if changed_paths:
+                # Emit refusal receipt
+                if audit_chain:
+                    from pathlib import Path as _Path
+
+                    from bernstein.core.security.audit import AuditLog
+
+                    sdd_dir = _Path(worktree_root).parent.parent
+                    audit_log = AuditLog.load_from_file(str(sdd_dir / "runtime" / "audit.log"))
+                    chain = AuditChainStore(audit_log)
+                    receipt = refuse_read_set(
+                        chain=chain,
+                        sdd_dir=sdd_dir,
+                        task_id=task_id,
+                        base_commit=base_commit,
+                        target_branch=branch,
+                        changed_paths=changed_paths,
+                        private_key_pem="",
+                        public_key_pem="",
+                    )
+                    receipt_str = json.dumps(receipt.to_dict())
+                    logger.error(
+                        "Read-set admission refused for task %s: %d path(s) changed. Refusal receipt: %s",
+                        task_id,
+                        len(changed_paths),
+                        receipt_str,
+                    )
+                else:
+                    logger.error(
+                        "Read-set admission refused for task %s: %d path(s) changed",
+                        task_id,
+                        len(changed_paths),
+                    )
+                return MergeResult(
+                    success=False,
+                    conflicting_files=[],
+                    error=(f"Read-set changed: {len(changed_paths)} path(s) modified since base commit {base_commit}"),
+                )
+        except ReadSetAdmissionRefused:
+            raise
+        except Exception as exc:
+            # The admission question could not be answered -- the journal or
+            # the tree was unreadable. This gate exists to refuse a merge
+            # whose read-set drifted; a check that could not run does not
+            # know that nothing drifted, and proceeding would turn every
+            # such failure into an admission. An unanswered question
+            # refuses, and names the reason instead of the drift.
+            logger.error(
+                "Read-set admission check could not run for task %s: %s",
+                task_id,
+                exc,
+            )
+            return MergeResult(
+                success=False,
+                conflicting_files=[],
+                error=f"Read-set admission check could not run: {exc}",
+            )
+
     with start_span("task.merge_with_conflict_detection", {"branch": branch}):
         # 1. Attempt the merge without committing
         merge_r = run_git(

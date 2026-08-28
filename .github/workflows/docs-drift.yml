@@ -278,6 +278,22 @@ jobs:
           uv run pytest tests/unit/test_docs_prose_cli_drift.py -q --no-cov --timeout=120
         shell: bash
 
+      - name: Fail when the change deletes a documented source of truth
+        # The drift report above is advisory on pull requests because a doc
+        # that fell behind can be caught up later. This is the narrower case
+        # and it fails here: the change deletes the very file a doc is
+        # documented against, so it introduces the broken reference, and the
+        # doc plus its playbook row can be corrected in the same change
+        # instead of turning main red after the merge.
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git diff --diff-filter=D --name-only "$BASE_SHA...$HEAD_SHA" > deleted-paths.txt
+          python scripts/check_docs_drift.py --deleted-paths-file deleted-paths.txt
+        shell: bash
+
       - name: Fail the gate on main-branch drift
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |

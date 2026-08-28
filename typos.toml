@@ -96,6 +96,15 @@ extend-exclude = [
     # fixtures tree; review still applies to the human-authored README/Makefile.
     "examples/lineage/*/fixtures/**",
     "examples/lineage/*/expected-pack.zip",
+    # Trust-record conformance vectors - same content profile as the lineage
+    # fixtures above: Ed25519 signatures and a did:key multibase subject, both
+    # base64/base58 runs the scanner reads as words ("iy" -> "it" inside a
+    # signature). The bytes are a real signature over the record, so a spelling
+    # fix here is not possible: editing one character invalidates the signature
+    # the offline verification test checks. Only the generated vectors are
+    # excluded; the human-authored builder script beside them stays in scope.
+    "tests/fixtures/trust-record-vectors/*.json",
+    "tests/fixtures/trust-record-vectors/*.pem",
     # Vite-built SPA bundle - minified JS / sourcemaps mangle identifiers to
     # 1–2 chars (``ue``, ``ot``, ``Iy``, ``Archtype``, etc.) that trigger
     # thousands of false-positive typo errors and bury real findings. Human-

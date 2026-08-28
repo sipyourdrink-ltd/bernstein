@@ -186,3 +186,26 @@ docs/_internal/observability/*
 # names elsewhere is unaffected.
 /task*.json
 /verdicts.json
+
+# `.coverage` alone matches one filename. Running the suite in parallel makes
+# pytest-cov write one shard per worker as `.coverage.<host>.<pid>.<random>`,
+# and 25 of them reached main because nothing matched that shape.
+.coverage.*
+!.coverage-baseline.json
+
+# Editor and tooling backups: a `.bak` beside the file it copies is never the
+# artefact, and one reached main under src/.
+*.bak
+*.orig
+*.rej
+
+# Per-run review scratch. These are written into the work tree by the review
+# pass and are not part of any change.
+REVIEW-*.md
+
+# Working notes agents write at the repository root while resolving an
+# issue. All three shapes have been committed by runs; none is ever part
+# of a change.
+/IMPLEMENTATION_PLAN.md
+/pr-body-*.md
+/test.txt

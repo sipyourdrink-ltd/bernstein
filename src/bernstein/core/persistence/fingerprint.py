@@ -198,9 +198,8 @@ def code_digest(*targets: CodeDependency) -> bytes:
 
     Module digests are cached against the file's ``(mtime_ns, size)`` and
     re-derived when that moves, so a module swapped in by
-    ``importlib.reload`` under a long-running process (see
-    ``plugins_core.plugin_hotreload``) does not keep folding its
-    pre-reload source into new keys.  Callable targets inherit
+    ``importlib.reload`` under a long-running process does not keep
+    folding its pre-reload source into new keys.  Callable targets inherit
     :func:`fingerprint`'s per-process source cache; prefer passing the
     owning module when a target may be reloaded.
     """
