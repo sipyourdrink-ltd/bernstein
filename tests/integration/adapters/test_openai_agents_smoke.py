@@ -46,6 +46,7 @@ def _sdk_installed() -> bool:
         try:
             # Try to import and see if it has the Agent class
             import agents
+
             return hasattr(agents, "Agent") and hasattr(agents, "Runner")
         except (ImportError, AttributeError):
             return False
@@ -53,6 +54,7 @@ def _sdk_installed() -> bool:
     # import and see if it has the expected classes
     try:
         import agents
+
         return hasattr(agents, "Agent") and hasattr(agents, "Runner")
     except (ImportError, AttributeError):
         return False

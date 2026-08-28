@@ -28,7 +28,6 @@ async def test_server_restart_resilience(test_client: TestClient, orchestrator_f
     }
 
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
-
         from tests.integration.conftest import make_proxy_handler
 
         proxy = make_proxy_handler(
