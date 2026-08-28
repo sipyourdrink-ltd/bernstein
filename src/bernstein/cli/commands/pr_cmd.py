@@ -84,13 +84,19 @@ def _current_branch(cwd: Path) -> str:
     return result.stdout.strip() or "HEAD"
 
 
-def _git_error(result: subprocess.CompletedProcess) -> str:
+def _git_error(
+    result: subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes],
+) -> str:
     """Summarise a failed git invocation in one line.
 
     A description is written from what git answers.  When git does not
     answer, the description must say so rather than describe the silence:
     an unanswered query is not a negative answer.  This returns the line
     the caller reports; ``""`` means the invocation succeeded.
+
+    Both stream types are accepted on purpose: the diff is captured as bytes
+    so its hash does not depend on this process's decoding, everything else
+    is captured as text, and both go through this one reporter.
     """
     if result.returncode == 0:
         return ""
@@ -515,7 +521,10 @@ def _attest_description(
     if not pr_url or summary.provenance is None:
         return
     try:
-        diff = _diff_bytes(cwd, summary.base_branch, summary.branch)
+        diff, diff_error = _diff_bytes(cwd, summary.base_branch, summary.branch)
+        if diff_error:
+            click.echo(f"note: could not re-read the diff to anchor it: {diff_error}", err=True)
+            return
         recomputed = build_provenance(diff=diff, journal_head=summary.journal_head)
         if recomputed.diff_hash != summary.provenance.diff_hash:
             click.echo(
@@ -534,5 +543,12 @@ def _attest_description(
             journal_head=summary.journal_head,
             task_id=summary.session_id,
         )
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+    except Exception as exc:
+        # Deliberately every exception, not a named few. This step's whole
+        # contract is that it is optional, and a handler that names the errors
+        # it expects only honours that contract for failures someone thought
+        # of. The one that happened -- a TypeError from a mis-called helper --
+        # was not in the list, so it walked past the handler and failed a
+        # command whose pull request was already open and whose run had
+        # already passed its verification gate.
         click.echo(f"note: could not anchor the pull-request description: {exc}", err=True)
