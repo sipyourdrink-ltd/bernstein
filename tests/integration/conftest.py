@@ -228,6 +228,7 @@ def orchestrator_factory(integration_sdd: Path):
         os.environ["BERNSTEIN_CLI"] = "integration-mock"
         os.environ["BERNSTEIN_MAX_TASK_RETRIES"] = "0"
         os.environ["BERNSTEIN_HEARTBEAT_TIMEOUT"] = "60"
+        os.environ["BERNSTEIN_ADAPTER_ADMISSION_POLICY"] = "off"
         # The ephemeral test repo lives on its default branch ("main"), so the
         # spawner's protected-trunk guard refuses to merge worktree output back
         # and the task never reaches "done" (it stays "claimed" and is

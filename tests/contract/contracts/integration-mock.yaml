@@ -1,0 +1,20 @@
+# Contract for the IntegrationMock adapter used in tests.
+#
+# This adapter executes python scripts from task descriptions for integration tests.
+adapter: integration-mock
+binary: python
+install:
+  method: python
+  spec: ""
+  python: "3.12"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: ""
+required_flags:
+  - "-c"
+  - "-m"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []
