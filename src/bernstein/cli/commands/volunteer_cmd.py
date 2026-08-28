@@ -256,3 +256,39 @@ def _fail(message: str, *, field: str, as_json: bool, path: Path) -> None:
         click.echo(f"✗ {path}", err=True)
         click.echo(f"  {field}: {message}", err=True)
     raise SystemExit(1)
+
+
+@volunteer_group.command("hub")
+@click.option("--host", default="127.0.0.1", help="Host to bind to.")
+@click.option("--port", type=int, default=8053, help="Port to bind to.")
+@click.option(
+    "--lease-store",
+    "lease_store_path",
+    default=None,
+    help="Path to the JSONL lease store file.",
+)
+def hub_cmd(host: str, port: int, lease_store_path: str | None) -> None:
+    """Serve the volunteer hub HTTP interface.
+
+    The hub exposes endpoints for workers to enroll, claim, heartbeat,
+    submit, and release tasks.  See :func:`bernstein.core.volunteer.hub_app.build_hub_app`
+    for the API surface.
+    """
+    try:
+        import uvicorn
+    except ImportError:
+        raise click.ClickException(
+            "uvicorn is required for the volunteer hub; install with `uv pip install uvicorn`"
+        ) from None
+
+    from bernstein.core.volunteer.hub_app import build_hub_app
+    from bernstein.core.volunteer.lease_store import LeaseStore
+
+    if lease_store_path is None:
+        lease_store_path = ".sdd/runtime/volunteer/leases.jsonl"
+
+    store = LeaseStore(Path(lease_store_path))
+    app = build_hub_app(store)
+    click.echo(f"Bernstein volunteer hub listening on http://{host}:{port}")
+    uvicorn.run(app, host=host, port=port, log_level="warning")
+
