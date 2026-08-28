@@ -367,3 +367,49 @@ def test_the_group_is_registered_on_the_cli() -> None:
 
     assert "volunteer" in cli.commands
     assert "verify" in cli.commands["volunteer"].commands
+
+
+def test_the_hub_refuses_to_boot_when_a_second_worker_is_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second worker corrupts the lease store rather than sharing it.
+
+    ``LeaseStore`` serialises writes with an in-process ``asyncio.Lock`` and
+    appends to JSONL without ``fcntl.flock``. A second process therefore
+    interleaves partial lines and hands one task to two claimants -- a
+    failure that shows up later as a duplicate submission, far from the
+    ``WEB_CONCURRENCY`` that caused it. The command has to refuse at boot,
+    because by the time the damage is visible the log no longer says why.
+    """
+    monkeypatch.setenv("WEB_CONCURRENCY", "2")
+    monkeypatch.delenv("BERNSTEIN_WORKERS", raising=False)
+
+    result = CliRunner().invoke(volunteer_group, ["hub"])
+
+    assert result.exit_code != 0
+    assert "workers=2" in str(result.exception)
+
+
+def test_the_hub_refusal_happens_before_the_port_is_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Refusing after ``uvicorn.run`` starts is not refusing.
+
+    The guard is only worth anything if it fires ahead of the server, so the
+    test fails the run outright if anything reaches ``uvicorn.run``.
+    """
+    monkeypatch.setenv("BERNSTEIN_WORKERS", "4")
+    import uvicorn
+
+    def _never(*args: object, **kwargs: object) -> None:
+        raise AssertionError("the server was started")
+
+    monkeypatch.setattr(uvicorn, "run", _never)
+
+    result = CliRunner().invoke(volunteer_group, ["hub"])
+
+    # SystemExit specifically: the sentinel above also fails the command, so
+    # a test that only checked for a non-zero exit would pass just as well
+    # against a hub that booted and then died.
+    assert isinstance(result.exception, SystemExit)
+    assert "refusing to boot" in str(result.exception)

@@ -276,7 +276,18 @@ def hub_cmd(host: str, port: int, lease_store_path: str | None) -> None:
 
     .. note:: The lease store is single-process only. Do not run with
        ``uvicorn --workers N>1`` or multiple replicas.
+
+    Raises:
+        SystemExit: Via ``preflight_multi_worker_guard`` when the operator
+            asks for more than one worker. ``LeaseStore`` serialises writes
+            with an in-process ``asyncio.Lock`` and appends to JSONL without
+            ``fcntl.flock``, so a second worker interleaves partial lines and
+            hands the same task to two claimants.
     """
+    from bernstein.core.server.server_app import preflight_multi_worker_guard
+
+    preflight_multi_worker_guard()
+
     try:
         import uvicorn
     except ImportError:
@@ -293,5 +304,4 @@ def hub_cmd(host: str, port: int, lease_store_path: str | None) -> None:
     store = LeaseStore(Path(lease_store_path))
     app = build_hub_app(store)
     click.echo(f"Bernstein volunteer hub listening on http://{host}:{port}")
-    click.echo("NOTE: single-process only — do not use --workers N>1 or replicas")
     uvicorn.run(app, host=host, port=port, log_level="warning")
