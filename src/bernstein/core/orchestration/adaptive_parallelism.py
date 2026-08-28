@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from bernstein.core.defaults import PARALLELISM
+from bernstein.core.orchestration.controller_state import AdaptiveParallelismState
 
 logger = logging.getLogger(__name__)
 
@@ -272,6 +273,46 @@ class AdaptiveParallelism:
         if low_error_since is not None:
             with contextlib.suppress(ValueError, TypeError):
                 ap._low_error_since = float(low_error_since)
+        return ap
+
+    def to_adaptive_parallelism_state(self) -> AdaptiveParallelismState:
+        """Convert this instance to a ``AdaptiveParallelismState`` for sidecar persistence.
+
+        Returns:
+            An ``AdaptiveParallelismState`` snapshot with the same field values
+            as :meth:`to_dict` (for compatibility with ``from_dict``), but
+            returned as a dataclass so callers can pass it directly to
+            ``controller_state.save`` without an extra dict round-trip.
+        """
+        return AdaptiveParallelismState(
+            configured_max=self.configured_max,
+            current_max=self._current_max,
+            slo_constrained_max=self._slo_constrained_max,
+            last_adjustment_reason=self._last_adjustment_reason,
+            low_error_since_epoch=self._low_error_since,
+        )
+
+    @classmethod
+    def from_adaptive_parallelism_state(
+        cls, state: AdaptiveParallelismState, configured_max: int | None = None
+    ) -> AdaptiveParallelism:
+        """Reconstruct an instance from an ``AdaptiveParallelismState`` dataclass.
+
+        Args:
+            state: The persisted state dataclass.
+            configured_max: Override the configured max if the caller
+                needs to enforce a different cap. ``None`` reads from
+                ``state.configured_max``.
+
+        Returns:
+            A new ``AdaptiveParallelism`` whose runtime state matches the
+            persisted snapshot. The outcome window is intentionally empty.
+        """
+        ap = cls(configured_max=configured_max or state.configured_max)
+        ap._current_max = state.current_max
+        ap._slo_constrained_max = state.slo_constrained_max
+        ap._last_adjustment_reason = state.last_adjustment_reason
+        ap._low_error_since = state.low_error_since_epoch
         return ap
 
     def status(self) -> AdaptiveParallelismStatus:

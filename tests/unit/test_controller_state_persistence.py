@@ -349,3 +349,77 @@ class TestOrchestratorIntegration:
         assert len(loaded_conflict) == 2
         assert loaded_conflict["t1"].episode_count == 1
         assert loaded_conflict["t2"].episode_count == 3
+
+
+# ---------------------------------------------------------------------------
+# AdaptiveParallelism.to_adaptive_parallelism_state / from_adaptive_parallelism_state
+#
+
+
+class TestAdaptiveParallelismStateConversion:
+    def test_to_adaptive_parallelism_state(self) -> None:
+        from bernstein.core.orchestration.adaptive_parallelism import AdaptiveParallelism
+
+        ap = AdaptiveParallelism(configured_max=6)
+        ap._current_max = 4
+        ap._slo_constrained_max = 3
+        ap._last_adjustment_reason = "error_rate_high (25%)"
+        ap._low_error_since = time.time() - 200.0
+
+        state = ap.to_adaptive_parallelism_state()
+        assert state.configured_max == 6
+        assert state.current_max == 4
+        assert state.slo_constrained_max == 3
+        assert state.last_adjustment_reason == "error_rate_high (25%)"
+        assert state.low_error_since_epoch == pytest.approx(ap._low_error_since, abs=1.0)
+
+    def test_from_adaptive_parallelism_state(self) -> None:
+        from bernstein.core.orchestration.adaptive_parallelism import AdaptiveParallelism
+
+        state = _make_ap_state(
+            configured_max=8,
+            current_max=5,
+            slo_constrained_max=4,
+            last_adjustment_reason="cpu_recovered",
+            low_error_since_epoch=time.time() - 100.0,
+        )
+
+        ap = AdaptiveParallelism.from_adaptive_parallelism_state(state)
+        assert ap.configured_max == 8
+        assert ap._current_max == 5
+        assert ap._slo_constrained_max == 4
+        assert ap._last_adjustment_reason == "cpu_recovered"
+        assert ap._low_error_since == pytest.approx(state.low_error_since_epoch, abs=1.0)
+
+    def test_from_adaptive_parallelism_state_with_override(self) -> None:
+        from bernstein.core.orchestration.adaptive_parallelism import AdaptiveParallelism
+
+        state = _make_ap_state(configured_max=6, current_max=4)
+        ap = AdaptiveParallelism.from_adaptive_parallelism_state(state, configured_max=10)
+        assert ap.configured_max == 10
+        assert ap._current_max == 4  # current_max preserved
+
+    def test_roundtrip_orchestrator_path(self, tmp_path: Path) -> None:
+        """Test the full orchestration path: AP.to_state -> sidecar -> AP.from_state."""
+        from bernstein.core.orchestration.adaptive_parallelism import AdaptiveParallelism
+
+        ap = AdaptiveParallelism(configured_max=10)
+        ap._current_max = 7
+        ap._slo_constrained_max = 5
+        ap._last_adjustment_reason = "slo_budget"
+        ap._low_error_since = time.time() - 500.0
+
+        # Save to sidecar
+        state = ap.to_adaptive_parallelism_state()
+        conflict: dict[str, ClaimConflictEntry] = {}
+        save(tmp_path, state, conflict)
+
+        # Restore from sidecar
+        loaded_ap, loaded_conflict = load(tmp_path)
+        restored = AdaptiveParallelism.from_adaptive_parallelism_state(loaded_ap)
+
+        assert restored.configured_max == 10
+        assert restored._current_max == 7
+        assert restored._slo_constrained_max == 5
+        assert restored._last_adjustment_reason == "slo_budget"
+        assert restored._low_error_since == pytest.approx(ap._low_error_since, abs=1.0)
