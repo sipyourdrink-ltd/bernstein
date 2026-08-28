@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 from bernstein.core.git.git_pr import push_head_as
 from bernstein.core.volunteer.claim import GhRunner, _default_runner, repo_slug
+from bernstein.core.volunteer.review_task import create_volunteer_review_task
 
 if TYPE_CHECKING:
     from bernstein.core.security.result_receipt_bundle import (
@@ -294,4 +295,9 @@ def submit_volunteer_pr(
 
     pr_url = result.stdout.strip()
     _write_pacing(slug, pr_url)
+
+    # 6. Create an independent review task on the task server.
+    # Best-effort: failure to create the review task does not fail the submission.
+    create_volunteer_review_task(bundle, pr_url)
+
     return pr_url
