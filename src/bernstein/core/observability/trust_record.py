@@ -133,6 +133,17 @@ class TrustRecordEmitter:
                 except json.JSONDecodeError:
                     continue
 
+        # Verify the journal's hash chain before trusting its head. A
+        # tampered journal (reordered or mutated events) must not produce a
+        # record; the error names the divergent step so a repairer can find it
+        # (R12: verifiers name the diverging element, never a bare true/false).
+        from bernstein.core.replay.journal import JournalVerifyResult, verify_events
+
+        verdict: JournalVerifyResult = verify_events(events)
+        if not verdict.chain_consistent:
+            reason = verdict.errors[0] if verdict.errors else f"step {verdict.divergent_index}"
+            raise ValueError(f"journal chain broken: {reason}")
+
         event_count = len(events)
         head_hash = ""
         first_ts: float | None = None
