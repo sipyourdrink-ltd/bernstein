@@ -43,7 +43,11 @@ def _get_git_diff_stat(start_sha: str) -> str:
             check=False,
         )
         if result.returncode == 0:
-            return result.stdout.strip() or "(no uncommitted changes)"
+            # An empty stat means "nothing to describe", and that is what
+            # gets recorded. The old placeholder string here ended up
+            # published as pull-request diff-stats by every consumer that
+            # treated any non-empty string as an answer.
+            return result.stdout.strip()
     return ""
 
 

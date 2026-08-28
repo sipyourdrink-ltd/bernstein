@@ -84,6 +84,26 @@ def _current_branch(cwd: Path) -> str:
     return result.stdout.strip() or "HEAD"
 
 
+def _base_rev(cwd: Path, base: str) -> str:
+    """Return the revision to diff the branch against.
+
+    ``base`` names the branch the pull request will merge onto -- a name on
+    the hosting side. Inside the workspace that name is a local branch that
+    nothing maintains: a single-branch clone does not have it at all, and a
+    clone that has fetched since it was created has a stale one. Both were
+    published: a description composed where ``main`` did not resolve went
+    out under "the diff could not be read", and a stale ``main`` composes
+    the description against commits the pull request does not touch. The
+    remote-tracking ref is the branch the pull request actually merges
+    onto, so it wins whenever it exists; the local name is the fallback for
+    a workspace with no remote at all.
+    """
+    result = _run_git(["rev-parse", "--verify", "-q", f"refs/remotes/origin/{base}"], cwd=cwd)
+    if result.returncode == 0:
+        return f"origin/{base}"
+    return base
+
+
 def _git_error(
     result: subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes],
 ) -> str:
@@ -163,17 +183,18 @@ def _enrich_summary_with_git(summary: SessionSummary, cwd: Path) -> SessionSumma
         when they were missing from the original.
     """
     branch = summary.branch if summary.branch not in ("", "HEAD") else _current_branch(cwd)
+    base_rev = _base_rev(cwd, summary.base_branch)
     errors: list[str] = []
 
     diff_stat = summary.diff_stat
     if not diff_stat:
-        diff_stat, error = _diff_stat(cwd, summary.base_branch, branch)
+        diff_stat, error = _diff_stat(cwd, base_rev, branch)
         if error:
             errors.append(f"diff --stat: {error}")
 
     commits = summary.commits
     if not commits:
-        raw, error = _commit_log(cwd, summary.base_branch, branch)
+        raw, error = _commit_log(cwd, base_rev, branch)
         commits = parse_commit_log(raw)
         if error:
             errors.append(f"log: {error}")
@@ -184,7 +205,7 @@ def _enrich_summary_with_git(summary: SessionSummary, cwd: Path) -> SessionSumma
     # it is a receipt that cannot be honoured. Bind only a diff that exists.
     provenance = summary.provenance
     if provenance is None:
-        diff, error = _diff_bytes(cwd, summary.base_branch, branch)
+        diff, error = _diff_bytes(cwd, base_rev, branch)
         if error:
             errors.append(f"diff: {error}")
         if diff:
@@ -196,7 +217,7 @@ def _enrich_summary_with_git(summary: SessionSummary, cwd: Path) -> SessionSumma
         # description written from an unanswered git reads as a run that
         # changed nothing, and nothing in the log says otherwise.
         click.echo(
-            f"warning: git could not describe {summary.base_branch}..{branch} ({git_error}); "
+            f"warning: git could not describe {base_rev}..{branch} ({git_error}); "
             "the description says so instead of claiming the branch is empty",
             err=True,
         )
@@ -521,7 +542,7 @@ def _attest_description(
     if not pr_url or summary.provenance is None:
         return
     try:
-        diff, diff_error = _diff_bytes(cwd, summary.base_branch, summary.branch)
+        diff, diff_error = _diff_bytes(cwd, _base_rev(cwd, summary.base_branch), summary.branch)
         if diff_error:
             click.echo(f"note: could not re-read the diff to anchor it: {diff_error}", err=True)
             return

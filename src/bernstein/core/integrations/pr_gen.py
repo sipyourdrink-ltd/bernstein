@@ -1631,6 +1631,14 @@ def load_session_summary(
     changes_summary = str(wrapup.get("changes_summary") or "")
     branch = str(wrapup.get("branch") or live_session.get("branch") or run_metadata.get("git_branch") or "HEAD")
     diff_stat = str(wrapup.get("git_diff_stat") or wrapup.get("diff_stat") or "")
+    if diff_stat == "(no uncommitted changes)":
+        # Wrap-up's old fallback answered a different question -- "any
+        # uncommitted changes right now?" -- and recorded that answer where
+        # the branch diff-stat belongs. Ten pull requests shipped it as
+        # their whole diff-stat block. Treat it as no answer so the git
+        # enrichment recomputes the real one; wrap-up files that predate
+        # the fix are still on disk and get replayed by bundle rescues.
+        diff_stat = ""
     primary_role_raw = wrapup.get("primary_role") or live_session.get("primary_role")
     primary_role = str(primary_role_raw) if primary_role_raw else None
 
