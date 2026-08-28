@@ -8,7 +8,6 @@ import types
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.plugins_core.plugin_hotreload import (
     PluginHotReloader,
     PluginVersionHistory,

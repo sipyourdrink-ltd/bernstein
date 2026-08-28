@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-
 from bernstein.core.routing.cloudflare_ai import (
     _CF_AI_BASE,
     WORKERS_AI_MODELS,

@@ -17,12 +17,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.plugins_core.team_hub_loader import (
     LoadedTeamHub,
     TeamHubLoaderError,
     load_team_hub,
 )
+
 from bernstein.core.plugins_core.team_hub_manifest import (
     TeamHubManifest,
     TeamHubManifestError,
