@@ -21,9 +21,17 @@ called with ``--strict`` (used by the CI gate on pushes to main); for
 pull requests the workflow runs without ``--strict`` so the comment
 posts as advisory.
 
+``--deleted-paths-file`` is a separate, narrower gate that does run on
+pull requests. It takes the list of paths a change deletes and fails when
+one of them is a source of truth the playbook names. Accumulated
+staleness is advisory because the doc merely fell behind; a change that
+deletes the file a doc is documented against introduces the error in that
+same change, and the doc and the playbook row can be fixed alongside it.
+
 Usage:
 
     uv run python scripts/check_docs_drift.py [--strict] [--json]
+    uv run python scripts/check_docs_drift.py --deleted-paths-file deleted.txt
 """
 
 from __future__ import annotations
@@ -35,6 +43,10 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PLAYBOOK = REPO_ROOT / "docs" / "playbooks" / "docs-drift.md"
@@ -144,6 +156,24 @@ def check_sources(rows: list[DocRow]) -> list[tuple[DocRow, str]]:
     return missing
 
 
+def sources_deleted_by(deleted_paths: Iterable[str], rows: list[DocRow]) -> list[tuple[DocRow, str]]:
+    """Return the (row, source) pairs whose source is in ``deleted_paths``.
+
+    ``deleted_paths`` are repo-relative, as ``git diff --diff-filter=D
+    --name-only`` prints them. ``static`` rows are skipped for the same
+    reason :func:`check_sources` skips them.
+    """
+    deleted = {p.strip().rstrip("/") for p in deleted_paths if p.strip()}
+    hits: list[tuple[DocRow, str]] = []
+    for row in rows:
+        if row.remediation == "static":
+            continue
+        for src in row.source_paths:
+            if src in deleted:
+                hits.append((row, src))
+    return hits
+
+
 def check_docs(rows: list[DocRow]) -> list[DocRow]:
     missing: list[DocRow] = []
     for row in rows:
@@ -227,11 +257,33 @@ def main() -> int:
         action="store_true",
         help="Emit a JSON summary instead of the Markdown report.",
     )
+    parser.add_argument(
+        "--deleted-paths-file",
+        type=Path,
+        help=(
+            "File of repo-relative paths a change deletes, one per line. "
+            "Exit 1 when any of them is a source of truth the playbook names."
+        ),
+    )
     args = parser.parse_args()
 
     rows = parse_playbook(PLAYBOOK)
     if not rows:
         print("ERROR: could not parse any doc rows from", PLAYBOOK, file=sys.stderr)
+        return 1
+
+    if args.deleted_paths_file is not None:
+        deleted = args.deleted_paths_file.read_text(encoding="utf-8").splitlines()
+        hits = sources_deleted_by(deleted, rows)
+        if not hits:
+            print("No deleted path is a documented source of truth.")
+            return 0
+        for row, src in hits:
+            print(
+                f"ERROR: `{src}` is deleted here and is the source of truth for `{row.doc}`. "
+                f"Update the doc and its row in {PLAYBOOK.relative_to(REPO_ROOT)} in this change.",
+                file=sys.stderr,
+            )
         return 1
 
     report = DriftReport(
