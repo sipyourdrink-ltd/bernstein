@@ -73,6 +73,7 @@ from bernstein.core.persistence.atomic_write import write_atomic_json
 __all__ = [
     "DEFAULT_RELAY_DIR",
     "GENESIS_PREV_HASH",
+    "MANAGER_RELAY_SECTION",
     "RELAY_VERSION",
     "RelayChainError",
     "RelayDecision",
@@ -86,6 +87,7 @@ __all__ = [
     "compute_relay_hmac",
     "default_relay_key",
     "load_relay_key",
+    "spawn_section_for_workdir",
     "verify_chain",
 ]
 
@@ -711,6 +713,19 @@ class RelayStore:
 
 _SPAWN_SECTION_CAP = 4_000
 """Maximum rendered bytes for the consensus section in a manager spawn prompt."""
+
+MANAGER_RELAY_SECTION = "consensus_relay"
+"""Section name both spawn paths must use, so one prompt does not differ from the other."""
+
+
+def spawn_section_for_workdir(workdir: Path) -> str:
+    """Return the manager relay section for ``workdir``, or ``""`` if there is none.
+
+    The two spawn paths resolve the same store and must not disagree about
+    where it lives or what the section is called, so the resolution lives
+    here rather than being spelled out at each call site.
+    """
+    return build_spawn_section(relay_root=workdir / ".sdd" / "runtime" / "consensus")
 
 
 def build_spawn_section(*, relay_root: Path | None = None, key: bytes | None = None) -> str:

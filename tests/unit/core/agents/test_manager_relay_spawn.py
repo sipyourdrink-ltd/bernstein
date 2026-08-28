@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import pytest
 from bernstein.core.spawn_prompt import _render_prompt
 
 
@@ -150,3 +152,55 @@ class TestManagerRelaySpawnPrompt:
             )
 
         assert "Prior cycle consensus" not in prompt
+
+
+def test_both_spawn_paths_name_the_relay_section_identically() -> None:
+    """One manager must not get a differently-named section than another.
+
+    The two render paths built the block independently, one calling it
+    "consensus relay" and the other "consensus_relay", so which name a
+    manager saw depended on which path spawned it - and section names are
+    what budget-aware compression and dedup key on.
+    """
+    import inspect
+
+    from bernstein.core.agents import spawn_prompt as sp_mod
+    from bernstein.core.agents import spawner_core as sc_mod
+
+    for module in (sp_mod, sc_mod):
+        source = inspect.getsource(module)
+        assert "MANAGER_RELAY_SECTION" in source, f"{module.__name__} spells the section name itself"
+        assert '"consensus relay"' not in source
+
+
+def test_a_broken_relay_is_reported_rather_than_swallowed(
+    tmp_path: Path,
+    make_task: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A relay that stops appearing must not look like a relay that is empty.
+
+    The injection is guarded so a relay problem can never block a spawn.
+    With a bare ``pass`` that same guard made the feature's death silent:
+    no section, no log, indistinguishable from a store with nothing in it.
+    """
+    task = make_task(id="T-9", role="manager", title="Plan next iteration")
+    templates_dir = tmp_path / "templates"
+    templates_dir.mkdir()
+
+    def _boom(_workdir: Path) -> str:
+        raise RuntimeError("relay store exploded")
+
+    with (
+        patch("bernstein.core.orchestration.consensus_relay.spawn_section_for_workdir", _boom),
+        caplog.at_level(logging.WARNING),
+    ):
+        prompt = _render_prompt(
+            [task],
+            templates_dir=templates_dir,
+            workdir=tmp_path,
+            session_id="mgr-boom",
+        )
+
+    assert "Consensus relay section omitted" in caplog.text
+    assert prompt, "a relay failure must not cost the spawn its prompt"

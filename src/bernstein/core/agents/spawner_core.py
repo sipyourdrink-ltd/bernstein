@@ -1256,13 +1256,20 @@ def _render_prompt_with_receipt(
     # entirely when the store is absent, empty, or chain verification fails.
     if role == "manager":
         try:
-            from bernstein.core.orchestration.consensus_relay import build_spawn_section
+            from bernstein.core.orchestration.consensus_relay import (
+                MANAGER_RELAY_SECTION,
+                spawn_section_for_workdir,
+            )
 
-            relay_block = build_spawn_section(relay_root=workdir / ".sdd" / "runtime" / "consensus")
+            relay_block = spawn_section_for_workdir(workdir)
             if relay_block:
-                named_sections.append(("consensus_relay", relay_block))
-        except Exception:
-            pass
+                named_sections.append((MANAGER_RELAY_SECTION, relay_block))
+        except Exception as exc:
+            # Never block a spawn because of relay problems - but a section
+            # that silently stops appearing is indistinguishable from a store
+            # that is simply empty, which is how this feature would die
+            # unnoticed.
+            logger.warning("Consensus relay section omitted from manager spawn: %s", exc)
     named_sections.append(("tasks", f"\n## Assigned tasks\n{task_block}"))
     # Artifact contract (#4539): surface the kind/path/criteria an
     # artifact-mode task is judged by. Empty for the git path, so a plain

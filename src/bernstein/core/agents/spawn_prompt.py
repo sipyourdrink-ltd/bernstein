@@ -949,14 +949,20 @@ def _render_prompt(
     # entirely when the store is absent, empty, or chain verification fails.
     if role == "manager":
         try:
-            from bernstein.core.orchestration.consensus_relay import build_spawn_section
+            from bernstein.core.orchestration.consensus_relay import (
+                MANAGER_RELAY_SECTION,
+                spawn_section_for_workdir,
+            )
 
-            relay_block = build_spawn_section(relay_root=workdir / ".sdd" / "runtime" / "consensus")
+            relay_block = spawn_section_for_workdir(workdir)
             if relay_block:
-                named_sections.append(("consensus relay", relay_block))
-        except Exception:
-            # Never block a spawn because of relay problems.
-            pass
+                named_sections.append((MANAGER_RELAY_SECTION, relay_block))
+        except Exception as exc:
+            # Never block a spawn because of relay problems - but a section
+            # that silently stops appearing is indistinguishable from a store
+            # that is simply empty, which is how this feature would die
+            # unnoticed.
+            logger.warning("Consensus relay section omitted from manager spawn: %s", exc)
     # KV-cache locality: lessons go AFTER the stable header (role,
     # git_safety, specialists) but BEFORE the variable goal/task body
     # so the cacheable prefix stays byte-stable across spawns.
