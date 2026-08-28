@@ -48,7 +48,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -128,10 +127,10 @@ class Claim:
             ``tzinfo``) is rejected because it is ambiguous.
     """
 
-    schema_version: str
     worker_id: str
     task_id: str
     claimed_at: str
+    schema_version: str = CLAIM_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         # Type guard: reject bool-as-int before anything else.

@@ -171,12 +171,11 @@ class TestCanonicalDict:
         assert rebuilt == sample_claim
 
     def test_field_order_stable(self, sample_claim: Claim) -> None:
-        """to_canonical_dict field order matches the constructor field order."""
+        """to_canonical_dict field order matches the canonical dict definition."""
         d = sample_claim.to_canonical_dict()
         keys = list(d.keys())
-        # Fields should appear in the same order as defined in the dataclass
-        # (worker_id, task_id, claimed_at)
-        assert keys == ["worker_id", "task_id", "claimed_at"], f"field order {keys} does not match dataclass definition"
+        # schema_version is first, then the three data fields
+        assert keys == ["schema_version", "worker_id", "task_id", "claimed_at"], f"field order {keys} does not match canonical dict definition"
 
     def test_digest_stable(self, sample_claim: Claim) -> None:
         """digest() returns the SHA-256 of canonical_bytes."""
