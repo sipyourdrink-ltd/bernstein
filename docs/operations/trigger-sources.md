@@ -102,17 +102,13 @@ aspiration:
 | OData | `trigger_sources/odata_poll.py` | A polled system-of-record row change | **Yes**, own poll loop. See [OData integration](odata.md). |
 | Generic webhook | `trigger_sources/receipt.py` (`automation_platforms.py`) | n8n / Zapier / Workato-style inbound payloads | **Yes** — `POST /webhook`. See [Automation bridge](../integrations/automation-bridge.md). |
 | Discord | `trigger_sources/discord.py` | Slash-command interactions | **Partial** — `POST /webhooks/discord/interactions` uses `verify_discord_signature` from this module for request verification; command handling builds its response directly rather than through `normalize_discord_interaction`, which is unused in production. |
-| GitHub | `trigger_sources/github.py` | Push / workflow_run / issues webhooks | **No** — the production route (`POST /webhooks/github`) maps events to tasks through the separate `bernstein.github_app.mapper` module instead. `github.py`'s `normalize_push` / `normalize_workflow_run` / `normalize_issues` are not called from any route; they are available to a custom `TriggerManager`-based rule if you feed them events yourself. |
-| GitLab | `trigger_sources/gitlab.py` | Pipeline / job webhooks | **No** — same situation as GitHub: `POST /webhooks/gitlab` builds tasks directly, not through this module. |
 | Generic HTTP | `trigger_sources/webhook.py` (`normalize_webhook`) | Arbitrary path/method/headers/payload | **No** — not called from any route in this codebase; the live generic-webhook endpoint (`POST /webhook`) creates a task from a task-shaped payload instead of normalizing through this function. |
 | File watch | `trigger_sources/file_watch.py` (`FileWatchSource`) | Debounced filesystem change events (via `watchdog`) | **No** — the class is defined but never instantiated outside its own module; no orchestrator loop drains its queue. The unrelated `bernstein watch` CLI command does not use it either. |
-| Claude Code Routine | `trigger_sources/routine.py` | A Routine session webhook | **No** — `normalize_routine_webhook` is defined but not called from any route. |
 
 ## Limitations
 
-Roughly half of the named adapters (GitHub, GitLab, generic HTTP webhook,
-file watch, Routine) are normalization functions with no production caller
-in this codebase — they are usable if you wire them into a custom route or
+Some of the named adapters (generic HTTP webhook, file watch) are
+normalization functions with no production caller in this codebase — they are usable if you wire them into a custom route or
 a `TriggerManager` rule yourself, but out of the box nothing invokes them.
 Treat the "wired" column above as authoritative over the module list; it
 will drift as routes change, so re-check the call sites (`grep -rn

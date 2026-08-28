@@ -79,14 +79,11 @@ Trigger orchestration is implemented and centered on:
 
 Current source adapters:
 
-- `src/bernstein/core/trigger_sources/github.py`
-- `src/bernstein/core/trigger_sources/gitlab.py`
 - `src/bernstein/core/trigger_sources/slack.py`
 - `src/bernstein/core/trigger_sources/discord.py`
 - `src/bernstein/core/trigger_sources/file_watch.py`
 - `src/bernstein/core/trigger_sources/webhook.py`
 - `src/bernstein/core/trigger_sources/webhook_node.py`
-- `src/bernstein/core/trigger_sources/routine.py`
 - `src/bernstein/core/trigger_sources/schedule.py`
 
 Configuration source:

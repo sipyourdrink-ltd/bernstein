@@ -93,7 +93,7 @@ The table below is a selection of the most load-bearing sub-packages, not the fu
 | `core/storage/` | Pluggable artifact storage sinks (local FS, S3, GCS, Azure Blob, R2) |
 | `core/tasks/` | Task models, lifecycle FSM, store, batch, dead-letter queue |
 | `core/tokens/` | Token monitor, context compression, prompt caching |
-| `core/trigger_sources/` | GitHub, GitLab, Slack, Discord, file watch, webhook triggers |
+| `core/trigger_sources/` | Slack, Discord, schedule, SLA, OData, file watch, webhook triggers |
 
 A few standalone files remain at `core/` top level: `defaults.py` (all configurable constants), `credential_scoping.py`, `streaming_merge.py`, `compat_redirect_ledger.py`, `dataclass_helpers.py`, `instrumentation.py`, `parallel_admission.py`, and `run_auth_token.py`.
 
