@@ -1,1 +1,0 @@
-Third-party trigger sources and reporters declared through Bernstein entry points now load at runtime. Malformed plugin entries are skipped with a named warning instead of leaving authors with a silent no-op (#4531).

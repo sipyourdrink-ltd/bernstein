@@ -1,1 +1,0 @@
-`bernstein pr` no longer exits non-zero after opening the pull request: the description-anchoring step passed a `(bytes, error)` tuple to the diff hasher and raised past a handler that named only three exception types (#4686).

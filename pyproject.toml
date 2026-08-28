@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bernstein"
-version = "3.18.1"
+version = "3.18.2"
 description = "Deterministic orchestrator for CLI coding agents (Claude Code, Codex, Gemini CLI, and 40+ more). No model in the coordination loop, so parallel runs in per-task git worktrees replay byte-identically. Signed lineage plus an opt-in HMAC audit chain a reviewer checks offline, without rerunning it. Cluster mode, air-gap deploy."
 readme = "README.md"
 requires-python = ">=3.12"
