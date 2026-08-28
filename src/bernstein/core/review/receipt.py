@@ -91,6 +91,7 @@ REVIEW_SCHEMA_VERSION = 1
 
 _RECEIPT_SUBPATH = (".sdd", "reviews", "receipts")
 _AUTOFIX_SUBPATH = (".sdd", "reviews", "autofix")
+_APPROVAL_SUBPATH = (".sdd", "reviews", "approvals")
 _IDENTITY_PRIVATE_NAME = "review-identity-key.pem"
 _IDENTITY_PUBLIC_NAME = "review-identity-public.pem"
 
@@ -1054,27 +1055,253 @@ def verify_autofix_receipt(
     return AutofixVerifyResult(ok=True, reason="", receipt=receipt)
 
 
+# --------------------------------------------------------------------------
+# ApprovalBinding -- signed, spine-anchored approval artefact
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ApprovalBinding:
+    """The record binding a PR approval to its diff and journal provenance.
+
+    Attributes:
+        pr_url: The pull request that was approved.
+        diff_hash: Content hash of the approved diff.
+        journal_head: The run journal Merkle head of the reviewed head commit.
+        timestamp: Integer timestamp for the binding.
+        signer_public_key_pem: The install's Ed25519 public key; a verifier
+            checks the signature against it offline.
+        signature: Ed25519 detached signature over the canonical binding.
+        journal_entry_hash: The review-spine entry hash anchoring the binding.
+    """
+
+    pr_url: str
+    diff_hash: str
+    journal_head: str
+    timestamp: int
+    signer_public_key_pem: str = ""
+    signature: str = ""
+    journal_entry_hash: str = ""
+
+    def _binding(self) -> dict[str, Any]:
+        """Return the signed + anchored binding (no signature / anchor)."""
+        return {
+            "v": REVIEW_SCHEMA_VERSION,
+            "pr_url": self.pr_url,
+            "diff_hash": self.diff_hash,
+            "journal_head": self.journal_head,
+            "timestamp": self.timestamp,
+        }
+
+    def to_canonical_bytes(self) -> bytes:
+        """Serialise the binding to canonical JSON bytes."""
+        return _canonical_bytes(self._binding())
+
+    def to_dict(self) -> dict[str, Any]:
+        return self._binding() | {
+            "signer_public_key_pem": self.signer_public_key_pem,
+            "signature": self.signature,
+            "journal_entry_hash": self.journal_entry_hash,
+        }
+
+    @classmethod
+    def from_bytes(cls, raw: bytes) -> ApprovalBinding:
+        row = json.loads(raw)
+        return cls(
+            pr_url=str(row["pr_url"]),
+            diff_hash=str(row["diff_hash"]),
+            journal_head=str(row["journal_head"]),
+            timestamp=int(row["timestamp"]),
+            signer_public_key_pem=str(row.get("signer_public_key_pem", "")),
+            signature=str(row.get("signature", "")),
+            journal_entry_hash=str(row.get("journal_entry_hash", "")),
+        )
+
+
+def approval_path(workdir: Path, pr_url: str) -> Path:
+    """Return the on-disk approval-binding path for ``pr_url``."""
+    return workdir.joinpath(*_APPROVAL_SUBPATH, f"{_safe_pr_name(pr_url)}.json")
+
+
+def read_approval_binding(workdir: Path, pr_url: str) -> ApprovalBinding | None:
+    """Return the approval binding for ``pr_url`` or ``None`` if absent."""
+    path = approval_path(workdir, pr_url)
+    if not path.is_file():
+        return None
+    try:
+        return ApprovalBinding.from_bytes(path.read_bytes())
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        logger.warning("review: malformed approval binding at %s", path)
+        return None
+
+
+def emit_approval_binding(
+    *,
+    workdir: Path,
+    lineage_root: Path,
+    hmac_key: bytes,
+    private_key_pem: str,
+    public_key_pem: str,
+    pr_url: str,
+    diff: bytes,
+    journal_head: str,
+    timestamp: int,
+) -> ApprovalBinding:
+    """Bind a PR approval into a signed, anchored approval binding.
+
+    The binding's canonical bytes are signed with the install's Ed25519 identity
+    and are anchored in the review spine, so the returned binding's
+    ``signature`` and ``journal_entry_hash`` are its chain-verifiable identity.
+
+    Args:
+        workdir: Project root; the binding lands under ``.sdd/reviews/approvals/``.
+        lineage_root: Spine root (``.sdd/lineage``).
+        hmac_key: The audit-chain HMAC key that tags spine entries.
+        private_key_pem: The install's Ed25519 private key (PEM).
+        public_key_pem: The matching public key, embedded on the binding.
+        pr_url: The pull request that was approved.
+        diff: The approved PR diff bytes; hashed into ``diff_hash``.
+        journal_head: The run journal Merkle head of the reviewed head commit.
+        timestamp: Integer timestamp for the binding.
+
+    Returns:
+        The signed, anchored :class:`ApprovalBinding`.
+    """
+    diff_hash = compute_diff_hash(diff)
+    unsigned = ApprovalBinding(
+        pr_url=pr_url,
+        diff_hash=diff_hash,
+        journal_head=journal_head,
+        timestamp=timestamp,
+    )
+    payload = unsigned.to_canonical_bytes()
+    signature = sign_payload(payload, private_key_pem)
+
+    spine = LineageSpine(lineage_root, run_id=REVIEW_RUN_ID, hmac_key=hmac_key)
+    path = approval_path(workdir, pr_url)
+    artifact_path = "/".join((*_APPROVAL_SUBPATH, path.name))
+    anchor = spine.record(
+        artifact_path=artifact_path,
+        content=payload,
+        actor=_REVIEW_ACTOR,
+        step_id=diff_hash,
+        model=_REVIEW_MODEL,
+        timestamp=timestamp,
+    )
+    anchored = ApprovalBinding(
+        pr_url=pr_url,
+        diff_hash=diff_hash,
+        journal_head=journal_head,
+        timestamp=timestamp,
+        signer_public_key_pem=public_key_pem,
+        signature=signature,
+        journal_entry_hash=anchor,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(anchored.to_dict(), ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+        encoding="utf-8",
+    )
+    return anchored
+
+
+@dataclass(frozen=True)
+class ApprovalVerifyResult:
+    """Outcome of :func:`verify_approval_binding`."""
+
+    ok: bool
+    reason: str
+    binding: ApprovalBinding | None = None
+
+
+def verify_approval_binding(
+    *,
+    workdir: Path,
+    lineage_root: Path,
+    hmac_key: bytes,
+    pr_url: str,
+    diff: bytes,
+) -> ApprovalVerifyResult:
+    """Prove offline that ``pr_url``'s approval binding is intact and anchored.
+
+    Recomputes ``diff_hash`` from the presented diff, checks the Ed25519
+    signature against the binding's embedded public key, and re-anchors the
+    binding against the review spine.
+    """
+    binding = read_approval_binding(workdir, pr_url)
+    if binding is None:
+        return ApprovalVerifyResult(ok=False, reason="no approval binding found")
+
+    if compute_diff_hash(diff) != binding.diff_hash:
+        return ApprovalVerifyResult(
+            ok=False,
+            reason="diff_hash mismatch: presented diff differs from the approved diff",
+            binding=binding,
+        )
+
+    if not binding.signature or not binding.signer_public_key_pem:
+        return ApprovalVerifyResult(ok=False, reason="binding is unsigned", binding=binding)
+    outcome = verify_payload(
+        binding.to_canonical_bytes(),
+        binding.signature,
+        binding.signer_public_key_pem,
+        allow_unverified=True,
+    )
+    if not outcome.verified:
+        return ApprovalVerifyResult(
+            ok=False,
+            reason=f"signature does not verify ({outcome.reason})",
+            binding=binding,
+        )
+
+    spine = LineageSpine(lineage_root, run_id=REVIEW_RUN_ID, hmac_key=hmac_key)
+    spine_result = spine.verify()
+    if not spine_result.ok:
+        return ApprovalVerifyResult(
+            ok=False,
+            reason=f"review spine failed verification ({spine_result.status.value})",
+            binding=binding,
+        )
+    recomputed = _recompute_anchor(spine, binding.to_canonical_bytes())
+    if recomputed is None:
+        return ApprovalVerifyResult(ok=False, reason="binding is not anchored in the review spine", binding=binding)
+    if recomputed != binding.journal_entry_hash:
+        return ApprovalVerifyResult(
+            ok=False,
+            reason="recorded journal_entry_hash does not match the spine anchor over the binding bytes",
+            binding=binding,
+        )
+
+    return ApprovalVerifyResult(ok=True, reason="", binding=binding)
+
+
 __all__ = [
     "AUTOFIX_RUN_ID",
     "REVIEW_RUN_ID",
     "REVIEW_SCHEMA_VERSION",
+    "ApprovalBinding",
+    "ApprovalVerifyResult",
     "AutofixReceipt",
     "AutofixVerifyResult",
     "Finding",
     "ReviewChainVerifyResult",
     "ReviewReceipt",
     "ReviewVerifyResult",
+    "approval_path",
     "autofix_receipt_path",
     "compute_diff_hash",
     "compute_issue_hash",
     "compute_plan_hash",
+    "emit_approval_binding",
     "emit_review_receipt",
     "load_or_create_review_identity",
+    "read_approval_binding",
     "read_autofix_receipt",
     "read_review_chain",
     "read_review_receipt",
     "receipt_path",
     "run_autofix_in_worktree",
+    "verify_approval_binding",
     "verify_autofix_receipt",
     "verify_review_chain",
     "verify_review_receipt",
