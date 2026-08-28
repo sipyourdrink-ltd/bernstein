@@ -295,6 +295,7 @@ _EXPECTED_SERVICES_BY_FILE: dict[Path, set[str]] = {
     REPO_ROOT / "docker" / "sandbox" / "docker-compose.yaml": {"bernstein-server"},
     REPO_ROOT / "docker" / "sandbox" / "docker-compose.researcher.yaml": {"bernstein-server"},
     REPO_ROOT / "docker" / "volunteer-rig" / "compose.yaml": set(),
+    REPO_ROOT / "docker" / "volunteer-hub" / "docker-compose.yaml": set(),
     REPO_ROOT / "examples" / "cluster" / "tailscale" / "docker-compose.yml": {"bernstein-central"},
     REPO_ROOT / "examples" / "cluster" / "cloudflared" / "docker-compose.yml": {"bernstein-central"},
 }
