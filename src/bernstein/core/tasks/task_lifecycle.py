@@ -2633,10 +2633,17 @@ def claim_and_spawn_batches(
                 if detector:
                     waiting_agent = None
                     if task.parent_task_id:
-                        for session in getattr(orch, "_agents", {}).values():
-                            if task.parent_task_id in session.task_ids:
-                                waiting_agent = session.id
-                                break
+                        waiting_agent = getattr(orch, "_task_to_session", {}).get(task.parent_task_id)
+                        if not waiting_agent:
+                            for session in getattr(orch, "_agents", {}).values():
+                                if task.parent_task_id in session.task_ids:
+                                    waiting_agent = session.id
+                                    break
+                        if not waiting_agent:
+                            for session in getattr(orch, "_batch_sessions", {}).values():
+                                if task.parent_task_id in session.task_ids:
+                                    waiting_agent = session.id
+                                    break
                     if waiting_agent:
                         detector.clear_wait(waiting_agent)
             except httpx.TransportError as exc:

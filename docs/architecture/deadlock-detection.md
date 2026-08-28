@@ -45,7 +45,7 @@ and deadlocks", right before idle-agent recycling).
 
 ## The Wait-For Graph
 
-`detect_deadlocks()` builds its cycle-finding graph using waits registered by `record_lock_wait()`. In the orchestrator, `Orchestrator._check_file_overlap` sees every file lock conflict when considering task batches. It defers batches when files are already locked, and records this wait in the `LoopDetector`. The wait is cleared when the batch is successfully claimed and spawned by an agent (in `task_lifecycle.py`), or when the agent holding the lock is killed and its locks are reaped. This end-to-end wiring ensures that the wait-for graph stays current.
+`detect_deadlocks()` builds its cycle-finding graph using waits registered by `record_lock_wait()`. In the orchestrator, `Orchestrator._check_file_overlap` sees every file lock conflict when considering task batches. It defers batches when files are already locked, and records this wait in the `LoopDetector`. The wait is cleared when the batch is successfully claimed and spawned by an agent (in `task_lifecycle.py`), and when recovery logic releases an agent’s locks (for example, deadlock victim selection in `check_loops_and_deadlocks()`). This end-to-end wiring ensures that the wait-for graph stays current.
 
 ## Source
 

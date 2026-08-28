@@ -4902,7 +4902,7 @@ class Orchestrator:
                     lock.task_id,
                 )
                 held_by[fpath] = lock.agent_id
-                lock_timestamps[lock.agent_id] = lock.locked_at
+                lock_timestamps[lock.agent_id] = min(lock.locked_at, lock_timestamps.get(lock.agent_id, lock.locked_at))
                 conflict = True
 
         if conflict:
@@ -4910,10 +4910,18 @@ class Orchestrator:
             if detector:
                 waiting_agent = None
                 if batch and batch[0].parent_task_id:
-                    for session in self._agents.values():
-                        if batch[0].parent_task_id in session.task_ids:
-                            waiting_agent = session.id
-                            break
+                    parent_id = batch[0].parent_task_id
+                    waiting_agent = getattr(self, "_task_to_session", {}).get(parent_id)
+                    if not waiting_agent:
+                        for session in getattr(self, "_agents", {}).values():
+                            if parent_id in session.task_ids:
+                                waiting_agent = session.id
+                                break
+                    if not waiting_agent:
+                        for session in getattr(self, "_batch_sessions", {}).values():
+                            if parent_id in session.task_ids:
+                                waiting_agent = session.id
+                                break
 
                 if waiting_agent:
                     detector.record_lock_wait(
@@ -4925,6 +4933,7 @@ class Orchestrator:
             return True
 
         return False
+
     def _should_auto_decompose(self, task: Task) -> bool:
         """Delegate to task_lifecycle.should_auto_decompose."""
         if not self._config.auto_decompose:
