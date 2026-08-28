@@ -227,6 +227,7 @@ def _filter_results(
 ) -> list[BrowseResult]:
     """Apply donor filters to the list of joinable projects."""
     filtered = results
+    filtered = [r for r in filtered if r.manifest.is_active]
     if local_ok_only:
         filtered = [r for r in filtered if r.manifest.local_ok]
     if budget_minutes is not None:
@@ -320,6 +321,8 @@ def browse_indexes(
     for result in joinable:
         if result.repo_url not in filtered_urls:
             reasons: list[str] = []
+            if not result.manifest.is_active:
+                reasons.append("status=paused")
             if local_ok_only and not result.manifest.local_ok:
                 reasons.append("local_ok=False")
             if budget_minutes is not None and result.manifest.max_wall_clock_minutes > budget_minutes:

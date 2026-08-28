@@ -51,7 +51,8 @@ manifest without the field.
   "sandbox": "microvm",
   "max_wall_clock_minutes": 30,
   "task_label": "volunteer-ok",
-  "local_ok": true
+  "local_ok": true,
+  "status": "active"
 }
 ```
 
@@ -68,6 +69,7 @@ manifest without the field.
 | `max_wall_clock_minutes` | integer 1–1440 | yes | Per-task wall-clock ceiling. A donor may set a tighter budget; no project may ask for more than a day of someone's machine. |
 | `task_label` | string ≤ 50 chars | no (default `"volunteer-ok"`) | Issue label marking a task as open to volunteers. |
 | `local_ok` | boolean | no (default `false`) | Whether tasks are generally solvable by local models. |
+| `status` | `"active"` or `"paused"` | no (default `"active"`) | Whether the project is currently accepting volunteer work. A paused manifest still loads, validates, and digests, so older workers can keep producing receipts against the same policy digest; `browse` is the place a paused project drops out of the donor's view. |
 
 Any other field is preserved and binds to the digest, and the loader warns that
 it does not enforce it.
@@ -238,7 +240,8 @@ sandbox would be more dangerous than no manifest at all.
     "sandbox": {"type": "string", "enum": ["microvm", "container"]},
     "max_wall_clock_minutes": {"type": "integer", "minimum": 1, "maximum": 1440},
     "task_label": {"type": "string", "minLength": 1, "maxLength": 50},
-    "local_ok": {"type": "boolean"}
+    "local_ok": {"type": "boolean"},
+    "status": {"type": "string", "enum": ["active", "paused"]}
   }
 }
 ```

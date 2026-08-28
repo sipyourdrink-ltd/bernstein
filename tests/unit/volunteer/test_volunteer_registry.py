@@ -54,6 +54,22 @@ NO_LOCAL_MANIFEST = json.dumps(
     }
 ).encode()
 
+#: A manifest for a paused project (no longer accepting volunteer work).
+PAUSED_MANIFEST = json.dumps(
+    {
+        "version": 1,
+        "license": "MIT",
+        "gates": [["echo", "hello"]],
+        "allowed_paths": [],
+        "egress_allowlist": [],
+        "sandbox": "container",
+        "max_wall_clock_minutes": 60,
+        "task_label": "volunteer-ok",
+        "local_ok": True,
+        "status": "paused",
+    }
+).encode()
+
 
 def _resolves_to(*addresses: str):
     """A resolver that answers with fixed addresses, so no DNS is needed."""
@@ -129,6 +145,27 @@ def test_a_project_with_a_non_osi_license_is_dropped_with_a_reason() -> None:
     assert len(dropped) == 1
     assert dropped[0].repo_url == repo
     assert "license" in dropped[0].reason
+
+
+def test_a_paused_project_is_dropped_from_browse() -> None:
+    """A paused manifest still loads and validates, but browse skips it."""
+    transport = _FakeTransport()
+    repo = "https://github.com/paused/quiet"
+    transport.responses[_manifest_url(repo)] = HTTPResponse(status=200, body=PAUSED_MANIFEST, etag=None)
+    transport.responses["https://index.test/i.json"] = HTTPResponse(
+        status=200,
+        body=_make_index(
+            [{"repo_url": repo, "default_branch": "main", "topics": [], "license": "MIT", "local_ok": True}]
+        ),
+        etag=None,
+    )
+
+    joinable, dropped = browse_indexes(["https://index.test/i.json"], transport=transport)
+
+    assert len(joinable) == 0
+    assert len(dropped) == 1
+    assert dropped[0].repo_url == repo
+    assert "status=paused" in dropped[0].reason
 
 
 def test_a_project_with_no_reachable_manifest_is_dropped_with_a_reason() -> None:

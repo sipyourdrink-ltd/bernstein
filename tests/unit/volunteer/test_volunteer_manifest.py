@@ -376,6 +376,7 @@ def test_reformatting_the_file_does_not_change_the_digest() -> None:
         ("max_wall_clock_minutes", 15),
         ("task_label", "help-wanted"),
         ("local_ok", False),
+        ("status", "paused"),
     ],
 )
 def test_changing_any_policy_field_changes_the_digest(field: str, tightened: Any) -> None:
@@ -431,6 +432,40 @@ def test_known_fields_alone_do_not_warn() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         load_manifest(_manifest())
+
+
+# ---------------------------------------------------------------------------
+# Status: pause/resume for a volunteer project
+# ---------------------------------------------------------------------------
+
+
+def test_a_paused_manifest_loads_and_validates() -> None:
+    manifest = _load(status="paused")
+
+    assert manifest.status == "paused"
+    assert manifest.is_active is False
+
+
+def test_an_active_manifest_loads_and_validates() -> None:
+    manifest = _load(status="active")
+
+    assert manifest.status == "active"
+    assert manifest.is_active is True
+
+
+def test_manifest_without_status_defaults_to_active() -> None:
+    manifest = _load(status=None)
+
+    assert manifest.status == "active"
+    assert manifest.is_active is True
+
+
+@pytest.mark.parametrize("status", ["vibes", "inactive", "ACTIVE", "", 42])
+def test_an_invalid_status_value_is_refused(status: Any) -> None:
+    with pytest.raises(VolunteerManifestError) as excinfo:
+        _load(status=status)
+
+    assert excinfo.value.field == "status"
 
 
 # ---------------------------------------------------------------------------

@@ -152,6 +152,9 @@ OSI_APPROVED_LICENSES = frozenset(
     }
 )
 
+#: Valid values for the manifest status field.
+STATUS_VALUES = ("active", "paused")
+
 _KNOWN_FIELDS = frozenset(
     {
         "version",
@@ -163,6 +166,7 @@ _KNOWN_FIELDS = frozenset(
         "max_wall_clock_minutes",
         "task_label",
         "local_ok",
+        "status",
     }
 )
 
@@ -236,7 +240,19 @@ class VolunteerManifest:
     max_wall_clock_minutes: int
     task_label: str
     local_ok: bool
+    status: str
     extensions: Mapping[str, Any]
+
+    @property
+    def is_active(self) -> bool:
+        """Whether the project is currently accepting volunteer work.
+
+        A paused manifest still loads, validates, and digests, so an older
+        worker can keep producing receipts against the same policy digest;
+        discovery (the browse view) is the place a paused project drops out
+        of the donor's view.
+        """
+        return self.status == "active"
 
     def to_canonical_dict(self) -> dict[str, Any]:
         """The normalised policy, as the digest sees it.
@@ -255,6 +271,7 @@ class VolunteerManifest:
             "max_wall_clock_minutes": self.max_wall_clock_minutes,
             "task_label": self.task_label,
             "local_ok": self.local_ok,
+            "status": self.status,
         }
         payload.update(self.extensions)
         return payload
@@ -333,6 +350,7 @@ def load_manifest(source: str | bytes) -> VolunteerManifest:
         max_wall_clock_minutes=_load_wall_clock(raw),
         task_label=_load_task_label(raw),
         local_ok=_load_local_ok(raw),
+        status=_load_status(raw),
         extensions=_load_extensions(raw),
     )
 
@@ -580,6 +598,15 @@ def _load_local_ok(raw: dict[str, Any]) -> bool:
     value = raw.get("local_ok", False)
     if not isinstance(value, bool):
         raise VolunteerManifestError("local_ok", f"expected a boolean, got {type(value).__name__}")
+    return value
+
+
+def _load_status(raw: dict[str, Any]) -> str:
+    value = raw.get("status", "active")
+    if not isinstance(value, str):
+        raise VolunteerManifestError("status", f"expected a string, got {type(value).__name__}")
+    if value not in STATUS_VALUES:
+        raise VolunteerManifestError("status", f"{value!r} is not one of: {', '.join(STATUS_VALUES)}")
     return value
 
 

@@ -209,3 +209,6 @@ REVIEW-*.md
 /IMPLEMENTATION_PLAN.md
 /pr-body-*.md
 /test.txt
+
+# Qwen Code internal files (never part of the repo)
+*.qwen*.json
