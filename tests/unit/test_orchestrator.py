@@ -2043,8 +2043,17 @@ class TestFileOwnership:
         r2 = orch.tick()
         assert len(r2.spawned) == 1  # no conflict, spawns fine
 
+    # The reap path calls agent_lifecycle's own local _is_process_alive, not this
+    # one; patch both bindings so the outcome no longer depends on whether the
+    # real PID 99 is alive on the host (same fix as #1476's sibling test).
+    @patch("bernstein.core.agents.agent_lifecycle._is_process_alive", return_value=False)
     @patch("bernstein.core.agent_recycling._is_process_alive", return_value=False)
-    def test_ownership_released_on_reap(self, _mock_alive: MagicMock, tmp_path: Path) -> None:
+    def test_ownership_released_on_reap(
+        self,
+        _mock_alive: MagicMock,
+        _mock_alive_lifecycle: MagicMock,
+        tmp_path: Path,
+    ) -> None:
         """File ownership released when a stale agent is reaped."""
         transport = _mock_transport(
             {
