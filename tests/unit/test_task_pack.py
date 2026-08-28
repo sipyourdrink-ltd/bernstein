@@ -2,7 +2,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from bernstein.core.tasks.task_pack import TaskContextPack, PackEntry
+
 
 def test_a_pack_rebuilds_byte_identically(tmp_path: Path):
     script = tmp_path / "build_pack.py"
@@ -19,11 +19,11 @@ sys.stdout.buffer.write(pack.canonical_bytes())
 
     # Ensure the subprocess can find the 'src' directory
     src_dir = str(Path(__file__).resolve().parent.parent.parent / "src")
-    
+
     env1 = os.environ.copy()
     env1["PYTHONHASHSEED"] = "1"
     env1["PYTHONPATH"] = src_dir
-    
+
     env2 = os.environ.copy()
     env2["PYTHONHASHSEED"] = "2"
     env2["PYTHONPATH"] = src_dir
