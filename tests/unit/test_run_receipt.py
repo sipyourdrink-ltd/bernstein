@@ -513,6 +513,9 @@ class _SealHookStub:
         self._run_id = journal.run_id
         self.calls: list[str] = []
 
+    def _record_run_branch_provenance(self, hmac_key: bytes) -> None:
+        self.calls.append("provenance")
+
     def _seal_intent_capsules(self, hmac_key: bytes) -> None:
         self.calls.append("capsules")
 
@@ -562,3 +565,55 @@ def test_successful_seal_writes_receipt_via_hook(
 
     Orchestrator._seal_journal_into_lineage_spine(stub)  # type: ignore[arg-type]
     assert "receipt" in stub.calls
+
+
+def test_branch_provenance_is_recorded_before_the_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Artifact rows must be in the spine before the receipt binds its head.
+
+    ``build_run_receipt`` reads the spine head as it stands when it runs, so
+    rows recorded after the receipt would sit outside what it attests - the
+    run would ship a receipt that covers a spine missing the run's own work.
+    """
+    from bernstein.core.orchestration.orchestrator import Orchestrator
+
+    sdd = tmp_path / ".sdd"
+    journal = EventJournal(run_id="run-hook-order", sdd_dir=sdd)
+    journal.record("run_started")
+    stub = _SealHookStub(tmp_path, journal)
+
+    monkeypatch.setattr("bernstein.core.security.audit.load_or_create_audit_key", lambda: b"k" * 32)
+
+    Orchestrator._seal_journal_into_lineage_spine(stub)  # type: ignore[arg-type]
+    assert stub.calls.index("provenance") < stub.calls.index("receipt")
+
+
+def test_branch_provenance_absorbs_a_failing_lineage_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A provenance failure must not travel far enough to cost the receipt.
+
+    The rows are an aid and stay re-derivable from the branch; the receipt is
+    the run's attested identity. The recording sits outside the seal's ``try``
+    so its failure is never reported as a seal failure - which leaves this
+    method's own handler as the thing that keeps it from reaching the caller
+    and skipping the receipt write that follows it.
+    """
+    from bernstein.core.orchestration.orchestrator import Orchestrator
+
+    journal = EventJournal(run_id="run-prov-fail", sdd_dir=tmp_path / ".sdd")
+    journal.record("run_started")
+    stub = _SealHookStub(tmp_path, journal)
+
+    def _boom(**_kwargs: object) -> None:
+        raise OSError("lineage store unavailable")
+
+    monkeypatch.setattr(
+        "bernstein.core.lineage.merge_provenance.record_run_branch_artifacts",
+        _boom,
+    )
+
+    Orchestrator._record_run_branch_provenance(stub, b"k" * 32)  # type: ignore[arg-type]

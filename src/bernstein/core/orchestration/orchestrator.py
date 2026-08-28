@@ -3277,11 +3277,6 @@ class Orchestrator:
             from bernstein.core.security.audit import load_or_create_audit_key
 
             hmac_key = load_or_create_audit_key()
-            # Before the seal, so the sealed head -- and the receipt that
-            # binds it -- cover the run's artifact rows rather than an empty
-            # chain. Recording after would attest a spine the receipt has
-            # already been computed against.
-            self._record_run_branch_provenance(hmac_key)
             seal_journal_into_spine(
                 self._recorder,
                 lineage_root=self._workdir / ".sdd" / "lineage",
@@ -3292,6 +3287,13 @@ class Orchestrator:
             logger.warning("Failed to seal journal head into lineage spine: %s", sanitize_log(str(exc)))
             logger.warning("Run receipt not written for run %s: journal-head seal failed", self._run_id)
         else:
+            # Here rather than beside the seal call above: the receipt binds
+            # the spine head as it stands when the receipt is built, so rows
+            # appended after the seal are still covered -- the intent-capsule
+            # seal already relies on that. Inside the try, a provenance
+            # failure would be reported as a seal failure and would withhold
+            # the receipt, which inverts what each one is worth.
+            self._record_run_branch_provenance(hmac_key)
             self._seal_intent_capsules(hmac_key)
             self._write_run_receipt()
 
