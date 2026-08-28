@@ -470,11 +470,68 @@ def _quality_gate_refusal(
 # ---------------------------------------------------------------------------
 
 
+def _record_landed_provenance(
+    session_id: str,
+    worktree_root: Path,
+    before_sha: str,
+    run_id: str,
+) -> None:
+    """Record a lineage row per path this merge landed (issue #2789).
+
+    A CLI adapter's subprocess writes never reach ``record_artifact_write``,
+    so without this the run's spine holds only its own journal seal: a chain
+    that verifies while recording nothing the agent produced.
+
+    Failure is loud but never propagates. The merge is already in git and
+    every row is re-derivable from the merge commit, so a provenance write
+    that fails must not undo work that landed -- the same reasoning
+    ``emit_production_event`` applies one level down.
+    """
+    if not run_id or not before_sha:
+        logger.debug("merge provenance: no run id or base for %s; nothing recorded", _sanitise_for_log(session_id))
+        return
+    try:
+        from bernstein.core.git.git_basic import run_git
+        from bernstein.core.lineage.merge_provenance import record_merge_artifacts
+        from bernstein.core.security.audit import load_or_create_audit_key
+
+        head = run_git(["rev-parse", "HEAD"], worktree_root, timeout=10)
+        if head.returncode != 0:
+            logger.warning("merge provenance: could not resolve HEAD after merge for %s", _sanitise_for_log(session_id))
+            return
+        after_sha = head.stdout.strip()
+        if after_sha == before_sha:
+            return
+        result = record_merge_artifacts(
+            worktree_root=worktree_root,
+            before_sha=before_sha,
+            after_sha=after_sha,
+            actor=f"agent/{session_id}",
+            lineage_root=worktree_root / ".sdd" / "lineage",
+            run_id=run_id,
+            hmac_key=load_or_create_audit_key(),
+        )
+        logger.info(
+            "merge provenance: recorded %d/%d landed path(s) for %s at %s",
+            len(result.recorded),
+            result.total_seen,
+            _sanitise_for_log(session_id),
+            after_sha[:12],
+        )
+    except Exception as exc:
+        logger.warning(
+            "merge provenance: no rows recorded for %s: %s",
+            _sanitise_for_log(session_id),
+            _sanitise_for_log(str(exc)),
+        )
+
+
 def _run_merge_and_push(
     session: AgentSession,
     worktree_root: Path,
     merge_worktree_branch_fn: Any,
     quality_gate_config: QualityGatesConfig | None = None,
+    run_id: str = "",
 ) -> MergeResult | None:
     """Run the merge subprocess, record metrics, and push on success.
 
@@ -565,6 +622,14 @@ def _run_merge_and_push(
         session.id,
         author_role,
     )
+    # Base for the landed-provenance diff. Read before the merge because
+    # ``before..after`` records a fast-forward -- which leaves no merge
+    # commit to diff against a parent -- the same way as a true merge.
+    from bernstein.core.git.git_basic import run_git as _run_git
+
+    _base = _run_git(["rev-parse", "HEAD"], worktree_root, timeout=10)
+    before_sha = _base.stdout.strip() if _base.returncode == 0 else ""
+
     merge_result = merge_worktree_branch_fn(session.id, repo_root=worktree_root)
     merge_duration.observe(time.perf_counter() - merge_start)
 
@@ -575,6 +640,7 @@ def _run_merge_and_push(
         get_collector().record_merge_result(task_id, success=merge_ok)
 
     if merge_result and merge_result.success:
+        _record_landed_provenance(session.id, worktree_root, before_sha, run_id)
         # Push the branch we actually merged into (never a hard-coded "main").
         # ``target_branch`` is None only on detached HEAD; fall back to the
         # resolved default there.
@@ -595,6 +661,7 @@ def _do_merge(
     merge_worktree_branch_fn: Any,
     merge_queue: MergeQueue | None = None,
     quality_gate_config: QualityGatesConfig | None = None,
+    run_id: str = "",
 ) -> MergeResult | None:
     """Execute the merge under a lock, record metrics, and push.
 
@@ -627,6 +694,7 @@ def _do_merge(
                 worktree_root,
                 merge_worktree_branch_fn,
                 quality_gate_config=quality_gate_config,
+                run_id=run_id,
             )
 
     merge_lock = merge_locks.setdefault(worktree_root, threading.Lock())
@@ -636,6 +704,7 @@ def _do_merge(
             worktree_root,
             merge_worktree_branch_fn,
             quality_gate_config=quality_gate_config,
+            run_id=run_id,
         )
 
 
@@ -668,6 +737,7 @@ def merge_and_cleanup_worktree(
     merge_worktree_branch_fn: Any,
     merge_queue: MergeQueue | None = None,
     quality_gate_config: QualityGatesConfig | None = None,
+    run_id: str = "",
 ) -> MergeResult | None:
     """Merge worktree branch back and optionally clean up.
 
@@ -718,6 +788,7 @@ def merge_and_cleanup_worktree(
             merge_worktree_branch_fn,
             merge_queue=merge_queue,
             quality_gate_config=quality_gate_config,
+            run_id=run_id,
         )
 
     if not defer_cleanup:

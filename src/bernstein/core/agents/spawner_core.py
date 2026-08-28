@@ -2024,6 +2024,14 @@ class AgentSpawner:
         """Wire in the orchestrator's :class:`QualityGatesConfig` (#4393)."""
         self._quality_gate_config = config
 
+    def set_run_id(self, run_id: str) -> None:
+        """Wire in the orchestrator's run id.
+
+        The merge path records a lineage row per landed path and keys those
+        rows by run, so without this the rows have no spine to join.
+        """
+        self._run_id = run_id
+
     def _merge_and_cleanup_worktree(
         self,
         session: AgentSession,
@@ -2045,6 +2053,7 @@ class AgentSpawner:
             merge_worktree_branch_fn=self._merge_worktree_branch,
             merge_queue=self._merge_queue,
             quality_gate_config=self._quality_gate_config,
+            run_id=getattr(self, "_run_id", ""),
         )
 
     def _touch_prespawn_heartbeat(self, session_id: str) -> None:
