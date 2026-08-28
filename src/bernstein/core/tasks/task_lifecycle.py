@@ -2629,6 +2629,17 @@ def claim_and_spawn_batches(
                     break
                 _clear_claim_conflict_state(orch, task.id)
                 claimed_tasks.append(task)
+                detector = getattr(orch, "_loop_detector", None)
+                if detector:
+                    waiting_agent = None
+                    if task.parent_task_id:
+                        for session in getattr(orch, "_agents", {}).values():
+                            if task.parent_task_id in session.task_ids:
+                                waiting_agent = session.id
+                                break
+                    if not waiting_agent:
+                        waiting_agent = task.id
+                    detector.clear_wait(waiting_agent)
             except httpx.TransportError as exc:
                 logger.error(
                     "Server unreachable claiming task %s: %s -- aborting spawn",

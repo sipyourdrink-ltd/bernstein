@@ -43,24 +43,9 @@ every `DeadlockDetection` returned, releases the victim's lock
 wired into the main tick loop in `orchestrator.py` (step "2d. Detect loops
 and deadlocks", right before idle-agent recycling).
 
-## Limitation
+## The Wait-For Graph
 
-`detect_deadlocks()` only finds cycles among agents that were previously
-registered via `record_lock_wait()`. In the current codebase,
-`record_lock_wait()` has no production caller - the one place that has the
-exact information needed to call it (`Orchestrator._check_file_overlap`,
-which calls `FileLockManager.check_conflicts()` and defers a task batch
-when one of its files is already locked) logs the conflict
-(`logger.debug(...)`) and returns `True` to defer, but does not forward the
-wait to the `LoopDetector`. `record_lock_wait()` is only exercised from
-unit tests (`tests/unit/test_loop_detector.py`) and from the usage example
-in the module's own docstring.
-
-Practical effect: the deadlock cycle-detection pass runs every tick as
-designed, but with an always-empty wait-for graph it can never find a cycle
-in the shipped orchestrator today. Loop detection (the other half of the
-same module, fed by `_poll_file_mtimes` → `record_edit()`) is fully wired
-and does not share this gap.
+`detect_deadlocks()` builds its cycle-finding graph using waits registered by `record_lock_wait()`. In the orchestrator, `Orchestrator._check_file_overlap` sees every file lock conflict when considering task batches. It defers batches when files are already locked, and records this wait in the `LoopDetector`. The wait is cleared when the batch is successfully claimed and spawned by an agent (in `task_lifecycle.py`), or when the agent holding the lock is killed and its locks are reaped. This end-to-end wiring ensures that the wait-for graph stays current.
 
 ## Source
 
