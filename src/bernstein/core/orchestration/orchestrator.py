@@ -3312,8 +3312,15 @@ class Orchestrator:
         must not fail a run that already completed.
         """
         try:
-            from bernstein.core.git.git_basic import resolve_default_branch
+            from bernstein.core.git.git_basic import is_git_repo, resolve_default_branch
             from bernstein.core.lineage.merge_provenance import record_run_branch_artifacts
+
+            # A workdir that is not a work tree has no branch to read, so
+            # there is nothing to record. Stating that here keeps every such
+            # run from spawning git only to have it fail, and from logging a
+            # warning about a condition that is ordinary rather than wrong.
+            if not is_git_repo(self._workdir):
+                return
 
             record_run_branch_artifacts(
                 worktree_root=self._workdir,
