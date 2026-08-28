@@ -61,6 +61,9 @@ The emitter:
 - Maps events to TRACE 0.2 claims (run_id, event_count, head hash, timestamps)
 - Signs with the install identity via existing signing infrastructure
 - Returns canonical JSON via json.dumps(..., sort_keys=True, separators=(",", ":"))
+- Signs over a *different* canonicalisation: the pre-image is JCS (RFC 8785),
+  not the returned document. A verifier must re-canonicalise the signed body
+  with JCS rather than hashing the bytes it received
 - Uses import guards to avoid pulling agentrust_trace when [trace] extra is absent
 
 Public surface:
