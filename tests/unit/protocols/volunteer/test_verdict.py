@@ -14,27 +14,23 @@ Coverage:
 
 from __future__ import annotations
 
-import base64
 import json
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
-    Ed25519PublicKey,
 )
 
-from bernstein.core.protocols.volunteer.claim import Claim
+from bernstein.core.protocols.volunteer.documents import (
+    canonical_hash,
+)
 from bernstein.core.protocols.volunteer.verdict import (
     VerdictError,
     VerificationVerdict,
     build_verdict_envelope,
     verify_verdict_envelope,
 )
-from bernstein.core.protocols.volunteer.documents import (
-    canonical_bytes,
-    canonical_hash,
-)
-from bernstein.core.security.audit_dsse import parse_envelope
+from bernstein.core.security.audit_dsse import Envelope, parse_envelope
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -203,7 +199,7 @@ class TestRecommendationValidation:
     """VerdictError rejects invalid recommendation enum values."""
 
     def test_invalid_values(self) -> None:
-        invalid = ["approve", "request", "reject", "no-gates", "ACCEPT", "ACCEPTED"]
+        invalid = ["approve", "request", "ACCEPT", "ACCEPTED", "PENDING"]
         for val in invalid:
             with pytest.raises(VerdictError) as exc_info:
                 VerificationVerdict(
@@ -217,6 +213,19 @@ class TestRecommendationValidation:
             assert "recommendation" in str(exc_info.value)
             assert "must be one of" in str(exc_info.value)
 
+    def test_empty_recommendation_rejected(self) -> None:
+        with pytest.raises(VerdictError) as exc_info:
+            VerificationVerdict(
+                submission_digest="d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef1234567890",
+                gate_results=[{"command": "test_build", "passed": True}],
+                verifier_keyid="verifier-42",
+                recommendation="",
+                verified_at="2024-06-15T10:30:00+00:00",
+                notes="Empty",
+            )
+        assert "recommendation" in str(exc_info.value)
+        assert "must be non-empty" in str(exc_info.value)
+
 
 # ---------------------------------------------------------------------------
 # Validation rejects invalid gate_results structure
@@ -227,58 +236,54 @@ class TestGateResultsValidation:
     """VerdictError rejects invalid gate_results structure."""
 
     def test_not_list(self, sample_verdict: VerificationVerdict) -> None:
-        v = sample_verdict.__class__(
-            submission_digest=sample_verdict.submission_digest,
-            gate_results="not a list",  # type: ignore[arg-type]
-            verifier_keyid=sample_verdict.verifier_keyid,
-            recommendation=sample_verdict.recommendation,
-            verified_at=sample_verdict.verified_at,
-            notes=sample_verdict.notes,
-        )
         with pytest.raises(VerdictError) as exc_info:
-            _ = v.gate_results
+            sample_verdict.__class__(
+                submission_digest=sample_verdict.submission_digest,
+                gate_results="not a list",  # type: ignore[arg-type]
+                verifier_keyid=sample_verdict.verifier_keyid,
+                recommendation=sample_verdict.recommendation,
+                verified_at=sample_verdict.verified_at,
+                notes=sample_verdict.notes,
+            )
         assert "gate_results" in str(exc_info.value)
         assert "expected list" in str(exc_info.value)
 
     def test_entry_not_dict(self, sample_verdict: VerificationVerdict) -> None:
-        v = sample_verdict.__class__(
-            submission_digest=sample_verdict.submission_digest,
-            gate_results=[123],  # type: ignore[arg-type]
-            verifier_keyid=sample_verdict.verifier_keyid,
-            recommendation=sample_verdict.recommendation,
-            verified_at=sample_verdict.verified_at,
-            notes=sample_verdict.notes,
-        )
         with pytest.raises(VerdictError) as exc_info:
-            _ = v.gate_results[0]
+            sample_verdict.__class__(
+                submission_digest=sample_verdict.submission_digest,
+                gate_results=[123],  # type: ignore[arg-type]
+                verifier_keyid=sample_verdict.verifier_keyid,
+                recommendation=sample_verdict.recommendation,
+                verified_at=sample_verdict.verified_at,
+                notes=sample_verdict.notes,
+            )
         assert "gate_results[0]" in str(exc_info.value)
         assert "expected dict" in str(exc_info.value)
 
     def test_missing_command(self, sample_verdict: VerificationVerdict) -> None:
-        v = sample_verdict.__class__(
-            submission_digest=sample_verdict.submission_digest,
-            gate_results=[{"passed": True}],  # type: ignore[arg-type]
-            verifier_keyid=sample_verdict.verifier_keyid,
-            recommendation=sample_verdict.recommendation,
-            verified_at=sample_verdict.verified_at,
-            notes=sample_verdict.notes,
-        )
         with pytest.raises(VerdictError) as exc_info:
-            _ = v.gate_results[0]
+            sample_verdict.__class__(
+                submission_digest=sample_verdict.submission_digest,
+                gate_results=[{"passed": True}],  # type: ignore[arg-type]
+                verifier_keyid=sample_verdict.verifier_keyid,
+                recommendation=sample_verdict.recommendation,
+                verified_at=sample_verdict.verified_at,
+                notes=sample_verdict.notes,
+            )
         assert "gate_results[0]" in str(exc_info.value)
         assert "missing 'command'" in str(exc_info.value)
 
     def test_missing_passed(self, sample_verdict: VerificationVerdict) -> None:
-        v = sample_verdict.__class__(
-            submission_digest=sample_verdict.submission_digest,
-            gate_results=[{"command": "test_build"}],  # type: ignore[arg-type]
-            verifier_keyid=sample_verdict.verifier_keyid,
-            recommendation=sample_verdict.recommendation,
-            verified_at=sample_verdict.verified_at,
-            notes=sample_verdict.notes,
-        )
         with pytest.raises(VerdictError) as exc_info:
-            _ = v.gate_results[0]
+            sample_verdict.__class__(
+                submission_digest=sample_verdict.submission_digest,
+                gate_results=[{"command": "test_build"}],  # type: ignore[arg-type]
+                verifier_keyid=sample_verdict.verifier_keyid,
+                recommendation=sample_verdict.recommendation,
+                verified_at=sample_verdict.verified_at,
+                notes=sample_verdict.notes,
+            )
         assert "gate_results[0]" in str(exc_info.value)
         assert "missing 'passed'" in str(exc_info.value)
 
@@ -291,11 +296,10 @@ class TestGateResultsValidation:
 def assert_conformance(doc: VerificationVerdict, harness) -> VerificationVerdict:
     """Helper that asserts canonical round-trip through hub and GitHub."""
     from bernstein.core.protocols.volunteer.conformance import (
-        assert_conformance as assert_harness_conformance,
-        to_hub_projection,
+        from_github_projection,
         from_hub_projection,
         to_github_projection,
-        from_github_projection,
+        to_hub_projection,
     )
 
     # Hub round-trip

@@ -11,6 +11,8 @@ Coverage:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -19,8 +21,9 @@ from bernstein.core.protocols.volunteer.receipt import (
     MergeReceipt,
     build_merge_receipt_envelope,
 )
-from bernstein.core.security.audit_dsse import Envelope
 
+if TYPE_CHECKING:
+    from bernstein.core.security.audit_dsse import Envelope
 
 # ---------------------------------------------------------------------------
 # Fixtures

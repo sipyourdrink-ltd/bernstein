@@ -19,25 +19,20 @@ import json
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
-    Ed25519PublicKey,
 )
 
-from bernstein.core.protocols.volunteer.receipt import (
-    MergeReceipt,
-    MergeReceiptError,
-    RECEIPT_PREDICATE_TYPE,
-    RECEIPT_SCHEMA_VERSION,
-    build_merge_receipt_envelope,
-    verify_merge_receipt_envelope,
-)
-from bernstein.core.protocols.volunteer.verdict import (
-    VerificationVerdict,
-)
 from bernstein.core.protocols.volunteer.documents import (
     canonical_hash,
 )
+from bernstein.core.protocols.volunteer.receipt import (
+    RECEIPT_PREDICATE_TYPE,
+    RECEIPT_SCHEMA_VERSION,
+    MergeReceipt,
+    MergeReceiptError,
+    build_merge_receipt_envelope,
+    verify_merge_receipt_envelope,
+)
 from bernstein.core.security.audit_dsse import Envelope, parse_envelope
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -212,65 +207,60 @@ class TestRewardValidation:
     """MergeReceiptError rejects invalid reward structure."""
 
     def test_reward_not_dict(self, sample_receipt: MergeReceipt) -> None:
-        r = sample_receipt.__class__(
-            submission_digest=sample_receipt.submission_digest,
-            merged_by_keyid=sample_receipt.merged_by_keyid,
-            merged_at=sample_receipt.merged_at,
-            reward="not a dict",  # type: ignore[arg-type]
-            task_id=sample_receipt.task_id,
-        )
         with pytest.raises(MergeReceiptError) as exc_info:
-            _ = r.reward
+            sample_receipt.__class__(
+                submission_digest=sample_receipt.submission_digest,
+                merged_by_keyid=sample_receipt.merged_by_keyid,
+                merged_at=sample_receipt.merged_at,
+                reward="not a dict",  # type: ignore[arg-type]
+                task_id=sample_receipt.task_id,
+            )
         assert "reward" in str(exc_info.value)
         assert "expected dict" in str(exc_info.value)
 
     def test_reward_missing_kind(self, sample_receipt: MergeReceipt) -> None:
-        r = sample_receipt.__class__(
-            submission_digest=sample_receipt.submission_digest,
-            merged_by_keyid=sample_receipt.merged_by_keyid,
-            merged_at=sample_receipt.merged_at,
-            reward={"amount": 100, "label": "test"},  # type: ignore[arg-type]
-            task_id=sample_receipt.task_id,
-        )
         with pytest.raises(MergeReceiptError) as exc_info:
-            _ = r.reward
+            sample_receipt.__class__(
+                submission_digest=sample_receipt.submission_digest,
+                merged_by_keyid=sample_receipt.merged_by_keyid,
+                merged_at=sample_receipt.merged_at,
+                reward={"amount": 100, "label": "test"},  # type: ignore[arg-type]
+                task_id=sample_receipt.task_id,
+            )
         assert "kind" in str(exc_info.value)
 
     def test_reward_invalid_kind(self, sample_receipt: MergeReceipt) -> None:
-        r = sample_receipt.__class__(
-            submission_digest=sample_receipt.submission_digest,
-            merged_by_keyid=sample_receipt.merged_by_keyid,
-            merged_at=sample_receipt.merged_at,
-            reward={"kind": "invalid", "amount": 100, "label": "test"},  # type: ignore[arg-type]
-            task_id=sample_receipt.task_id,
-        )
         with pytest.raises(MergeReceiptError) as exc_info:
-            _ = r.reward
+            sample_receipt.__class__(
+                submission_digest=sample_receipt.submission_digest,
+                merged_by_keyid=sample_receipt.merged_by_keyid,
+                merged_at=sample_receipt.merged_at,
+                reward={"kind": "invalid", "amount": 100, "label": "test"},  # type: ignore[arg-type]
+                task_id=sample_receipt.task_id,
+            )
         assert "kind" in str(exc_info.value)
         assert "must be one of" in str(exc_info.value)
 
     def test_reward_missing_amount(self, sample_receipt: MergeReceipt) -> None:
-        r = sample_receipt.__class__(
-            submission_digest=sample_receipt.submission_digest,
-            merged_by_keyid=sample_receipt.merged_by_keyid,
-            merged_at=sample_receipt.merged_at,
-            reward={"kind": "points", "label": "test"},  # type: ignore[arg-type]
-            task_id=sample_receipt.task_id,
-        )
         with pytest.raises(MergeReceiptError) as exc_info:
-            _ = r.reward
+            sample_receipt.__class__(
+                submission_digest=sample_receipt.submission_digest,
+                merged_by_keyid=sample_receipt.merged_by_keyid,
+                merged_at=sample_receipt.merged_at,
+                reward={"kind": "points", "label": "test"},  # type: ignore[arg-type]
+                task_id=sample_receipt.task_id,
+            )
         assert "amount" in str(exc_info.value)
 
     def test_reward_amount_invalid_type(self, sample_receipt: MergeReceipt) -> None:
-        r = sample_receipt.__class__(
-            submission_digest=sample_receipt.submission_digest,
-            merged_by_keyid=sample_receipt.merged_by_keyid,
-            merged_at=sample_receipt.merged_at,
-            reward={"kind": "points", "amount": "100", "label": "test"},  # type: ignore[arg-type]
-            task_id=sample_receipt.task_id,
-        )
         with pytest.raises(MergeReceiptError) as exc_info:
-            _ = r.reward
+            sample_receipt.__class__(
+                submission_digest=sample_receipt.submission_digest,
+                merged_by_keyid=sample_receipt.merged_by_keyid,
+                merged_at=sample_receipt.merged_at,
+                reward={"kind": "points", "amount": "100", "label": "test"},  # type: ignore[arg-type]
+                task_id=sample_receipt.task_id,
+            )
         assert "amount" in str(exc_info.value)
 
     def test_reward_amount_can_be_none(self, sample_receipt: MergeReceipt) -> None:
@@ -284,15 +274,14 @@ class TestRewardValidation:
         assert r.reward["amount"] is None
 
     def test_reward_missing_label(self, sample_receipt: MergeReceipt) -> None:
-        r = sample_receipt.__class__(
-            submission_digest=sample_receipt.submission_digest,
-            merged_by_keyid=sample_receipt.merged_by_keyid,
-            merged_at=sample_receipt.merged_at,
-            reward={"kind": "points", "amount": 100},  # type: ignore[arg-type]
-            task_id=sample_receipt.task_id,
-        )
         with pytest.raises(MergeReceiptError) as exc_info:
-            _ = r.reward
+            sample_receipt.__class__(
+                submission_digest=sample_receipt.submission_digest,
+                merged_by_keyid=sample_receipt.merged_by_keyid,
+                merged_at=sample_receipt.merged_at,
+                reward={"kind": "points", "amount": 100},  # type: ignore[arg-type]
+                task_id=sample_receipt.task_id,
+            )
         assert "label" in str(exc_info.value)
 
 
@@ -320,10 +309,6 @@ class TestConstants:
 def test_conformance_harness(sample_receipt: MergeReceipt) -> None:
     from bernstein.core.protocols.volunteer.conformance import (
         ConformanceHarness,
-        to_github_projection,
-        from_github_projection,
-        to_hub_projection,
-        from_hub_projection,
     )
 
     harness = ConformanceHarness()

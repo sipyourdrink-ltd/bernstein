@@ -31,10 +31,8 @@ import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from bernstein.core.security.audit_dsse import Envelope
-
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from bernstein.core.security.audit_dsse import Envelope
 
 
 # ---------------------------------------------------------------------------
@@ -73,14 +71,17 @@ class ReceiptAggregate:
     # Core operations
     # -----------------------------------------------------------------------
 
-    def add_receipt(self, envelope: Envelope) -> None:
+    def add_receipt(self, envelope: Envelope) -> ReceiptAggregate:
         """Append a receipt entry and recompute the root.
 
-        Mutates ``self`` in place (uses ``object.__setattr__`` to bypass
-        the frozen dataclass guard).
+        Returns a new ``ReceiptAggregate`` (the dataclass is frozen, so
+        mutation is via ``object.__setattr__`` to update in place).
 
         Args:
             envelope: The signed DSSE envelope to record.
+
+        Returns:
+            ``self`` (updated in place) so callers can chain.
         """
         # Extract envelope hash (SHA-256 of the canonical payload bytes).
         payload_bytes = envelope.payload_bytes
@@ -103,7 +104,8 @@ class ReceiptAggregate:
         if isinstance(predicate, dict):
             doc = predicate.get("document", {})
             if isinstance(doc, dict):
-                attested_at = doc.get("verified_at", doc.get("merged_at", ""))
+                val = doc.get("verified_at") or doc.get("merged_at")
+                attested_at = val if val else ""
 
         entry: dict[str, Any] = {
             "document_kind": predicate.get("document_kind", "") if isinstance(predicate, dict) else "",
@@ -111,7 +113,7 @@ class ReceiptAggregate:
             "attested_at": attested_at,
         }
 
-        new_receipts = list(self.receipts) + [entry]
+        new_receipts = [*list(self.receipts), entry]
         # Sort envelope hashes to make root deterministic over the set.
         sorted_hashes = sorted(
             [r["envelope_hash"] for r in new_receipts]
@@ -124,6 +126,7 @@ class ReceiptAggregate:
         object.__setattr__(self, "current_root", root_bytes)
         if attested_at and not self.updated_at:
             object.__setattr__(self, "updated_at", attested_at)
+        return self
 
     def verify_root(self) -> bool:
         """Recompute the root from receipts and compare with current_root.
