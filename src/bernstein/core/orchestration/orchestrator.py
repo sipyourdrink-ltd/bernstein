@@ -99,6 +99,7 @@ from bernstein.core.orchestration.adaptive_parallelism import AdaptiveParallelis
 from bernstein.core.orchestration.controller_state import (
     AdaptiveParallelismState,
     ClaimConflictEntry,
+    _sidecar_path,
 )
 from bernstein.core.orchestration.controller_state import (
     load as _load_controller_state,
@@ -895,32 +896,33 @@ class Orchestrator:
 
         # Adaptive parallelism: dynamically adjusts effective max_agents based
         # on error rate and CPU load.  See adaptive_parallelism.py.
-        # Sidecar persistence: try to restore state from the controllers
-        # sidecar; fall back to a fresh instance on any error.
-        _ap_state: AdaptiveParallelismState | None = None
-        _conflict_state: dict[str, ClaimConflictEntry] | None = None
-        try:
-            _ap_state_raw, _conflict_state = _load_controller_state(self._workdir)
-            _ap_state = _ap_state_raw
-        except Exception:  # best-effort: never let a bad sidecar break startup
-            logger.warning("Controller sidecar load failed — starting fresh", exc_info=True)
-        if _ap_state is not None:
-            self._adaptive_parallelism = AdaptiveParallelism.from_adaptive_parallelism_state(
-                _ap_state, configured_max=config.max_agents
-            )
+        # Sidecar persistence: restore state from a previous run when a sidecar
+        # exists.  ``load`` returns a zeroed naive state for an absent sidecar,
+        # so restoring it would start every fresh run at current_max=0 (which
+        # floors effective_max_agents far below configured_max).  Guard on the
+        # sidecar's presence so a missing file yields a clean AdaptiveParallelism
+        # (configured_max == current_max) instead.
+        if _sidecar_path(self._workdir).exists():
+            try:
+                _ap_state, _conflict_state = _load_controller_state(self._workdir)
+                self._adaptive_parallelism = AdaptiveParallelism.from_adaptive_parallelism_state(
+                    _ap_state, configured_max=config.max_agents
+                )
+                # Restore claim-conflict cooldowns (age-out is already applied in load).
+                for _tid, _entry in _conflict_state.items():
+                    self._claim_conflict_state[_tid] = (
+                        _entry.episode_count,
+                        _entry.backoff_until_epoch,
+                    )
+                logger.info(
+                    "Restored %d claim-conflict cooldown(s) from sidecar",
+                    len(self._claim_conflict_state),
+                )
+            except Exception:  # best-effort: never let a bad sidecar break startup
+                logger.warning("Controller sidecar load failed — starting fresh", exc_info=True)
+                self._adaptive_parallelism = AdaptiveParallelism(configured_max=config.max_agents)
         else:
             self._adaptive_parallelism = AdaptiveParallelism(configured_max=config.max_agents)
-        # Restore claim-conflict cooldowns (age-out is already applied in load).
-        if _conflict_state is not None:
-            for _tid, _entry in _conflict_state.items():
-                self._claim_conflict_state[_tid] = (
-                    _entry.episode_count,
-                    _entry.backoff_until_epoch,
-                )
-            logger.info(
-                "Restored %d claim-conflict cooldown(s) from sidecar",
-                len(self._claim_conflict_state),
-            )
 
         # Governed workflow mode: when config.workflow is set (e.g. "governed"),
         # the executor drives the run through deterministic phases, filtering
