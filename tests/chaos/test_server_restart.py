@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 import respx
-from httpx import ConnectError, Response
+from httpx import ConnectError
 
 if TYPE_CHECKING:
     from bernstein.core.orchestrator import Orchestrator
