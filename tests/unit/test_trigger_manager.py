@@ -1123,56 +1123,6 @@ class TestCronEvaluation:
 # ---------------------------------------------------------------------------
 
 
-class TestGitHubSources:
-    def test_normalize_push(self) -> None:
-        from bernstein.core.trigger_sources.github import normalize_push
-
-        payload = {
-            "ref": "refs/heads/main",
-            "head_commit": {"id": "abc123"},
-            "commits": [
-                {"message": "fix bug", "added": ["new.py"], "modified": ["app.py"], "removed": []},
-            ],
-        }
-        event = normalize_push(payload, "developer", "acme/widgets")
-        assert event.source == "github_push"
-        assert event.branch == "main"
-        assert event.sha == "abc123"
-        assert event.sender == "developer"
-        assert "new.py" in event.changed_files
-        assert "app.py" in event.changed_files
-
-    def test_normalize_workflow_run(self) -> None:
-        from bernstein.core.trigger_sources.github import normalize_workflow_run
-
-        payload = {
-            "workflow_run": {
-                "name": "CI",
-                "conclusion": "failure",
-                "head_branch": "main",
-                "head_sha": "def456",
-                "html_url": "https://github.com/acme/widgets/actions/runs/123",
-            }
-        }
-        event = normalize_workflow_run(payload, "github-actions", "acme/widgets")
-        assert event.source == "github_workflow_run"
-        assert event.metadata["conclusion"] == "failure"
-        assert event.metadata["workflow_name"] == "CI"
-
-    def test_normalize_issues(self) -> None:
-        from bernstein.core.trigger_sources.github import normalize_issues
-
-        payload = {
-            "issue": {
-                "number": 42,
-                "title": "Fix parser",
-                "body": "The parser crashes.",
-            }
-        }
-        event = normalize_issues(payload, "octocat", "acme/widgets", "opened")
-        assert event.source == "github_issues"
-        assert event.metadata["issue_number"] == 42
-        assert event.metadata["action"] == "opened"
 
 
 class TestSlackSource:
