@@ -227,6 +227,7 @@ def build_hub_app(lease_store: LeaseStore, config: dict | None = None) -> FastAP
 
         # Parse the PEM back to a key object for id derivation
         from cryptography.hazmat.primitives import serialization
+
         pubkey = serialization.load_pem_public_key(pubkey_pem.encode("utf-8"))
         if not isinstance(pubkey, Ed25519PublicKey):
             raise HTTPException(status_code=422, detail="public_key_pem must be an Ed25519 public key")
