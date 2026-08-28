@@ -16,11 +16,19 @@ single always-on Merkle+HMAC store that every adapter artifact write routes thro
 | `activity.py` | Active-set closure and provenance graph resolution over the receipt ledger |
 | `gate.py` | Lineage CI gate (ADR-009 §6.2) |
 | `run_graph.py` | Pairs each fan-out worktree branch with the spine that recorded it: `build_run_graph` returns one `RunGraphNode` per branch (`session_id`, `head_sha`, `run_id`, `spine_head_hash`) plus a deterministic root hash. Pure - it adds no storage and resolves `session_id -> run_id` from a caller-supplied mapping |
+| `merge_provenance.py` | Records one row per path a CLI agent's work lands through a merge (issue #2789). Reads the change as `before..after` so a fast-forward is recorded like a true merge, hashes the git blob rather than a re-read of the working tree, and names the merge commit in `step_id`. Recording at the merge, not at write time, is what lets a third party recompute every row's `content_hash` from the repository alone |
 
 ## Invariants
 
 - Adapter artifact writes route through `LineageSpine.record` at the single write boundary in
   `../../adapters/base.py` - no per-adapter opt-in, no second write path (issue #2292).
+- A CLI adapter spawns a subprocess that writes files itself, so those writes never reach that
+  in-process boundary; `merge_provenance.py` records them where the work is accepted into the
+  repository instead. It is a second *caller* of `record_artifact_write`, not a second write
+  path - anything new that records artifacts goes through that function too.
+- Provenance recording must never undo work that landed. A merge is already durable in git and
+  its rows are re-derivable from it, so `spawner_merge` logs a recording failure and keeps the
+  merge; `tests/unit/agents/test_spawner_merge_provenance.py` holds that boundary.
 - Spine entries chain: `entry_hash = H(prev_hash, artifact_path, content_hash, actor, step_id,
   model, timestamp)`. Changing the entry shape breaks head-hash verification for existing runs.
 - The spine's HMAC tag uses a per-store key derived from the audit-chain master key with
@@ -36,5 +44,8 @@ single always-on Merkle+HMAC store that every adapter artifact write routes thro
 
 Single files only, e.g. `uv run pytest tests/unit/test_lineage_record.py -x -q`;
 the `test_lineage_*.py` files cover entries, stores, signing, and gates.
+`tests/unit/lineage/test_merge_provenance.py` exercises merge recording against real git
+repositories rather than a stub, because what it asserts is that a row's `content_hash`
+matches the blob git stored.
 
-<!-- Reviewed 2026-08-24 against this subtree; the notes above still hold. -->
+<!-- Reviewed 2026-08-28 against this subtree; the notes above still hold. -->
