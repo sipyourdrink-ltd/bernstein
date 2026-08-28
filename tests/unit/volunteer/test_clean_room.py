@@ -28,7 +28,6 @@ from bernstein.core.volunteer.task_finish import (
     finish_volunteer_task,
 )
 
-
 # --------------------------------------------------------------------------
 # Fixtures and helpers
 # --------------------------------------------------------------------------
@@ -148,10 +147,8 @@ def test_clean_room_cleans_up_worktree_even_on_gate_failure(tmp_path: Path) -> N
     session = "session-gate-failure"
     worktree_path = _worktree(repo, session)
 
-    from bernstein.core.security.audit_dsse import keyid_from_public_key
-    from bernstein.core.security.result_receipt_bundle import GENESIS_ANCHOR, ChainLink
+    from bernstein.core.security.result_receipt_bundle import GENESIS_ANCHOR, ChainLink, TaskRef
     from bernstein.core.volunteer.sandbox_profile import build_volunteer_profile
-    from bernstein.core.security.result_receipt_bundle import TaskRef
     from bernstein.core.volunteer.task_finish import TaskProvenance
 
     manifest = _manifest()
@@ -205,10 +202,9 @@ def test_clean_room_cleans_up_worktree_even_on_scope_refusal(tmp_path: Path) -> 
     worktree_path = _worktree(repo, session)
 
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-    from bernstein.core.security.audit_dsse import keyid_from_public_key
-    from bernstein.core.security.result_receipt_bundle import GENESIS_ANCHOR, ChainLink
+
+    from bernstein.core.security.result_receipt_bundle import GENESIS_ANCHOR, ChainLink, TaskRef
     from bernstein.core.volunteer.sandbox_profile import build_volunteer_profile
-    from bernstein.core.security.result_receipt_bundle import TaskRef
     from bernstein.core.volunteer.task_finish import TaskProvenance
 
     key = Ed25519PrivateKey.from_private_bytes(bytes([2]) * 32)
@@ -267,9 +263,9 @@ def test_clean_room_cleans_up_worktree_on_profile_mismatch(tmp_path: Path) -> No
     worktree_path = _worktree(repo, session)
 
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-    from bernstein.core.security.result_receipt_bundle import GENESIS_ANCHOR, ChainLink
+
+    from bernstein.core.security.result_receipt_bundle import GENESIS_ANCHOR, ChainLink, TaskRef
     from bernstein.core.volunteer.sandbox_profile import build_volunteer_profile
-    from bernstein.core.security.result_receipt_bundle import TaskRef
     from bernstein.core.volunteer.task_finish import TaskProvenance
 
     key = Ed25519PrivateKey.from_private_bytes(bytes([3]) * 32)
