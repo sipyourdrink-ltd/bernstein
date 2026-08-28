@@ -36,14 +36,16 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from bernstein.core.protocols.volunteer.documents import (
     canonical_bytes,
     canonical_hash,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # ---------------------------------------------------------------------------
 # Projection constants
@@ -245,6 +247,7 @@ class ConformanceResult:
     error: str = ""
 
 
+@dataclass(frozen=True, slots=True)
 class ConformanceHarness:
     """Generic conformance checker for volunteer protocol documents.
 
@@ -397,20 +400,33 @@ class ConformanceHarness:
 def assert_conformance(
     doc: Any,
     *,
-    name: str,
-    to_canonical_dict: Callable[[Any], dict[str, Any]],
-    from_canonical_dict: Callable[[dict[str, Any]], Any],
+    harness: ConformanceHarness | None = None,
+    name: str = "",
+    to_canonical_dict: Callable[[Any], dict[str, Any]] | None = None,
+    from_canonical_dict: Callable[[dict[str, Any]], Any] | None = None,
 ) -> ConformanceResult:
     """Assert that a document conforms to both projections.
 
     A thin wrapper around :class:`ConformanceHarness` that raises
     ``AssertionError`` on failure.  Suitable for use in tests.
 
+    When ``harness`` is supplied, only the name is used to look up the
+    registered document type — the harness is shared so callers can
+    pre-register multiple types and verify one of them without creating a
+    fresh harness each time.  When ``harness`` is omitted, a new harness
+    is created and the document type is registered on-the-fly from
+    ``to_canonical_dict`` / ``from_canonical_dict``.
+
     Args:
         doc: A document instance.
-        name: Human-readable name for the document type.
+        harness: Optional pre-built harness; when supplied the name must
+            already be registered on it.
+        name: Human-readable name for the document type.  Ignored when
+            ``harness`` is provided and the type is already registered.
         to_canonical_dict: A callable that returns the canonical dict.
+            Required when ``harness`` is omitted.
         from_canonical_dict: A callable that accepts a canonical dict.
+            Required when ``harness`` is omitted.
 
     Returns:
         :class:`ConformanceResult` on success.
@@ -418,8 +434,11 @@ def assert_conformance(
     Raises:
         AssertionError: If either projection round-trip fails.
     """
-    harness = ConformanceHarness()
-    harness.register(name=name, to_canonical_dict=to_canonical_dict, from_canonical_dict=from_canonical_dict)
+    if harness is None:
+        if not name or to_canonical_dict is None or from_canonical_dict is None:
+            raise ValueError("assert_conformance requires name + to/from_canonical_dict when harness is None")
+        harness = ConformanceHarness()
+        harness.register(name=name, to_canonical_dict=to_canonical_dict, from_canonical_dict=from_canonical_dict)
     result = harness.check(name, doc)
     if not result.ok:
         raise AssertionError(result.error)

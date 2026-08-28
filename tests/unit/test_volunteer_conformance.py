@@ -269,7 +269,6 @@ class TestAssertConformance:
         with pytest.raises(AssertionError, match="unknown document type"):
             assert_conformance(
                 {"key": "value"},
+                harness=harness,
                 name="Unregistered",
-                to_canonical_dict=lambda x: x,
-                from_canonical_dict=lambda d: d,
             )
