@@ -304,18 +304,25 @@ def test_record_is_thread_safe_under_concurrent_dispatch(
     # body is reproducible per thread index for later assertions.
     big = "X" * 6000
 
+    worker_errors: list[tuple[int, BaseException]] = []
+
     def _worker(i: int) -> None:
-        gw.dispatch(
-            kind="llm",
-            key=f"k-{i}",
-            invoke=lambda i=i: {"i": i, "body": big},
-        )
+        try:
+            gw.dispatch(
+                kind="llm",
+                key=f"k-{i}",
+                invoke=lambda i=i: {"i": i, "body": big},
+            )
+        except BaseException as exc:
+            worker_errors.append((i, exc))
 
     threads = [threading.Thread(target=_worker, args=(i,)) for i in range(40)]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
+
+    assert not worker_errors, f"Worker failures: {worker_errors!r}"
 
     # Every line must parse and every seq must be unique + monotonic.
     raw_lines = gw.path.read_text(encoding="utf-8").splitlines()
