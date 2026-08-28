@@ -33,7 +33,29 @@ pytestmark = pytest.mark.skipif(
 
 def _sdk_installed() -> bool:
     """Return True when the optional ``openai-agents`` SDK is importable."""
-    return importlib.util.find_spec("agents") is not None
+    spec = importlib.util.find_spec("agents")
+    if spec is None:
+        return False
+    # Check if the spec has an origin (file-based package, not just a directory)
+    # Real openai-agents SDK will have a proper module structure with __init__.py
+    if spec.origin is None:
+        # This is likely a directory/namespace package like the local "agents/"
+        # that shadows the real SDK. Check if it's the local repo agents/ dir.
+        # The local agents/ directory doesn't have __init__.py, but the real
+        # SDK will have it and importable submodules like 'agents.Agent'.
+        try:
+            # Try to import and see if it has the Agent class
+            import agents
+            return hasattr(agents, "Agent") and hasattr(agents, "Runner")
+        except (ImportError, AttributeError):
+            return False
+    # Has an origin - check if it looks like a real SDK package by trying to
+    # import and see if it has the expected classes
+    try:
+        import agents
+        return hasattr(agents, "Agent") and hasattr(agents, "Runner")
+    except (ImportError, AttributeError):
+        return False
 
 
 @pytest.mark.skipif(
