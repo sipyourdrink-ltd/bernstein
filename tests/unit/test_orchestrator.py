@@ -5962,7 +5962,16 @@ class TestAdaptivePollingBackoff:
 
         # tick 1 (idle) → sleep 6, tick 2 (idle) → sleep 12,
         # tick 3 (active, resets) → sleep 3, tick 4 (idle, stops loop) → sleep 6
-        assert sleep_calls == [6.0, 12.0, 3.0, 6.0]
+        #
+        # By index rather than by equality on the whole list, the way the
+        # sibling test above already does it. `time.sleep` is one object
+        # shared by the whole process, so patching it here records every
+        # sleep anything performs while `run()` is on the stack - including
+        # a lock-acquire loop in the post-loop path, which under a
+        # no-op sleep spins its full real-time deadline and appended six
+        # thousand entries. The subject of this test is the polling
+        # schedule the loop chooses, and that is the first four.
+        assert sleep_calls[:4] == [6.0, 12.0, 3.0, 6.0]
 
     def test_idle_multiplier_field_exists(self, tmp_path: Path) -> None:
         orch = self._make_orch(tmp_path)
