@@ -36,7 +36,7 @@ class TaskContextPack:
         sorted_entries = sorted(self.entries, key=lambda e: e.path)
 
         return json.dumps(
-            [{"path": e.path, "sha256": e.sha256} for e in sorted_entries],
+            TaskContextPack(entries=sorted_entries).to_dict(),
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
