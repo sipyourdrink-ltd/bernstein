@@ -4908,21 +4908,7 @@ class Orchestrator:
         if conflict:
             detector = self._loop_detector
             if detector:
-                waiting_agent = None
-                if batch and batch[0].parent_task_id:
-                    parent_id = batch[0].parent_task_id
-                    waiting_agent = getattr(self, "_task_to_session", {}).get(parent_id)
-                    if not waiting_agent:
-                        for session in getattr(self, "_agents", {}).values():
-                            if parent_id in session.task_ids:
-                                waiting_agent = session.id
-                                break
-                    if not waiting_agent:
-                        for session in getattr(self, "_batch_sessions", {}).values():
-                            if parent_id in session.task_ids:
-                                waiting_agent = session.id
-                                break
-
+                waiting_agent = self.resolve_waiting_agent(batch[0].parent_task_id if batch else None)
                 if waiting_agent:
                     detector.record_lock_wait(
                         waiting_agent_id=waiting_agent,
@@ -4933,6 +4919,30 @@ class Orchestrator:
             return True
 
         return False
+
+    def resolve_waiting_agent(self, parent_task_id: str | None) -> str | None:
+        """Return the agent id waiting on ``parent_task_id``, or ``None``.
+
+        Recording a wait and clearing it must key on the same id, or the
+        wait-for graph keeps an entry nothing can ever remove -- the leak
+        this wiring exists to avoid. One resolver, called from both sides,
+        is what keeps them from drifting apart.
+
+        Returns ``None`` rather than substituting a task id when no agent
+        owns the task: a task id can never close a cycle in a graph whose
+        every target is an agent id, so an invented node is a permanent
+        non-participant, not a conservative default.
+        """
+        if not parent_task_id:
+            return None
+        owner = self._task_to_session.get(parent_task_id)
+        if owner:
+            return owner
+        for sessions in (self._agents, self._batch_sessions):
+            for session in sessions.values():
+                if parent_task_id in session.task_ids:
+                    return session.id
+        return None
 
     def _should_auto_decompose(self, task: Task) -> bool:
         """Delegate to task_lifecycle.should_auto_decompose."""

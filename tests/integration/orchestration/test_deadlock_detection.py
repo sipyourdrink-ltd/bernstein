@@ -30,12 +30,18 @@ async def test_deadlock_cycle_breaker_integration() -> None:
         orch = SimpleNamespace(
             _file_ownership={},
             _agents={"A-1": agent1, "A-2": agent2},
+            _batch_sessions={},
+            _task_to_session={},
             _lock_manager=lock_mgr,
             _loop_detector=loop_detector,
             _workdir=Path(tmpdir),
         )
 
         orch._check_file_overlap = Orchestrator._check_file_overlap.__get__(orch)
+        # Bind the real resolver rather than giving the stand-in its own: a
+        # fake that reimplements the lookup would pass while the shipped one
+        # resolved to something else, which is the drift this test is for.
+        orch.resolve_waiting_agent = Orchestrator.resolve_waiting_agent.__get__(orch)
 
         # They cross-hold two files
         # Agent 1 holds file 1 (older lock)

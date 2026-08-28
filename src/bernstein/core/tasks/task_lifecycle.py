@@ -2629,21 +2629,11 @@ def claim_and_spawn_batches(
                     break
                 _clear_claim_conflict_state(orch, task.id)
                 claimed_tasks.append(task)
-                detector = getattr(orch, "_loop_detector", None)
+                detector = orch._loop_detector
                 if detector:
-                    waiting_agent = None
-                    if task.parent_task_id:
-                        waiting_agent = getattr(orch, "_task_to_session", {}).get(task.parent_task_id)
-                        if not waiting_agent:
-                            for session in getattr(orch, "_agents", {}).values():
-                                if task.parent_task_id in session.task_ids:
-                                    waiting_agent = session.id
-                                    break
-                        if not waiting_agent:
-                            for session in getattr(orch, "_batch_sessions", {}).values():
-                                if task.parent_task_id in session.task_ids:
-                                    waiting_agent = session.id
-                                    break
+                    # Same resolver the wait was recorded with: keying the
+                    # clear differently is how an entry outlives the agent.
+                    waiting_agent = orch.resolve_waiting_agent(task.parent_task_id)
                     if waiting_agent:
                         detector.clear_wait(waiting_agent)
             except httpx.TransportError as exc:
