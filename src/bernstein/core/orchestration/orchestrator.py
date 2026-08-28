@@ -3277,6 +3277,11 @@ class Orchestrator:
             from bernstein.core.security.audit import load_or_create_audit_key
 
             hmac_key = load_or_create_audit_key()
+            # Before the seal, so the sealed head -- and the receipt that
+            # binds it -- cover the run's artifact rows rather than an empty
+            # chain. Recording after would attest a spine the receipt has
+            # already been computed against.
+            self._record_run_branch_provenance(hmac_key)
             seal_journal_into_spine(
                 self._recorder,
                 lineage_root=self._workdir / ".sdd" / "lineage",
@@ -3289,6 +3294,35 @@ class Orchestrator:
         else:
             self._seal_intent_capsules(hmac_key)
             self._write_run_receipt()
+
+    def _record_run_branch_provenance(self, hmac_key: bytes) -> None:
+        """Record a lineage row per path this run's branch added (issue #2789).
+
+        The merge boundary in ``spawner_merge`` covers work that arrives
+        through the orchestrator's own merge. Work also reaches a run branch
+        by direct commit and by a supervisor folding a worktree in outside
+        the orchestrator, and a hook on the merge alone leaves those runs
+        with a spine holding nothing the run produced -- the same shape of
+        gap, one path over.
+
+        Failures are logged, never raised: the branch is durable in git and
+        every row is re-derivable from it, so a provenance write that fails
+        must not fail a run that already completed.
+        """
+        try:
+            from bernstein.core.git.git_basic import resolve_default_branch
+            from bernstein.core.lineage.merge_provenance import record_run_branch_artifacts
+
+            record_run_branch_artifacts(
+                worktree_root=self._workdir,
+                actor="orchestrator",
+                lineage_root=self._workdir / ".sdd" / "lineage",
+                run_id=self._run_id,
+                hmac_key=hmac_key,
+                default_branch=resolve_default_branch(self._workdir),
+            )
+        except Exception as exc:
+            logger.warning("Run-branch provenance not recorded for run %s: %s", self._run_id, sanitize_log(str(exc)))
 
     def _write_run_receipt(self) -> None:
         """Write the signed run receipt at finalization (issue #2924).

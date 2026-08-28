@@ -37,6 +37,21 @@ logger = logging.getLogger(__name__)
 #: describe produced artifacts and which are the run's internal seal.
 MERGE_STEP_PREFIX = "merge:"
 
+#: Repository-relative prefix of the state directory the machinery writes its
+#: own journals, spines and run state into. Never recorded as run output: the
+#: journal is already attested by the seal, and a chain that records its own
+#: storage changes what it is recording every time it writes -- the second
+#: pass would attest the first pass's rows. Excluded by prefix rather than by
+#: resolving the lineage root, because a repo that tracks ``.sdd`` at all would
+#: otherwise pull the whole state tree in through a sibling path.
+STATE_DIR_PREFIX = ".sdd/"
+
+#: ``step_id`` prefix for rows recording everything a run's branch added over
+#: the trunk it branched from. Distinct from ``MERGE_STEP_PREFIX`` because the
+#: two answer different questions: a merge row names the merge that landed a
+#: path, a run-branch row names the run whose branch carries it.
+RUN_BRANCH_STEP_PREFIX = "run-branch:"
+
 #: Largest blob recorded inline. Content is hashed from bytes held in
 #: memory, and an agent-produced source file is orders of magnitude below
 #: this. A blob above the cap is skipped and counted rather than recorded
@@ -220,13 +235,115 @@ def record_merge_artifacts(
     return result
 
 
+def run_branch_range(worktree_root: Path, *, default_branch: str = "") -> tuple[str, str]:
+    """Return ``(base_sha, head_sha)`` for what this run's branch added.
+
+    The base is the merge-base with the trunk, so the range covers the run's
+    own work and not the trunk history it sits on. Falls back to the local
+    trunk ref, and then to the branch's root commit, because a workspace clone
+    may have no remote-tracking ref at all.
+
+    Raises:
+        MergedChangeUnreadable: HEAD could not be resolved.
+    """
+    head = _git_bytes(["rev-parse", "HEAD"], worktree_root).decode("utf-8", "replace").strip()
+    trunk = default_branch or "main"
+    for ref in (f"origin/{trunk}", trunk):
+        try:
+            base = _git_bytes(["merge-base", ref, "HEAD"], worktree_root).decode("utf-8", "replace").strip()
+        except (MergedChangeUnreadable, OSError, subprocess.SubprocessError):
+            continue
+        if base:
+            return base, head
+    # No trunk to diff against: an empty tree hash makes the range the whole
+    # branch rather than nothing. Recording too much is recoverable; recording
+    # silently nothing is the defect this module exists to remove.
+    empty_tree = _git_bytes(["hash-object", "-t", "tree", "/dev/null"], worktree_root)
+    return empty_tree.decode("utf-8", "replace").strip(), head
+
+
+def record_run_branch_artifacts(
+    *,
+    worktree_root: Path,
+    actor: str,
+    lineage_root: Path,
+    run_id: str,
+    hmac_key: bytes,
+    default_branch: str = "",
+    model: str = "",
+) -> MergeProvenanceResult:
+    """Record one row per path this run's branch added over the trunk.
+
+    Recording at the merge covers only work that arrived through a merge.
+    A run's branch also gains work by direct commit and by a supervisor
+    folding a worktree in outside the orchestrator, and those paths are
+    common enough in practice that a merge-only hook leaves most runs with
+    no provenance at all. This asks the question that has one answer
+    regardless of how the commits got there: what does this branch carry
+    that the trunk does not?
+
+    Paths already recorded for this run with the same bytes are skipped, so
+    running this alongside the merge hook cannot double-count a path.
+
+    Raises:
+        MergedChangeUnreadable: The range or its paths could not be read.
+            Callers finalizing a run must catch this: the branch is already
+            durable and the rows are re-derivable from it.
+    """
+    from bernstein.adapters.base import record_artifact_write
+    from bernstein.core.lineage.spine import LineageSpine, content_hash_of
+
+    base_sha, head_sha = run_branch_range(worktree_root, default_branch=default_branch)
+    if base_sha == head_sha:
+        return MergeProvenanceResult()
+
+    seen: set[tuple[str, str]] = set()
+    try:
+        for entry in LineageSpine(lineage_root, run_id=run_id, hmac_key=hmac_key).iter_entries():
+            seen.add((entry.artifact_path, entry.content_hash))
+    except Exception as exc:
+        logger.debug("run-branch provenance: prior rows unreadable, not deduplicating: %s", exc)
+
+    artifacts, oversize, unreadable = collect_merged_artifacts(worktree_root, base_sha, head_sha)
+    result = MergeProvenanceResult(skipped_oversize=oversize, unreadable=unreadable)
+
+    for artifact in artifacts:
+        if artifact.path.startswith(STATE_DIR_PREFIX):
+            continue
+        if (artifact.path, content_hash_of(artifact.content)) in seen:
+            continue
+        record_artifact_write(
+            artifact_path=artifact.path,
+            content=artifact.content,
+            actor=actor,
+            step_id=f"{RUN_BRANCH_STEP_PREFIX}{head_sha}",
+            model=model,
+            lineage_root=lineage_root,
+            run_id=run_id,
+            hmac_key=hmac_key,
+        )
+        result.recorded.append(artifact.path)
+
+    logger.info(
+        "run-branch provenance: recorded %d path(s) of %d in %s..%s",
+        len(result.recorded),
+        result.total_seen,
+        base_sha[:12],
+        head_sha[:12],
+    )
+    return result
+
+
 __all__ = [
     "MAX_BLOB_BYTES",
     "MERGE_STEP_PREFIX",
+    "RUN_BRANCH_STEP_PREFIX",
     "MergeProvenanceResult",
     "MergedArtifact",
     "MergedChangeUnreadable",
     "changed_paths",
     "collect_merged_artifacts",
     "record_merge_artifacts",
+    "record_run_branch_artifacts",
+    "run_branch_range",
 ]
