@@ -57,6 +57,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
 from bernstein.core.volunteer.lease_store import (
@@ -188,6 +189,18 @@ def build_hub_app(
         Configured :class:`FastAPI` app.
     """
     app = FastAPI(title="Bernstein volunteer hub", version="1.0")
+
+    # CORS middleware — allows the volunteer web UI (served from a different
+    # origin) to call the hub API.  Mirrors the pattern established by
+    # bernstein.core.fleet.web so the same configuration surface is used.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "Accept"],
+    )
+
     app.state.lease_store = lease_store
     if authenticator is not None:
         app.state.volunteer_authenticator = authenticator
