@@ -29,22 +29,20 @@ async def test_server_restart_resilience(test_client: TestClient, orchestrator_f
 
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
 
-        def handler(request):
-            method = request.method
-            path = request.url.path
-            api_path = path if path.startswith("/") else "/" + path
+        from tests.integration.conftest import make_proxy_handler
 
-            content = request.read()
-            headers = dict(request.headers)
-            resp = test_client.request(method, api_path, content=content, headers=headers)
-            return Response(resp.status_code, content=resp.content, headers=dict(resp.headers))
+        proxy = make_proxy_handler(
+            test_client,
+            integration_sdd,
+            slug_fn=lambda t: t["id"],
+        )
 
         outage_active = [False]
 
         def chaos_handler(request):
             if outage_active[0]:
                 raise ConnectError("Server is restarting (simulated chaos)...")
-            return handler(request)
+            return proxy(request)
 
         respx_mock.route().mock(side_effect=chaos_handler)
 
@@ -73,13 +71,6 @@ async def test_server_restart_resilience(test_client: TestClient, orchestrator_f
         outage_active[0] = False
 
         for i in range(15):
-            # Check for completion marker BEFORE tick
-            marker = integration_sdd / "runtime" / f"DONE_{task_id}"
-            if marker.exists():
-                print(f"Chaos Test: Detected completion for {task_id}, marking done")
-                test_client.post(f"/tasks/{task_id}/complete", json={"result_summary": "done"})
-                marker.unlink()
-
             orch.tick()
             await asyncio.sleep(0.5)
             resp = test_client.get(f"/tasks/{task_id}")
