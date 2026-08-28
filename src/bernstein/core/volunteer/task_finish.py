@@ -88,7 +88,6 @@ from bernstein.core.security.path_containment import (
     contained_subpath,
     validate_relative_path,
 )
-from bernstein.core.volunteer.runner import TaskDiff
 from bernstein.core.security.result_receipt_bundle import (
     GateResult,
     ResultBundle,
@@ -111,6 +110,7 @@ if TYPE_CHECKING:
     from bernstein.core.security.result_receipt_bundle import ChainLink, TaskRef
     from bernstein.core.volunteer.claim import ClaimClient
     from bernstein.core.volunteer.manifest import VolunteerManifest
+    from bernstein.core.volunteer.runner import TaskDiff
     from bernstein.core.volunteer.sandbox_profile import VolunteerSandboxProfile
 
 #: A patch path that is not a usable repository-relative path at all:
