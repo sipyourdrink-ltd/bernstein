@@ -3,6 +3,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+from bernstein.core.tasks.task_pack import PackEntry, TaskContextPack
+
 
 def test_a_pack_rebuilds_byte_identically(tmp_path: Path):
     script = tmp_path / "build_pack.py"
@@ -34,3 +38,15 @@ sys.stdout.buffer.write(pack.canonical_bytes())
 
     assert run1.stdout == run2.stdout
     assert b"12345" in run1.stdout
+
+
+def test_entry_order_does_not_change_bytes():
+    a = TaskContextPack(entries=[PackEntry(path="a.py", sha256="1"), PackEntry(path="b.py", sha256="2")])
+    b = TaskContextPack(entries=[PackEntry(path="b.py", sha256="2"), PackEntry(path="a.py", sha256="1")])
+    assert a.canonical_bytes() == b.canonical_bytes()
+
+
+def test_duplicate_paths_are_rejected():
+    pack = TaskContextPack(entries=[PackEntry(path="a.py", sha256="1"), PackEntry(path="a.py", sha256="2")])
+    with pytest.raises(ValueError, match="Duplicate path"):
+        pack.canonical_bytes()

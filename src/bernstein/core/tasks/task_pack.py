@@ -22,4 +22,21 @@ class TaskContextPack:
         return {"entries": [entry.to_dict() for entry in self.entries]}
 
     def canonical_bytes(self) -> bytes:
-        return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        """
+        Serializes the pack into deterministic bytes.
+        Duplicate paths are rejected and raise a ValueError.
+        """
+        seen_paths = set()
+        for entry in self.entries:
+            if entry.path in seen_paths:
+                raise ValueError(f"Duplicate path detected: {entry.path}")
+            seen_paths.add(entry.path)
+
+        # Sort deterministically by path before JSON serialization
+        sorted_entries = sorted(self.entries, key=lambda e: e.path)
+
+        return json.dumps(
+            [{"path": e.path, "sha256": e.sha256} for e in sorted_entries],
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
