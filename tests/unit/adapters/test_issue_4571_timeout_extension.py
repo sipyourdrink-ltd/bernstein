@@ -22,6 +22,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
 from bernstein.core.models import AgentSession, Complexity, Scope, Task
 
 from bernstein.core.agents.spawner_core import AgentSpawner
@@ -47,20 +48,27 @@ def test_extending_a_session_moves_the_process_deadline() -> None:
         patch("bernstein.adapters.base.kill_process_group") as mock_killpg,
         patch("bernstein.adapters.base.process_alive", return_value=True),
     ):
-        # Original deadline 0.4s from now.
-        timer = adapter._start_timeout_watchdog(pid=9001, timeout_seconds=0.4, session_id="extend-test")
-        time.sleep(0.2)  # most of the way to the original deadline
+        # Use a generous real-timer window so normal runner scheduling jitter does
+        # not turn this lifecycle test into a deadline test.
+        original_timeout = 1.0
+        timer = adapter._start_timeout_watchdog(pid=9001, timeout_seconds=original_timeout, session_id="extend-test")
+        arm_started = time.monotonic()
+        time.sleep(0.5)
+        elapsed_before_extension = time.monotonic() - arm_started
+        if elapsed_before_extension >= original_timeout:
+            timer.cancel()
+            pytest.skip(f"runner stalled for {elapsed_before_extension:.3f}s before extension")
 
-        # The extension path re-arms with a fresh deadline 0.4s from THIS moment,
-        # pushing the kill past the original 0.4s mark (to ~0.6s).
-        reinstate = adapter.extend_timeout(timer, pid=9001, timeout_seconds=0.4, session_id="extend-test")
+        # The extension path re-arms with a fresh deadline 1.0s from THIS moment,
+        # pushing the kill past the original 1.0s mark (to ~1.5s).
+        reinstate = adapter.extend_timeout(timer, pid=9001, timeout_seconds=1.0, session_id="extend-test")
 
-        # Past the ORIGINAL deadline (0.4s) but inside the re-armed window.
-        time.sleep(0.3)  # now ~0.5s: original would have fired at 0.4, re-armed fires at ~0.6
+        # Past the ORIGINAL deadline (1.0s) but inside the re-armed window.
+        time.sleep(0.7)  # now ~1.2s: original would have fired at 1.0, re-armed fires at ~1.5
         assert mock_killpg.call_count == 0, "extension did not move the deadline"
 
         # Past the re-armed deadline.
-        time.sleep(0.3)  # now ~0.8s: re-armed deadline was ~0.6s
+        time.sleep(0.6)  # now ~1.8s: re-armed deadline was ~1.5s
         assert mock_killpg.call_count >= 1, "re-armed deadline never fired"
 
     reinstate.cancel()
@@ -79,8 +87,8 @@ def test_non_extended_agent_still_killed_at_deadline() -> None:
         patch("bernstein.adapters.base.kill_process_group") as mock_killpg,
         patch("bernstein.adapters.base.process_alive", return_value=True),
     ):
-        timer = adapter._start_timeout_watchdog(pid=9002, timeout_seconds=0.3, session_id="no-extend")
-        time.sleep(0.5)
+        timer = adapter._start_timeout_watchdog(pid=9002, timeout_seconds=0.8, session_id="no-extend")
+        time.sleep(1.1)
         assert mock_killpg.call_count >= 1, "non-extended deadline never fired"
 
     timer.cancel()
