@@ -115,9 +115,7 @@ class ReceiptAggregate:
 
         new_receipts = [*list(self.receipts), entry]
         # Sort envelope hashes to make root deterministic over the set.
-        sorted_hashes = sorted(
-            [r["envelope_hash"] for r in new_receipts]
-        )
+        sorted_hashes = sorted([r["envelope_hash"] for r in new_receipts])
         root_bytes = hashlib.sha256(
             json.dumps(sorted_hashes, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
@@ -136,9 +134,7 @@ class ReceiptAggregate:
         """
         if not self.receipts:
             return self.current_root == ""
-        sorted_hashes = sorted(
-            [r["envelope_hash"] for r in self.receipts]
-        )
+        sorted_hashes = sorted([r["envelope_hash"] for r in self.receipts])
         root_bytes = hashlib.sha256(
             json.dumps(sorted_hashes, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()

@@ -180,7 +180,9 @@ class TestEnvelopeRoundTrip:
         result = verify_verdict_envelope(tampered, signing_key.public_key())
         assert result.ok is False
 
-    def test_persisted_envelope_roundtrips(self, signing_key: Ed25519PrivateKey, sample_verdict: VerificationVerdict) -> None:
+    def test_persisted_envelope_roundtrips(
+        self, signing_key: Ed25519PrivateKey, sample_verdict: VerificationVerdict
+    ) -> None:
         """Envelope serialised to JSON and re-parsed still verifies."""
         envelope = build_verdict_envelope(sample_verdict, signing_key)
         raw = envelope.to_json()

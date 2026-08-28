@@ -137,26 +137,18 @@ class MergeReceipt:
         try:
             parsed = datetime.fromisoformat(self.merged_at.replace("Z", "+00:00"))
         except (ValueError, TypeError) as exc:
-            raise MergeReceiptError(
-                "merged_at", f"not a valid ISO-8601 timestamp: {exc}"
-            ) from None
+            raise MergeReceiptError("merged_at", f"not a valid ISO-8601 timestamp: {exc}") from None
         if parsed.tzinfo is None:
-            raise MergeReceiptError(
-                "merged_at", "must be timezone-aware (include offset or Z suffix)"
-            )
+            raise MergeReceiptError("merged_at", "must be timezone-aware (include offset or Z suffix)")
 
         # reward must be a dict with valid kind, amount, label.
         if isinstance(self.reward, bool) or not isinstance(self.reward, dict):
-            raise MergeReceiptError(
-                "reward", f"expected dict, got {type(self.reward).__name__}"
-            )
+            raise MergeReceiptError("reward", f"expected dict, got {type(self.reward).__name__}")
         if "kind" not in self.reward:
             raise MergeReceiptError("reward", "missing 'kind' key")
         kind = self.reward.get("kind")
         if not isinstance(kind, str):
-            raise MergeReceiptError(
-                "reward.kind", f"expected str, got {type(kind).__name__}"
-            )
+            raise MergeReceiptError("reward.kind", f"expected str, got {type(kind).__name__}")
         if kind not in VALID_REWARD_KINDS:
             raise MergeReceiptError(
                 "reward.kind",
@@ -174,9 +166,7 @@ class MergeReceipt:
             raise MergeReceiptError("reward", "missing 'label' key")
         label = self.reward.get("label")
         if not isinstance(label, str):
-            raise MergeReceiptError(
-                "reward.label", f"expected str, got {type(label).__name__}"
-            )
+            raise MergeReceiptError("reward.label", f"expected str, got {type(label).__name__}")
 
         # pr_number is optional, but must be int if provided.
         if self.pr_number is not None and not isinstance(self.pr_number, int):
@@ -187,9 +177,7 @@ class MergeReceipt:
 
         # notes is optional but must be str if provided.
         if self.notes is not None and not isinstance(self.notes, str):
-            raise MergeReceiptError(
-                "notes", f"expected str or None, got {type(self.notes).__name__}"
-            )
+            raise MergeReceiptError("notes", f"expected str or None, got {type(self.notes).__name__}")
 
     # ---------------------------------------------------------------------------
     # Canonical form
@@ -257,9 +245,7 @@ def build_merge_receipt_envelope(
         MergeReceiptError: If ``receipt`` is not a ``MergeReceipt`` instance.
     """
     if not isinstance(receipt, MergeReceipt):
-        raise MergeReceiptError(
-            "<receipt>", f"expected MergeReceipt, got {type(receipt).__name__}"
-        )
+        raise MergeReceiptError("<receipt>", f"expected MergeReceipt, got {type(receipt).__name__}")
 
     doc = receipt.to_canonical_dict()
     doc_bytes = canonical_bytes(doc)
@@ -289,9 +275,7 @@ def build_merge_receipt_envelope(
     return Envelope(
         payload_type=DSSE_PAYLOAD_TYPE,
         payload_b64=base64.b64encode(payload).decode("ascii"),
-        signatures=[
-            Signature(keyid=keyid, sig=base64.b64encode(signature).decode("ascii"))
-        ],
+        signatures=[Signature(keyid=keyid, sig=base64.b64encode(signature).decode("ascii"))],
     )
 
 

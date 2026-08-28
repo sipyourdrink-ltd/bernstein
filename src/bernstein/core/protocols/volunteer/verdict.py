@@ -191,27 +191,19 @@ class VerificationVerdict:
 
         # verified_at must be an aware datetime.
         if isinstance(self.verified_at, bool) or not isinstance(self.verified_at, str):
-            raise VerdictError(
-                "verified_at", f"expected str, got {type(self.verified_at).__name__}"
-            )
+            raise VerdictError("verified_at", f"expected str, got {type(self.verified_at).__name__}")
         if not self.verified_at:
             raise VerdictError("verified_at", "must be non-empty")
         try:
             parsed = datetime.fromisoformat(self.verified_at.replace("Z", "+00:00"))
         except (ValueError, TypeError) as exc:
-            raise VerdictError(
-                "verified_at", f"not a valid ISO-8601 timestamp: {exc}"
-            ) from None
+            raise VerdictError("verified_at", f"not a valid ISO-8601 timestamp: {exc}") from None
         if parsed.tzinfo is None:
-            raise VerdictError(
-                "verified_at", "must be timezone-aware (include offset or Z suffix)"
-            )
+            raise VerdictError("verified_at", "must be timezone-aware (include offset or Z suffix)")
 
         # notes is optional but must be str or None if provided.
         if self.notes is not None and not isinstance(self.notes, str):
-            raise VerdictError(
-                "notes", f"expected str or None, got {type(self.notes).__name__}"
-            )
+            raise VerdictError("notes", f"expected str or None, got {type(self.notes).__name__}")
 
     # ---------------------------------------------------------------------------
     # Canonical form
@@ -279,9 +271,7 @@ def build_verdict_envelope(
         VerdictError: If ``verdict`` is not a ``VerificationVerdict`` instance.
     """
     if not isinstance(verdict, VerificationVerdict):
-        raise VerdictError(
-            "<verdict>", f"expected VerificationVerdict, got {type(verdict).__name__}"
-        )
+        raise VerdictError("<verdict>", f"expected VerificationVerdict, got {type(verdict).__name__}")
 
     doc = verdict.to_canonical_dict()
     doc_bytes = canonical_bytes(doc)
@@ -311,9 +301,7 @@ def build_verdict_envelope(
     return Envelope(
         payload_type=DSSE_PAYLOAD_TYPE,
         payload_b64=base64.b64encode(payload).decode("ascii"),
-        signatures=[
-            Signature(keyid=keyid, sig=base64.b64encode(signature).decode("ascii"))
-        ],
+        signatures=[Signature(keyid=keyid, sig=base64.b64encode(signature).decode("ascii"))],
     )
 
 
