@@ -553,8 +553,7 @@ def integration_sdd(tmp_path: Path) -> Path:
     (sdd / "config").mkdir(parents=True)
     (sdd / "incidents").mkdir(parents=True)
 
-    # Add dummy templates
-    for role in ["backend", "manager"]:
+    for role in ["backend", "frontend", "manager"]:
         templates = tmp_path / "templates" / "roles" / role
         templates.mkdir(parents=True, exist_ok=True)
         (templates / "system_prompt.md").write_text(f"You are a {role} specialist.")
@@ -590,12 +589,15 @@ def orchestrator_factory(integration_sdd: Path):
         os.environ["BERNSTEIN_CLI"] = "integration-mock"
         os.environ["BERNSTEIN_MAX_TASK_RETRIES"] = "0"
         os.environ["BERNSTEIN_HEARTBEAT_TIMEOUT"] = "60"
+        os.environ["BERNSTEIN_ADAPTER_ADMISSION_POLICY"] = "off"
+        os.environ["BERNSTEIN_ALLOW_MERGE_TO_DEFAULT_BRANCH"] = "1"
 
         config = OrchestratorConfig(
             server_url="http://127.0.0.1:8052",
             max_agents=max_agents,
             poll_interval_s=1,
             max_task_retries=0,
+            max_tasks_per_agent=1,
         )
 
         from bernstein.adapters.registry import register_adapter
@@ -603,12 +605,23 @@ def orchestrator_factory(integration_sdd: Path):
         adapter = IntegrationMockAdapter(integration_sdd)
         register_adapter("integration-mock", adapter)
 
+        from bernstein.core.agents.spawn_rate_limiter import (
+            SpawnRateLimitConfig,
+            SpawnRateLimiter,
+        )
+
+        permissive_rate_limiter = SpawnRateLimiter(SpawnRateLimitConfig(max_spawns=1000, window_seconds=1.0))
+
         spawner = AgentSpawner(
             adapter=adapter,
             templates_dir=integration_sdd.parent / "templates" / "roles",
             workdir=integration_sdd.parent,
             use_worktrees=use_worktrees,
+            spawn_rate_limiter=permissive_rate_limiter,
+            default_model="mock-model",
         )
-        return Orchestrator(config, spawner, workdir=integration_sdd.parent)
+        orchestrator = Orchestrator(config, spawner, workdir=integration_sdd.parent)
+        orchestrator._adaptive_parallelism.effective_max_agents = lambda: config.max_agents  # type: ignore[method-assign]
+        return orchestrator
 
     return _create
