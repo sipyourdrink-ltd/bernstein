@@ -419,6 +419,16 @@ class LeaseStore:
                         f"task {task_id} already carries a submission from worker {existing.worker_id}",
                     )
                 if existing.worker_id != worker_id:
+                    # A worker whose own lease was reaped learns that here, not
+                    # from a generic "already leased": the reason must match
+                    # what heartbeat/submit report through _holder_refusal so
+                    # a caller can apply one grace policy to all three.
+                    if self._reassigned.get((task_id, worker_id)) is not None:
+                        return LeaseRefusal(
+                            LeaseRefusalReason.LEASE_REASSIGNED,
+                            f"lease on task {task_id} was taken back from worker {worker_id} "
+                            f"and is now held by worker {existing.worker_id}",
+                        )
                     return LeaseRefusal(
                         LeaseRefusalReason.ALREADY_LEASED,
                         f"task {task_id} is leased to worker {existing.worker_id} until {existing.expires_at}",
