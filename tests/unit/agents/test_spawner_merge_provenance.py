@@ -19,9 +19,7 @@ from bernstein.core.lineage.spine import LineageSpine, SpineStatus
 
 
 def _git(repo: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, check=True
-    ).stdout.strip()
+    return subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=True).stdout.strip()
 
 
 class _Session:
@@ -119,9 +117,7 @@ def test_without_a_run_id_the_merge_still_lands(repo: Path) -> None:
     assert _git(repo, "log", "-1", "--pretty=%s") == "merge agent work"
 
 
-def test_a_failing_recorder_does_not_undo_a_landed_merge(
-    repo: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_failing_recorder_does_not_undo_a_landed_merge(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The merge is durable in git and the rows are re-derivable from it.
 
     So a provenance failure must be loud and survivable, never a rollback
