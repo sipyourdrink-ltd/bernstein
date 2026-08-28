@@ -9,8 +9,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from bernstein.core.observability.trust_record import (
     TrustRecord,
     TrustRecordEmitter,
@@ -47,9 +45,7 @@ class TestBuildUnsignedRecord:
         }
         assert record.signature == {}
 
-    def test_single_event_populates_head_hash_and_timestamps(
-        self, tmp_path: Path
-    ) -> None:
+    def test_single_event_populates_head_hash_and_timestamps(self, tmp_path: Path) -> None:
         emitter = TrustRecordEmitter()
         events = [{"ts": 1000.0, "event_hash": "abc123", "type": "start"}]
         journal = _create_journal(tmp_path, events)
@@ -60,9 +56,7 @@ class TestBuildUnsignedRecord:
         assert record.claims["first_event_ts"] == 1000.0
         assert record.claims["last_event_ts"] == 1000.0
 
-    def test_multiple_events_records_first_and_last_timestamps(
-        self, tmp_path: Path
-    ) -> None:
+    def test_multiple_events_records_first_and_last_timestamps(self, tmp_path: Path) -> None:
         emitter = TrustRecordEmitter()
         events = [
             {"ts": 1000.0, "event_hash": "first"},
@@ -77,9 +71,7 @@ class TestBuildUnsignedRecord:
         assert record.claims["first_event_ts"] == 1000.0
         assert record.claims["last_event_ts"] == 3000.0
 
-    def test_events_without_timestamps_omits_ts_fields(
-        self, tmp_path: Path
-    ) -> None:
+    def test_events_without_timestamps_omits_ts_fields(self, tmp_path: Path) -> None:
         emitter = TrustRecordEmitter()
         events = [{"event_hash": "no-ts", "type": "info"}]
         journal = _create_journal(tmp_path, events)
@@ -141,9 +133,7 @@ class TestSignRecord:
 
         assert re.match(r"^[A-Za-z0-9_-]*={0,2}$", sig)
 
-    def test_record_payload_unchanged_after_signing(
-        self, tmp_path: Path
-    ) -> None:
+    def test_record_payload_unchanged_after_signing(self, tmp_path: Path) -> None:
         emitter = TrustRecordEmitter()
         record = TrustRecord(
             subject="urn:bernstein:run:test",
@@ -219,9 +209,7 @@ class TestSignCanonicalBytesDetached:
         assert header["kid"] == kid
         assert header["alg"] == "EdDSA"
 
-    def test_different_payload_different_signature(
-        self, tmp_path: Path
-    ) -> None:
+    def test_different_payload_different_signature(self, tmp_path: Path) -> None:
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.asymmetric.ed25519 import (
             Ed25519PrivateKey,
@@ -335,9 +323,7 @@ class TestEmitTrustRecord:
 
         assert parsed["signature"]["alg"] == "EdDSA"
 
-    def test_full_round_trip_produces_valid_signature(
-        self, tmp_path: Path
-    ) -> None:
+    def test_full_round_trip_produces_valid_signature(self, tmp_path: Path) -> None:
         emitter = TrustRecordEmitter()
         events = [{"ts": 1.0, "event_hash": "final"}]
         journal = _create_journal(tmp_path, events)
