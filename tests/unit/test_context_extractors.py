@@ -1,7 +1,6 @@
-import json
-import logging
 from pathlib import Path
 
+from bernstein.core.quality.flaky_detector import FlakyDetector
 from bernstein.core.tasks.context_extractors import find_nearest_agents_md, get_known_flaky_tests
 
 # --- AGENTS.md Extractor Tests ---
@@ -36,27 +35,21 @@ def test_a_target_with_no_agents_md_anywhere_above_it_is_not_an_error(tmp_path: 
 # --- Flaky Test Extractor Tests ---
 
 
-def test_a_test_that_failed_and_passed_without_a_source_change_is_flaky(tmp_path: Path):
-    journal = tmp_path / "journal.json"
-    runs = [
-        {"test_id": "test_foo", "status": "failed", "commit": "abc"},
-        {"test_id": "test_foo", "status": "passed", "commit": "abc"},  # Flaky
-        {"test_id": "test_bar", "status": "failed", "commit": "abc"},
-        {"test_id": "test_bar", "status": "passed", "commit": "def"},  # Not flaky (commit changed)
+def test_the_extractor_reports_what_the_gate_deselects(tmp_path: Path):
+    """The prompt must name the same tests the gate is skipping.
+
+    Seeded through ``FlakyDetector`` rather than by writing the file by
+    hand, so the test breaks if the quarantine ever moves or changes shape
+    instead of silently reporting an empty list.
+    """
+    detector = FlakyDetector(tmp_path)
+    detector._write_quarantine(["tests/test_b.py::test_two", "tests/test_a.py::test_one"])
+
+    assert get_known_flaky_tests(tmp_path) == [
+        "tests/test_a.py::test_one",
+        "tests/test_b.py::test_two",
     ]
-    journal.write_text(json.dumps(runs))
-
-    flaky = get_known_flaky_tests([journal])
-    assert "test_foo" in flaky
-    assert "test_bar" not in flaky
 
 
-def test_an_unreadable_journal_yields_no_flaky_list_and_a_logged_reason(tmp_path: Path, caplog):
-    journal = tmp_path / "journal.json"
-    journal.write_text("{bad_json")
-
-    with caplog.at_level(logging.WARNING):
-        flaky = get_known_flaky_tests([journal])
-
-    assert flaky == []
-    assert "Failed to read run journal" in caplog.text
+def test_a_workdir_with_no_quarantine_yet_is_not_an_error(tmp_path: Path):
+    assert get_known_flaky_tests(tmp_path) == []
