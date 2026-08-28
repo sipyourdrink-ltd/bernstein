@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 if TYPE_CHECKING:
-    from src.bernstein.core.git.read_set_receipt import ReadSetRefusalReceipt
+    from bernstein.core.git.read_set_receipt import ReadSetRefusalReceipt
 
 
 # ------------------------------------------------------------------
@@ -32,11 +32,11 @@ def _clear_module_cache():
     import sys
 
     mods_to_delete = [
-        "src.bernstein.core.git.read_set_admission",
-        "src.bernstein.core.git.read_set_receipt",
-        "src.bernstein.core.security.audit_chain",
-        "src.bernstein.core.security.input_refusal",
-        "src.bernstein.core.lineage.identity",
+        "bernstein.core.git.read_set_admission",
+        "bernstein.core.git.read_set_receipt",
+        "bernstein.core.security.audit_chain",
+        "bernstein.core.security.input_refusal",
+        "bernstein.core.lineage.identity",
     ]
     for mod_name in mods_to_delete:
         if mod_name in sys.modules:
@@ -46,7 +46,7 @@ def _clear_module_cache():
 @pytest.fixture
 def sample_changed_paths():
     """Return sample ChangedPath entries."""
-    from src.bernstein.core.git.read_set_receipt import ChangedPath
+    from bernstein.core.git.read_set_receipt import ChangedPath
 
     return [
         ChangedPath(
@@ -65,7 +65,7 @@ def sample_changed_paths():
 @pytest.fixture
 def sample_receipt(sample_changed_paths):
     """Return a sample unsigned ReadSetRefusalReceipt."""
-    from src.bernstein.core.git.read_set_receipt import ReadSetRefusalReceipt
+    from bernstein.core.git.read_set_receipt import ReadSetRefusalReceipt
 
     return ReadSetRefusalReceipt(
         v=1,
@@ -82,7 +82,7 @@ def sample_receipt(sample_changed_paths):
 @pytest.fixture
 def keys(tmp_path: Path):
     """Generate and return test keypair."""
-    from src.bernstein.core.lineage.identity import generate_keypair
+    from bernstein.core.lineage.identity import generate_keypair
 
     private_key, public_key = generate_keypair()
     return {
@@ -102,7 +102,7 @@ def test_deterministic_serialization(sample_receipt: ReadSetRefusalReceipt) -> N
     This verifies the receipt serialization is deterministic and would produce
     identical audit artifacts across orchestrator workers.
     """
-    from src.bernstein.core.git.read_set_receipt import serialize_receipt
+    from bernstein.core.git.read_set_receipt import serialize_receipt
 
     # First invocation
     bytes1 = serialize_receipt(sample_receipt)
@@ -115,7 +115,7 @@ def test_deterministic_serialization(sample_receipt: ReadSetRefusalReceipt) -> N
 
 def test_canonical_bytes_are_stable(sample_receipt: ReadSetRefusalReceipt) -> None:
     """Canonical bytes are stable across runs (no wall-clock or chain field)."""
-    from src.bernstein.core.git.read_set_receipt import serialize_receipt
+    from bernstein.core.git.read_set_receipt import serialize_receipt
 
     # The canonical bytes should be stable even if we create a new receipt
     # with the same content
@@ -136,7 +136,7 @@ def test_receipt_hash_is_deterministic(sample_receipt: ReadSetRefusalReceipt) ->
 
 def test_receipt_signature_verifies(sample_receipt: ReadSetRefusalReceipt, keys: dict) -> None:
     """A signed receipt verifies correctly against its embedded public key."""
-    from src.bernstein.core.git.read_set_receipt import build_refusal_receipt
+    from bernstein.core.git.read_set_receipt import build_refusal_receipt
 
     signed = build_refusal_receipt(
         task_id=sample_receipt.task_id,
@@ -154,7 +154,7 @@ def test_receipt_signature_verifies(sample_receipt: ReadSetRefusalReceipt, keys:
 
 def test_receipt_tampering_fails_verification(sample_receipt: ReadSetRefusalReceipt, keys: dict) -> None:
     """A mutated receipt fails offline verification."""
-    from src.bernstein.core.git.read_set_receipt import (
+    from bernstein.core.git.read_set_receipt import (
         ReadSetRefusalReceipt,
         build_refusal_receipt,
     )
@@ -186,7 +186,7 @@ def test_receipt_tampering_fails_verification(sample_receipt: ReadSetRefusalRece
 
 def test_receipt_to_dict_round_trip(sample_receipt: ReadSetRefusalReceipt, keys: dict) -> None:
     """Receipt round-trips through to_dict/from_dict correctly."""
-    from src.bernstein.core.git.read_set_receipt import (
+    from bernstein.core.git.read_set_receipt import (
         ReadSetRefusalReceipt,
         build_refusal_receipt,
     )
@@ -216,7 +216,7 @@ def test_receipt_to_dict_round_trip(sample_receipt: ReadSetRefusalReceipt, keys:
 
 def test_offline_verification_fails_with_wrong_key(sample_receipt: ReadSetRefusalReceipt, keys: dict) -> None:
     """Receipt signed with one key fails verification with another."""
-    from src.bernstein.core.git.read_set_receipt import (
+    from bernstein.core.git.read_set_receipt import (
         ReadSetRefusalReceipt,
         build_refusal_receipt,
         verify_refusal_receipt,
@@ -233,7 +233,7 @@ def test_offline_verification_fails_with_wrong_key(sample_receipt: ReadSetRefusa
     )
 
     # Generate a different keypair
-    from src.bernstein.core.lineage.identity import generate_keypair
+    from bernstein.core.lineage.identity import generate_keypair
 
     _wrong_private, wrong_public = generate_keypair()
 
@@ -254,7 +254,7 @@ def test_offline_verification_fails_with_wrong_key(sample_receipt: ReadSetRefusa
 
 def test_receipt_persists_and_round_trips(sample_receipt: ReadSetRefusalReceipt, keys: dict, tmp_path: Path) -> None:
     """Receipt writes to disk and reads back correctly."""
-    from src.bernstein.core.git.read_set_receipt import (
+    from bernstein.core.git.read_set_receipt import (
         build_refusal_receipt,
         read_refusal_receipt,
         write_refusal_receipt,
@@ -285,7 +285,7 @@ def test_receipt_persists_and_round_trips(sample_receipt: ReadSetRefusalReceipt,
 
 def test_receipt_rejection_empty_changed_paths(sample_receipt: ReadSetRefusalReceipt, keys: dict) -> None:
     """Receipt works with empty changed_paths list."""
-    from src.bernstein.core.git.read_set_receipt import (
+    from bernstein.core.git.read_set_receipt import (
         ReadSetRefusalReceipt,
         build_refusal_receipt,
     )
@@ -317,7 +317,7 @@ def test_receipt_rejection_empty_changed_paths(sample_receipt: ReadSetRefusalRec
 
 def test_receipt_from_dict_handles_missing_fields(sample_receipt: ReadSetRefusalReceipt) -> None:
     """from_dict provides defaults for missing optional fields."""
-    from src.bernstein.core.git.read_set_receipt import ReadSetRefusalReceipt
+    from bernstein.core.git.read_set_receipt import ReadSetRefusalReceipt
 
     # Minimal dict
     minimal = {
@@ -364,7 +364,7 @@ def test_changed_path_dataclass(sample_changed_paths) -> None:
 
 def test_verify_receipt_offline_malformed_bytes(tmp_path: Path) -> None:
     """Malformed receipt bytes raise ValueError."""
-    from src.bernstein.core.git.read_set_receipt import verify_receipt_offline
+    from bernstein.core.git.read_set_receipt import verify_receipt_offline
 
     malformed = b"{this is not valid json"
     with pytest.raises(ValueError, match="Malformed receipt bytes"):
@@ -373,7 +373,7 @@ def test_verify_receipt_offline_malformed_bytes(tmp_path: Path) -> None:
 
 def test_verify_receipt_offline_invalid_chain(tmp_path: Path) -> None:
     """Invalid chain path returns False."""
-    from src.bernstein.core.git.read_set_receipt import verify_receipt_offline
+    from bernstein.core.git.read_set_receipt import verify_receipt_offline
 
     valid_receipt = b'{"v":1,"task_id":"t","base_commit":"b","target_branch":"m","changed_paths":[]}'
     result = verify_receipt_offline(valid_receipt, "/nonexistent/path.db")
@@ -388,10 +388,10 @@ def test_verify_receipt_offline_no_matching_anchor(
 
     # Re-import after clearing cache
     for mod_name in list(sys.modules.keys()):
-        if "src.bernstein" in mod_name:
+        if mod_name.startswith("bernstein.core.git.read_set_receipt"):
             del sys.modules[mod_name]
 
-    from src.bernstein.core.git.read_set_receipt import (
+    from bernstein.core.git.read_set_receipt import (
         build_refusal_receipt,
         verify_receipt_offline,
     )
@@ -415,10 +415,10 @@ def test_verify_receipt_offline_no_matching_anchor(
     mock_audit_log.load_from_file.return_value = mock_audit_log
 
     with (
-        patch("src.bernstein.core.security.audit.AuditLog", return_value=mock_audit_log),
-        patch("src.bernstein.core.security.audit_chain.AuditChainStore", return_value=mock_chain),
+        patch("bernstein.core.security.audit.AuditLog", return_value=mock_audit_log),
+        patch("bernstein.core.security.audit_chain.AuditChainStore", return_value=mock_chain),
         patch(
-            "src.bernstein.core.security.audit_chain.EVENT_READ_SET_REFUSAL",
+            "bernstein.core.security.audit_chain.EVENT_READ_SET_REFUSAL",
             "read_set.refusal_receipt",
         ),
     ):

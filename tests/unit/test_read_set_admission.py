@@ -15,7 +15,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from src.bernstein.core.replay.read_paths import ReadPathSet
+
+from bernstein.core.replay.read_paths import ReadPathSet
 
 # ------------------------------------------------------------------
 # Test helper fixtures
@@ -28,10 +29,10 @@ def _clear_module_cache():
     import sys
 
     mods_to_delete = [
-        "src.bernstein.core.git.read_set_admission",
-        "src.bernstein.core.git.read_set_receipt",
-        "src.bernstein.core.git.git_basic",
-        "src.bernstein.core.replay.read_paths",
+        "bernstein.core.git.read_set_admission",
+        "bernstein.core.git.read_set_receipt",
+        "bernstein.core.git.git_basic",
+        "bernstein.core.replay.read_paths",
     ]
     for mod_name in mods_to_delete:
         if mod_name in sys.modules:
@@ -65,13 +66,13 @@ def test_happy_path_no_changes(tmp_path: Path) -> None:
     mock_git_result.stdout = ""  # No changed files in diff
 
     with (
-        patch("src.bernstein.core.git.git_basic.run_git", return_value=mock_git_result),
+        patch("bernstein.core.git.git_basic.run_git", return_value=mock_git_result),
         patch(
-            "src.bernstein.core.replay.read_paths.derive_read_paths",
+            "bernstein.core.replay.read_paths.derive_read_paths",
             return_value=mock_read_path_set,
         ),
     ):
-        from src.bernstein.core.git.read_set_admission import check_read_set_changed
+        from bernstein.core.git.read_set_admission import check_read_set_changed
 
         result = check_read_set_changed(
             journal_path=str(journal_path),
@@ -120,13 +121,13 @@ def test_failure_path_changed(tmp_path: Path) -> None:
         return result
 
     with (
-        patch("src.bernstein.core.git.git_basic.run_git", side_effect=mock_run_git),
+        patch("bernstein.core.git.git_basic.run_git", side_effect=mock_run_git),
         patch(
-            "src.bernstein.core.replay.read_paths.derive_read_paths",
+            "bernstein.core.replay.read_paths.derive_read_paths",
             return_value=mock_read_path_set,
         ),
     ):
-        from src.bernstein.core.git.read_set_admission import check_read_set_changed
+        from bernstein.core.git.read_set_admission import check_read_set_changed
 
         result = check_read_set_changed(
             journal_path=str(journal_path),
@@ -154,8 +155,8 @@ def test_journal_mutation_detection(tmp_path: Path) -> None:
 
     # Mock derive_read_paths to raise broken_chain error
     with (
-        patch("src.bernstein.core.git.git_basic.run_git"),
-        patch("src.bernstein.core.replay.read_paths.derive_read_paths") as mock_derive,
+        patch("bernstein.core.git.git_basic.run_git"),
+        patch("bernstein.core.replay.read_paths.derive_read_paths") as mock_derive,
     ):
         mock_derive.side_effect = ReadPathSet(
             read_paths=frozenset(),
@@ -164,7 +165,7 @@ def test_journal_mutation_detection(tmp_path: Path) -> None:
         # Use a different approach - mock derive_read_paths to raise
         mock_derive.side_effect = Exception("Chain broken")
 
-        from src.bernstein.core.git.read_set_admission import (
+        from bernstein.core.git.read_set_admission import (
             check_read_set_changed,
         )
 
@@ -215,13 +216,13 @@ def test_deterministic_receipt_serialization(tmp_path: Path) -> None:
             return result
 
         with (
-            patch("src.bernstein.core.git.git_basic.run_git", side_effect=mock_run_git),
+            patch("bernstein.core.git.git_basic.run_git", side_effect=mock_run_git),
             patch(
-                "src.bernstein.core.replay.read_paths.derive_read_paths",
+                "bernstein.core.replay.read_paths.derive_read_paths",
                 return_value=mock_read_path_set,
             ),
         ):
-            from src.bernstein.core.git.read_set_admission import check_read_set_changed
+            from bernstein.core.git.read_set_admission import check_read_set_changed
 
             result = check_read_set_changed(
                 journal_path=str(journal_path),
@@ -279,13 +280,13 @@ def test_offline_verification(tmp_path: Path) -> None:
         return result
 
     with (
-        patch("src.bernstein.core.git.git_basic.run_git", side_effect=mock_run_git),
+        patch("bernstein.core.git.git_basic.run_git", side_effect=mock_run_git),
         patch(
-            "src.bernstein.core.replay.read_paths.derive_read_paths",
+            "bernstein.core.replay.read_paths.derive_read_paths",
             return_value=mock_read_path_set,
         ),
     ):
-        from src.bernstein.core.git.read_set_admission import check_read_set_changed
+        from bernstein.core.git.read_set_admission import check_read_set_changed
 
         result = check_read_set_changed(
             journal_path=str(journal_path),
@@ -339,13 +340,13 @@ def test_disjoint_write_sets_no_conflict(tmp_path: Path) -> None:
         return result
 
     with (
-        patch("src.bernstein.core.git.git_basic.run_git", side_effect=mock_run_git),
+        patch("bernstein.core.git.git_basic.run_git", side_effect=mock_run_git),
         patch(
-            "src.bernstein.core.replay.read_paths.derive_read_paths",
+            "bernstein.core.replay.read_paths.derive_read_paths",
             return_value=mock_read_path_set,
         ),
     ):
-        from src.bernstein.core.git.read_set_admission import check_read_set_changed
+        from bernstein.core.git.read_set_admission import check_read_set_changed
 
         result = check_read_set_changed(
             journal_path=str(journal_path),
@@ -386,13 +387,13 @@ def test_multiple_changed_paths(tmp_path: Path) -> None:
         return result
 
     with (
-        patch("src.bernstein.core.git.git_basic.run_git", side_effect=mock_run_git),
+        patch("bernstein.core.git.git_basic.run_git", side_effect=mock_run_git),
         patch(
-            "src.bernstein.core.replay.read_paths.derive_read_paths",
+            "bernstein.core.replay.read_paths.derive_read_paths",
             return_value=mock_read_path_set,
         ),
     ):
-        from src.bernstein.core.git.read_set_admission import check_read_set_changed
+        from bernstein.core.git.read_set_admission import check_read_set_changed
 
         result = check_read_set_changed(
             journal_path=str(journal_path),

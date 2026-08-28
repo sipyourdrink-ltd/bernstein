@@ -8,8 +8,8 @@ the Bernstein orchestrator.
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.bernstein.core.git.git_basic import run_git
-from src.bernstein.core.replay.read_paths import derive_read_paths
+from bernstein.core.git.git_basic import run_git
+from bernstein.core.replay.read_paths import derive_read_paths
 
 NULL_COMMIT_HASH = "0000000000000000000000000000000000000000"
 
