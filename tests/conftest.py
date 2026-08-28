@@ -481,7 +481,9 @@ class IntegrationMockAdapter(CLIAdapter):
             marker_dir = self.sdd_path.resolve() / "runtime"
             marker_dir.mkdir(parents=True, exist_ok=True)
 
-            markers_lines = "\n".join(f"(Path('{marker_dir}') / 'DONE_{tid}').write_text('done')" for tid in task_ids)
+            markers_lines = "\n".join(
+                f"    (Path('{marker_dir}') / 'DONE_{tid}').write_text('done')" for tid in task_ids
+            )
 
             script_body = f"""import os
 import subprocess
