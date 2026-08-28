@@ -273,6 +273,9 @@ def hub_cmd(host: str, port: int, lease_store_path: str | None) -> None:
     The hub exposes endpoints for workers to enroll, claim, heartbeat,
     submit, and release tasks.  See :func:`bernstein.core.volunteer.hub_app.build_hub_app`
     for the API surface.
+
+    .. note:: The lease store is single-process only. Do not run with
+       ``uvicorn --workers N>1`` or multiple replicas.
     """
     try:
         import uvicorn
@@ -290,4 +293,5 @@ def hub_cmd(host: str, port: int, lease_store_path: str | None) -> None:
     store = LeaseStore(Path(lease_store_path))
     app = build_hub_app(store)
     click.echo(f"Bernstein volunteer hub listening on http://{host}:{port}")
+    click.echo("NOTE: single-process only — do not use --workers N>1 or replicas")
     uvicorn.run(app, host=host, port=port, log_level="warning")

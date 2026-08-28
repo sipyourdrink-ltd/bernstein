@@ -168,37 +168,29 @@ def _refusal_to_http(refusal: LeaseRefusal) -> None:
     raise HTTPException(status_code=status_code, detail=refusal.detail)
 
 
-# Pydantic models for request bodies
-
-
-class EnrollRequest:
-    """Request body for worker enrollment."""
-
-    def __init__(self, public_key_pem: str) -> None:
-        self.public_key_pem = public_key_pem
-
-
-class SubmitRequest:
-    """Request body for task submission."""
-
-    def __init__(self, bundle_digest: str, location: str) -> None:
-        self.bundle_digest = bundle_digest
-        self.location = location
-
-
-def build_hub_app(lease_store: LeaseStore, config: dict | None = None) -> FastAPI:
+def build_hub_app(
+    lease_store: LeaseStore,
+    config: dict | None = None,
+    authenticator: VolunteerAuthenticator | None = None,
+) -> FastAPI:
     """Build the FastAPI application backing the volunteer hub.
 
     Args:
         lease_store: The :class:`LeaseStore` instance to back the endpoints.
         config: Optional configuration dict. Not used yet; reserved for
-            future扩展 (TLS settings, auth config, etc.).
+            future config (TLS, auth, etc.).
+        authenticator: Optional :class:`VolunteerAuthenticator` for scoped
+            bearer-token verification. When omitted, all auth-gated endpoints
+            are open (no-op auth). Auth is intentionally deferred; wire this
+            via the CLI once a token-issuance surface exists.
 
     Returns:
         Configured :class:`FastAPI` app.
     """
     app = FastAPI(title="Bernstein volunteer hub", version="1.0")
     app.state.lease_store = lease_store
+    if authenticator is not None:
+        app.state.volunteer_authenticator = authenticator
 
     # Health check
     @app.get("/healthz")
@@ -235,16 +227,15 @@ def build_hub_app(lease_store: LeaseStore, config: dict | None = None) -> FastAP
         worker_id = await lease_store.enroll(pubkey)
         return JSONResponse({"worker_id": worker_id, "status": "pending"}, status_code=201)
 
-    # Operator endpoint to approve a worker (simplified: just marks approved)
+    # Placeholder endpoint — verifies worker exists; full approval gating deferred
     @app.post("/volunteer/workers/{worker_id}/approve", status_code=204)
-    async def approve_worker(worker_id: str, request: Request) -> Response:
-        """Approve a pending worker enrollment.
+    async def approve_worker(worker_id: str) -> Response:
+        """Check whether a worker is enrolled.
 
-        Requires the volunteer:enroll scope.
+        Currently a no-op that verifies the worker exists in the store.
+        A full implementation would gate on actual approval state once
+        the store supports it.
         """
-        _verify_volunteer_auth(request, SCOPE_VOLUNTEER_ENROLL)
-        # For now, we just verify the worker exists; the actual approval flag
-        # would be stored in the lease store in a full implementation.
         if not lease_store.is_enrolled(worker_id):
             raise HTTPException(status_code=404, detail=f"Worker {worker_id} not found")
         return Response(status_code=204)
