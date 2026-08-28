@@ -117,6 +117,34 @@ def test_without_a_run_id_the_merge_still_lands(repo: Path) -> None:
     assert _git(repo, "log", "-1", "--pretty=%s") == "merge agent work"
 
 
+def test_an_unreadable_worktree_does_not_stop_the_merge_being_attempted(tmp_path: Path) -> None:
+    """Reading the provenance base must not decide whether the merge runs.
+
+    The base is read before the merge so a fast-forward can be recorded, and
+    ``run_git`` cannot chdir into a path that is not there: an unguarded read
+    raises before the merge function is ever called, turning a provenance aid
+    into a merge gate and taking the error away from the merge function that
+    reports it properly. Asserts the call happened, not merely that nothing
+    raised -- a silently skipped merge would also not raise.
+    """
+    called: list[Path] = []
+
+    def _merge(session_id: str, repo_root: Path) -> _MergeResult:
+        called.append(repo_root)
+        return _MergeResult(success=False)
+
+    missing = tmp_path / "gone"  # never created
+
+    _run_merge_and_push(
+        _Session(),  # type: ignore[arg-type]
+        missing,
+        _merge,
+        run_id="run-1",
+    )
+
+    assert called == [missing]
+
+
 def test_a_failing_recorder_does_not_undo_a_landed_merge(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The merge is durable in git and the rows are re-derivable from it.
 

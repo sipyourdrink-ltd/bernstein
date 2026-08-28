@@ -627,8 +627,18 @@ def _run_merge_and_push(
     # commit to diff against a parent -- the same way as a true merge.
     from bernstein.core.git.git_basic import run_git as _run_git
 
-    _base = _run_git(["rev-parse", "HEAD"], worktree_root, timeout=10)
-    before_sha = _base.stdout.strip() if _base.returncode == 0 else ""
+    # Reading the base must not decide whether the merge is attempted. A
+    # missing or unreadable worktree makes this raise before the merge
+    # function is ever called -- ``run_git`` cannot chdir into a path that is
+    # not there -- which would turn a provenance aid into a merge gate and
+    # take the error away from the merge function that reports it properly.
+    # An empty base makes the later recording a documented no-op.
+    try:
+        _base = _run_git(["rev-parse", "HEAD"], worktree_root, timeout=10)
+        before_sha = _base.stdout.strip() if _base.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.debug("merge provenance: base unreadable at %s: %s", worktree_root, exc)
+        before_sha = ""
 
     merge_result = merge_worktree_branch_fn(session.id, repo_root=worktree_root)
     merge_duration.observe(time.perf_counter() - merge_start)
