@@ -415,7 +415,7 @@ class TestAdaptiveParallelismStateConversion:
         save(tmp_path, state, conflict)
 
         # Restore from sidecar
-        loaded_ap, loaded_conflict = load(tmp_path)
+        loaded_ap, _loaded_conflict = load(tmp_path)
         restored = AdaptiveParallelism.from_adaptive_parallelism_state(loaded_ap)
 
         assert restored.configured_max == 10
