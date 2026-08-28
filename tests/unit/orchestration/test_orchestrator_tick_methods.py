@@ -104,11 +104,20 @@ def _overlap_stub(
     stub = SimpleNamespace(
         _file_ownership=file_ownership or {},
         _agents=agents or {},
+        _batch_sessions={},
+        _task_to_session={},
         _lock_manager=lock_manager,
         _loop_detector=MagicMock(),
     )
     stub._check_file_overlap = MethodType(
         Orchestrator._check_file_overlap,  # type: ignore[arg-type]
+        stub,
+    )
+    # The real resolver, not a stand-in: recording a wait under one key and
+    # clearing it under another is exactly the bug this attribution guards
+    # against, and a fake here would agree with whatever it was handed.
+    stub.resolve_waiting_agent = MethodType(
+        Orchestrator.resolve_waiting_agent,  # type: ignore[arg-type]
         stub,
     )
     return stub

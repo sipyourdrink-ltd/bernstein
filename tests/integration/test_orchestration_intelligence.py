@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +17,7 @@ from bernstein.core.spawn_prompt import render_prompt
 from bernstein.core.task_lifecycle import claim_and_spawn_batches, maybe_retry_task
 
 from bernstein.adapters.base import SpawnError
+from bernstein.core.orchestration.orchestrator import Orchestrator
 
 
 def _write_log(tmp_path: Path, session_id: str, content: str) -> None:
@@ -145,12 +146,22 @@ def test_spawn_failure_analysis_prevents_permanent_retry(tmp_path: Path, make_ta
         _client=client,
         _spawner=MagicMock(),
         _task_to_session={},
+        _batch_sessions={},
+        _loop_detector=MagicMock(),
         _lock_manager=MagicMock(),
         _rate_limit_tracker=None,
         _wal_writer=None,
         _response_cache=None,
         _fast_path_stats=MagicMock(),
         _bulletin=None,
+    )
+    # Bound from the class rather than faked: a successful claim clears the
+    # parent's deadlock wait through this resolver, and a stand-in would
+    # accept whatever key it was given instead of the one the wait was
+    # recorded under.
+    orch.resolve_waiting_agent = MethodType(
+        Orchestrator.resolve_waiting_agent,  # type: ignore[arg-type]
+        orch,
     )
     orch._quarantine.is_quarantined.return_value = False
     orch._spawner._adapter.is_rate_limited.return_value = False
