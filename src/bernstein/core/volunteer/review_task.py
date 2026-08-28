@@ -81,14 +81,14 @@ def _resolve_auth_token() -> str | None:
     # Fall back to the run auth token file in the worktree.
     try:
         token_path = os.getcwd() + "/.sdd/runtime/auth.token"
-        return open(token_path).read().strip()  # noqa: SIM115
+        return open(token_path).read().strip()
     except OSError:
         pass
     return None
 
 
 def create_volunteer_review_task(
-    bundle: "ResultBundle",
+    bundle: ResultBundle,
     pr_url: str,
     *,
     role: str | None = None,
