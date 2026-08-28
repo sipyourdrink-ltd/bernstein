@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "license": "Apache-2.0",
+  "gates": [
+    ["uv", "run", "pytest", "-q"],
+    ["uv", "run", "ruff", "check", "."]
+  ],
+  "allowed_paths": ["src/**", "tests/**", "docs/**"],
+  "egress_allowlist": [],
+  "sandbox": "container",
+  "max_wall_clock_minutes": 30,
+  "task_label": "volunteer-ok",
+  "local_ok": true,
+  "status": "active"
+}
