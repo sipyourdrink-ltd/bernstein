@@ -56,6 +56,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [Fleet steering](../operations/fleet-steering.md) | Full | 3 | Pause, resume, guidance, redirect, and abort each land a signed steering receipt before any effect runs (`core/orchestration/steering.py`) |
 | [Detached run service](../operations/run-service.md) | Full | 3 | Submit a goal, disconnect, and reattach later against a supervised run service (`core/run_service/`) |
 | [Named resource pools](../operations/named-resource-pools.md) | Full | 3 | Lease-backed admission with chain-anchored grant and release receipts (`core/admission/`) |
+| Spec-to-graph compile | Full | 3 | `bernstein plan compile` runs the draft/approve/compile pipeline offline into a gated task graph with a chain-anchored receipt (`plan_compile_cmd.py`) |
 
 ## State and persistence
 

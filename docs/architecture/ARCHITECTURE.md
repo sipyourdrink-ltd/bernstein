@@ -156,6 +156,7 @@ Tracks per-agent token consumption in real time. Detects runaway token growth an
 | `core/observability/circuit_breaker.py` | Halts agents that repeatedly violate purpose or crash - sends SHUTDOWN signal |
 | `core/cost/cost_tracker.py` | Per-run cost budget tracking with threshold warnings |
 | `core/cost/cost_history.py` | Persisted cost history and alert logic |
+| `core/quality/cross_model_verifier.py` | Routes completed diffs to a different model for independent review |
 | `core/communication/bulletin.py` | Append-only bulletin board for cross-agent communication |
 | `core/agents/agent_discovery.py` | Auto-detect installed CLI agents, check login status, register capabilities |
 | `core/agents/agent_lifecycle.py` | Heartbeat monitoring, stall detection, crash reaping |
