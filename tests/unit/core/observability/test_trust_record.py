@@ -26,7 +26,6 @@ from bernstein.core.observability.trust_record import (
     TrustRecordEmitter,
     _base58btc_decode,
     _base58btc_encode,
-    _did_key_from_ed25519_public_key,
     _sign_canonical_bytes_detached,
     _spiffe_uri_from_ed25519_public_key,
 )

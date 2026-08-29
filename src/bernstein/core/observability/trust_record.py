@@ -518,8 +518,6 @@ def _spiffe_uri_from_ed25519_public_key(raw_public_key: bytes, run_id: str) -> s
     Returns:
         A SPIFFE URI string.
     """
-    import platform as _platform
-
     digest = hashlib.sha256(raw_public_key).hexdigest()
     install_fp = digest[:16]
     trust_domain = f"install-{digest[:8]}.{sys.platform}"
