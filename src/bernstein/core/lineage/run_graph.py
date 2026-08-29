@@ -37,7 +37,7 @@ import enum
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
 from bernstein.core.security.agent_card_signer import sign_detached_jws_over_canonical
@@ -213,7 +213,7 @@ class RunGraphReceipt:
         return self.canonical_payload_without_anchor().encode("utf-8")
 
     @classmethod
-    def from_dict(cls, raw: Mapping[str, object]) -> RunGraphReceipt:
+    def from_dict(cls, raw: Mapping[str, Any]) -> RunGraphReceipt:
         return cls(
             schema_version=int(raw["schema_version"]),
             graph_root_hash=str(raw["graph_root_hash"]),
