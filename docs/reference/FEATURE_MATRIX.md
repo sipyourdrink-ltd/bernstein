@@ -230,6 +230,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 |---|---|---|---|
 | `bernstein -g GOAL` | Full | 3 | Inline goal |
 | `bernstein run plan.yaml` | Full | 3 | Plan file execution |
+| `bernstein gc cas` | Full | 3 | Mark and sweep unreferenced blobs from the CAS store |
 | `bernstein init` | Full | 3 | Workspace setup. The documented first run is covered by `tests/integration/test_first_run_documented_path.py`, which runs the command from an empty directory and asserts the created artifacts plus the key output lines documented in `first-run.md`. |
 | `bernstein stop` | Full | 3 | Graceful/force stop |
 | `bernstein live` | Full | 3 | TUI dashboard. Readiness is the first rendered frame, identified by the `AGENTS` and `TASKS` pane headers; `tests/integration/test_first_run_long_running_surfaces.py` starts it from an empty workspace, waits for that frame, and asserts a traceback-free exit on `SIGINT`. |
