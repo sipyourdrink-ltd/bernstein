@@ -59,10 +59,10 @@ def extract_test_to_source_map(repo_root: Path, targets: list[str], *, limit: in
         counts: Counter[str] = Counter()
         try:
             history = _git(repo_root, "log", "--format=%H%x00%B", "--", target)
-            reverted = _reverted_commits(history)
             records = re.findall(r"(?ms)([0-9a-f]{40})\x00(.*?)(?=\n?[0-9a-f]{40}\x00|\Z)", history)
+            excluded = _revert_pairs(records)
             for sha, _message in records:
-                if sha in reverted or _message.lstrip().startswith("Revert "):
+                if sha in excluded:
                     continue
                 changed = _git(
                     repo_root, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", sha
@@ -84,6 +84,23 @@ def _git(repo_root: Path, *args: str) -> str:
     return subprocess.check_output(("git", "-C", str(repo_root), *args), text=True)
 
 
-def _reverted_commits(history: str) -> set[str]:
-    """Return commits explicitly reverted in a ``git log --format=%B`` result."""
-    return set(re.findall(r"This reverts commit ([0-9a-f]{40})", history))
+def _revert_pairs(records: list[tuple[str, str]]) -> set[str]:
+    """Return the shas of every revert commit and the commit each one undid.
+
+    The evidence is the ``This reverts commit <sha>`` trailer that ``git
+    revert`` writes into the commit it creates -- a property of the record,
+    not of how someone worded a subject line. Matching on a ``Revert `` prefix
+    instead would drop an ordinary commit called "Revert to the previous retry
+    policy" and keep a revert whose message was rewritten by hand.
+
+    A revert that does not itself touch the target never appears in that
+    target's log, so the commit it undid still counts here. Narrowing that
+    needs the full history rather than the per-target one.
+    """
+    excluded: set[str] = set()
+    for sha, message in records:
+        undone = re.search(r"This reverts commit ([0-9a-f]{40})", message)
+        if undone is not None:
+            excluded.add(sha)
+            excluded.add(undone.group(1))
+    return excluded
