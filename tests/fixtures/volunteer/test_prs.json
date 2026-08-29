@@ -1,0 +1,58 @@
+{
+  "prs": [
+    {
+      "number": 1001,
+      "title": "feat: Add worker A contribution",
+      "body": "This PR implements a new feature and references worker_keyid: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+      "merged_at": "2026-07-15T10:30:00Z",
+      "html_url": "https://github.com/sipyourdrink-ltd/bernstein/pull/1001",
+      "user": "alice",
+      "labels": ["feature", "good-first-issue"]
+    },
+    {
+      "number": 1002,
+      "title": "fix: Correct worker B submission",
+      "body": "Fixes an issue with worker B's submission. Bundle digest: abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd",
+      "merged_at": "2026-07-16T14:20:00Z",
+      "html_url": "https://github.com/sipyourdrink-ltd/bernstein/pull/1002",
+      "user": "bob",
+      "labels": ["fix", "documentation"]
+    },
+    {
+      "number": 1003,
+      "title": "chore: Update worker A documentation",
+      "body": "Documentation update for worker A. No bundle reference.",
+      "merged_at": "2026-07-17T09:15:00Z",
+      "html_url": "https://github.com/sipyourdrink-ltd/bernstein/pull/1003",
+      "user": "alice",
+      "labels": ["docs", "good-first-issue"]
+    },
+    {
+      "number": 1004,
+      "title": "refactor: Clean up worker C code",
+      "body": "Refactors worker C's codebase. Bundle digest: 9876543210fedcba9876543210fedcba9876543210fedcba9876543210fedcba",
+      "merged_at": "2026-07-18T16:45:00Z",
+      "html_url": "https://github.com/sipyourdrink-ltd/bernstein/pull/1004",
+      "user": "charlie",
+      "labels": ["refactor", "cleanup"]
+    },
+    {
+      "number": 1005,
+      "title": "fix: Revert worker B's change",
+      "body": "Revert commit that introduced issues with worker B. This PR marks worker B's change as reverted.",
+      "merged_at": "2026-07-19T11:00:00Z",
+      "html_url": "https://github.com/sipyourdrink-ltd/bernstein/pull/1005",
+      "user": "bob",
+      "labels": ["revert", "fix"]
+    },
+{
+      "number": 1006,
+      "title": "docs: Add worker D guidelines",
+      "body": "Add guidelines for worker D. Bundle digest: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef1234",
+      "merged_at": "2026-07-20T13:30:00Z",
+      "html_url": "https://github.com/sipyourdrink-ltd/bernstein/pull/1006",
+      "user": "diana",
+      "labels": ["docs", "good-first-issue"]
+    }
+  ]
+}
