@@ -317,7 +317,7 @@ class TestIntegrationWithExistingTests:
         """_format_memory_lesson behavior should remain unchanged."""
         lesson = _format_memory_lesson({"task": "T-1", "lesson": "guard imports"})
         assert lesson == "- (T-1) guard imports"
-        
+
         lesson = _format_memory_lesson({"text": "deflake the parser"})
         assert lesson == "- deflake the parser"
 
