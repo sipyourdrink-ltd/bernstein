@@ -991,9 +991,10 @@ class MCPClientSession:
         Returns:
             Dict of HTTP headers for authentication.
         """
-        if self._config.auth_type == "bearer" and self._config.auth_token:
+        # Return placeholder for both bearer and oauth types regardless of token presence to avoid leaking secrets.
+        if self._config.auth_type == "bearer":
             return {"Authorization": "Bearer [REDACTED:auth_header]"}
-        if self._config.auth_type == "oauth" and self._config.auth_token:
+        if self._config.auth_type == "oauth":
             return {"Authorization": "Bearer [REDACTED:auth_header]"}
         return {}
 

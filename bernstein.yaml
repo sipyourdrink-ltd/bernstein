@@ -5,20 +5,20 @@ goal: 'Implement tickets from .sdd/backlog/open/ by priority (p0 first, then p1,
 
   '
 cli: claude
-max_agents: 2
+max_agents: 7
 role_model_policy:
-  manager: {model: fleet-live-strong, effort: max}
-  architect: {model: fleet-live-strong, effort: max}
-  security: {model: fleet-live, effort: high}
-  backend: {model: fleet-live, effort: high}
-  frontend: {model: fleet-live, effort: high}
-  qa: {model: fleet-live, effort: high}
-  reviewer: {model: fleet-live, effort: high}
-  docs: {model: fleet-live, effort: high}
-  devops: {model: fleet-live, effort: high}
+  manager: {model: coding-manager, effort: max}
+  architect: {model: coding-manager, effort: max}
+  security: {model: coding-worker, effort: high}
+  backend: {model: coding-worker, effort: high}
+  frontend: {model: coding-worker, effort: high}
+  qa: {model: coding-worker, effort: high}
+  reviewer: {model: coding-worker, effort: high}
+  docs: {model: coding-worker, effort: high}
+  devops: {model: coding-worker, effort: high}
 budget: $0
 internal_llm_provider: openai
-internal_llm_model: fleet-live-strong
+internal_llm_model: coding-manager
 evolution_enabled: false
 auto_decompose: false
 constraints:
@@ -37,7 +37,7 @@ quality_gates:
   type_check: false
   tests: true
   test_command: uv run python scripts/run_tests.py -x --affected origin/main --parallel 4
-  timeout_s: 2400
+  timeout_s: 900
   merge_conflict_check: true
   large_file_check: true
 context_files:
