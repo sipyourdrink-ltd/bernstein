@@ -126,6 +126,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `council_runner.py`         | Task-level "council of agents" runner |
 | `cursor.py`                 | Cursor Agent CLI adapter |
 | `devin_terminal.py`         | Devin for Terminal (Cognition) CLI adapter |
+| `draft.py`                  | Drafting helper for adapter capability profiles |
 | `droid.py`                  | Droid (Factory AI) CLI adapter |
 | `env_isolation.py`          | Environment variable isolation for spawned agents |
 | `floor_refresh.py`          | Adapter security-floor refresh pipeline with signed update receipts (#2515) |
