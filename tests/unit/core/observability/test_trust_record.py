@@ -662,7 +662,7 @@ def _mutate_appraisal(doc: dict[str, Any]) -> None:
 
 
 def _mutate_delegation_parent(doc: dict[str, Any]) -> None:
-    doc['delegation'] = {"parent": "0" * 64}
+    doc["delegation"] = {"parent": "0" * 64}
 
 
 def _mutate_subject(doc: dict[str, Any]) -> None:
@@ -762,7 +762,7 @@ class TestSignRecord:
         assert signed.runtime == record.runtime
         assert signed.references == record.references
         assert signed.appraisal == record.appraisal
-        assert signed.delegation["parent"] == record.delegation['parent']
+        assert signed.delegation["parent"] == record.delegation["parent"]
         assert signed.claims == record.claims
 
 
