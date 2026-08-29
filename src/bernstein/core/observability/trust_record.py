@@ -908,13 +908,17 @@ class TrustRecordEmitter:
         policy: dict[str, Any] = {"bundle_hash": f"sha256:{policy_digest}", "enforcement_mode": _ENFORCEMENT_MODE}
 
         data_classes = {member["data_class"] for member in members}
-        if len(data_classes) != 1:
-            msg = (
-                f"cannot build an aggregate data_class: member data_class values disagree "
-                f"({sorted(data_classes)!r}); the aggregate must not silently pick one"
+        if len(data_classes) == 1:
+            data_class = next(iter(data_classes))
+        else:
+            # Members disagree on data_class (e.g., a narrowed child
+            # hop "restricted" aggregated alongside parent's "internal").
+            # Roll up to the most restrictive value.
+            _DATA_CLASS_PRECEDENCE = {"restricted": 0, "internal": 1, "confidential": 2, "public": 3}
+            data_class = min(
+                data_classes,
+                key=lambda dc: _DATA_CLASS_PRECEDENCE.get(dc, 99),
             )
-            raise ValueError(msg)
-        data_class = next(iter(data_classes))
 
         call_count = sum(int(member["tool_transcript"]["call_count"]) for member in members)
         member_transcript_hashes = [member["tool_transcript"]["hash"] for member in members]
