@@ -54,7 +54,6 @@ def _reset_scanner_state():
     import bernstein.adapters.scanner_registry as scanner_reg
 
     # Save original state
-    orig_entrypoints_loaded = scanner_reg._entrypoints_loaded
     orig_scanners = dict(scanner_reg._SCANNERS)
 
     # Reset
