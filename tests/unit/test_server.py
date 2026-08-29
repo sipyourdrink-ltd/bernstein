@@ -1916,7 +1916,16 @@ def test_read_cost_by_role_incremental_offset(tmp_path: Path) -> None:
     with metrics_jsonl.open("ab") as fh:
         fh.write(record2.encode())
 
-    mtime2 = metrics_jsonl.stat().st_mtime + 1
+    # Derive the second mtime from mtime1, not from a fresh stat(). A fresh
+    # stat() only yields a *different* mtime when the filesystem stamped the
+    # two writes distinctly, and Linux stamps inodes from a coarse cached
+    # clock (tick granularity, 1-10ms), so two writes microseconds apart
+    # routinely share one mtime. When they do, mtime2 == mtime1,
+    # _read_cost_by_role() takes its cache-hit branch and never parses
+    # record2 - the KeyError: 'qa' seen on main. Whether the two writes
+    # straddle a tick boundary depends on where in the tick the test starts,
+    # which is what made the failure order-dependent.
+    mtime2 = mtime1 + 1
     os.utime(metrics_jsonl, (mtime2, mtime2))
     store._cost_cache_mtime = mtime1  # simulate prior cached mtime
 
