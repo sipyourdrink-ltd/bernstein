@@ -137,7 +137,6 @@ UNDOCUMENTED_EXEMPTIONS: dict[str, str] = {
     "trend-scan": "Metric trend scanner (#2550)",
     "var": "Fleet configuration variable group (#2550)",
     "wheelhouse": "Wheelhouse package cache group (#2550)",
-    "worktrees": "Git worktree management group (#2550)",
 }
 
 # ---------------------------------------------------------------------------

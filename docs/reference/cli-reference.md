@@ -1313,9 +1313,18 @@ bernstein completions --shell zsh > ~/.zsh/completion/_bernstein
 | `clone` | Clone all missing repos defined in the workspace. |
 | `validate` | Check workspace health: all repos exist and are valid git checkouts. |
 
-For worktree lifecycle (inspection / reaping) use `bernstein worktrees list` / `bernstein worktrees gc`.
+For worktree lifecycle (inspection / reaping) use the `bernstein worktrees` group below.
 
-#### `bernstein worktrees graph`
+#### `bernstein worktrees`
+
+| Subcommand | Purpose |
+|---|---|
+| `list` | Tabular dump of every worktree, with its classified state. |
+| `gc` | Reap orphan worktrees. `--dry` to preview, `--yes` to skip the prompt. |
+| `unlock` | Release a stale GC lock left by an interrupted run. |
+| `graph` | Render one fan-out's sealed run graph, branch by branch (below). |
+
+##### `bernstein worktrees graph`
 
 Render one fan-out's sealed run graph, branch by branch, from the receipt under `.sdd/run-graph/`.
 
