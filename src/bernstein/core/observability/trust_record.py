@@ -42,12 +42,8 @@ execution produced no artifacts. This mirrors how ``tool_transcript``
 replaced the old journal-pointer ``references[rel=evidence]`` entry: the
 tool-call digest *is* the journal evidence for an execution record now, so
 no execution record ever carries a ``rel: "evidence"`` reference. The
-``member-execution`` relation and the aggregate record itself (that
-``spiffe://bernstein.run/run/<run>`` form of ``subject`` scopes) are a
-later stage -- this module's subject builder supports both forms
-(:func:`spiffe_subject_for_execution` /
-:func:`spiffe_subject_for_aggregate`) but ``emit_trust_record`` only ever
-mints per-execution records today.
+``member-execution`` relation is carried only by the run-level aggregate
+record (see below), never by an execution record.
 
 Subject scheme: a fixed-trust-domain SPIFFE URI,
 ``spiffe://bernstein.run/run/<run_id>/exec/<exec_id>``. Unlike the
@@ -112,6 +108,28 @@ field. The key id that used to live in the signature object now lives in
 right place for it: a key id is a property of the key, not of one
 signature the key happens to have produced.
 
+Signing pre-image, corrected (issue #4764 conformance harness, mapping-vs-
+implementation conflict #2): "the canonical JSON form of the record with
+only [signature] absent" means exactly that -- the record *as it will be
+serialized*, nothing more. The interim STEP 0 code (and the fixture vectors
+it minted) instead built the pre-image from a fixed field list that always
+included ``delegation`` and ``references``, substituting an explicit
+``null`` when a record omits either. Running the vendored fixtures through
+the reference ``agentrust-trace-tests`` executable conformance suite
+(``trace-tests verify``) surfaced this directly: TR-SIG-005 failed on every
+record, because its own canonicalisation -- ``{k: v for k, v in
+record.items() if k != "signature"}`` -- has no key for a member the record
+does not carry, and RFC 8785 canonicalises "no key" and "key present with a
+``null`` value" to different bytes. This module now builds the pre-image
+the same way: :func:`sign_trust_record` and :func:`verify_trust_record`
+both sign/verify over exactly the record's own present keys (minus
+``signature``), so a root record's pre-image simply has no ``delegation``
+entry rather than a ``null`` one. The security property the STEP 0 code was
+protecting -- that forging a ``delegation`` onto an unsigned copy of a root
+record must not verify -- still holds without the explicit null: adding any
+key at all changes the canonicalised bytes, which invalidates the
+signature regardless of which convention is used.
+
 The emitter:
 
 - Takes a journal path and reads its events
@@ -125,9 +143,31 @@ The emitter:
   the bytes it received
 - Uses import guards to avoid pulling agentrust_trace when [trace] extra is absent
 
+Aggregate (run-level) records (issue #4763): a delegated run's individual
+per-execution records can be rolled up into one further record scoped to
+the whole run, minted by :meth:`TrustRecordEmitter.emit_aggregate_trust_record`.
+Its ``subject`` is the run-scoped SPIFFE URI (:func:`spiffe_subject_for_aggregate`,
+no ``/exec/<id>`` suffix); it carries no ``delegation`` member at all (an
+aggregate did not act under anyone's delegated authority -- it is a rollup,
+not a hop); and its ``references`` holds one ``{"rel": "member-execution",
+"id", "resolver"}`` entry per member, in the order the members were given.
+``id`` is ``sha256:`` + the hex SHA-256 of the member's own exact returned
+bytes (the same convention ``delegation.parent_record_hash`` uses for a
+parent record) -- content-addressed, so a verifier resolves a member by
+recomputing this hash over the record it holds rather than trusting an
+opaque pointer. The aggregate's own ``model``/``policy``/``data_class`` are
+rollups over the members (see :meth:`emit_aggregate_trust_record` for the
+exact rule for each), not a fresh execution's own values -- there is no
+journal backing the aggregate itself.
+
 Public surface:
 
-- :class:`TrustRecordEmitter` -- ``emit_trust_record`` method.
+- :class:`TrustRecordEmitter` -- ``emit_trust_record`` and
+  ``emit_aggregate_trust_record`` methods.
+- :func:`sign_trust_record` / :func:`verify_trust_record` -- the bare
+  sign/verify pair every record (execution or aggregate) is checked
+  against; used internally by the emitter and directly by the conformance
+  harness (issue #4764).
 """
 
 from __future__ import annotations
@@ -139,10 +179,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
-__all__ = ["TrustRecordEmitter"]
+__all__ = ["TrustRecordEmitter", "sign_trust_record", "verify_trust_record"]
 
 #: TRACE 0.2 EAT profile identifying this record as a TRACE v0.2 Trust Record
 #: (schema ``eat_profile.const``).
@@ -190,6 +230,13 @@ _RELEASE_PAGE_URI: str = "https://github.com/sipyourdrink-ltd/bernstein/releases
 #: SLSA Build Level this producer claims. 0: software-only, no hermetic /
 #: verifiable build pipeline backs the running install.
 _SLSA_LEVEL: int = 0
+
+#: Fixed resolver identifier for an aggregate record's ``references[rel=
+#: member-execution]`` entries: the party obliged to resolve a member's
+#: content-addressed ``id`` back to the record it names. A literal
+#: constant, like ``_APPRAISAL_VERIFIER_URI`` -- this producer always
+#: resolves its own member records the same way.
+_MEMBER_EXECUTION_RESOLVER_URI: str = "https://bernstein.run/trace/records"
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,13 +293,19 @@ class TrustRecord:
     signature: str
 
 
-#: Every top-level field the signature covers (everything except
-#: ``signature`` itself), in the fixed order the signed body is built in.
-#: ``delegation``/``references`` are included here even though they may be
-#: absent from a given record -- absence is itself part of what the
-#: signature must cover, so a verifier trying to *add* either member to an
-#: unsigned copy of a root record must fail the same way tampering does.
-_SIGNED_BODY_FIELDS: tuple[str, ...] = (
+#: Every top-level field that is *always* part of the signed body -- every
+#: TrustRecord carries these regardless of type (execution or aggregate).
+#: ``delegation``/``references`` are deliberately NOT in this tuple: they
+#: are only added to the signed body when the record actually carries them
+#: (see :func:`_record_dict_without_signature`) -- the schema's own words
+#: for ``signature`` are "the canonical JSON form of the record with only
+#: this field absent", which is the record *as serialized*, not a form
+#: padded out with an explicit ``null`` for whichever optional member the
+#: record happens to omit. A verifier that adds ``delegation`` to an
+#: unsigned copy of a root record still fails to verify it either way: RFC
+#: 8785 canonicalises "key present" and "key absent" as different bytes
+#: regardless of what value the key would have held.
+_BASE_SIGNED_FIELDS: tuple[str, ...] = (
     "eat_profile",
     "iat",
     "subject",
@@ -264,9 +317,99 @@ _SIGNED_BODY_FIELDS: tuple[str, ...] = (
     "build_provenance",
     "appraisal",
     "cnf",
-    "delegation",
-    "references",
 )
+
+
+def _record_dict_without_signature(record: TrustRecord) -> dict[str, Any]:
+    """Return the exact JSON object *record* will be signed and emitted as, minus ``signature``.
+
+    The single place both signing (:meth:`TrustRecordEmitter._sign_record`)
+    and final-output assembly (:meth:`TrustRecordEmitter.emit_trust_record`,
+    :meth:`TrustRecordEmitter.emit_aggregate_trust_record`) build this shape
+    from, so the two can never disagree about what the signature covers.
+    """
+    body: dict[str, Any] = {field: getattr(record, field) for field in _BASE_SIGNED_FIELDS}
+    if record.delegation is not None:
+        body["delegation"] = record.delegation
+    if record.references is not None:
+        body["references"] = record.references
+    return body
+
+
+def sign_trust_record(record: dict[str, Any], private_key_pem: bytes) -> dict[str, Any]:
+    """Return a copy of *record* with ``signature`` populated.
+
+    *record* must not already carry a ``signature`` key: pass it exactly as
+    it will be emitted, with every optional member (``delegation``,
+    ``references``) either present with its real value or omitted
+    entirely -- never present with an explicit ``null``. Signs the bare
+    Ed25519 signature (no JOSE/JWS framing) over the JCS (RFC 8785)
+    canonicalisation of *record* itself: nothing is added, removed, or
+    substituted before signing, so whatever *record* does or does not
+    carry is exactly what gets signed over.
+
+    Pairs with :func:`verify_trust_record`, which reverses this using only
+    the parsed record dict and a trusted public key -- no
+    :class:`TrustRecord` dataclass or :class:`TrustRecordEmitter` required
+    on either side. This is the pair the conformance harness (issue #4764)
+    round-trips every vector through, and what
+    :meth:`TrustRecordEmitter._sign_record` calls internally.
+
+    Raises:
+        ValueError: *record* already has a ``signature`` key.
+    """
+    if "signature" in record:
+        msg = "sign_trust_record expects a record with no 'signature' key yet, not an already-signed one"
+        raise ValueError(msg)
+
+    from bernstein.core.security.agent_card_signer import _b64url, canonicalize_jcs
+
+    canonical_bytes = canonicalize_jcs(record)
+    raw_signature = _sign_raw_ed25519(canonical_bytes, private_key_pem)
+    return {**record, "signature": _b64url(raw_signature)}
+
+
+def verify_trust_record(record: dict[str, Any], public_key_pem: bytes) -> bool:
+    """Verify a signed Trust Record dict's bare Ed25519 ``signature``.
+
+    Reconstructs the exact pre-image :func:`sign_trust_record` signed --
+    *record* with only the ``signature`` key removed, no other member added
+    or substituted -- and checks it against *public_key_pem*. Works on any
+    parsed TRACE v0.2 record, not only ones this module minted, which is
+    what makes it useful for cross-checking third-party or reference-suite
+    records against this producer's own verifier.
+
+    Returns:
+        ``True`` if the signature verifies, ``False`` if it does not.
+
+    Raises:
+        ValueError: *record* has no ``signature`` field, ``signature`` is
+            not valid base64url, or *public_key_pem* is not an Ed25519 key.
+            These are structurally malformed input, not a "verification
+            failed" outcome a caller should treat the same way as a bad
+            signature.
+    """
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    from cryptography.hazmat.primitives.serialization import load_pem_public_key
+
+    from bernstein.core.security.agent_card_signer import _b64url_decode, canonicalize_jcs
+
+    if "signature" not in record or not record["signature"]:
+        msg = "verify_trust_record: record has no 'signature' field"
+        raise ValueError(msg)
+
+    raw_signature = _b64url_decode(record["signature"])
+    body = {k: v for k, v in record.items() if k != "signature"}
+    public_key = load_pem_public_key(public_key_pem)
+    if not isinstance(public_key, Ed25519PublicKey):
+        msg = f"verify_trust_record requires an Ed25519 public key, got {type(public_key).__name__}"
+        raise ValueError(msg)
+    try:
+        public_key.verify(raw_signature, canonicalize_jcs(body))
+    except InvalidSignature:
+        return False
+    return True
 
 
 def spiffe_subject_for_execution(run_id: str, exec_id: str) -> str:
@@ -287,10 +430,8 @@ def spiffe_subject_for_execution(run_id: str, exec_id: str) -> str:
 def spiffe_subject_for_aggregate(run_id: str) -> str:
     """Return the run-scoped (aggregate) SPIFFE subject for a whole run.
 
-    ``spiffe://bernstein.run/run/<run_id>``. Not yet minted by
-    :meth:`TrustRecordEmitter.emit_trust_record` (the aggregate record is a
-    later stage) -- this exists so the subject shape is pinned and tested
-    ahead of that stage landing.
+    ``spiffe://bernstein.run/run/<run_id>`` -- no ``/exec/<id>`` suffix.
+    Used by :meth:`TrustRecordEmitter.emit_aggregate_trust_record`.
 
     Raises:
         ValueError: *run_id* is empty or contains ``/``.
@@ -538,18 +679,16 @@ class TrustRecordEmitter:
             signature="",
         )
 
-    def _signed_body(self, record: TrustRecord) -> dict[str, Any]:
-        """Return the exact field mapping ``_sign_record`` signs over."""
-        return {field: getattr(record, field) for field in _SIGNED_BODY_FIELDS}
-
     def _sign_record(self, record: TrustRecord) -> TrustRecord:
         """Sign a Trust Record using Ed25519.
 
         Per the schema, ``signature`` is a bare base64url Ed25519 signature
-        over the JCS canonicalisation of every other field -- no JOSE
-        header, no detached-JWS framing. The key id lives in
-        ``cnf.jwk.kid`` (already set on *record* by
-        :meth:`_build_unsigned_record`), not alongside this signature.
+        over the JCS canonicalisation of the record's own present fields
+        (see :func:`_record_dict_without_signature` /
+        :func:`sign_trust_record`) -- no JOSE header, no detached-JWS
+        framing. The key id lives in ``cnf.jwk.kid`` (already set on
+        *record* by :meth:`_build_unsigned_record`), not alongside this
+        signature.
 
         Args:
             record: Unsigned Trust Record.
@@ -557,18 +696,12 @@ class TrustRecordEmitter:
         Returns:
             TrustRecord with signature populated.
         """
-        from bernstein.core.security.agent_card_signer import _b64url, canonicalize_jcs
-
-        body = self._signed_body(record)
-        canonical_bytes = canonicalize_jcs(body)
-
-        private_key_pem = self._get_private_key_pem()
-        raw_signature = _sign_raw_ed25519(canonical_bytes, private_key_pem)
-        signature = _b64url(raw_signature)
+        body = _record_dict_without_signature(record)
+        signed_dict = sign_trust_record(body, self._get_private_key_pem())
 
         from dataclasses import replace
 
-        return replace(record, signature=signature)
+        return replace(record, signature=signed_dict["signature"])
 
     def emit_trust_record(
         self,
@@ -610,15 +743,171 @@ class TrustRecordEmitter:
 
         signed = self._sign_record(record)
 
-        output: dict[str, Any] = dict(self._signed_body(signed))
-        # Omit optional members entirely rather than emitting them as null /
-        # empty: matches how tool_transcript's zero-calls case still emits a
-        # real object (a known fact) while delegation/references (unknown /
-        # inapplicable) are left out.
-        if output["delegation"] is None:
-            del output["delegation"]
-        if output["references"] is None:
-            del output["references"]
+        output = _record_dict_without_signature(signed)
+        output["signature"] = signed.signature
+
+        return json.dumps(output, sort_keys=True, separators=(",", ":"))
+
+    def emit_aggregate_trust_record(
+        self,
+        run_id: str,
+        member_records: Sequence[str],
+    ) -> str:
+        """Emit a run-level aggregate Trust Record over already-minted member records.
+
+        Unlike :meth:`emit_trust_record`, this reads no journal: an
+        aggregate did not itself execute anything, so every field it
+        carries is a rollup over *member_records* rather than a fresh
+        execution's own observations.
+
+        Args:
+            run_id: The run identifier every member in *member_records*
+                shares (each member's own ``subject`` is
+                ``spiffe://bernstein.run/run/<run_id>/exec/<exec_id>``).
+            member_records: The exact canonical JSON strings
+                :meth:`emit_trust_record` returned for each member
+                execution, in the order they should appear in
+                ``references``. Must be non-empty.
+
+        Returns:
+            Canonical JSON string of the signed aggregate Trust Record.
+
+        Raises:
+            ValueError: *member_records* is empty, a member is not valid
+                JSON, or the members' ``data_class`` values disagree (the
+                aggregate must not silently pick one over another).
+
+        Rollup rules (documented here since there is no journal to point
+        to for them):
+
+        - ``iat``: the latest member ``iat`` -- the aggregate cannot be
+          issued before every member it covers has completed.
+        - ``model``: the last member's ``model``, mirroring the
+          last-event-wins convention :meth:`_build_unsigned_record` already
+          uses for a single execution's own model.
+        - ``policy.bundle_hash``: ``sha256:`` + the hex SHA-256 of the JCS
+          canonicalisation of the ordered list of member
+          ``policy.bundle_hash`` values -- a hash *of* the constituent
+          policy hashes, not a policy of its own. ``enforcement_mode`` is
+          the fixed :data:`_ENFORCEMENT_MODE`, same as every execution
+          record.
+        - ``data_class``: the members' shared value. Disagreement is
+          refused rather than resolved by picking the more (or less)
+          conservative one -- see Raises.
+        - ``tool_transcript``: ``call_count`` sums the members' counts;
+          ``hash`` is ``sha256:`` + the hex SHA-256 of the JCS
+          canonicalisation of the ordered list of member
+          ``tool_transcript.hash`` values (a hash of hashes, same shape as
+          ``policy.bundle_hash`` above).
+        - ``build_provenance``/``appraisal``/``cnf``: built the same way as
+          for an execution record (this producer's own build digest,
+          self-declared "none" appraisal, this install's signing key).
+        - ``delegation``: never present -- an aggregate is a rollup, not a
+          hop acting under delegated authority.
+        - ``references``: one ``{"rel": "member-execution", "id",
+          "resolver"}`` entry per member, in the given order. ``id`` is
+          ``sha256:`` + the hex SHA-256 of the member's own exact returned
+          bytes (the same convention ``delegation.parent_record_hash`` uses
+          for a parent record), so a verifier resolves a member by
+          recomputing this hash over the record it holds.
+        """
+        if not member_records:
+            msg = "emit_aggregate_trust_record requires at least one member record"
+            raise ValueError(msg)
+
+        members: list[dict[str, Any]] = []
+        for raw in member_records:
+            try:
+                members.append(json.loads(raw))
+            except json.JSONDecodeError as exc:
+                msg = f"a member record is not valid JSON: {exc}"
+                raise ValueError(msg) from exc
+
+        install_rev = self._get_install_rev()
+        kid = f"install-{install_rev}"
+
+        subject = spiffe_subject_for_aggregate(run_id)
+        iat = max(int(member["iat"]) for member in members)
+        model = dict(members[-1]["model"])
+
+        runtime: dict[str, str] = {
+            "platform": "software-only",
+            "measurement": _ALL_ZERO_SHA256_MEASUREMENT,
+        }
+
+        from bernstein.core.security.agent_card_signer import canonicalize_jcs
+
+        member_bundle_hashes = [member["policy"]["bundle_hash"] for member in members]
+        policy_digest = hashlib.sha256(canonicalize_jcs(member_bundle_hashes)).hexdigest()
+        policy: dict[str, Any] = {"bundle_hash": f"sha256:{policy_digest}", "enforcement_mode": _ENFORCEMENT_MODE}
+
+        data_classes = {member["data_class"] for member in members}
+        if len(data_classes) != 1:
+            msg = (
+                f"cannot build an aggregate data_class: member data_class values disagree "
+                f"({sorted(data_classes)!r}); the aggregate must not silently pick one"
+            )
+            raise ValueError(msg)
+        data_class = next(iter(data_classes))
+
+        call_count = sum(int(member["tool_transcript"]["call_count"]) for member in members)
+        member_transcript_hashes = [member["tool_transcript"]["hash"] for member in members]
+        transcript_digest = hashlib.sha256(canonicalize_jcs(member_transcript_hashes)).hexdigest()
+        tool_transcript: dict[str, Any] = {"hash": f"sha256:{transcript_digest}", "call_count": call_count}
+
+        build_provenance: dict[str, Any] = {
+            "slsa_level": _SLSA_LEVEL,
+            "digest": self._get_installed_digest(),
+            "provenance_uri": _RELEASE_PAGE_URI,
+        }
+
+        appraisal: dict[str, Any] = {
+            "status": "none",
+            "verifier": _APPRAISAL_VERIFIER_URI,
+            "timestamp": iat,
+        }
+
+        public_key_raw = _ed25519_public_key_raw(self._get_private_key_pem())
+        from bernstein.core.security.agent_card_signer import _b64url
+
+        cnf: dict[str, Any] = {
+            "jwk": {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": _b64url(public_key_raw),
+                "kid": kid,
+            }
+        }
+
+        references = [
+            {
+                "rel": "member-execution",
+                "id": f"sha256:{hashlib.sha256(raw.encode('utf-8')).hexdigest()}",
+                "resolver": _MEMBER_EXECUTION_RESOLVER_URI,
+            }
+            for raw in member_records
+        ]
+
+        record = TrustRecord(
+            eat_profile=_EAT_PROFILE,
+            iat=iat,
+            subject=subject,
+            model=model,
+            runtime=runtime,
+            policy=policy,
+            data_class=data_class,
+            tool_transcript=tool_transcript,
+            build_provenance=build_provenance,
+            appraisal=appraisal,
+            cnf=cnf,
+            delegation=None,
+            references=references,
+            signature="",
+        )
+
+        signed = self._sign_record(record)
+
+        output = _record_dict_without_signature(signed)
         output["signature"] = signed.signature
 
         return json.dumps(output, sort_keys=True, separators=(",", ":"))
@@ -673,7 +962,9 @@ def _build_references(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     No ``rel: "evidence"`` entry is ever produced for an execution record:
     ``tool_transcript`` covers the journal now. The ``member-execution``
-    relation belongs to the (not yet minted) aggregate record.
+    relation belongs to the run-level aggregate record
+    (:meth:`TrustRecordEmitter.emit_aggregate_trust_record`), never to one
+    built from a journal.
     """
     references: list[dict[str, Any]] = []
     for event in events:
