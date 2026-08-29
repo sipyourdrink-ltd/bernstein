@@ -9,7 +9,7 @@ from __future__ import annotations
 import inspect
 import logging
 from importlib.metadata import entry_points
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol, TYPE_CHECKING, runtime_checkable
 
 from bernstein.adapters.scanner import ScannerAdapter
 
