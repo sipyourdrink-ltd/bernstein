@@ -1248,9 +1248,7 @@ class MCPClientManager:
             {"server": server, "name": name, "description": desc, "inputSchema": schema}
             for server, name, desc, schema in sorted(merged_tools, key=lambda x: (x[0], x[1]))
         ]
-        return hashlib.sha256(
-            json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        ).hexdigest()
+        return hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
     @staticmethod
     def _compute_server_digest(
@@ -1276,9 +1274,7 @@ class MCPClientManager:
     @staticmethod
     def _compute_injection_digest(config: dict[str, Any]) -> str:
         """Return SHA-256 digest of the agent-config after MCP injection."""
-        return hashlib.sha256(
-            json.dumps(config, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        ).hexdigest()
+        return hashlib.sha256(json.dumps(config, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
     def inject_into_agent_config(
         self,
@@ -1357,9 +1353,7 @@ class MCPClientManager:
 
         for name, session in self._sessions.items():
             if name in targets and session.is_connected:
-                server_tools = [
-                    (t.name, t.description, t.input_schema) for t in session.tools
-                ]
+                server_tools = [(t.name, t.description, t.input_schema) for t in session.tools]
                 per_server_digests[name] = self._compute_server_digest(name, server_tools)
 
         injection_digest = self._compute_injection_digest(config)

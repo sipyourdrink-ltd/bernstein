@@ -666,9 +666,7 @@ class TestMCPClientManager:
         assert manifest_info.per_server_digests["s1"] == manager._compute_server_digest(
             "s1", [("t1", "Tool 1", {"type": "object"})]
         )
-        assert manifest_info.per_server_digests["s2"] == manager._compute_server_digest(
-            "s2", [("t2", "Tool 2", {})]
-        )
+        assert manifest_info.per_server_digests["s2"] == manager._compute_server_digest("s2", [("t2", "Tool 2", {})])
 
     def test_inject_digests_are_stable(self) -> None:
         """inject_into_agent_config() produces stable digests across calls."""
