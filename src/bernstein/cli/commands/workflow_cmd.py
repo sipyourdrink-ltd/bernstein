@@ -439,7 +439,7 @@ def resume_cmd(run_id: str, goal: str, manifest_arg: str | None) -> None:
         load_spec_snapshot,
         run_complete_marker_exists,
     )
-    from bernstein.core.workflows.workflow_spec import discover_workflows, resolve_workflow
+    from bernstein.core.workflows.workflow_spec import resolve_workflow
 
     console = Console()
     workdir = Path.cwd()
