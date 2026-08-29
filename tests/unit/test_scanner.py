@@ -8,10 +8,10 @@ from pathlib import Path
 from bernstein.adapters.scanner import (
     DeterminismTier,
     OutputFormat,
-    ScanResult,
-    ScanScope,
     ScannerAdapter,
     ScannerCategory,
+    ScanResult,
+    ScanScope,
 )
 from bernstein.adapters.scanner_finding import Finding
 
@@ -128,23 +128,24 @@ def test_scanner_adapter_cannot_instantiate_directly() -> None:
     """ScannerAdapter should not be instantiable directly (abstract)."""
     try:
         ScannerAdapter()
-        assert False, "Should not be instantiable"
     except TypeError:
         pass  # Expected - abstract class
+    else:
+        raise AssertionError("Should not be instantiable")
 
 
 class MockScannerAdapter(ScannerAdapter):
     """Mock scanner adapter for testing."""
-    
+
     registry_name = "mock-scanner"
     output_format = OutputFormat.JSON
     determinism = DeterminismTier.DETERMINISTIC
     pinned_inputs = ("source_files",)
     category = ScannerCategory.SAST
-    
+
     def name(self) -> str:
         return self.registry_name
-    
+
     def scan(self, target: Path, scope: ScanScope, workdir: Path) -> ScanResult:
         return ScanResult(
             findings=[Finding(rule="mock-rule", path=str(target))],
@@ -162,14 +163,14 @@ def test_mock_scanner_adapter() -> None:
     assert adapter.pinned_inputs == ("source_files",)
     assert adapter.category == ScannerCategory.SAST
     assert adapter.external_endpoints == ()
-    
+
     # Test scan
     with tempfile.TemporaryDirectory() as tmp:
         workdir = Path(tmp)
         target = Path("/tmp/test")
         scope = ScanScope(roots=(target,))
         result = adapter.scan(target, scope, workdir)
-        
+
         assert isinstance(result, ScanResult)
         assert len(result.findings) == 1
         assert result.findings[0].rule == "mock-rule"
@@ -200,10 +201,10 @@ def test_scanner_adapter_digests_for_pinned_inputs() -> None:
         root = Path(tmp)
         (root / "file1.txt").write_text("content1")
         (root / "file2.txt").write_text("content2")
-        
+
         scope = ScanScope(roots=(root,), config={"key": "value"})
         digests = adapter._digests_for_pinned_inputs(scope)
-        
+
         assert "source_files" in digests
         assert isinstance(digests["source_files"], str)
         assert len(digests["source_files"]) == 64  # SHA-256 hex
@@ -214,9 +215,10 @@ def test_scanner_adapter_not_iterable() -> None:
     adapter = MockScannerAdapter()
     try:
         list(adapter)
-        assert False, "Should raise TypeError"
     except TypeError as e:
         assert "not iterable" in str(e)
+    else:
+        raise AssertionError("Should raise TypeError")
 
 
 def test_scan_result_with_empty_findings() -> None:
@@ -228,5 +230,5 @@ def test_scan_result_with_empty_findings() -> None:
 def test_scanner_category_comparison() -> None:
     """ScannerCategory should be comparable as strings."""
     assert ScannerCategory.SAST == "sast"
-    assert "sast" == ScannerCategory.SAST
+    assert ScannerCategory.SAST == "sast"
     assert ScannerCategory.SAST != ScannerCategory.SCA

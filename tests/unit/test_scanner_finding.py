@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 
 from bernstein.adapters.scanner_finding import Finding, _canonical_json_bytes, findings_hash
 
@@ -113,8 +112,7 @@ def test_finding_hash() -> None:
         sort_keys=True,
         allow_nan=False,
     ).encode("utf-8")
-    expected_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"  # placeholder, we'll compute properly
-    
+
     # Actually compute the hash
     import hashlib
     expected = hashlib.sha256(canonical).hexdigest()
@@ -135,10 +133,10 @@ def test_finding_inequality() -> None:
     f1 = Finding(rule="r", path="p", severity="s", summary="sum", extra={"a": 1})
     f2 = Finding(rule="r", path="p", severity="s", summary="sum", extra={"a": 2})
     assert f1 == f2  # extra doesn't affect equality
-    
+
     f3 = Finding(rule="r", path="p", severity="s", summary="different", extra={"a": 1})
     assert f1 != f3  # summary differs
-    
+
     f4 = Finding(rule="r", path="p", severity="different", summary="sum", extra={"a": 1})
     assert f1 != f4  # severity differs
 
@@ -148,9 +146,10 @@ def test_finding_frozen() -> None:
     f = Finding(rule="r", path="p")
     try:
         f.rule = "changed"  # type: ignore[misc]
-        assert False, "Should not be able to modify frozen field"
     except AttributeError:
         pass  # Expected
+    else:
+        raise AssertionError("Should not be able to modify frozen field")
 
 
 def test_canonical_json_bytes() -> None:
@@ -158,7 +157,7 @@ def test_canonical_json_bytes() -> None:
     obj1 = {"b": 2, "a": 1}
     obj2 = {"a": 1, "b": 2}
     assert _canonical_json_bytes(obj1) == _canonical_json_bytes(obj2)
-    
+
     # Should be compact JSON with sorted keys
     expected = b'{"a":1,"b":2}'
     assert _canonical_json_bytes(obj1) == expected
@@ -170,14 +169,14 @@ def test_findings_hash() -> None:
     f1 = Finding(rule="a", path="p1")
     f2 = Finding(rule="b", path="p2")
     f3 = Finding(rule="c", path="p3")
-    
+
     # Order shouldn't matter - should sort by hash
     result1 = findings_hash([f1, f2, f3])
     result2 = findings_hash([f3, f1, f2])
     result3 = findings_hash([f2, f3, f1])
-    
+
     assert result1 == result2 == result3
-    
+
     # Should be hash of concatenated individual hashes
     individual_hashes = sorted([f.finding_hash() for f in [f1, f2, f3]])
     concatenated = "\n".join(individual_hashes).encode("utf-8")

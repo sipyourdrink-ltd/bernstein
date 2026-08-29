@@ -8,10 +8,10 @@ from pathlib import Path
 from bernstein.adapters.scanner import (
     DeterminismTier,
     OutputFormat,
-    ScanResult,
-    ScanScope,
     ScannerAdapter,
     ScannerCategory,
+    ScanResult,
+    ScanScope,
 )
 from bernstein.adapters.scanner_finding import Finding
 
@@ -128,9 +128,10 @@ def test_scanner_adapter_cannot_instantiate_directly() -> None:
     """ScannerAdapter should not be instantiable directly (abstract)."""
     try:
         ScannerAdapter()
-        assert False, "Should not be instantiable"
     except TypeError:
         pass  # Expected - abstract class
+    else:
+        raise AssertionError("Should not be instantiable")
 
 
 class MockScannerAdapter(ScannerAdapter):
@@ -214,9 +215,10 @@ def test_scanner_adapter_not_iterable() -> None:
     adapter = MockScannerAdapter()
     try:
         list(adapter)
-        assert False, "Should raise TypeError"
     except TypeError as e:
         assert "not iterable" in str(e)
+    else:
+        raise AssertionError("Should raise TypeError")
 
 
 def test_scan_result_with_empty_findings() -> None:
@@ -228,5 +230,5 @@ def test_scan_result_with_empty_findings() -> None:
 def test_scanner_category_comparison() -> None:
     """ScannerCategory should be comparable as strings."""
     assert ScannerCategory.SAST == "sast"
-    assert "sast" == ScannerCategory.SAST
+    assert ScannerCategory.SAST == "sast"
     assert ScannerCategory.SAST != ScannerCategory.SCA
