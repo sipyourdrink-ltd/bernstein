@@ -181,8 +181,7 @@ def test_onboarded_profile_hash_is_used_in_evidence() -> None:
 def test_generic_not_in_admission_exempt() -> None:
     """generic is no longer exempt from receipt-gated admission."""
     assert "generic" not in ADMISSION_EXEMPT, (
-        "generic must be routed through the admission chain so an onboarded "
-        "generic adapter's evidence is verified"
+        "generic must be routed through the admission chain so an onboarded generic adapter's evidence is verified"
     )
 
 
