@@ -27,28 +27,19 @@ Usage::
 
 from __future__ import annotations
 
-import ast
 import importlib
 import json
-import textwrap
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock, patch
+from typing import Any
 
 import yaml
 
-from bernstein.adapters.base import RateLimitMeter, record_rate_limit_hit
-from bernstein.adapters.scanner_finding import Finding, _canonical_json_bytes
 from bernstein.adapters.scanner import (
     DeterminismTier,
-    OutputFormat,
     ScannerAdapter,
-    ScanResult,
-    ScannerCategory,
 )
-
 
 # ---------------------------------------------------------------------------
 # Data types
@@ -150,7 +141,6 @@ class ScannerTranscriptResult:
     transcript_name: str
     adapter_class: str
     step_results: list[ScannerStepResult] = field(default_factory=list)
-    passed: bool = False
     determinism_tier: DeterminismTier = DeterminismTier.TRANSCRIPT_ANCHORED
 
     def to_dict(self) -> dict[str, Any]:
@@ -462,7 +452,10 @@ class ScannerConformanceHarness:
             tier = DeterminismTier.TRANSCRIPT_ANCHORED
         cap = None
         try:
-            cap = adapter.name() and __import__("bernstein.adapters._contract", fromlist=["scanner_capabilities"]).scanner_capabilities(adapter.name())
+            _contract = __import__(
+                "bernstein.adapters._contract", fromlist=["scanner_capabilities"]
+            )
+            cap = adapter.name() and _contract.scanner_capabilities(adapter.name())
         except Exception:
             cap = None
 
@@ -541,7 +534,7 @@ class ScannerConformanceHarness:
         if tier is DeterminismTier.TRANSCRIPT_ANCHORED and not transcript.strip():
             passed = False
             message_parts.append(
-                f"transcript_anchored tier: adapter declared transcript_anchored but produced empty transcript"
+                "transcript_anchored tier: adapter declared transcript_anchored but produced empty transcript"
             )
 
         actual_hashes_str = ", ".join(actual_finding_hashes[:3]) if actual_finding_hashes else "(none)"
@@ -584,7 +577,6 @@ class ScannerConformanceHarness:
         """
         import tempfile
 
-        from bernstein.adapters._contract import scanner_determinism
 
         if workdir is None:
             with tempfile.TemporaryDirectory() as tmp:
@@ -601,7 +593,8 @@ class ScannerConformanceHarness:
         workdir: Path,
     ) -> ScannerTranscriptResult:
         """Internal replay of one transcript against a workdir."""
-        from bernstein.adapters._contract import scanner_capabilities
+
+        from bernstein.adapters._contract import scanner_determinism
 
         result = ScannerTranscriptResult(
             transcript_name=transcript.name,
@@ -648,13 +641,14 @@ class ScannerConformanceHarness:
 
                 # Tier-specific regression detection
                 from bernstein.adapters._contract import (
-                    scanner_determinism as sd,
                     scanner_capabilities as sc,
-                    undeclared_scanner_capabilities,
+                )
+                from bernstein.adapters._contract import (
+                    scanner_determinism as sd,
                 )
 
                 cap = sc(transcript.adapter_class)
-                tier = sd(transcript.adapter_class)
+                _ = sd(transcript.adapter_class)
 
                 # Check for pinned_input failures
                 if cap and "pinned_inputs" in cap and cap["pinned_inputs"]:

@@ -33,11 +33,12 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from bernstein.adapters.base import RateLimitMeter, record_rate_limit_hit
-from bernstein.adapters.scanner_finding import Finding
 
 if TYPE_CHECKING:
-    from pathlib import Path
     from collections.abc import Iterator
+    from pathlib import Path
+
+    from bernstein.adapters.scanner_finding import Finding
 
 
 # ---------------------------------------------------------------------------
@@ -51,33 +52,6 @@ class OutputFormat(StrEnum):
     SARIF = "sarif"
     JSON = "json"
     XML = "xml"
-
-
-class DeterminismTier(StrEnum):
-    """How reproducible a scanner's output is, and what conformance must prove.
-
-    ``deterministic``     -- two runs on identical input yield identical
-                             finding hashes (no clock / PID / random noise).
-    ``feed_pinned``       -- reproducible "as-of" a recorded feed digest:
-                             identical hashes given the *same* recorded digest.
-    ``transcript_anchored`` -- not byte-deterministic; a transcript is recorded
-                             that a later verify step can diff.
-    """
-
-    DETERMINISTIC = "deterministic"
-    FEED_PINNED = "feed_pinned"
-    TRANSCRIPT_ANCHORED = "transcript_anchored"
-
-
-class ScannerCategory(StrEnum):
-    """The class of analysis the scanner performs."""
-
-    SAST = "sast"
-    SCA = "sca"
-    SECRET = "secret"
-    IAC = "iac"
-    RECON = "recon"
-    DAST = "dast"
 
 
 class DeterminismTier(StrEnum):
