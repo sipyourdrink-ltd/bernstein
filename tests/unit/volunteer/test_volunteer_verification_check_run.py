@@ -10,7 +10,6 @@ from unittest.mock import MagicMock, patch
 
 from bernstein.core.security.result_receipt_bundle import (
     BundleVerification,
-    FieldError,
 )
 from bernstein.core.volunteer import verification_check_run as vcr
 from bernstein.core.volunteer.verification_check_run import (
@@ -22,7 +21,6 @@ from bernstein.core.volunteer.verification_check_run import (
     _format_comparison_table,
     _verify_bundle_offline,
 )
-
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -101,7 +99,7 @@ class TestExtractEnvelopeFromPrBody:
         assert result["payload_b64"] == envelope["payload_b64"]
 
     def test_non_envelope_json_block_ignored(self) -> None:
-        body = "```json\n{\"foo\": 1}\n```"
+        body = '```json\n{"foo": 1}\n```'
         assert _extract_envelope_from_pr_body(body) is None
 
     def test_malformed_explicit_marker_falls_back(self) -> None:
@@ -111,10 +109,7 @@ class TestExtractEnvelopeFromPrBody:
         # Construct a body where the marker block has bad JSON but isn't
         # consumed as a whole by the regex.
         envelope = _make_envelope_dict()
-        body = (
-            "**Envelope:** ```json\n{not valid json}\n```\n"
-            f"```json\n{json.dumps(envelope)}\n```"
-        )
+        body = f"**Envelope:** ```json\n{{not valid json}}\n```\n```json\n{json.dumps(envelope)}\n```"
         result = _extract_envelope_from_pr_body(body)
         assert result is not None
         assert result["payload_b64"] == envelope["payload_b64"]
@@ -170,9 +165,7 @@ class TestVerifyBundleOffline:
         bundle = {"gates": [], "manifest_sha256": "abc"}
         actual_log = "real log text"
         wrong_sha = hashlib.sha256(b"different").hexdigest()
-        envelope = _make_envelope_dict(
-            bundle=bundle, log_for_gate=actual_log, gate_log_attest=wrong_sha
-        )
+        envelope = _make_envelope_dict(bundle=bundle, log_for_gate=actual_log, gate_log_attest=wrong_sha)
         result = _verify_bundle_offline(envelope)
         assert result.ok is False
         assert any("gates[0].log" in e.field for e in result.errors)
@@ -353,9 +346,7 @@ def test_run_verification_check_no_envelope_fails() -> None:
 
 def test_run_verification_check_post_called_on_pass() -> None:
     bundle = {
-        "gates": [
-            {"command": "pytest", "exit_code": 0, "log": "ok", "log_sha256": "x"}
-        ],
+        "gates": [{"command": "pytest", "exit_code": 0, "log": "ok", "log_sha256": "x"}],
         "manifest_sha256": "expected-manifest-digest",
     }
     envelope = _make_envelope_dict(bundle=bundle)

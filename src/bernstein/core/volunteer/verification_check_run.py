@@ -388,22 +388,11 @@ def _format_comparison_table(comparisons: list[GateComparison]) -> str:
         ci_exit = str(comp.ci_exit_code) if comp.ci_exit_code is not None else "N/A"
         status = "PASS" if comp.passed else "FAIL"
         reason = comp.mismatch_reason or ""
-        attested_log = (
-            f"`{comp.attested_log_sha256[:12]}...`"
-            if comp.attested_log_sha256
-            else "N/A"
-        )
-        ci_log = (
-            f"`{comp.ci_log_sha256[:12]}...`"
-            if comp.ci_log_sha256
-            else "N/A"
-        )
+        attested_log = f"`{comp.attested_log_sha256[:12]}...`" if comp.attested_log_sha256 else "N/A"
+        ci_log = f"`{comp.ci_log_sha256[:12]}...`" if comp.ci_log_sha256 else "N/A"
 
         lines.append(
-            f"| `{comp.command}` | {attested_exit} | {ci_exit} | "
-            f"{attested_log} | "
-            f"{ci_log} | "
-            f"{status} | {reason} |"
+            f"| `{comp.command}` | {attested_exit} | {ci_exit} | {attested_log} | {ci_log} | {status} | {reason} |"
         )
 
     return "\n".join(lines)
