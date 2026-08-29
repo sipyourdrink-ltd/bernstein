@@ -12,7 +12,7 @@
     {
       "number": 1002,
       "title": "fix: Correct worker B submission",
-      "body": "Fixes an issue with worker B's submission. worker_keyid: abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab",
+      "body": "Fixes an issue with worker B's submission. worker_keyid: abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
       "merged_at": "2026-07-16T14:20:00Z",
       "html_url": "https://github.com/sipyourdrink-ltd/bernstein/pull/1002",
       "user": "bob",
@@ -39,7 +39,7 @@
     {
       "number": 1005,
       "title": "Revert fix: Correct worker B submission",
-      "body": "Revert commit that introduced issues with worker B. Reverts #1002 worker_keyid: abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab",
+      "body": "Revert commit that introduced issues with worker B. Reverts #1002 worker_keyid: abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
       "merged_at": "2026-07-19T11:00:00Z",
       "html_url": "https://github.com/sipyourdrink-ltd/bernstein/pull/1005",
       "user": "bob",

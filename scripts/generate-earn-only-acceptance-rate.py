@@ -79,12 +79,10 @@ def get_pr_data(repo: str, since: str, until: str) -> list[dict[str, Any]]:
                 with open(fixture_path) as f:
                     fixture_data = json.load(f)
                 prs_list = fixture_data.get("prs", []) if isinstance(fixture_data, dict) else fixture_data
-                filtered_prs = [
-                    pr for pr in prs_list if pr.get("merged_at") and since <= pr["merged_at"] < until
-                ]
+                filtered_prs = [pr for pr in prs_list if pr.get("merged_at") and since <= pr["merged_at"] < until]
                 print(f"Using test fixture: {len(filtered_prs)} PRs match the date range")
                 return filtered_prs
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 print(f"Error loading fixture: {e}", file=sys.stderr)
         else:
             print("Warning: Test fixture not found", file=sys.stderr)
@@ -158,7 +156,7 @@ def get_pr_data(repo: str, since: str, until: str) -> list[dict[str, Any]]:
                                 "state": pr["state"],
                             }
                         )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print(f"Error fetching PRs from public API: {e}", file=sys.stderr)
             break
 
@@ -203,10 +201,10 @@ def fetch_bundle(bundle_url: str) -> dict[str, Any] | None:
     """Fetch a bundle from a public URL."""
     try:
         req = urllib.request.Request(bundle_url, headers={"User-Agent": "bernstein-earn-only/1.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
+        with urllib.request.urlopen(req, timeout=10) as resp:
             if resp.status == 200:
                 return json.loads(resp.read().decode("utf-8"))
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     return None
 
@@ -241,7 +239,7 @@ def verify_bundle(bundle_data: dict[str, Any]) -> bool:
 
         result = verify_result_bundle(envelope, public_key)
         return result.ok
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 
@@ -288,13 +286,17 @@ def process_prs(prs: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
                     bundle_data = fetch_bundle(ref["value"])
                     if bundle_data:
                         try:
-                            payload = json.loads(bundle_data["payload_bytes"]) if "payload_bytes" in bundle_data else bundle_data
+                            payload = (
+                                json.loads(bundle_data["payload_bytes"])
+                                if "payload_bytes" in bundle_data
+                                else bundle_data
+                            )
                             if "predicate" in payload and "bundle" in payload["predicate"]:
                                 worker = payload["predicate"]["bundle"].get("worker", {})
                                 keyid = worker.get("keyid")
                                 if keyid:
                                     worker_keyids.add(keyid)
-                        except Exception:  # noqa: BLE001
+                        except Exception:
                             pass
                 elif ref["type"] == "bundle_digest":
                     # Bundle digests in MVP map 1:1 to worker keyids for counting
