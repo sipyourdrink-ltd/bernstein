@@ -21,16 +21,18 @@ def _commit(repo: Path, message: str, *paths: str) -> None:
 
 def test_a_test_that_never_co_changed_is_not_offered(tmp_path: Path) -> None:
     subprocess.run(("git", "-C", str(tmp_path), "init"), check=True, stdout=subprocess.DEVNULL)
-    _commit(tmp_path, "green source change", "src/a.py", "tests/test_a.py")
-    _commit(tmp_path, "green unrelated test", "tests/test_never.py")
+    _commit(tmp_path, "source change", "src/a.py", "tests/test_a.py")
+    _commit(tmp_path, "unrelated test", "tests/test_never.py")
     assert extract_test_to_source_map(tmp_path, ["src/a.py"]) == {"src/a.py": ["tests/test_a.py"]}
 
 
 def test_only_commits_that_landed_green_contribute(tmp_path: Path) -> None:
     subprocess.run(("git", "-C", str(tmp_path), "init"), check=True, stdout=subprocess.DEVNULL)
-    _commit(tmp_path, "red source change", "src/a.py", "tests/test_red.py")
-    _commit(tmp_path, "green source change", "src/a.py", "tests/test_green.py")
-    assert extract_test_to_source_map(tmp_path, ["src/a.py"]) == {"src/a.py": ["tests/test_green.py"]}
+    _commit(tmp_path, "source change", "src/a.py", "tests/test_reverted.py")
+    reverted = subprocess.check_output(("git", "-C", str(tmp_path), "rev-parse", "HEAD"), text=True).strip()
+    subprocess.run(("git", "-C", str(tmp_path), "revert", "--no-edit", reverted), check=True, stdout=subprocess.DEVNULL)
+    _commit(tmp_path, "another source change", "src/a.py", "tests/test_kept.py")
+    assert extract_test_to_source_map(tmp_path, ["src/a.py"]) == {"src/a.py": ["tests/test_kept.py"]}
 
 
 def test_the_map_is_stable_under_input_reordering(tmp_path: Path) -> None:
