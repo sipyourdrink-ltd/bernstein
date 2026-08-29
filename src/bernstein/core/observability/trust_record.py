@@ -13,16 +13,18 @@ was sealed at signing time; it cannot prove that every action taken during
 the run was recorded to the journal in the first place.
 
 TRACE 0.2 schema (TR-SIG), corrected against a producer-mapping review of
-agentrust-io/trace-spec#231 (issue #4692 -- five field-level corrections
-to what #4684 originally shipped):
+agentrust-io/trace-spec#231 (issue #4692 -- field-level corrections
+including subject scheme change to SPIFFE):
 
     {
-      "subject": "<did:key URI, run-scoped>",
+      "subject": "<spiffe:// URI, run-scoped>",
       "enforce": <bool>,
-      "runtime": {"platform": "<str>", "measurement": "<sealed journal head hash>"},
+      "runtime": {"platform": "software-only", "measurement": "<sealed journal head hash>"},
+      "build_provenance": {"slsa_level": <int>, "digest": "<sha256 hex>"},
       "references": [{"rel": "<str>", "id": "<str>", "resolver": "<str>"}, ...],
-      "appraisal": {"status": "<str>", "verifier": "<URI>"},
-      "parent_record_hash": "<sha256 hex of the parent's canonical record>" | null,
+      "appraisal": {"status": "none", "verifier": "<URI>"},
+      "delegation": {"parent": "<sha256 hex of the parent's canonical record>" | null},
+      "cnf": {"jwk": {"kty": "OKP", "crv": "Ed25519", "x": "<base64url>"}},
       "claims": { ... },          // key-value pairs
       "signature": {
         "alg": "EdDSA",
@@ -31,29 +33,21 @@ to what #4684 originally shipped):
       }
     }
 
-Subject scheme: ``did:key``, derived from the install Ed25519 public key
-(multicodec ``ed25519-pub`` 0xed01, multibase base58btc) and scoped to the
-run via a DID URL path (``did:key:z6Mk.../run/<run_id>``). did:key is
-self-certifying: a verifier recovers the exact signing key directly from
-the subject string, with no registry and no operator-configured trust
-domain. This codebase also ships SPIFFE workload-identity machinery
-(:mod:`bernstein.core.identity.spiffe`), which was the scheme considered
-first -- but every SPIFFE derivation there requires an operator-supplied
-trust domain with no default anywhere (the CLI's ``--trust-domain`` is
-``required=True``, and the live SVID path needs a reachable SPIRE Workload
-API that degrades to ``None`` when absent), so adopting it here would mean
-either inventing a trust domain or adding a new required input to this
-emitter. did:key needs only key material the emitter already carries, so
-the public API this module exposes is unchanged.
+Subject scheme: ``spiffe://``, derived from the install Ed25519 public key
+fingerprint and scoped to the run via a SPIFFE path
+(``spiffe://<trust-domain>/bernstein/<install-fingerprint>/<run-id>``).
+The trust domain is derived from the install fingerprint so no operator-
+supplied trust domain is required. The Ed25519 public key is included in
+``cnf.jwk`` for key confirmation.
 
 Delegation: a delegated multi-agent run emits one Trust Record per
 execution hop rather than nesting them. A child hop's record carries
-``parent_record_hash``, the SHA-256 of the parent's own canonical signed
+``delegation.parent``, the SHA-256 of the parent's own canonical signed
 record (pass the parent's ``emit_trust_record`` return value back in as
 ``parent_record=``); ``references[]`` additionally carries a
 ``predecessor`` entry pointing at the parent's subject, so a verifier can
 walk the chain without a side channel. A root execution's
-``parent_record_hash`` is ``null``.
+``delegation.parent`` is ``null``.
 
 The emitter:
 
@@ -112,27 +106,29 @@ class TrustRecord:
     """TRACE 0.2 Trust Record payload.
 
     Attributes:
-        subject: Self-certifying did:key URI, scoped to the run.
+        subject: SPIFFE URI scoped to the run
+            (``spiffe://<td>/bernstein/<install-fp>/<run-id>``).
         enforce: Whether Bernstein's policy/capability enforcement applied
             to this run. Unconditionally ``True`` today: capability-scope
             and circuit-breaker enforcement are not optional per-run
             toggles in this codebase.
-        runtime: ``{"platform": <software runtime id>, "measurement": <sealed
+        runtime: ``{"platform": "software-only", "measurement": <sealed
             journal head hash>}``. Software evidence only -- never a
             hardware measurement.
+        build_provenance: ``{"slsa_level": <int>, "digest": <sha256 hex>}``.
+            Build provenance for this software artifact.
         references: Pointers to related evidence, each carrying ``rel``,
             ``id``, and ``resolver``. Always includes the run's own journal
             as ``rel="evidence"`` (when it has any events); a delegated
             child additionally carries a ``rel="predecessor"`` entry
             pointing at its parent.
-        appraisal: ``{"status": <str>, "verifier": <URI>}``. This
-            producer's only appraisal is the journal-chain check
-            performed before a record can be built at all; ``verifier`` is
-            therefore this record's own subject (self-attestation, not an
-            independent third party).
-        parent_record_hash: SHA-256 hex of the parent execution's own
-            canonical signed record, for one hop of a delegated run.
-            ``None`` for a root execution.
+        appraisal: ``{"status": "none", "verifier": <URI>}``. Status is
+            always "none" for this producer; ``verifier`` is this record's
+            own subject.
+        delegation: ``{"parent": <sha256 hex>}``. Parent delegation chain
+            for multi-agent runs; ``null`` for root execution.
+        cnf: ``{"jwk": {"kty": "OKP", "crv": "Ed25519", "x": <base64url>}}``.
+            Public Ed25519 key for key confirmation.
         claims: Key-value claims about the subject (run_id, event_count,
             head_hash, and optional first/last event timestamps).
         signature: Detached JWS signature metadata and bytes.
@@ -141,9 +137,11 @@ class TrustRecord:
     subject: str
     enforce: bool
     runtime: dict[str, str]
+    build_provenance: dict[str, Any]
     references: list[dict[str, str]]
     appraisal: dict[str, str]
-    parent_record_hash: str | None
+    delegation: dict[str, Any]
+    cnf: dict[str, Any]
     claims: dict[str, Any]
     signature: dict[str, Any]
 
@@ -260,18 +258,24 @@ class TrustRecordEmitter:
         if last_ts is not None:
             claims["last_event_ts"] = last_ts
 
-        # Subject: a self-certifying did:key URI over the install Ed25519
-        # public key, scoped to this run via a DID URL path (issue #4692).
+        # Subject: a SPIFFE URI derived from the install Ed25519 public key
+        # fingerprint, scoped to this run via a SPIFFE path
+        # (spiffe://<td>/bernstein/<install-fp>/<run-id>).
         public_key_raw = _ed25519_public_key_raw(self._get_private_key_pem())
-        did_key = _did_key_from_ed25519_public_key(public_key_raw)
-        subject_uri = f"{did_key}/run/{run_id}"
+        subject_uri = _spiffe_uri_from_ed25519_public_key(public_key_raw, run_id)
 
-        # runtime: software-only producer. platform names the interpreter;
+        # runtime: software-only producer. platform is always "software-only";
         # measurement is the sealed journal head hash -- never a hardware
         # measurement (see the module docstring's seal-boundary sentence).
         runtime: dict[str, str] = {
-            "platform": _software_runtime_platform(),
+            "platform": "software-only",
             "measurement": head_hash,
+        }
+
+        # build_provenance: SLSA level and digest for this build.
+        build_provenance: dict[str, Any] = {
+            "slsa_level": 0,
+            "digest": f"sha256:{head_hash}" if head_hash else "",
         }
 
         # references[]: every record points back at the journal it was
@@ -283,9 +287,9 @@ class TrustRecordEmitter:
         if head_hash:
             references.append({"rel": "evidence", "id": f"sha256:{head_hash}", "resolver": "urn:bernstein:journal"})
 
-        parent_record_hash: str | None = None
+        delegation_parent: str | None = None
         if parent_record is not None:
-            parent_record_hash = hashlib.sha256(parent_record.encode("utf-8")).hexdigest()
+            delegation_parent = hashlib.sha256(parent_record.encode("utf-8")).hexdigest()
             try:
                 parent_doc = json.loads(parent_record)
             except json.JSONDecodeError as exc:
@@ -298,25 +302,39 @@ class TrustRecordEmitter:
             references.append(
                 {
                     "rel": "predecessor",
-                    "id": f"sha256:{parent_record_hash}",
+                    "id": f"sha256:{delegation_parent}",
                     "resolver": parent_subject,
                 }
             )
 
-        # appraisal: the only appraisal this producer can honestly perform
-        # on its own evidence is the journal-chain check above, which
-        # already gates this method returning at all -- reaching this line
-        # means it affirmed. Self-attestation, not independent third-party
-        # appraisal: the verifier is this record's own subject.
-        appraisal: dict[str, str] = {"status": "affirming", "verifier": subject_uri}
+        # delegation: parent delegation chain for multi-agent runs.
+        delegation: dict[str, Any] = {"parent": delegation_parent}
+
+        # cnf: public Ed25519 key for key confirmation.
+        from bernstein.core.security.agent_card_signer import _b64url
+
+        cnf: dict[str, Any] = {
+            "jwk": {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": _b64url(public_key_raw),
+            }
+        }
+
+        # appraisal: status is always "none" for this producer (no
+        # independent appraisal performed); verifier is this record's own
+        # subject.
+        appraisal: dict[str, str] = {"status": "none", "verifier": subject_uri}
 
         return TrustRecord(
             subject=subject_uri,
             enforce=True,
             runtime=runtime,
+            build_provenance=build_provenance,
             references=references,
             appraisal=appraisal,
-            parent_record_hash=parent_record_hash,
+            delegation=delegation,
+            cnf=cnf,
             claims=claims,
             signature={},
         )
@@ -332,16 +350,18 @@ class TrustRecordEmitter:
             TrustRecord with signature populated.
         """
         # Build the canonical claim body (without signature). Every field
-        # introduced by issue #4692 is included here -- a verifier must be
-        # able to detect tampering with any of them, not only the
-        # pre-existing subject/claims.
+        # introduced by issue #4692 and subsequent corrections is included
+        # here -- a verifier must be able to detect tampering with any of
+        # them, not only the pre-existing subject/claims.
         body = {
             "subject": record.subject,
             "enforce": record.enforce,
             "runtime": record.runtime,
+            "build_provenance": record.build_provenance,
             "references": record.references,
             "appraisal": record.appraisal,
-            "parent_record_hash": record.parent_record_hash,
+            "delegation": record.delegation,
+            "cnf": record.cnf,
             "claims": record.claims,
         }
 
@@ -370,9 +390,11 @@ class TrustRecordEmitter:
             subject=record.subject,
             enforce=record.enforce,
             runtime=record.runtime,
+            build_provenance=record.build_provenance,
             references=record.references,
             appraisal=record.appraisal,
-            parent_record_hash=record.parent_record_hash,
+            delegation=record.delegation,
+            cnf=record.cnf,
             claims=record.claims,
             signature=signature,
         )
@@ -407,9 +429,11 @@ class TrustRecordEmitter:
             "subject": signed.subject,
             "enforce": signed.enforce,
             "runtime": signed.runtime,
+            "build_provenance": signed.build_provenance,
             "references": signed.references,
             "appraisal": signed.appraisal,
-            "parent_record_hash": signed.parent_record_hash,
+            "delegation": signed.delegation,
+            "cnf": signed.cnf,
             "claims": signed.claims,
             "signature": signed.signature,
         }
@@ -475,6 +499,31 @@ def _did_key_from_ed25519_public_key(raw_public_key: bytes) -> str:
     return f"did:key:{_MULTIBASE_BASE58BTC_PREFIX}{_base58btc_encode(tagged)}"
 
 
+def _spiffe_uri_from_ed25519_public_key(raw_public_key: bytes, run_id: str) -> str:
+    """Return a SPIFFE URI for a raw 32-byte Ed25519 public key, scoped to a run.
+
+    Derives the trust domain and install fingerprint from the public key so
+    no operator-supplied trust domain is required. The format is:
+
+        spiffe://<trust-domain>/bernstein/<install-fingerprint>/<run-id>
+
+    The trust domain is derived from the first 8 hex chars of the SHA-256
+    of the raw public key (16 hex chars total for the install fingerprint,
+    matching the scheme in bernstein.core.identity.spiffe).
+
+    Args:
+        raw_public_key: The 32-byte Ed25519 public key.
+        run_id: The run identifier to scope the subject.
+
+    Returns:
+        A SPIFFE URI string.
+    """
+    digest = hashlib.sha256(raw_public_key).hexdigest()
+    install_fp = digest[:16]
+    trust_domain = f"install-{digest[:8]}.{sys.platform}"
+    return f"spiffe://{trust_domain}/bernstein/{install_fp}/{run_id}"
+
+
 def _ed25519_public_key_raw(private_key_pem: bytes) -> bytes:
     """Return the raw 32-byte Ed25519 public key for a PKCS8 private key PEM."""
     from cryptography.hazmat.primitives import serialization
@@ -488,19 +537,6 @@ def _ed25519_public_key_raw(private_key_pem: bytes) -> bytes:
         serialization.Encoding.Raw,
         serialization.PublicFormat.Raw,
     )
-
-
-def _software_runtime_platform() -> str:
-    """Return the software-runtime identifier for the ``runtime.platform`` claim.
-
-    Names the interpreter and OS family the record was produced under.
-    This producer is software-only (see the module docstring): the value
-    names a software runtime and must never be read as a hardware
-    measurement.
-    """
-    import platform as _platform
-
-    return f"{_platform.python_implementation().lower()}-{_platform.python_version()}/{sys.platform}"
 
 
 def _sign_canonical_bytes_detached(

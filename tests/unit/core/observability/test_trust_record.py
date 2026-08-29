@@ -4,10 +4,11 @@ Focused tests for the TRACE 0.2 Trust Record emitter functionality.
 Tests cover journal parsing, claim construction, signing, and canonical output.
 
 Issue #4692 (spec-review corrections against agentrust-io/trace-spec#231)
-added the ``subject`` (did:key) rework, ``enforce``, ``runtime``,
-``references[]``, ``appraisal``, and the ``parent_record_hash`` delegation
-chain. Tests for those six corrections are named for the property they
-protect, grouped in dedicated classes below the pre-existing coverage.
+added the ``subject`` (spiffe://) rework, ``enforce``, ``runtime``,
+``references[]``, ``appraisal``, ``delegation``, ``cnf.jwk``, and
+``build_provenance`` fields. Tests for those corrections are named for the
+property they protect, grouped in dedicated classes below the pre-existing
+coverage.
 """
 
 from __future__ import annotations
@@ -25,8 +26,8 @@ from bernstein.core.observability.trust_record import (
     TrustRecordEmitter,
     _base58btc_decode,
     _base58btc_encode,
-    _did_key_from_ed25519_public_key,
     _sign_canonical_bytes_detached,
+    _spiffe_uri_from_ed25519_public_key,
 )
 from bernstein.core.replay.journal import (
     _GENESIS_HASH,
@@ -54,9 +55,11 @@ _SIGNED_BODY_FIELDS: tuple[str, ...] = (
     "subject",
     "enforce",
     "runtime",
+    "build_provenance",
     "references",
     "appraisal",
-    "parent_record_hash",
+    "delegation",
+    "cnf",
     "claims",
 )
 
@@ -195,8 +198,8 @@ class TestBuildUnsignedRecord:
         journal = _create_journal(tmp_path, [])
         record = emitter._build_unsigned_record(journal, "run-123")
 
-        assert record.subject.startswith("did:key:z")
-        assert record.subject.endswith("/run/run-123")
+        assert record.subject.startswith("spiffe://")
+        assert record.subject.endswith("/run-123")
         assert record.claims == {
             "run_id": "run-123",
             "event_count": 0,
@@ -291,25 +294,21 @@ class TestBuildUnsignedRecord:
 # ---------------------------------------------------------------------------
 
 
-class TestSubjectDidKeyUri:
-    """``subject`` must be a self-certifying did:key URI, run-scoped.
+class TestSubjectSpiffeUri:
+    """``subject`` must be a SPIFFE URI, run-scoped.
 
-    did:key was chosen over the codebase's existing SPIFFE machinery
-    (``bernstein.core.identity.spiffe``) because every SPIFFE derivation in
-    this repository requires an operator-supplied trust domain with no
-    default anywhere (CLI ``--trust-domain`` is ``required=True``, and the
-    live path needs a reachable SPIRE Workload API) -- exactly the
-    "invented trust domain" the did:key choice avoids. did:key needs only
-    the install's own Ed25519 key, which the emitter already carries.
+    The SPIFFE URI format is ``spiffe://<td>/bernstein/<install>/<run-id>``.
+    The trust domain and install fingerprint are derived from the Ed25519 public
+    key so no operator-supplied trust domain is required.
     """
 
-    def test_subject_is_a_spiffe_or_did_uri(self, tmp_path: Path) -> None:
+    def test_subject_is_a_spiffe_uri(self, tmp_path: Path) -> None:
         emitter = _emitter_with_known_key()
         journal = _create_journal(tmp_path, [{"type": "run_start", "ts": 1.0}])
         output = emitter.emit_trust_record(journal, "run-a")
         subject = json.loads(output)["subject"]
 
-        assert subject.startswith("did:key:z")
+        assert subject.startswith("spiffe://")
 
     def test_subject_is_no_longer_a_bare_run_urn(self, tmp_path: Path) -> None:
         """Pins the corrections-table regression: the old scheme must not reappear."""
@@ -320,7 +319,7 @@ class TestSubjectDidKeyUri:
 
         assert not subject.startswith("urn:bernstein:run:")
 
-    def test_subject_multibase_key_matches_the_install_public_key(self, tmp_path: Path) -> None:
+    def test_subject_matches_expected_spiffe_uri(self, tmp_path: Path) -> None:
         private_pem, public_raw = _test_keypair()
         emitter = TrustRecordEmitter(
             install_rev_getter=lambda: "aaaaaaaaaaaaaaaa",
@@ -330,7 +329,8 @@ class TestSubjectDidKeyUri:
         output = emitter.emit_trust_record(journal, "run-key-match")
         subject = json.loads(output)["subject"]
 
-        assert _public_key_from_did_key(subject) == public_raw
+        expected = _spiffe_uri_from_ed25519_public_key(public_raw, "run-key-match")
+        assert subject == expected
 
     def test_subject_is_scoped_to_the_run_id(self, tmp_path: Path) -> None:
         emitter = _emitter_with_known_key()
@@ -340,19 +340,10 @@ class TestSubjectDidKeyUri:
         subject_a = json.loads(output_a)["subject"]
         subject_b = json.loads(output_b)["subject"]
 
-        assert subject_a.endswith("/run/run-alpha")
-        assert subject_b.endswith("/run/run-beta")
-        # Same install key -> identical did:key prefix; only the run suffix differs.
-        assert subject_a.split("/run/")[0] == subject_b.split("/run/")[0]
-
-    def test_did_key_prefix_is_stable_for_any_ed25519_key(self) -> None:
-        """Every Ed25519 did:key begins ``did:key:z6Mk``: the 2-byte multicodec
-        prefix dominates the leading base58 digits regardless of the trailing
-        32 key bytes. A sanity check independent of the round-trip property
-        tests, and of the emitter itself (calls the derivation directly)."""
-        _private_pem, public_raw = _test_keypair()
-
-        assert _did_key_from_ed25519_public_key(public_raw).startswith("did:key:z6Mk")
+        assert subject_a.endswith("/run-alpha")
+        assert subject_b.endswith("/run-beta")
+        # Same install key -> identical SPIFFE prefix; only the run suffix differs.
+        assert subject_a.split("/bernstein/")[0] == subject_b.split("/bernstein/")[0]
 
     def test_two_installs_with_different_keys_get_different_subjects(self, tmp_path: Path) -> None:
         private_pem_a, _ = _test_keypair()
@@ -446,8 +437,7 @@ class TestRuntimeClaim:
         parsed = json.loads(emitter.emit_trust_record(journal, "run-runtime"))
 
         assert "runtime" in parsed
-        assert isinstance(parsed["runtime"]["platform"], str)
-        assert parsed["runtime"]["platform"] != ""
+        assert parsed["runtime"]["platform"] == "software-only"
         assert isinstance(parsed["runtime"]["measurement"], str)
 
     def test_runtime_measurement_is_the_sealed_journal_head_hash(self, tmp_path: Path) -> None:
@@ -460,15 +450,59 @@ class TestRuntimeClaim:
         assert parsed["runtime"]["measurement"] == parsed["claims"]["head_hash"]
         assert parsed["runtime"]["measurement"] != ""
 
-    def test_runtime_platform_identifies_software_not_hardware(self, tmp_path: Path) -> None:
-        """Design constraint: this producer is software-only, never hardware-attested."""
-        emitter = _emitter_with_known_key()
-        journal = _create_journal(tmp_path, [])
-        parsed = json.loads(emitter.emit_trust_record(journal, "run-software"))
 
-        platform_claim = parsed["runtime"]["platform"].lower()
-        for hardware_term in ("tpm", "sgx", "sev", "tee", "hsm"):
-            assert hardware_term not in platform_claim
+# --------------------------------------------------------------------------
+# build_provenance: slsa_level + digest
+# --------------------------------------------------------------------------
+
+
+class TestBuildProvenance:
+    def test_build_provenance_present(self, tmp_path: Path) -> None:
+        emitter = _emitter_with_known_key()
+        journal = _create_journal(tmp_path, [{"type": "run_start", "ts": 1.0}])
+        parsed = json.loads(emitter.emit_trust_record(journal, "run-build"))
+
+        assert "build_provenance" in parsed
+        assert "slsa_level" in parsed["build_provenance"]
+        assert "digest" in parsed["build_provenance"]
+
+    def test_build_provenance_digest_is_sha256_prefixed(self, tmp_path: Path) -> None:
+        emitter = _emitter_with_known_key()
+        journal = _create_journal(tmp_path, [{"type": "run_start", "ts": 1.0}])
+        parsed = json.loads(emitter.emit_trust_record(journal, "run-digest"))
+
+        digest = parsed["build_provenance"]["digest"]
+        if digest:
+            assert digest.startswith("sha256:")
+
+
+# --------------------------------------------------------------------------
+# cnf.jwk: public Ed25519 key for key confirmation
+# --------------------------------------------------------------------------
+
+
+class TestCnfJwk:
+    def test_cnf_jwk_present(self, tmp_path: Path) -> None:
+        emitter = _emitter_with_known_key()
+        journal = _create_journal(tmp_path, [{"type": "run_start", "ts": 1.0}])
+        parsed = json.loads(emitter.emit_trust_record(journal, "run-cnf"))
+
+        assert "cnf" in parsed
+        assert "jwk" in parsed["cnf"]
+        jwk = parsed["cnf"]["jwk"]
+        assert jwk["kty"] == "OKP"
+        assert jwk["crv"] == "Ed25519"
+        assert "x" in jwk
+
+    def test_cnf_jwk_x_is_base64url(self, tmp_path: Path) -> None:
+        emitter = _emitter_with_known_key()
+        journal = _create_journal(tmp_path, [{"type": "run_start", "ts": 1.0}])
+        parsed = json.loads(emitter.emit_trust_record(journal, "run-jwk"))
+
+        import re
+
+        jwk = parsed["cnf"]["jwk"]
+        assert re.match(r"^[A-Za-z0-9_-]*={0,2}$", jwk["x"])
 
 
 # ---------------------------------------------------------------------------
@@ -521,9 +555,9 @@ class TestAppraisalClaim:
 
         assert isinstance(parsed["appraisal"]["status"], str) and parsed["appraisal"]["status"]
         assert isinstance(parsed["appraisal"]["verifier"], str)
-        assert parsed["appraisal"]["verifier"].startswith("did:key:")
+        assert parsed["appraisal"]["verifier"].startswith("spiffe://")
 
-    def test_appraisal_status_is_affirming_when_the_journal_chain_verified(self, tmp_path: Path) -> None:
+    def test_appraisal_status_is_none(self, tmp_path: Path) -> None:
         """The only appraisal this producer can honestly perform is its own
         journal-chain check -- which already gates record construction
         (see test_a_journal_with_a_broken_chain_is_refused)."""
@@ -531,7 +565,7 @@ class TestAppraisalClaim:
         journal = _create_journal(tmp_path, [{"type": "run_start", "ts": 1.0}])
         parsed = json.loads(emitter.emit_trust_record(journal, "run-affirm"))
 
-        assert parsed["appraisal"]["status"] == "affirming"
+        assert parsed["appraisal"]["status"] == "none"
 
     def test_appraisal_verifier_is_the_producer_itself_not_a_third_party(self, tmp_path: Path) -> None:
         """Self-attestation, not independent third-party appraisal -- see the
@@ -544,7 +578,7 @@ class TestAppraisalClaim:
 
 
 # ---------------------------------------------------------------------------
-# delegation via parent_record_hash (issue #4692, corrections table row 6)
+# delegation via delegation.parent (issue #4692, corrections table row 6)
 # ---------------------------------------------------------------------------
 
 
@@ -562,18 +596,18 @@ class TestDelegationChain:
         child_output = emitter.emit_trust_record(child_journal, "child-run", parent_record=parent_output)
         return emitter, parent_output, child_output
 
-    def test_root_record_has_no_parent_record_hash(self, tmp_path: Path) -> None:
+    def test_root_record_has_null_delegation_parent(self, tmp_path: Path) -> None:
         emitter = _emitter_with_known_key()
         journal = _create_journal(tmp_path, [])
         parsed = json.loads(emitter.emit_trust_record(journal, "root-run"))
 
-        assert parsed["parent_record_hash"] is None
+        assert parsed["delegation"]["parent"] is None
 
-    def test_delegated_child_parent_record_hash_equals_sha256_of_parent_canonical_record(self, tmp_path: Path) -> None:
+    def test_delegated_child_delegation_parent_equals_sha256_of_parent_canonical_record(self, tmp_path: Path) -> None:
         _emitter, parent_output, child_output = self._emit_parent_and_child(tmp_path)
 
         expected = hashlib.sha256(parent_output.encode("utf-8")).hexdigest()
-        assert json.loads(child_output)["parent_record_hash"] == expected
+        assert json.loads(child_output)["delegation"]["parent"] == expected
 
     def test_delegated_execution_emits_one_record_per_hop(self, tmp_path: Path) -> None:
         _emitter, parent_output, child_output = self._emit_parent_and_child(tmp_path)
@@ -592,7 +626,7 @@ class TestDelegationChain:
 
         predecessors = [r for r in child_doc["references"] if r["rel"] == "predecessor"]
         assert len(predecessors) == 1
-        assert predecessors[0]["id"] == f"sha256:{child_doc['parent_record_hash']}"
+        assert predecessors[0]["id"] == f"sha256:{child_doc['delegation']['parent']}"
         assert predecessors[0]["resolver"] == parent_doc["subject"]
 
     def test_malformed_parent_record_is_refused(self, tmp_path: Path) -> None:
@@ -627,8 +661,8 @@ def _mutate_appraisal(doc: dict[str, Any]) -> None:
     doc["appraisal"]["status"] = "contraindicated"
 
 
-def _mutate_parent_record_hash(doc: dict[str, Any]) -> None:
-    doc["parent_record_hash"] = "0" * 64
+def _mutate_delegation_parent(doc: dict[str, Any]) -> None:
+    doc["delegation"] = {"parent": "0" * 64}
 
 
 def _mutate_subject(doc: dict[str, Any]) -> None:
@@ -638,8 +672,8 @@ def _mutate_subject(doc: dict[str, Any]) -> None:
 class TestSignatureCoversFullFieldSurface:
     @pytest.mark.parametrize(
         "mutate",
-        [_mutate_enforce, _mutate_runtime, _mutate_references, _mutate_appraisal, _mutate_parent_record_hash],
-        ids=["enforce", "runtime", "references", "appraisal", "parent_record_hash"],
+        [_mutate_enforce, _mutate_runtime, _mutate_references, _mutate_appraisal, _mutate_delegation_parent],
+        ids=["enforce", "runtime", "references", "appraisal", "delegation"],
     )
     def test_tampering_a_new_field_after_signing_invalidates_the_signature(self, tmp_path: Path, mutate: Any) -> None:
         private_pem, public_raw = _test_keypair()
@@ -682,12 +716,14 @@ class TestSignatureCoversFullFieldSurface:
 
 def _bare_record(**overrides: Any) -> TrustRecord:
     base: dict[str, Any] = {
-        "subject": "did:key:zTestOnly/run/test",
+        "subject": "spiffe://test-td/bernstein/test-fp/test",
         "enforce": True,
-        "runtime": {"platform": "cpython-test", "measurement": "deadbeef"},
+        "runtime": {"platform": "software-only", "measurement": "deadbeef"},
+        "build_provenance": {"slsa_level": 0, "digest": "sha256:deadbeef"},
         "references": [],
-        "appraisal": {"status": "affirming", "verifier": "did:key:zTestOnly/run/test"},
-        "parent_record_hash": None,
+        "appraisal": {"status": "none", "verifier": "spiffe://test-td/bernstein/test-fp/test"},
+        "delegation": {"parent": None},
+        "cnf": {"jwk": {"kty": "OKP", "crv": "Ed25519", "x": "dGVzdF9wdWJsaWNfa2V5XzEyMHgzMg"}},
         "claims": {"run_id": "test"},
         "signature": {},
     }
@@ -718,7 +754,7 @@ class TestSignRecord:
 
     def test_record_payload_unchanged_after_signing(self, tmp_path: Path) -> None:
         emitter = TrustRecordEmitter()
-        record = _bare_record(claims={"run_id": "test", "count": 5}, parent_record_hash="ab" * 32)
+        record = _bare_record(claims={"run_id": "test", "count": 5}, delegation={"parent": "ab" * 32})
         signed = emitter._sign_record(record, "kid-1")
 
         assert signed.subject == record.subject
@@ -726,7 +762,7 @@ class TestSignRecord:
         assert signed.runtime == record.runtime
         assert signed.references == record.references
         assert signed.appraisal == record.appraisal
-        assert signed.parent_record_hash == record.parent_record_hash
+        assert signed.delegation["parent"] == record.delegation["parent"]
         assert signed.claims == record.claims
 
 
@@ -870,7 +906,7 @@ class TestEmitTrustRecord:
         assert "runtime" in parsed
         assert "references" in parsed
         assert "appraisal" in parsed
-        assert "parent_record_hash" in parsed
+        assert "delegation" in parsed
         assert "claims" in parsed
         assert "signature" in parsed
 
@@ -883,11 +919,11 @@ class TestEmitTrustRecord:
         parsed = json.loads(output)
 
         assert parsed["subject"] != "urn:bernstein:run:my-run-id"
-        assert parsed["subject"].startswith("did:key:")
-        assert parsed["subject"].endswith("/run/my-run-id")
+        assert parsed["subject"].startswith("spiffe://")
+        assert parsed["subject"].endswith("/my-run-id")
 
-    def test_delegation_field_is_removed_in_favor_of_parent_record_hash(self, tmp_path: Path) -> None:
-        """Pins the corrections-table row: delegation (string) -> parent_record_hash."""
+    def test_parent_record_hash_field_removed_in_favor_of_delegation(self, tmp_path: Path) -> None:
+        """Pins the corrections-table row: parent_record_hash -> delegation.parent."""
         emitter = TrustRecordEmitter()
         events = []
         journal = _create_journal(tmp_path, events)
@@ -895,9 +931,9 @@ class TestEmitTrustRecord:
         output = emitter.emit_trust_record(journal, "run-delegate")
         parsed = json.loads(output)
 
-        assert "delegation" not in parsed
-        assert "parent_record_hash" in parsed
-        assert parsed["parent_record_hash"] is None
+        assert "delegation" in parsed
+        assert "parent_record_hash" not in parsed
+        assert parsed["delegation"]["parent"] is None
 
     def test_signature_alg_is_eddsa(self, tmp_path: Path) -> None:
         emitter = TrustRecordEmitter()
@@ -960,10 +996,11 @@ class TestFullEmitFlow:
         assert parsed["claims"]["first_event_ts"] == 1690000000.0
         assert parsed["claims"]["last_event_ts"] == 1690000002.0
 
-        # Subject: self-certifying did:key, run-scoped
-        assert parsed["subject"].startswith("did:key:z")
-        assert parsed["subject"].endswith("/run/integration-run")
-        assert _public_key_from_did_key(parsed["subject"]) == public_raw
+        # Subject: SPIFFE URI, run-scoped
+        assert parsed["subject"].startswith("spiffe://")
+        assert parsed["subject"].endswith("/integration-run")
+        expected_subject = _spiffe_uri_from_ed25519_public_key(public_raw, "integration-run")
+        assert parsed["subject"] == expected_subject
 
         # The six #4692 corrections
         assert parsed["enforce"] is True
@@ -972,9 +1009,9 @@ class TestFullEmitFlow:
             "measurement": parsed["claims"]["head_hash"],
         }
         assert parsed["references"][0]["rel"] == "evidence"
-        assert parsed["appraisal"]["status"] == "affirming"
+        assert parsed["appraisal"]["status"] == "none"
         assert parsed["appraisal"]["verifier"] == parsed["subject"]
-        assert parsed["parent_record_hash"] is None
+        assert parsed["delegation"]["parent"] is None
 
         # Signature
         assert parsed["signature"]["alg"] == "EdDSA"
@@ -992,7 +1029,7 @@ class TestFullEmitFlow:
         assert parsed["claims"]["event_count"] == 0
         assert parsed["claims"]["head_hash"] == ""
         assert parsed["signature"]["sig"] != ""  # Still signed
-        assert parsed["parent_record_hash"] is None
+        assert parsed["delegation"]["parent"] is None
         assert parsed["references"] == []
 
 
@@ -1066,7 +1103,7 @@ class TestDeterminism:
             "    'runtime': record.runtime,\n"
             "    'references': record.references,\n"
             "    'appraisal': record.appraisal,\n"
-            "    'parent_record_hash': record.parent_record_hash,\n"
+            "    'delegation': record.delegation,\n"
             "    'claims': record.claims,\n"
             "    'signature': record.signature,\n"
             "}\n"
@@ -1097,7 +1134,7 @@ class TestDeterminism:
             "runtime": in_process.runtime,
             "references": in_process.references,
             "appraisal": in_process.appraisal,
-            "parent_record_hash": in_process.parent_record_hash,
+            "delegation": in_process.delegation,
             "claims": in_process.claims,
             "signature": in_process.signature,
         }

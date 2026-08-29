@@ -6,14 +6,16 @@ Record and a delegated parent+child pair, all produced by the real
 hand-written JSON -- see ``_build_trust_record_vectors.py`` in that
 directory). These tests re-verify their signatures and full field surface
 from the committed bytes alone: no network, and no separately-known key
-file required, because the did:key ``subject`` is self-certifying and the
-signing key is recovered from the record itself. The committed public key
-PEM is pinned alongside purely as a second, independent check that the two
-agree -- not as something a verifier needs.
+file required, because the SPIFFE ``subject`` is deterministically derived
+from the Ed25519 public key and the signing key can be recovered from
+``cnf.jwk``. The committed public key PEM is pinned alongside purely as
+a second, independent check that the two agree -- not as something a
+verifier needs.
 """
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from pathlib import Path
@@ -40,9 +42,11 @@ _SIGNED_BODY_FIELDS: tuple[str, ...] = (
     "subject",
     "enforce",
     "runtime",
+    "build_provenance",
     "references",
     "appraisal",
-    "parent_record_hash",
+    "delegation",
+    "cnf",
     "claims",
 )
 _REQUIRED_TOP_LEVEL_FIELDS: tuple[str, ...] = (*_SIGNED_BODY_FIELDS, "signature")
@@ -75,21 +79,18 @@ def _verify_offline(doc: dict[str, Any], public_key_pem: bytes) -> bool:
     )
 
 
-def _public_key_pem_from_did_key(subject: str) -> bytes:
-    """Recover the SPKI PEM public key from a self-certifying ``did:key`` subject."""
+def _public_key_pem_from_cnf_jwk(doc: dict[str, Any]) -> bytes:
+    """Recover the SPKI PEM public key from a record's ``cnf.jwk``."""
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-    from bernstein.core.observability.trust_record import (
-        _MULTICODEC_ED25519_PUB,
-        _base58btc_decode,
-    )
-
-    method_specific_id = subject.removeprefix("did:key:").split("/", 1)[0]
-    assert method_specific_id.startswith("z"), f"not a base58btc multibase value: {method_specific_id!r}"
-    decoded = _base58btc_decode(method_specific_id[1:])
-    assert decoded[:2] == _MULTICODEC_ED25519_PUB
-    raw_public_key = decoded[2:]
+    jwk = doc["cnf"]["jwk"]
+    assert jwk["kty"] == "OKP"
+    assert jwk["crv"] == "Ed25519"
+    x_b64 = jwk["x"]
+    # Add padding if needed
+    padded = x_b64 + "=" * (4 - len(x_b64) % 4)
+    raw_public_key = base64.urlsafe_b64decode(padded)
     return Ed25519PublicKey.from_public_bytes(raw_public_key).public_bytes(
         serialization.Encoding.PEM,
         serialization.PublicFormat.SubjectPublicKeyInfo,
@@ -102,26 +103,26 @@ def test_single_execution_vector_has_all_required_top_level_fields() -> None:
         assert field in doc, f"missing required top-level field: {field}"
 
 
-def test_single_execution_vector_verifies_offline_via_its_own_self_certifying_subject() -> None:
+def test_single_execution_vector_verifies_offline_via_its_cnf_jwk() -> None:
     doc = _load(_SOLO)
-    public_key_pem = _public_key_pem_from_did_key(doc["subject"])
+    public_key_pem = _public_key_pem_from_cnf_jwk(doc)
     assert _verify_offline(doc, public_key_pem) is True
 
 
 def test_single_execution_vector_has_no_parent_record_hash() -> None:
     doc = _load(_SOLO)
-    assert doc["parent_record_hash"] is None
+    assert doc["delegation"]["parent"] is None
 
 
 def test_delegated_parent_vector_verifies_offline() -> None:
     doc = _load(_PARENT)
-    public_key_pem = _public_key_pem_from_did_key(doc["subject"])
+    public_key_pem = _public_key_pem_from_cnf_jwk(doc)
     assert _verify_offline(doc, public_key_pem) is True
 
 
 def test_delegated_child_vector_verifies_offline() -> None:
     doc = _load(_CHILD)
-    public_key_pem = _public_key_pem_from_did_key(doc["subject"])
+    public_key_pem = _public_key_pem_from_cnf_jwk(doc)
     assert _verify_offline(doc, public_key_pem) is True
 
 
@@ -133,7 +134,7 @@ def test_delegated_child_vector_parent_record_hash_matches_the_committed_parent_
     # parent_record when it minted the child.
     parent_bytes = _PARENT.read_text(encoding="utf-8").rstrip("\n")
     expected = hashlib.sha256(parent_bytes.encode("utf-8")).hexdigest()
-    assert child["parent_record_hash"] == expected
+    assert child["delegation"]["parent"] == expected
 
 
 def test_delegated_child_vector_references_a_predecessor_pointing_at_the_parent_subject() -> None:
@@ -144,14 +145,14 @@ def test_delegated_child_vector_references_a_predecessor_pointing_at_the_parent_
     assert predecessors[0]["resolver"] == parent["subject"]
 
 
-def test_committed_public_key_matches_the_key_recovered_from_the_subject() -> None:
-    """Belt-and-suspenders: the pinned PEM and the self-certifying subject must agree.
+def test_committed_public_key_matches_the_key_recovered_from_cnf_jwk() -> None:
+    """Belt-and-suspenders: the pinned PEM and cnf.jwk must agree.
 
-    Not something a real verifier needs (the subject alone is enough) --
+    Not something a real verifier needs (cnf.jwk alone is enough) --
     this just guards the fixture-generation script against pinning the
     wrong key file.
     """
     doc = _load(_SOLO)
-    from_subject = _public_key_pem_from_did_key(doc["subject"])
+    from_cnf = _public_key_pem_from_cnf_jwk(doc)
     pinned = _PUBKEY.read_bytes()
-    assert from_subject == pinned
+    assert from_cnf == pinned
