@@ -1014,8 +1014,8 @@ def describe_commit(commit: CommitRecord) -> str:
         only = commit.files[0]
         return f"work in `{only.path}` (+{only.added} / -{only.removed})"
     scope = _scope_of([f.path for f in commit.files])
-    where = f"`{scope}`" if scope else "across the tree"
-    return f"work in {where} ({len(commit.files)} files, +{added} / -{removed})"
+    where = f"in `{scope}`" if scope else "across the tree"
+    return f"work {where} ({len(commit.files)} files, +{added} / -{removed})"
 
 
 def _format_commit_changes(commits: tuple[CommitRecord, ...]) -> str:

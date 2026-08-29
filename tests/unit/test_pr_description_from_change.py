@@ -687,7 +687,7 @@ def test_files_sharing_no_directory_are_described_as_across_the_tree() -> None:
         "[WIP] backend-5 partial work",
         [("src/a.py", 3, 1), ("docs/b.md", 2, 0)],
     )
-    assert describe_commit(spread) == "work in across the tree (2 files, +5 / -1)"
+    assert describe_commit(spread) == "work across the tree (2 files, +5 / -1)"
 
 
 def test_the_rendered_body_never_carries_a_session_identifier() -> None:
