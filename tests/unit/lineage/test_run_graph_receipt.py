@@ -286,11 +286,11 @@ def test_build_run_graph_receipt_basic(
     # Verify on-disk receipt
     receipt_dir = repo_root / ".sdd" / "run-graph"
     assert receipt_dir.exists()
-    receipt_files = list(receipt_dir.glob("*.json"))
-    assert len(receipt_files) == 1
+    assert len(list(receipt_dir.glob("*.json"))) == 1
 
     # Verify receipt contents
-    data = json.loads(receipt_files[0].read_text())
+    receipt_file = next(iter(receipt_dir.glob("*.json")))
+    data = json.loads(receipt_file.read_text())
     assert data["receipt_hash"] == receipt.receipt_hash
     assert data["graph_root_hash"] == graph.root_hash
     assert data["schema_version"] == 1
