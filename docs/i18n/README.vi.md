@@ -139,6 +139,18 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 Kết hợp các tác tử trong cùng một phiên chạy: mô hình cục bộ chi phí thấp cho mã khuôn mẫu, mô hình đám mây mạnh mẽ hơn cho kiến trúc. `bernstein integrations list --installed` hiển thị những gì đang khả dụng trên máy của bạn.
 
+### tài nguyên tính toán tình nguyện
+<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+
+Một dự án có thể đánh dấu các issue là mở cho tình nguyện viên, và bất kỳ ai cũng có thể chạy một issue trên máy của mình mà không cần tài khoản hay người điều phối. Dự án khai báo những gì một tác vụ được phép làm trong tệp manifest `volunteer.json` - backend sandbox, danh sách mạng được phép, trần thời gian thực và bộ nhớ - còn giới hạn của chính người đóng góp chỉ có thể thu hẹp, không bao giờ nới rộng. Biên nhận mà một tác vụ hoàn tất tạo ra gắn kết quả với quyết định cô lập mà nó đã chạy dưới đó, nên nhiều tháng sau người bảo trì vẫn kiểm tra được công việc thực sự được phép chạm tới những gì.
+
+```bash
+bernstein volunteer verify .
+bernstein volunteer browse --budget 60
+```
+
+[Hướng dẫn cho người đóng góp](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) nói về việc chạy worker và ngân sách bạn đặt, [hướng dẫn cho dự án](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) nói về việc khai báo manifest, còn [mô hình mối đe dọa](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) nêu rõ mỗi ranh giới bảo vệ điều gì và không bảo vệ điều gì. Trình chạy một lệnh chưa được phát hành: hôm nay `verify`, `browse` và `hub` là các lệnh con hoạt động.
+
 ### xa hơn trang nhất
 <!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
 

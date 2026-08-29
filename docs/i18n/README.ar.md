@@ -139,6 +139,18 @@ Claude Code وCodex CLI وGemini CLI وGitHub Copilot CLI وCursor وAider وGoo
 
 امزج بين الوكلاء في نفس التشغيل: نماذج محلية منخفضة التكلفة للأكواد النمطية، ونماذج سحابية أقوى للأمور المعمارية. يعرض `bernstein integrations list --installed` ما هو متاح على جهازك.
 
+### الحوسبة التطوعية
+<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+
+يمكن لمشروع أن يضع على مسائله علامة تفيد بأنها مفتوحة للمتطوعين، ويمكن لأي شخص تشغيل واحدة منها على جهازه الخاص دون حساب ودون منسّق. يعلن المشروع ما يُسمح للمهمة بفعله في بيان `volunteer.json` - الخلفية المستخدمة للعزل، وقائمة الشبكة المسموح بها، وسقفا الزمن والذاكرة - ولا تستطيع حدود المتبرع نفسه إلا تضييق ذلك، لا توسيعه أبدًا. يربط الإيصال الذي تنتجه مهمة منتهية النتيجةَ بقرار الاحتواء الذي جرت تحته، فيستطيع المشرف بعد أشهر أن يتحقق مما كان مسموحًا للعمل فعليًا أن يمسّه.
+
+```bash
+bernstein volunteer verify .
+bernstein volunteer browse --budget 60
+```
+
+يغطي [دليل المتبرع](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) تشغيل العامل والميزانية التي تحددها، ويغطي [دليل المشروع](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) إعلان البيان، ويوضح [نموذج التهديد](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) ما يحميه كل حد وما لا يحميه. لم يُصدر بعد المشغّل ذو الأمر الواحد: الأوامر الفرعية العاملة اليوم هي `verify` و`browse` و`hub`.
+
 ### ما وراء الصفحة الرئيسية
 <!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
 

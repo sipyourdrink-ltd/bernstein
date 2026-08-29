@@ -139,6 +139,18 @@ Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goo
 
 在同一运行中混用智能体：用便宜的本地模型处理样板，用更重的云模型处理架构。`bernstein integrations list --installed` 显示你的机器上可用的内容。
 
+### 志愿算力
+<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+
+项目可以把 issue 标记为向志愿者开放，任何人都可以在自己的机器上运行其中一个，无需账号，也无需协调者。任务被允许做什么，由项目在 `volunteer.json` 清单中声明 —— 沙箱后端、允许访问的网络列表、挂钟时间与内存上限 —— 而捐献者自己的限制只能把它收紧，永远不能放宽。已完成任务产生的回执把结果绑定到它运行时所依据的隔离决策上，因此维护者在数月之后仍能核对这项工作当时究竟被允许触碰什么。
+
+```bash
+bernstein volunteer verify .
+bernstein volunteer browse --budget 60
+```
+
+[捐献者指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) 讲运行 worker 以及你设定的预算，[项目指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) 讲声明清单，[威胁模型](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) 说明每一层边界防护什么、不防护什么。单条命令的运行器尚未发布：目前可用的子命令是 `verify`、`browse` 和 `hub`。
+
 ### 首页之外
 <!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
 

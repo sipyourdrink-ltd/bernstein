@@ -139,6 +139,18 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 Kombinera agenter i samma körning: billiga lokala modeller för standardkod, tyngre molnmodeller för arkitektur. `bernstein integrations list --installed` visar vad som finns tillgängligt på din maskin.
 
+### frivillig beräkningskraft
+<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+
+Ett projekt kan märka ärenden som öppna för frivilliga, och vem som helst kan köra ett av dem på sin egen maskin, utan konto och utan samordnare. Vad en uppgift får göra deklarerar projektet i ett `volunteer.json`-manifest - sandlådebackend, tillåten nätverkslista, tak för väggklockstid och minne - och givarens egna gränser kan bara snäva åt detta, aldrig vidga det. Kvittot som en färdig uppgift ger binder resultatet till det inneslutningsbeslut det kördes under, så att en underhållare månader senare kan kontrollera vad arbetet faktiskt fick röra.
+
+```bash
+bernstein volunteer verify .
+bernstein volunteer browse --budget 60
+```
+
+[Givarguiden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) täcker hur du kör en worker och budgeten du sätter, [projektguiden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) täcker att deklarera ett manifest, och [hotmodellen](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) anger vad varje gräns skyddar mot och inte. Körning med ett enda kommando är ännu inte släppt: i dag är `verify`, `browse` och `hub` de underkommandon som fungerar.
+
 ### bortom förstasidan
 <!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
 

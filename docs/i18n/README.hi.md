@@ -139,6 +139,18 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 एक ही रन में एजेंट मिलाइए: बॉयलरप्लेट के लिए सस्ते लोकल मॉडल, आर्किटेक्चर के लिए भारी क्लाउड मॉडल। `bernstein integrations list --installed` दिखाता है कि आपकी मशीन पर क्या उपलब्ध है।
 
+### स्वैच्छिक कंप्यूट
+<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+
+कोई प्रोजेक्ट अपने issue को स्वयंसेवकों के लिए खुला चिह्नित कर सकता है, और कोई भी उनमें से एक को अपनी ही मशीन पर, बिना खाते और बिना समन्वयक के, चला सकता है। किसी कार्य को क्या करने की अनुमति है, यह प्रोजेक्ट `volunteer.json` मैनिफ़ेस्ट में घोषित करता है - सैंडबॉक्स बैकएंड, अनुमत नेटवर्क सूची, वॉल-क्लॉक और मेमोरी की ऊपरी सीमाएँ - और दाता की अपनी सीमाएँ इसे केवल संकरा कर सकती हैं, कभी चौड़ा नहीं। पूरा हुआ कार्य जो रसीद बनाता है वह परिणाम को उसी नियंत्रण-निर्णय से बाँध देती है जिसके अधीन वह चला, इसलिए अनुरक्षक महीनों बाद भी जाँच सकता है कि उस काम को वास्तव में किसे छूने की अनुमति थी।
+
+```bash
+bernstein volunteer verify .
+bernstein volunteer browse --budget 60
+```
+
+[दाता मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) वर्कर चलाने और आपके तय किए बजट को कवर करती है, [प्रोजेक्ट मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) मैनिफ़ेस्ट घोषित करना, और [ख़तरा मॉडल](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) बताता है कि हर सीमा किससे बचाती है और किससे नहीं। एक ही कमांड वाला रनर अभी जारी नहीं हुआ है: आज `verify`, `browse` और `hub` काम करने वाले सब-कमांड हैं।
+
 ### पहले पन्ने से आगे
 <!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
 

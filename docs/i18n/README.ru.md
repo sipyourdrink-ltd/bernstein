@@ -139,6 +139,18 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 Смешивай агентов в одном прогоне: дешёвые локальные модели на бойлерплейт, тяжёлые облачные — на архитектуру. `bernstein integrations list --installed` покажет, что доступно на твоей машине.
 
+### добровольные вычисления
+<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+
+Проект может пометить задачи как открытые для добровольцев, и любой может выполнить одну из них на своей машине без учётной записи и без координатора. Что задаче разрешено делать, проект объявляет в манифесте `volunteer.json` — бэкенд песочницы, список разрешённых сетевых адресов, потолки по времени и памяти, — а собственные лимиты донора могут только сузить это, но не расширить. Квитанция завершённой задачи привязывает результат к тому решению об изоляции, под которым он получен, поэтому сопровождающий и через месяцы может проверить, к чему работа действительно имела доступ.
+
+```bash
+bernstein volunteer verify .
+bernstein volunteer browse --budget 60
+```
+
+[Руководство донора](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) описывает запуск воркера и бюджет, который вы задаёте, [руководство проекта](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) — объявление манифеста, а [модель угроз](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) — что каждая граница защищает, а что нет. Запуск одной командой ещё не выпущен: сегодня работают подкоманды `verify`, `browse` и `hub`.
+
 ### за пределами первой страницы
 <!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
 

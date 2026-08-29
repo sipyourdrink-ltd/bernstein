@@ -139,6 +139,18 @@ Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goo
 
 同じ実行の中でエージェントを混ぜられる。定型作業には安価なローカルモデル、設計には重いクラウドモデルというように。`bernstein integrations list --installed` は自分のマシンで使えるものを表示する。
 
+### ボランティア計算資源
+<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+
+プロジェクトは issue をボランティアに開放されているものとして印を付けられ、誰でもその一つを自分のマシンで実行できます。アカウントも調整役も必要ありません。タスクに何を許すかは `volunteer.json` マニフェストで宣言され — サンドボックスのバックエンド、許可するネットワーク先、実時間とメモリの上限 — 提供者自身の制限はそれを狭めることしかできず、広げることはできません。完了したタスクが生む受領書は、結果をそれが動いた封じ込めの決定に結び付けるため、メンテナは数か月後でも、その作業が実際に何に触れることを許されていたかを確認できます。
+
+```bash
+bernstein volunteer verify .
+bernstein volunteer browse --budget 60
+```
+
+[提供者ガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) はワーカーの実行と自分で設定する予算を、[プロジェクトガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) はマニフェストの宣言を、[脅威モデル](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) は各境界が何を守り何を守らないかを扱います。単一コマンドのランナーはまだ出荷されていません。現在動くサブコマンドは `verify`、`browse`、`hub` です。
+
 ### 表紙の先へ
 <!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
 

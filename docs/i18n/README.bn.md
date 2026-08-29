@@ -139,6 +139,18 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 একই রানে এজেন্ট মেশান: বয়লারপ্লেটের জন্য সস্তা লোকাল মডেল, আর্কিটেকচারের জন্য ভারী ক্লাউড মডেল। `bernstein integrations list --installed` দেখায় আপনার মেশিনে কী কী আছে।
 
+### স্বেচ্ছাসেবী কম্পিউট
+<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+
+একটি প্রকল্প issue-গুলিকে স্বেচ্ছাসেবকদের জন্য খোলা হিসেবে চিহ্নিত করতে পারে, আর যে কেউ তার একটি নিজের মেশিনে চালাতে পারেন - অ্যাকাউন্ট ছাড়া, সমন্বয়কারী ছাড়া। কোনো কাজকে কী করার অনুমতি আছে, প্রকল্প তা `volunteer.json` ম্যানিফেস্টে ঘোষণা করে - স্যান্ডবক্স ব্যাকএন্ড, অনুমোদিত নেটওয়ার্ক তালিকা, ওয়াল-ক্লক ও মেমরির সর্বোচ্চ সীমা - আর দাতার নিজের সীমা কেবল সেটিকে সংকীর্ণ করতে পারে, কখনও প্রসারিত নয়। সম্পন্ন কাজ যে রসিদ তৈরি করে তা ফলাফলকে সেই সীমাবদ্ধতার সিদ্ধান্তের সঙ্গে বেঁধে দেয় যার অধীনে সেটি চলেছিল, ফলে রক্ষণাবেক্ষণকারী মাসখানেক পরেও যাচাই করতে পারেন কাজটি আসলে কী স্পর্শ করার অনুমতি পেয়েছিল।
+
+```bash
+bernstein volunteer verify .
+bernstein volunteer browse --budget 60
+```
+
+[দাতা নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) ওয়ার্কার চালানো ও আপনার নির্ধারিত বাজেট, [প্রকল্প নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) ম্যানিফেস্ট ঘোষণা, এবং [হুমকি মডেল](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) প্রতিটি সীমানা কী রক্ষা করে আর কী করে না তা বর্ণনা করে। এক-কমান্ডের রানার এখনও প্রকাশিত হয়নি: আজ `verify`, `browse` ও `hub` কার্যকর সাব-কমান্ড।
+
 ### প্রথম পাতার বাইরে
 <!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
 

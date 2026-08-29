@@ -139,6 +139,18 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 שלב סוכנים באותה ריצה: מודלים מקומיים זולים לקוד שגרתי, מודלי ענן חזקים יותר לארכיטקטורה. הפקודה `bernstein integrations list --installed` מציגה מה זמין במחשבך.
 
+### מחשוב התנדבותי
+<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+
+פרויקט יכול לסמן issues כפתוחים למתנדבים, וכל אחד יכול להריץ אחד מהם על המכונה שלו עצמו, בלי חשבון ובלי מתאם. מה שמשימה רשאית לעשות מוצהר על ידי הפרויקט במניפסט `volunteer.json` - קצה עורפי לארגז החול, רשימת רשת מותרת ותקרות של זמן שעון וזיכרון - והמגבלות של התורם עצמו יכולות רק לצמצם זאת, לעולם לא להרחיב. הקבלה שמייצרת משימה שהושלמה קושרת את התוצאה להחלטת ההכלה שתחתיה רצה, כך שמתחזק יכול לבדוק גם חודשים אחר כך במה בדיוק הותר לעבודה לגעת.
+
+```bash
+bernstein volunteer verify .
+bernstein volunteer browse --budget 60
+```
+
+[מדריך התורם](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) מכסה הרצת worker ואת התקציב שאתה קובע, [מדריך הפרויקט](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) מכסה הצהרה על מניפסט, ו[מודל האיומים](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) מפרט מפני מה כל גבול מגן ומפני מה לא. המריץ בפקודה אחת עדיין לא שוחרר: כיום `verify`, `browse` ו-`hub` הן תת-הפקודות שעובדות.
+
 ### מעבר לעמוד הראשי
 <!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
 

@@ -139,6 +139,18 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 ผสมผสานเอเจนต์ในการรันรอบเดียวกัน: ใช้โมเดลในเครื่องราคาประหยัดสำหรับโค้ดโครงสร้างพื้นฐาน และใช้โมเดลบนคลาวด์ที่ทรงพลังกว่าสำหรับสถาปัตยกรรม คำสั่ง `bernstein integrations list --installed` จะแสดงรายการที่มีอยู่ในเครื่องของคุณ
 
+### การประมวลผลโดยอาสาสมัคร
+<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+
+โปรเจกต์สามารถทำเครื่องหมายให้ issue เปิดรับอาสาสมัคร และใครก็ได้สามารถรัน issue นั้นบนเครื่องของตนเองโดยไม่ต้องมีบัญชีและไม่ต้องมีผู้ประสานงาน โปรเจกต์ประกาศสิ่งที่งานหนึ่งได้รับอนุญาตให้ทำไว้ในไฟล์ manifest `volunteer.json` - แบ็กเอนด์แซนด์บ็อกซ์ รายการเครือข่ายที่อนุญาต เพดานเวลาจริงและหน่วยความจำ - ส่วนขีดจำกัดของผู้บริจาคเองทำได้เพียงบีบให้แคบลง ไม่สามารถขยายออกได้ ใบรับที่งานซึ่งเสร็จสิ้นสร้างขึ้นจะผูกผลลัพธ์เข้ากับการตัดสินใจเรื่องการกักกันที่งานนั้นรันอยู่ ผู้ดูแลจึงตรวจสอบได้แม้ผ่านไปหลายเดือนว่างานนั้นได้รับอนุญาตให้แตะต้องสิ่งใดจริง ๆ
+
+```bash
+bernstein volunteer verify .
+bernstein volunteer browse --budget 60
+```
+
+[คู่มือผู้บริจาค](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) ครอบคลุมการรัน worker และงบประมาณที่คุณกำหนด [คู่มือโปรเจกต์](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) ครอบคลุมการประกาศ manifest และ [แบบจำลองภัยคุกคาม](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) ระบุว่าขอบเขตแต่ละชั้นป้องกันอะไรและไม่ป้องกันอะไร ตัวรันแบบคำสั่งเดียวยังไม่ถูกปล่อยออกมา วันนี้คำสั่งย่อยที่ใช้งานได้คือ `verify`, `browse` และ `hub`
+
 ### เนื้อหาเชิงลึกนอกเหนือจากหน้าแรก
 <!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
 

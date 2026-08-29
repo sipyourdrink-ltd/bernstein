@@ -132,6 +132,17 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 Mix agents in the same run: cheap local models for boilerplate, heavier cloud models for architecture. `bernstein integrations list --installed` shows what is available on your machine.
 
+### volunteer compute
+
+A project can mark issues as open to volunteers, and anyone can run one on their own machine without an account or a coordinator. The project declares what a task is allowed to do in a `volunteer.json` manifest - sandbox backend, network allowlist, wall-clock and memory ceilings - and a donor's own limits can only narrow that, never widen it. The receipt a finished task produces binds the result to the containment decision it ran under, so a maintainer can check months later what the work was actually permitted to touch.
+
+```bash
+bernstein volunteer verify .
+bernstein volunteer browse --budget 60
+```
+
+The [donor guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) covers running a worker and the budget you set, the [project guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) covers declaring a manifest, and the [threat model](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) states what each boundary does and does not protect. The one-command runner is not shipped yet: `verify`, `browse` and `hub` are the working subcommands today.
+
 ### beyond the front page
 
 Everything deep lives on the [docs site](https://bernstein.readthedocs.io/):

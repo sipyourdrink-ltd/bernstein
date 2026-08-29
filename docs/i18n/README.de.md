@@ -139,6 +139,18 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 Kombinieren Sie Agenten im selben Lauf: Günstige lokale Modelle für Boilerplate-Code, leistungsfähigere Cloud-Modelle für Architekturfragen. `bernstein integrations list --installed` zeigt verfügbare Installationen auf Ihrem System.
 
+### freiwillige rechenleistung
+<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+
+Ein Projekt kann Issues als offen für Freiwillige markieren, und jeder kann eines davon auf der eigenen Maschine ausführen - ohne Konto und ohne Koordinator. Was eine Aufgabe tun darf, erklärt das Projekt in einem `volunteer.json`-Manifest - Sandbox-Backend, erlaubte Netzwerkziele, Obergrenzen für Laufzeit und Speicher - und die eigenen Limits des Spenders können das nur enger ziehen, niemals weiter. Die Quittung einer abgeschlossenen Aufgabe bindet das Ergebnis an die Isolationsentscheidung, unter der es entstanden ist, sodass ein Maintainer noch Monate später prüfen kann, worauf die Arbeit tatsächlich zugreifen durfte.
+
+```bash
+bernstein volunteer verify .
+bernstein volunteer browse --budget 60
+```
+
+Der [Spenderleitfaden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) behandelt den Betrieb eines Workers und das Budget, das Sie setzen, der [Projektleitfaden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) das Deklarieren eines Manifests, und das [Bedrohungsmodell](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) beschreibt, wovor jede Grenze schützt und wovor nicht. Der Runner mit einem einzigen Befehl ist noch nicht veröffentlicht: Heute sind `verify`, `browse` und `hub` die funktionierenden Unterbefehle.
+
 ### hinter den Kulissen
 <!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
 

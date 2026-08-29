@@ -139,6 +139,18 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 Aynı çalıştırmada ajanları birleştirin: standart şablon kodlar için ucuz yerel modeller, mimari için daha güçlü bulut modelleri. `bernstein integrations list --installed` makinenizde nelerin mevcut olduğunu gösterir.
 
+### gönüllü işlem gücü
+<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+
+Bir proje sorunları gönüllülere açık olarak işaretleyebilir ve herkes bunlardan birini kendi makinesinde, hesap ve koordinatör olmadan çalıştırabilir. Bir görevin ne yapmasına izin verildiğini proje bir `volunteer.json` manifestinde bildirir - sanal alan arka ucu, izin verilen ağ listesi, duvar saati ve bellek tavanları - ve bağışçının kendi sınırları bunu yalnızca daraltabilir, asla genişletemez. Tamamlanan bir görevin ürettiği makbuz, sonucu altında çalıştığı sınırlama kararına bağlar; böylece bir bakımcı aylar sonra bile işin gerçekte neye dokunmasına izin verildiğini denetleyebilir.
+
+```bash
+bernstein volunteer verify .
+bernstein volunteer browse --budget 60
+```
+
+[Bağışçı kılavuzu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) bir worker çalıştırmayı ve belirlediğiniz bütçeyi, [proje kılavuzu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) bir manifest bildirmeyi anlatır, [tehdit modeli](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) ise her sınırın neyi koruyup neyi korumadığını belirtir. Tek komutluk çalıştırıcı henüz yayımlanmadı: bugün çalışan alt komutlar `verify`, `browse` ve `hub`.
+
 ### ön sayfanın ötesinde
 <!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
 

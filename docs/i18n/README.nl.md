@@ -139,6 +139,18 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 Combineer agents binnen dezelfde run: goedkope lokale modellen voor routinematige code, krachtigere cloudmodellen voor architectuur. `bernstein integrations list --installed` toont wat er beschikbaar is op uw machine.
 
+### vrijwillige rekenkracht
+<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+
+Een project kan issues markeren als open voor vrijwilligers, en iedereen kan er een uitvoeren op de eigen machine, zonder account en zonder coördinator. Wat een taak mag doen, verklaart het project in een `volunteer.json`-manifest - sandbox-backend, toegestane netwerklijst, plafonds voor looptijd en geheugen - en de eigen limieten van de donateur kunnen dat alleen versmallen, nooit verruimen. Het ontvangstbewijs van een voltooide taak bindt het resultaat aan de insluitingsbeslissing waaronder het tot stand kwam, zodat een maintainer maanden later kan nagaan waar het werk daadwerkelijk bij mocht.
+
+```bash
+bernstein volunteer verify .
+bernstein volunteer browse --budget 60
+```
+
+De [donateursgids](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) behandelt het draaien van een worker en het budget dat je instelt, de [projectgids](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) behandelt het declareren van een manifest, en het [dreigingsmodel](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) beschrijft waartegen elke grens wel en niet beschermt. De runner met één commando is nog niet uitgebracht: vandaag zijn `verify`, `browse` en `hub` de werkende subcommando's.
+
 ### voorbij de voorpagina
 <!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
 

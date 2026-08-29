@@ -139,6 +139,18 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 Misture agentes na mesma execução: modelos locais econômicos para código repetitivo, modelos em nuvem mais potentes para arquitetura. `bernstein integrations list --installed` mostra o que está disponível na sua máquina.
 
+### computação voluntária
+<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+
+Um projeto pode marcar issues como abertas a voluntários, e qualquer pessoa pode executar uma na própria máquina sem conta e sem coordenador. O projeto declara o que uma tarefa tem permissão de fazer num manifesto `volunteer.json` - backend de sandbox, lista de rede permitida, tetos de tempo de relógio e memória - e os limites do próprio doador só podem estreitar isso, nunca ampliar. O recibo que uma tarefa concluída produz liga o resultado à decisão de contenção sob a qual ela rodou, de modo que um mantenedor pode verificar meses depois a que o trabalho realmente teve permissão de tocar.
+
+```bash
+bernstein volunteer verify .
+bernstein volunteer browse --budget 60
+```
+
+O [guia do doador](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) cobre a execução de um worker e o orçamento que você define, o [guia do projeto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) cobre a declaração de um manifesto, e o [modelo de ameaças](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) diz o que cada fronteira protege e o que não protege. O executor de um único comando ainda não foi lançado: hoje `verify`, `browse` e `hub` são os subcomandos que funcionam.
+
 ### além da página inicial
 <!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
 

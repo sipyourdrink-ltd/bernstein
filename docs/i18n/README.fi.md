@@ -139,6 +139,18 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 Yhdistele agentteja samassa ajossa: edullisia paikallisia malleja rutiinikoodiin, raskaampia pilvimalleja arkkitehtuuriin. `bernstein integrations list --installed` näyttää koneellasi käytettävissä olevat työkalut.
 
+### vapaaehtoinen laskentateho
+<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+
+Projekti voi merkitä tiketit vapaaehtoisille avoimiksi, ja kuka tahansa voi ajaa yhden niistä omalla koneellaan ilman tiliä ja ilman koordinaattoria. Sen, mitä tehtävä saa tehdä, projekti ilmoittaa `volunteer.json`-manifestissa - hiekkalaatikon taustaosa, sallittujen verkko-osoitteiden lista, seinäkelloajan ja muistin katot - ja lahjoittajan omat rajat voivat vain kaventaa tätä, eivät koskaan laajentaa. Valmiin tehtävän tuottama kuitti sitoo tuloksen siihen eristyspäätökseen, jonka alla se ajettiin, joten ylläpitäjä voi kuukausienkin päästä tarkistaa, mihin työllä todella oli lupa koskea.
+
+```bash
+bernstein volunteer verify .
+bernstein volunteer browse --budget 60
+```
+
+[Lahjoittajan opas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) käsittelee workerin ajamisen ja asettamasi budjetin, [projektin opas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) manifestin ilmoittamisen, ja [uhkamalli](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) kertoo, miltä kukin raja suojaa ja miltä ei. Yhden komennon ajuria ei ole vielä julkaistu: tänään toimivat alikomennot ovat `verify`, `browse` ja `hub`.
+
 ### etusivun lisäksi
 <!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
 

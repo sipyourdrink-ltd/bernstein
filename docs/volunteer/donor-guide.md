@@ -4,11 +4,18 @@
 
 ### One-Liner CLI Command
 
+> **Not available yet.** `bernstein volunteer run` is the intended entry point
+> and lands with the one-command onboarding work (#3889). Today the shipped
+> subcommands are `bernstein volunteer verify`, `browse` and `hub`; the rest of
+> this guide describes the shape the runner is being built to, so a donor can
+> tell in advance what it will and will not be allowed to do on their machine.
+
 ```bash
 bernstein volunteer run https://github.com/owner/project/issues/123
 ```
 
-This is the exact command a donor runs to start a volunteer task. It takes a GitHub issue URL and begins the execution process.
+This is the command a donor will run to start a volunteer task. It takes a
+GitHub issue URL and begins the execution process.
 
 ### Complete Join Process
 
@@ -40,7 +47,9 @@ This is the exact command a donor runs to start a volunteer task. It takes a Git
 ### Wall-Clock Budget
 - Each task has a configured maximum runtime (default: 24 hours = 1440 minutes)
 - Projects can set stricter limits in their `volunteer.json`
-- Donors can override with `--budget` flag when running specific tasks
+- `bernstein volunteer browse --budget <minutes>` already filters the offered
+  projects to what fits the wall clock you are willing to give; the same figure
+  becomes the runner's own limit once it lands
 - Exceeding the budget results in automatic task termination
 
 ### Memory Limits
@@ -105,11 +114,11 @@ This is the exact command a donor runs to start a volunteer task. It takes a Git
 ```
 
 **Task Release**
-```bash
-# To abandon a task before completion:
-# The donor interrupts the process or runs:
-bernstein volunteer release <task-id> "reason for release"
-```
+
+Interrupting the worker process abandons the task and the lease it holds
+expires on its own. `bernstein volunteer release <task-id> "<reason>"`, which
+records the reason against the lease instead of waiting for the timeout, lands
+with the runner (#3889) and is not available yet.
 
 ### Cleanup
 
@@ -170,7 +179,6 @@ bernstein volunteer --help
 # Specific subcommand help
 bernstein volunteer verify --help
 bernstein volunteer browse --help
-bernstein volunteer run --help
 bernstein volunteer hub --help
 ```
 

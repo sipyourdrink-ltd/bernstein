@@ -139,6 +139,18 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 한 실행 안에서 에이전트를 섞을 수 있다. 정형 작업에는 값싼 로컬 모델을, 설계에는 무거운 클라우드 모델을. `bernstein integrations list --installed`는 자기 머신에서 쓸 수 있는 것을 보여준다.
 
+### 자원봉사 컴퓨팅
+<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+
+프로젝트는 이슈를 자원봉사자에게 열린 것으로 표시할 수 있고, 누구나 그중 하나를 계정이나 조정자 없이 자기 컴퓨터에서 실행할 수 있습니다. 작업이 무엇을 해도 되는지는 프로젝트가 `volunteer.json` 매니페스트에 선언합니다 - 샌드박스 백엔드, 허용 네트워크 목록, 실행 시간과 메모리 상한 - 그리고 기여자 자신의 한도는 그것을 좁힐 수만 있을 뿐 넓힐 수는 없습니다. 완료된 작업이 만드는 영수증은 결과를 그것이 실행된 격리 결정에 묶으므로, 관리자는 몇 달 뒤에도 그 작업이 실제로 무엇에 접근할 수 있었는지 확인할 수 있습니다.
+
+```bash
+bernstein volunteer verify .
+bernstein volunteer browse --budget 60
+```
+
+[기여자 가이드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md)는 워커 실행과 직접 정하는 예산을, [프로젝트 가이드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md)는 매니페스트 선언을, [위협 모델](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md)은 각 경계가 무엇을 막고 무엇을 막지 않는지를 다룹니다. 한 번의 명령으로 실행하는 러너는 아직 출시되지 않았습니다. 오늘 동작하는 하위 명령은 `verify`, `browse`, `hub` 입니다.
+
 ### 표지 너머
 <!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
 

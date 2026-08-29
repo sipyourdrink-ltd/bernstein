@@ -139,6 +139,18 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 Combinez différents agents au cours d'une même session : modèles locaux économiques pour le code générique, modèles cloud plus robustes pour l'architecture. `bernstein integrations list --installed` indique les outils disponibles sur votre machine.
 
+### calcul bénévole
+<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+
+Un projet peut marquer des tickets comme ouverts aux bénévoles, et n'importe qui peut en exécuter un sur sa propre machine, sans compte ni coordinateur. Le projet déclare ce qu'une tâche a le droit de faire dans un manifeste `volunteer.json` - backend de bac à sable, liste réseau autorisée, plafonds de temps et de mémoire - et les limites propres au donateur ne peuvent que le restreindre, jamais l'élargir. Le reçu produit par une tâche terminée lie le résultat à la décision de confinement sous laquelle elle a tourné, si bien qu'un mainteneur peut vérifier des mois plus tard ce que le travail avait réellement le droit de toucher.
+
+```bash
+bernstein volunteer verify .
+bernstein volunteer browse --budget 60
+```
+
+Le [guide du donateur](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) couvre l'exécution d'un worker et le budget que vous fixez, le [guide du projet](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) couvre la déclaration d'un manifeste, et le [modèle de menaces](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) indique ce que chaque frontière protège et ne protège pas. Le lanceur en une seule commande n'est pas encore livré : aujourd'hui `verify`, `browse` et `hub` sont les sous-commandes qui fonctionnent.
+
 ### au-delà de la page d'accueil
 <!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
 

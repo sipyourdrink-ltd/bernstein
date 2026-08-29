@@ -139,6 +139,18 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 Gabungkan berbagai agen dalam satu eksekusi: model lokal hemat biaya untuk kode repetitif, model cloud berkapasitas besar untuk arsitektur. `bernstein integrations list --installed` menampilkan apa saja yang tersedia di mesin Anda.
 
+### komputasi sukarela
+<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+
+Sebuah proyek dapat menandai isu sebagai terbuka bagi relawan, dan siapa pun dapat menjalankan salah satunya di mesin sendiri tanpa akun dan tanpa koordinator. Apa yang boleh dilakukan sebuah tugas dideklarasikan proyek dalam manifes `volunteer.json` - backend sandbox, daftar jaringan yang diizinkan, batas atas waktu dan memori - dan batas milik donor hanya dapat mempersempitnya, tidak pernah memperlebarnya. Tanda terima yang dihasilkan tugas yang selesai mengikat hasilnya pada keputusan pengungkungan tempat ia berjalan, sehingga seorang pengelola dapat memeriksa berbulan-bulan kemudian apa yang sebenarnya boleh disentuh oleh pekerjaan itu.
+
+```bash
+bernstein volunteer verify .
+bernstein volunteer browse --budget 60
+```
+
+[Panduan donor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) membahas menjalankan worker dan anggaran yang Anda tetapkan, [panduan proyek](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) membahas mendeklarasikan manifes, dan [model ancaman](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) menyatakan apa yang dilindungi dan tidak dilindungi setiap batas. Peluncur satu perintah belum dirilis: hari ini `verify`, `browse`, dan `hub` adalah subperintah yang berfungsi.
+
 ### di luar halaman utama
 <!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
 
