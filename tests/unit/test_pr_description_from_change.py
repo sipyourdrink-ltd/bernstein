@@ -35,6 +35,7 @@ from bernstein.core.integrations.pr_gen import (
     build_pr_body,
     build_pr_title,
     build_provenance,
+    describe_commit,
     dominant_commit,
     is_housekeeping_commit,
     load_session_summary,
@@ -627,3 +628,80 @@ def test_rebase_markers_are_housekeeping_whatever_they_touch() -> None:
     )
 
     assert is_housekeeping_commit(fixup) is True
+
+
+# ---------------------------------------------------------------------------
+# Uninformative subjects are described, not quoted (#4766)
+# ---------------------------------------------------------------------------
+
+WIP_FOLD_IN_COMMIT = _commit(
+    "dddddddddddd",
+    "[WIP] backend-3c1d21a5 partial work",
+    [
+        ("src/bernstein/core/agents/agent_lifecycle.py", 100, 5),
+        ("src/bernstein/core/agents/in_process_agent.py", 20, 3),
+    ],
+)
+WIP_BUT_DESCRIPTIVE_COMMIT = _commit(
+    "eeeeeeeeeeee",
+    "[WIP] rework the lease reaper's expiry sweep",
+    [("src/bernstein/core/agents/reaper.py", 40, 10)],
+)
+
+
+def test_an_uninformative_wip_subject_renders_as_what_it_changed() -> None:
+    """A squash merge copies the body onto main, so the session id became the
+    permanent description of the change. Describe the diff instead."""
+    rendered = describe_commit(WIP_FOLD_IN_COMMIT)
+    assert "backend-3c1d21a5" not in rendered
+    assert "partial work" not in rendered
+    assert "src/bernstein/core/agents" in rendered
+    assert "+120 / -8" in rendered
+
+
+def test_a_wip_commit_with_a_real_subject_renders_unchanged() -> None:
+    """The author's own words beat anything derived from a diff."""
+    assert describe_commit(WIP_BUT_DESCRIPTIVE_COMMIT) == "[WIP] rework the lease reaper's expiry sweep"
+
+
+def test_a_descriptive_subject_renders_unchanged() -> None:
+    assert describe_commit(FEATURE_COMMIT) == FEATURE_COMMIT.subject
+
+
+def test_a_single_file_uninformative_commit_names_the_file() -> None:
+    one = _commit("ffffffffffff", "[WIP] qa-9 partial work", [("src/bernstein/core/x.py", 7, 2)])
+    assert describe_commit(one) == "work in `src/bernstein/core/x.py` (+7 / -2)"
+
+
+def test_an_uninformative_commit_touching_nothing_says_so() -> None:
+    """Falling back to the subject here is what leaked the identifier."""
+    empty = _commit("111111111111", "[WIP] backend-77 partial work")
+    rendered = describe_commit(empty)
+    assert "backend-77" not in rendered
+    assert rendered == "checkpoint, no file changes"
+
+
+def test_files_sharing_no_directory_are_described_as_across_the_tree() -> None:
+    spread = _commit(
+        "222222222222",
+        "[WIP] backend-5 partial work",
+        [("src/a.py", 3, 1), ("docs/b.md", 2, 0)],
+    )
+    assert describe_commit(spread) == "work in across the tree (2 files, +5 / -1)"
+
+
+def test_the_rendered_body_never_carries_a_session_identifier() -> None:
+    """The end-to-end shape from the issue: a branch carrying both kinds."""
+    body = build_pr_body(_summary(commits=(WIP_FOLD_IN_COMMIT, WIP_BUT_DESCRIPTIVE_COMMIT)))
+    assert "backend-3c1d21a5" not in body
+    assert "partial work" not in body
+    # The descriptive one survives verbatim in the same body.
+    assert "rework the lease reaper's expiry sweep" in body
+
+
+def test_ranking_is_untouched_by_the_rendering_change() -> None:
+    """#4726's behaviour still holds: a WIP commit with src/ churn is
+    eligible to name the pull request, and outranks a smaller one."""
+    assert not is_housekeeping_commit(WIP_FOLD_IN_COMMIT)
+    ranked = rank_commits((WIP_BUT_DESCRIPTIVE_COMMIT, WIP_FOLD_IN_COMMIT))
+    assert ranked[0] is WIP_FOLD_IN_COMMIT
