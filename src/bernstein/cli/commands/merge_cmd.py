@@ -1,9 +1,13 @@
-"""merge command - pick the best agent solution and merge it into main.
+"""``merge`` command group - pick best agent solution and verify merge admission receipts.
 
+``bernstein merge pick``: pick the best agent solution and merge it into main.
 Used after comparing parallel branches (A/B testing different models on the
-same task) to select a winner: ``bernstein merge --pick agent1``.
-"""
+same task) to select a winner.
 
+``bernstein merge verify``: verify offline that a merge SHA carries a valid
+merge-admission receipt, following the same exit-code contract as
+``bernstein review-receipt verify``: 0 = verified / 1 = no receipt / 2 = mismatch.
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -21,19 +25,15 @@ from bernstein.cli.diff_cmd import (
 )
 from bernstein.cli.helpers import console
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+# ------------------------------------------------------------------
+# Helpers (shared between subcommands)
+# ------------------------------------------------------------------
 
 
 def _resolve_agent_branch(
     identifier: str, root: Path, agents: list[dict[str, Any]]
 ) -> tuple[str | None, dict[str, Any] | None]:
-    """Resolve an identifier (task ID or session ID) to a branch name.
-
-    Returns:
-        (branch_name, agent_dict) or (None, None) if not found.
-    """
+    """Resolve an identifier (task ID or session ID) to a branch name."""
     agent = _find_agent_for_task(identifier, agents) or _find_agent_by_session(identifier, agents)
     if agent is None:
         return None, None
@@ -41,7 +41,6 @@ def _resolve_agent_branch(
     session_id = agent.get("id", "")
     branch = f"agent/{session_id}"
 
-    # Check if the branch or worktree exists
     worktree_path = root / ".sdd" / "worktrees" / session_id
     if worktree_path.exists() and (worktree_path / ".git").exists():
         return branch, agent
@@ -79,14 +78,28 @@ def _verify_merge_result(root: Path, merge_msg: str, switched: bool, original_br
     console.print(f"[green]Merge completed:[/green] {merge_log}")
 
 
-# ---------------------------------------------------------------------------
-# CLI command
-# ---------------------------------------------------------------------------
+# ------------------------------------------------------------------
+# CLI group
+# ------------------------------------------------------------------
+
+@click.group("merge")
+def merge_cmd() -> None:
+    """Merge management: pick best agent solution and verify merge admission receipts.
+
+    \b
+      bernstein merge pick   --pick <task-id>   # merge agent work into main
+      bernstein merge verify --sha <sha>         # offline-verify merge receipt
+    """
 
 
-@click.command("merge")
+# ------------------------------------------------------------------
+# pick subcommand
+# ------------------------------------------------------------------
+
+@merge_cmd.command("pick")
 @click.option(
     "--pick",
+    "pick_id",
     type=str,
     required=True,
     metavar="AGENT",
@@ -110,8 +123,8 @@ def _verify_merge_result(root: Path, merge_msg: str, switched: bool, original_br
     metavar="AGENT",
     help="Also delete branches of rejected agents (repeatable).",
 )
-def merge_cmd(
-    pick: str,
+def merge_pick_cmd(
+    pick_id: str,
     base: str,
     workdir: str,
     no_ff: bool,
@@ -126,39 +139,33 @@ def merge_cmd(
 
     \b
     Examples:
-      bernstein merge --pick backend-abc123           # merge agent's work
-      bernstein merge --pick task-id-prefix           # resolve by task ID
-      bernstein merge --pick agent1 --reject agent2   # merge one, delete other
-      bernstein merge --pick agent1 --dry-run         # preview only
+      bernstein merge pick --pick backend-abc123           # merge agent's work
+      bernstein merge pick --pick task-id-prefix           # resolve by task ID
+      bernstein merge pick --pick agent1 --reject agent2   # merge one, delete other
+      bernstein merge pick --pick agent1 --dry-run         # preview only
     """
     root = Path(workdir).resolve()
     agents = _load_agents(root)
 
-    # ------------------------------------------------------------------
-    # 1. Resolve the picked agent to a branch
-    # ------------------------------------------------------------------
-    branch, agent = _resolve_agent_branch(pick, root, agents)
+    branch, agent = _resolve_agent_branch(pick_id, root, agents)
 
     if branch is None:
         if agent:
             console.print(
-                f"[yellow]Agent found for [bold]{pick}[/bold] but no branch/worktree exists.[/yellow]\n"
+                f"[yellow]Agent found for [bold]{pick_id}[/bold] but no branch/worktree exists.[/yellow]\n"
                 "[dim]The branch may have been cleaned up or already merged.[/dim]"
             )
         else:
-            console.print(f"[red]No agent or branch found for:[/red] [bold]{pick}[/bold]")
+            console.print(f"[red]No agent or branch found for:[/red] [bold]{pick_id}[/bold]")
         raise SystemExit(1)
 
-    session_id = agent.get("id", "") if agent else pick
+    session_id = agent.get("id", "") if agent else pick_id
     role = agent.get("role", "") if agent else ""
     model = agent.get("model", "") if agent else ""
 
     console.print(f"[bold]Picking:[/bold] [cyan]{branch}[/cyan]  [dim]role={role}, model={model}[/dim]")
 
-    # ------------------------------------------------------------------
-    # 2. Show what will be merged
-    # ------------------------------------------------------------------
-    resolved = resolve_diff(pick, root, agents, base)
+    resolved = resolve_diff(pick_id, root, agents, base)
     if resolved.stat_text:
         console.print("\n[bold]Changes to merge:[/bold]")
         console.print(resolved.stat_text)
@@ -167,18 +174,14 @@ def merge_cmd(
     if dry_run:
         console.print("[yellow]--dry-run: no changes made.[/yellow]")
 
-        # Show rejected branches that would be deleted
         if reject_others:
             console.print("\n[bold]Would reject (delete branches):[/bold]")
             for rej_id in reject_others:
-                rej_branch, _rej_agent = _resolve_agent_branch(rej_id, root, agents)
+                rej_branch, _ = _resolve_agent_branch(rej_id, root, agents)
                 status = f"[cyan]{rej_branch}[/cyan]" if rej_branch else "[dim]not found[/dim]"
                 console.print(f"  {rej_id} -> {status}")
         return
 
-    # ------------------------------------------------------------------
-    # 3. Perform the merge
-    # ------------------------------------------------------------------
     current = _current_branch(root)
     switched = False
 
@@ -199,13 +202,10 @@ def merge_cmd(
     _run_git(merge_args, root)
     _verify_merge_result(root, merge_msg, switched, current)
 
-    # ------------------------------------------------------------------
-    # 4. Clean up rejected branches
-    # ------------------------------------------------------------------
     if reject_others:
         console.print()
         for rej_id in reject_others:
-            rej_branch, _rej_agent = _resolve_agent_branch(rej_id, root, agents)
+            rej_branch, _ = _resolve_agent_branch(rej_id, root, agents)
             if rej_branch:
                 del_result = _run_git(["branch", "-D", rej_branch], root)
                 if del_result:
@@ -214,3 +214,72 @@ def merge_cmd(
                     console.print(f"[yellow]Could not delete:[/yellow] {rej_branch}")
             else:
                 console.print(f"[dim]No branch found for rejected agent:[/dim] {rej_id}")
+
+
+# ------------------------------------------------------------------
+# verify subcommand
+# ------------------------------------------------------------------
+
+@merge_cmd.command("verify")
+@click.option(
+    "--sha",
+    "head_sha",
+    required=True,
+    help="Commit SHA to verify the merge receipt for.",
+)
+@click.option(
+    "--workdir",
+    "-w",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False, exists=True),
+    help="Project root containing .sdd/.",
+)
+def merge_verify_cmd(head_sha: str, workdir: str) -> None:
+    """Prove offline that a merge SHA carries a valid merge-admission receipt.
+
+    Recomputes the spine anchor over the receipt's canonical binding bytes,
+    checks the Ed25519 signature, and verifies the merge spine.
+
+    Exit codes:
+        0 = verified
+        1 = no receipt / bad input
+        2 = mismatch (tamper)
+
+    This follows the same exit-code contract as ``bernstein review-receipt verify``.
+    """
+    from bernstein.core.quality.merge_receipt import verify_merge_receipt
+    from bernstein.core.security.audit import load_or_create_audit_key
+
+    root = Path(workdir).resolve()
+
+    hmac_key = load_or_create_audit_key()
+    lineage_root = root / ".sdd" / "lineage"
+
+    result = verify_merge_receipt(
+        workdir=root,
+        lineage_root=lineage_root,
+        hmac_key=hmac_key,
+        head_sha=head_sha,
+    )
+
+    console.print()
+    console.print(f"[bold]Merge receipt verify[/bold] sha={head_sha}")
+
+    if result.ok:
+        console.print(f"  decision  {result.decision}")
+        console.print(f"  authority {result.authority}")
+        if result.receipt and result.receipt.review_receipt_id:
+            console.print(f"  review_receipt_id {result.receipt.review_receipt_id}")
+        console.print(
+            "[green]OK[/green] -- merge receipt verified, spine anchored."
+        )
+        raise SystemExit(0)
+
+    receipt = result.receipt
+    if receipt is None:
+        console.print(f"[yellow]NO RECEIPT[/yellow] -- {result.reason}")
+        raise SystemExit(1)
+
+    console.print(f"[red]MISMATCH[/red] -- {result.reason}")
+    raise SystemExit(2)
