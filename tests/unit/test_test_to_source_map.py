@@ -80,3 +80,17 @@ def test_the_map_is_stable_under_input_reordering(tmp_path: Path) -> None:
 def test_a_target_with_no_history_yields_an_empty_map_and_no_error(tmp_path: Path) -> None:
     _git(tmp_path, "init")
     assert extract_test_to_source_map(tmp_path, ["src/missing.py"]) == {"src/missing.py": []}
+
+
+def test_a_test_whose_path_git_would_quote_is_still_found(tmp_path: Path) -> None:
+    """Plain ``--name-only`` hands back C-quoted paths for anything non-ASCII.
+
+    ``tests/test_ünïcode.py`` comes out as ``"tests/test_\\303\\274n..."`` --
+    a string that starts with a double quote, so a ``tests/`` prefix check
+    silently drops it and the map claims the file has no covering test. The
+    map is read as "these are the tests that cover this", which makes a
+    missing row a wrong answer rather than a thin one.
+    """
+    _git(tmp_path, "init")
+    _commit(tmp_path, "source change", "src/a.py", "tests/test_ünïcode.py")
+    assert extract_test_to_source_map(tmp_path, ["src/a.py"]) == {"src/a.py": ["tests/test_ünïcode.py"]}

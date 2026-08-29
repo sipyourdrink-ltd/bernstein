@@ -112,8 +112,8 @@ def extract_test_to_source_map(repo_root: Path, targets: list[str], *, limit: in
                 if sha in excluded:
                     continue
                 changed = _git(
-                    repo_root, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", sha
-                ).splitlines()
+                    repo_root, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-z", sha
+                ).split("\0")
                 for path in changed:
                     if path.startswith(("test/", "tests/")) and path.endswith(".py"):
                         counts[path] += 1
