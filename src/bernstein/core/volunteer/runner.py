@@ -647,7 +647,7 @@ def _run_sandbox_pipeline(
     
     if run_budget.exhausted:
         return refuse(RefusalStage.CLONE, "budget_exhausted", "the run budget was spent before the clone started")
-    clone_outcome, _, clone_stderr = run_under_wall_clock(
+clone_outcome, _, clone_stderr = run_under_wall_clock(
         _clone_argv(task, clone_path),
         limit_seconds=run_budget.phase_limit_seconds(),
         env=env,
