@@ -52,6 +52,38 @@ constant: two installs signing the same ``(run_id, exec_id)`` pair mint the
 same subject (they still sign with different keys, so ``cnf.jwk`` -- not
 ``subject`` -- is what a verifier uses to tell installs apart).
 
+``run_id``/``exec_id`` derivation (issue #4761 AC1): these two identifiers
+are caller-supplied SPIFFE path segments (see
+:func:`_require_spiffe_segment`) -- the emitter itself never reads either
+one *from* the journal, and does not check either against the journal's
+own content. The contract a caller must uphold, so a verifier can
+reproduce it from the journal alone:
+
+- ``exec_id`` names *this one execution's* journal and must be the same
+  string that identifies that journal on disk. Every journal built through
+  :class:`bernstein.core.replay.journal.EventJournal` already carries this
+  identifier as its own :attr:`EventJournal.run_id` property (a
+  same-named but narrower concept than this module's ``run_id`` -- see
+  below), and the journal path itself encodes it: a production journal
+  lives at ``<sdd_dir>/runs/<that-id>/journal.jsonl``
+  (:func:`bernstein.core.replay.journal.run_journal_path`), so
+  ``journal_path.parent.name`` recovers the expected ``exec_id`` for any
+  journal built that way. A verifier can therefore reproduce the
+  correspondence without trusting the caller: fetch the journal named in
+  ``journal_path.parent.name`` and confirm it matches the ``exec_id``
+  embedded in the record's ``subject``.
+- ``run_id`` is the *wider*, multi-hop grouping identifier: every
+  execution hop of one delegated run must be called with the same
+  ``run_id`` (this is what lets :meth:`TrustRecordEmitter.emit_aggregate_trust_record`
+  roll several executions' records up into one run-scoped record). No
+  single journal carries this value -- it is not any one
+  :class:`EventJournal`'s own ``run_id`` property, despite the name
+  collision with that unrelated, per-journal identifier. Today, minting
+  every hop's ``run_id`` consistently is the caller's responsibility (the
+  real caller -- the ``bernstein trace export`` CLI, issue #4667 -- is
+  scoped out of this module); this module only validates its *shape* (a
+  safe SPIFFE segment), never its consistency across hops.
+
 Journal conventions this emitter reads (all producer-owned; no other
 module depends on these key names today, so this docstring is their only
 specification):
@@ -451,13 +483,20 @@ def _default_installed_digest() -> str:
 
     Not the original ``.whl`` artifact's own hash -- pip does not retain the
     wheel file after installation, so there is nothing on disk to re-hash.
-    This instead hashes the sorted list of files the installed distribution
-    recorded (``importlib.metadata``'s ``RECORD``-derived file list), which
-    changes if and only if the installed content does. Falls back to the
-    installed version string when the distribution cannot be located (e.g.
-    editable/no-RECORD installs), and to an all-zero placeholder when
-    ``bernstein`` itself is not resolvable as an installed distribution at
-    all (should not happen outside of unusual embeddings).
+    This instead hashes the sorted list of ``path:content-hash`` entries for
+    every file the installed distribution recorded
+    (``importlib.metadata``'s ``RECORD``-derived per-file SHA-256 digest,
+    ``PackagePath.hash`` -- *not* merely the path strings themselves, which
+    are identical for two installs with the same file layout but different
+    file *contents* and so would not be a content digest at all). The result
+    therefore changes if and only if the installed content does. A file with
+    no recorded hash (``RECORD`` itself cannot hash its own still-being-
+    written contents) still contributes its path with an empty hash slot,
+    so its presence is not silently dropped from the digest. Falls back to
+    the installed version string when the distribution's file list is empty
+    or unavailable (e.g. editable/no-RECORD installs), and to an all-zero
+    placeholder when ``bernstein`` itself is not resolvable as an installed
+    distribution at all (should not happen outside of unusual embeddings).
     """
     import importlib.metadata as metadata
 
@@ -469,8 +508,10 @@ def _default_installed_digest() -> str:
         files = dist.files or ()
     except Exception:
         files = ()
-    file_names = sorted(str(f) for f in files)
-    digest_input = "\n".join(file_names).encode("utf-8") if file_names else dist.version.encode("utf-8")
+    entries = sorted(
+        f"{file_path}:{file_path.hash.value}" if file_path.hash is not None else f"{file_path}:" for file_path in files
+    )
+    digest_input = "\n".join(entries).encode("utf-8") if entries else dist.version.encode("utf-8")
     return f"sha256:{hashlib.sha256(digest_input).hexdigest()}"
 
 
@@ -545,9 +586,16 @@ class TrustRecordEmitter:
 
         Args:
             journal_path: Path to the journal.jsonl file.
-            run_id: The overall (potentially multi-hop) run identifier.
+            run_id: The overall (potentially multi-hop) run identifier --
+                shared by every hop of one delegated run. Not read from
+                *journal_path*; see the module docstring's "run_id/exec_id
+                derivation" section for the full contract and how a
+                verifier reproduces it.
             exec_id: This execution hop's identifier, scoped within
-                *run_id*.
+                *run_id*. Expected to equal the identifier that names
+                *journal_path* on disk (``journal_path.parent.name`` for a
+                journal built through :class:`~bernstein.core.replay.journal.EventJournal`)
+                -- see the module docstring.
             kid: Key identifier for the install signing key, embedded as
                 ``cnf.jwk.kid`` (and therefore covered by the signature,
                 unlike the pre-#4760 shape which carried it in a
@@ -557,7 +605,9 @@ class TrustRecordEmitter:
                 -- when this call is one hop of a delegated multi-agent
                 run. ``None`` (the default) for a root execution.
             credential_id: The delegation credential this hop acted under.
-                Required exactly when *parent_record* is given.
+                Required exactly when *parent_record* is given, and must be
+                non-empty (the schema requires
+                ``delegation.credential_id`` to have ``minLength: 1``).
 
         Returns:
             TrustRecord with every field populated but no signature.
@@ -565,13 +615,20 @@ class TrustRecordEmitter:
         Raises:
             ValueError: The journal's hash chain does not verify, the
                 journal has no events (no completion time to source ``iat``
-                from), the journal names no model or gate config, *
+                from), the journal names no model or gate config,
+                *credential_id* was given but is an empty string, *
                 *parent_record* was given but is not valid JSON, or
                 *parent_record* and *credential_id* disagree about whether
                 this is a delegated hop.
         """
         if (parent_record is None) != (credential_id is None):
             msg = "parent_record and credential_id must be given together (child hop) or not at all (root hop)"
+            raise ValueError(msg)
+        if credential_id is not None and not credential_id:
+            msg = (
+                "credential_id must be non-empty when given "
+                "(schema requires delegation.credential_id to have minLength 1)"
+            )
             raise ValueError(msg)
 
         # Read journal file
@@ -716,9 +773,13 @@ class TrustRecordEmitter:
 
         Args:
             journal_path: Path to the journal.jsonl file.
-            run_id: The overall (potentially multi-hop) run identifier.
+            run_id: The overall (potentially multi-hop) run identifier --
+                shared by every hop of one delegated run. See
+                :meth:`_build_unsigned_record` and the module docstring's
+                "run_id/exec_id derivation" section for the full contract.
             exec_id: This execution hop's identifier, scoped within
-                *run_id*.
+                *run_id*. Expected to equal the identifier that names
+                *journal_path* on disk -- see the module docstring.
             parent_record: The parent execution's own canonical signed
                 record, when this call is one hop of a delegated
                 multi-agent run (see :meth:`_build_unsigned_record`).

@@ -562,6 +562,164 @@ class TestBuildProvenanceClaim:
 
 
 # ---------------------------------------------------------------------------
+# _default_installed_digest: the real (uninjected) build_provenance.digest
+# default. Every test above uses ``get_installed_digest=`` to inject a
+# canned value, so none of them exercises this function at all -- these
+# tests call it directly.
+# ---------------------------------------------------------------------------
+
+
+class _FakeFileHash:
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+
+class _FakePackagePath:
+    """Minimal stand-in for ``importlib.metadata.PackagePath``.
+
+    Only implements what ``_default_installed_digest`` reads: ``str()`` for
+    the path and a ``.hash`` attribute (``None``, or an object with
+    ``.value``) for the RECORD-derived per-file content hash.
+    """
+
+    def __init__(self, path: str, hash_value: str | None) -> None:
+        self._path = path
+        self.hash = _FakeFileHash(hash_value) if hash_value is not None else None
+
+    def __str__(self) -> str:
+        return self._path
+
+
+class _FakeDistribution:
+    def __init__(self, files: list[_FakePackagePath] | None, version: str = "1.0.0") -> None:
+        self.files = files
+        self.version = version
+
+
+class TestDefaultInstalledDigest:
+    """Exercise ``trust_record._default_installed_digest`` directly.
+
+    Confirms the fix for the digest tracking file *content* (RECORD's
+    per-file SHA-256, ``PackagePath.hash.value``) rather than only file
+    *path names* -- two installs with identical layouts but different file
+    contents must not collide on the same digest.
+    """
+
+    def test_changing_a_file_content_hash_changes_the_digest(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import importlib.metadata as metadata
+
+        from bernstein.core.observability.trust_record import _default_installed_digest
+
+        same_layout_different_content = _FakeDistribution(
+            [_FakePackagePath("bernstein/__init__.py", "hash-of-version-A")]
+        )
+        monkeypatch.setattr(metadata, "distribution", lambda name: same_layout_different_content)
+        digest_a = _default_installed_digest()
+
+        same_layout_different_content.files = [_FakePackagePath("bernstein/__init__.py", "hash-of-version-B")]
+        digest_b = _default_installed_digest()
+
+        assert digest_a != digest_b, (
+            "two installs with the same file layout but different file contents "
+            "must not produce the same build_provenance.digest"
+        )
+
+    def test_identical_file_layout_and_content_is_deterministic(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import importlib.metadata as metadata
+
+        from bernstein.core.observability.trust_record import _default_installed_digest
+
+        def make_dist() -> _FakeDistribution:
+            return _FakeDistribution(
+                [
+                    _FakePackagePath("bernstein/__init__.py", "hash-a"),
+                    _FakePackagePath("bernstein/cli.py", "hash-b"),
+                ]
+            )
+
+        monkeypatch.setattr(metadata, "distribution", lambda name: make_dist())
+        assert _default_installed_digest() == _default_installed_digest()
+
+    def test_file_order_does_not_affect_the_digest(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import importlib.metadata as metadata
+
+        from bernstein.core.observability.trust_record import _default_installed_digest
+
+        forward = _FakeDistribution(
+            [
+                _FakePackagePath("a.py", "hash-a"),
+                _FakePackagePath("b.py", "hash-b"),
+            ]
+        )
+        monkeypatch.setattr(metadata, "distribution", lambda name: forward)
+        digest_forward = _default_installed_digest()
+
+        forward.files = list(reversed(forward.files))
+        digest_reversed = _default_installed_digest()
+
+        assert digest_forward == digest_reversed
+
+    def test_a_file_with_no_recorded_hash_still_participates(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import importlib.metadata as metadata
+
+        from bernstein.core.observability.trust_record import _default_installed_digest
+
+        with_extra_unhashed_file = _FakeDistribution(
+            [
+                _FakePackagePath("bernstein/__init__.py", "hash-a"),
+                _FakePackagePath("bernstein-1.0.dist-info/RECORD", None),
+            ]
+        )
+        monkeypatch.setattr(metadata, "distribution", lambda name: with_extra_unhashed_file)
+        digest_with_record = _default_installed_digest()
+
+        without_extra_file = _FakeDistribution([_FakePackagePath("bernstein/__init__.py", "hash-a")])
+        monkeypatch.setattr(metadata, "distribution", lambda name: without_extra_file)
+        digest_without_record = _default_installed_digest()
+
+        assert digest_with_record != digest_without_record
+
+    def test_no_files_falls_back_to_the_version_string(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import importlib.metadata as metadata
+
+        from bernstein.core.observability.trust_record import _default_installed_digest
+
+        monkeypatch.setattr(metadata, "distribution", lambda name: _FakeDistribution([], version="9.9.9"))
+        digest_a = _default_installed_digest()
+
+        monkeypatch.setattr(metadata, "distribution", lambda name: _FakeDistribution([], version="9.9.9"))
+        digest_b = _default_installed_digest()
+        assert digest_a == digest_b
+
+        monkeypatch.setattr(metadata, "distribution", lambda name: _FakeDistribution([], version="1.2.3"))
+        digest_c = _default_installed_digest()
+        assert digest_c != digest_a
+
+    def test_distribution_not_found_falls_back_to_all_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import importlib.metadata as metadata
+
+        from bernstein.core.observability.trust_record import _default_installed_digest
+
+        def _raise(name: str) -> _FakeDistribution:
+            raise metadata.PackageNotFoundError(name)
+
+        monkeypatch.setattr(metadata, "distribution", _raise)
+        assert _default_installed_digest() == f"sha256:{'0' * 64}"
+
+    def test_the_real_installed_distribution_produces_a_wellformed_digest(self) -> None:
+        """Sanity check against the actual installed ``bernstein`` distribution.
+
+        Not mocked: confirms ``_default_installed_digest`` runs end-to-end
+        against real ``importlib.metadata`` output in this environment.
+        """
+        from bernstein.core.observability.trust_record import _default_installed_digest
+
+        digest = _default_installed_digest()
+        assert digest.startswith("sha256:")
+        assert len(digest) == len("sha256:") + 64
+
+
+# ---------------------------------------------------------------------------
 # appraisal (issue #4762)
 # ---------------------------------------------------------------------------
 
@@ -761,6 +919,25 @@ class TestDelegationClaim:
 
         with pytest.raises(ValueError, match="credential_id"):
             emitter.emit_trust_record(journal, "run-1", "exec-1", credential_id="cred-1")
+
+    def test_delegation_rejects_an_empty_credential_id(self, tmp_path: Path) -> None:
+        """An empty ``credential_id`` would emit ``delegation.credential_id == ""``,
+        which fails schema validation (``minLength: 1``) -- refuse it at the
+        emitter boundary instead of letting a caller mint a non-conformant
+        record with a plausible mistake (passing ``""`` instead of omitting
+        the argument)."""
+        emitter = _emitter_with_known_key()
+        journal = _create_journal(tmp_path, [{"type": "run_completed", "ts": 1.0}])
+        parent_output = emitter.emit_trust_record(journal, "run-1", "exec-parent")
+
+        with pytest.raises(ValueError, match="credential_id"):
+            emitter.emit_trust_record(
+                journal,
+                "run-1",
+                "exec-child",
+                parent_record=parent_output,
+                credential_id="",
+            )
 
     def test_malformed_parent_record_is_not_required_to_be_valid_json(self, tmp_path: Path) -> None:
         """delegation.parent_record_hash hashes the parent's raw bytes -- it
@@ -1331,42 +1508,67 @@ class TestCoreInstallWithoutTraceExtra:
 
 
 class TestSigningPreImageJCS:
-    """Verify the signing pre-image equals JCS output byte-for-byte.
+    """Verify the signature was actually produced over the JCS pre-image.
 
     These regression tests protect against accidental re-introduction of
     ``json.dumps(sort_keys=True)`` (RFC 8259) as the signing pre-image.
+    Each test verifies ``doc["signature"]`` with an independent Ed25519
+    verify call (:func:`_offline_verify`, built from scratch in this test
+    file rather than reusing the module's own
+    ``_record_dict_without_signature``/``canonicalize_jcs`` call sequence)
+    against a known public key, and confirms with a tamper control that the
+    verify call is actually sensitive to the bytes being checked -- a test
+    that only ever compared two independently-computed JCS renderings of
+    the same parsed ``doc`` (never reading ``signature`` itself) would pass
+    even if signing and verification silently agreed on the wrong
+    pre-image, which is exactly the class of bug this guards against.
     """
 
     def test_non_ascii_data_class_signing_pre_image_matches_jcs(self, tmp_path: Path) -> None:
-        emitter = _emitter_with_known_key()
+        private_pem, public_raw = _test_keypair()
+        emitter = TrustRecordEmitter(
+            install_rev_getter=lambda: "aaaaaaaaaaaaaaaa",
+            get_private_key_pem=lambda: private_pem,
+            get_installed_digest=lambda: "sha256:" + "ab" * 32,
+        )
         journal = _create_journal(tmp_path, [{"type": "run_started", "data_class": "конфиденциально"}])
         output = emitter.emit_trust_record(journal, "run-1", "exec-1")
         doc = json.loads(output)
+        public_key_pem = _public_key_pem_from_raw(public_raw)
 
-        body = {field: doc[field] for field in _BASE_SIGNED_FIELDS}
-        if "delegation" in doc:
-            body["delegation"] = doc["delegation"]
-        if "references" in doc:
-            body["references"] = doc["references"]
-        jcs_bytes = canonicalize_jcs(body)
+        # The real assertion: the signature verifies against the record's
+        # own JCS pre-image, over an actual Ed25519 verify call.
+        assert _offline_verify(doc, public_key_pem) is True
 
-        assert jcs_bytes == _canonical_body_bytes(doc)
-        assert b"\\u04" not in jcs_bytes  # No \u-escaped Cyrillic
+        # No \u-escaped Cyrillic in the bytes that were actually signed.
+        assert b"\\u04" not in _canonical_body_bytes(doc)
+
+        # Tamper control: mutating the non-ASCII field must invalidate the
+        # signature, proving the verify call above is not a vacuous no-op.
+        doc["data_class"] = "public"
+        assert _offline_verify(doc, public_key_pem) is False
 
     def test_float_1e7_exponent_iat_rounding_still_matches_jcs(self, tmp_path: Path) -> None:
-        emitter = _emitter_with_known_key()
+        private_pem, public_raw = _test_keypair()
+        emitter = TrustRecordEmitter(
+            install_rev_getter=lambda: "aaaaaaaaaaaaaaaa",
+            get_private_key_pem=lambda: private_pem,
+            get_installed_digest=lambda: "sha256:" + "ab" * 32,
+        )
         journal = _create_journal(tmp_path, [{"type": "run_completed", "ts": 1e-7}])
         output = emitter.emit_trust_record(journal, "run-1", "exec-1")
         doc = json.loads(output)
+        public_key_pem = _public_key_pem_from_raw(public_raw)
 
-        body = {field: doc[field] for field in _BASE_SIGNED_FIELDS}
-        if "delegation" in doc:
-            body["delegation"] = doc["delegation"]
-        if "references" in doc:
-            body["references"] = doc["references"]
-        jcs_bytes = canonicalize_jcs(body)
+        # The real assertion: the signature verifies against the record's
+        # own JCS pre-image (with iat rounded from a 1e-7-exponent float),
+        # over an actual Ed25519 verify call.
+        assert _offline_verify(doc, public_key_pem) is True
 
-        assert jcs_bytes == _canonical_body_bytes(doc)
+        # Tamper control: mutating iat must invalidate the signature,
+        # proving the verify call above is not a vacuous no-op.
+        doc["iat"] = doc["iat"] + 1
+        assert _offline_verify(doc, public_key_pem) is False
 
 
 class TestModuleDocstringStatesTheSealBoundary:
