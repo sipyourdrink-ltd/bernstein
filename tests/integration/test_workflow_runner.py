@@ -769,18 +769,22 @@ nodes:
     assert snapshot["version"] == 1  # STATE_VERSION
 
     # Test record_node_state and load_node_state
-    node1_exec = type("NodeExecution", (), {
-        "node_id": "node1",
-        "status": NodeStatus.SUCCESS,
-        "iterations": 1,
-        "exit_code": 0,
-        "stdout": "hello\n",
-        "stderr": "",
-        "session_id": "session-123",
-        "error": "",
-        "wall_time_seconds": 0.5,
-        "condition_skipped": False,
-    })()
+    node1_exec = type(
+        "NodeExecution",
+        (),
+        {
+            "node_id": "node1",
+            "status": NodeStatus.SUCCESS,
+            "iterations": 1,
+            "exit_code": 0,
+            "stdout": "hello\n",
+            "stderr": "",
+            "session_id": "session-123",
+            "error": "",
+            "wall_time_seconds": 0.5,
+            "condition_skipped": False,
+        },
+    )()
 
     record_node_state(sdd_dir, run_id, node1_exec, digest1)
 

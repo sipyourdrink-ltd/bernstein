@@ -456,8 +456,7 @@ def resume_cmd(run_id: str, goal: str, manifest_arg: str | None) -> None:
     snapshot = load_spec_snapshot(workdir, run_id)
     if snapshot is None:
         console.print(
-            f"[bold red]No workflow run state for run_id {run_id!r} "
-            f"under {workdir / '.sdd/runs'}.[/bold red]"
+            f"[bold red]No workflow run state for run_id {run_id!r} under {workdir / '.sdd/runs'}.[/bold red]"
         )
         console.print("Start a new run with `bernstein workflow run` first.")
         raise SystemExit(1)
