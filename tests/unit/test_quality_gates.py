@@ -102,6 +102,56 @@ class TestRunQualityGatesDisabled:
 
 
 # ---------------------------------------------------------------------------
+# run_quality_gates: CLAUDE.md session override (GATE-REPAIR regression)
+# ---------------------------------------------------------------------------
+
+
+class TestRunQualityGatesClaudeMdRestore:
+    def test_worktree_run_restores_tracked_claude_md(self, tmp_path: Path) -> None:
+        """A gate run in an agent worktree must not grade the session CLAUDE.md.
+
+        The orchestrator writes a session-specific CLAUDE.md (skip-worktree)
+        into every agent worktree; the tracked one documents the real
+        back-compat mechanism (_CoreRedirectFinder). Gates must restore the
+        tracked file first - test_claude_md_shim_doc reads it.
+        """
+        import subprocess
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+
+        def _git(*args: str) -> None:
+            subprocess.run(args, cwd=worktree, check=True, capture_output=True, text=True)
+
+        _git("git", "init", "-q", "-b", "main")
+        _git("git", "config", "user.email", "test@example.com")
+        _git("git", "config", "user.name", "Test")
+        (worktree / "CLAUDE.md").write_text("# docs\n_CoreRedirectFinder\n", encoding="utf-8")
+        _git("git", "add", "CLAUDE.md")
+        _git("git", "commit", "-q", "-m", "init")
+
+        # Simulate the session override worktree_claude_md.write_claude_md applies.
+        (worktree / "CLAUDE.md").write_text("# session override\n", encoding="utf-8")
+        _git("git", "update-index", "--skip-worktree", "CLAUDE.md")
+
+        config = QualityGatesConfig(enabled=True, pipeline=[])
+        task = _make_task()
+        result = run_quality_gates(task, worktree, tmp_path, config)
+        assert result.passed
+        assert "_CoreRedirectFinder" in (worktree / "CLAUDE.md").read_text(encoding="utf-8")
+
+    def test_main_checkout_run_leaves_claude_md_untouched(self, tmp_path: Path) -> None:
+        """When gates run in the main checkout (run_dir == workdir) the file is
+        not restored/replaced - it is already the tracked one."""
+        (tmp_path / "CLAUDE.md").write_text("# tracked\n_CoreRedirectFinder\n", encoding="utf-8")
+        config = QualityGatesConfig(enabled=True, pipeline=[])
+        task = _make_task()
+        with patch("bernstein.core.git.worktree_claude_md.restore_claude_md") as mock_restore:
+            run_quality_gates(task, tmp_path, tmp_path, config)
+            mock_restore.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # run_quality_gates: lint gate
 # ---------------------------------------------------------------------------
 

@@ -1102,6 +1102,15 @@ def run_quality_gates(
     if not config.enabled:
         return QualityGatesResult(task_id=task.id, passed=True)
 
+    # Agent worktrees carry a session-specific CLAUDE.md override marked
+    # skip-worktree (worktree_claude_md.write_claude_md). Restore the tracked
+    # one before gates run so checks that read repo-root docs (e.g.
+    # test_claude_md_shim_doc) grade the real tree, not the session file.
+    if run_dir != workdir:
+        from bernstein.core.git.worktree_claude_md import restore_claude_md
+
+        restore_claude_md(run_dir)
+
     explicit_skip_gates = skip_gates if skip_gates is not None else _env_skip_gates()
     explicit_bypass_reason = bypass_reason if bypass_reason is not None else _env_bypass_reason()
     runner = GateRunner(config, workdir, base_ref=config.base_ref)
