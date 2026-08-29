@@ -33,8 +33,6 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from bernstein.core.security.path_containment import contained_path, PathContainmentError
-
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from bernstein.core.spawner import AgentSpawner
     from bernstein.core.workflows.workflow_spec import LoopSpec, WorkflowNode, WorkflowSpec
@@ -177,7 +175,6 @@ def _run_state_dir(workdir: Path, run_id: str) -> Path:
     ids are single safe path segments so a crafted id cannot escape the
     runs root.
     """
-    safe_run_id = _validated_run_id(run_id)
     from bernstein.core.replay.journal import run_journal_path
 
     # Reuse the orchestrator's run-journal path to maintain consistency

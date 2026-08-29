@@ -434,12 +434,12 @@ def resume_cmd(run_id: str, goal: str, manifest_arg: str | None) -> None:
     from rich.console import Console
     from rich.table import Table
 
-    from bernstein.core.workflows import NodeStatus, WorkflowRunner, WorkflowRunError, WorkflowSpecError
+    from bernstein.core.workflows import NodeStatus, WorkflowRunError, WorkflowRunner, WorkflowSpecError
     from bernstein.core.workflows.workflow_runner import (
         load_spec_snapshot,
         run_complete_marker_exists,
     )
-    from bernstein.core.workflows.workflow_spec import discover_workflows, resolve_workflow
+    from bernstein.core.workflows.workflow_spec import resolve_workflow
 
     console = Console()
     workdir = Path.cwd()
@@ -455,7 +455,10 @@ def resume_cmd(run_id: str, goal: str, manifest_arg: str | None) -> None:
 
     snapshot = load_spec_snapshot(workdir, run_id)
     if snapshot is None:
-        console.print(f"[bold red]No workflow run state for run_id {run_id!r} under {workdir / '.sdd/runs'}.[/bold red]")
+        console.print(
+            f"[bold red]No workflow run state for run_id {run_id!r} "
+            f"under {workdir / '.sdd/runs'}.[/bold red]"
+        )
         console.print("Start a new run with `bernstein workflow run` first.")
         raise SystemExit(1)
 
