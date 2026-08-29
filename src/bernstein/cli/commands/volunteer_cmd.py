@@ -199,6 +199,105 @@ def browse_cmd(
             click.echo(f"  {d.repo_url}: {d.reason}")
 
 
+@volunteer_group.command("budget")
+@click.option("--budget-tasks", type=click.IntRange(min=0), default=None, help="Total tasks you authorize.")
+@click.option(
+    "--budget-hours",
+    type=click.FloatRange(min=0),
+    default=None,
+    help="Total wall-clock hours you authorize.",
+)
+@click.option("--budget-tokens", type=click.IntRange(min=0), default=None, help="Estimated token total you authorize.")
+@click.option("--max-size", type=click.Choice(["xs", "s", "m"]), default=None, help="Largest task size to offer.")
+@click.option(
+    "--local-only/--allow-api-adapters",
+    default=None,
+    help="Restrict adapter selection to profiles with local-model support.",
+)
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Override the persistent donor budget config path.",
+)
+@click.option(
+    "--ledger",
+    "ledger_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Override the persistent donor budget ledger path.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def budget_cmd(
+    budget_tasks: int | None,
+    budget_hours: float | None,
+    budget_tokens: int | None,
+    max_size: str | None,
+    local_only: bool | None,
+    config_path: Path | None,
+    ledger_path: Path | None,
+    as_json: bool,
+) -> None:
+    """Set or inspect the donor budget that persists across volunteer runs."""
+    from bernstein.core.volunteer.budget import (
+        DEFAULT_BUDGET_CONFIG_PATH,
+        DEFAULT_LEDGER_PATH,
+        BudgetConfigError,
+        BudgetLedgerError,
+        VolunteerBudget,
+        budget_line_items,
+        load_budget_config,
+        load_ledger,
+        save_budget_config,
+        with_budget_overrides,
+    )
+
+    config = config_path or DEFAULT_BUDGET_CONFIG_PATH
+    ledger = ledger_path or DEFAULT_LEDGER_PATH
+    try:
+        persisted = load_budget_config(config)
+        effective = with_budget_overrides(
+            persisted,
+            max_tasks=budget_tasks,
+            max_hours=budget_hours,
+            max_tokens=budget_tokens,
+            max_size=max_size,
+            local_only=local_only,
+        )
+        supplied = any(
+            value is not None for value in (budget_tasks, budget_hours, budget_tokens, max_size, local_only)
+        )
+        consumption = load_ledger(ledger)
+        if supplied:
+            save_budget_config(effective, config)
+    except (BudgetConfigError, BudgetLedgerError, OSError) as error:
+        raise click.ClickException(str(error)) from error
+
+    line_items = budget_line_items(effective, consumption)
+    payload = {
+        "budget": effective.to_dict(),
+        "ledger": consumption.to_dict(),
+        "line_items": line_items,
+        "config_path": str(config),
+        "ledger_path": str(ledger),
+    }
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+        return
+
+    click.echo("Volunteer donor budget")
+    for item in line_items:
+        authorized = item["authorized"] if item["authorized"] is not None else "unlimited"
+        remaining_value = item["remaining"] if item["remaining"] is not None else "unlimited"
+        click.echo(
+            f"  {item['dimension']}: used {item['used']}, reserved {item['reserved']}, "
+            f"authorized {authorized}, remaining {remaining_value} {item['unit']}"
+        )
+    if effective == VolunteerBudget() and persisted is None:
+        click.echo("  No limits configured.")
+
+
 def _report(
     manifest: VolunteerManifest,
     path: Path,
@@ -295,13 +394,19 @@ def hub_cmd(host: str, port: int, lease_store_path: str | None) -> None:
             "uvicorn is required for the volunteer hub; install with `uv pip install uvicorn`"
         ) from None
 
+    from bernstein.core.volunteer.budget import BudgetConfigError, load_budget_config
     from bernstein.core.volunteer.hub_app import build_hub_app
     from bernstein.core.volunteer.lease_store import LeaseStore
 
     if lease_store_path is None:
         lease_store_path = ".sdd/runtime/volunteer/leases.jsonl"
 
-    store = LeaseStore(Path(lease_store_path))
+    try:
+        donor_budget = load_budget_config()
+    except (BudgetConfigError, OSError) as error:
+        raise click.ClickException(str(error)) from error
+
+    store = LeaseStore(Path(lease_store_path), budget=donor_budget)
     app = build_hub_app(store)
     click.echo(f"Bernstein volunteer hub listening on http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="warning")

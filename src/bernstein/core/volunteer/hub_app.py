@@ -55,11 +55,13 @@ submissions.
 from __future__ import annotations
 
 import logging
+import math
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
+from bernstein.adapters.capability_profile import UnknownProfileError, get_profile
 from bernstein.core.volunteer.lease_store import (
     LeaseRefusal,
     LeaseRefusalReason,
@@ -164,6 +166,12 @@ def _refusal_to_http(refusal: LeaseRefusal) -> None:
         LeaseRefusalReason.ALREADY_SUBMITTED: 409,
         LeaseRefusalReason.UNKNOWN_WORKER: 401,
         LeaseRefusalReason.LEASE_REASSIGNED: 403,
+        LeaseRefusalReason.TASK_BUDGET_EXHAUSTED: 409,
+        LeaseRefusalReason.WALL_CLOCK_BUDGET_EXHAUSTED: 409,
+        LeaseRefusalReason.TOKEN_BUDGET_EXHAUSTED: 409,
+        LeaseRefusalReason.SIZE_CAP_EXCEEDED: 409,
+        LeaseRefusalReason.TASK_SIZE_UNKNOWN: 422,
+        LeaseRefusalReason.LOCAL_ONLY_ADAPTER_REQUIRED: 409,
     }
     status_code = status_map.get(refusal.reason, 400)
     raise HTTPException(status_code=status_code, detail=refusal.detail)
@@ -265,6 +273,14 @@ def build_hub_app(
             body = await request.json()
             worker_id = body.get("worker_id")
             ttl_seconds = int(body.get("ttl_seconds", 300))
+            task_size = str(body.get("task_size", "s"))
+            token_estimate = int(body.get("token_estimate", 0))
+            wall_clock_hours_raw = body.get("wall_clock_hours")
+            wall_clock_hours = float(wall_clock_hours_raw) if wall_clock_hours_raw is not None else None
+            adapter_id = body.get("adapter_id")
+            adapter_profile = get_profile(adapter_id) if isinstance(adapter_id, str) else None
+        except UnknownProfileError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:
             if isinstance(exc, HTTPException):
                 raise
@@ -272,8 +288,20 @@ def build_hub_app(
 
         if not worker_id:
             raise HTTPException(status_code=422, detail="worker_id is required")
+        if token_estimate < 0:
+            raise HTTPException(status_code=422, detail="token_estimate must be non-negative")
+        if wall_clock_hours is not None and (wall_clock_hours < 0 or not math.isfinite(wall_clock_hours)):
+            raise HTTPException(status_code=422, detail="wall_clock_hours must be finite and non-negative")
 
-        result = await lease_store.claim(task_id, worker_id, ttl_seconds)
+        result = await lease_store.claim(
+            task_id,
+            worker_id,
+            ttl_seconds,
+            task_size=task_size,
+            token_estimate=token_estimate,
+            wall_clock_hours=wall_clock_hours,
+            adapter_profile=adapter_profile,
+        )
         if isinstance(result, LeaseRefusal):
             _refusal_to_http(result)
         return JSONResponse(result.to_dict(), status_code=201)
@@ -315,6 +343,8 @@ def build_hub_app(
             worker_id = body.get("worker_id")
             bundle_digest = body.get("bundle_digest")
             location = body.get("location")
+            actual_tokens_raw = body.get("actual_tokens")
+            actual_tokens = int(actual_tokens_raw) if actual_tokens_raw is not None else None
         except Exception as exc:
             if isinstance(exc, HTTPException):
                 raise
@@ -325,8 +355,16 @@ def build_hub_app(
                 status_code=422,
                 detail="worker_id, bundle_digest, and location are required",
             )
+        if actual_tokens is not None and actual_tokens < 0:
+            raise HTTPException(status_code=422, detail="actual_tokens must be non-negative")
 
-        result = await lease_store.submit(task_id, worker_id, bundle_digest, location)
+        result = await lease_store.submit(
+            task_id,
+            worker_id,
+            bundle_digest,
+            location,
+            actual_tokens=actual_tokens,
+        )
         if isinstance(result, LeaseRefusal):
             _refusal_to_http(result)
         return JSONResponse(result.to_dict())
@@ -342,6 +380,8 @@ def build_hub_app(
         try:
             body = await request.json()
             worker_id = body.get("worker_id")
+            actual_tokens_raw = body.get("actual_tokens")
+            actual_tokens = int(actual_tokens_raw) if actual_tokens_raw is not None else None
         except Exception as exc:
             if isinstance(exc, HTTPException):
                 raise
@@ -349,8 +389,10 @@ def build_hub_app(
 
         if not worker_id:
             raise HTTPException(status_code=422, detail="worker_id is required")
+        if actual_tokens is not None and actual_tokens < 0:
+            raise HTTPException(status_code=422, detail="actual_tokens must be non-negative")
 
-        result = await lease_store.release(task_id, worker_id)
+        result = await lease_store.release(task_id, worker_id, actual_tokens=actual_tokens)
         if isinstance(result, LeaseRefusal):
             _refusal_to_http(result)
         return Response(status_code=204)

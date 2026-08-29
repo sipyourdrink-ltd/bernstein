@@ -15,6 +15,7 @@ network:
 * the task reference (repo, commit sha, issue);
 * a manifest hash, adapter and model identifiers;
 * the sandbox profile and its selection receipt;
+* donor-budget line items for volunteer runs;
 * timestamps and the worker's public key;
 * a link into the worker's receipt chain (the previous bundle's digest and the
   chain length), so a sequence of bundles is walkable offline.
@@ -74,6 +75,7 @@ from bernstein.core.security.audit_dsse import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -88,7 +90,7 @@ if TYPE_CHECKING:
 RESULT_RECEIPT_PREDICATE_TYPE: str = "https://bernstein.run/attestations/result-receipt/v1"
 
 #: Bundle schema version, bumped when the field set changes.
-BUNDLE_SCHEMA_VERSION: str = "1.0.0"
+BUNDLE_SCHEMA_VERSION: str = "1.1.0"
 
 #: Sentinel anchor for the first bundle in a worker's chain.
 GENESIS_ANCHOR: str = "genesis"
@@ -195,6 +197,7 @@ class ResultBundle:
     worker_keyid: str
     worker_public_key_pem: str
     chain: ChainLink
+    budget_line_items: tuple[Mapping[str, object], ...] = ()
 
     @property
     def patch_sha256(self) -> str:
@@ -220,6 +223,7 @@ class ResultBundle:
                 "public_key_pem": self.worker_public_key_pem,
             },
             "chain": self.chain.to_dict(),
+            "budget": [dict(item) for item in self.budget_line_items],
         }
 
     def canonical_bytes(self) -> bytes:

@@ -101,7 +101,7 @@ from bernstein.core.volunteer.sandbox_profile import sandbox_env
 from bernstein.core.volunteer.wall_clock import run_under_wall_clock
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
 
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -343,6 +343,7 @@ def finish_volunteer_task(
     claim_comment_id: int | None = None,
     claim_fingerprint: str | None = None,
     pr_url: str | None = None,
+    budget_line_items: Sequence[Mapping[str, object]] = (),
 ) -> SignedResultBundle | VolunteerRefusal:
     """Enforce scope and gates, sign the result, and resolve the claim comment.
 
@@ -383,6 +384,7 @@ def finish_volunteer_task(
         gate_env=gate_env,
         gate_budget_seconds=gate_budget_seconds,
         created_at=created_at,
+        budget_line_items=budget_line_items,
     )
     if claim is not None and claim_repo is not None and claim_comment_id is not None:
         # A real per-worker identifier by default, derived fresh from the
@@ -409,6 +411,7 @@ def _finish_volunteer_task(
     gate_env: Mapping[str, str] | None = None,
     gate_budget_seconds: int | None = None,
     created_at: str | None = None,
+    budget_line_items: Sequence[Mapping[str, object]] = (),
 ) -> SignedResultBundle | VolunteerRefusal:
     """Enforce scope, re-run the project's gates, and sign the result.
 
@@ -437,6 +440,8 @@ def _finish_volunteer_task(
             given.
         created_at: Bundle timestamp.  Supply one to make a run reproducible
             byte-for-byte; the default is the current UTC second.
+        budget_line_items: Auditable donor-budget usage to bind into the
+            signed receipt.
 
     Returns:
         :class:`SignedResultBundle` when the patch is in scope and every gate
@@ -484,6 +489,7 @@ def _finish_volunteer_task(
         worker_keyid=keyid_from_public_key(public_key),
         worker_public_key_pem=export_public_key_pem(public_key).decode("ascii"),
         chain=provenance.chain,
+        budget_line_items=tuple(dict(item) for item in budget_line_items),
     )
     return SignedResultBundle(bundle=bundle, envelope=build_result_bundle(bundle, signing_key=signing_key))
 

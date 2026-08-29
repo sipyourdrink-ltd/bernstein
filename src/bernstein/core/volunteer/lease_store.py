@@ -76,12 +76,23 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.security.audit_dsse import export_public_key_pem, keyid_from_public_key
+from bernstein.core.volunteer.budget import (
+    DEFAULT_LEDGER_PATH,
+    BudgetClaimError,
+    VolunteerBudget,
+    complete_claim,
+    load_ledger,
+    reserve_claim,
+    save_ledger,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+
+    from bernstein.adapters.capability_profile import AdapterCapabilityProfile
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +128,12 @@ class LeaseRefusalReason(Enum):
     LEASE_REASSIGNED = "lease_reassigned"
     NO_LEASE = "no_lease"
     UNKNOWN_WORKER = "unknown_worker"
+    TASK_BUDGET_EXHAUSTED = "task_budget_exhausted"
+    WALL_CLOCK_BUDGET_EXHAUSTED = "wall_clock_budget_exhausted"
+    TOKEN_BUDGET_EXHAUSTED = "token_budget_exhausted"
+    SIZE_CAP_EXCEEDED = "size_cap_exceeded"
+    TASK_SIZE_UNKNOWN = "task_size_unknown"
+    LOCAL_ONLY_ADAPTER_REQUIRED = "local_only_adapter_required"
 
 
 @dataclass(frozen=True, slots=True)
@@ -318,16 +335,27 @@ class LeaseStore:
     call sites stay uniform once a FastAPI surface is the first caller.
     """
 
-    def __init__(self, jsonl_path: Path, *, clock: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self,
+        jsonl_path: Path,
+        *,
+        clock: Callable[[], float] = time.time,
+        budget: VolunteerBudget | None = None,
+        budget_ledger_path: Path = DEFAULT_LEDGER_PATH,
+    ) -> None:
         """Build a store over ``jsonl_path``, replaying it if it exists.
 
         Args:
             jsonl_path: The append-only log.  Created on first write.
             clock: Source of the current Unix timestamp.  Injected so expiry
                 tests are exact rather than timing-dependent.
+            budget: Optional donor policy enforced before a lease is granted.
+            budget_ledger_path: Durable ledger used when ``budget`` is set.
         """
         self._jsonl_path = jsonl_path
         self._clock = clock
+        self._budget = budget
+        self._budget_ledger_path = budget_ledger_path
         self._lock = asyncio.Lock()
         self._leases: dict[str, Lease] = {}
         self._workers: dict[str, str] = {}
@@ -390,13 +418,27 @@ class LeaseStore:
             )
         return worker_id
 
-    async def claim(self, task_id: str, worker_id: str, ttl_seconds: int) -> Lease | LeaseRefusal:
+    async def claim(
+        self,
+        task_id: str,
+        worker_id: str,
+        ttl_seconds: int,
+        *,
+        task_size: str = "s",
+        token_estimate: int = 0,
+        wall_clock_hours: float | None = None,
+        adapter_profile: AdapterCapabilityProfile | None = None,
+    ) -> Lease | LeaseRefusal:
         """Lease ``task_id`` to ``worker_id`` for ``ttl_seconds``.
 
         Args:
             task_id: The task to lease.
             worker_id: An enrolled worker.
             ttl_seconds: How long the lease is honoured before it may be reaped.
+            task_size: Canonical size label used by donor admission.
+            token_estimate: Tokens reserved before the external claim.
+            wall_clock_hours: Expected runtime; defaults to the lease TTL.
+            adapter_profile: Registered capability profile selected for the run.
 
         Returns:
             The granted :class:`Lease`, or a :class:`LeaseRefusal` when the task
@@ -457,6 +499,15 @@ class LeaseStore:
                     LeaseRefusalReason.LEASE_REASSIGNED,
                     f"lease on task {task_id} was taken back from worker {worker_id}",
                 )
+            budget_refusal = self._reserve_budget_unlocked(
+                task_id,
+                task_size=task_size,
+                token_estimate=token_estimate,
+                wall_clock_hours=ttl_seconds / 3600 if wall_clock_hours is None else wall_clock_hours,
+                adapter_profile=adapter_profile,
+            )
+            if budget_refusal is not None:
+                return budget_refusal
             # Generation counts *holds* of this task, whoever held them and
             # however each ended, so it is strictly increasing per task and a
             # worker can always tell a lease of its own from a later one.
@@ -494,7 +545,13 @@ class LeaseStore:
             # next, and resetting them would erase that.
             return self._store_lease(replace(lease, expires_at=now + lease.ttl_seconds, heartbeat_at=now))
 
-    async def release(self, task_id: str, worker_id: str) -> LeaseRefusal | None:
+    async def release(
+        self,
+        task_id: str,
+        worker_id: str,
+        *,
+        actual_tokens: int | None = None,
+    ) -> LeaseRefusal | None:
         """Give up a lease early, making the task immediately claimable.
 
         A voluntary release is not a reassignment: the worker is not recorded as
@@ -513,7 +570,9 @@ class LeaseStore:
             refusal = self._holder_refusal(task_id, worker_id)
             if refusal is not None:
                 return refusal
-            lease = self._leases.pop(task_id)
+            lease = self._leases[task_id]
+            self._complete_budget_unlocked(lease, actual_tokens=actual_tokens)
+            del self._leases[task_id]
             self._append({"kind": "release", "task_id": task_id, "generation": lease.generation})
         return None
 
@@ -523,6 +582,8 @@ class LeaseStore:
         worker_id: str,
         bundle_digest: str,
         location: str,
+        *,
+        actual_tokens: int | None = None,
     ) -> Lease | LeaseRefusal:
         """Record the result for a leased task.
 
@@ -562,6 +623,7 @@ class LeaseStore:
                 location=location,
                 submitted_at=self._clock(),
             )
+            self._complete_budget_unlocked(lease, actual_tokens=actual_tokens)
             return self._store_lease(replace(lease, submission=submission))
 
     async def reap_expired(self) -> tuple[ReassignedLease, ...]:
@@ -630,11 +692,55 @@ class LeaseStore:
                 expires_at=lease.expires_at,
                 reaped_at=now,
             )
+            self._complete_budget_unlocked(lease, actual_tokens=None)
             del self._leases[lease.task_id]
             self._reassigned[lease.task_id, lease.worker_id] = lease.generation
             self._append({"kind": "reassign", **record.to_dict()})
             reassigned.append(record)
         return tuple(reassigned)
+
+    def _reserve_budget_unlocked(
+        self,
+        task_id: str,
+        *,
+        task_size: str,
+        token_estimate: int,
+        wall_clock_hours: float,
+        adapter_profile: AdapterCapabilityProfile | None,
+    ) -> LeaseRefusal | None:
+        """Reserve donor capacity before the lease event becomes durable."""
+        if self._budget is None:
+            return None
+        ledger = load_ledger(self._budget_ledger_path)
+        try:
+            reserved = reserve_claim(
+                self._budget,
+                ledger,
+                claim_id=task_id,
+                task_size=task_size,
+                token_estimate=token_estimate,
+                wall_clock_hours=wall_clock_hours,
+                adapter_profile=adapter_profile,
+            )
+        except BudgetClaimError as error:
+            return LeaseRefusal(LeaseRefusalReason(error.refusal.reason), error.refusal.detail)
+        save_ledger(reserved, self._budget_ledger_path)
+        return None
+
+    def _complete_budget_unlocked(self, lease: Lease, *, actual_tokens: int | None) -> None:
+        """Reconcile terminal work while already holding the store lock."""
+        if self._budget is None:
+            return
+        ledger = load_ledger(self._budget_ledger_path)
+        reservation = next((item for item in ledger.reservations if item.claim_id == lease.task_id), None)
+        if reservation is None:
+            return
+        elapsed_hours = max(0.0, self._clock() - lease.claimed_at) / 3600
+        tokens = reservation.token_estimate if actual_tokens is None else actual_tokens
+        save_ledger(
+            complete_claim(ledger, claim_id=lease.task_id, hours=elapsed_hours, actual_tokens=tokens),
+            self._budget_ledger_path,
+        )
 
     def _store_lease(self, lease: Lease) -> Lease:
         """Put ``lease`` in the projection and append its snapshot."""

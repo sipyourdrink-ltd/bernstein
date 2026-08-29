@@ -14,6 +14,8 @@ receipt bundle that a maintainer can verify offline.
   a project commits to opt in.
 - [Volunteer sandbox profile](reference/volunteer-sandbox.md) — the containment
   boundary derived from the manifest and the donor's limits.
+- [Volunteer donor budgets](reference/volunteer-budget.md) — persistent task,
+  wall-clock, token, size, and local-model limits.
 
 ## For donors
 
@@ -23,6 +25,7 @@ text, and never loosens containment — the profile digest that lands in the
 receipt is a pure function of the project's manifest.
 
 ```bash
+bernstein volunteer budget --budget-tasks 10 --budget-hours 6 --max-size m
 bernstein volunteer run https://github.com/owner/project/issues/123
 bernstein volunteer verify /path/to/checkout   # check a project's manifest
 ```
@@ -45,5 +48,6 @@ bernstein volunteer browse            # list issues open to volunteers
 | --- | --- |
 | `bernstein volunteer verify [repo]` | Validate a manifest and print its digest. |
 | `bernstein volunteer browse` | List issues labeled for volunteers. |
+| `bernstein volunteer budget` | Set or inspect persistent donor limits and usage. |
 | `bernstein volunteer run <url>` | Execute a claimed task and produce a receipt. |
 | `bernstein volunteer hub` | Serve the lease store over HTTP (see [issue #4037]). |

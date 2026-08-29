@@ -127,6 +127,7 @@ def _finish(
     profile: VolunteerSandboxProfile | None = None,
     gate_budget_seconds: int | None = None,
     gate_env: dict[str, str] | None = None,
+    budget_line_items: list[dict[str, object]] | None = None,
 ) -> SignedResultBundle | VolunteerRefusal:
     return finish_volunteer_task(
         patch=patch,
@@ -138,6 +139,7 @@ def _finish(
         gate_budget_seconds=gate_budget_seconds,
         gate_env=gate_env if gate_env is not None else {},
         created_at="2026-08-17T00:00:00Z",
+        budget_line_items=budget_line_items or (),
     )
 
 
@@ -462,6 +464,32 @@ def test_the_signed_envelope_verifies_against_the_worker_identity_the_bundle_nam
     verification = verify_result_bundle(result.envelope, _key().public_key())
     assert verification.ok, verification.errors
     assert verification.bundle["manifest_sha256"] == manifest.digest
+
+
+def test_the_signed_receipt_contains_budget_line_items(tmp_path: Path) -> None:
+    manifest = _manifest(allowed_paths=["src/**"], gates=[["python", "-c", "pass"]])
+    line_items = [
+        {
+            "dimension": "tasks",
+            "unit": "tasks",
+            "authorized": 4,
+            "used": 1,
+            "reserved": 0,
+            "remaining": 3,
+        }
+    ]
+
+    result = _finish(
+        tmp_path,
+        patch=_diff_touching("src/pkg/mod.py"),
+        manifest=manifest,
+        budget_line_items=line_items,
+    )
+
+    assert isinstance(result, SignedResultBundle)
+    verification = verify_result_bundle(result.envelope, _key().public_key())
+    assert verification.ok, verification.errors
+    assert verification.bundle["budget"] == line_items
 
 
 def test_a_refusal_is_a_record_rather_than_prose(tmp_path: Path) -> None:

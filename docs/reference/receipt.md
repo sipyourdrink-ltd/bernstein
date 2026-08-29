@@ -3,7 +3,9 @@
 Create and offline-verify a **result receipt bundle**: the portable unit of
 trust for a worker submission. A bundle seals the patch, every gate's
 command/exit-code/log, the task reference, the sandbox selection, and the
-worker's DSSE-signed attestation over all of it into one artifact.
+worker's DSSE-signed attestation over all of it into one artifact. Volunteer
+workers also bind donor-budget line items (tasks, wall clock, and tokens) into
+the signed bundle, including authorized, used, reserved, and remaining values.
 `bernstein receipt verify` checks that artifact with no network access at
 all — nothing here calls out to any service.
 
