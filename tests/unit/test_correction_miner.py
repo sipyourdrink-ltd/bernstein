@@ -94,7 +94,7 @@ def _make_merge_repo() -> tuple[Path, dict[str, str]]:
     repo = _init_repo()
 
     # Initial commit on main
-    initial_sha = _commit(
+    _commit(
         repo,
         "initial",
         file_path="init.py",
@@ -125,7 +125,7 @@ def _make_merge_repo() -> tuple[Path, dict[str, str]]:
 
     # Back to main: add a commit so main diverges from contributor
     _run("checkout", "main", cwd=repo)
-    main_commit_sha = _commit(
+    _commit(
         repo,
         "main internal change",
         file_path="main_only.py",
@@ -154,7 +154,7 @@ def _make_multi_author_correction_repo() -> tuple[Path, dict[str, str]]:
     repo = _init_repo()
 
     # Initial commit
-    base_sha = _commit(repo, "initial", file_path="init.py", content="# init\n")
+    _commit(repo, "initial", file_path="init.py", content="# init\n")
     _run("branch", "-M", "main", cwd=repo)
 
     # Alice's branch
@@ -174,7 +174,7 @@ def _make_multi_author_correction_repo() -> tuple[Path, dict[str, str]]:
 
     # Merge alice's fix
     _run("merge", "--no-edit", "alice-fix", cwd=repo)
-    merge1 = _run("rev-parse", "HEAD", cwd=repo)
+    _run("rev-parse", "HEAD", cwd=repo)
 
     # Bob's branch
     _run("checkout", "-b", "bob-fix", cwd=repo)
@@ -193,7 +193,7 @@ def _make_multi_author_correction_repo() -> tuple[Path, dict[str, str]]:
 
     # Merge bob's fix
     _run("merge", "--no-edit", "bob-fix", cwd=repo)
-    merge2 = _run("rev-parse", "HEAD", cwd=repo)
+    _run("rev-parse", "HEAD", cwd=repo)
 
     shas = {
         "follow_up1": sha1,
@@ -367,7 +367,7 @@ class TestMineCorrections:
         result = mine_corrections(pairs)
         assert result.total_pairs_analyzed >= 1
         # There should be at least one corroborated proposal (two authors)
-        corroborated = [p for p in result.proposals if p.is_corroborated]
+        [p for p in result.proposals if p.is_corroborated]
         # Note: if the two corrections cluster differently by diff signature, they may be separate proposals.
         # The key guarantee: when they ARE in the same cluster, classification is corroborated.
         if len(pairs) >= 2:
@@ -397,7 +397,7 @@ class TestMineCorrections:
 
     def test_recommendations_include_corpus(self) -> None:
         """The report includes corpus size for every proposal."""
-        repo, shas = _make_merge_repo()
+        repo, _shas = _make_merge_repo()
         pairs = extract_correction_pairs(repo)
         result = mine_corrections(pairs)
         report = render_corrections_report(result)
@@ -405,7 +405,7 @@ class TestMineCorrections:
 
     def test_corpus_size_matches_pair_count(self) -> None:
         """corpus_size equals the number of pairs in the cluster."""
-        repo, shas = _make_multi_author_correction_repo()
+        repo, _shas = _make_multi_author_correction_repo()
         pairs = extract_correction_pairs(repo)
         result = mine_corrections(pairs)
         for prop in result.proposals:
@@ -426,7 +426,7 @@ class TestRenderCorrectionsReport:
         assert "No correction patterns found" in report
 
     def test_renders_proposals(self) -> None:
-        repo, shas = _make_merge_repo()
+        repo, _shas = _make_merge_repo()
         pairs = extract_correction_pairs(repo)
         result = mine_corrections(pairs)
         report = render_corrections_report(result)
@@ -435,7 +435,7 @@ class TestRenderCorrectionsReport:
 
     def test_renders_commit_pairs(self) -> None:
         """Every proposal cites its commit-SHA pairs in the report."""
-        repo, shas = _make_merge_repo()
+        repo, _shas = _make_merge_repo()
         pairs = extract_correction_pairs(repo)
         result = mine_corrections(pairs)
         report = render_corrections_report(result)
@@ -445,7 +445,7 @@ class TestRenderCorrectionsReport:
 
     def test_renders_corpus_size(self) -> None:
         """Corpus size renders with the proposal."""
-        repo, shas = _make_merge_repo()
+        repo, _shas = _make_merge_repo()
         pairs = extract_correction_pairs(repo)
         result = mine_corrections(pairs)
         report = render_corrections_report(result)
@@ -454,7 +454,7 @@ class TestRenderCorrectionsReport:
 
     def test_renders_classification(self) -> None:
         """Classification renders as either single-source or corroborated."""
-        repo, shas = _make_merge_repo()
+        repo, _shas = _make_merge_repo()
         pairs = extract_correction_pairs(repo)
         result = mine_corrections(pairs)
         report = render_corrections_report(result)
@@ -462,7 +462,7 @@ class TestRenderCorrectionsReport:
 
     def test_renders_authors(self) -> None:
         """Authors render with the proposal."""
-        repo, shas = _make_multi_author_correction_repo()
+        repo, _shas = _make_multi_author_correction_repo()
         pairs = extract_correction_pairs(repo)
         result = mine_corrections(pairs)
         report = render_corrections_report(result)
@@ -479,7 +479,7 @@ class TestRenderCorrectionsReport:
 class TestEndToEnd:
     def test_full_pipeline_finds_recurring_classes(self) -> None:
         """Running the miner over a repo with maintainer corrections produces proposals citing SHA pairs."""
-        repo, shas = _make_merge_repo()
+        repo, _shas = _make_merge_repo()
         pairs = extract_correction_pairs(repo)
         assert len(pairs) >= 1
         result = mine_corrections(pairs)
@@ -495,7 +495,7 @@ class TestEndToEnd:
         must appear in at least one proposal's commit_pairs (or the
         result must acknowledge it was processed).
         """
-        repo, shas = _make_merge_repo()
+        repo, _shas = _make_merge_repo()
         pairs = extract_correction_pairs(repo)
         result = mine_corrections(pairs)
         # Build the set of all pair IDs seen in proposals
@@ -512,7 +512,7 @@ class TestEndToEnd:
 
     def test_mining_result_fields(self) -> None:
         """MiningResult carries the required fields."""
-        repo, shas = _make_merge_repo()
+        repo, _shas = _make_merge_repo()
         pairs = extract_correction_pairs(repo)
         result = mine_corrections(pairs)
         assert isinstance(result.total_pairs_analyzed, int)
@@ -522,7 +522,7 @@ class TestEndToEnd:
 
     def test_proposal_is_frozen_dataclass(self) -> None:
         """CorrectionProposal is frozen: attributes cannot be mutated."""
-        repo, shas = _make_merge_repo()
+        repo, _shas = _make_merge_repo()
         pairs = extract_correction_pairs(repo)
         result = mine_corrections(pairs)
         if result.proposals:
@@ -532,7 +532,7 @@ class TestEndToEnd:
 
     def test_correction_pair_is_frozen_dataclass(self) -> None:
         """CorrectionPair is frozen: attributes cannot be mutated."""
-        repo, shas = _make_merge_repo()
+        repo, _shas = _make_merge_repo()
         pairs = extract_correction_pairs(repo)
         if pairs:
             pair = pairs[0]

@@ -41,9 +41,12 @@ import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.core.git.git_basic import run_git
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -270,7 +273,7 @@ def _merge_base(cwd: Path, a: str, b: str) -> str | None:
 def _is_ancestor(cwd: Path, ancestor: str, descendant: str) -> bool:
     """Return True if *ancestor* is reachable from *descendant*."""
     try:
-        out = _git(cwd, ["merge-base", "--is-ancestor", ancestor, descendant])
+        _git(cwd, ["merge-base", "--is-ancestor", ancestor, descendant])
     except RuntimeError:
         return False
     return True
@@ -585,7 +588,7 @@ def _summarise(diffs: list[str], limit: int = 3) -> str:
     for diff in diffs[:limit]:
         text = diff.strip().splitlines()
         if len(text) > 12:
-            text = text[:12] + ["..."]
+            text = [*text[:12], "..."]
         snippets.append(" | ".join(text))
     out = " ;; ".join(snippets)
     if len(out) > 800:
