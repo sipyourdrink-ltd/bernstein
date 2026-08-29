@@ -41,7 +41,7 @@ def _find_flag_in_help(help_text: str, flag: str) -> tuple[str, int, int] | None
         Tuple of (flag, start_index, end_index) if found, else None.
     """
     # Look for the flag as a whole word (not part of another word)
-    pattern = rf'(?<!\w){re.escape(flag)}(?!\w)'
+    pattern = rf"(?<!\w){re.escape(flag)}(?!\w)"
     match = re.search(pattern, help_text)
     if match:
         return flag, match.start(), match.end()

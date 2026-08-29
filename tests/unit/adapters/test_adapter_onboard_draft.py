@@ -39,6 +39,7 @@ def _load_fixture_help_text(fixture_name: str) -> str:
     assert fixture_path.exists(), f"Missing fixture: {fixture_path}"
     # Run the fixture to capture its --help output
     import subprocess
+
     result = subprocess.run(
         [sys.executable, str(fixture_path), "--help"],
         capture_output=True,
@@ -52,6 +53,7 @@ def _load_fixture_help_text(fixture_name: str) -> str:
 def _write_evidence_file(out_dir: Path, binary: str, output: str, command: str) -> Path:
     """Write a synthetic evidence file shaped like probe_cli output."""
     import hashlib
+
     record = {
         "binary": binary,
         "command": command,
