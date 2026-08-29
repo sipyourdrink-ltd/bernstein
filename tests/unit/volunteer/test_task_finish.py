@@ -467,7 +467,7 @@ def test_the_signed_envelope_verifies_against_the_worker_identity_the_bundle_nam
 
 
 def test_the_signed_receipt_contains_budget_line_items(tmp_path: Path) -> None:
-    manifest = _manifest(allowed_paths=["src/**"], gates=[["python", "-c", "pass"]])
+    manifest = _manifest(allowed_paths=["src/**"], gates=[[sys.executable, "-c", "pass"]])
     line_items = [
         {
             "dimension": "tasks",
