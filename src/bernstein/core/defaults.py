@@ -597,6 +597,11 @@ class JanitorDefaults:
     # bernstein.core.persistence.fingerprint.MemoStore.
     memo_max_mb: int = 200
 
+    # CAS blob retention window (days).  Unreferenced blobs older than this
+    # are eligible for GC via ``bernstein gc cas``.  See
+    # bernstein.core.persistence.cas_gc.
+    cas_retention_days: int = 30
+
 
 # ---------------------------------------------------------------------------
 # MCP catalog defaults
