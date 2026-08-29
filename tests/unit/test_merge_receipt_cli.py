@@ -8,12 +8,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 
 import pytest
 
 from bernstein.core.quality.merge_receipt import (
-    MERGE_RECEIPT_DIR,
     emit_merge_receipt,
     read_merge_receipt,
     verify_merge_receipt,
@@ -154,7 +152,7 @@ def test_verify_stored_refusal(populated_workdir):
     head_sha = "stored_refusal123"
     merge_base_sha = "base456"
 
-    receipt = _emit(
+    _emit(
         root,
         head_sha,
         merge_base_sha,
@@ -194,7 +192,7 @@ def test_verify_hard_one_way_with_advisory(populated_workdir):
     head_sha = "hard123"
     merge_base_sha = "def456"
 
-    receipt = _emit(
+    _emit(
         root,
         head_sha,
         merge_base_sha,
@@ -236,7 +234,7 @@ def test_verify_operator_review(populated_workdir):
     head_sha = "operator123"
     merge_base_sha = "def456"
 
-    receipt = _emit(
+    _emit(
         root,
         head_sha,
         merge_base_sha,
