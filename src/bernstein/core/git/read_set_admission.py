@@ -76,9 +76,7 @@ def check_read_set_changed(
         # A check that could not run does not know that nothing drifted, and
         # proceeding would turn every such failure into an admission. Instead,
         # refuse the action and name the reason: "read-set admission check could not run"
-        raise ReadSetAdmissionRefused(
-            f"Read-set admission check could not run: {exc}"
-        ) from exc
+        raise ReadSetAdmissionRefused(f"Read-set admission check could not run: {exc}") from exc
 
     changed_paths: list[ChangedPath] = []
     for path in read_paths:
