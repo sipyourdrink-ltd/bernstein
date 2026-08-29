@@ -1191,6 +1191,7 @@ receipt that no longer recomputes fails exactly like a tampered chain entry.
 | Command | Purpose | Source |
 |---|---|---|
 | `bernstein cleanup` | Clean worktrees / logs. | `cli/maintenance_cmd.py:162` |
+| `bernstein gc` | Reclaim storage held by durable stores (group). | `cli/commands/gc_cmd.py:gc_group` |
 | `bernstein daemon` | systemd / launchd unit (group). | `cli/commands/daemon_cmd.py:76` |
 | `bernstein dr` | Disaster recovery (group). | `cli/commands/disaster_recovery_cmd.py:12` |
 | `bernstein debug bundle` | Bug-report bundle. | `cli/debug_bundle.py:bundle_cmd` |
@@ -1209,6 +1210,20 @@ receipt that no longer recomputes fails exactly like a tampered chain entry.
 | `bernstein notify` | Outbound notification drivers (group). | `cli/commands/notify_cmd.py:63` |
 | `bernstein triggers` | Trigger sources (group). | `cli/commands/triggers_cmd.py:17` |
 | `bernstein issue-to-pr trace --repo OWNER/NAME N` | Print the read-only issue-to-PR pipeline state snapshot. | `cli/commands/issue_to_pr_cmd.py:trace_cmd` |
+
+#### `bernstein gc cas`
+
+Mark-and-sweep of the content-addressed store. Referenced digests are collected
+from the durable roots -- the write-ahead log, snapshots, audit seals, lineage
+records and the backlog -- so a blob reachable from any of them survives
+regardless of its age. Exits non-zero if the sweep fails.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--workdir PATH` | current directory | Root directory containing `.sdd/`. |
+| `--days N` | configured retention window | Delete unreferenced blobs older than N days; `0` deletes immediately. |
+| `--dry-run` | off | Report what would be deleted without modifying the store. |
+| `--yes` | off | Skip the confirmation prompt. |
 
 #### `bernstein doctor`
 
