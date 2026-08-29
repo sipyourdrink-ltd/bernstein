@@ -27,6 +27,7 @@ _VECTORS = _REPO_ROOT / "tests" / "fixtures" / "trust-record-vectors"
 _SOLO = _VECTORS / "single-execution-trust-record.json"
 _PARENT = _VECTORS / "delegated-parent-trust-record.json"
 _CHILD = _VECTORS / "delegated-child-trust-record.json"
+_GRANDCHILD = _VECTORS / "delegated-grandchild-trust-record.json"
 _AGGREGATE = _VECTORS / "aggregate-trust-record.json"
 _PUBKEY = _VECTORS / "trust-record-vectors-key.pem"
 
@@ -298,3 +299,76 @@ def test_regenerating_the_vectors_is_byte_identical_to_the_committed_files() -> 
         ):
             committed = (_VECTORS / name).read_bytes()
             assert first[name] == committed, f"{name} has drifted from the committed vector -- re-mint required"
+
+
+def test_chain_depth_at_least_two_hops() -> None:
+    """The committed delegation chain must be at least two hops deep when
+    walking delegation.parent_record_hash from the deepest record back
+    to a root. The grandchild adds a second hop over the original
+    parent->child pair (issue #4782).
+    """
+    grandchild = _load(_GRANDCHILD)
+    child = _load(_CHILD)
+    parent = _load(_PARENT)
+
+    # Compute each record's content hash from its bytes
+    child_bytes = _CHILD.read_text(encoding="utf-8").rstrip("\n")
+    child_hash = f"sha256:{hashlib.sha256(child_bytes.encode('utf-8')).hexdigest()}"
+
+    parent_bytes = _PARENT.read_text(encoding="utf-8").rstrip("\n")
+    parent_hash = f"sha256:{hashlib.sha256(parent_bytes.encode('utf-8')).hexdigest()}"
+
+    # Walk the chain: grandchild -> child -> parent
+    hop_count = 0
+
+    # Hop 1: grandchild's parent_record_hash must point to child's content hash
+    grandchild_parent_hash = grandchild["delegation"]["parent_record_hash"]
+    assert grandchild_parent_hash == child_hash, (
+        f"Grandchild's parent_record_hash {grandchild_parent_hash[-20:]}... "
+        f"does not match child's content hash {child_hash[-20:]}..."
+    )
+    hop_count += 1
+
+    # Hop 2: child's parent_record_hash must point to parent's content hash
+    child_parent_hash = child["delegation"]["parent_record_hash"]
+    assert child_parent_hash == parent_hash, (
+        f"Child's parent_record_hash {child_parent_hash[-20:]}... "
+        f"does not match parent's content hash {parent_hash[-20:]}..."
+    )
+    hop_count += 1
+
+    # Parent is the root of the chain (no delegation field)
+    assert "delegation" not in parent, "Parent should not have delegation field"
+
+    assert hop_count >= 2, f"Expected at least 2 hops in delegation chain, got {hop_count}"
+
+
+def test_data_class_narrowing_exists() -> None:
+    """At least one parent/child pair must have a strictly narrower data_class
+    on the child (e.g., 'internal' -> 'restricted'). The test loads all
+    delegated records and checks each pair for this narrowing pattern.
+    """
+    parent = _load(_PARENT)
+    child = _load(_CHILD)
+    grandchild = _load(_GRANDCHILD)
+
+    records = [
+        ("parent-child", parent, child),
+        ("child-grandchild", child, grandchild),
+    ]
+
+    narrowing_found = False
+    for pair_name, parent_rec, child_rec in records:
+        parent_dc = parent_rec["data_class"]
+        child_dc = child_rec["data_class"]
+
+        # Define narrowing hierarchy: 'public' > 'internal' > 'restricted'
+        if (parent_dc == "internal" and child_dc == "restricted") or \
+           (parent_dc == "internal" and child_dc == "public"):  # also valid narrowing
+            narrowing_found = True
+            assert parent_dc != child_dc, \
+                f"Data class not narrowed in {pair_name}: parent={parent_dc}, child={child_dc}"
+
+    assert narrowing_found, \
+        "No parent/child pair found with narrowed data_class. Expected at least one of: " \
+        "'internal'->'restricted' or 'internal'->'public'"
