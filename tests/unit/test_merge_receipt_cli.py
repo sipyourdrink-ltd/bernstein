@@ -86,7 +86,7 @@ def test_emit_and_verify_merge_receipt(populated_workdir):
     head_sha = "integration123"
     merge_base_sha = "base456"
 
-    receipt = _emit(
+    _emit(
         root,
         head_sha,
         merge_base_sha,
