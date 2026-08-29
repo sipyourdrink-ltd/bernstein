@@ -120,8 +120,8 @@ def _extract_bundle_from_envelope(envelope_dict: dict[str, Any]) -> dict[str, An
         if not isinstance(predicate, dict):
             return None
 
-        bundle = predicate.get("bundle", {})
-        return bundle if isinstance(bundle, dict) else None
+        bundle = predicate.get("bundle")
+        return bundle if isinstance(bundle, dict) and bundle else None
     except (ValueError, UnicodeDecodeError, json.JSONDecodeError, KeyError):
         return None
 
@@ -388,11 +388,21 @@ def _format_comparison_table(comparisons: list[GateComparison]) -> str:
         ci_exit = str(comp.ci_exit_code) if comp.ci_exit_code is not None else "N/A"
         status = "PASS" if comp.passed else "FAIL"
         reason = comp.mismatch_reason or ""
+        attested_log = (
+            f"`{comp.attested_log_sha256[:12]}...`"
+            if comp.attested_log_sha256
+            else "N/A"
+        )
+        ci_log = (
+            f"`{comp.ci_log_sha256[:12]}...`"
+            if comp.ci_log_sha256
+            else "N/A"
+        )
 
         lines.append(
             f"| `{comp.command}` | {attested_exit} | {ci_exit} | "
-            f"`{comp.attested_log_sha256[:12]}...` | "
-            f"`{comp.ci_log_sha256[:12] if comp.ci_log_sha256 else 'N/A'}...` | "
+            f"{attested_log} | "
+            f"{ci_log} | "
             f"{status} | {reason} |"
         )
 

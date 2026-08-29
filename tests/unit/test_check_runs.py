@@ -177,3 +177,114 @@ class TestCheckRunClientUpdate:
         body = json.loads(captured_input[0])
         assert body["conclusion"] == "neutral"
         assert body["status"] == "completed"
+
+
+# ---------------------------------------------------------------------------
+# CheckRunClient.create_verification_check_run
+# ---------------------------------------------------------------------------
+
+
+class TestCheckRunClientCreateVerificationCheckRun:
+    def test_not_configured_returns_none(self) -> None:
+        client = CheckRunClient(repo="acme/widgets", installation_id=None)
+        result = client.create_verification_check_run(
+            head_sha="abc123",
+            summary="summary",
+            details="details",
+            conclusion="success",
+        )
+        assert result is None
+
+    def test_success_returns_comparison_check_run_result(self) -> None:
+        client = CheckRunClient(repo="acme/widgets", installation_id="42")
+        response_data = {"id": 200, "html_url": "https://github.com/checks/200"}
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps(response_data).encode()
+        mock_result.stderr = b""
+
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            result = client.create_verification_check_run(
+                head_sha="abc123",
+                summary="All gates matched",
+                details="## Comparison\n",
+                conclusion="success",
+            )
+
+        assert result is not None
+        assert result.check_run_id == 200
+        assert result.html_url == "https://github.com/checks/200"
+        # call_args[0] is positional args tuple; args[0] is the gh command list
+        args = list(mock_run.call_args[0][0])
+        assert "POST" in args
+        assert "check-runs" in args
+
+    def test_gh_failure_returns_none(self) -> None:
+        client = CheckRunClient(repo="acme/widgets", installation_id="42")
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = b""
+        mock_result.stderr = b"Internal Server Error"
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = client.create_verification_check_run(
+                head_sha="abc123",
+                summary="Failed",
+                conclusion="failure",
+            )
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# CheckRunClient.update_verification_check_run
+# ---------------------------------------------------------------------------
+
+
+class TestCheckRunClientUpdateVerificationCheckRun:
+    def test_not_configured_returns_none(self) -> None:
+        client = CheckRunClient(repo="acme/widgets", installation_id=None)
+        result = client.update_verification_check_run(
+            check_run_id=123,
+            summary="summary",
+            details="details",
+            conclusion="success",
+        )
+        assert result is None
+
+    def test_success_returns_comparison_check_run_result(self) -> None:
+        client = CheckRunClient(repo="acme/widgets", installation_id="42")
+        response_data = {"id": 456, "html_url": "https://github.com/checks/456"}
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps(response_data).encode()
+        mock_result.stderr = b""
+
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            result = client.update_verification_check_run(
+                check_run_id=456,
+                summary="Verification complete",
+                details="## Result\n",
+                conclusion="failure",
+            )
+
+        assert result is not None
+        assert result.check_run_id == 456
+        assert result.html_url == "https://github.com/checks/456"
+        # Verify PATCH was used
+        call_args = mock_run.call_args[0][0]
+        assert "PATCH" in call_args
+
+    def test_gh_failure_returns_none(self) -> None:
+        client = CheckRunClient(repo="acme/widgets", installation_id="42")
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = b""
+        mock_result.stderr = b"Not Found"
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = client.update_verification_check_run(
+                check_run_id=999,
+                summary="Failed",
+                conclusion="failure",
+            )
+        assert result is None
