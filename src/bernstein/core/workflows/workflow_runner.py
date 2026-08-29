@@ -378,6 +378,20 @@ class WorkflowRunner:
             already-completed node from the prior run (read from disk)
             plus every node executed by this resume.
 
+        Spec digest validation:
+        The SHA-256 digest is computed from the spec's canonical JSON
+        projection (key-sorted, no defaults, no None fields) at run start.
+        Resume computes the same digest from the current spec; a mismatch
+        raises ``WorkflowRunError`` with the first 16 hex chars of each
+        digest for easy comparison.  Formatting differences in the YAML
+        source do not affect the digest.
+
+        Loop node resume behavior:
+        Each node checkpoint carries the recorded iteration count.  On
+        resume, a loop node that completed all iterations is skipped; one
+        that was interrupted mid-loop continues from ``iterations + 1``
+        (the next iteration) with its full prior loop state intact.
+
         Raises:
             WorkflowRunError: The run is already finished, the spec
                 digest does not match, or no prior run state exists.
@@ -517,7 +531,7 @@ class WorkflowRunner:
         goal: str = "",
         run_id: str | None = None,
     ) -> WorkflowExecution:
-        """Execute ``spec`` end-to-end.
+        """Execute ``spec`` end-to-end, with state persistence for resume.
 
         Args:
             spec: Validated workflow manifest.
@@ -536,6 +550,27 @@ class WorkflowRunner:
         - Persists a terminal ``NodeExecution`` checkpoint after every node
           transitions, so a later ``bernstein workflow resume`` can re-enter
           at the first non-completed node.
+        - Writes ``run_complete.json`` when the run finishes, so a second
+          ``resume`` call refuses with a clear error instead of re-running
+          a finished DAG.
+
+        State persisted under ``.sdd/runs/<run_id>/``:
+
+        * ``spec_snapshot.json`` - manifest name, version, digest, and
+          optional source path; ``resume`` re-validates the digest.
+        * ``<node_id>.node.json`` - one checkpoint per node after its
+          terminal state is recorded.  Loop nodes carry their iteration
+          count so resume continues from the next iteration.
+        * ``run_complete.json`` - sentinel written when the DAG finishes
+          (succeeded or failed).
+
+        Resume behavior:
+        ``run()`` also supports resume inline: if a ``run_id`` is given
+        that already has persisted node state, already-completed nodes are
+        read back from disk and skipped, so a killed run re-entered via
+        ``bernstein workflow resume`` finishes the remaining nodes.  The
+        spec digest recorded at run start is re-validated; a mismatch is
+        refused with ``WorkflowRunError``.
         """
         rid = run_id or uuid.uuid4().hex[:12]
         execution = WorkflowExecution(spec_name=spec.name, run_id=rid)
