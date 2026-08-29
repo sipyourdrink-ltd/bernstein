@@ -232,11 +232,11 @@ def test_aggregate_vector_subject_is_run_scoped_not_execution_scoped() -> None:
 def test_aggregate_vector_has_one_member_execution_reference_per_member_no_other_rel() -> None:
     doc = _load(_AGGREGATE)
     rels = [r["rel"] for r in doc["references"]]
-    assert rels == ["member-execution", "member-execution"]
+    assert rels == ["member-execution", "member-execution", "member-execution"]
 
 
 def test_aggregate_vector_member_references_resolve_to_the_parent_and_child_vectors_by_hash() -> None:
-    """The generator gave the aggregate ``[parent_output, child_output]`` in
+    """The generator gave the aggregate ``[parent_output, child_output, grandchild_output]`` in
     that order -- each reference's ``digest`` must recompute to the
     corresponding committed member vector's own exact bytes.
 
@@ -249,14 +249,17 @@ def test_aggregate_vector_member_references_resolve_to_the_parent_and_child_vect
     aggregate = _load(_AGGREGATE)
     parent_bytes = _PARENT.read_text(encoding="utf-8").rstrip("\n")
     child_bytes = _CHILD.read_text(encoding="utf-8").rstrip("\n")
+    grandchild_bytes = _GRANDCHILD.read_text(encoding="utf-8").rstrip("\n")
 
     parent_digest = f"sha256:{hashlib.sha256(parent_bytes.encode('utf-8')).hexdigest()}"
     child_digest = f"sha256:{hashlib.sha256(child_bytes.encode('utf-8')).hexdigest()}"
+    grandchild_digest = f"sha256:{hashlib.sha256(grandchild_bytes.encode('utf-8')).hexdigest()}"
 
-    assert [r["digest"] for r in aggregate["references"]] == [parent_digest, child_digest]
+    assert [r["digest"] for r in aggregate["references"]] == [parent_digest, child_digest, grandchild_digest]
     assert [r["id"] for r in aggregate["references"]] == [
         _load(_PARENT)["subject"],
         _load(_CHILD)["subject"],
+        _load(_GRANDCHILD)["subject"],
     ]
     for entry in aggregate["references"]:
         assert entry["resolver"]
@@ -295,6 +298,7 @@ def test_regenerating_the_vectors_is_byte_identical_to_the_committed_files() -> 
             "single-execution-trust-record.json",
             "delegated-parent-trust-record.json",
             "delegated-child-trust-record.json",
+            "delegated-grandchild-trust-record.json",
             "aggregate-trust-record.json",
         ):
             committed = (_VECTORS / name).read_bytes()

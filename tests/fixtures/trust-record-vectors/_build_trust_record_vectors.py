@@ -191,9 +191,6 @@ def main() -> None:
         # depth_exceeded rule has a bound to cross (issue #4782). Carries a
         # data_class narrowed below the child's, so data_class_widened has a
         # change of direction to detect rather than an absence of values.
-        # Runs as its own journal and is NOT rolled up into the aggregate:
-        # the aggregate requires every member to share one data_class, and
-        # the grandchild's is narrower than the parent+child pair's.
         grandchild_journal = EventJournal("trust-record-vector-grandchild", sdd_dir)
         grandchild_journal.record(
             "run_started",
@@ -216,12 +213,15 @@ def main() -> None:
         grandchild_path.write_text(grandchild_output + "\n", encoding="utf-8")
         print(f"Wrote delegated-grandchild vector: {grandchild_path}  ({len(grandchild_output)} bytes)")
 
-        # 3. Run-level aggregate: rolls up the parent + child execution
-        # records under one run-scoped record (issue #4763). Built from the
-        # two already-minted member records, not from a journal -- there is
-        # no journal for "the whole run" as such. Unchanged by the addition
-        # of the grandchild hop.
-        aggregate_output = emitter.emit_aggregate_trust_record(run_id, [parent_output, child_output])
+        # 3. Run-level aggregate: rolls up the parent + child + grandchild
+        # execution records under one run-scoped record (issue #4763, #4782).
+        # Built from the three already-minted member records, not from a
+        # journal -- there is no journal for "the whole run" as such. Extended
+        # to cover all three hops so the aggregate's references[] surface
+        # exercises the full delegation chain, not just the first two hops.
+        aggregate_output = emitter.emit_aggregate_trust_record(
+            run_id, [parent_output, child_output, grandchild_output]
+        )
         aggregate_path = OUT_DIR / "aggregate-trust-record.json"
         aggregate_path.write_text(aggregate_output + "\n", encoding="utf-8")
         print(f"Wrote run-level aggregate vector: {aggregate_path}  ({len(aggregate_output)} bytes)")
