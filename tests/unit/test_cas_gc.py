@@ -374,7 +374,7 @@ class TestPruneCASStore:
         store.put(b"orphan-content", content_type="text/plain")
 
         # Run GC
-        result = prune_cas_store(sdd_dir, retention_days=0, dry_run=False)
+        prune_cas_store(sdd_dir, retention_days=0, dry_run=False)
 
         # Check that a receipt was written (a new entry in CAS)
         entries = store.list_entries()
