@@ -644,10 +644,14 @@ def _run_sandbox_pipeline(
             "open_source_preflight_failed",
             license_problem,
         )
-    
+
     if run_budget.exhausted:
-        return refuse(RefusalStage.CLONE, "budget_exhausted", "the run budget was spent before the clone started")
-clone_outcome, _, clone_stderr = run_under_wall_clock(
+        return refuse(
+            RefusalStage.CLONE,
+            "budget_exhausted",
+            "the run budget was spent before the clone started",
+        )
+    clone_outcome, _, clone_stderr = run_under_wall_clock(
         _clone_argv(task, clone_path),
         limit_seconds=run_budget.phase_limit_seconds(),
         env=env,
@@ -786,6 +790,8 @@ def repo_url_problem(repo_url: str) -> str | None:
     if scheme.lower() not in ALLOWED_REPO_SCHEMES:
         return f"the repository URL scheme {scheme!r} is not one of {', '.join(ALLOWED_REPO_SCHEMES)}"
     return None
+
+
 def _validate_open_source_preflight(repo_url: str, manifest_license: str) -> str | None:
     """Why this task must not run, based on open-source preflight checks.
 
@@ -824,7 +830,7 @@ def _validate_open_source_preflight(repo_url: str, manifest_license: str) -> str
         return "the repository URL is empty"
 
     scheme = urlparse(url).scheme
-    
+
     # Local filesystem paths (no scheme) are allowed for test fixtures and
     # special cases where the project explicitly opts in.  The donor can
     # see exactly what they're executing, so the public-repository restriction
@@ -832,15 +838,18 @@ def _validate_open_source_preflight(repo_url: str, manifest_license: str) -> str
     if not scheme:
         # Allow local paths like "/srv/project", "./project", etc.
         # These are projects the donor controls directly.
-        pass
-    
+        return None
+
     # Only public schemes are allowed: git, http, https, ssh
     if scheme.lower() not in {"git", "http", "https", "ssh"}:
         # file:// URLs have an empty netloc but a valid scheme
         if scheme.lower() == "file":
             pass
         else:
-            return f"the repository URL scheme {scheme!r} is not permitted; only public repository schemes (git, http, https, ssh) are allowed"
+            return (
+                f"the repository URL scheme {scheme!r} is not permitted; "
+                "only public repository schemes (git, http, https, ssh) are allowed"
+            )
 
     # Check 2: Manifest license is validated by _load_license; just verify it's present
     if not manifest_license:
@@ -852,12 +861,13 @@ def _validate_open_source_preflight(repo_url: str, manifest_license: str) -> str
     if scheme.lower() in {"https", "http"}:
         # This is a simplistic check for GitHub URLs - extract owner/repo
         import re
+
         github_match = re.match(r"https?://github\.com/([^/]+/[^/]+)", url)
         if github_match:
             repo_path = github_match.group(1)
             # Use GitHub API to detect license without cloning
-            import urllib.request
             import urllib.error
+            import urllib.request
 
             # Add authentication if available, otherwise use public API
             headers = {"Accept": "application/vnd.github.v3+json"}
@@ -868,10 +878,15 @@ def _validate_open_source_preflight(repo_url: str, manifest_license: str) -> str
                 with urllib.request.urlopen(req, timeout=10) as response:
                     if response.status == 200:
                         import json
+
                         license_data = json.loads(response.read().decode())
                         detected_license = license_data.get("spdx_id")
                         if detected_license and detected_license != manifest_license:
-                            return f"license mismatch: repository declares '{detected_license}' but manifest specifies '{manifest_license}'"
+                            return (
+                                f"license mismatch: repository declares "
+                                f"'{detected_license}' but manifest specifies "
+                                f"'{manifest_license}'"
+                            )
                     elif response.status == 404:
                         # No license detected in GitHub API
                         pass
