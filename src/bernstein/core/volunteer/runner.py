@@ -102,8 +102,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sys
 import time
+import urllib.error
+import urllib.request
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -860,16 +863,10 @@ def _validate_open_source_preflight(repo_url: str, manifest_license: str) -> str
     # if it's a GitHub repository and use the GitHub API to detect the license
     if scheme.lower() in {"https", "http"}:
         # This is a simplistic check for GitHub URLs - extract owner/repo
-        import re
-
         github_match = re.match(r"https?://github\.com/([^/]+/[^/]+)", url)
         if github_match:
             repo_path = github_match.group(1)
             # Use GitHub API to detect license without cloning
-            import urllib.error
-            import urllib.request
-
-            # Add authentication if available, otherwise use public API
             headers = {"Accept": "application/vnd.github.v3+json"}
             api_url = f"https://api.github.com/repos/{repo_path}/license"
 
@@ -877,8 +874,6 @@ def _validate_open_source_preflight(repo_url: str, manifest_license: str) -> str
                 req = urllib.request.Request(api_url, headers=headers)
                 with urllib.request.urlopen(req, timeout=10) as response:
                     if response.status == 200:
-                        import json
-
                         license_data = json.loads(response.read().decode())
                         detected_license = license_data.get("spdx_id")
                         if detected_license and detected_license != manifest_license:
