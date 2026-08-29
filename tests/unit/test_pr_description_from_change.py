@@ -558,7 +558,9 @@ def test_the_body_states_no_spend_anywhere() -> None:
     rule was not applied: it reached the headline as ``$38.94`` and the body
     as a per-role table, on a page anyone can read.
     """
-    body = build_pr_body(_summary(commits=(FEATURE_COMMIT,), cost=CostBreakdown(total_usd=38.94, total_tokens=1_000_000)))
+    body = build_pr_body(
+        _summary(commits=(FEATURE_COMMIT,), cost=CostBreakdown(total_usd=38.94, total_tokens=1_000_000))
+    )
 
     assert "$" not in body
     assert "## Cost" not in body
