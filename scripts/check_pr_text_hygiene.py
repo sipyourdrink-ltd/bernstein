@@ -54,11 +54,13 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-# Phrases at or below this length are treated as short tokens (e.g. a
-# three-letter acronym). Short tokens require a non-alphanumeric boundary
-# on BOTH sides so they do not match by accident inside an unrelated
-# longer word. Longer phrases require only a left boundary so that
-# suffixed forms (plurals, adjective endings) are still caught.
+# A trailing alphanumeric run at or below this length counts as a short
+# token (e.g. a three-letter acronym, or the "me" in "rel=me"). A phrase
+# ending in one -- unless that run is the last word of a multi-word phrase
+# -- requires a non-alphanumeric boundary on BOTH sides, so it cannot match
+# the front of an unrelated longer word. Everything else requires only a
+# left boundary so that suffixed forms (plurals, adjective endings) are
+# still caught.
 _SHORT_PHRASE_MAX_LEN = 4
 
 
@@ -118,16 +120,30 @@ def _compile_phrase(phrase: str) -> re.Pattern[str]:
 
     * A left boundary ``(?<![A-Za-z0-9])`` is always required, so a phrase
       never matches when it is glued to the tail of a longer word.
-    * A right boundary ``(?![A-Za-z0-9])`` is added only for short phrases
-      (``<= _SHORT_PHRASE_MAX_LEN``). Short acronyms are the main source of
-      accidental hits inside longer words, so they must be delimited on
-      both sides; longer phrases keep a left-only boundary so suffixed
-      forms still match.
+    * A right boundary ``(?![A-Za-z0-9])`` is added when the phrase ends in
+      a short alphanumeric run (``<= _SHORT_PHRASE_MAX_LEN``) that is not
+      simply the last word of a multi-word phrase.
+
+      Two different things end in a short run. ``foo bar`` and ``em-dash``
+      end in a word, and appending a suffix to a word is exactly the
+      evasion the left-only boundary exists to catch, so they stay
+      unbounded and still match ``foo barbaz`` and ``em-dashes``.
+      ``rel=me`` ends in the value half of a structured token, where a
+      longer value is a different value rather than a suffixed form -- and
+      while the boundary was judged by total length alone, six characters
+      was long enough to leave it unbounded, so it matched the front of
+      ``rel=member-execution``. The separator before the trailing run tells
+      the two apart: a space or a hyphen joins words, anything else builds
+      a structured token.
 
     Matching stays case-insensitive.
     """
     left = r"(?<![A-Za-z0-9])"
-    right = r"(?![A-Za-z0-9])" if len(phrase) <= _SHORT_PHRASE_MAX_LEN else ""
+    trailing_run = re.search(r"[A-Za-z0-9]*$", phrase).group()
+    separator = phrase[: -len(trailing_run) or None][-1:]
+    ends_in_a_word = separator in {" ", "-"}
+    needs_right = len(trailing_run) <= _SHORT_PHRASE_MAX_LEN and not ends_in_a_word
+    right = r"(?![A-Za-z0-9])" if needs_right else ""
     return re.compile(left + re.escape(phrase) + right, re.IGNORECASE)
 
 

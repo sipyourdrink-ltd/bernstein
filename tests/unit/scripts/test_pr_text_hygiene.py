@@ -465,3 +465,62 @@ def test_short_token_matched_in_commit_message(hygiene_module: ModuleType, bound
         phrases=phrases,
     )
     assert any(surface.startswith("commit[") and phrase == "SEO" for surface, phrase in findings)
+
+
+# --- a phrase's tail decides whether it needs a right boundary --------------
+#
+# The right boundary used to be keyed on the phrase's total length, so a
+# phrase that is long overall but ends in a short token stayed unbounded and
+# matched the front of an unrelated word: 'rel=me' (six characters) flagged
+# 'references entries with a rel=member-execution value'. What makes a phrase
+# prefix-prone is its trailing alphanumeric run, not its length.
+
+
+@pytest.fixture
+def tail_deny_file(tmp_path: Path) -> Path:
+    """Deny-list holding a phrase that is long overall but ends in a short token."""
+    path = tmp_path / "tail.json"
+    path.write_text(
+        json.dumps({"denylist": ["rel=me", "marketing"]}),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_phrase_with_short_tail_does_not_match_longer_word(hygiene_module: ModuleType, tail_deny_file: Path) -> None:
+    """'rel=me' must not match the front of 'rel=member-execution'."""
+    phrases = hygiene_module.load_denylist(tail_deny_file)
+    findings = hygiene_module.check_pr_text(
+        title="fix: add run-level aggregate records",
+        body="Carries one references entry with a rel=member-execution value per member.",
+        branch="fix/aggregate",
+        commit_messages=["fix: emit rel=member-execution references"],
+        phrases=phrases,
+    )
+    assert findings == []
+
+
+def test_phrase_with_short_tail_still_matches_standalone(hygiene_module: ModuleType, tail_deny_file: Path) -> None:
+    """The phrase the entry exists for is still caught when it stands alone."""
+    phrases = hygiene_module.load_denylist(tail_deny_file)
+    findings = hygiene_module.check_pr_text(
+        title="chore: profile links",
+        body='Adds <a rel=me href="https://example.invalid/">.',
+        branch="chore/links",
+        commit_messages=[],
+        phrases=phrases,
+    )
+    assert ("body", "rel=me") in findings
+
+
+def test_phrase_with_long_tail_still_matches_suffixed_forms(hygiene_module: ModuleType, tail_deny_file: Path) -> None:
+    """A phrase ending in a long run keeps left-only boundaries, so suffixes match."""
+    phrases = hygiene_module.load_denylist(tail_deny_file)
+    findings = hygiene_module.check_pr_text(
+        title="chore: copy",
+        body="Reviewed by the marketingteam before release.",
+        branch="chore/copy",
+        commit_messages=[],
+        phrases=phrases,
+    )
+    assert ("body", "marketing") in findings
