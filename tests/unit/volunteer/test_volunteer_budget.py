@@ -99,7 +99,7 @@ def test_remaining_hours_feed_the_existing_sandbox_profile_refusal() -> None:
             {
                 "version": 1,
                 "license": "Apache-2.0",
-                "gates": [["python", "-c", "pass"]],
+                "gates": [[sys.executable, "-c", "pass"]],
                 "allowed_paths": ["src/**"],
                 "egress_allowlist": [],
                 "sandbox": "container",
