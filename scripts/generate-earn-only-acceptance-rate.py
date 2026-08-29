@@ -21,7 +21,7 @@ import sys
 import urllib.parse
 import urllib.request
 from collections import defaultdict
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -317,6 +317,11 @@ def process_prs(prs: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
             if is_reverted_pr(pr, merged_prs):
                 stats["reverted"] += 1
 
+            # "verified" mirrors "submitted" in this MVP generator: attribution
+            # comes from the worker_keyid and bundle_digest references in the PR
+            # body, and neither carries the bundle bytes ``verify_bundle`` needs.
+            # Until the hub serves fetchable bundles for merged PRs, this counter
+            # records "attributed to a worker", not "receipt checked".
             stats["verified"] += 1
 
     return dict(worker_counts)
@@ -351,7 +356,7 @@ def main() -> int:
 
     output = {
         "month": args.month,
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": datetime.now(tz=UTC).isoformat(),
         "repo": args.repo,
         "period": {"since": since, "until": until},
         "workers": dict(sorted(worker_counts.items())),
