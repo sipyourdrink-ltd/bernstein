@@ -9,14 +9,12 @@ from __future__ import annotations
 import inspect
 import logging
 from importlib.metadata import entry_points
-from typing import Protocol, TYPE_CHECKING, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from bernstein.adapters.scanner import ScannerAdapter
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-
-    from bernstein.adapters.scanner import ScannerAdapter
 
 logger = logging.getLogger(__name__)
 

@@ -15,3 +15,17 @@ from .scanner_registry import (
     register_scanner,
     scanner_name_for_provider,
 )
+
+__all__ = [
+    "DeterminismTier",
+    "Finding",
+    "OutputFormat",
+    "ScanResult",
+    "ScanScope",
+    "ScannerAdapter",
+    "ScannerCategory",
+    "get_scanner",
+    "iter_scanner_specs",
+    "register_scanner",
+    "scanner_name_for_provider",
+]

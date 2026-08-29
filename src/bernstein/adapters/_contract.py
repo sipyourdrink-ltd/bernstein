@@ -34,10 +34,7 @@ import subprocess
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict
-
-if TYPE_CHECKING:
-    from bernstein.adapters.scanner import ScannerAdapter
+from typing import Any, TypedDict
 
 import yaml
 
