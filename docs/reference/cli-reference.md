@@ -1315,6 +1315,22 @@ bernstein completions --shell zsh > ~/.zsh/completion/_bernstein
 
 For worktree lifecycle (inspection / reaping) use `bernstein worktrees list` / `bernstein worktrees gc`.
 
+#### `bernstein worktrees graph`
+
+Render one fan-out's sealed run graph, branch by branch, from the receipt under `.sdd/run-graph/`.
+
+| Argument / flag | Purpose |
+|---|---|
+| `FANOUT_ID` | The receipt hash, or any unique prefix of it. An ambiguous prefix lists its candidates rather than choosing one. |
+| `--run-id SESSION=RUN` | Pair a branch's session id with the run whose spine recorded it. Repeatable. |
+| `--verify` | Re-derive the whole receipt and report the verdict. Needs `--public-key`. |
+| `--json` | Emit the signed receipt verbatim and nothing else. |
+| `--public-key FILE` | PEM public key the receipt was signed with. |
+| `--workdir DIRECTORY` | Project root holding `.sdd` (default: the current directory). |
+
+Exits non-zero when a branch's spine no longer verifies, or when `--verify` refuses the receipt.
+A branch with no `--run-id` is reported as unresolved, not as failing: it was not checked, so it did not fail.
+
 #### `bernstein session`
 
 | Subcommand | Purpose |

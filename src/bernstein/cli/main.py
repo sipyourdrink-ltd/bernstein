@@ -83,6 +83,7 @@ from bernstein.cli.commands.pool_cmd import pool_group
 from bernstein.cli.commands.receipt_cmd import receipt_group
 from bernstein.cli.commands.resume_cmd import resume_cmd
 from bernstein.cli.commands.role_adapter_policy_cmd import security_group as _role_adapter_security_group
+from bernstein.cli.commands.run_graph_cmd import run_graph_cmd
 from bernstein.cli.commands.run_names_cmd import run_lookup_cmd
 from bernstein.cli.commands.skills_cmd import skills_group
 from bernstein.cli.commands.spec_cmd import spec_group
@@ -1162,6 +1163,12 @@ cli.add_command(self_group, "self")
 cli.add_command(undo_cmd, "undo")
 cli.add_command(worker, "worker")
 cli.add_command(worktrees_group, "worktrees")
+# `bernstein worktrees graph <fanout-id>`: a fan-out's branches *are*
+# worktrees, and this group already owns the classifier surface they are read
+# through. The alternative reading, `bernstein run graph`, is not available:
+# `run` is a command (`bernstein run plan.yaml`), not a group, and turning it
+# into one would change how every existing invocation parses.
+worktrees_group.add_command(run_graph_cmd, "graph")
 cli.add_command(diff_cmd, "diff")
 cli.add_command(merge_cmd, "merge")
 cli.add_command(migrate_cmd, "migrate")

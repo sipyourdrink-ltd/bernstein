@@ -1,0 +1,3 @@
+## A sealed fan-out can be read on the command line, and the tamper sweep now covers one
+
+`bernstein worktrees graph <fanout-id>` renders every branch of a sealed fan-out with its verify status, `--verify` re-derives the whole receipt, and `--json` emits the signed artifact verbatim. `verify_lineage_chains` gained the matching coverage: a tampered branch inside a fan-out now trips the same `lineage_tamper_detected` event and `bernstein_lineage_tamper_total` counter that a tampered single-run spine already did. A fan-out whose worktrees have been reaped, or whose branches have no run id supplied, is reported as not checked rather than as tampered (#3761).

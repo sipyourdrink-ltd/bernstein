@@ -15,6 +15,7 @@ Asserts that:
 from __future__ import annotations
 
 import json
+import shutil
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -282,3 +283,220 @@ def _counter_value(counter: Any, **labels: str) -> float:
         return float(counter.labels(**labels)._value.get())
     except AttributeError:
         return 0.0
+
+
+# ---------------------------------------------------------------------------
+# The same sweep, applied to a fan-out (#3761)
+#
+# A fan-out's branches are sealed into one run-graph receipt, and the sweep
+# above had no knowledge of those: a branch edited inside a fan-out was
+# invisible to the same pass that catches an edited single-run spine. These
+# assert the parity -- same event, same counter -- and, just as importantly,
+# the two states where the sweep must stay quiet, because an alert that fires
+# on healthy state is one an operator learns to skip.
+# ---------------------------------------------------------------------------
+
+_FANOUT_HMAC_KEY = b"k" * 32
+_FANOUT_TIMESTAMP = 1_700_000_000
+_FANOUT_SESSIONS = ("sess-alpha", "sess-beta")
+_FANOUT_RUN_IDS = {session: f"run-{session.split('-')[1]}" for session in _FANOUT_SESSIONS}
+
+
+def _git(cwd: Path, *args: str) -> None:
+    import subprocess
+
+    subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        env={
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@example.invalid",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@example.invalid",
+            "PATH": "/usr/bin:/bin:/usr/local/bin",
+            "HOME": str(cwd),
+        },
+    )
+
+
+def _seal_fanout(workdir: Path) -> tuple[str, bytes]:
+    """Two branches, their spines, and one sealed receipt on disk.
+
+    The branches are real git repositories because the head sha is one of the
+    three things the graph root commits to, and it is resolved through git
+    both when sealing and when checking. A fixture that stubbed it would seal
+    a head nothing could re-derive, and every receipt would then look
+    tampered -- which is a fixture failing, dressed as the finding under test.
+
+    Returns ``(receipt_hash, public_key_pem)``.
+    """
+    from bernstein.core.lineage.run_graph import build_run_graph, build_run_graph_receipt
+    from bernstein.core.lineage.spine import LineageSpine
+    from bernstein.core.security.agent_card_signer import generate_ed25519_keypair
+
+    worktrees = workdir / ".sdd" / "runtime" / "worktrees"
+    worktrees.mkdir(parents=True, exist_ok=True)
+    lineage_root = workdir / ".sdd" / "lineage"
+    for session in _FANOUT_SESSIONS:
+        branch = worktrees / session
+        branch.mkdir(exist_ok=True)
+        _git(branch, "init", "-q", "-b", "main")
+        (branch / "out.txt").write_text(session, encoding="utf-8")
+        _git(branch, "add", "out.txt")
+        _git(branch, "commit", "-q", "-m", f"work in {session}")
+        LineageSpine(lineage_root, run_id=_FANOUT_RUN_IDS[session], hmac_key=_FANOUT_HMAC_KEY).record(
+            artifact_path=f"out/{session}.txt",
+            content=session.encode(),
+            actor="tester",
+            step_id="step-1",
+            model="test-model",
+            timestamp=_FANOUT_TIMESTAMP,
+        )
+
+    private_key_pem, public_key_pem = generate_ed25519_keypair()
+    graph = build_run_graph(
+        workdir,
+        run_ids=_FANOUT_RUN_IDS,
+        lineage_root=lineage_root,
+        hmac_key=_FANOUT_HMAC_KEY,
+    )
+    receipt = build_run_graph_receipt(
+        graph=graph,
+        workdir=workdir,
+        lineage_root=lineage_root,
+        hmac_key=_FANOUT_HMAC_KEY,
+        timestamp=_FANOUT_TIMESTAMP,
+        private_key_pem=private_key_pem,
+        chain=None,
+    )
+    return receipt.receipt_hash, public_key_pem
+
+
+def _fanout_inputs(workdir: Path, public_key_pem: bytes, *, run_ids: dict[str, str] | None = None) -> Any:
+    from bernstein.core.quality.janitor import RunGraphSweepInputs
+
+    return RunGraphSweepInputs(
+        repo_root=workdir,
+        run_ids=_FANOUT_RUN_IDS if run_ids is None else run_ids,
+        lineage_root=workdir / ".sdd" / "lineage",
+        hmac_key=_FANOUT_HMAC_KEY,
+        public_key_pem=public_key_pem,
+    )
+
+
+def _tamper_branch(workdir: Path, session: str) -> None:
+    """Edit a row inside one branch's spine, leaving its stored head alone.
+
+    The stored head is what a node hash carries, so this edit is invisible to
+    the hash comparison and only the chain walk sees it.
+    """
+    journal = next((workdir / ".sdd" / "lineage" / _FANOUT_RUN_IDS[session]).rglob("*.jsonl"))
+    raw = journal.read_bytes()
+    assert b'"actor":"tester"' in raw, "fixture no longer carries the field this test edits"
+    journal.write_bytes(raw.replace(b'"actor":"tester"', b'"actor":"testeR"'))
+
+
+def _tamper_counter(receipt_hash: str) -> float:
+    """The same counter the single-run tests read, keyed on the fan-out."""
+    from bernstein.core.observability.prometheus import lineage_tamper_total
+
+    return _counter_value(lineage_tamper_total, run_id=receipt_hash)
+
+
+def test_janitor_detects_a_tampered_fan_out_branch(tmp_path: Path) -> None:
+    """A branch edited inside a fan-out reaches the same alert as a run does."""
+    receipt_hash, public_key_pem = _seal_fanout(tmp_path)
+    _tamper_branch(tmp_path, "sess-beta")
+    before = _tamper_counter(receipt_hash)
+
+    audit = _FakeAuditLog()
+    verify_lineage_chains(
+        tmp_path,
+        audit_log=audit,
+        sink=NullAlertSink(),
+        run_graph=_fanout_inputs(tmp_path, public_key_pem),
+    )
+
+    tamper_events = [e for e in audit.events if e["event_type"] == "lineage_tamper_detected"]
+    assert len(tamper_events) == 1
+    assert tamper_events[0]["resource_id"] == receipt_hash
+    assert "sess-beta" in tamper_events[0]["details"]["errors"][0]
+    assert _tamper_counter(receipt_hash) == before + 1
+
+
+def test_janitor_leaves_an_intact_fan_out_alone(tmp_path: Path) -> None:
+    """No finding on a healthy fan-out, or the alert means nothing."""
+    _receipt_hash, public_key_pem = _seal_fanout(tmp_path)
+
+    audit = _FakeAuditLog()
+    verify_lineage_chains(
+        tmp_path,
+        audit_log=audit,
+        sink=NullAlertSink(),
+        run_graph=_fanout_inputs(tmp_path, public_key_pem),
+    )
+
+    assert audit.events == []
+
+
+def test_janitor_does_not_call_a_reaped_fan_out_tampering(tmp_path: Path) -> None:
+    """A receipt stops verifying once its worktrees are reaped.
+
+    From the filesystem a branch removed by routine cleanup and a branch
+    removed to hide what it held are the same observation -- and the janitor
+    is the process that does the reaping, so alerting on this would fire on
+    every fan-out it cleans up after.
+    """
+    receipt_hash, public_key_pem = _seal_fanout(tmp_path)
+    shutil.rmtree(tmp_path / ".sdd" / "runtime" / "worktrees" / "sess-beta")
+    before = _tamper_counter(receipt_hash)
+
+    audit = _FakeAuditLog()
+    verify_lineage_chains(
+        tmp_path,
+        audit_log=audit,
+        sink=NullAlertSink(),
+        run_graph=_fanout_inputs(tmp_path, public_key_pem),
+    )
+
+    assert audit.events == []
+    assert _tamper_counter(receipt_hash) == before
+
+
+def test_janitor_does_not_call_a_missing_run_id_tampering(tmp_path: Path) -> None:
+    """An incomplete mapping is a gap in the inputs, not in the tree."""
+    receipt_hash, public_key_pem = _seal_fanout(tmp_path)
+    before = _tamper_counter(receipt_hash)
+
+    audit = _FakeAuditLog()
+    verify_lineage_chains(
+        tmp_path,
+        audit_log=audit,
+        sink=NullAlertSink(),
+        run_graph=_fanout_inputs(tmp_path, public_key_pem, run_ids={"sess-alpha": "run-alpha"}),
+    )
+
+    assert audit.events == []
+    assert _tamper_counter(receipt_hash) == before
+
+
+def test_janitor_without_fan_out_inputs_sweeps_exactly_what_it_did_before(tmp_path: Path) -> None:
+    """The coupling is opt-in: no inputs, no fan-out sweep, same verdict.
+
+    A tampered fan-out sitting on disk must not change the answer for a caller
+    that never asked about fan-outs -- otherwise every existing janitor call
+    silently acquires a new failure mode.
+    """
+    _make_signed_run(tmp_path)
+    receipt_hash, _ = _seal_fanout(tmp_path)
+    _tamper_branch(tmp_path, "sess-beta")
+    before = _tamper_counter(receipt_hash)
+
+    audit = _FakeAuditLog()
+    results = verify_lineage_chains(tmp_path, audit_log=audit, sink=NullAlertSink())
+
+    assert [r.ok for r in results] == [True]
+    assert audit.events == []
+    assert _tamper_counter(receipt_hash) == before

@@ -15,6 +15,7 @@ import re
 import shlex
 import subprocess
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -41,6 +42,8 @@ from bernstein.core.quality.verifier_ladder import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from bernstein.core.lineage.gate import GateResult
     from bernstein.core.persistence.lineage import LineageVerificationResult
     from bernstein.core.security.audit_chain import AuditChainStore
@@ -597,12 +600,40 @@ def compact_lineage_logs(workdir: Path) -> list[str]:
     return compress_rotated_lineage(workdir / ".sdd")
 
 
+@dataclass(frozen=True, slots=True)
+class RunGraphSweepInputs:
+    """Everything a sealed fan-out needs before it can be re-derived.
+
+    A run-graph receipt seals opaque node hashes, so checking one means
+    rebuilding the graph off the tree and the spines -- which needs the repo,
+    the session-to-run mapping the fan-out was sealed with, the spine root,
+    and both keys. None of that is recoverable from the receipt file, so it is
+    supplied by the caller or the sweep does not run. That is the same opt-in
+    boundary :func:`verify_lineage_tool_call_gate` uses: without it the pass
+    is byte-for-byte what it was.
+
+    Attributes:
+        repo_root: Repository whose worktrees are the fan-out's branches.
+        run_ids: ``session_id -> run_id``, as used when the fan-out was sealed.
+        lineage_root: Root under which each run's spine lives.
+        hmac_key: Key the spines were written with.
+        public_key_pem: PEM public key the receipts were signed with.
+    """
+
+    repo_root: Path
+    run_ids: Mapping[str, str]
+    lineage_root: Path
+    hmac_key: bytes
+    public_key_pem: bytes
+
+
 def verify_lineage_chains(
     workdir: Path,
     *,
     audit_log: Any = None,
     sink: Any = None,
     verifier: Any = None,
+    run_graph: RunGraphSweepInputs | None = None,
 ) -> list[LineageVerificationResult]:
     """Re-verify every run's lineage chain and surface tampering loudly.
 
@@ -624,9 +655,16 @@ def verify_lineage_chains(
             ``LineageTamperEvent`` is delivered for each failed run.
         verifier: Optional :class:`LineageVerifier`. When set, customer
             signatures are checked alongside the WAL hash chain.
+        run_graph: Optional :class:`RunGraphSweepInputs`. When set, every
+            sealed fan-out under ``.sdd/run-graph`` is re-derived too, and a
+            tampered branch inside one surfaces exactly as a tampered
+            single-run spine already does. A fan-out the inputs cannot
+            account for is logged and skipped, never alerted on.
 
     Returns:
-        One :class:`LineageVerificationResult` per run inspected.
+        One :class:`LineageVerificationResult` per run inspected. Fan-out
+        receipts are not runs and do not appear here; they surface through
+        the alert path only.
     """
     from bernstein.core.persistence.lineage import LineageReader, verify_run_chain
 
@@ -644,7 +682,99 @@ def verify_lineage_chains(
         if result.ok:
             continue
         _surface_tamper(run_id, result, audit_log=audit_log, sink=sink)
+    if run_graph is not None:
+        _sweep_run_graph_receipts(workdir, run_graph, audit_log=audit_log, sink=sink)
     return results
+
+
+def _sweep_run_graph_receipts(
+    workdir: Path,
+    inputs: RunGraphSweepInputs,
+    *,
+    audit_log: Any,
+    sink: Any,
+) -> None:
+    """Re-derive every sealed fan-out and alert on the ones that disagree.
+
+    The sweep that already catches a tampered single-run spine had no
+    knowledge of fan-outs, so a branch edited inside one was invisible to it.
+    This closes that, through the same alert path -- one
+    ``lineage_tamper_detected`` event and one counter increment per receipt,
+    keyed on the receipt hash, which is the fan-out's identity.
+    """
+    from bernstein.core.lineage.run_graph import verify_run_graph_receipt
+    from bernstein.core.persistence.lineage import LineageVerificationResult
+
+    receipt_dir = workdir / ".sdd" / "run-graph"
+    if not receipt_dir.is_dir():
+        return
+    for receipt_path in sorted(receipt_dir.glob("*.json")):
+        try:
+            result = verify_run_graph_receipt(
+                receipt_path=receipt_path,
+                repo_root=inputs.repo_root,
+                run_ids=inputs.run_ids,
+                lineage_root=inputs.lineage_root,
+                hmac_key=inputs.hmac_key,
+                public_key_pem=inputs.public_key_pem,
+            )
+        except Exception:
+            logger.warning("run-graph: verification raised for %s", receipt_path.name, exc_info=True)
+            continue
+        if result.ok:
+            continue
+        unverifiable = _run_graph_unverifiable_reason(result, inputs)
+        if unverifiable is not None:
+            logger.info("run-graph: %s not checked -- %s", receipt_path.stem, unverifiable)
+            continue
+        sealed = 0 if result.receipt is None else len(result.receipt.node_hashes)
+        _surface_tamper(
+            receipt_path.stem,
+            LineageVerificationResult(ok=False, errors=[result.reason], record_count=sealed),
+            audit_log=audit_log,
+            sink=sink,
+        )
+
+
+def _run_graph_unverifiable_reason(
+    result: Any,
+    inputs: RunGraphSweepInputs,
+) -> str | None:
+    """Why this fan-out cannot be judged, or ``None`` when the failure is real.
+
+    Two states are refused by verification and are not evidence of anything.
+
+    A receipt stops verifying once its worktrees are reaped: from the
+    filesystem, a branch removed by routine cleanup and a branch removed to
+    hide what it held are the same observation. Alerting on the first would
+    fire on every fan-out the moment the janitor's own cleanup ran, and an
+    alert that fires on healthy state stops being read -- which costs more
+    than the coverage is worth.
+
+    A branch with no ``run_id`` in the supplied mapping is the same shape:
+    the caller did not give the sweep enough to pair that branch with a
+    spine, so the disagreement is in the inputs, not in the tree.
+
+    Everything else -- an edited body, a bad signature, a branch whose spine
+    no longer walks, a missing anchor -- is a real finding and is alerted on.
+    """
+    from bernstein.core.lineage.run_graph import RunGraphNodeStatus, build_run_graph
+
+    if result.status != "diverged" or result.receipt is None:
+        return None
+    graph = build_run_graph(
+        inputs.repo_root,
+        run_ids=inputs.run_ids,
+        lineage_root=inputs.lineage_root,
+        hmac_key=inputs.hmac_key,
+    )
+    sealed = len(result.receipt.node_hashes)
+    if len(graph.nodes) < sealed:
+        return f"the tree holds {len(graph.nodes)} of the {sealed} branches it sealed"
+    unresolved = sorted(node.session_id for node in graph.nodes if node.status is RunGraphNodeStatus.UNRESOLVED)
+    if unresolved:
+        return f"no run id supplied for branch(es) {', '.join(unresolved)}"
+    return None
 
 
 def verify_lineage_tool_call_gate(
