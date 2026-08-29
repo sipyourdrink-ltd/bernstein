@@ -23,7 +23,6 @@ from bernstein.core.quality.finding_disposition import (
     record_disposition,
 )
 
-
 # ---------------------------------------------------------------------------
 # FindingDisposition enum
 # ---------------------------------------------------------------------------
@@ -166,9 +165,7 @@ def test_load_returns_empty_when_missing(tmp_path: Path) -> None:
 
 def test_load_returns_records_in_append_order(tmp_path: Path) -> None:
     runtime = tmp_path / "rt"
-    record_disposition(
-        finding_id="a", disposition=FindingDisposition.OPEN, resolved_by="qa", runtime_dir=runtime
-    )
+    record_disposition(finding_id="a", disposition=FindingDisposition.OPEN, resolved_by="qa", runtime_dir=runtime)
     record_disposition(
         finding_id="b",
         disposition=FindingDisposition.CONFIRMED,
@@ -198,10 +195,13 @@ def test_load_skips_malformed_lines(tmp_path: Path, caplog: pytest.LogCaptureFix
         timestamp=2,
     )
     ledger.write_text(
-        json.dumps(good_a.to_dict()) + "\n"
+        json.dumps(good_a.to_dict())
+        + "\n"
         + "not-json\n"
-        + json.dumps({"missing": "fields"}) + "\n"
-        + json.dumps(good_b.to_dict()) + "\n",
+        + json.dumps({"missing": "fields"})
+        + "\n"
+        + json.dumps(good_b.to_dict())
+        + "\n",
         encoding="utf-8",
     )
     with caplog.at_level(logging.WARNING, logger="bernstein.core.quality.finding_disposition"):
