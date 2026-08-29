@@ -26,10 +26,6 @@ from pathlib import Path
 
 import pytest
 
-from bernstein.adapters.capability_profile import (
-    InvocationSpec,
-)
-
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "probe"
 
 
