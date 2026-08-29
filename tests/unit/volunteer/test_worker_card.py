@@ -166,8 +166,6 @@ class TestSignVerifyEnvelope:
         key, _ = _keypair()
         card = _make_worker_card()
         envelope = build_worker_card_envelope(card, key)
-        # Parse the envelope back to a dict and inspect the predicate type.
-        env_dict = envelope.to_dict()
         statement = envelope.statement
         assert statement["predicateType"] == WORKER_CARD_PREDICATE_TYPE
 
@@ -202,15 +200,17 @@ class TestVerifyWorkerCardEnvelope:
         env_dict = envelope.to_dict()
         import base64
         import json
+
         statement_bytes = base64.b64decode(env_dict["payload"])
         statement = json.loads(statement_bytes)
         # Mutate document_kind at the JSON layer; re-encode.
         statement["predicate"]["document_kind"] = "wrong-kind"
         # Recompute the subject digest.
-        new_doc_bytes = json.dumps(
-            statement["predicate"]["document"], sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
+        new_doc_bytes = json.dumps(statement["predicate"]["document"], sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
         import hashlib
+
         new_digest = hashlib.sha256(new_doc_bytes).hexdigest()
         statement["subject"][0]["digest"]["sha256"] = new_digest
         new_payload = json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -234,15 +234,17 @@ class TestVerifyWorkerCardEnvelope:
         env_dict = envelope.to_dict()
         import base64
         import json
+
         statement_bytes = base64.b64decode(env_dict["payload"])
         statement = json.loads(statement_bytes)
         # Inject a credential-looking string into the document.
         statement["predicate"]["document"]["capabilities"] = "uses API_KEY"
         # Recompute the subject digest.
-        new_doc_bytes = json.dumps(
-            statement["predicate"]["document"], sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
+        new_doc_bytes = json.dumps(statement["predicate"]["document"], sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
         import hashlib
+
         new_digest = hashlib.sha256(new_doc_bytes).hexdigest()
         statement["subject"][0]["digest"]["sha256"] = new_digest
         new_payload = json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
