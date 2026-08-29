@@ -401,22 +401,26 @@ def test_an_unanswerable_admission_question_refuses_the_merge(tmp_path: Path) ->
 
     from bernstein.core.git.git_pr import merge_with_conflict_detection
 
+    # Create a dummy journal file to allow the read_paths derivation to proceed
+    journal_path = tmp_path / "journal.jsonl"
+    journal_path.touch()
+
+    # Test that merge_with_conflict_detection raises ReadSetAdmissionRefused when an exception occurs
     with patch(
         "bernstein.core.git.git_pr.check_read_set_changed",
         side_effect=RuntimeError("journal unreadable"),
     ):
-        result = merge_with_conflict_detection(
-            cwd=tmp_path,
-            branch="work",
-            message="m",
-            task_id="T-1",
-            journal_path=str(tmp_path / "journal.jsonl"),
-            worktree_root=str(tmp_path),
-        )
+        from bernstein.core.git.read_set_admission import ReadSetAdmissionRefused
 
-    assert result.success is False
-    assert "could not run" in (result.error or "")
-    assert "journal unreadable" in (result.error or "")
+        with pytest.raises(ReadSetAdmissionRefused, match="Read-set admission check could not run"):
+            merge_with_conflict_detection(
+                cwd=tmp_path,
+                branch="work",
+                message="m",
+                task_id="T-1",
+                journal_path=str(journal_path),
+                worktree_root=str(tmp_path),
+            )
 
 
 def test_an_unanswerable_admission_question_refuses_the_incremental_merge(
@@ -427,19 +431,24 @@ def test_an_unanswerable_admission_question_refuses_the_incremental_merge(
 
     from bernstein.core.git.incremental_merge import incremental_merge_files
 
+    # Create a dummy journal file to allow the read_paths derivation to proceed
+    journal_path = tmp_path / "journal.jsonl"
+    journal_path.touch()
+
+    # Test that incremental_merge_files raises ReadSetAdmissionRefused when an exception occurs
     with patch(
         "bernstein.core.git.incremental_merge.check_read_set_changed",
         side_effect=RuntimeError("journal unreadable"),
     ):
-        result = incremental_merge_files(
-            workdir=tmp_path,
-            runtime_dir=tmp_path / "runtime",
-            session_id="S-1",
-            files=["a.py"],
-            task_id="T-1",
-            journal_path=str(tmp_path / "journal.jsonl"),
-            worktree_root=str(tmp_path),
-        )
+        from bernstein.core.git.read_set_admission import ReadSetAdmissionRefused
 
-    assert result.success is False
-    assert "could not run" in (result.error or "")
+        with pytest.raises(ReadSetAdmissionRefused, match="Read-set admission check could not run"):
+            incremental_merge_files(
+                workdir=tmp_path,
+                runtime_dir=tmp_path / "runtime",
+                session_id="S-1",
+                files=["a.py"],
+                task_id="T-1",
+                journal_path=str(journal_path),
+                worktree_root=str(tmp_path),
+            )

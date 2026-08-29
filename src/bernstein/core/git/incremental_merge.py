@@ -439,20 +439,9 @@ def incremental_merge_files(
                 # for a task that declared a journal for admission, and an
                 # admission question that could not be answered refuses
                 # rather than admitting by default.
-                logger.error(
-                    "Read-set admission check could not run for task %s: %s",
-                    task_id,
-                    exc,
-                )
-                return IncrementalMergeResult(
-                    success=False,
-                    merged_files=[],
-                    skipped_already_merged=[],
-                    uncommitted_files=[],
-                    conflicting_files=[],
-                    commit_sha="",
-                    error=f"Read-set admission check could not run: {exc}",
-                )
+                raise ReadSetAdmissionRefused(
+                    f"Read-set admission check could not run for task {task_id}: {exc}"
+                ) from exc
 
         # Load current state to find already-merged files
         state = _load_state(runtime_dir, session_id)

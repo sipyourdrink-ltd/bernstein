@@ -70,11 +70,15 @@ def check_read_set_changed(
         )
         # Split output into lines and filter out empty lines
         changed_files = set(line.strip() for line in diff_result.stdout.splitlines() if line.strip())
-    except Exception:
-        # If we cannot compute the diff, assume no changes to avoid blocking
-        # the orchestrator on a temporary failure. The caller can decide to
-        # treat this as a refusal if desired.
-        changed_files = set()
+    except Exception as exc:
+        # If we cannot compute the diff (e.g., unreadable journal, bad tree state),
+        # this gate exists to refuse a merge whose read-set might have drifted.
+        # A check that could not run does not know that nothing drifted, and
+        # proceeding would turn every such failure into an admission. Instead,
+        # refuse the action and name the reason: "read-set admission check could not run"
+        raise ReadSetAdmissionRefused(
+            f"Read-set admission check could not run: {exc}"
+        ) from exc
 
     changed_paths: list[ChangedPath] = []
     for path in read_paths:
