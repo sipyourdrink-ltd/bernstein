@@ -698,20 +698,16 @@ nodes:
 def test_state_persistence_functions_work_correctly(tmp_path: Path) -> None:
     """Test that all state persistence functions work as expected."""
     from bernstein.core.workflows.workflow_runner import (
-        spec_digest,
-        record_spec_snapshot,
-        record_node_state,
-        load_node_state,
-        load_spec_snapshot,
-        record_run_complete,
-        run_complete_marker_exists,
+        SPEC_SNAPSHOT_FILE,
         _run_state_dir,
         _validated_run_id,
-        SPEC_SNAPSHOT_FILE,
-    )
-    from bernstein.core.workflows.workflow_spec import (
-        WorkflowSpecError,
-        load_workflow_spec_from_text,
+        load_node_state,
+        load_spec_snapshot,
+        record_node_state,
+        record_run_complete,
+        record_spec_snapshot,
+        run_complete_marker_exists,
+        spec_digest,
     )
 
     workdir = tmp_path / "workdir"
@@ -744,7 +740,7 @@ nodes:
     for invalid_id in [".", "..", "test/run", "test\\run", "", "a" * 129]:
         try:
             _validated_run_id(invalid_id)
-            assert False, f"Expected WorkflowRunError for invalid run_id: {invalid_id}"
+            raise AssertionError(f"Expected WorkflowRunError for invalid run_id: {invalid_id}")
         except Exception:
             pass  # Expected
 
@@ -833,10 +829,6 @@ nodes:
 
 def test_workflow_resume_works_correctly(tmp_path: Path) -> None:
     """Test that workflow resume correctly resumes from completed nodes."""
-    from bernstein.core.workflows.workflow_spec import (
-        WorkflowSpecError,
-        load_workflow_spec_from_text,
-    )
 
     workdir = tmp_path / "workdir"
     workdir.mkdir()
@@ -914,7 +906,7 @@ nodes:
     # Test resuming an already completed run fails
     try:
         runner.resume(fixed_spec, goal="", run_id=run_id)
-        assert False, "Expected WorkflowRunError for already completed run"
+        raise AssertionError("Expected WorkflowRunError for already completed run")
     except Exception as e:
         assert "already completed" in str(e).lower()
 
@@ -943,13 +935,13 @@ nodes:
     # Then try to resume with modified spec - should fail
     try:
         runner.resume(modified_spec, goal="", run_id=run_id2)
-        assert False, "Expected WorkflowRunError due to spec digest mismatch"
+        raise AssertionError("Expected WorkflowRunError due to spec digest mismatch")
     except Exception as e:
         assert "spec digest mismatch" in str(e).lower()
 
     # Test resume with non-existent run_id fails
     try:
         runner.resume(fixed_spec, goal="", run_id="nonexistent-run")
-        assert False, "Expected WorkflowRunError for nonexistent run"
+        raise AssertionError("Expected WorkflowRunError for nonexistent run")
     except Exception as e:
         assert "no workflow run state" in str(e).lower()
