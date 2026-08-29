@@ -88,11 +88,13 @@ class TestScanWALForDigests:
 
         wal_file = wal_dir / "test.wal.jsonl"
         wal_file.write_text(
-            json.dumps({
-                "seq": 1,
-                "inputs": {"digest": "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a12"},
-                "output": {"result": "ok"},
-            })
+            json.dumps(
+                {
+                    "seq": 1,
+                    "inputs": {"digest": "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a12"},
+                    "output": {"result": "ok"},
+                }
+            )
             + "\n",
             encoding="utf-8",
         )
@@ -108,8 +110,7 @@ class TestScanWALForDigests:
         for i in range(3):
             wal_file = wal_dir / f"run-{i}.wal.jsonl"
             wal_file.write_text(
-                json.dumps({"seq": 1, "inputs": {"digest": f"{i:0>64}"}})
-                + "\n",
+                json.dumps({"seq": 1, "inputs": {"digest": f"{i:0>64}"}}) + "\n",
                 encoding="utf-8",
             )
 
@@ -159,11 +160,13 @@ class TestScanLineageForDigests:
 
         spine_file = lineage_dir / "spine.jsonl"
         spine_file.write_text(
-            json.dumps({
-                "v": 2,
-                "content_hash": "sha256:0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a12",
-                "artifact_path": "output.txt",
-            })
+            json.dumps(
+                {
+                    "v": 2,
+                    "content_hash": "sha256:0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a12",
+                    "artifact_path": "output.txt",
+                }
+            )
             + "\n",
             encoding="utf-8",
         )
@@ -182,11 +185,13 @@ class TestScanLineageForDigests:
             run_dir.mkdir(parents=True)
             spine_file = run_dir / "spine.jsonl"
             spine_file.write_text(
-                json.dumps({
-                    "v": 2,
-                    "content_hash": f"sha256:{i:0>64}",
-                    "artifact_path": f"output-{i}.txt",
-                })
+                json.dumps(
+                    {
+                        "v": 2,
+                        "content_hash": f"sha256:{i:0>64}",
+                        "artifact_path": f"output-{i}.txt",
+                    }
+                )
                 + "\n",
                 encoding="utf-8",
             )
@@ -210,8 +215,7 @@ class TestScanBacklogForDigests:
 
         yaml_file = backlog_dir / "task-1.yaml"
         yaml_file.write_text(
-            "title: Test task\n"
-            "content: 0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a12\n",
+            "title: Test task\ncontent: 0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a12\n",
             encoding="utf-8",
         )
 
@@ -229,7 +233,10 @@ class TestCollectReferencedDigests:
         wal_dir.mkdir(parents=True)
         wal_file = wal_dir / "run.wal.jsonl"
         wal_file.write_text(
-            json.dumps({"seq": 1, "inputs": {"digest": "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a12"}}) + "\n",
+            json.dumps(
+                {"seq": 1, "inputs": {"digest": "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a12"}}
+            )
+            + "\n",
             encoding="utf-8",
         )
 
@@ -238,7 +245,9 @@ class TestCollectReferencedDigests:
         lineage_dir.mkdir(parents=True)
         spine_file = lineage_dir / "spine.jsonl"
         spine_file.write_text(
-            json.dumps({"v": 2, "content_hash": "sha256:1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a23"})
+            json.dumps(
+                {"v": 2, "content_hash": "sha256:1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a23"}
+            )
             + "\n",
             encoding="utf-8",
         )
