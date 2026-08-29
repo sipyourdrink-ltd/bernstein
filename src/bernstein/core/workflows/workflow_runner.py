@@ -182,7 +182,8 @@ def _run_state_dir(workdir: Path, run_id: str) -> Path:
 
     # Reuse the orchestrator's run-journal path to maintain consistency
     # between the workflow engine and the higher-level orchestrator.
-    return run_journal_path(workdir, run_id)
+    # Return the parent directory (without the journal filename).
+    return run_journal_path(workdir, run_id).parent
 
 
 def _validated_run_id(run_id: str) -> str:

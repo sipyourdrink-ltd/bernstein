@@ -434,7 +434,7 @@ def resume_cmd(run_id: str, goal: str, manifest_arg: str | None) -> None:
     from rich.console import Console
     from rich.table import Table
 
-    from bernstein.core.workflows import NodeStatus, WorkflowRunner, WorkflowSpecError
+    from bernstein.core.workflows import NodeStatus, WorkflowRunner, WorkflowRunError, WorkflowSpecError
     from bernstein.core.workflows.workflow_runner import (
         load_spec_snapshot,
         run_complete_marker_exists,
@@ -499,7 +499,7 @@ def resume_cmd(run_id: str, goal: str, manifest_arg: str | None) -> None:
     runner = WorkflowRunner(workdir=workdir)
     try:
         execution = runner.resume(spec, goal=goal, run_id=run_id)
-    except WorkflowSpecError as exc:
+    except (WorkflowSpecError, WorkflowRunError) as exc:
         console.print(f"[bold red]Resume failed:[/bold red] {exc}")
         raise SystemExit(1) from exc
 
