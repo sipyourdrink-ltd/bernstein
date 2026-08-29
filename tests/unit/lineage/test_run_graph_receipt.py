@@ -18,20 +18,18 @@ import pytest
 
 from bernstein.core.lineage.run_graph import (
     RUN_GRAPH_RUN_ID,
-    RunGraph,
     RunGraphNode,
     RunGraphNodeStatus,
     RunGraphReceipt,
+    _node_hash,
     build_run_graph,
     build_run_graph_receipt,
-    compute_root_hash,
-    _node_hash,
 )
+from bernstein.core.security.agent_card_signer import generate_ed25519_keypair
 from bernstein.core.security.audit_chain import (
     EVENT_RUN_GRAPH_SEALED,
     AuditChainStore,
 )
-from bernstein.core.security.agent_card_signer import generate_ed25519_keypair
 
 HMAC_KEY = b"k" * 32
 
@@ -251,9 +249,7 @@ def test_node_hash_includes_session_id() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_build_run_graph_receipt_basic(
-    fanout: tuple[Path, Path], private_key_pem: bytes
-) -> None:
+def test_build_run_graph_receipt_basic(fanout: tuple[Path, Path], private_key_pem: bytes) -> None:
     """Test basic functionality of build_run_graph_receipt."""
     repo_root, lineage_root = fanout
 
@@ -297,9 +293,7 @@ def test_build_run_graph_receipt_basic(
     assert "signed_jws" in data
 
 
-def test_build_run_graph_receipt_with_audit_chain(
-    fanout: tuple[Path, Path], private_key_pem: bytes
-) -> None:
+def test_build_run_graph_receipt_with_audit_chain(fanout: tuple[Path, Path], private_key_pem: bytes) -> None:
     """Test audit chain mirroring."""
     repo_root, lineage_root = fanout
     chain = AuditChainStore(repo_root / "audit", key=HMAC_KEY)
@@ -336,9 +330,7 @@ def test_build_run_graph_receipt_with_audit_chain(
     assert ok, errors
 
 
-def test_build_run_graph_receipt_determinism(
-    fanout: tuple[Path, Path], private_key_pem: bytes
-) -> None:
+def test_build_run_graph_receipt_determinism(fanout: tuple[Path, Path], private_key_pem: bytes) -> None:
     """Test that identical inputs produce byte-identical receipts."""
     repo_root, lineage_root = fanout
 
@@ -379,9 +371,7 @@ def test_build_run_graph_receipt_determinism(
     assert receipt_a.journal_entry_hash == receipt_b.journal_entry_hash
 
 
-def test_build_run_graph_receipt_includes_all_nodes(
-    fanout: tuple[Path, Path], private_key_pem: bytes
-) -> None:
+def test_build_run_graph_receipt_includes_all_nodes(fanout: tuple[Path, Path], private_key_pem: bytes) -> None:
     """Test that receipt includes hashes for all nodes including unresolved."""
     repo_root, lineage_root = fanout
 
@@ -460,9 +450,7 @@ def test_build_run_graph_receipt_anchors_under_dedicated_run_id(
     assert graph_spine.head_hash() != ""
 
 
-def test_build_run_graph_receipt_is_signed(
-    fanout: tuple[Path, Path], private_key_pem: bytes
-) -> None:
+def test_build_run_graph_receipt_is_signed(fanout: tuple[Path, Path], private_key_pem: bytes) -> None:
     """Test that receipt is signed with Ed25519 JWS."""
     repo_root, lineage_root = fanout
 
@@ -498,9 +486,7 @@ def test_build_run_graph_receipt_is_signed(
     assert parts[1] == ""
 
 
-def test_build_run_graph_receipt_graph_root_hash_matches(
-    fanout: tuple[Path, Path], private_key_pem: bytes
-) -> None:
+def test_build_run_graph_receipt_graph_root_hash_matches(fanout: tuple[Path, Path], private_key_pem: bytes) -> None:
     """Test that the sealed graph root hash matches the input graph."""
     repo_root, lineage_root = fanout
 

@@ -240,6 +240,7 @@ class RunGraphReceiptSchema:
 
     Bump only on a wire-format change.
     """
+
     version: int = 1
 
 
@@ -325,7 +326,12 @@ def build_run_graph_receipt(
     receipt_dir.mkdir(parents=True, exist_ok=True)
     receipt_path = receipt_dir / f"{receipt_hash}.json"
     receipt_path.write_text(
-        json.dumps({**sealed_no_anchor.to_dict(), "signed_jws": signed_jws}, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+        json.dumps(
+            {**sealed_no_anchor.to_dict(), "signed_jws": signed_jws},
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
         encoding="utf-8",
     )
 
@@ -415,9 +421,9 @@ __all__ = [
     "RunGraphNodeStatus",
     "RunGraphReceipt",
     "RunGraphReceiptSchema",
+    "_node_hash",
+    "_record_run_graph_receipt",
     "build_run_graph",
     "build_run_graph_receipt",
     "compute_root_hash",
-    "_node_hash",
-    "_record_run_graph_receipt",
 ]
