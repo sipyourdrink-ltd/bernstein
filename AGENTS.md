@@ -35,7 +35,6 @@ Per-directory context files for agents working inside a subtree. Each covers: wh
 | `src/bernstein/core/orchestration/AGENTS.md` | Orchestration engine |
 | `src/bernstein/core/quality/AGENTS.md`       | Quality gates and verification |
 | `src/bernstein/core/security/AGENTS.md`      | Security: audit chain, identity, policy |
-| `src/bernstein/core/workflows/AGENTS.md`     | Workflow runner: declarative YAML DAG execution |
 | `tests/AGENTS.md`                            | Test suite |
 
 ## Build & test
