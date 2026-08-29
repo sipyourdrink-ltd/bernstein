@@ -326,14 +326,12 @@ def _render_memory_lessons_block(workdir: Path) -> str:
 
     # 1. Age bounding - filter entries older than horizon
     recent_entries = []
-    for entry in entries:
+    for idx, entry in enumerate(entries):
         ts = entry.get("timestamp")
         if ts is None:
-            # No timestamp - treat as newest so they're kept in FIFO order
-            # (they sort to the front after weight desc, then drop first at cap)
+            # No timestamp - treat as newest for age bounding (always include)
             age = 0.0
             weight = 1.0
-            ts = 0  # sort to front so they drop first when capped
         else:
             age = now - ts
             if age >= horizon + 1.0:
@@ -347,28 +345,44 @@ def _render_memory_lessons_block(workdir: Path) -> str:
         entry_copy = dict(entry)
         entry_copy["_weight"] = weight
         entry_copy["_age"] = age
+        entry_copy["_has_ts"] = ts is not None
+        entry_copy["_insertion_order"] = idx
         recent_entries.append(entry_copy)
 
-    # 2. Sort by (recency desc, weight desc) for deterministic output
-    # Recency desc: newer entries (higher timestamp) come first
-    # Weight desc: within same recency tier, higher weight (less decay) comes first
-    # This ensures older entries are prioritized for removal when capping
-    recent_entries.sort(key=lambda e: (-e.get("timestamp", 0), -e["_weight"]))
+    # 2. Sort all entries for deterministic output
+    # Entries with timestamps: sort by (age asc = newer first, weight desc = higher weight first)
+    # Entries without timestamps: preserve FIFO order (newest = highest insertion_order kept first)
+    def _sort_key(e: dict[str, Any]) -> tuple:
+        if e["_has_ts"]:
+            # Timestamped: age ascending (newest first), then weight desc, then insertion
+            return (0, e["_age"], -e["_weight"], e["_insertion_order"])
+        else:
+            # Untimestamped: insertion_order descending (newest last = kept first)
+            return (1, -e["_insertion_order"])
 
-    # 3. Per-author cap - keep only N entries per author
-    author_entries = {}
-    for entry in recent_entries:
+    recent_entries.sort(key=_sort_key)
+
+    # 3. Apply global cap
+    capped_by_global = recent_entries[:_MEMORY_LESSONS_MAX]
+
+    # 4. Per-author cap - only for timestamped entries (not for backward compat)
+    ts_capped = [e for e in capped_by_global if e["_has_ts"]]
+    no_ts_capped = [e for e in capped_by_global if not e["_has_ts"]]
+
+    # Apply per-author cap only to timestamped entries
+    author_entries: dict[str, list[dict[str, Any]]] = {}
+    for entry in ts_capped:
         author = entry.get("author", "")
         if author not in author_entries:
             author_entries[author] = []
         author_entries[author].append(entry)
 
-    capped_entries = []
-    for author, entries_list in author_entries.items():
-        capped_entries.extend(entries_list[:SPAWN.memory_lessons_max_per_author])
+    ts_final: list[dict[str, Any]] = []
+    for _author, entries_list in author_entries.items():
+        ts_final.extend(entries_list[:SPAWN.memory_lessons_max_per_author])
 
-    # 4. Limit to max entries overall
-    final_entries = capped_entries[:_MEMORY_LESSONS_MAX]
+    # Untimestamped entries already capped globally, just pass through
+    final_entries = no_ts_capped + ts_final
 
     bullets: list[str] = []
     for entry in final_entries:
