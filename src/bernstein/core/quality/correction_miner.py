@@ -250,6 +250,18 @@ def _parents(cwd: Path, commit_sha: str) -> list[str]:
     return parts[1:] if len(parts) > 1 else []
 
 
+def _count_commits(cwd: Path, commit_sha: str) -> int:
+    """Return the number of commits reachable from *commit_sha* (excluding merges)."""
+    try:
+        out = _git(cwd, ["rev-list", "--no-merges", "--count", commit_sha])
+    except RuntimeError:
+        return 0
+    try:
+        return int(out.strip())
+    except (TypeError, ValueError):
+        return 0
+
+
 def _merge_base(cwd: Path, a: str, b: str) -> str | None:
     """Return ``merge-base(a, b)`` or ``None`` on failure."""
     try:
@@ -377,7 +389,17 @@ def extract_correction_pairs(
         # sides, so skip it too.
         if len(parents) != 2:
             continue
-        contributor_side, other_side = parents
+
+        # Identify which parent is the contributor side (the branch that was merged)
+        # and which is the main/trunk side. Use a heuristic: the contributor side
+        # has MORE commits in its ancestry (because the branch accumulated commits
+        # before being merged). Count commits reachable from each parent.
+        p0_commits = _count_commits(cwd, parents[0])
+        p1_commits = _count_commits(cwd, parents[1])
+        if p0_commits > p1_commits:
+            contributor_side, other_side = parents[0], parents[1]
+        else:
+            contributor_side, other_side = parents[1], parents[0]
 
         # Walk every non-merge commit on the contributor's side that landed
         # in this merge. These are the *base* candidates -- the states a

@@ -86,50 +86,59 @@ def _commit(
 def _make_merge_repo() -> tuple[Path, dict[str, str]]:
     """Create a repo with a contributor branch and a maintainer correction on top.
 
-    Returns (repo_root, commit_shas) where sha dict contains the key commit SHAs.
+    Structure:
+      main:  initial -> main_only.py: main commit
+      contributor: initial -> contrib.py: contributor commit -> maintainer fix on contrib.py
     """
     repo = _init_repo()
 
     # Initial commit on main
-    base_sha = _commit(repo, "initial", file_path="lib.py", content="def foo():\n    return 1\n")
+    initial_sha = _commit(
+        repo,
+        "initial",
+        file_path="init.py",
+        content="# init\n",
+    )
     _run("branch", "-M", "main", cwd=repo)
 
-    # Create a contributor branch
+    # Contributor branch: initial -> contributor commit (the "base" that needs fixing)
     _run("checkout", "-b", "contributor", cwd=repo)
-    # Contributor commits (the "base" state that needs fixing)
     contrib_sha = _commit(
         repo,
         "Add logging without sanitization",
         author_name="Contributor",
         author_email="contributor@example.com",
-        file_path="lib.py",
-        content='def foo():\n    import logging\n    logging.info(user_input)\n',
+        file_path="contrib.py",
+        content='def add_logging(user_input):\n    import logging\n    logging.info(user_input)\n',
     )
 
-    # Merge contributor into main (maintainer side is empty at this point)
-    _run("checkout", "main", cwd=repo)
-    _run("merge", "--no-edit", "contributor", cwd=repo)
-    merge_sha = _run("rev-parse", "HEAD", cwd=repo)
-
-    # Maintainer creates a fix on top of contributor's commit
-    _run("checkout", "-b", "maintainer-fix", cwd=repo)
+    # Maintainer creates a fix on top of contributor's commit (on the contributor branch)
     fix_sha = _commit(
         repo,
         "sanitize user_input before logging",
         author_name="Maintainer",
         author_email="maintainer@example.com",
-        file_path="lib.py",
-        content='def foo():\n    import logging\n    from bernstein.safety import sanitize\n    logging.info(sanitize(user_input))\n',
+        file_path="contrib.py",
+        content='def add_logging(user_input):\n    import logging\n    from bernstein.safety import sanitize\n    logging.info(sanitize(user_input))\n',
     )
 
-    # Merge the maintainer fix back into main
+    # Back to main: add a commit so main diverges from contributor
     _run("checkout", "main", cwd=repo)
-    _run("merge", "--no-edit", "maintainer-fix", cwd=repo)
+    main_commit_sha = _commit(
+        repo,
+        "main internal change",
+        file_path="main_only.py",
+        content="# main only\n",
+    )
+
+    # Merge contributor into main: creates a TRUE merge (two parents)
+    _run("merge", "--no-edit", "contributor", cwd=repo)
+    merge1_sha = _run("rev-parse", "HEAD", cwd=repo)
 
     shas = {
         "base": contrib_sha,
         "follow_up": fix_sha,
-        "merge": merge_sha,
+        "merge": merge1_sha,
         "contributor": "contributor@example.com",
         "maintainer": "maintainer@example.com",
     }
@@ -137,45 +146,57 @@ def _make_merge_repo() -> tuple[Path, dict[str, str]]:
 
 
 def _make_multi_author_correction_repo() -> tuple[Path, dict[str, str]]:
-    """Create a repo with corrections from two different authors (corroborated)."""
+    """Create a repo with corrections from two different authors (corroborated).
+
+    Use separate files so merges don't conflict.
+    """
     repo = _init_repo()
-    base_sha = _commit(repo, "initial", file_path="lib.py", content="def bar():\n    pass\n")
+
+    # Initial commit
+    base_sha = _commit(repo, "initial", file_path="init.py", content="# init\n")
     _run("branch", "-M", "main", cwd=repo)
 
-    # First author's correction
-    _run("checkout", "-b", "fix1", cwd=repo)
+    # Alice's branch
+    _run("checkout", "-b", "alice-fix", cwd=repo)
     sha1 = _commit(
         repo,
-        "sanitize input in bar",
+        "alice sanitization",
         author_name="Alice",
         author_email="alice@example.com",
-        file_path="lib.py",
-        content='def bar():\n    from bernstein.safety import sanitize\n    return sanitize(data)\n',
+        file_path="alice.py",
+        content='def foo(data):\n    from bernstein.safety import sanitize\n    return sanitize(data)\n',
     )
+
+    # Back to main: add a commit so main diverges
     _run("checkout", "main", cwd=repo)
-    _run("merge", "--no-edit", "fix1", cwd=repo)
+    _commit(repo, "main internal", file_path="main_only.py", content="# main only\n")
+
+    # Merge alice's fix
+    _run("merge", "--no-edit", "alice-fix", cwd=repo)
     merge1 = _run("rev-parse", "HEAD", cwd=repo)
 
-    # Second author's correction (similar shape)
-    _run("checkout", "-b", "fix2", cwd=repo)
+    # Bob's branch
+    _run("checkout", "-b", "bob-fix", cwd=repo)
     sha2 = _commit(
         repo,
-        "sanitize input in bar",
+        "bob sanitization",
         author_name="Bob",
         author_email="bob@example.com",
-        file_path="lib.py",
-        content='def bar():\n    from bernstein.safety import sanitize\n    return sanitize(data)\n',
+        file_path="bob.py",
+        content='def foo(data):\n    from bernstein.safety import sanitize\n    return sanitize(data)\n',
     )
+
+    # Back to main: add another commit so it diverges
     _run("checkout", "main", cwd=repo)
-    _run("merge", "--no-edit", "fix2", cwd=repo)
+    _commit(repo, "another main commit", file_path="main_only2.py", content="# main2\n")
+
+    # Merge bob's fix
+    _run("merge", "--no-edit", "bob-fix", cwd=repo)
     merge2 = _run("rev-parse", "HEAD", cwd=repo)
 
     shas = {
-        "base1": base_sha,
         "follow_up1": sha1,
-        "merge1": merge1,
         "follow_up2": sha2,
-        "merge2": merge2,
         "author1": "alice@example.com",
         "author2": "bob@example.com",
     }
