@@ -265,9 +265,7 @@ def budget_cmd(
             max_size=max_size,
             local_only=local_only,
         )
-        supplied = any(
-            value is not None for value in (budget_tasks, budget_hours, budget_tokens, max_size, local_only)
-        )
+        supplied = any(value is not None for value in (budget_tasks, budget_hours, budget_tokens, max_size, local_only))
         consumption = load_ledger(ledger)
         if supplied:
             save_budget_config(effective, config)
