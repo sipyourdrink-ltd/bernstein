@@ -1,14 +1,15 @@
-"""Committed trust-record test vectors are exercised by CI (issues #4760-#4762).
+"""Committed trust-record test vectors are exercised by CI (issues #4760-#4764).
 
 ``tests/fixtures/trust-record-vectors/`` carries a single-execution Trust
-Record and a delegated parent+child pair, all produced by the real
-``TrustRecordEmitter`` over real ``EventJournal``-recorded runs (never
-hand-written JSON -- see ``_build_trust_record_vectors.py`` in that
-directory). These tests re-verify their signatures and full field surface
-from the committed bytes alone: no network, and no separately-known key
-file required (``cnf.jwk`` carries the public key needed to verify). The
-committed public key PEM is pinned alongside purely as a second,
-independent check that the two agree -- not as something a verifier needs.
+Record, a delegated parent+child pair, and a run-level aggregate over that
+pair (issue #4763), all produced by the real ``TrustRecordEmitter`` over
+real ``EventJournal``-recorded runs (never hand-written JSON -- see
+``_build_trust_record_vectors.py`` in that directory). These tests
+re-verify their signatures and full field surface from the committed bytes
+alone: no network, and no separately-known key file required (``cnf.jwk``
+carries the public key needed to verify). The committed public key PEM is
+pinned alongside purely as a second, independent check that the two
+agree -- not as something a verifier needs.
 """
 
 from __future__ import annotations
@@ -26,14 +27,14 @@ _VECTORS = _REPO_ROOT / "tests" / "fixtures" / "trust-record-vectors"
 _SOLO = _VECTORS / "single-execution-trust-record.json"
 _PARENT = _VECTORS / "delegated-parent-trust-record.json"
 _CHILD = _VECTORS / "delegated-child-trust-record.json"
+_AGGREGATE = _VECTORS / "aggregate-trust-record.json"
 _PUBKEY = _VECTORS / "trust-record-vectors-key.pem"
 
-#: Every top-level field the signature covers (everything except
-#: ``signature``), in the order ``TrustRecordEmitter._signed_body`` builds
-#: the signing body (``bernstein.core.observability.trust_record``).
-#: ``delegation``/``references`` are signed-over even on records that omit
-#: them from the emitted JSON -- see ``_canonical_body_bytes`` below.
-_SIGNED_BODY_FIELDS: tuple[str, ...] = (
+#: Every top-level field that is *always* signed, mirroring
+#: ``trust_record._BASE_SIGNED_FIELDS``. ``delegation``/``references`` are
+#: deliberately excluded here: they only enter the signed body when the
+#: record actually carries them -- see ``_canonical_body_bytes`` below.
+_BASE_SIGNED_FIELDS: tuple[str, ...] = (
     "eat_profile",
     "iat",
     "subject",
@@ -45,8 +46,6 @@ _SIGNED_BODY_FIELDS: tuple[str, ...] = (
     "build_provenance",
     "appraisal",
     "cnf",
-    "delegation",
-    "references",
 )
 _REQUIRED_TOP_LEVEL_FIELDS: tuple[str, ...] = (
     "eat_profile",
@@ -70,11 +69,16 @@ def _load(path: Path) -> dict[str, Any]:
 def _canonical_body_bytes(doc: dict[str, Any]) -> bytes:
     """Rebuild the exact bytes the emitter signed from a parsed record.
 
-    ``.get`` rather than ``[]``: ``delegation``/``references`` are absent
-    from the emitted JSON on a root record, but the signer still signed
-    over an explicit ``None`` for each, so the reconstruction must too.
+    ``delegation``/``references`` are only added when *doc* actually
+    carries them: the signed pre-image is the record as serialized (see
+    ``trust_record``'s "Signing pre-image, corrected" docstring note), not
+    a form padded out with an explicit ``null`` for an absent member.
     """
-    body = {field: doc.get(field) for field in _SIGNED_BODY_FIELDS}
+    body = {field: doc[field] for field in _BASE_SIGNED_FIELDS}
+    if "delegation" in doc:
+        body["delegation"] = doc["delegation"]
+    if "references" in doc:
+        body["references"] = doc["references"]
     return canonicalize_jcs(body)
 
 
@@ -182,7 +186,7 @@ def test_delegated_child_vector_parent_record_hash_matches_the_committed_parent_
 
 def test_delegated_child_vector_carries_the_delegation_credential_id() -> None:
     child = _load(_CHILD)
-    assert child["delegation"]["credential_id"] == "trust-record-vector-delegation-credential"
+    assert child["delegation"]["credential_id"] == "trust-record-vector-delegation-credential:scope=narrow"
 
 
 def test_delegated_parent_and_child_have_different_policy_bundle_hashes() -> None:
@@ -204,6 +208,47 @@ def test_committed_public_key_matches_the_key_recovered_from_cnf_jwk() -> None:
     from_cnf = _public_key_pem_from_cnf_jwk(doc)
     pinned = _PUBKEY.read_bytes()
     assert from_cnf == pinned
+
+
+def test_aggregate_vector_verifies_offline() -> None:
+    doc = _load(_AGGREGATE)
+    public_key_pem = _public_key_pem_from_cnf_jwk(doc)
+    assert _verify_offline(doc, public_key_pem) is True
+
+
+def test_aggregate_vector_has_no_delegation_member() -> None:
+    """A rollup is not a hop acting under delegated authority."""
+    doc = _load(_AGGREGATE)
+    assert "delegation" not in doc
+
+
+def test_aggregate_vector_subject_is_run_scoped_not_execution_scoped() -> None:
+    doc = _load(_AGGREGATE)
+    assert doc["subject"] == "spiffe://bernstein.run/run/trust-record-vector-run"
+    assert "/exec/" not in doc["subject"]
+
+
+def test_aggregate_vector_has_one_member_execution_reference_per_member_no_other_rel() -> None:
+    doc = _load(_AGGREGATE)
+    rels = [r["rel"] for r in doc["references"]]
+    assert rels == ["member-execution", "member-execution"]
+
+
+def test_aggregate_vector_member_references_resolve_to_the_parent_and_child_vectors_by_hash() -> None:
+    """The generator gave the aggregate ``[parent_output, child_output]`` in
+    that order -- each reference's content-addressed ``id`` must recompute
+    to the corresponding committed member vector's own exact bytes."""
+    aggregate = _load(_AGGREGATE)
+    parent_bytes = _PARENT.read_text(encoding="utf-8").rstrip("\n")
+    child_bytes = _CHILD.read_text(encoding="utf-8").rstrip("\n")
+
+    parent_id = f"sha256:{hashlib.sha256(parent_bytes.encode('utf-8')).hexdigest()}"
+    child_id = f"sha256:{hashlib.sha256(child_bytes.encode('utf-8')).hexdigest()}"
+
+    ids = [r["id"] for r in aggregate["references"]]
+    assert ids == [parent_id, child_id]
+    for entry in aggregate["references"]:
+        assert entry["resolver"]
 
 
 def test_regenerating_the_vectors_is_byte_identical_to_the_committed_files() -> None:
@@ -239,6 +284,7 @@ def test_regenerating_the_vectors_is_byte_identical_to_the_committed_files() -> 
             "single-execution-trust-record.json",
             "delegated-parent-trust-record.json",
             "delegated-child-trust-record.json",
+            "aggregate-trust-record.json",
         ):
             committed = (_VECTORS / name).read_bytes()
             assert first[name] == committed, f"{name} has drifted from the committed vector -- re-mint required"

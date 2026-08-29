@@ -49,10 +49,11 @@ _TEST_SEED = b"t" * 32
 #: non-empty authority with no ``/``, then a REQUIRED non-empty path.
 _SPIFFE_SUBJECT_RE = re.compile(r"^spiffe://[^/]+/.+$")
 
-#: Every top-level field an emitted record's signature must cover
-#: (everything except ``signature``), mirroring
-#: ``TrustRecordEmitter._SIGNED_BODY_FIELDS``.
-_SIGNED_BODY_FIELDS: tuple[str, ...] = (
+#: Every top-level field that is *always* signed, mirroring
+#: ``trust_record._BASE_SIGNED_FIELDS``. ``delegation``/``references`` are
+#: deliberately excluded: they are only part of the signed body when the
+#: record actually carries them (see ``_canonical_body_bytes`` below).
+_BASE_SIGNED_FIELDS: tuple[str, ...] = (
     "eat_profile",
     "iat",
     "subject",
@@ -64,8 +65,6 @@ _SIGNED_BODY_FIELDS: tuple[str, ...] = (
     "build_provenance",
     "appraisal",
     "cnf",
-    "delegation",
-    "references",
 )
 
 _DEFAULT_GATE_CONFIG = {"rules": ["deny-network"], "version": 1}
@@ -181,11 +180,17 @@ def _emitter_with_known_key(
 def _canonical_body_bytes(doc: dict[str, Any]) -> bytes:
     """Rebuild the exact bytes ``_sign_record`` signed from a parsed record.
 
-    ``delegation``/``references`` are signed-over even when the emitted
-    document omits them (see the module docstring): reconstruct the ``None``
-    the signer saw for whichever of the two is absent from *doc*.
+    ``delegation``/``references`` are only added to the reconstruction when
+    *doc* actually carries them: the signed pre-image is the record as
+    serialized, not a form padded out with an explicit ``null`` for
+    whichever optional member is absent (see the module docstring's
+    "Signing pre-image, corrected" note).
     """
-    body = {field: doc.get(field) for field in _SIGNED_BODY_FIELDS}
+    body = {field: doc[field] for field in _BASE_SIGNED_FIELDS}
+    if "delegation" in doc:
+        body["delegation"] = doc["delegation"]
+    if "references" in doc:
+        body["references"] = doc["references"]
     return canonicalize_jcs(body)
 
 
@@ -769,6 +774,184 @@ class TestDelegationClaim:
 
 
 # ---------------------------------------------------------------------------
+# emit_aggregate_trust_record: run-level rollup (issue #4763)
+# ---------------------------------------------------------------------------
+
+
+class TestAggregateTrustRecord:
+    def _emit_parent_and_child(self, tmp_path: Path, emitter: TrustRecordEmitter) -> tuple[str, str]:
+        parent_journal = _create_journal(
+            tmp_path / "parent",
+            [
+                {
+                    "type": "run_started",
+                    "ts": 1.0,
+                    "model_provider": "anthropic",
+                    "model_id": "claude-sonnet-5",
+                    "data_class": "internal",
+                    "gate_config": {"scope": "wide"},
+                }
+            ],
+            with_defaults=False,
+        )
+        child_journal = _create_journal(
+            tmp_path / "child",
+            [
+                {
+                    "type": "run_started",
+                    "ts": 2.0,
+                    "model_provider": "anthropic",
+                    "model_id": "claude-haiku-5",
+                    "data_class": "internal",
+                    "gate_config": {"scope": "narrow"},
+                },
+                {"type": "tool_call", "tool": "fs.read"},
+            ],
+            with_defaults=False,
+        )
+        parent_output = emitter.emit_trust_record(parent_journal, "run-1", "exec-parent")
+        child_output = emitter.emit_trust_record(
+            child_journal,
+            "run-1",
+            "exec-child",
+            parent_record=parent_output,
+            credential_id="cred-1",
+        )
+        return parent_output, child_output
+
+    def test_requires_at_least_one_member(self) -> None:
+        emitter = _emitter_with_known_key()
+        with pytest.raises(ValueError, match="at least one member"):
+            emitter.emit_aggregate_trust_record("run-1", [])
+
+    def test_rejects_a_malformed_member(self) -> None:
+        emitter = _emitter_with_known_key()
+        with pytest.raises(ValueError, match="not valid JSON"):
+            emitter.emit_aggregate_trust_record("run-1", ["not json"])
+
+    def test_subject_is_run_scoped_not_execution_scoped(self, tmp_path: Path) -> None:
+        emitter = _emitter_with_known_key()
+        parent_output, child_output = self._emit_parent_and_child(tmp_path, emitter)
+
+        output = emitter.emit_aggregate_trust_record("run-1", [parent_output, child_output])
+        parsed = json.loads(output)
+
+        assert parsed["subject"] == "spiffe://bernstein.run/run/run-1"
+        assert "/exec/" not in parsed["subject"]
+
+    def test_has_no_delegation_member(self, tmp_path: Path) -> None:
+        emitter = _emitter_with_known_key()
+        parent_output, child_output = self._emit_parent_and_child(tmp_path, emitter)
+
+        parsed = json.loads(emitter.emit_aggregate_trust_record("run-1", [parent_output, child_output]))
+
+        assert "delegation" not in parsed
+
+    def test_one_member_execution_reference_per_member_in_order(self, tmp_path: Path) -> None:
+        emitter = _emitter_with_known_key()
+        parent_output, child_output = self._emit_parent_and_child(tmp_path, emitter)
+
+        parsed = json.loads(emitter.emit_aggregate_trust_record("run-1", [parent_output, child_output]))
+
+        assert [r["rel"] for r in parsed["references"]] == ["member-execution", "member-execution"]
+        parent_id = f"sha256:{hashlib.sha256(parent_output.encode('utf-8')).hexdigest()}"
+        child_id = f"sha256:{hashlib.sha256(child_output.encode('utf-8')).hexdigest()}"
+        assert [r["id"] for r in parsed["references"]] == [parent_id, child_id]
+        for entry in parsed["references"]:
+            assert entry["resolver"]
+
+    def test_iat_is_the_latest_member_iat(self, tmp_path: Path) -> None:
+        emitter = _emitter_with_known_key()
+        parent_output, child_output = self._emit_parent_and_child(tmp_path, emitter)
+
+        parsed = json.loads(emitter.emit_aggregate_trust_record("run-1", [parent_output, child_output]))
+
+        assert parsed["iat"] == max(json.loads(parent_output)["iat"], json.loads(child_output)["iat"])
+
+    def test_model_is_the_last_members_model(self, tmp_path: Path) -> None:
+        emitter = _emitter_with_known_key()
+        parent_output, child_output = self._emit_parent_and_child(tmp_path, emitter)
+
+        parsed = json.loads(emitter.emit_aggregate_trust_record("run-1", [parent_output, child_output]))
+
+        assert parsed["model"] == json.loads(child_output)["model"]
+
+    def test_tool_transcript_call_count_sums_the_members(self, tmp_path: Path) -> None:
+        emitter = _emitter_with_known_key()
+        parent_output, child_output = self._emit_parent_and_child(tmp_path, emitter)
+
+        parsed = json.loads(emitter.emit_aggregate_trust_record("run-1", [parent_output, child_output]))
+
+        parent_calls = json.loads(parent_output)["tool_transcript"]["call_count"]
+        child_calls = json.loads(child_output)["tool_transcript"]["call_count"]
+        assert parsed["tool_transcript"]["call_count"] == parent_calls + child_calls == 1
+
+    def test_policy_bundle_hash_differs_from_either_members_own(self, tmp_path: Path) -> None:
+        """The aggregate's bundle_hash is a hash *of* the member hashes, not
+        one member's own value copied through."""
+        emitter = _emitter_with_known_key()
+        parent_output, child_output = self._emit_parent_and_child(tmp_path, emitter)
+
+        parsed = json.loads(emitter.emit_aggregate_trust_record("run-1", [parent_output, child_output]))
+
+        parent_bundle = json.loads(parent_output)["policy"]["bundle_hash"]
+        child_bundle = json.loads(child_output)["policy"]["bundle_hash"]
+        assert parsed["policy"]["bundle_hash"] not in (parent_bundle, child_bundle)
+        assert parsed["policy"]["enforcement_mode"] == "enforce"
+
+    def test_rejects_disagreeing_member_data_classes(self, tmp_path: Path) -> None:
+        emitter = _emitter_with_known_key()
+        parent_journal = _create_journal(
+            tmp_path / "parent",
+            [
+                {
+                    "type": "run_started",
+                    "ts": 1.0,
+                    "model_provider": "a",
+                    "model_id": "m",
+                    "data_class": "internal",
+                    "gate_config": {"scope": "wide"},
+                }
+            ],
+            with_defaults=False,
+        )
+        child_journal = _create_journal(
+            tmp_path / "child",
+            [
+                {
+                    "type": "run_started",
+                    "ts": 2.0,
+                    "model_provider": "a",
+                    "model_id": "m",
+                    "data_class": "restricted",
+                    "gate_config": {"scope": "narrow"},
+                }
+            ],
+            with_defaults=False,
+        )
+        parent_output = emitter.emit_trust_record(parent_journal, "run-1", "exec-parent")
+        child_output = emitter.emit_trust_record(
+            child_journal, "run-1", "exec-child", parent_record=parent_output, credential_id="cred-1"
+        )
+
+        with pytest.raises(ValueError, match="disagree"):
+            emitter.emit_aggregate_trust_record("run-1", [parent_output, child_output])
+
+    def test_verifies_offline_via_its_cnf_jwk(self, tmp_path: Path) -> None:
+        private_pem, public_raw = _test_keypair()
+        emitter = TrustRecordEmitter(
+            install_rev_getter=lambda: "aaaaaaaaaaaaaaaa",
+            get_private_key_pem=lambda: private_pem,
+            get_installed_digest=lambda: "sha256:" + "ab" * 32,
+        )
+        parent_output, child_output = self._emit_parent_and_child(tmp_path, emitter)
+
+        parsed = json.loads(emitter.emit_aggregate_trust_record("run-1", [parent_output, child_output]))
+
+        assert _offline_verify(parsed, _public_key_pem_from_raw(public_raw)) is True
+
+
+# ---------------------------------------------------------------------------
 # Signature coverage: every field, including absent delegation/references,
 # is inside the signed body.
 # ---------------------------------------------------------------------------
@@ -887,7 +1070,7 @@ class TestSignRecord:
         record = _bare_record()
         signed = emitter._sign_record(record)
 
-        doc = {
+        doc: dict[str, Any] = {
             "eat_profile": signed.eat_profile,
             "iat": signed.iat,
             "subject": signed.subject,
@@ -899,10 +1082,14 @@ class TestSignRecord:
             "build_provenance": signed.build_provenance,
             "appraisal": signed.appraisal,
             "cnf": signed.cnf,
-            "delegation": signed.delegation,
-            "references": signed.references,
             "signature": signed.signature,
         }
+        # Matches the real emitted shape: an absent optional member is left
+        # out entirely, never carried as an explicit null.
+        if signed.delegation is not None:
+            doc["delegation"] = signed.delegation
+        if signed.references is not None:
+            doc["references"] = signed.references
         assert _offline_verify(doc, _public_key_pem_from_raw(public_raw)) is True
 
 
@@ -1156,7 +1343,11 @@ class TestSigningPreImageJCS:
         output = emitter.emit_trust_record(journal, "run-1", "exec-1")
         doc = json.loads(output)
 
-        body = {field: doc.get(field) for field in _SIGNED_BODY_FIELDS}
+        body = {field: doc[field] for field in _BASE_SIGNED_FIELDS}
+        if "delegation" in doc:
+            body["delegation"] = doc["delegation"]
+        if "references" in doc:
+            body["references"] = doc["references"]
         jcs_bytes = canonicalize_jcs(body)
 
         assert jcs_bytes == _canonical_body_bytes(doc)
@@ -1168,7 +1359,11 @@ class TestSigningPreImageJCS:
         output = emitter.emit_trust_record(journal, "run-1", "exec-1")
         doc = json.loads(output)
 
-        body = {field: doc.get(field) for field in _SIGNED_BODY_FIELDS}
+        body = {field: doc[field] for field in _BASE_SIGNED_FIELDS}
+        if "delegation" in doc:
+            body["delegation"] = doc["delegation"]
+        if "references" in doc:
+            body["references"] = doc["references"]
         jcs_bytes = canonicalize_jcs(body)
 
         assert jcs_bytes == _canonical_body_bytes(doc)

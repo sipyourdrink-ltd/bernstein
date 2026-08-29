@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Re-mint the trust-record test vectors in this directory (issues #4760-#4762).
+"""Re-mint the trust-record test vectors in this directory (issues #4760-#4764).
 
 Run by hand from a source checkout, never by the test suite::
 
     uv run python tests/fixtures/trust-record-vectors/_build_trust_record_vectors.py
 
 Records two real runs through the actual ``EventJournal`` write path (not a
-hand-built journal), emits a single-execution Trust Record for the first and
-a delegated parent+child pair (linked by ``delegation.parent_record_hash``)
-for the second, and writes all three alongside the deterministic Ed25519 key
-that signed them.
+hand-built journal): a single-execution Trust Record for the first, and a
+delegated parent+child pair (linked by ``delegation.parent_record_hash``)
+for the second. A fourth, run-level aggregate record (issue #4763) is then
+built over the parent+child pair -- not from a journal, since there is none
+for "the whole run" as such. All four are written alongside the
+deterministic Ed25519 key that signed them.
 
 Why the vectors are committed rather than generated at test time
 ------------------------------------------------------------------
@@ -177,11 +179,22 @@ def main() -> None:
             run_id,
             "trust-record-vector-child",
             parent_record=parent_output,
-            credential_id="trust-record-vector-delegation-credential",
+            # Scoped below the parent's own (implicit, unbounded) authority --
+            # the credential id names the narrower grant this hop acted under.
+            credential_id="trust-record-vector-delegation-credential:scope=narrow",
         )
         child_path = OUT_DIR / "delegated-child-trust-record.json"
         child_path.write_text(child_output + "\n", encoding="utf-8")
         print(f"Wrote delegated-child vector: {child_path}  ({len(child_output)} bytes)")
+
+        # 3. Run-level aggregate: rolls up the parent + child execution
+        # records under one run-scoped record (issue #4763). Built from the
+        # two already-minted member records, not from a journal -- there is
+        # no journal for "the whole run" as such.
+        aggregate_output = emitter.emit_aggregate_trust_record(run_id, [parent_output, child_output])
+        aggregate_path = OUT_DIR / "aggregate-trust-record.json"
+        aggregate_path.write_text(aggregate_output + "\n", encoding="utf-8")
+        print(f"Wrote run-level aggregate vector: {aggregate_path}  ({len(aggregate_output)} bytes)")
 
     # 3. Public key PEM -- pinned alongside as a second, independent check
     # that it agrees with the key recoverable from cnf.jwk. Not required
