@@ -236,17 +236,27 @@ def test_aggregate_vector_has_one_member_execution_reference_per_member_no_other
 
 def test_aggregate_vector_member_references_resolve_to_the_parent_and_child_vectors_by_hash() -> None:
     """The generator gave the aggregate ``[parent_output, child_output]`` in
-    that order -- each reference's content-addressed ``id`` must recompute
-    to the corresponding committed member vector's own exact bytes."""
+    that order -- each reference's ``digest`` must recompute to the
+    corresponding committed member vector's own exact bytes.
+
+    The digest has to be in ``digest``: that is the field §3.1.2 defines as
+    binding the reference to specific bytes, and the field a verifier that
+    content-binds references reads. An entry carrying it as ``id`` and no
+    ``digest`` still validates, because ``digest`` is optional and ``rel`` is
+    open -- so this is the only place the difference is caught.
+    """
     aggregate = _load(_AGGREGATE)
     parent_bytes = _PARENT.read_text(encoding="utf-8").rstrip("\n")
     child_bytes = _CHILD.read_text(encoding="utf-8").rstrip("\n")
 
-    parent_id = f"sha256:{hashlib.sha256(parent_bytes.encode('utf-8')).hexdigest()}"
-    child_id = f"sha256:{hashlib.sha256(child_bytes.encode('utf-8')).hexdigest()}"
+    parent_digest = f"sha256:{hashlib.sha256(parent_bytes.encode('utf-8')).hexdigest()}"
+    child_digest = f"sha256:{hashlib.sha256(child_bytes.encode('utf-8')).hexdigest()}"
 
-    ids = [r["id"] for r in aggregate["references"]]
-    assert ids == [parent_id, child_id]
+    assert [r["digest"] for r in aggregate["references"]] == [parent_digest, child_digest]
+    assert [r["id"] for r in aggregate["references"]] == [
+        _load(_PARENT)["subject"],
+        _load(_CHILD)["subject"],
+    ]
     for entry in aggregate["references"]:
         assert entry["resolver"]
 

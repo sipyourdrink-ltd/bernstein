@@ -182,11 +182,13 @@ Its ``subject`` is the run-scoped SPIFFE URI (:func:`spiffe_subject_for_aggregat
 no ``/exec/<id>`` suffix); it carries no ``delegation`` member at all (an
 aggregate did not act under anyone's delegated authority -- it is a rollup,
 not a hop); and its ``references`` holds one ``{"rel": "member-execution",
-"id", "resolver"}`` entry per member, in the order the members were given.
-``id`` is ``sha256:`` + the hex SHA-256 of the member's own exact returned
-bytes (the same convention ``delegation.parent_record_hash`` uses for a
-parent record) -- content-addressed, so a verifier resolves a member by
-recomputing this hash over the record it holds rather than trusting an
+"id", "resolver", "digest"}`` entry per member, in the order the members
+were given. ``id`` is the member's own ``subject`` -- what names it inside
+the resolver -- and ``digest`` is ``sha256:`` + the hex SHA-256 of the
+member's own exact returned bytes (the same convention
+``delegation.parent_record_hash`` uses for a parent record). The digest is
+what content-binds the entry: a verifier resolves a member by name and then
+recomputes that digest over the record it holds, rather than trusting an
 opaque pointer. The aggregate's own ``model``/``policy``/``data_class`` are
 rollups over the members (see :meth:`emit_aggregate_trust_record` for the
 exact rule for each), not a fresh execution's own values -- there is no
@@ -265,7 +267,8 @@ _SLSA_LEVEL: int = 0
 
 #: Fixed resolver identifier for an aggregate record's ``references[rel=
 #: member-execution]`` entries: the party obliged to resolve a member's
-#: content-addressed ``id`` back to the record it names. A literal
+#: ``id`` back to the record it names, which the entry's ``digest`` then
+#: binds to specific bytes. A literal
 #: constant, like ``_APPRAISAL_VERIFIER_URI`` -- this producer always
 #: resolves its own member records the same way.
 _MEMBER_EXECUTION_RESOLVER_URI: str = "https://bernstein.run/trace/records"
@@ -866,11 +869,13 @@ class TrustRecordEmitter:
         - ``delegation``: never present -- an aggregate is a rollup, not a
           hop acting under delegated authority.
         - ``references``: one ``{"rel": "member-execution", "id",
-          "resolver"}`` entry per member, in the given order. ``id`` is
-          ``sha256:`` + the hex SHA-256 of the member's own exact returned
-          bytes (the same convention ``delegation.parent_record_hash`` uses
-          for a parent record), so a verifier resolves a member by
-          recomputing this hash over the record it holds.
+          "resolver", "digest"}`` entry per member, in the given order.
+          ``id`` is the member's own ``subject``, which is what names it
+          inside the resolver; ``digest`` is ``sha256:`` + the hex SHA-256 of
+          the member's own exact returned bytes (the same convention
+          ``delegation.parent_record_hash`` uses for a parent record), so a
+          verifier resolves a member by name and binds it by recomputing
+          that digest over the record it holds.
         """
         if not member_records:
             msg = "emit_aggregate_trust_record requires at least one member record"
@@ -940,13 +945,24 @@ class TrustRecordEmitter:
             }
         }
 
+        # The member digest belongs in ``digest``, not in ``id``. §3.1.2 gives
+        # the two fields different jobs -- ``id`` identifies the referenced
+        # fact within the resolver's system, ``digest`` binds it to specific
+        # bytes -- and a verifier that content-binds references reads
+        # ``digest``. Carrying the digest as an ``id`` and omitting ``digest``
+        # validates (``digest`` is optional and ``rel`` is open), so nothing
+        # catches it; the entries are simply not content-bound in the
+        # vocabulary the block defines, and the set property is readable only
+        # by whoever produced both sides. The sibling ``produced-artifact``
+        # entry on an execution record already splits the two correctly.
         references = [
             {
                 "rel": "member-execution",
-                "id": f"sha256:{hashlib.sha256(raw.encode('utf-8')).hexdigest()}",
+                "id": member["subject"],
                 "resolver": _MEMBER_EXECUTION_RESOLVER_URI,
+                "digest": f"sha256:{hashlib.sha256(raw.encode('utf-8')).hexdigest()}",
             }
-            for raw in member_records
+            for raw, member in zip(member_records, members, strict=True)
         ]
 
         record = TrustRecord(

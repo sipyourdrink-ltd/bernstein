@@ -1031,11 +1031,34 @@ class TestAggregateTrustRecord:
         parsed = json.loads(emitter.emit_aggregate_trust_record("run-1", [parent_output, child_output]))
 
         assert [r["rel"] for r in parsed["references"]] == ["member-execution", "member-execution"]
-        parent_id = f"sha256:{hashlib.sha256(parent_output.encode('utf-8')).hexdigest()}"
-        child_id = f"sha256:{hashlib.sha256(child_output.encode('utf-8')).hexdigest()}"
-        assert [r["id"] for r in parsed["references"]] == [parent_id, child_id]
+        assert [r["id"] for r in parsed["references"]] == [
+            json.loads(parent_output)["subject"],
+            json.loads(child_output)["subject"],
+        ]
         for entry in parsed["references"]:
             assert entry["resolver"]
+
+    def test_each_member_reference_is_content_bound_through_its_digest(self, tmp_path: Path) -> None:
+        """The digest lives in ``digest``, which is the field a verifier reads.
+
+        Carrying it as an ``id`` and omitting ``digest`` validates -- ``digest``
+        is optional and ``rel`` is open -- so nothing catches the difference,
+        and a verifier that content-binds references finds nothing to bind.
+        The entry is then readable only by whoever produced both sides.
+        """
+        emitter = _emitter_with_known_key()
+        parent_output, child_output = self._emit_parent_and_child(tmp_path, emitter)
+
+        parsed = json.loads(emitter.emit_aggregate_trust_record("run-1", [parent_output, child_output]))
+
+        assert [r["digest"] for r in parsed["references"]] == [
+            f"sha256:{hashlib.sha256(parent_output.encode('utf-8')).hexdigest()}",
+            f"sha256:{hashlib.sha256(child_output.encode('utf-8')).hexdigest()}",
+        ]
+        # An id that is itself a digest is the shape this replaced: it puts the
+        # binding in the field that names things, where nothing looks for it.
+        for entry in parsed["references"]:
+            assert not entry["id"].startswith("sha256:")
 
     def test_iat_is_the_latest_member_iat(self, tmp_path: Path) -> None:
         emitter = _emitter_with_known_key()
