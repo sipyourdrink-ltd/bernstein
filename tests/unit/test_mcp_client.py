@@ -7,12 +7,14 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-from bernstein.core.protocols.mcp_client import (
+
+from bernstein.core.protocols.mcp.mcp_client import (
     MCPAuthError,
     MCPClientError,
     MCPClientManager,
     MCPClientSession,
     MCPConnectionError,
+    MCPManifestInfo,
     MCPToolNotFoundError,
     RemoteServerConfig,
     RemoteTool,
@@ -538,7 +540,7 @@ class TestMCPClientManager:
         session._tools = [RemoteTool(name="search", description="Search docs", server_name="remote")]
         manager._sessions = {"remote": session}
 
-        result = manager.inject_into_agent_config({})
+        result, _ = manager.inject_into_agent_config({})
 
         assert "mcp_config" in result
         mcp_servers = result["mcp_config"]["mcpServers"]
@@ -555,11 +557,13 @@ class TestMCPClientManager:
         session._tools = []
         manager._sessions = {"open": session}
 
-        result = manager.inject_into_agent_config({})
+        result, manifest_info = manager.inject_into_agent_config({})
 
         assert "mcp_config" in result
         entry = result["mcp_config"]["mcpServers"]["open"]
         assert "headers" not in entry
+        assert isinstance(manifest_info, MCPManifestInfo)
+        assert manifest_info.per_server_digests["open"] == manager._compute_server_digest("open", [])
 
     def test_inject_into_agent_config_merges_existing(self) -> None:
         """inject_into_agent_config() merges with existing mcp_config."""
@@ -571,7 +575,7 @@ class TestMCPClientManager:
         manager._sessions = {"new": session}
 
         existing_config: dict[str, Any] = {"mcp_config": {"mcpServers": {"old": {"url": "https://old"}}}}
-        result = manager.inject_into_agent_config(existing_config)
+        result, _ = manager.inject_into_agent_config(existing_config)
 
         servers = result["mcp_config"]["mcpServers"]
         assert "old" in servers
@@ -587,7 +591,7 @@ class TestMCPClientManager:
             s._tools = []
             manager._sessions[name] = s
 
-        result = manager.inject_into_agent_config({}, server_names=["a"])
+        result, _ = manager.inject_into_agent_config({}, server_names=["a"])
         servers = result["mcp_config"]["mcpServers"]
         assert "a" in servers
         assert "b" not in servers
@@ -600,5 +604,84 @@ class TestMCPClientManager:
         session._initialized = False  # not connected
         manager._sessions = {"dead": session}
 
-        result = manager.inject_into_agent_config({})
+        result, manifest_info = manager.inject_into_agent_config({})
         assert "mcp_config" not in result
+        assert manifest_info.aggregate_digest == manager._compute_aggregate_digest([])
+        assert manifest_info.per_server_digests == {}
+        assert manifest_info.merged_tools == []
+        assert manifest_info.name_collisions == []
+
+    def test_inject_returns_manifest_info(self) -> None:
+        """inject_into_agent_config() returns MCPManifestInfo with digests."""
+        manager = MCPClientManager()
+        cfg = RemoteServerConfig(name="remote", url="https://api.example.com/mcp")
+        session = MCPClientSession(cfg)
+        session._initialized = True
+        session._tools = [
+            RemoteTool(name="search", description="Search docs", server_name="remote", input_schema={"type": "object"}),
+        ]
+        manager._sessions = {"remote": session}
+
+        result, manifest_info = manager.inject_into_agent_config({})
+
+        assert isinstance(manifest_info, MCPManifestInfo)
+        assert manifest_info.merged_tools == [("remote", "search", "Search docs", {"type": "object"})]
+        assert "remote" in manifest_info.per_server_digests
+        assert manifest_info.aggregate_digest == manager._compute_aggregate_digest(
+            [("remote", "search", "Search docs", {"type": "object"})]
+        )
+        expected_servers = [("remote", "search", "Search docs", {"type": "object"})]
+        expected_digest = manager._compute_aggregate_digest(expected_servers)
+        assert manifest_info.aggregate_digest == expected_digest
+        assert manifest_info.name_collisions == []
+        assert manifest_info.injection_digest == manager._compute_injection_digest(result)
+
+    def test_inject_detects_name_collisions(self) -> None:
+        """inject_into_agent_config() raises on tool name collisions."""
+        manager = MCPClientManager()
+        for name in ("alpha", "beta"):
+            cfg = RemoteServerConfig(name=name, url=f"https://{name}")
+            s = MCPClientSession(cfg)
+            s._initialized = True
+            s._tools = [RemoteTool(name="echo", description="Echo", server_name=name)]
+            manager._sessions[name] = s
+
+        with pytest.raises(ValueError, match="collision"):
+            manager.inject_into_agent_config({})
+
+    def test_inject_per_server_digests(self) -> None:
+        """inject_into_agent_config() computes per-server digests."""
+        manager = MCPClientManager()
+        s1 = MCPClientSession(RemoteServerConfig(name="s1", url="https://x"))
+        s1._initialized = True
+        s1._tools = [RemoteTool(name="t1", description="Tool 1", server_name="s1", input_schema={"type": "object"})]
+        s2 = MCPClientSession(RemoteServerConfig(name="s2", url="https://y"))
+        s2._initialized = True
+        s2._tools = [RemoteTool(name="t2", description="Tool 2", server_name="s2")]
+        manager._sessions = {"s1": s1, "s2": s2}
+
+        _, manifest_info = manager.inject_into_agent_config({})
+
+        assert set(manifest_info.per_server_digests.keys()) == {"s1", "s2"}
+        assert manifest_info.per_server_digests["s1"] == manager._compute_server_digest(
+            "s1", [("t1", "Tool 1", {"type": "object"})]
+        )
+        assert manifest_info.per_server_digests["s2"] == manager._compute_server_digest(
+            "s2", [("t2", "Tool 2", {})]
+        )
+
+    def test_inject_digests_are_stable(self) -> None:
+        """inject_into_agent_config() produces stable digests across calls."""
+        manager = MCPClientManager()
+        cfg = RemoteServerConfig(name="remote", url="https://api.example.com/mcp")
+        session = MCPClientSession(cfg)
+        session._initialized = True
+        session._tools = [RemoteTool(name="search", description="Search docs", server_name="remote")]
+        manager._sessions = {"remote": session}
+
+        _, first = manager.inject_into_agent_config({})
+        _, second = manager.inject_into_agent_config({})
+
+        assert first.aggregate_digest == second.aggregate_digest
+        assert first.per_server_digests == second.per_server_digests
+        assert first.injection_digest == second.injection_digest
