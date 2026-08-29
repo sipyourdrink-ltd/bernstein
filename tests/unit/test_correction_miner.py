@@ -323,7 +323,7 @@ class TestMineCorrections:
 
     def test_cites_commit_pairs(self) -> None:
         """Proposals cite the commit-SHA pairs they were derived from (requirement #1)."""
-        repo, shas = _make_merge_repo()
+        repo, _ = _make_merge_repo()
         pairs = extract_correction_pairs(repo)
         result = mine_corrections(pairs)
         for prop in result.proposals:
@@ -334,7 +334,7 @@ class TestMineCorrections:
 
     def test_corpus_size_rendered(self) -> None:
         """Corpus size renders with the proposal (requirement #4)."""
-        repo, shas = _make_merge_repo()
+        repo, _ = _make_merge_repo()
         pairs = extract_correction_pairs(repo)
         result = mine_corrections(pairs)
         for prop in result.proposals:
@@ -345,7 +345,7 @@ class TestMineCorrections:
 
     def test_single_source_label(self) -> None:
         """A correction from one author is labelled single-source (requirement #3)."""
-        repo, shas = _make_merge_repo()
+        repo, _ = _make_merge_repo()
         pairs = extract_correction_pairs(repo)
         result = mine_corrections(pairs)
         for prop in result.proposals:
@@ -355,7 +355,7 @@ class TestMineCorrections:
 
     def test_corroborated_label(self) -> None:
         """Corrections from multiple authors are labelled corroborated (requirement #3)."""
-        repo, shas = _make_multi_author_correction_repo()
+        repo, _ = _make_multi_author_correction_repo()
         pairs = extract_correction_pairs(repo)
         result = mine_corrections(pairs)
         assert result.total_pairs_analyzed >= 1
@@ -377,7 +377,7 @@ class TestMineCorrections:
         which T2 (confirm_convention_proposal) will implement.
         Here we verify the proposal has no status that implies activation.
         """
-        repo, shas = _make_merge_repo()
+        repo, _ = _make_merge_repo()
         pairs = extract_correction_pairs(repo)
         result = mine_corrections(pairs)
         for prop in result.proposals:
