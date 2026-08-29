@@ -28,11 +28,13 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from bernstein.core.defaults import JANITOR
 from bernstein.core.persistence.cas_store import CASStore
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -428,8 +430,7 @@ def run_cas_gc_cli(
 
     if not yes and not dry_run:
         print(
-            "This will permanently delete unreferenced CAS blobs older than "
-            f"{days or JANITOR.cas_retention_days} days."
+            f"This will permanently delete unreferenced CAS blobs older than {days or JANITOR.cas_retention_days} days."
         )
         if not input("Continue? [y/N] ").lower().startswith("y"):
             print("Cancelled.")
