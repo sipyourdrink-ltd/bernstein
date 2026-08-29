@@ -417,3 +417,52 @@ class TestRunCasGCCli:
         assert not success
         captured = capsys.readouterr()
         assert "non-negative" in captured.out.lower() or "error" in captured.out.lower()
+
+
+class TestCASGCCommandIsReachable:
+    """The documented command exists on the CLI, not only as a helper function."""
+
+    def test_gc_cas_is_registered(self) -> None:
+        """`bernstein gc cas` resolves; docs/architecture/cas-store.md documents it."""
+        from click.testing import CliRunner
+
+        from bernstein.cli.main import cli
+
+        result = CliRunner().invoke(cli, ["gc", "cas", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "No such command" not in result.output
+
+    def test_documented_options_are_accepted(self) -> None:
+        """Every flag the architecture doc lists is a real option."""
+        from click.testing import CliRunner
+
+        from bernstein.cli.main import cli
+
+        result = CliRunner().invoke(cli, ["gc", "cas", "--help"])
+        for flag in ("--days", "--dry-run", "--workdir"):
+            assert flag in result.output, f"{flag} is documented but not offered"
+
+    def test_dry_run_reaches_the_store(self, tmp_path: Path) -> None:
+        """The command drives the real prune path rather than exiting early."""
+        from click.testing import CliRunner
+
+        from bernstein.cli.main import cli
+
+        sdd_dir = tmp_path / ".sdd"
+        sdd_dir.mkdir()
+        cas_dir = sdd_dir / "cas"
+        cas_dir.mkdir()
+        CASStore(cas_dir).put(b"orphan", content_type="text/plain")
+
+        result = CliRunner().invoke(cli, ["gc", "cas", "--workdir", str(tmp_path), "--days", "0", "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert "Would delete" in result.output or "DRY RUN" in result.output
+
+    def test_missing_sdd_directory_exits_nonzero(self, tmp_path: Path) -> None:
+        """A workdir with no .sdd fails loudly instead of reporting success."""
+        from click.testing import CliRunner
+
+        from bernstein.cli.main import cli
+
+        result = CliRunner().invoke(cli, ["gc", "cas", "--workdir", str(tmp_path), "--yes"])
+        assert result.exit_code != 0

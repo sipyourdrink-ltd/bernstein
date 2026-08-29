@@ -166,7 +166,7 @@ which digests are still referenced. Today GC happens during these
 operations:
 
 - **Safe incremental pruning / `bernstein gc cas`.** Performs a
-s   mark-and-sweep over the CAS store, deleting unreferenced blobs
+  mark-and-sweep over the CAS store, deleting unreferenced blobs
    older than a configured retention window (default 30 days). Uses
    reachability analysis over durable roots (WAL, audit seals,
    lineage spines, backlog tasks) and preserves referenced or young

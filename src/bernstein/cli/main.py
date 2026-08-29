@@ -70,6 +70,7 @@ from bernstein.cli.commands.events_cmd import events_group
 from bernstein.cli.commands.export_cmd import export_cmd
 from bernstein.cli.commands.fleet_cmd import fleet_group
 from bernstein.cli.commands.fork_cmd import fork_cmd
+from bernstein.cli.commands.gc_cmd import gc_group
 from bernstein.cli.commands.impact_cmd import (
     blast_radius_alias_group,
     dep_impact_alias_cmd,
@@ -999,6 +1000,7 @@ cli.add_command(config_group)
 # From advanced_cmd module - groups and commands
 cli.add_command(benchmark_alias_group, "benchmark")
 cli.add_command(cache_group, "cache")
+cli.add_command(gc_group, "gc")
 cli.add_command(eval_group)
 cli.add_command(best_of_n_group)
 cli.add_command(dashboard)
