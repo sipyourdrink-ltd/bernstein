@@ -42,12 +42,8 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from bernstein.core.git.git_basic import run_git
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -757,15 +753,15 @@ def render_corrections_report(result: MiningResult) -> str:
             append(f"- **Pinned base SHA:** `{prop.base_commit_sha}`")
             append(f"- **Corpus size:** {prop.corpus_size} correction pair(s)")
             append(f"- **Authors:** {', '.join(prop.authors)}")
-            append(f"- **Commit pairs (evidence, requirement #1):**")
+            append("- **Commit pairs (evidence, requirement #1):**")
             for pair_id in prop.commit_pairs:
                 append(f"  - `{pair_id}`")
-            append(f"- **Base diff sample:**")
+            append("- **Base diff sample:**")
             append("  ```diff")
             for snippet in prop.base_diff_summary.split(" ;; "):
                 append(f"  {snippet}")
             append("  ```")
-            append(f"- **Follow-up diff sample:**")
+            append("- **Follow-up diff sample:**")
             append("  ```diff")
             for snippet in prop.follow_up_diff_summary.split(" ;; "):
                 append(f"  {snippet}")
@@ -780,9 +776,9 @@ def render_corrections_report(result: MiningResult) -> str:
 
 
 __all__ = [
+    "DEFAULT_MERGE_RIGHTS_HOLDERS",
     "CorrectionPair",
     "CorrectionProposal",
-    "DEFAULT_MERGE_RIGHTS_HOLDERS",
     "MiningResult",
     "classify_correction",
     "extract_correction_pairs",

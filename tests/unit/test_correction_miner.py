@@ -4,15 +4,12 @@ from __future__ import annotations
 
 import subprocess
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from bernstein.core.quality.correction_miner import (
     CorrectionPair,
-    CorrectionProposal,
     MiningResult,
     classify_correction,
     extract_correction_pairs,
@@ -21,7 +18,6 @@ from bernstein.core.quality.correction_miner import (
     mine_corrections,
     render_corrections_report,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -67,7 +63,12 @@ def _commit(
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
     _run("add", "--", file_path, cwd=cwd)
-    env = {"GIT_AUTHOR_NAME": author_name, "GIT_AUTHOR_EMAIL": author_email, "GIT_COMMITTER_NAME": author_name, "GIT_COMMITTER_EMAIL": author_email}
+    env = {
+        "GIT_AUTHOR_NAME": author_name,
+        "GIT_AUTHOR_EMAIL": author_email,
+        "GIT_COMMITTER_NAME": author_name,
+        "GIT_COMMITTER_EMAIL": author_email,
+    }
     result = subprocess.run(
         ["git", "commit", "-m", message],
         cwd=cwd,
@@ -109,7 +110,7 @@ def _make_merge_repo() -> tuple[Path, dict[str, str]]:
         author_name="Contributor",
         author_email="contributor@example.com",
         file_path="contrib.py",
-        content='def add_logging(user_input):\n    import logging\n    logging.info(user_input)\n',
+        content="def add_logging(user_input):\n    import logging\n    logging.info(user_input)\n",
     )
 
     # Maintainer creates a fix on top of contributor's commit (on the contributor branch)
@@ -119,7 +120,7 @@ def _make_merge_repo() -> tuple[Path, dict[str, str]]:
         author_name="Maintainer",
         author_email="maintainer@example.com",
         file_path="contrib.py",
-        content='def add_logging(user_input):\n    import logging\n    from bernstein.safety import sanitize\n    logging.info(sanitize(user_input))\n',
+        content="def add_logging(user_input):\n    import logging\n    from bernstein.safety import sanitize\n    logging.info(sanitize(user_input))\n",
     )
 
     # Back to main: add a commit so main diverges from contributor
@@ -164,7 +165,7 @@ def _make_multi_author_correction_repo() -> tuple[Path, dict[str, str]]:
         author_name="Alice",
         author_email="alice@example.com",
         file_path="alice.py",
-        content='def foo(data):\n    from bernstein.safety import sanitize\n    return sanitize(data)\n',
+        content="def foo(data):\n    from bernstein.safety import sanitize\n    return sanitize(data)\n",
     )
 
     # Back to main: add a commit so main diverges
@@ -183,7 +184,7 @@ def _make_multi_author_correction_repo() -> tuple[Path, dict[str, str]]:
         author_name="Bob",
         author_email="bob@example.com",
         file_path="bob.py",
-        content='def foo(data):\n    from bernstein.safety import sanitize\n    return sanitize(data)\n',
+        content="def foo(data):\n    from bernstein.safety import sanitize\n    return sanitize(data)\n",
     )
 
     # Back to main: add another commit so it diverges
@@ -230,10 +231,16 @@ class TestIsMergeRightsHolder:
         assert is_merge_rights_holder("anyone@example.com") is True
 
     def test_known_holder(self) -> None:
-        assert is_merge_rights_holder("maintainer@example.com", merge_rights_holders=frozenset({"maintainer@example.com"})) is True
+        assert (
+            is_merge_rights_holder("maintainer@example.com", merge_rights_holders=frozenset({"maintainer@example.com"}))
+            is True
+        )
 
     def test_unknown_holder(self) -> None:
-        assert is_merge_rights_holder("stranger@example.com", merge_rights_holders=frozenset({"maintainer@example.com"})) is False
+        assert (
+            is_merge_rights_holder("stranger@example.com", merge_rights_holders=frozenset({"maintainer@example.com"}))
+            is False
+        )
 
 
 # ---------------------------------------------------------------------------
