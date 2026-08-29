@@ -31,12 +31,11 @@ import os
 import re
 import shutil
 import subprocess
+import yaml
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, TypedDict
-
-import yaml
 
 # Repo-root anchor. We compute the repo root from this file's location so
 # the loader works under editable installs and from a source checkout.
@@ -54,6 +53,19 @@ CONTRACTS_DIR = _DEV_CONTRACTS_DIR if _DEV_CONTRACTS_DIR.is_dir() else _PACKAGED
 # Per-subprocess timeouts. Plenty for any well-behaved CLI.
 _HELP_TIMEOUT_SECONDS = 30
 _MODELS_TIMEOUT_SECONDS = 60
+
+
+class AuthBasis(StrEnum):
+    """Authentication mechanism declared by an adapter contract."""
+
+    #: Adapter authenticates via an API key (e.g. ANTHROPIC_API_KEY).
+    API_KEY = "api_key"
+    #: Adapter is local-only, no remote authentication required.
+    LOCAL = "local"
+    #: OAuth-based subscription authentication.
+    SUBSCRIPTION_OAUTH = "subscription_oauth"
+    #: Unknown or unspecified authentication mechanism.
+    UNKNOWN = "unknown"
 
 
 @dataclass(frozen=True)
@@ -96,6 +108,8 @@ class ContractSpec:
     security_floor: str | None = None
     #: Bernstein-local advisory id backing :attr:`security_floor`, or ``None``.
     security_advisory_id: str | None = None
+    #: Authentication mechanism declared in the contract YAML.
+    auth_basis: AuthBasis = AuthBasis.UNKNOWN
 
     @classmethod
     def load(cls, name: str, contracts_dir: Path | None = None) -> ContractSpec:
@@ -132,6 +146,8 @@ class ContractSpec:
         _advisory = ADAPTER_MIN_SAFE_VERSIONS.get(str(data.get("adapter", name)))
         security_floor = _advisory.min_safe_version if _advisory is not None else None
         security_advisory_id = _advisory.advisory_id if _advisory is not None else None
+        raw_auth_basis = auth.get("basis")
+        auth_basis = AuthBasis(raw_auth_basis) if raw_auth_basis else AuthBasis.UNKNOWN
         return cls(
             adapter=str(data.get("adapter", name)),
             binary=str(data.get("binary", name)),
@@ -149,6 +165,7 @@ class ContractSpec:
             auth_secret_envs=secret_envs,
             security_floor=security_floor,
             security_advisory_id=security_advisory_id,
+            auth_basis=auth_basis,
         )
 
     def resolved_help_command(self) -> list[str]:

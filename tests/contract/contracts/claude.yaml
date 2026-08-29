@@ -17,7 +17,7 @@ auth:
   # Model listing would require auth; left disabled by default.
   required_for_models: false
   secret_env:
-  auth_basis: api_key "ANTHROPIC_API_KEY"
+  basis: api_key
 required_flags:
   - "--model"
   - "--effort"
