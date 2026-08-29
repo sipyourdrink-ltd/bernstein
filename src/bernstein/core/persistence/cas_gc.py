@@ -23,11 +23,8 @@ Usage:
 
 from __future__ import annotations
 
-import contextlib
-import hashlib
 import json
 import logging
-import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -35,7 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from bernstein.core.defaults import JANITOR
-from bernstein.core.persistence.cas_store import CASStore, CASEntry
+from bernstein.core.persistence.cas_store import CASStore
 
 logger = logging.getLogger(__name__)
 
@@ -84,9 +81,8 @@ def _extract_digests_from_obj(obj: Any) -> set[str]:
     """
     digests: set[str] = set()
     if isinstance(obj, str):
-        digest = _digest_from_string(obj)
-        if digest:
-            digests.add(digest)
+        for match in re.finditer(r"\b[0-9a-fA-F]{64}\b", obj):
+            digests.add(match.group(0).lower())
     elif isinstance(obj, dict):
         for value in obj.values():
             digests.update(_extract_digests_from_obj(value))
@@ -231,12 +227,13 @@ def _scan_backlog_for_digests(sdd_dir: Path) -> set[str]:
         state_path = backlog_dir / state_dir
         if not state_path.is_dir():
             continue
-        for yaml_file in state_path.glob("*.{yaml,yml}"):
-            try:
-                data = yaml_file.read_text(encoding="utf-8")
-                digests.update(_extract_digests_from_obj(data))
-            except OSError as exc:
-                logger.warning("Failed to read backlog file %s: %s", yaml_file, exc)
+        for pattern in ("*.yaml", "*.yml"):
+            for yaml_file in state_path.glob(pattern):
+                try:
+                    data = yaml_file.read_text(encoding="utf-8")
+                    digests.update(_extract_digests_from_obj(data))
+                except OSError as exc:
+                    logger.warning("Failed to read backlog file %s: %s", yaml_file, exc)
 
     return digests
 
@@ -294,7 +291,11 @@ def prune_cas_store(
     store = CASStore(sdd_dir / "cas")
     referenced = collect_referenced_digests(sdd_dir)
 
-    result = CASPruneResult()
+    scanned_entries = 0
+    preserved_entries = 0
+    deleted_entries = 0
+    preserved_bytes = 0
+    deleted_bytes = 0
     errors: list[str] = []
 
     logger.info(
@@ -306,7 +307,7 @@ def prune_cas_store(
 
     # Scan all CAS entries
     for entry in store.list_entries():
-        result.scanned_entries += 1
+        scanned_entries += 1
         entry_time = entry.created_at
 
         # Check if entry is referenced
@@ -317,8 +318,8 @@ def prune_cas_store(
 
         if is_referenced or is_young:
             # Preserve referenced or young entries
-            result.preserved_entries += 1
-            result.preserved_bytes += entry.size_bytes
+            preserved_entries += 1
+            preserved_bytes += entry.size_bytes
             logger.debug(
                 "Preserving CAS entry %s (referenced=%s, young=%s)",
                 entry.digest[:12],
@@ -327,8 +328,8 @@ def prune_cas_store(
             )
         else:
             # Candidate for deletion
-            result.deleted_entries += 1
-            result.deleted_bytes += entry.size_bytes
+            deleted_entries += 1
+            deleted_bytes += entry.size_bytes
             logger.debug(
                 "Deleting CAS entry %s (referenced=%s, young=%s, age=%.1fd)",
                 entry.digest[:12],
@@ -348,7 +349,14 @@ def prune_cas_store(
                     errors.append(error_msg)
                     logger.error(error_msg)
 
-    result.errors = errors
+    result = CASPruneResult(
+        scanned_entries=scanned_entries,
+        preserved_entries=preserved_entries,
+        deleted_entries=deleted_entries,
+        preserved_bytes=preserved_bytes,
+        deleted_bytes=deleted_bytes,
+        errors=errors,
+    )
     logger.info(
         "CAS GC complete: scanned=%d, preserved=%d (%d bytes), deleted=%d (%d bytes)",
         result.scanned_entries,

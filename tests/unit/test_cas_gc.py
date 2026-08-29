@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 
 from bernstein.core.persistence.cas_gc import (
-    CASPruneResult,
     _extract_digests_from_obj,
     _scan_audit_seals_for_digests,
     _scan_backlog_for_digests,
@@ -26,10 +25,10 @@ class TestExtractDigestsFromObj:
 
     def test_extract_from_string_with_digest(self) -> None:
         """Extract 64-char hex digest from a string."""
-        text = "some text 0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9ff0a12 more"
+        text = "some text 0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a12 more"
         digests = _extract_digests_from_obj(text)
         assert len(digests) == 1
-        assert "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9ff0a12" in digests
+        assert "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a12" in digests
 
     def test_extract_from_string_without_digest(self) -> None:
         """Return empty set when no digest present."""
@@ -39,25 +38,25 @@ class TestExtractDigestsFromObj:
 
     def test_extract_from_dict(self) -> None:
         """Extract digests from dict values."""
-        data = {"digest": "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1"}
+        data = {"digest": "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a12"}
         digests = _extract_digests_from_obj(data)
         assert len(digests) == 1
 
     def test_extract_from_nested_dict(self) -> None:
         """Extract digests from nested dict."""
-        data = {"outer": {"inner": {"digest": "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1"}}}
+        data = {"outer": {"inner": {"digest": "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a12"}}}
         digests = _extract_digests_from_obj(data)
         assert len(digests) == 1
 
     def test_extract_from_list(self) -> None:
         """Extract digests from list items."""
-        data = ["first", "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1", "last"]
+        data = ["first", "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a12", "last"]
         digests = _extract_digests_from_obj(data)
         assert len(digests) == 1
 
     def test_extract_multiple_digests(self) -> None:
         """Extract multiple digests from same string."""
-        text = "digests: 0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a123 and 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a234"
+        text = "digests: 0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a12 and 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a23"
         digests = _extract_digests_from_obj(text)
         assert len(digests) == 2
 
@@ -91,7 +90,7 @@ class TestScanWALForDigests:
         wal_file.write_text(
             json.dumps({
                 "seq": 1,
-                "inputs": {"digest": "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1"},
+                "inputs": {"digest": "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a12"},
                 "output": {"result": "ok"},
             })
             + "\n",
@@ -109,7 +108,7 @@ class TestScanWALForDigests:
         for i in range(3):
             wal_file = wal_dir / f"run-{i}.wal.jsonl"
             wal_file.write_text(
-                json.dumps({"seq": 1, "inputs": {"digest": f"{i:0>64}"}}, encoding="utf-8")
+                json.dumps({"seq": 1, "inputs": {"digest": f"{i:0>64}"}})
                 + "\n",
                 encoding="utf-8",
             )
@@ -135,8 +134,8 @@ class TestScanAuditSealsForDigests:
         seal_data = {
             "root_hash": "root-hash-value",
             "leaves": [
-                "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1",
-                "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2",
+                "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a12",
+                "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a23",
             ],
         }
         seal_file.write_text(json.dumps(seal_data), encoding="utf-8")
@@ -162,7 +161,7 @@ class TestScanLineageForDigests:
         spine_file.write_text(
             json.dumps({
                 "v": 2,
-                "content_hash": "sha256:0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1",
+                "content_hash": "sha256:0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a12",
                 "artifact_path": "output.txt",
             })
             + "\n",
@@ -171,7 +170,7 @@ class TestScanLineageForDigests:
 
         result = _scan_lineage_for_digests(tmp_path)
         assert len(result) == 1
-        assert "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1" in result
+        assert "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a12" in result
 
     def test_scan_multiple_lineage_files(self, tmp_path: Path) -> None:
         """All lineage spine files are scanned."""
@@ -212,7 +211,7 @@ class TestScanBacklogForDigests:
         yaml_file = backlog_dir / "task-1.yaml"
         yaml_file.write_text(
             "title: Test task\n"
-            "content: 0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1\n",
+            "content: 0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a12\n",
             encoding="utf-8",
         )
 
@@ -230,7 +229,7 @@ class TestCollectReferencedDigests:
         wal_dir.mkdir(parents=True)
         wal_file = wal_dir / "run.wal.jsonl"
         wal_file.write_text(
-            json.dumps({"seq": 1, "inputs": {"digest": "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1"}}) + "\n",
+            json.dumps({"seq": 1, "inputs": {"digest": "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a12"}}) + "\n",
             encoding="utf-8",
         )
 
@@ -239,7 +238,7 @@ class TestCollectReferencedDigests:
         lineage_dir.mkdir(parents=True)
         spine_file = lineage_dir / "spine.jsonl"
         spine_file.write_text(
-            json.dumps({"v": 2, "content_hash": "sha256:1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2"})
+            json.dumps({"v": 2, "content_hash": "sha256:1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a23"})
             + "\n",
             encoding="utf-8",
         )
@@ -270,22 +269,25 @@ class TestPruneCASStore:
         cas_dir = sdd_dir / "cas"
         cas_dir.mkdir()
 
+        # Store the referenced blob
+        store = CASStore(cas_dir)
+        referenced_digest = store.put(b"referenced-content", content_type="text/plain")
+
         # Create a referenced entry via WAL
         wal_dir = sdd_dir / "runtime" / "wal"
         wal_dir.mkdir(parents=True)
-        referenced_digest = "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1"
         wal_file = wal_dir / "run.wal.jsonl"
         wal_file.write_text(
             json.dumps({"seq": 1, "inputs": {"digest": referenced_digest}}) + "\n",
             encoding="utf-8",
         )
 
-        # Store the referenced blob
-        store = CASStore(cas_dir)
-        store.put(b"referenced-content", content_type="text/plain")
-
-        # Also add an unreferenced blob
+        # Also add an unreferenced blob that is older than the retention window
         unreferenced_digest = store.put(b"unreferenced-content", content_type="text/plain")
+        old_meta_path = cas_dir / unreferenced_digest[:2] / f"{unreferenced_digest}.meta.json"
+        meta_data = json.loads(old_meta_path.read_text(encoding="utf-8"))
+        meta_data["created_at"] = time.time() - (31 * 86400)
+        old_meta_path.write_text(json.dumps(meta_data, indent=2) + "\n", encoding="utf-8")
 
         # Verify both exist
         assert store.has(unreferenced_digest)
@@ -297,6 +299,8 @@ class TestPruneCASStore:
         # Referenced blob should be preserved, unreferenced should be deleted
         assert result.preserved_entries == 1
         assert result.deleted_entries == 1
+        assert store.has(referenced_digest)
+        assert not store.has(unreferenced_digest)
 
     def test_unreferenced_young_survives(self, tmp_path: Path) -> None:
         """AC2: An unreferenced digest younger than window survives."""
@@ -324,27 +328,20 @@ class TestPruneCASStore:
         cas_dir.mkdir()
 
         store = CASStore(cas_dir)
-        # Manually create an old entry by manipulating the metadata
-        old_digest = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2"
-        old_entry = CASEntry(
-            digest=old_digest,
-            size_bytes=10,
-            created_at=time.time() - (31 * 86400),  # 31 days ago
-            content_type="text/plain",
-        )
-        store.put(b"old-content", content_type="text/plain")
-        # Override the created_at by rewriting metadata
-        import json as json_module
+        old_digest = store.put(b"old-content", content_type="text/plain")
 
+        # Override the created_at by rewriting metadata
         meta_path = cas_dir / old_digest[:2] / f"{old_digest}.meta.json"
-        meta_path.write_text(json_module.dumps(old_entry.__dict__, indent=2) + "\n", encoding="utf-8")
+        meta_data = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta_data["created_at"] = time.time() - (31 * 86400)
+        meta_path.write_text(json.dumps(meta_data, indent=2) + "\n", encoding="utf-8")
 
         # Run GC with 30-day retention
         result = prune_cas_store(sdd_dir, retention_days=30)
 
         # Old unreferenced blob should be deleted
         assert result.deleted_entries == 1
-        assert result.deleted_bytes == 10
+        assert result.deleted_bytes == len(b"old-content")
         assert not store.has(old_digest)
 
     def test_dry_run_does_not_delete(self, tmp_path: Path) -> None:
@@ -388,7 +385,7 @@ class TestPruneCASStore:
 class TestRunCasGCCli:
     """Tests for run_cas_gc_cli helper."""
 
-    def test_dry_run_output(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    def test_dry_run_output(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Dry run outputs what would be deleted."""
         from bernstein.core.persistence.cas_gc import run_cas_gc_cli
 
@@ -403,7 +400,7 @@ class TestRunCasGCCli:
         captured = capsys.readouterr()
         assert "DRY RUN" in captured.out or "Would delete" in captured.out
 
-    def test_negative_days_returns_false(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    def test_negative_days_returns_false(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Negative days returns False."""
         from bernstein.core.persistence.cas_gc import run_cas_gc_cli
 
