@@ -431,7 +431,7 @@ def test_build_run_graph_receipt_anchors_under_dedicated_run_id(
     task_head_before = task_spine.head_hash()
 
     # Build the run-graph receipt
-    receipt = build_run_graph_receipt(
+    build_run_graph_receipt(
         graph=graph,
         workdir=repo_root,
         lineage_root=lineage_root,
@@ -462,7 +462,7 @@ def test_build_run_graph_receipt_is_signed(fanout: tuple[Path, Path], private_ke
         head_sha_resolver=lambda p: HEAD_SHAS.get(p.name),
     )
 
-    receipt = build_run_graph_receipt(
+    build_run_graph_receipt(
         graph=graph,
         workdir=repo_root,
         lineage_root=lineage_root,
@@ -474,7 +474,7 @@ def test_build_run_graph_receipt_is_signed(fanout: tuple[Path, Path], private_ke
 
     # Read the on-disk receipt and verify signature
     receipt_dir = repo_root / ".sdd" / "run-graph"
-    receipt_file = list(receipt_dir.glob("*.json"))[0]
+    receipt_file = next(iter(receipt_dir.glob("*.json")))
     data = json.loads(receipt_file.read_text())
 
     assert "signed_jws" in data
