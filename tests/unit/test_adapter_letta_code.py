@@ -159,7 +159,8 @@ def test_memory_export_digest_recorded(tmp_path: Path, monkeypatch) -> None:
         return {"agent_id": "test-agent-123", "conversation_id": "test-conv-456", "digest": "abc123digest"}
 
     monkeypatch.setattr(
-        "bernstein.adapters.letta_code.export_memory_digest", mock_export,
+        "bernstein.adapters.letta_code.export_memory_digest",
+        mock_export,
     )
 
     adapter = LettaCodeAdapter()
@@ -188,7 +189,8 @@ def test_memory_export_failure_reported(tmp_path: Path, monkeypatch, caplog) -> 
         raise RuntimeError("Memory export failed")
 
     monkeypatch.setattr(
-        "bernstein.adapters.letta_code.export_memory_digest", mock_export_failure,
+        "bernstein.adapters.letta_code.export_memory_digest",
+        mock_export_failure,
     )
 
     adapter = LettaCodeAdapter()
