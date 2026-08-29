@@ -271,12 +271,11 @@ _POLICY_ENV = "BERNSTEIN_ADAPTER_ADMISSION_POLICY"
 _ENFORCE_TOKENS = frozenset({"enforce", "block", "strict"})
 _OFF_TOKENS = frozenset({"off", "0", "false", "disabled", "none"})
 
-#: Registry names the gate never withholds. ``mock`` is the test-only stub and
-#: ``generic`` is the user-supplied passthrough: neither wraps a pinned
-#: upstream surface, so neither has conformance evidence to present. This is
-#: the explicit dev/offline escape hatch -- the gate must never block work
-#: against ``mock``.
-ADMISSION_EXEMPT: frozenset[str] = frozenset({"generic", "mock"})
+#: Registry names the gate never withholds. ``mock`` is the test-only stub:
+#: it does not wrap a pinned upstream surface so it has no conformance evidence
+#: to present. This is the explicit dev/offline escape hatch -- the gate must
+#: never block work against ``mock``.
+ADMISSION_EXEMPT: frozenset[str] = frozenset({"mock"})
 
 #: Env override for the golden-transcript directory, for an operator pinning a
 #: tree of their own ahead of both layouts below.
