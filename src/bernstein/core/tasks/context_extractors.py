@@ -128,9 +128,7 @@ def extract_test_to_source_map(repo_root: Path, targets: list[str], *, limit: in
 
 
 def _git(repo_root: Path, *args: str) -> str:
-    return subprocess.check_output(
-        ("git", "-C", str(repo_root), *args), text=True, encoding="utf-8"
-    )
+    return subprocess.check_output(("git", "-C", str(repo_root), *args), text=True, encoding="utf-8")
 
 
 def _revert_pairs(records: list[tuple[str, str]]) -> set[str]:
