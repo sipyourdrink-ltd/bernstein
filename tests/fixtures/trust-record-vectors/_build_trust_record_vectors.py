@@ -80,7 +80,7 @@ def main() -> None:
         print(f"Wrote single-execution vector: {solo_path}  ({len(solo_output)} bytes)")
 
         # 2. Delegated pair: a parent run that spawns a child, one Trust
-        # Record per execution hop, linked by parent_record_hash.
+        # Record per execution hop, linked by delegation.parent.
         parent_journal = EventJournal("trust-record-vector-parent", sdd_dir)
         parent_journal.record("run_started", role="orchestrator")
         parent_journal.record("agent_spawned", agent="child-1")
