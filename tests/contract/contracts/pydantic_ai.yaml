@@ -24,6 +24,7 @@ auth:
     - "GEMINI_API_KEY"
     - "GROQ_API_KEY"
     - "MISTRAL_API_KEY"
+  basis: api_key
 required_flags:
   - "-m"
   - "--no-stream"

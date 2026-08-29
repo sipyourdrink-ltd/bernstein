@@ -14,6 +14,7 @@ auth:
   required_for_help: false
   required_for_models: true
   secret_env: "AMAZON_Q_TOKEN"
+  basis: api_key
 required_flags:
   - "--no-interactive"
   - "--trust-all-tools"

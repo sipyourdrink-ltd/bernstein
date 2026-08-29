@@ -23,6 +23,7 @@ auth:
   secret_env:
     - "GOOGLE_API_KEY"
     - "GEMINI_API_KEY"
+  basis: subscription_oauth
 required_flags:
   - "-p"
   - "--print"

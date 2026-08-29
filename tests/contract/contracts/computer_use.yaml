@@ -17,6 +17,7 @@ auth:
   required_for_help: false
   required_for_models: false
   secret_env: ""
+  basis: unknown
 required_flags:
   - "--model"
   - "--prompt"

@@ -61,6 +61,7 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.adapters._contract import (
     AdapterStrategy,
+    AuthBasis,
     ContractSpec,
     DangerousModeStrategy,
     EventChannel,
@@ -336,6 +337,7 @@ class AdapterCapabilityProfile:
         resume: How the agent reattaches to a prior session.
         dangerous_mode: How the agent is told to skip approval prompts.
         event_channel: The surface Bernstein reads for lifecycle signals.
+        auth_basis: Authentication mechanism declared by the adapter contract.
         provides: Provider-name aliases this agent answers to.
         notes: Free-text provenance for the declaration.
     """
@@ -358,6 +360,7 @@ class AdapterCapabilityProfile:
     event_channel: EventChannel = EventChannel.TEXT_SIGNALS
     provides: tuple[str, ...] = ()
     notes: str = ""
+    auth_basis: AuthBasis = AuthBasis.UNKNOWN
 
     def __post_init__(self) -> None:
         """Refuse an underspecified profile at construction time.
@@ -402,6 +405,7 @@ class AdapterCapabilityProfile:
             "resume": str(self.resume),
             "sandbox": str(self.sandbox),
             "vision": self.vision,
+            "auth_basis": str(self.auth_basis),
         }
         return dict(sorted(canonical.items()))
 
