@@ -5,6 +5,12 @@ from __future__ import annotations
 import subprocess
 from typing import TYPE_CHECKING, Any
 
+from bernstein.adapters._contract import (
+    AdapterStrategy,
+    DangerousModeStrategy,
+    EventChannel,
+    SessionState,
+)
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
 
@@ -36,7 +42,15 @@ class LettaCodeAdapter(CLIAdapter):
     opaque to Bernstein's orchestrator. If you want Bernstein-level
     state to survive across tasks, use Bernstein's ``.sdd/`` files,
     not Letta's memory.
+
+    Event channel: stream-json (structured NDJSON events on stdout).
     """
+
+    strategy_override: AdapterStrategy = AdapterStrategy(
+        dangerous_mode=DangerousModeStrategy.CLI_FLAG,
+        event_channel=EventChannel.STREAM_JSON,
+        session_state=SessionState.PERSISTENT_AGENT,
+    )
 
     def spawn(
         self,
