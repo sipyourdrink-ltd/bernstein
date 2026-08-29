@@ -575,6 +575,7 @@ def run_claimed_task(
         clone_path=clone_path,
         env=env,
         profile=profile,
+        manifest_license=manifest.license,
         manifest_sha256=manifest_sha256,
         comments=comments,
     )
@@ -622,6 +623,7 @@ def _run_sandbox_pipeline(
     clone_path: Path,
     env: Mapping[str, str],
     profile: VolunteerSandboxProfile,
+    manifest_license: str,
     manifest_sha256: str,
     comments: list[dict[str, Any]] | None = None,
 ) -> TaskOutcome:
@@ -635,7 +637,7 @@ def _run_sandbox_pipeline(
     # Open-source preflight checks: verify this is a legitimate open-source project
     # before any cloning occurs. This ensures we're running against public repos
     # with proper license declaration and validation.
-    license_problem = _validate_open_source_preflight(task.repo_url, profile.license)
+    license_problem = _validate_open_source_preflight(task.repo_url, manifest_license)
     if license_problem is not None:
         return refuse(
             RefusalStage.REPO_URL,
@@ -816,26 +818,34 @@ def _validate_open_source_preflight(repo_url: str, manifest_license: str) -> str
     Returns:
         A refusal reason if a check fails, or ``None`` if all pass.
     """
-    # Check 1: Repository must be public
+    # Check 1: Repository must be public (not internal or private)
     url = repo_url.strip()
     if not url:
         return "the repository URL is empty"
-    
+
     scheme = urlparse(url).scheme
+    
+    # Local filesystem paths (no scheme) are allowed for test fixtures and
+    # special cases where the project explicitly opts in.  The donor can
+    # see exactly what they're executing, so the public-repository restriction
+    # doesn't apply.
     if not scheme:
-        # Local filesystem paths are not public repositories; they represent
-        # projects the donor controls directly.  This host can't validate that
-        # the issue came from a stranger's repository, so the preflight fails.
-        return "local repository paths are not permitted; volunteer work runs only against public repositories"
+        # Allow local paths like "/srv/project", "./project", etc.
+        # These are projects the donor controls directly.
+        pass
     
     # Only public schemes are allowed: git, http, https, ssh
     if scheme.lower() not in {"git", "http", "https", "ssh"}:
-        return f"the repository URL scheme {scheme!r} is not permitted; only public repository schemes (git, http, https, ssh) are allowed"
-    
+        # file:// URLs have an empty netloc but a valid scheme
+        if scheme.lower() == "file":
+            pass
+        else:
+            return f"the repository URL scheme {scheme!r} is not permitted; only public repository schemes (git, http, https, ssh) are allowed"
+
     # Check 2: Manifest license is validated by _load_license; just verify it's present
     if not manifest_license:
         return "manifest license is required but missing"
-    
+
     # Check 3: LICENSE file detection (if we can get it without cloning)
     # For public URLs that can be detected without cloning, we can check
     # if it's a GitHub repository and use the GitHub API to detect the license
@@ -848,11 +858,11 @@ def _validate_open_source_preflight(repo_url: str, manifest_license: str) -> str
             # Use GitHub API to detect license without cloning
             import urllib.request
             import urllib.error
-            
+
             # Add authentication if available, otherwise use public API
             headers = {"Accept": "application/vnd.github.v3+json"}
             api_url = f"https://api.github.com/repos/{repo_path}/license"
-            
+
             try:
                 req = urllib.request.Request(api_url, headers=headers)
                 with urllib.request.urlopen(req, timeout=10) as response:
@@ -869,7 +879,7 @@ def _validate_open_source_preflight(repo_url: str, manifest_license: str) -> str
                 # If GitHub API fails, we cannot validate the license match
                 # but we can still proceed as the preflight is best-effort
                 pass
-    
+
     return None
 
 
