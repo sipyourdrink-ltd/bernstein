@@ -474,7 +474,7 @@ def sign_detached_jws_over_canonical(
     if not isinstance(private_key, Ed25519PrivateKey):
         msg = "sign_detached_jws_over_canonical requires an Ed25519 (EdDSA) private key"
         raise ValueError(msg)
-    header = {"alg": "EdDSA", "typ": typ, "kid": kid}
+    header = {"alg": "EdDSA", "kid": kid, "typ": typ}
     header_b64 = _b64url(canonicalize_jcs(header))
     body_b64 = _b64url(canonical_body)
     signing_input = f"{header_b64}.{body_b64}".encode("ascii")
