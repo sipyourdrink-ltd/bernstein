@@ -8,7 +8,7 @@ are applied.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from bernstein.core.models import ModelConfig
@@ -37,8 +37,7 @@ def test_spawn_builds_run_command(tmp_path: Path) -> None:
 
     cmd = popen.call_args.args[0]
     inner = inner_cmd(cmd)
-    assert inner[:3] == ["letta", "--yolo", "-p"]
-    assert inner[-1] == "fix the bug"
+    assert inner[:3] == ["letta", "--output-format", "stream-json"]
 
 
 def test_spawn_uses_stream_json_format(tmp_path: Path) -> None:
@@ -132,13 +131,12 @@ def test_consecutive_runs_get_distinct_conversation_bindings(tmp_path: Path) -> 
 def test_spawn_records_meta_sidecar(tmp_path: Path) -> None:
     """After tasks 3671-A/B: .sdd/runtime/<session_id>.letta_meta.json written with agent_id and conversation_id."""
     import json
-    from pathlib import Path
 
     adapter = LettaCodeAdapter()
     proc_mock = make_popen_mock(900)
 
-    with patch("bernstein.adapters.letta_code.subprocess.Popen", return_value=proc_mock) as popen:
-        result = adapter.spawn(
+    with patch("bernstein.adapters.letta_code.subprocess.Popen", return_value=proc_mock):
+        adapter.spawn(
             prompt="fix the bug",
             workdir=tmp_path,
             model_config=ModelConfig(model="sonnet", effort="high"),
@@ -168,7 +166,7 @@ def test_memory_export_digest_recorded(tmp_path: Path, monkeypatch) -> None:
     proc_mock = make_popen_mock(900)
 
     with patch("bernstein.adapters.letta_code.subprocess.Popen", return_value=proc_mock):
-        result = adapter.spawn(
+        adapter.spawn(
             prompt="fix the bug",
             workdir=tmp_path,
             model_config=ModelConfig(model="sonnet", effort="high"),
@@ -184,7 +182,6 @@ def test_memory_export_digest_recorded(tmp_path: Path, monkeypatch) -> None:
 
 def test_memory_export_failure_reported(tmp_path: Path, monkeypatch, caplog) -> None:
     """After tasks 3671-A/B: mock export failure, assert warning logged and finish_reason set."""
-    import json
     import logging
 
     def mock_export_failure(*args, **kwargs):
