@@ -31,11 +31,12 @@ import os
 import re
 import shutil
 import subprocess
-import yaml
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, TypedDict
+
+import yaml
 
 # Repo-root anchor. We compute the repo root from this file's location so
 # the loader works under editable installs and from a source checkout.
