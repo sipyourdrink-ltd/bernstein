@@ -169,6 +169,10 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `registry.py`               | Adapter registry - look up CLI adapters by name |
 | `report.py`                 | Adapter conformance + capability report |
 | `rovo.py`                   | Atlassian Rovo Dev CLI adapter |
+| `scanner.py`                | Scanner adapter contract (issue #3617, slice 2 of #2953) |
+| `scanner_conformance.py`    | Scanner adapter conformance suite harness |
+| `scanner_finding.py`        | Scanner Finding dataclass |
+| `scanner_registry.py`       | Scanner registry - look up scanner adapters by name |
 | `security_floor.py`         | Adapter security-floor spawn preflight with signed refusal receipts (#2515) |
 | `session_id.py`             | Deterministic session-id binding for adapter replay isolation |
 | `skills_injector.py`        | Inject per-task Claude Code skills into the worktree before spawn |
