@@ -932,8 +932,8 @@ class TestEmitTrustRecord:
         output = emitter.emit_trust_record(journal, "run-delegate")
         parsed = json.loads(output)
 
-        assert "delegation" not in parsed
         assert "delegation" in parsed
+        assert "parent_record_hash" not in parsed
         assert parsed["delegation"]["parent"] is None
 
     def test_signature_alg_is_eddsa(self, tmp_path: Path) -> None:
@@ -997,10 +997,11 @@ class TestFullEmitFlow:
         assert parsed["claims"]["first_event_ts"] == 1690000000.0
         assert parsed["claims"]["last_event_ts"] == 1690000002.0
 
-        # Subject: self-certifying did:key, run-scoped
-        assert parsed["subject"].startswith("did:key:z")
-        assert parsed["subject"].endswith("/run/integration-run")
-        assert _public_key_from_did_key(parsed["subject"]) == public_raw
+        # Subject: SPIFFE URI, run-scoped
+        assert parsed["subject"].startswith("spiffe://")
+        assert parsed["subject"].endswith("/integration-run")
+        expected_subject = _spiffe_uri_from_ed25519_public_key(public_raw, "integration-run")
+        assert parsed["subject"] == expected_subject
 
         # The six #4692 corrections
         assert parsed["enforce"] is True
@@ -1134,7 +1135,7 @@ class TestDeterminism:
             "runtime": in_process.runtime,
             "references": in_process.references,
             "appraisal": in_process.appraisal,
-            "delegation": in_process.delegation['parent'],
+            "delegation": in_process.delegation,
             "claims": in_process.claims,
             "signature": in_process.signature,
         }
