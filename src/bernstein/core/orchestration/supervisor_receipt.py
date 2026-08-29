@@ -123,6 +123,12 @@ class StallReason(StrEnum):
     #: falls through to ``INSPECT`` for it, so no existing decision changes.
     INTENT_DRIFT = "intent_drift"
 
+    #: The worker is lagging behind its assigned cohort — e.g. a
+    #: parallel branch completed while this worker is still catching
+    #: up. Additive; ``recommend_action`` falls through to ``INSPECT``
+    #: for it, so no existing decision changes.
+    COHORT_LAGGARD = "cohort_laggard"
+
     #: Fallback when an upstream detector produces a structured reason
     #: the supervisor does not know about. Carries the original token
     #: in ``details["raw_reason"]`` so a verifier can still inspect it.
