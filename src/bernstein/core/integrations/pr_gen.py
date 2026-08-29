@@ -22,7 +22,7 @@ description belongs to this diff.
 The module reuses existing Bernstein state:
 
 * :class:`bernstein.core.persistence.session.SessionState` - run-level
-  goal, completed task ids and cumulative cost.
+  goal and completed task ids.
 * :class:`bernstein.core.persistence.session.WrapUpBrief` - per-session
   diff-stat and changes summary written on graceful stop.
 * :class:`bernstein.core.tasks.models.JanitorResult` - quality-gate
@@ -904,30 +904,6 @@ def _format_gates(gates: tuple[GateResult, ...]) -> str:
     return "\n".join(lines)
 
 
-def _format_cost(cost: CostBreakdown) -> str:
-    """Render the cost section as a markdown list."""
-    if cost.total_usd == 0 and cost.total_tokens == 0:
-        return "- _No cost was recorded for this session._"
-
-    lines: list[str] = [
-        f"- **Total:** ${cost.total_usd:.2f}",
-        f"- **Tokens:** {cost.total_tokens:,}",
-    ]
-
-    if cost.total_tokens > 0 and cost.total_usd > 0:
-        rate = (cost.total_usd / cost.total_tokens) * 1_000_000
-        lines.append(f"- **Effective rate:** ${rate:.2f} / 1M tokens")
-    else:
-        lines.append("- **Effective rate:** n/a")
-
-    if cost.by_role:
-        by_role_sorted = sorted(cost.by_role.items(), key=lambda kv: -kv[1])
-        role_fragments = ", ".join(f"{role} ${usd:.2f}" for role, usd in by_role_sorted)
-        lines.append(f"- **By role:** {role_fragments}")
-
-    return "\n".join(lines)
-
-
 def _format_diff_stat(diff_stat: str) -> str:
     """Render the diff-stat, folded away, or a fallback line."""
     stripped = diff_stat.strip()
@@ -1108,7 +1084,7 @@ def _format_headline(session: SessionSummary) -> str:
     """Render the one-line summary that opens the body.
 
     A reviewer opening a pull request asks three questions before any other:
-    how big is it, did the checks pass, what did it cost.  The line answers
+    how big is it and did the checks pass.  The line answers
     all three above the fold so the rest of the description is optional
     reading rather than a search.
     """
@@ -1124,9 +1100,6 @@ def _format_headline(session: SessionSummary) -> str:
     if session.gates:
         passed = len(session.gates) - len(failed)
         segments.append(f"**{passed}/{len(session.gates)} gates passed**")
-
-    if session.cost.total_usd > 0:
-        segments.append(f"**${session.cost.total_usd:.2f}**")
 
     if session.git_error:
         marker = "⚠️"
@@ -1148,8 +1121,11 @@ def build_pr_body(session: SessionSummary) -> str:
 
     The output is structured so downstream reviewers (and tooling) can
     reliably grep for section headers.  All core sections - Problem,
-    Change, Verification and Cost - are always present even when the
+    Change and Verification - are always present even when the
     underlying data is empty, so tests can rely on their presence.
+
+    What the run spent is deliberately absent, for the same reason the
+    status text is: it describes the run, and the page is public.
 
     Every section is projected from the change: the linked issue states the
     problem, the commits and their files state what the diff does, and the
@@ -1206,9 +1182,6 @@ def build_pr_body(session: SessionSummary) -> str:
             "",
         ]
     parts += [
-        "## Cost",
-        _format_cost(session.cost),
-        "",
         "---",
         f"_Generated from Bernstein session `{short_id}`._",
         "",

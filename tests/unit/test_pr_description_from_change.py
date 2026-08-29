@@ -517,7 +517,7 @@ def test_a_colon_lead_in_absorbs_the_block_it_introduces() -> None:
     assert "edge ships nightly" in problem
 
 
-def test_the_body_opens_with_the_size_the_gates_and_the_cost() -> None:
+def test_the_body_opens_with_the_size_and_the_gates() -> None:
     body = build_pr_body(_summary(commits=(FEATURE_COMMIT,)))
     headline = body.splitlines()[0]
 
@@ -525,7 +525,6 @@ def test_the_body_opens_with_the_size_the_gates_and_the_cost() -> None:
     assert "2 files" in headline
     assert "+210 / -4" in headline
     assert "2/2 gates passed" in headline
-    assert "$1.00" in headline
 
 
 def test_a_failed_gate_shows_in_the_headline() -> None:
@@ -539,7 +538,7 @@ def test_a_failed_gate_shows_in_the_headline() -> None:
 def test_a_run_without_a_journal_head_does_not_advertise_one() -> None:
     """``Journal head: unrecorded`` reads as a lost recording, not an absent one."""
     body = build_pr_body(_summary(provenance=build_provenance(diff=b"diff --git a/x b/x\n")))
-    provenance = body.split("## Provenance", 1)[1].split("## Cost", 1)[0]
+    provenance = body.split("## Provenance", 1)[1].split("\n---", 1)[0]
 
     assert "unrecorded" not in provenance
     assert "Journal head" not in provenance
@@ -551,12 +550,28 @@ def test_a_journal_head_is_shown_when_the_run_anchored_one() -> None:
     assert "**Journal head:** `deadbeef`" in body
 
 
-def test_a_session_with_no_cost_says_so_in_one_line() -> None:
-    body = build_pr_body(_summary(cost=CostBreakdown()))
-    cost = body.split("## Cost", 1)[1].split("---", 1)[0]
+def test_the_body_states_no_spend_anywhere() -> None:
+    """What a run cost describes the run, not the diff a reviewer is reading.
 
-    assert "No cost was recorded" in cost
-    assert "Effective rate" not in cost
+    The module already refuses to source the description from the session's
+    own status text for exactly this reason. Spend was the one place that
+    rule was not applied: it reached the headline as ``$38.94`` and the body
+    as a per-role table, on a page anyone can read.
+    """
+    body = build_pr_body(_summary(commits=(FEATURE_COMMIT,), cost=CostBreakdown(total_usd=38.94, total_tokens=1_000_000)))
+
+    assert "$" not in body
+    assert "## Cost" not in body
+    assert "Effective rate" not in body
+    assert "38.94" not in body
+
+
+def test_a_session_with_no_cost_recorded_renders_the_same_body() -> None:
+    """No branch on spend survives, so the two bodies cannot drift apart."""
+    priced = build_pr_body(_summary(commits=(FEATURE_COMMIT,), cost=CostBreakdown(total_usd=12.5, total_tokens=999)))
+    free = build_pr_body(_summary(commits=(FEATURE_COMMIT,), cost=CostBreakdown()))
+
+    assert priced == free
 
 
 # ---------------------------------------------------------------------------
