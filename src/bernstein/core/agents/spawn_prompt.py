@@ -341,7 +341,7 @@ def _render_memory_lessons_block(workdir: Path) -> str:
             if bucket_size <= 0:
                 bucket_size = horizon / 2
             bucket = int(age // bucket_size)
-            weight = SPAWN.memory_lessons_weight_decay_factor ** bucket
+            weight = SPAWN.memory_lessons_weight_decay_factor**bucket
         entry_copy = dict(entry)
         entry_copy["_weight"] = weight
         entry_copy["_age"] = age
@@ -379,7 +379,7 @@ def _render_memory_lessons_block(workdir: Path) -> str:
 
     ts_final: list[dict[str, Any]] = []
     for _author, entries_list in author_entries.items():
-        ts_final.extend(entries_list[:SPAWN.memory_lessons_max_per_author])
+        ts_final.extend(entries_list[: SPAWN.memory_lessons_max_per_author])
 
     # Untimestamped entries already capped globally, just pass through
     final_entries = no_ts_capped + ts_final
