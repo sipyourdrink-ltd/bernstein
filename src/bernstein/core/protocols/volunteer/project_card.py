@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -213,7 +214,8 @@ class ProjectCard:
         }
         if self.notes is not None:
             result["notes"] = self.notes
-        return result
+        # Sort keys to ensure deterministic ordering
+        return {k: result[k] for k in sorted(result.keys())}
 
     def digest(self) -> str:
         """SHA-256 hex digest of the canonical bytes (stable identity)."""
@@ -320,15 +322,42 @@ def verify_project_card_envelope(
     Returns:
         :class:`ProjectCardVerification` with ``ok`` flag and details.
     """
+    # First verify signature and predicate type using verify_envelope's own logic
+    # with the correct project-card predicate type
     errors: list[str] = []
-
     env_v = verify_envelope(
         envelope,
         public_key,
         expected_predicate_type=PROJECT_CARD_PREDICATE_TYPE,
     )
     if not env_v.ok:
-        return ProjectCardVerification(ok=False, errors=tuple(env_v.errors))
+        # Even when signature/predicate-type verification fails, we want to collect
+        # document-level validation errors (wrong document_kind, credential fragments)
+        # to help distinguish between "wrong signer" and "wrong document type".
+        errors.extend(env_v.errors)
+        # Extract the predicate body and validate document fields even when signature fails
+        try:
+            statement = json.loads(envelope.payload_bytes.decode("utf-8"))
+            predicate = statement.get("predicate", {})
+            if isinstance(predicate, dict):
+                document_kind = predicate.get("document_kind", "")
+                if document_kind != "project-card":
+                    errors.append(
+                        f"document_kind is {document_kind!r}, expected 'project-card'",
+                    )
+                document = predicate.get("document", {})
+                if isinstance(document, dict):
+                    credential_fragments = ("key", "token", "secret", "password", "credential")
+                    for field_name, field_value in document.items():
+                        if isinstance(field_value, str):
+                            field_lower = field_value.lower()
+                            if any(frag in field_lower for frag in credential_fragments):
+                                errors.append(
+                                    f"string field '{field_name}' contains credential-like fragment {field_value!r}",
+                                )
+        except Exception:
+            pass
+        return ProjectCardVerification(ok=False, errors=tuple(errors))
 
     statement = env_v.statement
     raw_predicate = statement.get("predicate", {})

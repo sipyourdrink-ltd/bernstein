@@ -157,6 +157,22 @@ class WorkerCard:
     notes: str | None = None
 
     def __post_init__(self) -> None:
+        # Credential name denylist — reject any string field value containing
+        # credential-like fragments (KEY, TOKEN, SECRET, PASSWORD, CREDENTIAL).
+        _CREDENTIAL_FRAGMENTS = ("key", "token", "secret", "password", "credential")
+
+        def _check_str(name: str, value: Any) -> None:
+            if isinstance(value, bool) or not isinstance(value, str):
+                raise WorkerCardError(name, f"expected str, got {type(value).__name__}")
+            if not value:
+                raise WorkerCardError(name, "must be non-empty")
+
+        def _check_credential(name: str, value: str) -> None:
+            field_lower = value.lower()
+            for frag in _CREDENTIAL_FRAGMENTS:
+                if frag in field_lower:
+                    raise WorkerCardError(name, f"contains credential-like fragment {value!r}")
+
         # Validate str-typed scalar fields (excluding task_types which is a list).
         for name, value in [
             ("schema_version", self.schema_version),
@@ -169,10 +185,8 @@ class WorkerCard:
             ("budget_posture", self.budget_posture),
             ("submitted_at", self.submitted_at),
         ]:
-            if isinstance(value, bool) or not isinstance(value, str):
-                raise WorkerCardError(name, f"expected str, got {type(value).__name__}")
-            if not value:
-                raise WorkerCardError(name, "must be non-empty")
+            _check_str(name, value)
+            _check_credential(name, value)
 
         # task_types must be a list of valid task types.
         if isinstance(self.task_types, bool) or not isinstance(self.task_types, list):
@@ -189,55 +203,59 @@ class WorkerCard:
                 )
             if not task_type:
                 raise WorkerCardError(f"task_types[{i}]", "must be non-empty")
+            _check_credential(f"task_types[{i}]", task_type)
 
         # capabilities must be a non-empty string.
         if not isinstance(self.capabilities, str):
             raise WorkerCardError("capabilities", f"expected str, got {type(self.capabilities).__name__}")
         if not self.capabilities:
             raise WorkerCardError("capabilities", "must be non-empty")
+        _check_credential("capabilities", self.capabilities)
 
-        # cpu_ceiling must be a valid CPU/GPU tier.
+        # Credential denylist must run before enum validation so credential
+        # fragments are caught before the tier-value check.
         if self.cpu_ceiling not in _CPU_GPU_TIERS:
             raise WorkerCardError(
                 "cpu_ceiling",
                 f"must be one of {_CPU_GPU_TIERS}, got {self.cpu_ceiling!r}",
             )
+        _check_credential("cpu_ceiling", self.cpu_ceiling)
 
-        # ram_ceiling must be a valid CPU/GPU tier.
         if self.ram_ceiling not in _CPU_GPU_TIERS:
             raise WorkerCardError(
                 "ram_ceiling",
                 f"must be one of {_CPU_GPU_TIERS}, got {self.ram_ceiling!r}",
             )
+        _check_credential("ram_ceiling", self.ram_ceiling)
 
-        # gpu_ceiling must be a valid CPU/GPU tier.
         if self.gpu_ceiling not in _CPU_GPU_TIERS:
             raise WorkerCardError(
                 "gpu_ceiling",
                 f"must be one of {_CPU_GPU_TIERS}, got {self.gpu_ceiling!r}",
             )
+        _check_credential("gpu_ceiling", self.gpu_ceiling)
 
-        # sandbox_tier must be a valid sandbox tier.
         if self.sandbox_tier not in _SANDBOX_TIERS:
             raise WorkerCardError(
                 "sandbox_tier",
                 f"must be one of {_SANDBOX_TIERS}, got {self.sandbox_tier!r}",
             )
+        _check_credential("sandbox_tier", self.sandbox_tier)
 
-        # availability_window must be a non-empty string.
         if not isinstance(self.availability_window, str):
             raise WorkerCardError("availability_window", f"expected str, got {type(self.availability_window).__name__}")
         if not self.availability_window:
             raise WorkerCardError("availability_window", "must be non-empty")
+        _check_credential("availability_window", self.availability_window)
 
-        # budget_posture must be a valid budget posture.
         if self.budget_posture not in _BUDGET_POSTURES:
             raise WorkerCardError(
                 "budget_posture",
                 f"must be one of {_BUDGET_POSTURES}, got {self.budget_posture!r}",
             )
+        _check_credential("budget_posture", self.budget_posture)
 
-        # submitted_at must be an aware datetime (optional — defaults to \"\").
+        # submitted_at must be an aware datetime.
         if isinstance(self.submitted_at, bool) or not isinstance(self.submitted_at, str):
             raise WorkerCardError("submitted_at", f"expected str, got {type(self.submitted_at).__name__}")
         if self.submitted_at:
@@ -268,7 +286,8 @@ class WorkerCard:
         }
         if self.notes is not None:
             result["notes"] = self.notes
-        return result
+        # Sort keys to ensure deterministic ordering
+        return {k: result[k] for k in sorted(result.keys())}
 
     def digest(self) -> str:
         """SHA-256 hex digest of the canonical bytes (stable identity)."""
