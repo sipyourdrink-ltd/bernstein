@@ -992,9 +992,9 @@ class MCPClientSession:
             Dict of HTTP headers for authentication.
         """
         if self._config.auth_type == "bearer" and self._config.auth_token:
-            return {"Authorization": f"Bearer {self._config.auth_token}"}
+            return {"Authorization": "Bearer [REDACTED:auth_header]"}
         if self._config.auth_type == "oauth" and self._config.auth_token:
-            return {"Authorization": f"Bearer {self._config.auth_token}"}
+            return {"Authorization": "Bearer [REDACTED:auth_header]"}
         return {}
 
 

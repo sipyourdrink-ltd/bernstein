@@ -42,7 +42,7 @@ def bearer_config() -> RemoteServerConfig:
         name="secure-server",
         url="https://api.example.com/mcp",
         auth_type="bearer",
-        auth_token="xxx",
+        auth_token="xxx-placeholder-token-xxx",
         timeout_seconds=10,
         retry_limit=1,
     )
@@ -55,7 +55,7 @@ def oauth_config() -> RemoteServerConfig:
         name="oauth-server",
         url="https://oauth.example.com/mcp",
         auth_type="oauth",
-        auth_token="xxx",
+        auth_token="xxx-placeholder-token-xxx",
         oauth_client_id="client-id",
         oauth_client_secret="client-secret",
     )
@@ -127,7 +127,7 @@ class TestRemoteServerConfig:
 
     def test_bearer_config(self, bearer_config: RemoteServerConfig) -> None:
         assert bearer_config.auth_type == "bearer"
-        assert bearer_config.auth_token == "xxx"
+        assert bearer_config.auth_token == "xxx-placeholder-token-xxx"
         assert bearer_config.timeout_seconds == 10
         assert bearer_config.retry_limit == 1
 
