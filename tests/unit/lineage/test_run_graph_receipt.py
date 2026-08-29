@@ -21,9 +21,11 @@ from bernstein.core.lineage.run_graph import (
     RunGraphNode,
     RunGraphNodeStatus,
     RunGraphReceipt,
+    RunGraphVerifyResult,
     _node_hash,
     build_run_graph,
     build_run_graph_receipt,
+    verify_run_graph_receipt,
 )
 from bernstein.core.security.agent_card_signer import generate_ed25519_keypair
 from bernstein.core.security.audit_chain import (
@@ -515,3 +517,243 @@ def test_run_graph_receipt_has_correct_run_id_constant() -> None:
     """Test RUN_GRAPH_RUN_ID constant exists and has expected value."""
     assert RUN_GRAPH_RUN_ID == "run-graph"
     assert RUN_GRAPH_RUN_ID != "eval-gate"  # Different from gate receipts
+
+
+# ---------------------------------------------------------------------------
+# verify_run_graph_receipt (#3760)
+# ---------------------------------------------------------------------------
+#
+# A receipt that only replays its own stored fields proves nothing: every hash
+# inside it was written by the pass that wrote the fields. These tests damage
+# the tree and the receipt in turn, and assert the verifier notices -- which is
+# the only way to tell re-derivation from a self-consistency check.
+
+
+def _seal(
+    repo_root: Path,
+    lineage_root: Path,
+    private_key_pem: bytes,
+    *,
+    sessions: tuple[str, ...] = SESSIONS,
+) -> tuple[RunGraphReceipt, Path]:
+    """Seal the fan-out and return the receipt with its on-disk path."""
+    graph = build_run_graph(
+        repo_root,
+        run_ids={s: RUN_IDS[s] for s in sessions},
+        lineage_root=lineage_root,
+        hmac_key=HMAC_KEY,
+        head_sha_resolver=lambda p: HEAD_SHAS.get(p.name),
+    )
+    receipt = build_run_graph_receipt(
+        graph=graph,
+        workdir=repo_root,
+        lineage_root=lineage_root,
+        hmac_key=HMAC_KEY,
+        timestamp=TIMESTAMP,
+        private_key_pem=private_key_pem,
+        chain=None,
+    )
+    return receipt, repo_root / ".sdd" / "run-graph" / f"{receipt.receipt_hash}.json"
+
+
+def _verify(path: Path, repo_root: Path, lineage_root: Path, public_key_pem: bytes) -> RunGraphVerifyResult:
+    return verify_run_graph_receipt(
+        receipt_path=path,
+        repo_root=repo_root,
+        run_ids=dict(RUN_IDS),
+        lineage_root=lineage_root,
+        hmac_key=HMAC_KEY,
+        public_key_pem=public_key_pem,
+        head_sha_resolver=lambda p: HEAD_SHAS.get(p.name),
+    )
+
+
+@pytest.fixture
+def keypair() -> tuple[bytes, bytes]:
+    private, public = generate_ed25519_keypair()
+    return private, public
+
+
+def test_a_sealed_receipt_verifies_against_the_tree_it_sealed(
+    fanout: tuple[Path, Path], keypair: tuple[bytes, bytes]
+) -> None:
+    repo_root, lineage_root = fanout
+    private, public = keypair
+    _receipt, path = _seal(repo_root, lineage_root, private)
+
+    result = _verify(path, repo_root, lineage_root, public)
+
+    assert result.ok is True
+    assert result.status == "verified"
+    assert "3 branch" in result.reason
+
+
+def test_a_flipped_byte_in_a_branch_spine_names_that_branch(
+    fanout: tuple[Path, Path], keypair: tuple[bytes, bytes]
+) -> None:
+    """The assertion #3760 exists for: damage the tree, not the receipt.
+
+    Nothing inside the receipt changes here. Only re-derivation can see it,
+    and the message has to name the branch or an operator has N places to look.
+    """
+    repo_root, lineage_root = fanout
+    private, public = keypair
+    _receipt, path = _seal(repo_root, lineage_root, private)
+
+    spine_file = next((lineage_root / RUN_IDS["sess-beta"]).rglob("*.jsonl"))
+    raw = spine_file.read_bytes()
+    assert b'"actor":"tester"' in raw
+    spine_file.write_bytes(raw.replace(b'"actor":"tester"', b'"actor":"testeR"'))
+
+    result = _verify(path, repo_root, lineage_root, public)
+
+    assert result.ok is False
+    assert result.status == "diverged"
+    assert "sess-beta" in result.reason
+
+
+def test_a_branch_that_disappeared_is_reported_as_a_count(
+    fanout: tuple[Path, Path], keypair: tuple[bytes, bytes]
+) -> None:
+    """With a branch gone there is no pairing to read a name out of."""
+    repo_root, lineage_root = fanout
+    private, public = keypair
+    _receipt, path = _seal(repo_root, lineage_root, private)
+
+    import shutil
+
+    shutil.rmtree(repo_root / ".sdd" / "runtime" / "worktrees" / "sess-gamma")
+
+    result = _verify(path, repo_root, lineage_root, public)
+
+    assert result.ok is False
+    assert result.status == "diverged"
+    assert "3 branch(es)" in result.reason
+    assert "2" in result.reason
+
+
+def test_an_edited_receipt_body_fails_before_any_re_derivation(
+    fanout: tuple[Path, Path], keypair: tuple[bytes, bytes]
+) -> None:
+    repo_root, lineage_root = fanout
+    private, public = keypair
+    _receipt, path = _seal(repo_root, lineage_root, private)
+
+    data = json.loads(path.read_text())
+    data["timestamp"] = TIMESTAMP + 1
+    path.write_text(json.dumps(data))
+
+    result = _verify(path, repo_root, lineage_root, public)
+
+    assert result.ok is False
+    assert result.status == "tampered"
+    assert "receipt_hash" in result.reason
+
+
+def test_a_receipt_signed_by_another_key_is_refused(fanout: tuple[Path, Path], keypair: tuple[bytes, bytes]) -> None:
+    """The body is intact and self-consistent; only the signer is wrong."""
+    repo_root, lineage_root = fanout
+    private, _public = keypair
+    _receipt, path = _seal(repo_root, lineage_root, private)
+    _other_private, other_public = generate_ed25519_keypair()
+
+    result = _verify(path, repo_root, lineage_root, other_public)
+
+    assert result.ok is False
+    assert result.status == "tampered"
+    assert "signature" in result.reason
+
+
+def test_a_receipt_stripped_of_its_signature_is_refused(
+    fanout: tuple[Path, Path], keypair: tuple[bytes, bytes]
+) -> None:
+    """Absent evidence must not read as satisfied evidence."""
+    repo_root, lineage_root = fanout
+    private, public = keypair
+    _receipt, path = _seal(repo_root, lineage_root, private)
+
+    data = json.loads(path.read_text())
+    del data["signed_jws"]
+    path.write_text(json.dumps(data))
+
+    result = _verify(path, repo_root, lineage_root, public)
+
+    assert result.ok is False
+    assert result.status == "unreadable"
+
+
+def test_an_empty_fan_out_is_refused_rather_than_passing_on_nothing(
+    tmp_path: Path, keypair: tuple[bytes, bytes]
+) -> None:
+    """Zero branches means zero disagreements, which is not the same as agreement."""
+    private, public = keypair
+    repo_root = tmp_path / "repo"
+    (repo_root / ".sdd" / "runtime" / "worktrees").mkdir(parents=True)
+    lineage_root = tmp_path / "lineage"
+
+    graph = build_run_graph(
+        repo_root,
+        run_ids={},
+        lineage_root=lineage_root,
+        hmac_key=HMAC_KEY,
+        head_sha_resolver=lambda p: None,
+    )
+    assert graph.nodes == ()
+    receipt = build_run_graph_receipt(
+        graph=graph,
+        workdir=repo_root,
+        lineage_root=lineage_root,
+        hmac_key=HMAC_KEY,
+        timestamp=TIMESTAMP,
+        private_key_pem=private,
+        chain=None,
+    )
+    path = repo_root / ".sdd" / "run-graph" / f"{receipt.receipt_hash}.json"
+
+    result = verify_run_graph_receipt(
+        receipt_path=path,
+        repo_root=repo_root,
+        run_ids={},
+        lineage_root=lineage_root,
+        hmac_key=HMAC_KEY,
+        public_key_pem=public,
+        head_sha_resolver=lambda p: None,
+    )
+
+    assert result.ok is False
+    assert result.status == "empty"
+
+
+def test_a_receipt_whose_spine_anchor_is_gone_is_refused(
+    fanout: tuple[Path, Path], keypair: tuple[bytes, bytes]
+) -> None:
+    """The receipt and the tree agree; only the anchor binding them is missing."""
+    repo_root, lineage_root = fanout
+    private, public = keypair
+    _receipt, path = _seal(repo_root, lineage_root, private)
+
+    anchor_spine = next((lineage_root / RUN_GRAPH_RUN_ID).rglob("*.jsonl"))
+    anchor_spine.write_bytes(b"")
+
+    result = _verify(path, repo_root, lineage_root, public)
+
+    assert result.ok is False
+    assert result.status == "unanchored"
+
+
+def test_an_unreadable_receipt_is_refused_rather_than_skipped(tmp_path: Path, keypair: tuple[bytes, bytes]) -> None:
+    _private, public = keypair
+    missing = tmp_path / "nope.json"
+
+    result = verify_run_graph_receipt(
+        receipt_path=missing,
+        repo_root=tmp_path,
+        run_ids={},
+        lineage_root=tmp_path / "lineage",
+        hmac_key=HMAC_KEY,
+        public_key_pem=public,
+    )
+
+    assert result.ok is False
+    assert result.status == "unreadable"
+    assert result.receipt is None
