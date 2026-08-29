@@ -115,6 +115,7 @@ def test_finding_hash() -> None:
 
     # Actually compute the hash
     import hashlib
+
     expected = hashlib.sha256(canonical).hexdigest()
     assert f.finding_hash() == expected
 
@@ -181,10 +182,13 @@ def test_findings_hash() -> None:
     individual_hashes = sorted([f.finding_hash() for f in [f1, f2, f3]])
     concatenated = "\n".join(individual_hashes).encode("utf-8")
     import hashlib
+
     expected = hashlib.sha256(concatenated).hexdigest()
     assert result1 == expected
 
 
 def test_findings_hash_empty() -> None:
     """findings_hash with empty list should work."""
-    assert findings_hash([]) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"  # SHA-256 of empty string
+    assert (
+        findings_hash([]) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    )  # SHA-256 of empty string

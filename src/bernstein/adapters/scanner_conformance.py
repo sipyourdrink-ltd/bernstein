@@ -150,19 +150,14 @@ class ScannerTranscriptResult:
             "passed": self.passed,
             "determinism_tier": self.determinism_tier.value,
             "step_results": [
-                {"step_index": s.step_index, "passed": s.passed, "message": s.message}
-                for s in self.step_results
+                {"step_index": s.step_index, "passed": s.passed, "message": s.message} for s in self.step_results
             ],
         }
 
     @property
     def regressions(self) -> list[str]:
         """Names of steps or expectations that failed."""
-        return [
-            r.message
-            for r in self.step_results
-            if not r.passed
-        ]
+        return [r.message for r in self.step_results if not r.passed]
 
     @property
     def passed(self) -> bool:
@@ -305,9 +300,7 @@ def _check_feed_pinned_tier(
 
         # Check that feed_digest is present and non-empty
         # The step result should carry the scan result
-        has_feed_digest = (
-            hasattr(step, "feed_digest") and step.feed_digest
-        ) or False
+        has_feed_digest = (hasattr(step, "feed_digest") and step.feed_digest) or False
         if not has_feed_digest:
             failures.append(
                 f"Step {step_idx}: feed_pinned - adapter declared pinned_inputs {pinned_inputs} "
@@ -452,9 +445,7 @@ class ScannerConformanceHarness:
             tier = DeterminismTier.TRANSCRIPT_ANCHORED
         cap = None
         try:
-            _contract = __import__(
-                "bernstein.adapters._contract", fromlist=["scanner_capabilities"]
-            )
+            _contract = __import__("bernstein.adapters._contract", fromlist=["scanner_capabilities"])
             cap = adapter.name() and _contract.scanner_capabilities(adapter.name())
         except Exception:
             cap = None
@@ -517,9 +508,7 @@ class ScannerConformanceHarness:
                 passed = False
                 missing_str = sorted(missing) if missing else ""
                 extra_str = sorted(extra) if extra else ""
-                message_parts.append(
-                    f"deterministic tier: expected hashes {missing_str}, got extra {extra_str}"
-                )
+                message_parts.append(f"deterministic tier: expected hashes {missing_str}, got extra {extra_str}")
 
         # Check feed_pinned
         pinned_inputs = cap.get("pinned_inputs", ()) if cap else ()
@@ -577,7 +566,6 @@ class ScannerConformanceHarness:
         """
         import tempfile
 
-
         if workdir is None:
             with tempfile.TemporaryDirectory() as tmp:
                 wd = Path(tmp)
@@ -599,9 +587,7 @@ class ScannerConformanceHarness:
         result = ScannerTranscriptResult(
             transcript_name=transcript.name,
             adapter_class=transcript.adapter_class,
-            determinism_tier=scanner_determinism(
-                transcript.adapter_class
-            ),  # simplified; actual lookup needs instance
+            determinism_tier=scanner_determinism(transcript.adapter_class),  # simplified; actual lookup needs instance
         )
 
         for i, step in enumerate(transcript.steps):
@@ -654,9 +640,7 @@ class ScannerConformanceHarness:
                 if cap and "pinned_inputs" in cap and cap["pinned_inputs"]:
                     # If this scanner has pinned_inputs declared but none of the
                     # step results have a feed_digest, record the failure
-                    has_feed = any(
-                        getattr(sr, "feed_digest", None) for sr in result.step_results
-                    )
+                    has_feed = any(getattr(sr, "feed_digest", None) for sr in result.step_results)
                     if not has_feed:
                         report.pinned_input_failures.append(
                             f"{transcript.name}: declared pinned_inputs but no feed_digest recorded"
@@ -665,8 +649,6 @@ class ScannerConformanceHarness:
                 # Add regressions for failed steps
                 for sr in result.step_results:
                     if not sr.passed:
-                        report.regressions.append(
-                            f"{transcript.name} step {sr.step_index}: {sr.message}"
-                        )
+                        report.regressions.append(f"{transcript.name} step {sr.step_index}: {sr.message}")
 
         return report

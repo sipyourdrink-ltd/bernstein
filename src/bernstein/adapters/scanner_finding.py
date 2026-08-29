@@ -23,24 +23,24 @@ from typing import Any
 class Finding:
     """A finding (issue) produced by a scanner adapter.
 
-    Finding objects are hashable (frozen dataclass) and comparable, which lets the conformance
-suite enforce determinism tiers: for ``deterministic`` tier adapters, two
-runs on the exact same input must produce identical finding hashes; for
-``feed_pinned``, identical hashes are required given the same recorded
-digest; and for ``transcript_anchored``, a transcript is recorded that a
-later verify step can diff.
+        Finding objects are hashable (frozen dataclass) and comparable, which lets the conformance
+    suite enforce determinism tiers: for ``deterministic`` tier adapters, two
+    runs on the exact same input must produce identical finding hashes; for
+    ``feed_pinned``, identical hashes are required given the same recorded
+    digest; and for ``transcript_anchored``, a transcript is recorded that a
+    later verify step can diff.
 
-    Attributes:
-        rule: The check / rule / signature that matched (e.g. ``"SSTI-001"``).
-        path: Repo-relative or absolute path where the issue was found.
-        severity: One of ``"informational"``, ``"low"``, ``"medium"``,
-            ``"high"``, ``"critical"``.  When the adapter does not declare
-            a severity the default is ``"informational"``.
-        summary: One-line human-readable description of the issue.
-        extra: Optional free-form metadata dict that downstream consumers may
-            use for additional context.  This field is *not* included in the
-            canonical hash so that adapters may enrich findings without
-            breaking determinism checks.
+        Attributes:
+            rule: The check / rule / signature that matched (e.g. ``"SSTI-001"``).
+            path: Repo-relative or absolute path where the issue was found.
+            severity: One of ``"informational"``, ``"low"``, ``"medium"``,
+                ``"high"``, ``"critical"``.  When the adapter does not declare
+                a severity the default is ``"informational"``.
+            summary: One-line human-readable description of the issue.
+            extra: Optional free-form metadata dict that downstream consumers may
+                use for additional context.  This field is *not* included in the
+                canonical hash so that adapters may enrich findings without
+                breaking determinism checks.
     """
 
     rule: str

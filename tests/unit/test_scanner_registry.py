@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import pytest
 
 from bernstein.adapters.scanner import (
@@ -15,18 +13,6 @@ from bernstein.adapters.scanner import (
     ScanScope,
 )
 from bernstein.adapters.scanner_finding import Finding
-from bernstein.adapters.scanner_registry import (
-    ScannerAdmissionGateLike,
-    _SCANNERS,
-    _entrypoints_loaded,
-    get_scanner,
-    iter_scanner_specs,
-    register_scanner,
-    removed_scanner_message,
-    registry_name_for,
-    scanner_name_for_provider,
-    selectable_scanner_names,
-)
 
 
 class DummyScanner(ScannerAdapter):

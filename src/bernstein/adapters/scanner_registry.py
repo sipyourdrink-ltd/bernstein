@@ -46,9 +46,7 @@ def _load_entrypoint_scanners() -> None:
         try:
             loaded = ep.load()
             name = ep.name
-            if (inspect.isclass(loaded) and issubclass(loaded, ScannerAdapter)) or isinstance(
-                loaded, ScannerAdapter
-            ):
+            if (inspect.isclass(loaded) and issubclass(loaded, ScannerAdapter)) or isinstance(loaded, ScannerAdapter):
                 _SCANNERS[name] = loaded
             else:
                 logger.warning(
