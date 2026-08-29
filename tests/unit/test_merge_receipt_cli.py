@@ -52,8 +52,15 @@ def _emit(root, head_sha, merge_base_sha, **kwargs):
 
     defaults = dict(
         required_context_ids=("status/green",),
-        blast_radius={"score": 0.2, "hard_one_way": False, "components": [], "hits": [],
-                      "rationale": "no destructive detectors fired", "files_touched": 0, "files": []},
+        blast_radius={
+            "score": 0.2,
+            "hard_one_way": False,
+            "components": [],
+            "hits": [],
+            "rationale": "no destructive detectors fired",
+            "files_touched": 0,
+            "files": [],
+        },
         review_verdict="pass",
         ruleset_bytes=b"",
         decision="admit",
@@ -77,6 +84,7 @@ def _emit(root, head_sha, merge_base_sha, **kwargs):
 # emit + verify round-trip
 # -------------------------------------------------------------------
 
+
 def test_emit_and_verify_merge_receipt(populated_workdir):
     """Integration test: emit a merge receipt and verify it offline."""
     root = populated_workdir
@@ -90,8 +98,13 @@ def test_emit_and_verify_merge_receipt(populated_workdir):
         merge_base_sha,
         required_context_ids=("unit/green", "integration/green"),
         blast_radius={
-            "score": 0.3, "hard_one_way": False, "components": [], "hits": [],
-            "rationale": "all gates passed", "files_touched": 5, "files": ["src/", "tests/"],
+            "score": 0.3,
+            "hard_one_way": False,
+            "components": [],
+            "hits": [],
+            "rationale": "all gates passed",
+            "files_touched": 5,
+            "files": ["src/", "tests/"],
         },
         review_verdict="approve",
         decision="admit",
@@ -121,6 +134,7 @@ def test_emit_and_verify_merge_receipt(populated_workdir):
 # verify: no receipt
 # -------------------------------------------------------------------
 
+
 def test_verify_no_receipt(workdir):
     """When no receipt exists, verify reports a failure with reason."""
     root = workdir
@@ -144,6 +158,7 @@ def test_verify_no_receipt(workdir):
 # verify: stored refusal still verifies
 # -------------------------------------------------------------------
 
+
 def test_verify_stored_refusal(populated_workdir):
     """A receipt storing a refusal still verifies cryptographically."""
     root = populated_workdir
@@ -158,8 +173,13 @@ def test_verify_stored_refusal(populated_workdir):
         merge_base_sha,
         required_context_ids=("integration/fail",),
         blast_radius={
-            "score": 0.9, "hard_one_way": False, "components": [], "hits": [],
-            "rationale": "integration failed", "files_touched": 3, "files": ["test_integration.py"],
+            "score": 0.9,
+            "hard_one_way": False,
+            "components": [],
+            "hits": [],
+            "rationale": "integration failed",
+            "files_touched": 3,
+            "files": ["test_integration.py"],
         },
         review_verdict="fail",
         decision="refuse",
@@ -184,6 +204,7 @@ def test_verify_stored_refusal(populated_workdir):
 # verify: hard one-way + advisory
 # -------------------------------------------------------------------
 
+
 def test_verify_hard_one_way_with_advisory(populated_workdir):
     """Verify a receipt where hard_one_way fired and an advisory was recorded."""
     root = populated_workdir
@@ -198,8 +219,13 @@ def test_verify_hard_one_way_with_advisory(populated_workdir):
         merge_base_sha,
         required_context_ids=("status/red",),
         blast_radius={
-            "score": 1.0, "hard_one_way": True, "components": [], "hits": [],
-            "rationale": "hard one-way detector fired", "files_touched": 1, "files": ["secrets.py"],
+            "score": 1.0,
+            "hard_one_way": True,
+            "components": [],
+            "hits": [],
+            "rationale": "hard one-way detector fired",
+            "files_touched": 1,
+            "files": ["secrets.py"],
         },
         review_verdict="fail",
         decision="refuse",
@@ -226,6 +252,7 @@ def test_verify_hard_one_way_with_advisory(populated_workdir):
 # verify: operator review authority
 # -------------------------------------------------------------------
 
+
 def test_verify_operator_review(populated_workdir):
     """Verify a receipt authored under operator-review authority."""
     root = populated_workdir
@@ -240,8 +267,13 @@ def test_verify_operator_review(populated_workdir):
         merge_base_sha,
         required_context_ids=("build/green",),
         blast_radius={
-            "score": 0.1, "hard_one_way": False, "components": [], "hits": [],
-            "rationale": "build succeeded", "files_touched": 2, "files": ["src/", "tests/"],
+            "score": 0.1,
+            "hard_one_way": False,
+            "components": [],
+            "hits": [],
+            "rationale": "build succeeded",
+            "files_touched": 2,
+            "files": ["src/", "tests/"],
         },
         review_verdict="pass",
         decision="admit",
@@ -266,6 +298,7 @@ def test_verify_operator_review(populated_workdir):
 # tamper detection
 # -------------------------------------------------------------------
 
+
 def test_verify_tamper_detected(populated_workdir):
     """A tampered receipt (decision changed after emit) fails verification."""
     root = populated_workdir
@@ -280,8 +313,13 @@ def test_verify_tamper_detected(populated_workdir):
         merge_base_sha,
         required_context_ids=("status/red",),
         blast_radius={
-            "score": 0.9, "hard_one_way": False, "components": [], "hits": [],
-            "rationale": "integration failed", "files_touched": 3, "files": ["test_integration.py"],
+            "score": 0.9,
+            "hard_one_way": False,
+            "components": [],
+            "hits": [],
+            "rationale": "integration failed",
+            "files_touched": 3,
+            "files": ["test_integration.py"],
         },
         review_verdict="fail",
         decision="refuse",

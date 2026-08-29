@@ -8,6 +8,7 @@ same task) to select a winner.
 merge-admission receipt, following the same exit-code contract as
 ``bernstein review-receipt verify``: 0 = verified / 1 = no receipt / 2 = mismatch.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -82,6 +83,7 @@ def _verify_merge_result(root: Path, merge_msg: str, switched: bool, original_br
 # CLI group
 # ------------------------------------------------------------------
 
+
 @click.group("merge")
 def merge_cmd() -> None:
     """Merge management: pick best agent solution and verify merge admission receipts.
@@ -95,6 +97,7 @@ def merge_cmd() -> None:
 # ------------------------------------------------------------------
 # pick subcommand
 # ------------------------------------------------------------------
+
 
 @merge_cmd.command("pick")
 @click.option(
@@ -220,6 +223,7 @@ def merge_pick_cmd(
 # verify subcommand
 # ------------------------------------------------------------------
 
+
 @merge_cmd.command("verify")
 @click.option(
     "--sha",
@@ -271,9 +275,7 @@ def merge_verify_cmd(head_sha: str, workdir: str) -> None:
         console.print(f"  authority {result.authority}")
         if result.receipt and result.receipt.review_receipt_id:
             console.print(f"  review_receipt_id {result.receipt.review_receipt_id}")
-        console.print(
-            "[green]OK[/green] -- merge receipt verified, spine anchored."
-        )
+        console.print("[green]OK[/green] -- merge receipt verified, spine anchored.")
         raise SystemExit(0)
 
     receipt = result.receipt

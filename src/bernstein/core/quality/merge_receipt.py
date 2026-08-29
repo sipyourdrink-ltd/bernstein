@@ -295,6 +295,7 @@ class MergeAdmissionReceipt:
 # On-disk paths
 # ---------------------------------------------------------------------------
 
+
 def merge_receipt_path(workdir: Path, head_sha: str) -> Path:
     """Return the on-disk path for the merge receipt covering ``head_sha``.
 
