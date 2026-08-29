@@ -673,6 +673,15 @@ EVENT_INTENT_JOURNAL_SEAL = "intent.journal_seal"
 #: are recorded -- never task prompts or agent output.
 EVENT_EVAL_GATE_VERDICT = "eval.gate_verdict"
 
+#: Issue #3759 -- emitted once per sealed fan-out receipt
+#: (``build_run_graph_receipt``). The event binds the receipt hash (the CAS
+#: identity of the full receipt), the graph root hash, the per-node hashes,
+#: and the spine journal entry hash so a verifier can prove, from the chain
+#: alone, that the exact set of N branches came from one fan-out, anchored by
+#: a single signed object. Only hashes and the anchor are recorded -- never
+#: the raw worktree or spine content.
+EVENT_RUN_GRAPH_SEALED = "run_graph.sealed"
+
 #: Issue #2520 -- emitted when a significant_regression verdict at canary or
 #: default rolls a candidate configuration back. The revocation receipt names
 #: the content hashes of the verdict receipts it revokes and the stage the
@@ -2257,6 +2266,50 @@ def record_gate_adjudication(
             "rubric_hash": rubric_hash,
             "panel_config_hash": panel_config_hash,
             "final_verdict": final_verdict,
+            "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
+def record_run_graph_receipt(
+    *,
+    chain: AuditChainStore,
+    receipt_hash: str,
+    graph_root_hash: str,
+    node_hashes: tuple[str, ...],
+    timestamp: int,
+    journal_entry_hash: str = "",
+    actor: str = "bernstein.run_graph",
+) -> AuditEvent:
+    """Append a ``run_graph.sealed`` event into *chain* (#3759).
+
+    Mirrors one sealed fan-out receipt into the HMAC chain so an operator can
+    prove, from the chain alone, that the exact set of N branches came from one
+    fan-out, anchored by a single signed object. Only hashes and the anchor are
+    recorded -- never the raw worktree or spine content.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        receipt_hash: Content hash pinning the whole run-graph receipt.
+        graph_root_hash: The RunGraph root hash that was sealed.
+        node_hashes: Deterministic hashes of each node in the sealed graph.
+        timestamp: Integer timestamp when the receipt was sealed.
+        journal_entry_hash: Lineage-spine entry hash anchoring the sealed receipt.
+        actor: Recorded actor; defaults to ``"bernstein.run_graph"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_RUN_GRAPH_SEALED,
+        actor=actor,
+        resource_type="run_graph_receipt",
+        resource_id=receipt_hash,
+        details={
+            "receipt_hash": receipt_hash,
+            "graph_root_hash": graph_root_hash,
+            "node_hashes": list(node_hashes),
+            "timestamp": timestamp,
             "journal_entry_hash": journal_entry_hash,
         },
     )
@@ -8666,6 +8719,7 @@ __all__ = [
     "EVENT_EVAL_GATE_VERDICT",
     "EVENT_EVIDENCE_BUNDLE",
     "EVENT_EXPECTATION_EXPIRED",
+    "EVENT_RUN_GRAPH_SEALED",
     "EVENT_FEED_RENDER_FAILURE",
     "EVENT_FLEET_CONN_CREATE",
     "EVENT_FLEET_CONN_REFUSE",

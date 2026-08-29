@@ -34,21 +34,29 @@ differently from one that never had that branch.
 from __future__ import annotations
 
 import enum
+import hashlib
 import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
+from bernstein.core.security.agent_card_signer import sign_detached_jws_over_canonical
 from bernstein.core.worktrees.classifier import _git_head_sha, classify_worktrees
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from pathlib import Path
 
+    from bernstein.core.security.audit_chain import AuditChainStore
+
 #: Stands in for a missing ``head_sha`` or ``spine_head_hash`` in the root
 #: pre-image. A literal empty string would let "absent" and "recorded as
 #: empty" collide, and an empty spine head *is* the empty string.
 ABSENT = "\x00absent"
+
+#: Lineage run id under which every run-graph receipt is anchored, kept separate
+#: so fan-out receipts never interleave with per-task journals.
+RUN_GRAPH_RUN_ID = "run-graph"
 
 
 class RunGraphNodeStatus(enum.Enum):
@@ -170,11 +178,246 @@ def build_run_graph(
     return RunGraph(nodes=ordered, root_hash=compute_root_hash(ordered))
 
 
+@dataclass(frozen=True, slots=True)
+class RunGraphReceipt:
+    """A sealed receipt that anchors an entire fan-out's RunGraph.
+
+    The body (everything the ``receipt_hash`` covers) binds the graph root hash,
+    per-node hashes, and timestamp. The ``journal_entry_hash`` is assigned post-seal.
+    """
+
+    schema_version: int
+    graph_root_hash: str
+    node_hashes: tuple[str, ...]
+    timestamp: int
+    receipt_hash: str
+    journal_entry_hash: str = ""
+
+    def body(self) -> dict[str, object]:
+        """The hashed body: every field except the receipt hash and anchor."""
+        return {
+            "schema_version": self.schema_version,
+            "graph_root_hash": self.graph_root_hash,
+            "node_hashes": list(self.node_hashes),
+            "timestamp": self.timestamp,
+        }
+
+    def canonical_payload_without_anchor(self) -> str:
+        """Canonical JSON of the body plus receipt hash (excludes the anchor)."""
+        payload = self.body()
+        payload["receipt_hash"] = self.receipt_hash
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+    def canonical_bytes(self) -> bytes:
+        """Canonical bytes sealed into the lineage spine (body + hash)."""
+        return self.canonical_payload_without_anchor().encode("utf-8")
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, object]) -> RunGraphReceipt:
+        return cls(
+            schema_version=int(raw["schema_version"]),
+            graph_root_hash=str(raw["graph_root_hash"]),
+            node_hashes=tuple(str(h) for h in raw["node_hashes"]),
+            timestamp=int(raw["timestamp"]),
+            receipt_hash=str(raw["receipt_hash"]),
+            journal_entry_hash=str(raw.get("journal_entry_hash", "")),
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "graph_root_hash": self.graph_root_hash,
+            "node_hashes": list(self.node_hashes),
+            "timestamp": self.timestamp,
+            "receipt_hash": self.receipt_hash,
+            "journal_entry_hash": self.journal_entry_hash,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class RunGraphReceiptSchema:
+    """Canonical bytes revision for RunGraphReceipt schema.
+
+    Bump only on a wire-format change.
+    """
+    version: int = 1
+
+
+def _hash_obj(obj: object) -> str:
+    """Canonical SHA256 hash over canonical JSON (mirror gate_receipt._hash_obj)."""
+    payload = json.dumps(obj, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def build_run_graph_receipt(
+    *,
+    graph: RunGraph,
+    workdir: Path,
+    lineage_root: Path,
+    hmac_key: bytes,
+    timestamp: int,
+    private_key_pem: bytes,
+    chain: AuditChainStore | None = None,
+    actor: str = "bernstein.run_graph",
+) -> RunGraphReceipt:
+    """Classify a fan-out's RunGraph and seal it into a receipt.
+
+    The receipt anchors the entire fan-out's graph root into the ``run-graph``
+    lineage spine, mirrors the identity into the HMAC audit chain, and signs the
+    canonical bytes with the Ed25519 agent identity. This provides a single
+    artifact that binds together all N branches, solving the fan-out receipt
+    problem described in issue #3759.
+
+    Args:
+        graph: The RunGraph to seal (produced by the earlier slice of #2929).
+        workdir: Project root (receipt written under ``.sdd/run-graph``).
+        lineage_root: ``.sdd/lineage`` root for the spine.
+        hmac_key: Audit-chain HMAC key for the spine seal.
+        timestamp: Integer timestamp anchored into the spine entry (stable).
+        private_key_pem: PEM-encoded PKCS#8 Ed25519 private key for signing.
+        chain: Optional :class:`AuditChainStore` accepting the mirror.
+        actor: Recorded actor; defaults to ``"bernstein.run_graph"``.
+
+    Returns:
+        The sealed :class:`RunGraphReceipt`.
+    """
+    # Compute deterministic node hashes from the graph's ordered nodes
+    node_hashes = tuple(_node_hash(node) for node in graph.nodes)
+    schema = RunGraphReceiptSchema()
+    unsealed = RunGraphReceipt(
+        schema_version=schema.version,
+        graph_root_hash=graph.root_hash,
+        node_hashes=node_hashes,
+        timestamp=timestamp,
+        receipt_hash="",
+    )
+    receipt_hash = _hash_obj(unsealed.body())
+    sealed_no_anchor = RunGraphReceipt(
+        schema_version=unsealed.schema_version,
+        graph_root_hash=unsealed.graph_root_hash,
+        node_hashes=unsealed.node_hashes,
+        timestamp=unsealed.timestamp,
+        receipt_hash=receipt_hash,
+    )
+
+    # Anchor into the lineage spine under the dedicated run id
+    spine = LineageSpine(lineage_root, run_id=RUN_GRAPH_RUN_ID, hmac_key=hmac_key)
+    artifact_path = "/".join(("run-graph", f"{receipt_hash}.json"))
+    anchor = spine.record(
+        artifact_path=artifact_path,
+        content=sealed_no_anchor.canonical_bytes(),
+        actor=actor,
+        step_id=receipt_hash,
+        model="run-graph-receipt",
+        timestamp=timestamp,
+    )
+
+    # Sign the canonical bytes (excluding the spine anchor)
+    signed_jws = sign_detached_jws_over_canonical(
+        canonical_body=sealed_no_anchor.canonical_bytes(),
+        private_key_pem=private_key_pem,
+        typ="run-graph-receipt+jws",
+        kid="bernstein.run_graph",
+    )
+
+    # Write signed receipt JSON under .sdd/run-graph/
+    receipt_dir = workdir / ".sdd" / "run-graph"
+    receipt_dir.mkdir(parents=True, exist_ok=True)
+    receipt_path = receipt_dir / f"{receipt_hash}.json"
+    receipt_path.write_text(
+        json.dumps({**sealed_no_anchor.to_dict(), "signed_jws": signed_jws}, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+        encoding="utf-8",
+    )
+
+    # Mirror into audit chain if requested
+    if chain is not None:
+        _record_run_graph_receipt(
+            chain=chain,
+            receipt_hash=receipt_hash,
+            graph_root_hash=sealed_no_anchor.graph_root_hash,
+            node_hashes=sealed_no_anchor.node_hashes,
+            timestamp=sealed_no_anchor.timestamp,
+            journal_entry_hash=anchor,
+            actor=actor,
+        )
+
+    sealed = RunGraphReceipt(
+        schema_version=sealed_no_anchor.schema_version,
+        graph_root_hash=sealed_no_anchor.graph_root_hash,
+        node_hashes=sealed_no_anchor.node_hashes,
+        timestamp=sealed_no_anchor.timestamp,
+        receipt_hash=receipt_hash,
+        journal_entry_hash=anchor,
+    )
+    return sealed
+
+
+def _node_hash(node: RunGraphNode) -> str:
+    """Compute deterministic hash for a RunGraphNode.
+
+    The hash includes session_id, head_sha, spine_head_hash, and status.
+    This ensures the receipt commits to exactly which nodes were sealed.
+    """
+    payload = {
+        "session_id": node.session_id,
+        "head_sha": node.head_sha if node.head_sha is not None else None,
+        "run_id": node.run_id if node.run_id is not None else None,
+        "spine_head_hash": node.spine_head_hash if node.spine_head_hash is not None else None,
+        "status": node.status.value,
+    }
+    return _hash_obj(payload)
+
+
+def _record_run_graph_receipt(
+    *,
+    chain: AuditChainStore,
+    receipt_hash: str,
+    graph_root_hash: str,
+    node_hashes: tuple[str, ...],
+    timestamp: int,
+    journal_entry_hash: str = "",
+    actor: str = "bernstein.run_graph",
+) -> None:
+    """Append a ``run_graph.sealed`` event into *chain*.
+
+    Mirrors one sealed fan-out receipt into the HMAC chain so an operator can
+    prove, from the chain alone, that the exact set of N branches came from one
+    fan-out, anchored by a single object. Only hashes and the anchor are
+    recorded -- never the raw worktree or spine content.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        receipt_hash: Content hash pinning the whole run-graph receipt.
+        graph_root_hash: The RunGraph root hash that was sealed.
+        node_hashes: Deterministic hashes of each node in the sealed graph.
+        timestamp: Integer timestamp when the receipt was sealed.
+        journal_entry_hash: Lineage-spine entry hash anchoring the sealed receipt.
+        actor: Recorded actor; defaults to ``"bernstein.run_graph"``.
+    """
+    from bernstein.core.security.audit_chain import record_run_graph_receipt
+
+    record_run_graph_receipt(
+        chain=chain,
+        receipt_hash=receipt_hash,
+        graph_root_hash=graph_root_hash,
+        node_hashes=node_hashes,
+        timestamp=timestamp,
+        journal_entry_hash=journal_entry_hash,
+        actor=actor,
+    )
+
+
 __all__ = [
     "ABSENT",
+    "RUN_GRAPH_RUN_ID",
     "RunGraph",
     "RunGraphNode",
     "RunGraphNodeStatus",
+    "RunGraphReceipt",
+    "RunGraphReceiptSchema",
     "build_run_graph",
+    "build_run_graph_receipt",
     "compute_root_hash",
+    "_node_hash",
+    "_record_run_graph_receipt",
 ]
