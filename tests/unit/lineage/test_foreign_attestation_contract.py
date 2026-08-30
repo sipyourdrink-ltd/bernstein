@@ -19,8 +19,6 @@ import json
 import re
 from pathlib import Path
 
-import pytest
-
 _FIXTURE_PATH = Path(__file__).with_name("fixtures") / "foreign_attestation_unverifiable.json"
 
 #: Every key a foreign attestation may carry.  An allowlist rather than a
@@ -83,22 +81,8 @@ def test_foreign_attestation_fixture_is_protocol_neutral_and_unlinked() -> None:
     assert expected["derived_taint"] == "third_party"
 
 
-@pytest.mark.xfail(
-    raises=ImportError,
-    strict=True,
-    reason="issue #3133: foreign-attestation verification is not implemented yet",
-)
 def test_unverifiable_foreign_attestation_fails_closed_without_changing_local_chain() -> None:
-    """Specify the verifier contract before its implementation exists.
-
-    The import intentionally fails on current main, and ``raises=ImportError``
-    keeps that the only tolerated failure.  A verifier that lands and reports
-    the wrong verdict raises ``AssertionError``, which this marker does not
-    absorb, so the suite turns red instead of reporting a green xfail over a
-    contract it never actually checked.  A verifier that lands and is correct
-    turns this into a strict xpass, red as well, which forces whoever
-    implements it to convert this into an ordinary contract test.
-    """
+    """A valid but unknown foreign format remains explicitly unverifiable."""
     from bernstein.core.lineage.foreign_attestation import verify_foreign_attestation
 
     fixture = _fixture()
@@ -121,3 +105,39 @@ def test_unverifiable_foreign_attestation_fails_closed_without_changing_local_ch
         "expected_verdict": "verified",
         "evidence_source": "bernstein-lineage-only",
     }
+
+
+def test_malformed_foreign_attestation_fails_closed_at_public_trust() -> None:
+    from bernstein.core.lineage.foreign_attestation import verify_foreign_attestation
+
+    fixture = _fixture()
+    record = fixture["lineage_record"]
+    assert isinstance(record, dict)
+    original = record["external_attestation"]
+    assert isinstance(original, dict)
+    malformed = {**original, "trust_class": "operator_hmac"}
+
+    result = verify_foreign_attestation(malformed)
+
+    assert result.verdict == "malformed"
+    assert result.verified is False
+    assert result.taint.value == "public"
+
+
+def test_unknown_envelope_format_is_unverifiable_not_a_parse_error() -> None:
+    from bernstein.core.lineage.foreign_attestation import verify_foreign_attestation
+
+    fixture = _fixture()
+    record = fixture["lineage_record"]
+    assert isinstance(record, dict)
+    original = record["external_attestation"]
+    assert isinstance(original, dict)
+    envelope = original["envelope"]
+    assert isinstance(envelope, dict)
+    unknown_format = {**original, "envelope": {**envelope, "format": "future-foreign-format-v9"}}
+
+    result = verify_foreign_attestation(unknown_format)
+
+    assert result.verdict == "unverifiable"
+    assert result.verified is False
+    assert result.taint.value == "third_party"
