@@ -1000,6 +1000,100 @@ class ProfileAdapter(CLIAdapter):
         return result
 
 
+def _profile_tokens(value: Iterable[str] | None, field_name: str) -> tuple[str, ...]:
+    """Normalise a YAML token list and reject scalar or non-string values."""
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        raise ProfileValidationError(f"RecordedProfileAdapter {field_name} must be a list of strings")
+    try:
+        tokens = tuple(value)
+    except TypeError as exc:
+        raise ProfileValidationError(f"RecordedProfileAdapter {field_name} must be a list of strings") from exc
+    if any(not isinstance(token, str) for token in tokens):
+        raise ProfileValidationError(f"RecordedProfileAdapter {field_name} must be a list of strings")
+    return tokens
+
+
+class RecordedProfileAdapter(ProfileAdapter):
+    """Replay bridge for an operator-recorded capability profile.
+
+    The constructor deliberately accepts only primitive, YAML-safe values so
+    :class:`~bernstein.adapters.conformance.GoldenTranscript` can instantiate
+    this class in a fresh process.  The invocation is rebuilt before the base
+    adapter is initialised, leaving the inherited :meth:`ProfileAdapter.spawn`
+    as the single process-launch implementation.
+    """
+
+    def __init__(
+        self,
+        registry_name: str,
+        display_name: str,
+        binary: str,
+        subcommands: Iterable[str] = (),
+        model_flag: str | None = None,
+        prompt_flag: str | None = None,
+        prompt_positional: bool = True,
+        extra_args: Iterable[str] = (),
+        env_passthrough: Iterable[str] = (),
+        *,
+        environment_allowlist: Iterable[str] | None = None,
+    ) -> None:
+        """Build a replayable adapter from explicit serialized fields.
+
+        Args:
+            registry_name: Registry key used by admission and session
+                namespacing.
+            display_name: Human-readable adapter name.
+            binary: CLI executable name or path.
+            subcommands: Ordered subcommand tokens.
+            model_flag: Model option, or ``None`` for model-less CLIs.
+            prompt_flag: Prompt option, or ``None`` for positional prompts.
+            prompt_positional: Whether a flag-less prompt is positional.
+            extra_args: Ordered tokens emitted on every invocation.
+            env_passthrough: Environment names allowed through isolation.
+            environment_allowlist: Backward-compatible spelling for
+                ``env_passthrough`` when loading hand-authored YAML.
+
+        Raises:
+            ProfileValidationError: A serialized field cannot form a valid
+                :class:`AdapterCapabilityProfile`.
+        """
+        if not isinstance(registry_name, str) or not registry_name.strip():
+            raise ProfileValidationError("RecordedProfileAdapter requires a non-empty registry_name")
+        if not isinstance(display_name, str) or not display_name.strip():
+            raise ProfileValidationError("RecordedProfileAdapter requires a non-empty display_name")
+        if not isinstance(binary, str):
+            raise ProfileValidationError("RecordedProfileAdapter binary must be a string")
+        if model_flag is not None and not isinstance(model_flag, str):
+            raise ProfileValidationError("RecordedProfileAdapter model_flag must be a string or None")
+        if prompt_flag is not None and not isinstance(prompt_flag, str):
+            raise ProfileValidationError("RecordedProfileAdapter prompt_flag must be a string or None")
+        if not isinstance(prompt_positional, bool):
+            raise ProfileValidationError("RecordedProfileAdapter prompt_positional must be a boolean")
+        if environment_allowlist is not None:
+            if tuple(env_passthrough) != ():
+                raise ProfileValidationError("provide only one of env_passthrough and environment_allowlist")
+            env_passthrough = environment_allowlist
+
+        invocation = InvocationSpec(
+            binary=binary,
+            subcommands=_profile_tokens(subcommands, "subcommands"),
+            model_flag=model_flag,
+            prompt_flag=prompt_flag,
+            prompt_positional=prompt_positional,
+            extra_args=_profile_tokens(extra_args, "extra_args"),
+            env_passthrough=_profile_tokens(env_passthrough, "env_passthrough"),
+        )
+        self.profile = AdapterCapabilityProfile(
+            name=registry_name,
+            display_name=display_name,
+            invocation=invocation,
+        )
+        super().__init__()
+        self.registry_name = registry_name
+
+
 def _class_name_for(profile: AdapterCapabilityProfile) -> str:
     """Return a PEP 8 class name derived from a profile name."""
     camel = "".join(part.capitalize() for part in profile.name.replace("-", "_").split("_") if part)
@@ -1301,6 +1395,7 @@ __all__ = [
     "ProfileError",
     "ProfileImplementation",
     "ProfileValidationError",
+    "RecordedProfileAdapter",
     "SandboxTier",
     "TaskCapabilityRequirements",
     "UnknownProfileError",
