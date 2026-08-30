@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from bernstein.core.knowledge.conventions import ConventionReceipt, compute_rule_text_hash
 from bernstein.core.quality.review_pipeline.scope import (
-    ScopeResolution,
     compute_resolution_hash,
     resolve_scope,
 )

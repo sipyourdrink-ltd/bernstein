@@ -6,10 +6,7 @@ import json
 from pathlib import Path
 
 from bernstein.core.quality.review_pipeline.contour import PassReceiptRequest, receipt_emitter
-from bernstein.core.quality.review_pipeline.scope import compute_resolution_hash, resolve_scope
-from bernstein.core.knowledge.conventions import ConventionReceipt, compute_rule_text_hash
 from bernstein.core.review.receipt import (
-    ReviewReceipt,
     emit_review_receipt,
     load_or_create_review_identity,
     receipt_path,
