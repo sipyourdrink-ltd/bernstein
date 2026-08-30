@@ -60,6 +60,61 @@ Flags an adapter passes *conditionally* are deliberately out of scope.
 They are not part of the pinned contract, and modelling them would make
 the profile-to-contract cross-check report false drift.
 
+## Recording an onboarding transcript
+
+An operator can turn a drafted profile into a replayable golden transcript
+with the public helpers in `bernstein.adapters.onboarding`. The flow is
+supervised and bounded: it runs one known-good smoke invocation, then three
+deterministic held-out invocations against the same binary.
+
+| API | Behaviour |
+|---|---|
+| `record_golden_transcript(profile, *, name, smoke_prompt, smoke_model, golden_dir)` | Builds the smoke argv with `InvocationSpec.build_argv`, runs it once with a finite timeout, and atomically writes a transcript only after exit code `0`. |
+| `derive_held_out_invocations(evidence, invocation, *, smoke_prompt, smoke_model)` | Checks that the probe evidence names the drafted binary and returns exactly three stable, unique cases. Only the prompt payload varies; every always-emitted profile token remains present. |
+| `replay_held_out_invocations(invocations, *, invocation=...)` | Executes every derived case and returns one `StepResult` per case in a `TranscriptResult`. |
+
+The recorded document keeps the existing `GoldenTranscript` shape and has
+exactly four top-level keys: `name`, `adapter_class`, `ctor_kwargs`, and
+`steps`. Its adapter class is the stable
+`bernstein.adapters.capability_profile.RecordedProfileAdapter`, which
+rehydrates the exact invocation from YAML-safe fields (`registry_name`,
+`display_name`, `binary`, `subcommands`, `model_flag`, `prompt_flag`,
+`prompt_positional`, `extra_args`, and `env_passthrough`). This preserves
+token order and the environment allow-list across processes; no output,
+ambient environment, or operator identity is stored.
+
+```python
+from pathlib import Path
+
+from bernstein.adapters.onboarding import (
+    derive_held_out_invocations,
+    record_golden_transcript,
+    replay_held_out_invocations,
+)
+
+record_golden_transcript(
+    profile,
+    name="example_cli",
+    smoke_prompt="print a short greeting",
+    smoke_model="local-model",
+    golden_dir=Path("tests/golden"),
+)
+held_out = derive_held_out_invocations(
+    evidence_path,
+    profile.invocation,
+    smoke_prompt="print a short greeting",
+    smoke_model="local-model",
+)
+result = replay_held_out_invocations(held_out, invocation=profile.invocation)
+assert result.passed
+```
+
+Every held-out case is attempted. A non-zero exit, timeout (`124`), missing
+binary (`127`), or execution error is a failed step, not a skip; an empty
+case list is also a failed result. Captured output is discarded after the
+exit check. `_sandbox_env` normalizes the supervised environment but is not
+an OS-level network sandbox.
+
 ## Content addressing
 
 `profile.profile_hash` is a SHA-256 over the profile's canonical JSON
