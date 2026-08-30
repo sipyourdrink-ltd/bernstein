@@ -12,62 +12,24 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from enum import Enum
 from typing import Any
 
 #: Sentinel epoch for default clock_value when none is supplied.
 _EPOCH_UTC = datetime(1970, 1, 1, tzinfo=timezone.utc)  # noqa: UP017
 
+#: Schema version stamped into every render receipt. Bump only on a
+#: wire-format change.
+RENDER_RECEIPT_SCHEMA_VERSION = 1
+
 __all__ = [
+    "RENDER_RECEIPT_SCHEMA_VERSION",
     "A11yNode",
     "ComputedStyle",
-    "DeltaKind",
-    "DeltaSet",
     "EnvironmentDescriptor",
-    "EnvironmentMismatchError",
     "LayoutBox",
-    "PropertyClass",
-    "RenderDelta",
     "RenderReceipt",
-    "UnresolvedDelta",
-    "UnresolvedReason",
     "Viewport",
-    "render_delta",
 ]
-
-
-# ---------------------------------------------------------------------------
-# Property classes and enums for delta comparison
-# ---------------------------------------------------------------------------
-
-
-class PropertyClass(Enum):
-    """Classification of CSS properties for delta analysis."""
-
-    TOKEN = "token"  # Individual tokens (keywords, identifiers, numbers, etc.)
-    GEOMETRY = "geometry"  # Position, size, spacing properties
-    OVERFLOW = "overflow"  # Overflow and clipping properties
-    VISIBILITY = "visibility"  # Display, opacity, visibility properties
-    TYPOGRAPHY = "typography"  # Font, text, spacing properties
-    PAINT = "paint"  # Colors, backgrounds, borders, shadows
-    A11Y = "a11y"  # Accessibility-related properties
-
-
-class UnresolvedReason(Enum):
-    """Reason why a delta could not be resolved during comparison."""
-
-    CANVAS = "canvas"  # Canvas rendering cannot be inspected
-    WEBGL = "webgl"  # WebGL rendering cannot be inspected
-    VIDEO = "video"  # Video elements cannot be inspected
-    CROSS_ORIGIN_IFRAME = "cross_origin_iframe"  # Cross-origin iframe content
-
-
-class DeltaKind(Enum):
-    """Type of change detected between two render receipts."""
-
-    ADDED = "added"  # Element or property appeared in head
-    REMOVED = "removed"  # Element or property disappeared from head
-    CHANGED = "changed"  # Element or property value changed
 
 
 # ---------------------------------------------------------------------------
@@ -97,10 +59,24 @@ def _sha256_hex(data: bytes) -> str:
 
 @dataclass(frozen=True, slots=True)
 class Viewport:
-    """Render viewport dimensions."""
+    """Render viewport dimensions.
 
-    width: int
-    height: int
+    Attributes:
+        width: Viewport width in pixels.
+        height: Viewport height in pixels.
+    """
+
+    width: int = 0
+    height: int = 0
+
+    def to_dict(self) -> dict[str, int]:
+        """Convert viewport to a dict."""
+        return {"width": self.width, "height": self.height}
+
+    @classmethod
+    def from_dict(cls, row: dict[str, Any]) -> Viewport:
+        """Construct viewport from a dict."""
+        return cls(width=int(row.get("width", 0)), height=int(row.get("height", 0)))
 
 
 # ---------------------------------------------------------------------------
@@ -126,8 +102,8 @@ class EnvironmentDescriptor:
         colour_scheme: Active colour scheme (``"light"``, ``"dark"``, ``"no-preference"``).
     """
 
-    engine_build_identity: str
-    viewport: Viewport
+    engine_build_identity: str = ""
+    viewport: Viewport = field(default_factory=Viewport)
     device_pixel_ratio: float = 1.0
     locale: str = ""
     timezone: str = ""
@@ -139,9 +115,10 @@ class EnvironmentDescriptor:
     colour_scheme: str = "no-preference"
 
     def to_dict(self) -> dict[str, Any]:
+        """Convert environment descriptor to a dict."""
         return {
             "engine_build_identity": self.engine_build_identity,
-            "viewport": {"width": self.viewport.width, "height": self.viewport.height},
+            "viewport": self.viewport.to_dict(),
             "device_pixel_ratio": self.device_pixel_ratio,
             "locale": self.locale,
             "timezone": self.timezone,
@@ -155,12 +132,28 @@ class EnvironmentDescriptor:
 
     @classmethod
     def from_dict(cls, row: dict[str, Any]) -> EnvironmentDescriptor:
-        vp = row["viewport"]
-        clock_raw = row.get("clock_value", "")
-        clock_value = datetime.fromisoformat(clock_raw) if clock_raw else _EPOCH_UTC
+        """Construct environment descriptor from a dict."""
+        vp_raw = row.get("viewport", {})
+        if isinstance(vp_raw, Viewport):
+            viewport = vp_raw
+        elif isinstance(vp_raw, dict):
+            viewport = Viewport.from_dict(vp_raw)
+        elif isinstance(vp_raw, (list, tuple)) and len(vp_raw) == 2:
+            viewport = Viewport(width=int(vp_raw[0]), height=int(vp_raw[1]))
+        else:
+            viewport = Viewport()
+
+        clock_raw = row.get("clock_value")
+        if isinstance(clock_raw, datetime):
+            clock_value = clock_raw
+        elif isinstance(clock_raw, str) and clock_raw:
+            clock_value = datetime.fromisoformat(clock_raw)
+        else:
+            clock_value = _EPOCH_UTC
+
         return cls(
             engine_build_identity=str(row.get("engine_build_identity", "")),
-            viewport=Viewport(width=int(vp["width"]), height=int(vp["height"])),
+            viewport=viewport,
             device_pixel_ratio=float(row.get("device_pixel_ratio", 1.0)),
             locale=str(row.get("locale", "")),
             timezone=str(row.get("timezone", "")),
@@ -169,7 +162,7 @@ class EnvironmentDescriptor:
             animation_disabled=bool(row.get("animation_disabled", False)),
             caret_disabled=bool(row.get("caret_disabled", False)),
             reduced_motion=bool(row.get("reduced_motion", False)),
-            colour_scheme=str(row.get("colour_scheme", "no-preference")),
+            colour_scheme=str(row.get("colour_scheme", row.get("color_scheme", "no-preference"))),
         )
 
 
@@ -199,6 +192,7 @@ class LayoutBox:
     paint_order: int = 0
 
     def to_dict(self) -> dict[str, Any]:
+        """Convert layout box to a dict."""
         return {
             "element_path": self.element_path,
             "border_box": list(self.border_box),
@@ -210,10 +204,11 @@ class LayoutBox:
 
     @classmethod
     def from_dict(cls, row: dict[str, Any]) -> LayoutBox:
+        """Construct layout box from a dict."""
+
         def _box(raw: object) -> tuple[float, float, float, float]:
             if isinstance(raw, (list, tuple)) and len(raw) == 4:
-                vals = raw
-                return (float(vals[0]), float(vals[1]), float(vals[2]), float(vals[3]))
+                return (float(raw[0]), float(raw[1]), float(raw[2]), float(raw[3]))
             return (0.0, 0.0, 0.0, 0.0)
 
         return cls(
@@ -244,6 +239,7 @@ class ComputedStyle:
     properties: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        """Convert computed style to a dict."""
         return {
             "element_path": self.element_path,
             "properties": dict(self.properties),
@@ -251,6 +247,7 @@ class ComputedStyle:
 
     @classmethod
     def from_dict(cls, row: dict[str, Any]) -> ComputedStyle:
+        """Construct computed style from a dict."""
         props_raw = row.get("properties")
         props: dict[str, str] = {}
         if isinstance(props_raw, dict):
@@ -283,6 +280,7 @@ class A11yNode:
     state: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        """Convert accessibility node to a dict."""
         return {
             "element_path": self.element_path,
             "role": self.role,
@@ -292,6 +290,7 @@ class A11yNode:
 
     @classmethod
     def from_dict(cls, row: dict[str, Any]) -> A11yNode:
+        """Construct accessibility node from a dict."""
         state_raw = row.get("state")
         state: dict[str, str] = {}
         if isinstance(state_raw, dict):
@@ -307,11 +306,6 @@ class A11yNode:
 # ---------------------------------------------------------------------------
 # Render receipt
 # ---------------------------------------------------------------------------
-
-
-#: Schema version stamped into every render receipt. Bump only on a
-#: wire-format change.
-RENDER_RECEIPT_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -337,15 +331,15 @@ class RenderReceipt:
             used in computed styles.
     """
 
-    route: str
-    viewport: Viewport
-    declared_state: str
+    version: int = RENDER_RECEIPT_SCHEMA_VERSION
+    route: str = ""
+    viewport: Viewport = field(default_factory=Viewport)
+    declared_state: str = ""
     layout_tree: tuple[LayoutBox, ...] = ()
     computed_styles: tuple[ComputedStyle, ...] = ()
     accessibility_tree: tuple[A11yNode, ...] = ()
     environment: EnvironmentDescriptor | None = None
     unstable_properties: dict[str, str] = field(default_factory=dict)
-    version: int = RENDER_RECEIPT_SCHEMA_VERSION
     property_vocabulary_version: str = ""
 
     def _binding(self) -> dict[str, Any]:
@@ -353,7 +347,7 @@ class RenderReceipt:
         binding: dict[str, Any] = {
             "v": self.version,
             "route": self.route,
-            "viewport": {"width": self.viewport.width, "height": self.viewport.height},
+            "viewport": self.viewport.to_dict(),
             "declared_state": self.declared_state,
             "layout_tree": [box.to_dict() for box in self.layout_tree],
             "computed_styles": [style.to_dict() for style in self.computed_styles],
@@ -375,22 +369,39 @@ class RenderReceipt:
         return _sha256_hex(self.to_canonical_bytes())
 
     def to_dict(self) -> dict[str, Any]:
+        """Convert render receipt to a dict including receipt_hash."""
         out = self._binding()
         out["receipt_hash"] = self.receipt_hash()
         return out
 
     @classmethod
     def from_dict(cls, row: dict[str, Any]) -> RenderReceipt:
-        vp = row["viewport"]
-        viewport = Viewport(width=int(vp["width"]), height=int(vp["height"]))
+        """Construct render receipt from a dict."""
+        vp_raw = row.get("viewport", {})
+        if isinstance(vp_raw, Viewport):
+            viewport = vp_raw
+        elif isinstance(vp_raw, dict):
+            viewport = Viewport.from_dict(vp_raw)
+        elif isinstance(vp_raw, (list, tuple)) and len(vp_raw) == 2:
+            viewport = Viewport(width=int(vp_raw[0]), height=int(vp_raw[1]))
+        else:
+            viewport = Viewport()
 
-        layout_tree = tuple(LayoutBox.from_dict(b) for b in row.get("layout_tree", []))
-        computed_styles = tuple(ComputedStyle.from_dict(s) for s in row.get("computed_styles", []))
-        accessibility_tree = tuple(A11yNode.from_dict(n) for n in row.get("accessibility_tree", []))
+        layout_tree = tuple(
+            b if isinstance(b, LayoutBox) else LayoutBox.from_dict(b) for b in row.get("layout_tree", ())
+        )
+        computed_styles = tuple(
+            s if isinstance(s, ComputedStyle) else ComputedStyle.from_dict(s) for s in row.get("computed_styles", ())
+        )
+        accessibility_tree = tuple(
+            n if isinstance(n, A11yNode) else A11yNode.from_dict(n) for n in row.get("accessibility_tree", ())
+        )
 
         env: EnvironmentDescriptor | None = None
         env_raw = row.get("environment")
-        if isinstance(env_raw, dict):
+        if isinstance(env_raw, EnvironmentDescriptor):
+            env = env_raw
+        elif isinstance(env_raw, dict):
             env = EnvironmentDescriptor.from_dict(env_raw)
 
         unstable_raw = row.get("unstable_properties")
@@ -398,8 +409,10 @@ class RenderReceipt:
         if isinstance(unstable_raw, dict):
             unstable_properties = {str(k): str(v) for k, v in unstable_raw.items()}
 
+        version = int(row.get("version", row.get("v", RENDER_RECEIPT_SCHEMA_VERSION)))
+
         return cls(
-            version=int(row.get("v", RENDER_RECEIPT_SCHEMA_VERSION)),
+            version=version,
             route=str(row.get("route", "")),
             viewport=viewport,
             declared_state=str(row.get("declared_state", "")),
