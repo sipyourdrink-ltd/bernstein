@@ -14,8 +14,10 @@ import fnmatch
 import hashlib
 import json
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from bernstein.core.knowledge.conventions import ConventionReceipt
+if TYPE_CHECKING:
+    from bernstein.core.knowledge.conventions import ConventionReceipt
 
 
 def _expand_braces(pattern: str) -> list[str]:
@@ -74,10 +76,7 @@ def _expand_braces(pattern: str) -> list[str]:
 
 def _matches(path: str, pattern: str) -> bool:
     """Return whether *path* matches *pattern* (brace-expanded, fnmatch)."""
-    for expanded in _expand_braces(pattern):
-        if fnmatch.fnmatch(path, expanded):
-            return True
-    return False
+    return any(fnmatch.fnmatch(path, expanded) for expanded in _expand_braces(pattern))
 
 
 @dataclass(frozen=True)
@@ -191,7 +190,7 @@ def compute_resolution_hash(scope: ScopeResolution) -> str:
     # Build deterministic entries sorted by receipt_id so ordering inside the
     # scope does not affect hash beyond the defined sort.
     entries = []
-    for receipt, glob in zip(scope.in_scope_receipts, scope.matched_globs):
+    for receipt, glob in zip(scope.in_scope_receipts, scope.matched_globs, strict=False):
         entries.append(
             {
                 "receipt_id": receipt.receipt_id,
