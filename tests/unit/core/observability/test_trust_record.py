@@ -1134,8 +1134,13 @@ class TestAggregateTrustRecord:
             child_journal, "run-1", "exec-child", parent_record=parent_output, credential_id="cred-1"
         )
 
-        with pytest.raises(ValueError, match="disagree"):
-            emitter.emit_aggregate_trust_record("run-1", [parent_output, child_output])
+        # Rolling up to most restrictive value is correct semantics for an aggregate:
+        # it covers all members, so its classification ceiling is the most restrictive member's ceiling.
+        result = emitter.emit_aggregate_trust_record("run-1", [parent_output, child_output])
+        parsed = json.loads(result)
+        assert parsed["data_class"] == "restricted", (
+            f"Expected 'restricted' (most restrictive), got '{parsed['data_class']}'"
+        )
 
     def test_verifies_offline_via_its_cnf_jwk(self, tmp_path: Path) -> None:
         private_pem, public_raw = _test_keypair()

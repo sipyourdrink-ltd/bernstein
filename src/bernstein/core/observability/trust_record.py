@@ -838,8 +838,8 @@ class TrustRecordEmitter:
 
         Raises:
             ValueError: *member_records* is empty, a member is not valid
-                JSON, or the members' ``data_class`` values disagree (the
-                aggregate must not silently pick one over another).
+                JSON, or the members' ``data_class`` values disagree (roll
+                up to the most restrictive).
 
         Rollup rules (documented here since there is no journal to point
         to for them):
@@ -855,9 +855,10 @@ class TrustRecordEmitter:
           policy hashes, not a policy of its own. ``enforcement_mode`` is
           the fixed :data:`_ENFORCEMENT_MODE`, same as every execution
           record.
-        - ``data_class``: the members' shared value. Disagreement is
-          refused rather than resolved by picking the more (or less)
-          conservative one -- see Raises.
+        - ``data_class``: the most restrictive value among members
+          (``restricted < internal < confidential < public``). An aggregate
+          covers all members, so its classification ceiling is the most
+          restrictive member's ceiling.
         - ``tool_transcript``: ``call_count`` sums the members' counts;
           ``hash`` is ``sha256:`` + the hex SHA-256 of the JCS
           canonicalisation of the ordered list of member
@@ -908,17 +909,14 @@ class TrustRecordEmitter:
         policy: dict[str, Any] = {"bundle_hash": f"sha256:{policy_digest}", "enforcement_mode": _ENFORCEMENT_MODE}
 
         data_classes = {member["data_class"] for member in members}
-        if len(data_classes) == 1:
-            data_class = next(iter(data_classes))
-        else:
-            # Members disagree on data_class (e.g., a narrowed child
-            # hop "restricted" aggregated alongside parent's "internal").
-            # Roll up to the most restrictive value.
-            _DATA_CLASS_PRECEDENCE = {"restricted": 0, "internal": 1, "confidential": 2, "public": 3}
-            data_class = min(
-                data_classes,
-                key=lambda dc: _DATA_CLASS_PRECEDENCE.get(dc, 99),
-            )
+        # Members disagree on data_class (e.g., a narrowed child
+        # hop "restricted" aggregated alongside parent's "internal").
+        # Roll up to the most restrictive value (restricted < internal < confidential < public).
+        _DATA_CLASS_PRECEDENCE = {"restricted": 0, "internal": 1, "confidential": 2, "public": 3}
+        data_class = min(
+            data_classes,
+            key=lambda dc: _DATA_CLASS_PRECEDENCE.get(dc, 99),
+        )
 
         call_count = sum(int(member["tool_transcript"]["call_count"]) for member in members)
         member_transcript_hashes = [member["tool_transcript"]["hash"] for member in members]

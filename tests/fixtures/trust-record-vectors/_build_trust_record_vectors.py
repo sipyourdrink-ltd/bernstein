@@ -219,9 +219,7 @@ def main() -> None:
         # journal -- there is no journal for "the whole run" as such. Extended
         # to cover all three hops so the aggregate's references[] surface
         # exercises the full delegation chain, not just the first two hops.
-        aggregate_output = emitter.emit_aggregate_trust_record(
-            run_id, [parent_output, child_output, grandchild_output]
-        )
+        aggregate_output = emitter.emit_aggregate_trust_record(run_id, [parent_output, child_output, grandchild_output])
         aggregate_path = OUT_DIR / "aggregate-trust-record.json"
         aggregate_path.write_text(aggregate_output + "\n", encoding="utf-8")
         print(f"Wrote run-level aggregate vector: {aggregate_path}  ({len(aggregate_output)} bytes)")

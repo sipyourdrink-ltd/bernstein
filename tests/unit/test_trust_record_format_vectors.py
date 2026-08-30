@@ -367,10 +367,7 @@ def test_data_class_narrowing_exists() -> None:
     ]
     rank = {"public": 3, "internal": 2, "restricted": 1}
 
-    assert any(
-        rank[child_rec["data_class"]] < rank[parent_rec["data_class"]]
-        for _, parent_rec, child_rec in pairs
-    ), (
+    assert any(rank[child_rec["data_class"]] < rank[parent_rec["data_class"]] for _, parent_rec, child_rec in pairs), (
         "No parent/child pair has a strictly narrower child data_class "
         "(ranking: public > internal > restricted). Observed classes: "
         f"parent-child {parent['data_class']} -> {child['data_class']}, "
