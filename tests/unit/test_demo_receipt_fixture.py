@@ -85,13 +85,3 @@ def test_the_demo_receipt_has_a_non_empty_lineage_spine() -> None:
     receipt = json.loads(_RECEIPT.read_text(encoding="utf-8"))
     assert receipt["spine"]["entry_count"] > 0
     assert bool(receipt["spine"]["head_hash"])
-
-
-def test_the_demo_receipt_has_a_non_empty_lineage_spine_as_failing_first_guard() -> None:
-    """Failing-first guard test for non-empty spine in demo receipt (id=91bc21818a89)
-    Reads docs/assets/demo-run/run-receipt.json and asserts spine.entry_count > 0.
-    This test must fail today (spine.entry_count is 1 in the committed receipt)
-    and will pass only after record_demo.sh is updated to produce a non-empty spine via graceful finalize.
-    """
-    receipt = json.loads(_RECEIPT.read_text(encoding="utf-8"))
-    assert receipt["spine"]["entry_count"] > 0, f"spine.entry_count is {receipt['spine']['entry_count']}, expected > 0"
