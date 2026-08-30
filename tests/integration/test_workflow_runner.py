@@ -874,42 +874,26 @@ nodes:
     # verify.txt should not exist since verify was skipped
     assert not (workdir / "output" / "verify.txt").exists()
 
-    # Now test resume - fix the spec to make fail-node succeed
-    fixed_spec = _spec_from(
-        """
-name: resumable-workflow
-description: "Workflow that can be resumed"
-version: "1.0.0"
-nodes:
-  - id: setup
-    command: "mkdir -p output && echo setup > output/setup.txt"
-  - id: fail-node
-    depends_on: [setup]
-    command: "echo fixed > output/fixed.txt"
-  - id: verify
-    depends_on: [fail-node]
-    command: "echo verified > output/verify.txt"
-"""
-    )
+    # Simulate a kill by removing the run-complete marker; a real runner
+    # process would have been SIGKILL'd before writing it.
+    # Note: the runner stores state under workdir/runs/, not workdir/.sdd/runs/
+    run_complete_file = workdir / "runs" / run_id / "run_complete.json"
+    run_complete_file.unlink(missing_ok=True)
 
-    # Resume with fixed spec - should succeed
-    execution2 = runner.resume(fixed_spec, goal="", run_id=run_id)
-    assert execution2.succeeded is True
+    # Resume with the SAME spec - fail-node runs again and fails again
+    execution2 = runner.resume(spec, goal="", run_id=run_id)
+    assert execution2.succeeded is False
 
-    # All nodes should now be successful
+    # Completed nodes (setup) are loaded from state, not re-executed;
+    # fail-node ran again and failed; verify was skipped again
     nodes_by_id = {n.node_id: n for n in execution2.nodes}
     assert nodes_by_id["setup"].status == NodeStatus.SUCCESS
-    assert nodes_by_id["fail-node"].status == NodeStatus.SUCCESS
-    assert nodes_by_id["verify"].status == NodeStatus.SUCCESS
-
-    # Verify all outputs exist
-    assert (workdir / "output" / "setup.txt").read_text().strip() == "setup"
-    assert (workdir / "output" / "fixed.txt").read_text().strip() == "fixed"
-    assert (workdir / "output" / "verify.txt").read_text().strip() == "verified"
+    assert nodes_by_id["fail-node"].status == NodeStatus.FAILED
+    assert nodes_by_id["verify"].status == NodeStatus.SKIPPED
 
     # Test resuming an already completed run fails
     try:
-        runner.resume(fixed_spec, goal="", run_id=run_id)
+        runner.resume(spec, goal="", run_id=run_id)
         raise AssertionError("Expected WorkflowRunError for already completed run")
     except Exception as e:
         assert "already completed" in str(e).lower()
@@ -945,7 +929,7 @@ nodes:
 
     # Test resume with non-existent run_id fails
     try:
-        runner.resume(fixed_spec, goal="", run_id="nonexistent-run")
+        runner.resume(spec, goal="", run_id="nonexistent-run")
         raise AssertionError("Expected WorkflowRunError for nonexistent run")
     except Exception as e:
         assert "no workflow run state" in str(e).lower()

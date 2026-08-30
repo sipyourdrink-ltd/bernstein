@@ -483,7 +483,6 @@ def resume_cmd(run_id: str, goal: str, manifest_arg: str | None) -> None:
             candidate = Path(stored_source)
             if candidate.is_absolute() and candidate.is_file():
                 path = candidate
-                spec = WorkflowSpecError  # placeholder
                 from bernstein.core.workflows import load_workflow_spec
 
                 try:
