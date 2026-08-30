@@ -29,6 +29,19 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from bernstein.core.lineage.spine import LineageSpine
 
+#: DRIFT reason taxonomy. Maps each :attr:`FindingVerifyVerdict.DRIFT_*`
+#: member to the stable string the janitor's ``file_contains`` signal uses
+#: to assert the module declares it (issue #2557). Keep in sync with the
+#: enum - adding a new DRIFT verdict requires a matching entry here.
+DRIFT_REASON = frozenset(
+    {
+        "feed_changed",
+        "rule_changed",
+        "target_changed",
+        "nondeterministic",
+    }
+)
+
 #: Version stamped into every receipt payload. Bump only on a wire-format
 #: change so a verifier can reject unknown receipt shapes.
 FINDING_VERIFY_RECEIPT_VERSION = 1
@@ -267,6 +280,7 @@ def finding_verify_step_id(receipt: FindingVerifyReceipt) -> str:
 
 
 __all__ = [
+    "DRIFT_REASON",
     "FINDING_VERIFY_ARTIFACT_DIR",
     "FINDING_VERIFY_RECEIPT_VERSION",
     "FindingVerifyReceipt",
