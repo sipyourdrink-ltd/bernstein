@@ -127,12 +127,14 @@ def _run(
     manifest: Any = None,
     donor: DonorLimits | None = None,
     budget: WallClockBudget | None = None,
+    adapter_id: str | None = None,
 ) -> TaskDiff | TaskRefusal:
     return run_claimed_task(
         task if task is not None else _task(repo),
         manifest if manifest is not None else _manifest(),
         donor=donor if donor is not None else _donor(),
         workspace=tmp_path / "run",
+        adapter_id=adapter_id,
         agent_argv=agent_argv,
         sanitize=_passthrough,
         budget=budget,
@@ -329,6 +331,7 @@ def test_an_agent_that_exits_non_zero_is_a_refusal_rather_than_a_patch(fixture_r
     assert outcome.reason == "agent_failed"
     assert outcome.wall_clock is not None
     assert outcome.wall_clock["killed"] is False, "a failing agent and a killed one must stay distinguishable"
+    assert outcome.wall_clock["exit_code"] == 3
 
 
 # ---------------------------------------------------------------------------
@@ -387,7 +390,7 @@ def test_auth_basis_api_key_is_accepted_in_volunteer_mode(fixture_repo: Path, tm
         adapter_id="claude",  # claude has api_key
     )
     assert isinstance(outcome, TaskDiff)
-    assert outcome.outcome == "diff"
+    assert outcome.as_record()["outcome"] == "diff"
 
 
 def test_auth_basis_local_is_accepted_in_volunteer_mode(
@@ -418,7 +421,7 @@ def test_auth_basis_local_is_accepted_in_volunteer_mode(
         adapter_id="local-adapter",
     )
     assert isinstance(outcome, TaskDiff)
-    assert outcome.outcome == "diff"
+    assert outcome.as_record()["outcome"] == "diff"
 
 
 def test_a_run_that_changed_nothing_is_a_refusal_rather_than_an_empty_patch(fixture_repo: Path, tmp_path: Path) -> None:

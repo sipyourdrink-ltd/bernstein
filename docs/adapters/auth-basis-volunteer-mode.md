@@ -50,7 +50,6 @@ Volunteer donor budgets (`VolunteerBudget`) enforce adapter selection through `f
 | `aichat` | `api_key` | Yes (`local_ok`) / No (`local_only`) | `OPENAI_API_KEY` / multi-provider |
 | `devin_terminal` | `api_key` | Yes (`local_ok`) / No (`local_only`) | `DEVIN_API_KEY` / `WINDSURF_API_KEY` |
 | `agy` | `subscription_oauth` | Yes (`local_ok`) / No (`local_only`) | Consumer lane; Google OAuth |
-| `copilot` | `subscription_oauth` | Yes (`local_ok`) / No (`local_only`) | GitHub OAuth |
 | `computer_use` | `unknown` | Yes (`local_ok`) / No (`local_only`) | Third-party agent; no contract auth basis |
 | `integration-mock` | `unknown` | Yes (`local_ok`) / No (`local_only`) | Test stub; no contract auth basis |
 | `mock` | — | **Yes** (both) | No contract; zero-key, no network |

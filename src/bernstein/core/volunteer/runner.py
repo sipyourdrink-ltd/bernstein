@@ -632,21 +632,30 @@ def _validate_volunteer_auth_basis(adapter_id: str | None) -> str | None:
     """
     if not adapter_id:
         return None
-    from bernstein.adapters.capability_profile import get_profile
+    from bernstein.adapters._contract import ContractSpec
+    from bernstein.adapters.capability_profile import UnknownProfileError, get_profile
 
     try:
         profile = get_profile(adapter_id)
-    except Exception:
-        # No registered profile for this adapter — treat as unknown auth_basis
-        # rather than crashing the pipeline; the refusal will name compliant
-        # paths.
-        return (
-            f"adapter '{adapter_id}' has no pinned auth_basis (unknown); "
-            "use API-key adapter (e.g. claude, qwen) or local endpoint adapter"
-        )
-    if profile.auth_basis is AuthBasis.API_KEY or profile.auth_basis is AuthBasis.LOCAL:
+    except UnknownProfileError:
+        # No registered profile for this adapter — fall back to the contract,
+        # which may still declare an auth_basis even if no capability profile
+        # is registered.
+        try:
+            auth_basis = ContractSpec.load(adapter_id).auth_basis
+        except Exception:
+            # No contract either — treat as unknown auth_basis rather than
+            # crashing the pipeline.
+            return (
+                f"adapter '{adapter_id}' has no pinned auth_basis (unknown); "
+                "use API-key adapter (e.g. claude, qwen) or local endpoint adapter"
+            )
+    else:
+        auth_basis = profile.auth_basis
+
+    if auth_basis is AuthBasis.API_KEY or auth_basis is AuthBasis.LOCAL:
         return None
-    if profile.auth_basis is AuthBasis.SUBSCRIPTION_OAUTH:
+    if auth_basis is AuthBasis.SUBSCRIPTION_OAUTH:
         return (
             f"adapter '{adapter_id}' requires subscription OAuth; "
             "use an API-key adapter (e.g. claude, qwen, gemini) "
