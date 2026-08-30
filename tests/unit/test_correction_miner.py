@@ -160,7 +160,7 @@ def _make_multi_author_correction_repo() -> tuple[Path, dict[str, str]]:
     _run("branch", "-M", "main", cwd=repo)
 
     # Correction 1: contributor commit, maintainer Alice fix on top, merged.
-    _run("checkout", "-b", "correction-1", cwd=repo)
+    _run("checkout", "-b", "contributor-1", cwd=repo)
     _commit(
         repo,
         "Add logging without sanitization",
@@ -182,11 +182,13 @@ def _make_multi_author_correction_repo() -> tuple[Path, dict[str, str]]:
     _run("checkout", "main", cwd=repo)
     _commit(repo, "main internal", file_path="main_only.py", content="# main only\n")
 
-    # Merge correction 1
-    _run("merge", "--no-edit", "correction-1", cwd=repo)
+    # Merge contributor-1 branch (with Alice's fix) into main
+    _run("merge", "--no-edit", "contributor-1", cwd=repo)
+    merge1_sha = _run("rev-parse", "HEAD", cwd=repo)
 
     # Correction 2: same fix shape on the same file, maintainer Bob fixes.
-    _run("checkout", "-b", "correction-2", cwd=repo)
+    # Start from a fresh contributor branch again
+    _run("checkout", "-b", "contributor-2", cwd=repo)
     _commit(
         repo,
         "Add logging without sanitization (again)",
@@ -208,14 +210,17 @@ def _make_multi_author_correction_repo() -> tuple[Path, dict[str, str]]:
     _run("checkout", "main", cwd=repo)
     _commit(repo, "another main commit", file_path="main_only2.py", content="# main2\n")
 
-    # Merge correction 2
-    _run("merge", "--no-edit", "correction-2", cwd=repo)
+    # Merge contributor-2 branch (with Bob's fix) into main
+    _run("merge", "--no-edit", "contributor-2", cwd=repo)
+    merge2_sha = _run("rev-parse", "HEAD", cwd=repo)
 
     shas = {
         "follow_up1": sha1,
         "follow_up2": sha2,
         "author1": "alice@example.com",
         "author2": "bob@example.com",
+        "merge1": merge1_sha,
+        "merge2": merge2_sha,
     }
     return repo, shas
 
