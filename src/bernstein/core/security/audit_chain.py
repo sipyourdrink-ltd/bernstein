@@ -6414,6 +6414,12 @@ def record_provenance_quarantine(
 #: must never be reordered or removed.
 EVENT_STEERING_RECEIPT = "steering.receipt"
 
+#: Emitted when a steer.* message is consumed but its receipt_hash has no
+#: matching steering.receipt event on the audit chain. The refusal itself
+#: is an audit-chain event so a steered run is distinguishable from a
+#: tampered one.
+EVENT_STEERING_REJECTION = "steering.rejection"
+
 
 def record_steering_receipt(
     *,
@@ -6469,6 +6475,61 @@ def record_steering_receipt(
             "principal": principal,
             "scope": scope,
             "payload_hash": payload_hash,
+        },
+    )
+
+
+def record_steering_rejection(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    mailbox_seq: int,
+    kind: str,
+    receipt_hash: str,
+    payload_hash: str,
+    entry_hash: str,
+    body_hash: str,
+    reason: str,
+    actor: str = "fleet_steering",
+) -> AuditEvent:
+    """Append a ``steering.rejection`` event into *chain* (#2508).
+
+    The receipt-gate at consumption time refuses a ``steer.*`` message when
+    its body does not reference a chain-attested ``steering.receipt`` event.
+    The refusal itself is bound into the HMAC chain, so a steered run with
+    a missing receipt is distinguishable from a tampered one: the journal
+    records what was refused, the chain records the refusal, and the
+    receipt it expected is absent.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        task_id: The steered task the rejected message addressed.
+        mailbox_seq: The mailbox chain position of the rejected message.
+        kind: The steering kind (``pause``/``resume``/etc.).
+        receipt_hash: The ``receipt_hash`` the rejected message declared.
+        payload_hash: The ``payload_hash`` the rejected message declared.
+        entry_hash: The mailbox entry hash of the rejected message.
+        body_hash: The body hash of the rejected message.
+        reason: The refusal reason (e.g. ``"missing_receipt_hash"``).
+        actor: Recorded actor; defaults to ``"fleet_steering"``.
+
+    Returns:
+        The recorded :class:`AuditEvent`.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_STEERING_REJECTION,
+        actor=actor,
+        resource_type="steering_command",
+        resource_id=task_id,
+        details={
+            "task_id": task_id,
+            "mailbox_seq": mailbox_seq,
+            "kind": kind,
+            "receipt_hash": receipt_hash,
+            "payload_hash": payload_hash,
+            "entry_hash": entry_hash,
+            "body_hash": body_hash,
+            "reason": reason,
         },
     )
 

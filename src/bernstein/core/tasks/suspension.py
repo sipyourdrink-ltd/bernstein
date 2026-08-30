@@ -51,10 +51,11 @@ there is no suspension, only a dead process:
   and a ``task_id`` that is not a plain identifier never reaches a filesystem
   name.
 
-Scope relative to steer.pause (#2508): steer.pause is the momentary in-place
-halt for quick correction; this is the durable variant that frees
-infrastructure and proves continuity. Both share the checkpoint row shape and
-the receipt-before-effect rule.
+Scope relative to steer.pause (#2508) and the receipt-gate at
+:func:`~bernstein.core.orchestration.steering.consume_steering`: steer.pause is
+the momentary in-place halt for quick correction; this is the durable variant
+that frees infrastructure and proves continuity. Both share the checkpoint row
+shape and the receipt-before-effect rule.
 """
 
 from __future__ import annotations
