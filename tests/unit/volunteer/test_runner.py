@@ -397,7 +397,7 @@ def test_auth_basis_local_is_accepted_in_volunteer_mode(fixture_repo: Path, tmp_
     injected via the registry and the runner must accept it the same way
     it accepts api_key.
     """
-    from bernstein.adapters.capability_profile import AdapterCapabilityProfile, InvocationSpec, PROFILES
+    from bernstein.adapters.capability_profile import PROFILES, AdapterCapabilityProfile, InvocationSpec
 
     monkeypatch.setitem(
         PROFILES,
