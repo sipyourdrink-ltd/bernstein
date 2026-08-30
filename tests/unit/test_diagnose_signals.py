@@ -100,7 +100,8 @@ class TestIncidentSignal:
         """inc-f31dce50e73b.yaml has a 93-char error line that gets extracted."""
         # Copy the real case file to tmp_path for isolation
         case_file = tmp_path / "inc-f31dce50e73b.yaml"
-        case_file.write_text("""id: inc-f31dce50e73b
+        case_file.write_text(
+            """id: inc-f31dce50e73b
 severity: P2
 source_incident: "dlq:9316bdb174f045b5"
 owner: backend
@@ -114,7 +115,9 @@ prompt: |
   Failure reason: max_retries_exceeded
   Last error (trimmed):
   Agent backend-1ce0c6f4 died; janitor failed: ['path_exists: src/bernstein/core/orchestration/pqa_synthesiser.py (not found)']
-""", encoding="utf-8")
+""",
+            encoding="utf-8",
+        )
 
         predicate = incident_signal("inc-f31dce50e73b", cases_dir=tmp_path)
 
@@ -154,13 +157,16 @@ prompt: |
     def test_no_fingerprint_lines_raises(self, tmp_path: Path) -> None:
         """Case with no valid fingerprint lines raises DiagnoseError."""
         case_file = tmp_path / "no_fingerprint.yaml"
-        case_file.write_text("""id: no_fingerprint
+        case_file.write_text(
+            """id: no_fingerprint
 prompt: |
   Some text
   Last error (trimmed):
   - Short
   - Also short
-""", encoding="utf-8")
+""",
+            encoding="utf-8",
+        )
 
         with pytest.raises(DiagnoseError, match="carries no matchable failure fingerprint"):
             incident_signal("no_fingerprint", cases_dir=tmp_path)
@@ -182,11 +188,14 @@ class TestResolveSignalIncident:
         cases_dir = tmp_path / "src" / "bernstein" / "eval" / "cases" / "incidents"
         cases_dir.mkdir(parents=True)
         case_file = cases_dir / "test-case.yaml"
-        case_file.write_text("""id: test-case
+        case_file.write_text(
+            """id: test-case
 prompt: |
   Last error (trimmed):
   - This is a long enough error line for extraction
-""", encoding="utf-8")
+""",
+            encoding="utf-8",
+        )
 
         predicate = resolve_signal("incident:test-case", sdd_dir=tmp_path, workdir=tmp_path)
 
