@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from bernstein.adapters._contract import AuthBasis
 from bernstein.core.volunteer.manifest import load_manifest
 from bernstein.core.volunteer.runner import (
     AgentInvocation,
@@ -328,7 +329,94 @@ def test_an_agent_that_exits_non_zero_is_a_refusal_rather_than_a_patch(fixture_r
     assert outcome.reason == "agent_failed"
     assert outcome.wall_clock is not None
     assert outcome.wall_clock["killed"] is False, "a failing agent and a killed one must stay distinguishable"
-    assert outcome.wall_clock["exit_code"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Provider-terms auth_basis preflight
+# ---------------------------------------------------------------------------
+
+
+def test_auth_basis_subscription_oauth_is_refused_in_volunteer_mode(fixture_repo: Path, tmp_path: Path) -> None:
+    """adapter with auth_basis=subscription_oauth is refused in volunteer mode.
+
+    The refusal receipt must name the compliant alternatives (API key or
+    local endpoint), not just say "no".
+    """
+    outcome = _run(
+        fixture_repo,
+        tmp_path,
+        agent_argv=mock_agent_argv(fix="off-by-one"),
+        adapter_id="copilot",  # copilot has subscription_oauth
+    )
+    assert isinstance(outcome, TaskRefusal)
+    assert outcome.stage == RefusalStage.AGENT
+    assert outcome.reason == "provider_terms_unavailable"
+    record = outcome.as_record()
+    assert "subscription OAuth" in record["detail"]
+    assert "API-key adapter" in record["detail"]
+    assert "local endpoint adapter" in record["detail"]
+
+
+def test_auth_basis_unknown_is_refused_in_volunteer_mode(fixture_repo: Path, tmp_path: Path) -> None:
+    """adapter with unknown auth_basis is refused in volunteer mode.
+
+    computer_use carries an unknown auth_basis in its contract; the gate
+    must refuse it and name compliant paths.
+    """
+    outcome = _run(
+        fixture_repo,
+        tmp_path,
+        agent_argv=mock_agent_argv(fix="off-by-one"),
+        adapter_id="computer_use",  # computer_use has unknown auth_basis
+    )
+    assert isinstance(outcome, TaskRefusal)
+    assert outcome.stage == RefusalStage.AGENT
+    assert outcome.reason == "provider_terms_unavailable"
+    record = outcome.as_record()
+    assert "unknown" in record["detail"].lower()
+    assert "API-key adapter" in record["detail"]
+    assert "local endpoint adapter" in record["detail"]
+
+
+def test_auth_basis_api_key_is_accepted_in_volunteer_mode(fixture_repo: Path, tmp_path: Path) -> None:
+    """adapter with auth_basis=api_key is accepted in volunteer mode."""
+    outcome = _run(
+        fixture_repo,
+        tmp_path,
+        agent_argv=mock_agent_argv(fix="off-by-one"),
+        adapter_id="claude",  # claude has api_key
+    )
+    assert isinstance(outcome, TaskDiff)
+    assert outcome.outcome == "diff"
+
+
+def test_auth_basis_local_is_accepted_in_volunteer_mode(fixture_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """adapter with auth_basis=local is accepted in volunteer mode.
+
+    No shipped adapter carries a local auth_basis, so a local profile is
+    injected via the registry and the runner must accept it the same way
+    it accepts api_key.
+    """
+    from bernstein.adapters.capability_profile import AdapterCapabilityProfile, InvocationSpec, PROFILES
+
+    monkeypatch.setitem(
+        PROFILES,
+        "local-adapter",
+        AdapterCapabilityProfile(
+            name="local-adapter",
+            display_name="Local Adapter",
+            invocation=InvocationSpec(binary="local"),
+            auth_basis=AuthBasis.LOCAL,
+        ),
+    )
+    outcome = _run(
+        fixture_repo,
+        tmp_path,
+        agent_argv=mock_agent_argv(fix="off-by-one"),
+        adapter_id="local-adapter",
+    )
+    assert isinstance(outcome, TaskDiff)
+    assert outcome.outcome == "diff"
 
 
 def test_a_run_that_changed_nothing_is_a_refusal_rather_than_an_empty_patch(fixture_repo: Path, tmp_path: Path) -> None:

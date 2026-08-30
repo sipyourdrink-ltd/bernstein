@@ -114,6 +114,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol
 from urllib.parse import urlparse
 
+from bernstein.adapters._contract import AuthBasis
 from bernstein.core.git.worktree import WorktreeError, WorktreeManager
 from bernstein.core.integrations.tickets import TicketParseError, fetch_ticket
 from bernstein.core.volunteer.claim import (
@@ -442,6 +443,7 @@ def run_claimed_task(
     claim_fingerprint: str | None = None,
     claim_staleness: timedelta = DEFAULT_CLAIM_STALENESS,
     now: Callable[[], datetime] | None = None,
+    adapter_id: str | None = None,
 ) -> TaskOutcome:
     """Run one claimed task inside the volunteer sandbox.
 
@@ -479,6 +481,9 @@ def run_claimed_task(
             task is treated as free again.
         now: Clock for the staleness comparison; injected for deterministic
             tests.  Defaults to :func:`datetime.now` in UTC.
+        adapter_id: Optional adapter identifier.  When supplied, the runner
+            validates the adapter's auth_basis and refuses volunteer tasks
+            whose auth_basis is incompatible with volunteer mode.
 
     Returns:
         :class:`TaskDiff` when the agent produced a patch, otherwise
@@ -512,6 +517,17 @@ def run_claimed_task(
     url_problem = repo_url_problem(task.repo_url)
     if url_problem is not None:
         return refuse(RefusalStage.REPO_URL, "unsupported_repo_url", url_problem)
+
+    # Provider-terms preflight: a volunteer task runs on a stranger's machine
+    # with no credentials of its own, so it may only run behind an adapter that
+    # authenticates in a way compatible with that boundary.  Subscription OAuth
+    # ties the run to a paid account the donor does not possess, and an unknown
+    # basis means no contract has pinned what authentication the adapter needs,
+    # so neither is safe here.  API key and local are fine: the former carries
+    # no session entitlement and the latter needs no remote auth at all.
+    auth_problem = _validate_volunteer_auth_basis(adapter_id)
+    if auth_problem is not None:
+        return refuse(RefusalStage.AGENT, "provider_terms_unavailable", auth_problem)
 
     # --- claim etiquette: read the issue, skip a duplicate, post a claim ------
     # Best-effort and coordinator-free: a gh failure yields no state and the run
@@ -598,6 +614,48 @@ def run_claimed_task(
             build_release_body(fingerprint=resolve_fingerprint(claim_fingerprint), reason=outcome.reason),
         )
     return outcome
+
+
+def _validate_volunteer_auth_basis(adapter_id: str | None) -> str | None:
+    """Preflight gate for adapter auth_basis in volunteer mode.
+
+    Volunteer tasks run on a donor's machine with no provider subscription
+    in scope.  Only adapters pinned to api_key or local auth_basis are
+    allowed; subscription_oauth or unknown are refused with a receipt
+    naming the compliant alternatives (API key or local endpoint).
+
+    Args:
+        adapter_id: Adapter registry name.  ``None`` or empty skips the gate.
+
+    Returns:
+        Structured refusal reason when refused, else ``None``.
+    """
+    if not adapter_id:
+        return None
+    from bernstein.adapters.capability_profile import get_profile
+    try:
+        profile = get_profile(adapter_id)
+    except Exception:
+        # No registered profile for this adapter — treat as unknown auth_basis
+        # rather than crashing the pipeline; the refusal will name compliant
+        # paths.
+        return (
+            f"adapter '{adapter_id}' has no pinned auth_basis (unknown); "
+            "use API-key adapter (e.g. claude, qwen) or local endpoint adapter"
+        )
+    if profile.auth_basis is AuthBasis.API_KEY or profile.auth_basis is AuthBasis.LOCAL:
+        return None
+    if profile.auth_basis is AuthBasis.SUBSCRIPTION_OAUTH:
+        return (
+            f"adapter '{adapter_id}' requires subscription OAuth; "
+            "use an API-key adapter (e.g. claude, qwen, gemini) "
+            "or a local endpoint adapter"
+        )
+    # AuthBasis.UNKNOWN
+    return (
+        f"adapter '{adapter_id}' has unknown auth_basis; "
+        "use API-key adapter (e.g. claude, qwen) or local endpoint adapter"
+    )
 
 
 def _utc_now() -> datetime:
