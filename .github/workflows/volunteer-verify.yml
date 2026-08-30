@@ -176,6 +176,7 @@ jobs:
 
           with open(result_path, 'w') as f:
               json.dump({
+                  'conclusion': result.conclusion,
                   'overall_passed': result.overall_passed,
                   'summary': result.summary,
                   'details': result.details,
@@ -187,7 +188,7 @@ jobs:
                   'gate_comparisons': gate_comparisons_serializable,
               }, f, indent=2)
 
-          print(f"Verification completed. Overall passed: {result.overall_passed}")
+          print(f"Verification completed. Conclusion: {result.conclusion}")
           print(f"Summary: {result.summary}")
           PYEOF
 
@@ -209,44 +210,37 @@ jobs:
             exit 0
           fi
 
-          # Extract verification result
-          RESULT_JSON=$(cat "$VERIFICATION_RESULT_PATH")
-
-          # Determine conclusion based on overall pass/fail
-          if echo "$RESULT_JSON" | grep -q '"overall_passed": true'; then
-            CONCLUSION="success"
-            SUMMARY="Volunteer receipt verification passed"
-          else
-            CONCLUSION="failure"
-            SUMMARY="Volunteer receipt verification failed"
-          fi
-
-          # Create check run client and post/update check run
-          uv run python << EOF
-          import os
+          # Create check run client and post/update check run.
+          #
+          # The conclusion is decided by `run_verification_check` and carried in
+          # the result file - notably `neutral` for a PR that is not a volunteer
+          # submission, which must not be reported as a failure. Values reach
+          # Python through the environment (quoted heredoc), never through shell
+          # interpolation into the script body.
+          uv run python << 'PYEOF'
           import json
+          import os
           import sys
-          from pathlib import Path
+
           from bernstein.github_app.check_runs import CheckRunClient
 
-          # Load result
-          with open('$VERIFICATION_RESULT_PATH') as f:
+          with open(os.environ['VERIFICATION_RESULT_PATH']) as f:
               result = json.load(f)
 
-          # Create check run client
-          check_run_client = CheckRunClient('$REPO_SLUG', None)
+          conclusion = result['conclusion']
 
-          # Post new verification check run
+          check_run_client = CheckRunClient(os.environ['REPO_SLUG'], None)
+
           check_run_result = check_run_client.create_verification_check_run(
-              head_sha='$HEAD_SHA',
+              head_sha=os.environ['HEAD_SHA'],
               summary=result['summary'],
               details=result['details'],
-              conclusion=CONCLUSION,
+              conclusion=conclusion,
           )
 
           if check_run_result is None:
               print("Failed to create verification check run")
               sys.exit(1)
 
-          print(f"Posted verification check run: {check_run_result.check_run_id}")
-          EOF
+          print(f"Posted verification check run ({conclusion}): {check_run_result.check_run_id}")
+          PYEOF

@@ -21,7 +21,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from bernstein.core.security.audit_dsse import Statement
 from bernstein.core.security.result_receipt_bundle import (
@@ -42,6 +42,33 @@ _ENVELOPE_FIELD_PATTERN = re.compile(
     r"\*\*Envelope:\*\*\s*```json\s*(\{[\s\S]*?\})\s*```",
     re.DOTALL | re.MULTILINE,
 )
+
+# Markers that mean "this PR presents itself as a volunteer submission".
+# Every one of them is emitted by
+# :func:`bernstein.core.volunteer.submission.build_volunteer_pr_body`, so a
+# genuine volunteer PR always matches even when its envelope block is
+# malformed or was edited away. A PR matching none of them is simply not a
+# volunteer PR and has nothing to verify.
+_VOLUNTEER_CLAIM_PATTERNS = (
+    re.compile(r"\*\*Envelope:\*\*"),
+    re.compile(r"\*\*Receipt digest:\*\*"),
+    re.compile(r"\*\*Manifest digest:\*\*"),
+    re.compile(r"bernstein receipt verify"),
+    re.compile(r"^_Assisted-by:", re.MULTILINE),
+)
+
+#: Check-run conclusions this engine produces. ``neutral`` means the PR was
+#: not a volunteer submission, so no verification was attempted.
+Conclusion = Literal["success", "failure", "neutral"]
+
+
+def _pr_claims_volunteer_receipt(pr_body: str) -> bool:
+    """Return whether a PR body presents itself as a volunteer submission.
+
+    Used to tell "nothing to verify here" apart from "a receipt was promised
+    and it does not hold up". Only the latter is a failure.
+    """
+    return any(pattern.search(pr_body) for pattern in _VOLUNTEER_CLAIM_PATTERNS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,9 +91,18 @@ class VerificationCheckRunResult:
     bundle_verification: BundleVerification
     gate_comparisons: list[GateComparison]
     manifest_digest_match: bool
-    overall_passed: bool
+    conclusion: Conclusion
     summary: str
     details: str
+
+    @property
+    def overall_passed(self) -> bool:
+        """Whether a receipt was verified and held up.
+
+        Derived so it can never disagree with :attr:`conclusion`. A
+        ``neutral`` result is not a pass: nothing was verified.
+        """
+        return self.conclusion == "success"
 
 
 def _extract_envelope_from_pr_body(pr_body: str) -> dict[str, Any] | None:
@@ -431,7 +467,22 @@ def run_verification_check(
     # Extract envelope from PR body
     envelope_dict = _extract_envelope_from_pr_body(pr_body)
     if envelope_dict is None:
-        # No envelope found - create a failed result
+        if not _pr_claims_volunteer_receipt(pr_body):
+            # Not a volunteer PR at all: there is nothing to verify, and
+            # saying so as `failure` would make every ordinary PR red.
+            return VerificationCheckRunResult(
+                bundle_verification=BundleVerification(ok=True),
+                gate_comparisons=[],
+                manifest_digest_match=False,
+                conclusion="neutral",
+                summary="Skipped: not a volunteer PR",
+                details="This pull request carries no volunteer receipt envelope and none of "
+                "the attribution markers a volunteer submission emits, so there is nothing "
+                "to verify.\n\nVolunteer submissions opened by `bernstein volunteer submit` "
+                "are checked strictly; this check is skipped for every other pull request.",
+            )
+        # The PR presents itself as a volunteer submission but ships no
+        # envelope - that is a real, reportable failure.
         bundle_verification = BundleVerification(
             ok=False, errors=(FieldError("envelope", "No result receipt envelope found in PR body"),)
         )
@@ -439,10 +490,12 @@ def run_verification_check(
             bundle_verification=bundle_verification,
             gate_comparisons=[],
             manifest_digest_match=False,
-            overall_passed=False,
+            conclusion="failure",
             summary="Verification failed: No receipt envelope found in PR body",
-            details="Could not extract a result receipt envelope from the PR body. "
-            "Ensure the PR contains a valid Bernstein volunteer submission.",
+            details="This pull request presents itself as a volunteer submission, but no "
+            "result receipt envelope could be extracted from its body.\n\nRestore the "
+            "`**Envelope:**` JSON block produced by `bernstein volunteer submit`, or remove "
+            "the volunteer attribution markers if this is not a volunteer submission.",
         )
 
     # Verify the bundle offline (internal consistency checks)
@@ -457,7 +510,7 @@ def run_verification_check(
             bundle_verification=bundle_verification,
             gate_comparisons=[],
             manifest_digest_match=False,
-            overall_passed=False,
+            conclusion="failure",
             summary="Verification failed: Receipt bundle does not verify",
             details=_format_verification_details(bundle_verification),
         )
@@ -471,7 +524,7 @@ def run_verification_check(
             ),
             gate_comparisons=[],
             manifest_digest_match=False,
-            overall_passed=False,
+            conclusion="failure",
             summary="Verification failed: Could not extract bundle",
             details="The envelope verified but we could not extract the bundle data.",
         )
@@ -487,7 +540,7 @@ def run_verification_check(
             bundle_verification=bundle_verification,
             gate_comparisons=[],
             manifest_digest_match=False,
-            overall_passed=False,
+            conclusion="failure",
             summary="Verification failed: Could not load manifest",
             details=f"Failed to load manifest from workspace: {e!s}",
         )
@@ -503,7 +556,7 @@ def run_verification_check(
             bundle_verification=bundle_verification,
             gate_comparisons=[],
             manifest_digest_match=manifest_digest_match,
-            overall_passed=False,
+            conclusion="failure",
             summary="Verification failed: Error running gates in CI",
             details=f"Error while re-running manifest gates: {e!s}",
         )
@@ -519,6 +572,7 @@ def run_verification_check(
     manifest_matches = manifest_digest_match
     gates_match = all(comp.passed for comp in gate_comparisons)
     overall_passed = bundle_verified and manifest_matches and gates_match
+    conclusion: Conclusion = "success" if overall_passed else "failure"
 
     # Generate summary
     if overall_passed:
@@ -560,7 +614,7 @@ def run_verification_check(
         bundle_verification=bundle_verification,
         gate_comparisons=gate_comparisons,
         manifest_digest_match=manifest_digest_match,
-        overall_passed=overall_passed,
+        conclusion=conclusion,
         summary=summary,
         details=details,
     )
@@ -605,7 +659,7 @@ def post_verification_check_run(
         CheckRunResult if successful, None otherwise
     """
     # Determine conclusion based on verification result
-    conclusion = "success" if verification_result.overall_passed else "failure"
+    conclusion = verification_result.conclusion
 
     return check_run_client.create_verification_check_run(
         head_sha=head_sha,
@@ -635,7 +689,7 @@ def update_verification_check_run(
         CheckRunResult if successful, None otherwise
     """
     # Determine conclusion based on verification result
-    conclusion = "success" if verification_result.overall_passed else "failure"
+    conclusion = verification_result.conclusion
 
     return check_run_client.update_verification_check_run(
         check_run_id=check_run_id,

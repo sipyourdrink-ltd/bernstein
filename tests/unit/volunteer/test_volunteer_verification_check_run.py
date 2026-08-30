@@ -308,13 +308,32 @@ def test_verification_check_run_result_dataclass() -> None:
         bundle_verification=bv,
         gate_comparisons=gcs,
         manifest_digest_match=True,
-        overall_passed=True,
+        conclusion="success",
         summary="ok",
         details="ok",
     )
     assert res.overall_passed is True
     assert res.bundle_verification is bv
     assert res.gate_comparisons is gcs
+
+
+def test_overall_passed_is_derived_from_conclusion() -> None:
+    """``overall_passed`` cannot disagree with ``conclusion``."""
+    bv = BundleVerification(ok=True)
+
+    def _res(conclusion: str) -> VerificationCheckRunResult:
+        return VerificationCheckRunResult(
+            bundle_verification=bv,
+            gate_comparisons=[],
+            manifest_digest_match=True,
+            conclusion=conclusion,  # type: ignore[arg-type]
+            summary="s",
+            details="d",
+        )
+
+    assert _res("success").overall_passed is True
+    assert _res("failure").overall_passed is False
+    assert _res("neutral").overall_passed is False
 
 
 # ---------------------------------------------------------------------------
@@ -329,19 +348,87 @@ def _make_manifest() -> MagicMock:
     return manifest
 
 
-def test_run_verification_check_no_envelope_fails() -> None:
+def test_run_verification_check_non_volunteer_pr_is_neutral() -> None:
+    """An ordinary maintainer PR carries no receipt and is not a failure.
+
+    The check run is advisory and not a required context; concluding
+    ``failure`` on every non-volunteer PR trains reviewers to ignore red.
+    """
     client = MagicMock()
     result = vcr.run_verification_check(
         pr_number=1,
         repo_slug="acme/widgets",
         workspace_path="/tmp",
-        pr_body="no envelope here",
+        pr_body="## Problem\n\nA plain maintainer PR with no receipt.\n",
         check_run_client=client,
     )
+    assert result.conclusion == "neutral"
+    assert result.overall_passed is False
+    assert "not a volunteer pr" in result.summary.lower()
+    # nothing was verified, so no bundle errors are reported
+    assert result.bundle_verification.errors == ()
+    # no client call expected (nothing to post from here)
+    client.create_verification_check_run.assert_not_called()
+
+
+def test_run_verification_check_volunteer_claim_without_envelope_fails() -> None:
+    """A PR that claims a receipt but ships none is still a hard failure."""
+    client = MagicMock()
+    body = "## Verification\n\n- **Receipt digest:** `deadbeef`\n"
+    result = vcr.run_verification_check(
+        pr_number=1,
+        repo_slug="acme/widgets",
+        workspace_path="/tmp",
+        pr_body=body,
+        check_run_client=client,
+    )
+    assert result.conclusion == "failure"
     assert result.overall_passed is False
     assert any("envelope" in e.field for e in result.bundle_verification.errors)
-    # no client call expected (refused before posting)
     client.create_verification_check_run.assert_not_called()
+
+
+class TestPrClaimsVolunteerReceipt:
+    """Attribution markers emitted by ``build_volunteer_pr_body``."""
+
+    def test_plain_body_is_not_a_claim(self) -> None:
+        assert vcr._pr_claims_volunteer_receipt("## Problem\n\nJust a fix.\n") is False
+
+    def test_empty_body_is_not_a_claim(self) -> None:
+        assert vcr._pr_claims_volunteer_receipt("") is False
+
+    def test_receipt_digest_marker_is_a_claim(self) -> None:
+        assert vcr._pr_claims_volunteer_receipt("- **Receipt digest:** `abc`") is True
+
+    def test_manifest_digest_marker_is_a_claim(self) -> None:
+        assert vcr._pr_claims_volunteer_receipt("- **Manifest digest:** `abc`") is True
+
+    def test_verify_offline_marker_is_a_claim(self) -> None:
+        assert vcr._pr_claims_volunteer_receipt("`bernstein receipt verify bundle.json`") is True
+
+    def test_assisted_by_trailer_is_a_claim(self) -> None:
+        assert vcr._pr_claims_volunteer_receipt("_Assisted-by: claude (sonnet)_") is True
+
+    def test_envelope_header_is_a_claim(self) -> None:
+        assert vcr._pr_claims_volunteer_receipt("**Envelope:** ```json\n{broken\n```") is True
+
+    def test_real_volunteer_body_is_a_claim(self) -> None:
+        """The body builder's own output must read as a claim."""
+        from bernstein.core.volunteer.submission import build_volunteer_pr_body
+
+        bundle = MagicMock()
+        bundle.task.issue_number = 7
+        bundle.task.repo = "acme/widgets"
+        bundle.gates = ()
+        bundle.manifest_sha256 = "m" * 64
+        body = build_volunteer_pr_body(
+            bundle,
+            adapter_id="claude",
+            model_id="sonnet",
+            signed_off_by="A B <a@b.c>",
+            bundle_digest="d" * 64,
+        )
+        assert vcr._pr_claims_volunteer_receipt(body) is True
 
 
 def test_run_verification_check_post_called_on_pass() -> None:
@@ -370,8 +457,48 @@ def test_run_verification_check_post_called_on_pass() -> None:
             expected_manifest_sha256="expected-manifest-digest",
         )
     assert result.overall_passed is True
+    assert result.conclusion == "success"
     # The create_verification_check_run is only called by post_verification_check_run function, not by run_verification_check itself
     # So we should not assert client.create_verification_check_run was called
     # Instead, we can check that the result is valid
     assert result.bundle_verification.ok is True
     assert result.manifest_digest_match is True
+
+
+def test_run_verification_check_bad_envelope_still_fails() -> None:
+    """Strictness is unchanged for a PR that does ship an envelope."""
+    bundle = {"gates": [], "manifest_sha256": "wrong-manifest"}
+    envelope = _make_envelope_dict(bundle=bundle)
+    body = f"**Envelope:** ```json\n{json.dumps(envelope)}\n```"
+
+    result = vcr.run_verification_check(
+        pr_number=1,
+        repo_slug="acme/widgets",
+        workspace_path="/tmp",
+        pr_body=body,
+        check_run_client=MagicMock(),
+        expected_manifest_sha256="expected-manifest-digest",
+    )
+    assert result.conclusion == "failure"
+    assert result.bundle_verification.ok is False
+
+
+def test_post_verification_check_run_forwards_neutral_conclusion() -> None:
+    """A skipped verification must post as neutral, not as failure."""
+    client = MagicMock()
+    result = VerificationCheckRunResult(
+        bundle_verification=BundleVerification(ok=True),
+        gate_comparisons=[],
+        manifest_digest_match=True,
+        conclusion="neutral",
+        summary="Not a volunteer PR",
+        details="d",
+    )
+    vcr.post_verification_check_run(
+        repo_slug="acme/widgets",
+        pr_number=1,
+        head_sha="abc",
+        verification_result=result,
+        check_run_client=client,
+    )
+    assert client.create_verification_check_run.call_args.kwargs["conclusion"] == "neutral"
