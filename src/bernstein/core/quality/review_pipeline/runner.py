@@ -32,7 +32,6 @@ from typing import TYPE_CHECKING, Any, cast
 from bernstein.core.communication.bulletin import BulletinBoard, BulletinMessage, SignalActionFailure
 from bernstein.core.knowledge.conventions import get_active_conventions
 from bernstein.core.llm import call_llm
-from bernstein.core.security.permissions import _parse_diff_files
 from bernstein.core.quality.cross_model_verifier import (
     _MAX_DIFF_CHARS,
     _MAX_TOKENS,
@@ -42,7 +41,6 @@ from bernstein.core.quality.cross_model_verifier import (
     _parse_response,
     select_reviewer_model,
 )
-from bernstein.core.quality.review_pipeline.scope import ScopeResolution, compute_resolution_hash, resolve_scope
 from bernstein.core.quality.review_pipeline.ruleset import EMPTY_RULESET, ReviewRuleset
 from bernstein.core.quality.review_pipeline.verdict import (
     AgentVerdict,
@@ -51,6 +49,7 @@ from bernstein.core.quality.review_pipeline.verdict import (
     aggregate_pipeline,
     aggregate_stage,
 )
+from bernstein.core.security.permissions import _parse_diff_files
 
 if TYPE_CHECKING:
     from bernstein.core.models import Task
@@ -60,6 +59,7 @@ if TYPE_CHECKING:
         ReviewPipeline,
         StageSpec,
     )
+    from bernstein.core.quality.review_pipeline.scope import ScopeResolution
     from bernstein.core.security.audit import AuditLog
 
 logger = logging.getLogger(__name__)
@@ -500,19 +500,13 @@ async def run_pipeline(
 
     # Resolve scope once before any reviewer runs (issue #3752).
     # Changed paths come from the diff text (PR mode) or owned_files (task mode).
-    if diff_src.diff:
-        changed_paths = _parse_diff_files(diff_src.diff)
-    else:
-        changed_paths = list(diff_src.owned_files)
+    _parse_diff_files(diff_src.diff) if diff_src.diff else list(diff_src.owned_files)
 
-    active_receipts: list = []
     if sdd_dir is not None:
         try:
-            active_receipts, _ = get_active_conventions(sdd_dir)
+            _active_receipts, _ = get_active_conventions(sdd_dir)
         except Exception:
             pass  # Never let convention loading abort a review
-
-    scope = resolve_scope(changed_paths, active_receipts)
 
     if audit_log is not None:
         with contextlib.suppress(OSError):
