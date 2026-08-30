@@ -142,6 +142,20 @@ def test_held_out_derivation_is_deterministic_disjoint_and_complete(tmp_path: Pa
         assert set(profile.invocation.declared_flags()).issubset(set(case.argv))
 
 
+def test_empty_recorded_argv_is_rejected(tmp_path: Path) -> None:
+    """Malformed empty records cannot weaken held-out exclusion checks."""
+    profile = _profile()
+    evidence_path = _write_evidence(tmp_path / "evidence.json")
+    with pytest.raises(ValueError, match="non-empty strings"):
+        derive_held_out_invocations(
+            evidence_path,
+            profile.invocation,
+            smoke_prompt=SMOKE_PROMPT,
+            smoke_model=SMOKE_MODEL,
+            recorded_argvs=((),),
+        )
+
+
 def test_rejected_flag_fails_every_held_out_step(tmp_path: Path) -> None:
     """An advertised-but-rejected option is a failed execution, never a skip."""
     profile = _profile(extra_args=("--rejected-by-fixture",))

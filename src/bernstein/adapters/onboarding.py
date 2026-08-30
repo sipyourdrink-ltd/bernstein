@@ -322,7 +322,7 @@ def _argv_tuple(raw: object, field_name: str) -> tuple[str, ...]:
     if isinstance(raw, str) or not isinstance(raw, Sequence):
         raise ValueError(f"{field_name} must be a list of strings")
     argv = tuple(raw)
-    if any(not isinstance(token, str) or not token for token in argv):
+    if not argv or any(not isinstance(token, str) or not token for token in argv):
         raise ValueError(f"{field_name} must be a list of non-empty strings")
     return argv
 
