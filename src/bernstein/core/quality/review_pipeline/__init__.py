@@ -88,6 +88,11 @@ from bernstein.core.quality.review_pipeline.schema import (
     load_pipeline,
     parse_pipeline_yaml,
 )
+from bernstein.core.quality.review_pipeline.scope import (
+    ScopeResolution,
+    compute_resolution_hash,
+    resolve_scope,
+)
 from bernstein.core.quality.review_pipeline.verdict import (
     AgentVerdict,
     FinalVerdict,
@@ -158,5 +163,8 @@ __all__ = [
     "run_review_contour",
     "should_block_merge",
     "to_cross_model_verdict",
+    "ScopeResolution",
+    "compute_resolution_hash",
+    "resolve_scope",
     "wait_for_checks",
 ]

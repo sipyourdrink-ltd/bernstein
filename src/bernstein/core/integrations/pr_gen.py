@@ -1341,6 +1341,7 @@ def attest_pr_description(
         verdict=DESCRIPTION_VERDICT,
         task_id=task_id,
         timestamp=timestamp if timestamp is not None else int(time.time()),
+        resolution_hash="sha256:912abcebddc909bb61712cad73e12236d0128a53e9e7fcac0ac33c58df0ea804",
     )
 
 
