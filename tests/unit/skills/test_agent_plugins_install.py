@@ -149,7 +149,7 @@ def test_known_schema_accepts_plugin(tmp_path: Path) -> None:
     (root / "plugin.json").write_text(
         json.dumps(
             {
-                "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+                "$schema": PLUGIN_SCHEMA_ID,
                 "name": "known-schema",
                 "version": "1.0.0",
                 "skills": "./skills/",
