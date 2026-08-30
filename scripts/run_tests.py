@@ -404,16 +404,26 @@ def _report_file_result(label: str, code: int, duration: float, output: str) -> 
     return outcome
 
 
-def _print_totals(passed: int, failed: int, no_tests: int, total: int) -> None:
-    """Print the per-file totals with ran-nothing broken out."""
-    print(f"Files: {passed} passed, {failed} failed, {no_tests} ran no tests, {total} total")
+def _print_totals(passed: int, failed: int, no_tests: Collection[Path], total: int) -> None:
+    """Print the per-file totals with ran-nothing broken out, naming each file.
+
+    The per-file lines are printed only for failures, so on a green shard the
+    totals are the whole record. "1 ran no tests" out of several hundred names
+    nothing: a reader cannot tell which file executed nothing, and cannot check
+    whether the file they care about was among the ones that ran at all. The
+    names are cheap -- this bucket is a handful of files on a normal shard --
+    and they are what makes the count auditable.
+    """
+    print(f"Files: {passed} passed, {failed} failed, {len(no_tests)} ran no tests, {total} total")
+    for path in sorted(no_tests):
+        print(f"  ran no tests: {path}")
 
 
 def run_sequential(files: list[Path], extra_args: list[str], fail_fast: bool, coverage: bool = False) -> int:
     """Run test files one by one."""
     passed = 0
     failed = 0
-    no_tests = 0
+    no_tests: list[Path] = []
     total_duration = 0.0
 
     for i, path in enumerate(files, 1):
@@ -437,7 +447,7 @@ def run_sequential(files: list[Path], extra_args: list[str], fail_fast: bool, co
         if outcome == OUTCOME_PASSED:
             passed += 1
         elif outcome == OUTCOME_NO_TESTS:
-            no_tests += 1
+            no_tests.append(path)
         else:
             failed += 1
             if fail_fast:
@@ -457,7 +467,7 @@ def run_parallel(
 
     passed = 0
     failed = 0
-    no_tests = 0
+    no_tests: list[Path] = []
     done = 0
     total = len(files)
     abort = False
@@ -499,7 +509,7 @@ def run_parallel(
             if outcome == OUTCOME_PASSED:
                 passed += 1
             elif outcome == OUTCOME_NO_TESTS:
-                no_tests += 1
+                no_tests.append(fpath)
             else:
                 failed += 1
                 if fail_fast:
@@ -534,7 +544,7 @@ def run_parallel(
             if outcome == OUTCOME_PASSED:
                 passed += 1
             elif outcome == OUTCOME_NO_TESTS:
-                no_tests += 1
+                no_tests.append(fpath)
             else:
                 failed += 1
                 if fail_fast:
