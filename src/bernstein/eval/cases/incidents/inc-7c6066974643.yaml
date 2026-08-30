@@ -1,0 +1,14 @@
+id: inc-7c6066974643
+severity: P2
+source_incident: "dlq:96bdaeb05b2248c5"
+owner: backend
+created_at: 1788052001.535
+expected_outcome: "Agent should complete the task; flake-tolerant retry is acceptable. (root cause: max_retries_exceeded)"
+tags:
+  - max_retries_exceeded
+prompt: |
+  Reproduce and resolve the following terminal failure (role=backend).
+  Task: Wire scope into review rendering and surface unscoped_paths (#3752)
+  Failure reason: max_retries_exceeded
+  Last error (trimmed):
+  Agent backend-resume-2daf8508 died; janitor failed: ['path_exists: tests/unit/review/test_review_scope_wiring.py (not found)', 'test_passes: uv run pytest tests/unit/review/test_review_scope_wiring.py -x -q (non-zero exit)']

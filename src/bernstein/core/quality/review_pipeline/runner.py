@@ -30,7 +30,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.communication.bulletin import BulletinBoard, BulletinMessage, SignalActionFailure
+from bernstein.core.knowledge.conventions import get_active_conventions
 from bernstein.core.llm import call_llm
+from bernstein.core.security.permissions import _parse_diff_files
 from bernstein.core.quality.cross_model_verifier import (
     _MAX_DIFF_CHARS,
     _MAX_TOKENS,
@@ -40,6 +42,7 @@ from bernstein.core.quality.cross_model_verifier import (
     _parse_response,
     select_reviewer_model,
 )
+from bernstein.core.quality.review_pipeline.scope import ScopeResolution, compute_resolution_hash, resolve_scope
 from bernstein.core.quality.review_pipeline.ruleset import EMPTY_RULESET, ReviewRuleset
 from bernstein.core.quality.review_pipeline.verdict import (
     AgentVerdict,
@@ -461,8 +464,12 @@ async def run_pipeline(
     audit_log: AuditLog | None = None,
     actor: str = "review_pipeline",
     ruleset: ReviewRuleset | None = None,
-) -> PipelineVerdict:
-    """Execute *pipeline* against *diff_src* and return the final verdict.
+    sdd_dir: Path | None = None,
+) -> tuple[PipelineVerdict, ScopeResolution]:
+    """Execute *pipeline* against *diff_src* and return the final verdict and scope.
+
+    Scope is resolved once before any reviewer runs.  Changed paths are derived
+    from the diff; active conventions are loaded from ``sdd_dir`` (when provided).
 
     Args:
         pipeline: Validated pipeline spec.
@@ -480,15 +487,32 @@ async def run_pipeline(
         actor: Audit ``actor`` field - defaults to ``review_pipeline``.
         ruleset: The raise / guard rules every reviewer is held to.  ``None``
             (or an empty ruleset) leaves the prompt untouched.
+        sdd_dir: Path to the project .sdd directory for loading active conventions.
 
     Returns:
-        :class:`PipelineVerdict`.
+        ``(PipelineVerdict, ScopeResolution)``.
     """
     caller = llm_caller or _default_llm_caller
     rules = ruleset if ruleset is not None else EMPTY_RULESET
     board = bulletin if bulletin is not None else BulletinBoard()
     pipeline_started = time.monotonic()
     pr_resource = f"pr-{diff_src.pr_number}" if diff_src.pr_number is not None else f"task:{diff_src.title[:60]}"
+
+    # Resolve scope once before any reviewer runs (issue #3752).
+    # Changed paths come from the diff text (PR mode) or owned_files (task mode).
+    if diff_src.diff:
+        changed_paths = _parse_diff_files(diff_src.diff)
+    else:
+        changed_paths = list(diff_src.owned_files)
+
+    active_receipts: list = []
+    if sdd_dir is not None:
+        try:
+            active_receipts, _ = get_active_conventions(sdd_dir)
+        except Exception:
+            pass  # Never let convention loading abort a review
+
+    scope = resolve_scope(changed_paths, active_receipts)
 
     if audit_log is not None:
         with contextlib.suppress(OSError):
