@@ -11,7 +11,7 @@ name: Volunteer receipt verification check run
 #   actually needs (Scorecard token-permissions).
 #
 # What it does:
-#  1. Checks out the PR head in an isolated workspace
+#  1. Checks out the trusted base ref (see the safety note below)
 #  2. Loads the project's volunteer manifest
 #  3. Extracts the DSSE envelope from the PR body
 #  4. Verifies the bundle offline (internal consistency checks)
@@ -23,19 +23,24 @@ name: Volunteer receipt verification check run
 # and customize permissions (e.g., for GitHub Apps) if they need to.
 #
 # Safety note (zizmor dangerous-triggers): the privileged context here
-# executes nothing from the PR. The job:
-#   - Has NO checkout step at all in this workflow - the envelope extraction
-#     lives in a function that runs in the GitHub Actions runner.
-#   - never interpolates PR-controlled text into a `run:` block (only
-#     GitHub-provided values like PR number and author login, and the PR
-#     number is only ever compared for equality, never executed).
+# executes nothing from the PR head. The job:
+#   - checks out with no `ref:`, so it takes the workflow's own ref - the
+#     trusted base - and never the fork's head. Everything the job then
+#     installs and imports (the bootstrap action, `pyproject.toml`, the
+#     bernstein package) comes from that base checkout.
+#   - never interpolates PR-controlled text into a `run:` block. The only
+#     PR-controlled input is the pull request body, fetched through the API
+#     and handed to `run_verification_check` as data.
 #   - holds `checks: write` and nothing else, with no secrets beyond
 #     `GITHUB_TOKEN`.
 #
-# This workflow is based on the safe execution pattern in
-# `.github/workflows/area-steward-review.yml`.
+# Adding a `ref:` to the checkout step would make this trigger genuinely
+# unsafe, because the job installs and imports the tree it checks out.
+#
+# `.github/workflows/area-steward-review.yml` uses the same trigger under the
+# stricter rule of having no checkout at all.
 
-on:
+on:  # zizmor: ignore[dangerous-triggers]
   pull_request_target:
     types: [opened, reopened, ready_for_review]
 
@@ -65,7 +70,7 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Checkout PR head
+      - name: Checkout base ref
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
