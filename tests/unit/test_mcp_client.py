@@ -163,14 +163,18 @@ class TestAuthHeaders:
         assert session._build_auth_headers() == {}
 
     def test_bearer_auth(self, bearer_config: RemoteServerConfig) -> None:
+        # Asserted against the fixture's own token rather than a literal: the
+        # fixture value is a placeholder chosen to keep secret scanners quiet
+        # and may change again, and what this test is for is that the
+        # configured token reaches the header at all.
         session = MCPClientSession(bearer_config)
         headers = session._build_auth_headers()
-        assert headers == {"Authorization": "Bearer sk-test-token-123"}
+        assert headers == {"Authorization": f"Bearer {bearer_config.auth_token}"}
 
     def test_oauth_auth(self, oauth_config: RemoteServerConfig) -> None:
         session = MCPClientSession(oauth_config)
         headers = session._build_auth_headers()
-        assert headers == {"Authorization": "Bearer oauth-access-token"}
+        assert headers == {"Authorization": f"Bearer {oauth_config.auth_token}"}
 
 
 # ---------------------------------------------------------------------------
