@@ -49,7 +49,6 @@ from bernstein.core.quality.review_pipeline.verdict import (
     aggregate_pipeline,
     aggregate_stage,
 )
-from bernstein.core.security.permissions import _parse_diff_files
 
 if TYPE_CHECKING:
     from bernstein.core.models import Task
@@ -498,15 +497,9 @@ async def run_pipeline(
     pipeline_started = time.monotonic()
     pr_resource = f"pr-{diff_src.pr_number}" if diff_src.pr_number is not None else f"task:{diff_src.title[:60]}"
 
-    # Resolve scope once before any reviewer runs (issue #3752).
-    # Changed paths come from the diff text (PR mode) or owned_files (task mode).
-    _parse_diff_files(diff_src.diff) if diff_src.diff else list(diff_src.owned_files)
-
     if sdd_dir is not None:
-        try:
-            _active_receipts, _ = get_active_conventions(sdd_dir)
-        except Exception:
-            pass  # Never let convention loading abort a review
+        with contextlib.suppress(Exception):
+            get_active_conventions(sdd_dir)
 
     if audit_log is not None:
         with contextlib.suppress(OSError):
