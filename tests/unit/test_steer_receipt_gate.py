@@ -120,9 +120,7 @@ def test_steer_message_without_matching_receipt_is_rejected(
     assert rej.details["reason"] == "missing_receipt_hash"
 
 
-def test_steer_message_with_matching_receipt_is_applied(
-    chain: AuditChainStore, mailbox: TaskMailbox, tmp_path
-) -> None:
+def test_steer_message_with_matching_receipt_is_applied(chain: AuditChainStore, mailbox: TaskMailbox, tmp_path) -> None:
     """A steer.* message whose receipt exists on the chain is consumed."""
     # Record a steering.receipt on the chain.
     receipt_event = record_steering_receipt(
