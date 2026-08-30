@@ -162,7 +162,11 @@ def test_verify_chain_accepts_bound_receipt(tmp_path: Path) -> None:
     )
     emit(
         PassReceiptRequest(
-            pass_index=1, diff=_DIFF, verdict="approve", ruleset_digest="sha256:" + "b" * 64, resolution_hash=_RESOLUTION_HASH
+            pass_index=1,
+            diff=_DIFF,
+            verdict="approve",
+            ruleset_digest="sha256:" + "b" * 64,
+            resolution_hash=_RESOLUTION_HASH,
         )
     )
     result = verify_review_chain(
