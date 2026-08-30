@@ -920,6 +920,8 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `bernstein volunteer` | Volunteer-worker surfaces for opt-in projects (group): `verify` validates a project's `.bernstein/volunteer.json` through the same loader a donor's worker uses and prints the manifest digest a receipt binds to as `manifest_sha256`. | `cli/commands/volunteer_cmd.py` |
 | `bernstein gate verify <run>` | Verify a maker-checker / judge-panel gate's signed adjudication record: recompute `inputs_hash` from `--inputs` and confirm the panel saw exactly those inputs, then confirm the spine anchor still verifies. Exit 1 when no record, 2 on mismatch. | `cli/commands/gate_cmd.py` |
 | `bernstein governance verify <run>` | Recompute every RBAC access and per-subject budget decision recorded for a run from the signed spine and confirm the recorded verdicts: re-resolve roles from the signed `--bindings`, re-project spend from the `--ledger`, and match. Exit 1 when no records, 2 on mismatch. | `cli/commands/governance_cmd.py` |
+| `bernstein pool` | Named sandbox pool ops (group): `register`, `list`, `show`, `verify`. Projected from audit chain. Distinct from `bernstein limits pool`. | `cli/commands/pool_cmd.py` |
+| `bernstein limits` | Lease-backed admission and concurrency limits (group): `pool`, `tag`, `rate`, `queue`, `status`, `verify`. Projected from admission ledger. Distinct from `bernstein pool`. | `cli/commands/limits_cmd.py` |
 
 > Task-level `approve` / `reject` are different commands - see [Plan & tasks](#plan-tasks). Both also accept `--tool <id>` to resolve tool-call approvals (the flag form of `approve-tool` / `reject-tool`).
 
@@ -1084,6 +1086,35 @@ advisory-only, `1` on any critical/high finding, `2` when there is no diff.
 | `--diff-file PATH` | none | Scan a saved diff; `-` reads stdin. |
 | `--as-json` | off | Emit findings as JSON. |
 | `--fail-on-any` | off | Exit non-zero on any finding, not just critical/high. |
+
+#### `bernstein pool`
+
+Define and govern named sandbox pools projected from the HMAC audit chain.
+
+| Subcommand | Purpose |
+|---|---|
+| `register SPEC_FILE` | Register or update a sandbox pool from a JSON manifest spec file. `--workdir DIR`, `--json`. |
+| `list` | List active sandbox pools projected from the audit chain. `--workdir DIR`, `--json`. |
+| `show NAME` | Show canonical manifest and hash for an active sandbox pool. `--workdir DIR`. |
+| `verify` | Verify sandbox pool bodies in the content-addressed store and placement receipts offline. `--workdir DIR`. |
+
+> **Deliberate distinction (#3138):** `bernstein pool` defines and verifies execution sandbox environments (backends, capability ceilings, egress classes, templates) projected from the HMAC audit chain (`.sdd/audit/`) and content-addressed store (`.sdd/sandbox/`). It is distinct from `bernstein limits pool`, which manages admission slot concurrency in the hash-chained admission work ledger (`.sdd/admission/`).
+
+#### `bernstein limits`
+
+Named resource pools with lease-backed admission (verify, status, CRUD) projected from the admission work ledger.
+
+| Subcommand | Purpose |
+|---|---|
+| `pool create NAME` | Create or update a named admission slot pool (e.g. `staging-env --slots 1`). `--slots N`, `--posture {enforce\|advise\|off}`, `--workdir DIR`, `--json`. |
+| `tag set TAG` | Set concurrency ceiling over a task tag (`--limit 0` quarantines). `--limit N`, `--posture {enforce\|advise\|off}`, `--workdir DIR`, `--json`. |
+| `rate set NAME` | Define a fleet-wide named rate limit with adaptive decay. `--base-limit N`, `--floor N`, `--posture {enforce\|advise\|off}`, `--workdir DIR`, `--json`. |
+| `queue create NAME` | Create or update an operator-defined named queue. `--priority N`, `--workdir DIR`, `--json`. |
+| `queue pause NAME` | Pause or resume a named queue. `--resume`, `--workdir DIR`, `--json`. |
+| `status` | Show projected admission state (pools, tags, rates, queues, active grants, waivers, quarantines). `--workdir DIR`, `--json`. |
+| `verify` | Recompute admission state from genesis over the admission ledger and fail closed on drift. `--workdir DIR`, `--json`. |
+
+> **Deliberate distinction (#3138):** `bernstein limits pool` manages lease-backed concurrency slot pools in the admission work ledger (`.sdd/admission/`). It is distinct from `bernstein pool`, which defines sandbox execution environments in the HMAC audit chain.
 
 #### `bernstein approve-tool` / `bernstein reject-tool`
 
