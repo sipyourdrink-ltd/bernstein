@@ -26,12 +26,12 @@ from bernstein.core.finding_verify import (
 
 
 def test_drift_reason_contains_all_expected_values() -> None:
-    assert DRIFT_REASON == {
+    assert {
         "feed_changed",
         "rule_changed",
         "target_changed",
         "nondeterministic",
-    }
+    } == DRIFT_REASON
 
 
 def test_drift_reason_is_frozenset() -> None:
