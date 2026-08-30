@@ -738,7 +738,7 @@ def consume_steering(
             # a steering.rejection audit event. The refusal itself is an
             # audit-chain event so a steered run is distinguishable from a
             # tampered one.
-            rejection_entry = journal.append(
+            journal.append(
                 input_hash=message.body_hash,
                 tool_call={
                     "steer": "rejected",
