@@ -78,7 +78,6 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `tools/`                    | Tool support, execution, and coverage helpers |
 | `tournament/`               | Tournament runs: parallel attempts selected by deterministic evaluators (#2353) |
 | `trackers/`                 | Tracker adapter subsystem |
-| `trigger_rules/`            | trigger_rules/ sub-package |
 | `trigger_sources/`          | Trigger source adapters - normalize raw events into TriggerEvent |
 | `tunnels/`                  | Tunnel provider abstraction and registry |
 | `volunteer/`                | Volunteer-workers substrate: opt-in project policy and its trust anchor |
