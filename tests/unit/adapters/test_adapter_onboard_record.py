@@ -10,11 +10,12 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from bernstein.adapters import capability_profile, registry
+from bernstein.adapters import registry
 from bernstein.adapters.admission import _transcripts_for, replay_fingerprint
 from bernstein.adapters.capability_profile import (
     AdapterCapabilityProfile,
     InvocationSpec,
+    ProfileValidationError,
     RecordedProfileAdapter,
 )
 from bernstein.adapters.conformance import ConformanceHarness
@@ -153,6 +154,17 @@ def test_empty_recorded_argv_is_rejected(tmp_path: Path) -> None:
             smoke_prompt=SMOKE_PROMPT,
             smoke_model=SMOKE_MODEL,
             recorded_argvs=((),),
+        )
+
+
+def test_recorded_profile_rejects_mapping_tokens() -> None:
+    """Mapping-shaped YAML fields cannot silently turn into key tokens."""
+    with pytest.raises(ProfileValidationError, match="must be a list of strings"):
+        RecordedProfileAdapter(
+            registry_name="recordable-fixture",
+            display_name="Recordable Fixture",
+            binary="probe-recordable",
+            subcommands={"unexpected": "value"},
         )
 
 

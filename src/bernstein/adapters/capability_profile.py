@@ -55,6 +55,7 @@ import hashlib
 import json
 import logging
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -1005,6 +1006,8 @@ def _profile_tokens(value: Iterable[str] | None, field_name: str) -> tuple[str, 
     if value is None:
         return ()
     if isinstance(value, str):
+        raise ProfileValidationError(f"RecordedProfileAdapter {field_name} must be a list of strings")
+    if isinstance(value, Mapping):
         raise ProfileValidationError(f"RecordedProfileAdapter {field_name} must be a list of strings")
     try:
         tokens = tuple(value)
