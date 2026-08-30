@@ -457,6 +457,12 @@ jobs:
         # and this job passed all three. Pure stdlib and git, so it runs here
         # ahead of the bootstrap step rather than waiting on the toolchain.
         run: python3 scripts/check_bom.py
+      - name: Reject an unquoted Python heredoc in a workflow
+        # A workflow step assembled its Python source by shell substitution
+        # and died on NameError the first time it ran after merge, leaving a
+        # red check on every pull request opened afterwards. Pure stdlib, so
+        # it runs here ahead of the bootstrap step.
+        run: python3 scripts/check_workflow_heredocs.py
       - name: Check Python syntax in scripts/
         run: |
           ERRORS=""
