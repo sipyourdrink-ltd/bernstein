@@ -169,8 +169,13 @@ def test_effect_without_matching_receipt_is_rejected(
 
     assert result.applied == []
     assert result.rejected and result.rejected[0][0] == 0
-    # Nothing was journaled: an effect cannot exist without its receipt.
-    assert JournalReader(tmp_path / "journal" / "agent-1").head() is None
+    # A steer.rejected journal entry was recorded (the refusal itself is an
+    # audit-chain event, not a dropped message).
+    reader = JournalReader(tmp_path / "journal" / "agent-1")
+    entries = list(reader.entries())
+    assert len(entries) == 1
+    assert entries[0].tool_call["steer"] == "rejected"
+    assert entries[0].tool_call["reason"] == "missing_receipt_hash"
 
 
 # ---------------------------------------------------------------------------
