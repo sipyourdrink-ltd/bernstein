@@ -633,6 +633,7 @@ def _validate_volunteer_auth_basis(adapter_id: str | None) -> str | None:
     if not adapter_id:
         return None
     from bernstein.adapters.capability_profile import get_profile
+
     try:
         profile = get_profile(adapter_id)
     except Exception:

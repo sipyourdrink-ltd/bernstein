@@ -390,7 +390,9 @@ def test_auth_basis_api_key_is_accepted_in_volunteer_mode(fixture_repo: Path, tm
     assert outcome.outcome == "diff"
 
 
-def test_auth_basis_local_is_accepted_in_volunteer_mode(fixture_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_auth_basis_local_is_accepted_in_volunteer_mode(
+    fixture_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """adapter with auth_basis=local is accepted in volunteer mode.
 
     No shipped adapter carries a local auth_basis, so a local profile is
