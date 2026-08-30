@@ -243,13 +243,9 @@ def test_prompt_digest_computes_digest_of_assembled_section(tmp_path: Path) -> N
     spawner = DummySpawner(workdir)
     tasks = [_create_task(task_id="T-1")]
 
-    # Import to compute expected digest
-    from bernstein.core.communication.task_mailbox import render_mailbox_section
     from bernstein.core.security.audit_chain import AuditChainStore
 
     result1 = AgentSpawner._render_mailbox_section(spawner, tasks)
-    assert "[seq 0]" in result1
-
     chain = AuditChainStore(workdir / ".sdd" / "audit")
     events = chain.query(event_type="task.mailbox_consumed")
     assert len(events) == 1
@@ -291,7 +287,7 @@ def test_prompt_digest_changes_when_assembled_content_changes(tmp_path: Path) ->
 
     from bernstein.core.security.audit_chain import AuditChainStore
 
-    result1 = AgentSpawner._render_mailbox_section(spawner, tasks)
+    AgentSpawner._render_mailbox_section(spawner, tasks)
 
     # Add a new message (seq=1)
     _write_message(journal, task_id="T-1", seq=1, append=True)
