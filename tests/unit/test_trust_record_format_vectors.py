@@ -351,28 +351,28 @@ def test_data_class_narrowing_exists() -> None:
     """At least one parent/child pair must have a strictly narrower data_class
     on the child (e.g., 'internal' -> 'restricted'). The test loads all
     delegated records and checks each pair for this narrowing pattern.
+
+    Semantics: 'public' is broadest, 'internal' is less broad, 'restricted'
+    is narrowest -- a narrow child data_class is a subset of the parent's
+    authority. The failure message names both the broader parent data_class
+    and the narrower child data_class actually present in the vectors.
     """
     parent = _load(_PARENT)
     child = _load(_CHILD)
     grandchild = _load(_GRANDCHILD)
 
-    records = [
+    pairs = [
         ("parent-child", parent, child),
         ("child-grandchild", child, grandchild),
     ]
+    rank = {"public": 3, "internal": 2, "restricted": 1}
 
-    narrowing_found = False
-    for pair_name, parent_rec, child_rec in records:
-        parent_dc = parent_rec["data_class"]
-        child_dc = child_rec["data_class"]
-
-        # Define narrowing hierarchy: 'public' > 'internal' > 'restricted'
-        if (parent_dc == "internal" and child_dc == "restricted") or \
-           (parent_dc == "internal" and child_dc == "public"):  # also valid narrowing
-            narrowing_found = True
-            assert parent_dc != child_dc, \
-                f"Data class not narrowed in {pair_name}: parent={parent_dc}, child={child_dc}"
-
-    assert narrowing_found, \
-        "No parent/child pair found with narrowed data_class. Expected at least one of: " \
-        "'internal'->'restricted' or 'internal'->'public'"
+    assert any(
+        rank[child_rec["data_class"]] < rank[parent_rec["data_class"]]
+        for _, parent_rec, child_rec in pairs
+    ), (
+        "No parent/child pair has a strictly narrower child data_class "
+        "(ranking: public > internal > restricted). Observed classes: "
+        f"parent-child {parent['data_class']} -> {child['data_class']}, "
+        f"child-grandchild {child['data_class']} -> {grandchild['data_class']}"
+    )
