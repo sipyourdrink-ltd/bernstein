@@ -1,0 +1,3 @@
+## 3451 — Mailbox consumption now emits prompt_digest; steer rejection is an audit event
+
+`task.mailbox_consumed` audit records now carry a `prompt_digest` field — the SHA-256 digest of the assembled mailbox section — so the content that drove a prompt can be verified against the chain. In addition, a steering receipt miss is no longer silently dropped: when `consume_steering` encounters a `steer.*` message whose `receipt_hash` has no matching `steering.receipt` event, it appends a `steer.rejected` journal row and records a `steering.rejection` audit event, binding the refusal into the HMAC chain so a steered run is distinguishable from a tampered one.
