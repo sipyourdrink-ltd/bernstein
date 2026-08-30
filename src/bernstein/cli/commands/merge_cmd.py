@@ -7,6 +7,12 @@ same task) to select a winner.
 ``bernstein merge verify``: verify offline that a merge SHA carries a valid
 merge-admission receipt, following the same exit-code contract as
 ``bernstein review-receipt verify``: 0 = verified / 1 = no receipt / 2 = mismatch.
+
+Back-compat: ``merge`` used to be a single command taking ``--pick``/``--base``/
+etc. directly, before ``pick``/``verify`` became subcommands. Those options are
+still declared on the ``merge`` group itself, so ``bernstein merge --base main
+--pick 2`` (no subcommand) keeps working, running the same code as
+``bernstein merge pick --base main --pick 2``. See ``merge_cmd`` below.
 """
 
 from __future__ import annotations
@@ -79,54 +85,7 @@ def _verify_merge_result(root: Path, merge_msg: str, switched: bool, original_br
     console.print(f"[green]Merge completed:[/green] {merge_log}")
 
 
-# ------------------------------------------------------------------
-# CLI group
-# ------------------------------------------------------------------
-
-
-@click.group("merge")
-def merge_cmd() -> None:
-    """Merge management: pick best agent solution and verify merge admission receipts.
-
-    \b
-      bernstein merge pick   --pick <task-id>   # merge agent work into main
-      bernstein merge verify --sha <sha>         # offline-verify merge receipt
-    """
-
-
-# ------------------------------------------------------------------
-# pick subcommand
-# ------------------------------------------------------------------
-
-
-@merge_cmd.command("pick")
-@click.option(
-    "--pick",
-    "pick_id",
-    type=str,
-    required=True,
-    metavar="AGENT",
-    help="Task ID or session ID of the agent whose solution to merge.",
-)
-@click.option("--base", default="main", show_default=True, help="Target branch to merge into.")
-@click.option(
-    "--workdir",
-    default=".",
-    show_default=True,
-    type=click.Path(),
-    help="Project root (parent of .sdd/).",
-)
-@click.option("--no-ff", "no_ff", is_flag=True, default=True, show_default=True, help="Use --no-ff merge.")
-@click.option("--message", "-m", default=None, help="Custom merge commit message.")
-@click.option("--dry-run", is_flag=True, default=False, help="Show what would be merged without merging.")
-@click.option(
-    "--reject",
-    "reject_others",
-    multiple=True,
-    metavar="AGENT",
-    help="Also delete branches of rejected agents (repeatable).",
-)
-def merge_pick_cmd(
+def _merge_pick_impl(
     pick_id: str,
     base: str,
     workdir: str,
@@ -135,17 +94,12 @@ def merge_pick_cmd(
     dry_run: bool,
     reject_others: tuple[str, ...],
 ) -> None:
-    """Pick the best agent solution and merge it.
+    """Pick the best agent solution and merge it -- the shared body.
 
-    After comparing parallel branches with ``bernstein diff --compare``,
-    use this command to merge the winning solution into the target branch.
-
-    \b
-    Examples:
-      bernstein merge pick --pick backend-abc123           # merge agent's work
-      bernstein merge pick --pick task-id-prefix           # resolve by task ID
-      bernstein merge pick --pick agent1 --reject agent2   # merge one, delete other
-      bernstein merge pick --pick agent1 --dry-run         # preview only
+    Both entry points call this and only this: the ``merge`` group's own
+    callback (legacy ``bernstein merge --pick ...`` with no subcommand) and
+    ``merge_pick_cmd`` (``bernstein merge pick --pick ...``). Keep the actual
+    logic here so the two invocations can never drift apart.
     """
     root = Path(workdir).resolve()
     agents = _load_agents(root)
@@ -217,6 +171,144 @@ def merge_pick_cmd(
                     console.print(f"[yellow]Could not delete:[/yellow] {rej_branch}")
             else:
                 console.print(f"[dim]No branch found for rejected agent:[/dim] {rej_id}")
+
+
+# ------------------------------------------------------------------
+# CLI group
+# ------------------------------------------------------------------
+
+
+@click.group("merge", invoke_without_command=True, no_args_is_help=False)
+@click.option(
+    "--pick",
+    "pick_id",
+    type=str,
+    default=None,
+    metavar="AGENT",
+    help="Task ID or session ID of the agent whose solution to merge. "
+    "Legacy form: passing this directly to `bernstein merge` (no subcommand) "
+    "runs `merge pick`.",
+)
+@click.option("--base", default="main", show_default=True, help="Target branch to merge into.")
+@click.option(
+    "--workdir",
+    default=".",
+    show_default=True,
+    type=click.Path(),
+    help="Project root (parent of .sdd/).",
+)
+@click.option("--no-ff", "no_ff", is_flag=True, default=True, show_default=True, help="Use --no-ff merge.")
+@click.option("--message", "-m", default=None, help="Custom merge commit message.")
+@click.option("--dry-run", is_flag=True, default=False, help="Show what would be merged without merging.")
+@click.option(
+    "--reject",
+    "reject_others",
+    multiple=True,
+    metavar="AGENT",
+    help="Also delete branches of rejected agents (repeatable).",
+)
+@click.pass_context
+def merge_cmd(
+    ctx: click.Context,
+    pick_id: str | None,
+    base: str,
+    workdir: str,
+    no_ff: bool,
+    message: str | None,
+    dry_run: bool,
+    reject_others: tuple[str, ...],
+) -> None:
+    """Merge management: pick best agent solution and verify merge admission receipts.
+
+    \b
+      bernstein merge pick   --pick <task-id>   # merge agent work into main
+      bernstein merge verify --sha <sha>         # offline-verify merge receipt
+
+    \b
+    Back-compat: the options above also work directly on ``bernstein merge``
+    with no subcommand (``bernstein merge --base main --pick 2``), reaching
+    the same code as ``bernstein merge pick``. Scripts written before ``pick``
+    and ``verify`` became subcommands keep working unchanged; new scripts
+    should prefer ``bernstein merge pick`` explicitly.
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+    if pick_id is None:
+        click.echo(ctx.get_help())
+        return
+    _merge_pick_impl(
+        pick_id=pick_id,
+        base=base,
+        workdir=workdir,
+        no_ff=no_ff,
+        message=message,
+        dry_run=dry_run,
+        reject_others=reject_others,
+    )
+
+
+# ------------------------------------------------------------------
+# pick subcommand
+# ------------------------------------------------------------------
+
+
+@merge_cmd.command("pick")
+@click.option(
+    "--pick",
+    "pick_id",
+    type=str,
+    required=True,
+    metavar="AGENT",
+    help="Task ID or session ID of the agent whose solution to merge.",
+)
+@click.option("--base", default="main", show_default=True, help="Target branch to merge into.")
+@click.option(
+    "--workdir",
+    default=".",
+    show_default=True,
+    type=click.Path(),
+    help="Project root (parent of .sdd/).",
+)
+@click.option("--no-ff", "no_ff", is_flag=True, default=True, show_default=True, help="Use --no-ff merge.")
+@click.option("--message", "-m", default=None, help="Custom merge commit message.")
+@click.option("--dry-run", is_flag=True, default=False, help="Show what would be merged without merging.")
+@click.option(
+    "--reject",
+    "reject_others",
+    multiple=True,
+    metavar="AGENT",
+    help="Also delete branches of rejected agents (repeatable).",
+)
+def merge_pick_cmd(
+    pick_id: str,
+    base: str,
+    workdir: str,
+    no_ff: bool,
+    message: str | None,
+    dry_run: bool,
+    reject_others: tuple[str, ...],
+) -> None:
+    """Pick the best agent solution and merge it.
+
+    After comparing parallel branches with ``bernstein diff --compare``,
+    use this command to merge the winning solution into the target branch.
+
+    \b
+    Examples:
+      bernstein merge pick --pick backend-abc123           # merge agent's work
+      bernstein merge pick --pick task-id-prefix           # resolve by task ID
+      bernstein merge pick --pick agent1 --reject agent2   # merge one, delete other
+      bernstein merge pick --pick agent1 --dry-run         # preview only
+    """
+    _merge_pick_impl(
+        pick_id=pick_id,
+        base=base,
+        workdir=workdir,
+        no_ff=no_ff,
+        message=message,
+        dry_run=dry_run,
+        reject_others=reject_others,
+    )
 
 
 # ------------------------------------------------------------------

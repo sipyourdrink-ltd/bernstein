@@ -10,7 +10,9 @@ import hashlib
 import json
 
 import pytest
+from click.testing import CliRunner
 
+from bernstein.cli.commands.merge_cmd import merge_cmd
 from bernstein.core.quality.merge_receipt import (
     emit_merge_receipt,
     read_merge_receipt,
@@ -387,3 +389,98 @@ def test_gate_results_hash_differs_on_input():
         required_contexts=("status/green",),
     )
     assert h1 != h2
+
+
+# -------------------------------------------------------------------
+# CLI wiring: legacy invocation vs. pick/verify subcommands (#4779)
+# -------------------------------------------------------------------
+#
+# ``merge`` went from a single ``@click.command`` to a ``@click.group`` with
+# ``pick``/``verify`` subcommands, which broke any script invoking the old
+# form directly (``bernstein merge --base main --pick 2``: those options
+# only existed on ``pick`` after the split). The fix keeps the legacy
+# options declared on the group itself and routes both the group's
+# default (no-subcommand) invocation and the ``pick`` subcommand through
+# one shared function, ``_merge_pick_impl``. These tests drive all three
+# surviving invocation forms through ``click.testing.CliRunner``.
+
+
+def _capture_merge_pick_calls(monkeypatch):
+    """Replace ``_merge_pick_impl`` and record every call's kwargs.
+
+    Patching the one function both entry points call is what proves they
+    are the same code path: unlike a ``--help`` text check, this fails the
+    instant either callback stops delegating and starts running (or
+    re-implementing) the body itself.
+    """
+    calls = []
+
+    def _record(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr("bernstein.cli.commands.merge_cmd._merge_pick_impl", _record)
+    return calls
+
+
+_EXPECTED_PICK_CALL = {
+    "pick_id": "2",
+    "base": "release",
+    "workdir": ".",
+    "no_ff": True,
+    "message": None,
+    "dry_run": False,
+    "reject_others": (),
+}
+
+
+def test_legacy_merge_invocation_without_subcommand_still_picks(monkeypatch):
+    """``bernstein merge --base ... --pick ...`` with no subcommand still picks.
+
+    This is the exact form #4779 broke: a script written before ``pick``
+    became a subcommand calls ``merge`` directly with these options.
+    """
+    calls = _capture_merge_pick_calls(monkeypatch)
+
+    result = CliRunner().invoke(merge_cmd, ["--base", "release", "--pick", "2"])
+
+    assert result.exit_code == 0, f"{result.output}\n{result.exception!r}"
+    assert calls == [_EXPECTED_PICK_CALL], calls
+
+
+def test_pick_subcommand_invocation_reaches_the_same_pick_behaviour(monkeypatch):
+    """``bernstein merge pick --base ... --pick ...`` reaches the identical body.
+
+    Same options as the legacy form above, driven through the explicit
+    ``pick`` subcommand instead of the bare group: the recorded call must
+    be indistinguishable from it.
+    """
+    calls = _capture_merge_pick_calls(monkeypatch)
+
+    result = CliRunner().invoke(merge_cmd, ["pick", "--base", "release", "--pick", "2"])
+
+    assert result.exit_code == 0, f"{result.output}\n{result.exception!r}"
+    assert calls == [_EXPECTED_PICK_CALL], calls
+
+
+def test_merge_verify_invocation_still_works(populated_workdir, monkeypatch):
+    """``bernstein merge verify --sha ...`` keeps working through the group.
+
+    ``verify`` predates #4779 and takes no part in the legacy-invocation
+    fix; this pins that turning ``merge`` into a group with its own
+    default-path options did not disturb the pre-existing ``verify``
+    subcommand.
+    """
+    monkeypatch.setattr(
+        "bernstein.core.security.audit.load_or_create_audit_key",
+        lambda *args, **kwargs: b"x" * 32,
+    )
+
+    root = populated_workdir
+    head_sha = "cli_verify_sha_123"
+    _emit(root, head_sha, "cli_base_456", timestamp=6000)
+
+    result = CliRunner().invoke(merge_cmd, ["verify", "--sha", head_sha, "--workdir", str(root)])
+
+    assert result.exit_code == 0, f"{result.output}\n{result.exception!r}"
+    assert "OK" in result.output
+    assert head_sha in result.output
