@@ -207,7 +207,7 @@ def _git(cwd: Path, args: list[str]) -> str:
     result = run_git(args, cwd)
     if not result.ok:
         raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
-    return result.stdout
+    return result.stdout.strip()
 
 
 def find_merged_commits(

@@ -147,9 +147,11 @@ def _make_merge_repo() -> tuple[Path, dict[str, str]]:
 
 
 def _make_multi_author_correction_repo() -> tuple[Path, dict[str, str]]:
-    """Create a repo with corrections from two different authors (corroborated).
+    """Create a repo with corrections from two maintainers (corroborated).
 
-    Use separate files so merges don't conflict.
+    Both correction chains fix the same file with the same shape, so the
+    extracted pairs cluster into a single corroborated proposal:
+    contributor commit -> maintainer fix on top -> merged into main, twice.
     """
     repo = _init_repo()
 
@@ -157,43 +159,57 @@ def _make_multi_author_correction_repo() -> tuple[Path, dict[str, str]]:
     _commit(repo, "initial", file_path="init.py", content="# init\n")
     _run("branch", "-M", "main", cwd=repo)
 
-    # Alice's branch
-    _run("checkout", "-b", "alice-fix", cwd=repo)
+    # Correction 1: contributor commit, maintainer Alice fix on top, merged.
+    _run("checkout", "-b", "correction-1", cwd=repo)
+    _commit(
+        repo,
+        "Add logging without sanitization",
+        author_name="Contributor",
+        author_email="contributor@example.com",
+        file_path="shared.py",
+        content="def add_logging(user_input):\n    import logging\n    logging.info(user_input)\n",
+    )
     sha1 = _commit(
         repo,
-        "alice sanitization",
+        "sanitize user_input before logging",
         author_name="Alice",
         author_email="alice@example.com",
-        file_path="alice.py",
-        content="def foo(data):\n    from bernstein.safety import sanitize\n    return sanitize(data)\n",
+        file_path="shared.py",
+        content="def add_logging(user_input):\n    import logging\n    from bernstein.safety import sanitize\n    logging.info(sanitize(user_input))\n",
     )
 
     # Back to main: add a commit so main diverges
     _run("checkout", "main", cwd=repo)
     _commit(repo, "main internal", file_path="main_only.py", content="# main only\n")
 
-    # Merge alice's fix
-    _run("merge", "--no-edit", "alice-fix", cwd=repo)
-    _run("rev-parse", "HEAD", cwd=repo)
+    # Merge correction 1
+    _run("merge", "--no-edit", "correction-1", cwd=repo)
 
-    # Bob's branch
-    _run("checkout", "-b", "bob-fix", cwd=repo)
+    # Correction 2: same fix shape on the same file, maintainer Bob fixes.
+    _run("checkout", "-b", "correction-2", cwd=repo)
+    _commit(
+        repo,
+        "Add logging without sanitization (again)",
+        author_name="Contributor",
+        author_email="contributor@example.com",
+        file_path="shared.py",
+        content="def add_logging(user_input):\n    import logging\n    logging.info(user_input)\n",
+    )
     sha2 = _commit(
         repo,
-        "bob sanitization",
+        "sanitize user_input before logging",
         author_name="Bob",
         author_email="bob@example.com",
-        file_path="bob.py",
-        content="def foo(data):\n    from bernstein.safety import sanitize\n    return sanitize(data)\n",
+        file_path="shared.py",
+        content="def add_logging(user_input):\n    import logging\n    from bernstein.safety import sanitize\n    logging.info(sanitize(user_input))\n",
     )
 
     # Back to main: add another commit so it diverges
     _run("checkout", "main", cwd=repo)
     _commit(repo, "another main commit", file_path="main_only2.py", content="# main2\n")
 
-    # Merge bob's fix
-    _run("merge", "--no-edit", "bob-fix", cwd=repo)
-    _run("rev-parse", "HEAD", cwd=repo)
+    # Merge correction 2
+    _run("merge", "--no-edit", "correction-2", cwd=repo)
 
     shas = {
         "follow_up1": sha1,
@@ -422,7 +438,7 @@ class TestRenderCorrectionsReport:
     def test_empty_result(self) -> None:
         result = MiningResult(proposals=(), total_pairs_analyzed=0, total_authors_analyzed=0, total_proposals=0)
         report = render_corrections_report(result)
-        assert "Correction pairs analyzed: 0" in report
+        assert "**Correction pairs analyzed:** 0" in report
         assert "No correction patterns found" in report
 
     def test_renders_proposals(self) -> None:
