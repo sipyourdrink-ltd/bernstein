@@ -40,16 +40,26 @@ def test_check_run_result_fields() -> None:
 
 
 class TestCheckRunClientCreate:
-    def test_create_not_configured_returns_none(self) -> None:
-        """No installation ID → silent no-op."""
-        client = CheckRunClient(repo="acme/widgets", installation_id=None)
+    def test_create_empty_repo_returns_none(self) -> None:
+        """No repo slug → silent no-op."""
+        client = CheckRunClient(repo="", installation_id="42")
         result = client.create(head_sha="abc123", task_title="Fix the bug")
         assert result is None
 
-    def test_create_empty_installation_returns_none(self) -> None:
-        client = CheckRunClient(repo="acme/widgets", installation_id="")
-        result = client.create(head_sha="abc123", task_title="Fix the bug")
-        assert result is None
+    def test_create_without_installation_id_calls_gh_api(self) -> None:
+        """Auth is delegated to gh; token-authenticated callers pass no installation ID."""
+        client = CheckRunClient(repo="acme/widgets", installation_id=None)
+        response_data = {"id": 999, "html_url": "https://github.com/checks/999"}
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps(response_data).encode()
+        mock_result.stderr = b""
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = client.create(head_sha="abc123", task_title="Fix the bug")
+
+        assert result is not None
+        assert result.check_run_id == 999
 
     def test_create_calls_gh_api(self) -> None:
         client = CheckRunClient(repo="acme/widgets", installation_id="42")
@@ -113,8 +123,8 @@ class TestCheckRunClientCreate:
 
 
 class TestCheckRunClientUpdate:
-    def test_update_not_configured_returns_none(self) -> None:
-        client = CheckRunClient(repo="acme/widgets", installation_id=None)
+    def test_update_empty_repo_returns_none(self) -> None:
+        client = CheckRunClient(repo="", installation_id="42")
         result = client.update(check_run_id=123, conclusion="success", summary="All good")
         assert result is None
 
@@ -185,8 +195,8 @@ class TestCheckRunClientUpdate:
 
 
 class TestCheckRunClientCreateVerificationCheckRun:
-    def test_not_configured_returns_none(self) -> None:
-        client = CheckRunClient(repo="acme/widgets", installation_id=None)
+    def test_empty_repo_returns_none(self) -> None:
+        client = CheckRunClient(repo="", installation_id="42")
         result = client.create_verification_check_run(
             head_sha="abc123",
             summary="summary",
@@ -194,6 +204,26 @@ class TestCheckRunClientCreateVerificationCheckRun:
             conclusion="success",
         )
         assert result is None
+
+    def test_without_installation_id_posts_check_run(self) -> None:
+        """The receipt verification workflow authenticates via gh and passes no installation ID."""
+        client = CheckRunClient(repo="acme/widgets", installation_id=None)
+        response_data = {"id": 200, "html_url": "https://github.com/checks/200"}
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps(response_data).encode()
+        mock_result.stderr = b""
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = client.create_verification_check_run(
+                head_sha="abc123",
+                summary="summary",
+                details="details",
+                conclusion="neutral",
+            )
+
+        assert result is not None
+        assert result.check_run_id == 200
 
     def test_success_returns_comparison_check_run_result(self) -> None:
         client = CheckRunClient(repo="acme/widgets", installation_id="42")
@@ -241,8 +271,8 @@ class TestCheckRunClientCreateVerificationCheckRun:
 
 
 class TestCheckRunClientUpdateVerificationCheckRun:
-    def test_not_configured_returns_none(self) -> None:
-        client = CheckRunClient(repo="acme/widgets", installation_id=None)
+    def test_empty_repo_returns_none(self) -> None:
+        client = CheckRunClient(repo="", installation_id="42")
         result = client.update_verification_check_run(
             check_run_id=123,
             summary="summary",

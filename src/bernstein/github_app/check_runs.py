@@ -60,10 +60,14 @@ class ComparisonCheckRunResult:
 class CheckRunClient:
     """Thin wrapper around the GitHub Check Runs API via ``gh`` CLI.
 
+    Authentication is delegated entirely to ``gh`` (its token environment),
+    so the client itself needs only the repository slug to operate.
+
     Args:
-        repo: ``owner/repo`` slug.  Required for all API calls.
-        installation_id: GitHub App installation ID.  Required; if ``None``
-            or empty all operations are no-ops.
+        repo: ``owner/repo`` slug.  Required; if empty all operations are
+            no-ops.
+        installation_id: GitHub App installation ID, kept for callers that
+            track one.  Not used for API calls.
     """
 
     def __init__(self, repo: str, installation_id: str | None = None) -> None:
@@ -73,7 +77,7 @@ class CheckRunClient:
     @property
     def _configured(self) -> bool:
         """True if the client has enough config to make API calls."""
-        return bool(self._repo and self._installation_id)
+        return bool(self._repo)
 
     def create(
         self,
