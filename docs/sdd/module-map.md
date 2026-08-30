@@ -27,7 +27,6 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `communication/`            | communication sub-package |
 | `compliance/`               | Compliance subpackage |
 | `config/`                   | Config: seed parsing, config management, settings, feature gates |
-| `consent/`                  | consent/ sub-package |
 | `cost/`                     | cost sub-package |
 | `daemon/`                   | Daemon installation helpers for Bernstein |
 | `datasources/`              | Content-addressed query receipts (issue #2887) and the schema-bound query driver (issue #3125) |
