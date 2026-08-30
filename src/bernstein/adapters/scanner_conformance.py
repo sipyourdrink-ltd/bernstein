@@ -36,9 +36,11 @@ from typing import Any
 
 import yaml
 
+from bernstein.adapters._contract import scanner_capabilities, scanner_determinism
 from bernstein.adapters.scanner import (
     DeterminismTier,
     ScannerAdapter,
+    ScanScope,
 )
 
 # ---------------------------------------------------------------------------
@@ -54,6 +56,10 @@ class ScannerTranscriptStep:
         prompt: Prompt-like target description passed to scan().
         model: Optional model name (scanners don't use models; kept for
             transcript compatibility).
+        target: Path (as a string) handed to ``scan(target=...)``.
+        scope: Raw ``ScanScope`` fields for this call -- ``roots``,
+            ``include``, ``exclude``, ``max_depth``, ``config``.  An empty
+            dict replays with a default (unrestricted) scope.
         expected_finding_hashes: Expected per-finding hashes, sorted, or
             ``None`` when any order is acceptable.
         expect_exception: Exception class name to expect, or None.
@@ -65,6 +71,8 @@ class ScannerTranscriptStep:
 
     prompt: str = "scan this target"
     model: str = "default"
+    target: str = "."
+    scope: dict[str, Any] = field(default_factory=dict)
     expected_finding_hashes: list[str] | None = None
     expect_exception: str | None = None
     expect_feed_digest: str | None = None
@@ -76,6 +84,8 @@ class ScannerTranscriptStep:
         return cls(
             prompt=str(raw.get("prompt", "scan this target")),
             model=str(raw.get("model", "default")),
+            target=str(raw.get("target", ".")),
+            scope=dict(raw.get("scope") or {}),
             expected_finding_hashes=raw.get("expected_finding_hashes"),
             expect_exception=raw.get("expect_exception"),
             expect_feed_digest=raw.get("expect_feed_digest"),
@@ -119,11 +129,15 @@ class ScannerStepResult:
         step_index: Zero-based index in the transcript.
         passed: Whether the step conformed to its expected outcome.
         message: Human-readable explanation of success or failure.
+        feed_digest: The feed digest the scan recorded, if any.  Carried so
+            the aggregate report can check pinned-input evidence without
+            re-running the scan.
     """
 
     step_index: int
     passed: bool
     message: str
+    feed_digest: str = ""
 
 
 @dataclass
@@ -140,6 +154,7 @@ class ScannerTranscriptResult:
 
     transcript_name: str
     adapter_class: str
+    adapter_name: str = ""
     step_results: list[ScannerStepResult] = field(default_factory=list)
     determinism_tier: DeterminismTier = DeterminismTier.TRANSCRIPT_ANCHORED
 
@@ -147,6 +162,7 @@ class ScannerTranscriptResult:
         return {
             "transcript_name": self.transcript_name,
             "adapter_class": self.adapter_class,
+            "adapter_name": self.adapter_name,
             "passed": self.passed,
             "determinism_tier": self.determinism_tier.value,
             "step_results": [
@@ -195,6 +211,32 @@ class ScannerConformanceReport:
         }
 
 
+def _resolve_tier(adapter: ScannerAdapter) -> DeterminismTier:
+    """Resolve the adapter's declared tier from the registry, by its name.
+
+    The registry is keyed on the scanner *name* (``adapter.name()``), not the
+    dotted class path.  An unregistered name resolves to the weakest tier,
+    ``transcript_anchored``, which is also what the registry itself returns
+    for unknown names.
+    """
+    declared = scanner_determinism(adapter.name())
+    try:
+        return DeterminismTier(declared.value)
+    except ValueError:
+        return DeterminismTier.TRANSCRIPT_ANCHORED
+
+
+def _scope_from_dict(raw: dict[str, Any]) -> ScanScope:
+    """Build a :class:`ScanScope` from a transcript step's raw ``scope`` dict."""
+    return ScanScope(
+        roots=tuple(Path(r) for r in raw.get("roots", ())),
+        include=tuple(raw.get("include", ())),
+        exclude=tuple(raw.get("exclude", ())),
+        max_depth=raw.get("max_depth"),
+        config=dict(raw.get("config") or {}),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Scanner instantiation helper
 # ---------------------------------------------------------------------------
@@ -221,135 +263,6 @@ def _load_adapter(dotted_class: str, ctor_kwargs: dict[str, Any] | None = None) 
     module = importlib.import_module(parts[0])
     cls = getattr(module, parts[1])
     return cls(**(ctor_kwargs or {}))
-
-
-# ---------------------------------------------------------------------------
-# Tier-specific conformance checks
-# ---------------------------------------------------------------------------
-
-
-def _check_deterministic_tier(
-    result: ScannerTranscriptResult,
-    step_results: list[ScannerStepResult],
-) -> tuple[bool, list[str]]:
-    """Enforce ``deterministic`` tier: two runs must produce identical hashes.
-
-    The harness runs the scan twice on the exact same inputs and checks that
-    the per-finding hashes are byte-identical.  A mismatch is a hard failure
-    (adapter lied about its tier, not a "degradation").
-
-    Args:
-        result: The transcript result (populated with tier info).
-        step_results: Per-step outcomes.
-
-    Returns:
-        ``(True, [])`` when the two runs matched, or ``(False, [failure_msgs])``.
-    """
-    failures: list[str] = []
-
-    for step_idx, step in enumerate(step_results):
-        if not step.passed:
-            failures.append(f"Step {step_idx}: {step.message}")
-            continue
-
-        # The transcript should have captured a run index; replay both runs
-        # with the same prompt and compare finding hashes.
-        # Deterministic conformance is enforced by replay_step comparing
-        # expected_finding_hashes against the actual scan result hashes.
-        if step.expected_finding_hashes:
-            # The harness's replay_step already validates expected vs actual.
-            # A mismatch there would have produced a failure above.
-            pass
-
-    return len(failures) == 0, failures
-
-
-def _check_feed_pinned_tier(
-    result: ScannerTranscriptResult,
-    step_results: list[ScannerStepResult],
-    scanner_name: str,
-    registry_capabilities: dict[str, Any],
-) -> tuple[bool, list[str]]:
-    """Enforce ``feed_pinned`` tier: identical hashes given same recorded digest.
-
-    The adapter must:
-    1. Declare pinned_inputs
-    2. Record a feed digest in ScanResult.feed_digest
-    3. The digest must be reproducible on replay with the same inputs
-
-    Args:
-        result: The transcript result.
-        step_results: Per-step outcomes.
-        scanner_name: Registry name of the scanner.
-        registry_capabilities: The adapter's declared capabilities.
-
-    Returns:
-        ``(True, [])`` when conformant, ``(False, [failure_msgs])`` otherwise.
-    """
-    failures: list[str] = []
-    pinned_inputs = registry_capabilities.get("pinned_inputs", ())
-
-    if not pinned_inputs:
-        # No pinned_inputs declared, feed_pinned is a no-op
-        return True, []
-
-    for step_idx, step in enumerate(step_results):
-        if not step.passed:
-            failures.append(f"Step {step_idx}: {step.message}")
-            continue
-
-        # Check that feed_digest is present and non-empty
-        # The step result should carry the scan result
-        has_feed_digest = (hasattr(step, "feed_digest") and step.feed_digest) or False
-        if not has_feed_digest:
-            failures.append(
-                f"Step {step_idx}: feed_pinned - adapter declared pinned_inputs {pinned_inputs} "
-                "but did not record a feed_digest"
-            )
-        else:
-            # Verify the digest is reproducible - the conformance harness
-            # would replay with the same recorded inputs and check the digest matches
-            # For slice 2 we just validate the digest was present
-            pass
-
-    return len(failures) == 0, failures
-
-
-def _check_transcript_anchored_tier(
-    result: ScannerTranscriptResult,
-    step_results: list[ScannerStepResult],
-) -> tuple[bool, list[str]]:
-    """Enforce ``transcript_anchored`` tier: a transcript is recorded.
-
-    The adapter must produce a transcript string (capturing stdout / log output /
-    any observable side-effect) that a later verify step can diff against.
-    An empty transcript when the tier is ``transcript_anchored`` is a failure,
-    because the whole point of the tier is that byte-identical output is not
-    guaranteed - but some observable record must exist.
-
-    Args:
-        result: The transcript result.
-        step_results: Per-step outcomes.
-
-    Returns:
-        ``(True, [])`` when conformant, ``(False, [failure_msgs])`` otherwise.
-    """
-    failures: list[str] = []
-
-    for step_idx, step in enumerate(step_results):
-        if not step.passed:
-            failures.append(f"Step {step_idx}: {step.message}")
-            continue
-
-        # The transcript should be non-empty
-        transcript = getattr(step, "transcript", None) or ""
-        if not transcript.strip():
-            failures.append(
-                f"Step {step_idx}: transcript_anchored - adapter declared transcript_anchored "
-                "but produced an empty transcript"
-            )
-
-    return len(failures) == 0, failures
 
 
 # ---------------------------------------------------------------------------
@@ -431,40 +344,25 @@ class ScannerConformanceHarness:
         Returns:
             ScannerStepResult indicating pass/fail with a message.
         """
-        # Resolve the adapter's declared tier from the registry matrix
-        from bernstein.adapters._contract import scanner_determinism
+        # Resolve the adapter's declared tier and capabilities from the
+        # registry, keyed on the scanner name (not the dotted class path).
+        tier = _resolve_tier(adapter)
+        cap = scanner_capabilities(adapter.name())
 
-        declared_tier = scanner_determinism(adapter.name()) if hasattr(adapter, "name") else None
-        # Convert from contract enum (ScannerDeterminism) to scanner module enum (DeterminismTier)
-        if declared_tier is not None:
-            try:
-                tier = DeterminismTier(declared_tier.value)
-            except (KeyError, ValueError):
-                tier = DeterminismTier.TRANSCRIPT_ANCHORED
-        else:
-            tier = DeterminismTier.TRANSCRIPT_ANCHORED
-        cap = None
-        try:
-            _contract = __import__("bernstein.adapters._contract", fromlist=["scanner_capabilities"])
-            cap = adapter.name() and _contract.scanner_capabilities(adapter.name())
-        except Exception:
-            cap = None
-
-        # Run the scan
+        # Run the scan.  The step's own fields are the call's inputs: the
+        # target path and the ScanScope -- scan() takes scope positionally,
+        # so the replay must hand it over rather than drop it.
         import tempfile
-        from pathlib import Path
 
         with tempfile.TemporaryDirectory() as tmp:
             workdir = Path(tmp)
-            scope = step.ctor_kwargs.get("scope", {}) if step.ctor_kwargs else {}
-            scan_kwargs = dict(step.ctor_kwargs) if step.ctor_kwargs else {}
-            scan_kwargs.setdefault("scope", scope)
+            scope = _scope_from_dict(step.scope)
 
             try:
                 scan_result = adapter.scan(
-                    target=Path(scan_kwargs.get("target", ".")),
+                    target=Path(step.target),
+                    scope=scope,
                     workdir=workdir,
-                    **{k: v for k, v in scan_kwargs.items() if k != "scope"},
                 )
             except Exception as exc:
                 # Emit the expected exception
@@ -491,7 +389,7 @@ class ScannerConformanceHarness:
         expected_hashes = step.expected_finding_hashes
 
         # Build actual findings hashes for comparison
-        actual_finding_hashes = sorted(f.finding_hash() for f in scan_result.findings)
+        actual_finding_hashes = scan_result.finding_hashes()
 
         # Check expected vs actual
         passed = True
@@ -518,13 +416,25 @@ class ScannerConformanceHarness:
                 f"feed_pinned tier: declared pinned_inputs {pinned_inputs} but no feed_digest recorded"
             )
 
+        # A transcript that pins the exact feed digest must see that digest.
+        if step.expect_feed_digest is not None and scan_result.feed_digest != step.expect_feed_digest:
+            passed = False
+            message_parts.append(
+                f"feed_pinned tier: expected feed_digest {step.expect_feed_digest!r}, got {scan_result.feed_digest!r}"
+            )
+
         # Check transcript_anchored
-        transcript = getattr(scan_result, "transcript", "") or ""
+        transcript = scan_result.transcript or ""
         if tier is DeterminismTier.TRANSCRIPT_ANCHORED and not transcript.strip():
             passed = False
             message_parts.append(
                 "transcript_anchored tier: adapter declared transcript_anchored but produced empty transcript"
             )
+
+        # A transcript that pins the exact recorded transcript must match it.
+        if step.expected_transcript is not None and transcript != step.expected_transcript:
+            passed = False
+            message_parts.append("transcript_anchored tier: recorded transcript differs from the expected one")
 
         actual_hashes_str = ", ".join(actual_finding_hashes[:3]) if actual_finding_hashes else "(none)"
         expected_str = ", ".join(expected_hashes[:3]) if expected_hashes else "(none)"
@@ -537,6 +447,7 @@ class ScannerConformanceHarness:
                 step_index=step_index,
                 passed=True,
                 message=message,
+                feed_digest=scan_result.feed_digest,
             )
         else:
             message = (
@@ -548,6 +459,7 @@ class ScannerConformanceHarness:
                 step_index=step_index,
                 passed=False,
                 message=message,
+                feed_digest=scan_result.feed_digest,
             )
 
     def replay_transcript(
@@ -581,27 +493,22 @@ class ScannerConformanceHarness:
         workdir: Path,
     ) -> ScannerTranscriptResult:
         """Internal replay of one transcript against a workdir."""
-
-        from bernstein.adapters._contract import scanner_determinism
-
+        # The registry is keyed on the scanner name, so the tier lookup needs
+        # a built instance; one is built up front for the name, and a fresh
+        # one per step so steps cannot leak state into each other.
+        first = _load_adapter(transcript.adapter_class, transcript.ctor_kwargs)
         result = ScannerTranscriptResult(
             transcript_name=transcript.name,
             adapter_class=transcript.adapter_class,
-            determinism_tier=scanner_determinism(transcript.adapter_class),  # simplified; actual lookup needs instance
+            adapter_name=first.name(),
+            determinism_tier=_resolve_tier(first),
         )
 
         for i, step in enumerate(transcript.steps):
-            # Build the adapter instance
             adapter = _load_adapter(transcript.adapter_class, transcript.ctor_kwargs)
-            step_result = self.replay_step(adapter, step, i)
+            result.step_results.append(self.replay_step(adapter, step, i))
 
-            # Attach the scan result's feed_digest for tier checks
-            if hasattr(step_result, "feed_digest"):
-                pass  # already embedded
-
-            result.step_results.append(step_result)
-
-        result.passed = all(s.passed for s in result.step_results)
+        # ``passed`` is a property computed from the step results.
         return result
 
     def run_all(
@@ -618,35 +525,24 @@ class ScannerConformanceHarness:
         Returns:
             ScannerConformanceReport with regressions identified.
         """
+        import tempfile
+
         report = ScannerConformanceReport()
-        with __import__("tempfile", fromlist=["TemporaryDirectory"]).TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             wd = workdir or Path(tmp)
             for transcript in transcripts:
                 result = self.replay_transcript(transcript, workdir=wd)
                 report.results.append(result)
 
-                # Tier-specific regression detection
-                from bernstein.adapters._contract import (
-                    scanner_capabilities as sc,
-                )
-                from bernstein.adapters._contract import (
-                    scanner_determinism as sd,
-                )
+                # A scanner that declares pinned inputs must have recorded a
+                # feed digest on at least one step; the registry is keyed on
+                # the adapter name the replay resolved.
+                cap = scanner_capabilities(result.adapter_name)
+                if cap and cap.get("pinned_inputs") and not any(sr.feed_digest for sr in result.step_results):
+                    report.pinned_input_failures.append(
+                        f"{transcript.name}: declared pinned_inputs but no feed_digest recorded"
+                    )
 
-                cap = sc(transcript.adapter_class)
-                _ = sd(transcript.adapter_class)
-
-                # Check for pinned_input failures
-                if cap and "pinned_inputs" in cap and cap["pinned_inputs"]:
-                    # If this scanner has pinned_inputs declared but none of the
-                    # step results have a feed_digest, record the failure
-                    has_feed = any(getattr(sr, "feed_digest", None) for sr in result.step_results)
-                    if not has_feed:
-                        report.pinned_input_failures.append(
-                            f"{transcript.name}: declared pinned_inputs but no feed_digest recorded"
-                        )
-
-                # Add regressions for failed steps
                 for sr in result.step_results:
                     if not sr.passed:
                         report.regressions.append(f"{transcript.name} step {sr.step_index}: {sr.message}")
