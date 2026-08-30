@@ -135,10 +135,14 @@ def _emit_chain(project: Path) -> str:
     """Emit two contour passes and return the ruleset digest they used."""
     from bernstein.core.quality.review_pipeline.contour import PassReceiptRequest, receipt_emitter
     from bernstein.core.quality.review_pipeline.ruleset import parse_ruleset
+    from bernstein.core.quality.review_pipeline.scope import compute_resolution_hash, resolve_scope
 
     (project / "issue.md").write_text(_ISSUE, encoding="utf-8")
     (project / "rules.md").write_text(_RULES, encoding="utf-8")
     digest = parse_ruleset(_RULES).digest
+    # Each pass binds the scope it resolved conventions under, same as a real
+    # contour pass; no changed conventions are in scope for this fixture.
+    resolution_hash = compute_resolution_hash(resolve_scope((), ()))
     emit = receipt_emitter(workdir=project, pr_url=_PR_URL, repo="acme/widget", issue_body=_ISSUE, timestamp=1000)
     previous = ""
     for index, (diff, verdict) in enumerate(zip(_PASS_DIFFS, ("request_changes", "approve"), strict=True), start=1):
@@ -150,6 +154,7 @@ def _emit_chain(project: Path) -> str:
                 verdict=verdict,
                 ruleset_digest=digest,
                 prev_entry_hash=previous,
+                resolution_hash=resolution_hash,
             )
         )
     return digest
