@@ -267,6 +267,7 @@ class ReviewReceipt:
     pass_index: int = 0
     ruleset_digest: str = ""
     prev_entry_hash: str = ""
+    resolution_hash: str = ""
 
     def _binding(self) -> dict[str, Any]:
         """Return the signed + anchored binding (no signature / anchor).
@@ -294,6 +295,7 @@ class ReviewReceipt:
             binding["ruleset_digest"] = self.ruleset_digest
         if self.prev_entry_hash:
             binding["prev_entry_hash"] = self.prev_entry_hash
+        binding["resolution_hash"] = self.resolution_hash
         return binding
 
     def to_canonical_bytes(self) -> bytes:
@@ -327,6 +329,7 @@ class ReviewReceipt:
             pass_index=int(row.get("pass_index", 0)),
             ruleset_digest=str(row.get("ruleset_digest", "")),
             prev_entry_hash=str(row.get("prev_entry_hash", "")),
+            resolution_hash=str(row.get("resolution_hash", "")),
         )
 
 
@@ -398,6 +401,7 @@ def emit_review_receipt(
     pass_index: int = 0,
     ruleset_digest: str = "",
     prev_entry_hash: str = "",
+    resolution_hash: str = "",
 ) -> ReviewReceipt:
     """Bind issue, plan, tool calls, and diff into a signed, anchored receipt.
 
@@ -446,6 +450,7 @@ def emit_review_receipt(
         pass_index=pass_index,
         ruleset_digest=ruleset_digest,
         prev_entry_hash=prev_entry_hash,
+        resolution_hash=resolution_hash,
     )
     payload = unsigned.to_canonical_bytes()
     signature = sign_payload(payload, private_key_pem)
@@ -481,6 +486,7 @@ def emit_review_receipt(
         pass_index=pass_index,
         ruleset_digest=ruleset_digest,
         prev_entry_hash=prev_entry_hash,
+        resolution_hash=resolution_hash,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -554,6 +560,13 @@ def verify_review_receipt(
             receipt=receipt,
         )
 
+    if not receipt.resolution_hash:
+        return ReviewVerifyResult(
+            ok=False,
+            reason="receipt carries no resolution_hash: conventions in scope were not recorded",
+            receipt=receipt,
+        )
+
     if not receipt.signature or not receipt.signer_public_key_pem:
         return ReviewVerifyResult(ok=False, reason="receipt is unsigned", receipt=receipt)
     outcome = verify_payload(
@@ -623,6 +636,8 @@ def _verify_one(
     """Return the rejection reason for one receipt, or ``""`` when it holds."""
     if compute_issue_hash(issue_body) != receipt.issue_hash:
         return "issue_hash mismatch: presented issue body differs from the reviewed ticket"
+    if not receipt.resolution_hash:
+        return "receipt carries no resolution_hash: conventions in scope were not recorded"
     if not receipt.signature or not receipt.signer_public_key_pem:
         return "receipt is unsigned"
     outcome = verify_payload(

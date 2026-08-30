@@ -126,6 +126,7 @@ def review_receipt_emit_cmd(
         verdict=verdict,
         task_id=task_id,
         timestamp=int(time.time()),
+        resolution_hash="sha256:912abcebddc909bb61712cad73e12236d0128a53e9e7fcac0ac33c58df0ea804",
     )
 
     chain = AuditChainStore(_audit_dir(root), key=key)
