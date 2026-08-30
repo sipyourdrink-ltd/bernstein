@@ -117,7 +117,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 스케줄러가 순수 Python인 이유와 그 대가로 포기한 것은 [왜 결정론적인가](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)에 있다.
 
 ### 일상적인 명령
-<!-- l10n: en="everyday commands" hash="sha256:b3520027ef7d" -->
+<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
 
 ```bash
 cd your-project
@@ -129,6 +129,15 @@ bernstein stop                    # graceful shutdown with drain
 ```
 
 PR 자동화, 스케줄, 채팅 브리지, autofix 데몬을 포함한 오퍼레이터 기능 전체는 [오퍼레이터 명령](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md)에 있다.
+
+`bernstein workflow`는 에이전트 / 커맨드 / 루프 노드로 이루어진 선언적 YAML DAG를 실행하며, 중단된 실행의 재개도 지원한다:
+
+```bash
+bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
+bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+```
+
+실행 상태는 노드마다 `.sdd/runs/<run_id>/`에 체크포인트된다. 재개는 실행 시작 시 매니페스트 다이제스트를 검증하므로, 명세가 바뀌었다면 다른 매니페스트를 조용히 실행하는 대신 거부된다. [워크플로 매니페스트](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)를 보라.
 
 리포지터리 위생 게이트: `bernstein readme-l10n verify`는 번역된 README가 영어 원문에서 벗어난 PR을 오래된 섹션 이름과 함께 실패시킨다. `bernstein readme-l10n sync`는 영어를 편집한 뒤 다시 묶는다. [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)을 보라.
 
