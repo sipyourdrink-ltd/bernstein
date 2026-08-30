@@ -1895,6 +1895,8 @@ class AgentSpawner:
         or resume (#4151).
         """
         try:
+            import hashlib
+
             from bernstein.core.communication.task_mailbox import (
                 TaskMailbox,
                 render_mailbox_section,
@@ -1910,14 +1912,6 @@ class AgentSpawner:
 
             pending = []
             for task in tasks:
-                # Compute cursor: highest seq already marked consumed for this task
-                # include_archived: the cursor reasons about linkage across the
-                # retention boundary, so it must see consumption records that
-                # routine `audit archive` has already compressed into
-                # archive/*.jsonl.gz. Without it the cursor silently falls back
-                # to -1 once a segment ages out and the whole backlog is
-                # re-rendered -- the same defect this fix closes, re-armed by
-                # maintenance rather than by a code change.
                 events = chain.query(
                     event_type="task.mailbox_consumed",
                     resource_id=task.id,
@@ -1926,8 +1920,9 @@ class AgentSpawner:
                 cursor = max((int(e.details.get("seq", -1)) for e in events), default=-1)
                 pending.extend(mailbox.pending(task.id, since_seq=cursor))
 
-            # Record consumption for each newly rendered message
             if pending:
+                assembled = render_mailbox_section(pending)
+                prompt_digest = hashlib.sha256(assembled.encode("utf-8")).hexdigest()
                 for msg in pending:
                     chain.log(
                         event_type="task.mailbox_consumed",
@@ -1939,10 +1934,13 @@ class AgentSpawner:
                             "entry_hash": msg.entry_hash,
                             "body_hash": msg.body_hash,
                             "kind": msg.kind,
+                            "prompt_digest": prompt_digest,
                         },
                     )
-
-            return render_mailbox_section(pending)
+                return assembled
+            else:
+                logger.info("No pending mailbox messages for tasks, rendering empty section.")
+                return ""
         except Exception as exc:
             logger.warning("Mailbox section rendering skipped: %s", type(exc).__name__)
             return ""
