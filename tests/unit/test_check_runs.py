@@ -217,7 +217,7 @@ class TestCheckRunClientCreateVerificationCheckRun:
         # call_args[0] is positional args tuple; args[0] is the gh command list
         args = list(mock_run.call_args[0][0])
         assert "POST" in args
-        assert "check-runs" in args
+        assert any("/check-runs" in str(a) for a in args)
 
     def test_gh_failure_returns_none(self) -> None:
         client = CheckRunClient(repo="acme/widgets", installation_id="42")

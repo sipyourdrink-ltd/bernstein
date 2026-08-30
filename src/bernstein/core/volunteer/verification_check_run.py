@@ -270,6 +270,13 @@ def _run_manifest_gates_in_ci(
     return list(gate_results), all_passed
 
 
+def _get_gate_attr(gate: Any, key: str, default: Any = None) -> Any:
+    """Get an attribute from a gate object, handling both dict-like and object gates."""
+    if isinstance(gate, dict):
+        return gate.get(key, default)
+    return getattr(gate, key, default)
+
+
 def _compare_gate_results(
     attested_gates: tuple[Any, ...],
     ci_gate_results: list[Any],
@@ -288,15 +295,16 @@ def _compare_gate_results(
     # Create a map of CI results by command for easy lookup
     ci_results_by_command = {}
     for gate_result in ci_gate_results:
-        if hasattr(gate_result, "command"):
-            ci_results_by_command[gate_result.command] = gate_result
+        command = _get_gate_attr(gate_result, "command")
+        if command:
+            ci_results_by_command[command] = gate_result
 
     # Compare each attested gate
     for attested_gate in attested_gates:
-        command = getattr(attested_gate, "command", "unknown")
-        attested_exit_code = getattr(attested_gate, "exit_code", -1)
-        attested_log = getattr(attested_gate, "log", "")
-        attested_log_sha256 = getattr(attested_gate, "log_sha256", "")
+        command = _get_gate_attr(attested_gate, "command", "unknown")
+        attested_exit_code = _get_gate_attr(attested_gate, "exit_code", -1)
+        attested_log = _get_gate_attr(attested_gate, "log", "")
+        attested_log_sha256 = _get_gate_attr(attested_gate, "log_sha256", "")
 
         # Handle the case where log_sha256 might need to be computed
         if not attested_log_sha256 and attested_log:
@@ -318,9 +326,9 @@ def _compare_gate_results(
             )
             continue
 
-        ci_exit_code = getattr(ci_result, "exit_code", -1)
-        ci_log = getattr(ci_result, "log", "")
-        ci_log_sha256 = getattr(ci_result, "log_sha256", "")
+        ci_exit_code = _get_gate_attr(ci_result, "exit_code", -1)
+        ci_log = _get_gate_attr(ci_result, "log", "")
+        ci_log_sha256 = _get_gate_attr(ci_result, "log_sha256", "")
 
         if not ci_log_sha256 and ci_log:
             ci_log_sha256 = hashlib.sha256(ci_log.encode("utf-8")).hexdigest()
@@ -349,11 +357,11 @@ def _compare_gate_results(
         )
 
     # Check for extra gates in CI that weren't in the bundle
-    attested_commands = {getattr(g, "command", "unknown") for g in attested_gates}
+    attested_commands = {_get_gate_attr(g, "command") for g in attested_gates}
     for command, ci_result in ci_results_by_command.items():
         if command not in attested_commands:
-            ci_exit_code = getattr(ci_result, "exit_code", -1)
-            ci_log = getattr(ci_result, "log", "")
+            ci_exit_code = _get_gate_attr(ci_result, "exit_code", -1)
+            ci_log = _get_gate_attr(ci_result, "log", "")
             ci_log_sha256 = ""
             if ci_log:
                 ci_log_sha256 = hashlib.sha256(ci_log.encode("utf-8")).hexdigest()
