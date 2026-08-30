@@ -215,33 +215,31 @@ jobs:
           # Determine conclusion based on overall pass/fail
           if echo "$RESULT_JSON" | grep -q '"overall_passed": true'; then
             CONCLUSION="success"
-            SUMMARY="Volunteer receipt verification passed"
           else
             CONCLUSION="failure"
-            SUMMARY="Volunteer receipt verification failed"
           fi
+          export CONCLUSION
 
           # Create check run client and post/update check run
-          uv run python << EOF
+          uv run python << 'PYEOF'
           import os
           import json
           import sys
-          from pathlib import Path
           from bernstein.github_app.check_runs import CheckRunClient
 
           # Load result
-          with open('$VERIFICATION_RESULT_PATH') as f:
+          with open(os.environ["VERIFICATION_RESULT_PATH"]) as f:
               result = json.load(f)
 
           # Create check run client
-          check_run_client = CheckRunClient('$REPO_SLUG', None)
+          check_run_client = CheckRunClient(os.environ["REPO_SLUG"], None)
 
           # Post new verification check run
           check_run_result = check_run_client.create_verification_check_run(
-              head_sha='$HEAD_SHA',
+              head_sha=os.environ["HEAD_SHA"],
               summary=result['summary'],
               details=result['details'],
-              conclusion=CONCLUSION,
+              conclusion=os.environ["CONCLUSION"],
           )
 
           if check_run_result is None:
@@ -249,4 +247,4 @@ jobs:
               sys.exit(1)
 
           print(f"Posted verification check run: {check_run_result.check_run_id}")
-          EOF
+          PYEOF
