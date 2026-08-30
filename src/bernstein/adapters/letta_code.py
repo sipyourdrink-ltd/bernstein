@@ -27,6 +27,38 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: ``finish_reason`` for a session whose process finished but whose Letta
+#: memory could not be exported. A caller reading run records needs to tell
+#: this apart from a failed agent, so it is a fixed token rather than the
+#: text of whatever the export happened to raise.
+MEMORY_EXPORT_FAILURE = "memory_export_failure"
+
+
+def export_memory_digest(workdir: Path, agent_id: str, export_path: Path) -> str:
+    """Export the agent's Letta memory and return the SHA-256 of the export.
+
+    Raises ``RuntimeError`` if ``letta memory export`` exits non-zero or
+    leaves no file behind, so the caller can record the failure without
+    having to interpret a return code or a missing path.
+    """
+    export_proc = subprocess.Popen(
+        ["letta", "memory", "export", "--agent", agent_id, "--out", str(export_path)],
+        cwd=workdir,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    _, export_stderr = export_proc.communicate()
+    if export_proc.returncode != 0:
+        raise RuntimeError(f"letta memory export exited {export_proc.returncode}: {export_stderr.decode()}")
+    if not export_path.exists():
+        raise RuntimeError(f"letta memory export wrote no file at {export_path}")
+
+    sha256_hash = hashlib.sha256()
+    with export_path.open("rb") as f:
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
+
 
 class LettaCodeAdapter(CLIAdapter):
     """Spawn and monitor Letta Code CLI sessions.
@@ -153,6 +185,7 @@ class LettaCodeAdapter(CLIAdapter):
         thread = threading.Thread(target=self._post_exit, args=(proc, workdir, session_id, log_path, result))
         thread.daemon = True
         thread.start()
+        result.post_exit_thread = thread
 
         return result
 
@@ -210,40 +243,16 @@ class LettaCodeAdapter(CLIAdapter):
             export_path = runtime_dir / f"letta_memory_{conversation_id}.json"
             export_sha256_path = export_path.with_suffix(export_path.suffix + ".sha256")
 
-            # Run letta memory export
-            export_cmd = [
-                "letta",
-                "memory",
-                "export",
-                "--agent",
-                agent_id,
-                "--out",
-                str(export_path),
-            ]
-            export_proc = subprocess.Popen(
-                export_cmd,
-                cwd=workdir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            _, export_stderr = export_proc.communicate()
-            if export_proc.returncode != 0:
-                logger.warning(f"Letta memory export failed for agent {agent_id}: {export_stderr.decode()}")
-                # We'll continue to try to write the metadata, but note the export failed.
-                # We'll set the export_path to None so we skip the SHA-256 step.
-                export_path = None
-
-            # Compute SHA-256 of the export file if it exists and was created successfully
-            if export_path and export_path.exists():
-                sha256_hash = hashlib.sha256()
-                with export_path.open("rb") as f:
-                    for byte_block in iter(lambda: f.read(4096), b""):
-                        sha256_hash.update(byte_block)
-                digest = sha256_hash.hexdigest()
-                with export_sha256_path.open("w") as f:
-                    f.write(digest)
+            # A failed export must not cost us the envelope: the metadata
+            # sidecar below is written either way, and the run carries a
+            # stable finish_reason naming which half went missing.
+            try:
+                digest = export_memory_digest(workdir, agent_id, export_path)
+            except Exception as exc:
+                logger.warning(f"Letta memory export failed for agent {agent_id}: {exc}")
+                spawn_result.finish_reason = MEMORY_EXPORT_FAILURE
             else:
-                logger.warning(f"Letta memory export file not found or export failed for agent {agent_id}")
+                export_sha256_path.write_text(digest)
 
             # Write the envelope data to a metadata sidecar file
             meta_path = runtime_dir / f"{session_id}.letta_meta.json"

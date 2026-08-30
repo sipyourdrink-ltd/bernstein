@@ -348,6 +348,10 @@ class SpawnResult:
     log_path: Path
     proc: object | None = None  # subprocess.Popen, kept for poll()-based alive check
     timeout_timer: threading.Timer | None = field(default=None, repr=False)
+    #: Adapters that finish their bookkeeping after the process exits publish
+    #: the worker here, so a caller that needs the artefacts can join it
+    #: rather than poll for the files to appear.
+    post_exit_thread: threading.Thread | None = field(default=None, repr=False)
     abort_reason: AbortReason | None = None
     abort_detail: str = ""
     finish_reason: str = ""

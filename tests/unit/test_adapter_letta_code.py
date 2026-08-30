@@ -7,13 +7,17 @@ are applied.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 from bernstein.core.models import ModelConfig
 
-from bernstein.adapters.letta_code import LettaCodeAdapter
+from bernstein.adapters.base import SpawnResult
+from bernstein.adapters.letta_code import MEMORY_EXPORT_FAILURE, LettaCodeAdapter, export_memory_digest
 from tests.unit._adapter_test_helpers import inner_cmd, make_popen_mock
 
 if TYPE_CHECKING:
@@ -128,85 +132,133 @@ def test_consecutive_runs_get_distinct_conversation_bindings(tmp_path: Path) -> 
     assert conv1 != conv2
 
 
-def test_spawn_records_meta_sidecar(tmp_path: Path) -> None:
-    """After tasks 3671-A/B: .sdd/runtime/<session_id>.letta_meta.json written with agent_id and conversation_id."""
-    import json
+ENVELOPE = {
+    "agent_id": "agent-77",
+    "conversation_id": "conv-77",
+    "token_usage": {"input": 10, "output": 5},
+}
 
+
+def _log_with_envelope(tmp_path: Path) -> Path:
+    """A stream-json log carrying one envelope line, as the CLI emits it."""
+    log_path = tmp_path / "letta.log"
+    log_path.write_text('{"type":"chatter"}\n' + json.dumps(ENVELOPE) + "\n")
+    return log_path
+
+
+def test_export_memory_digest_hashes_the_exported_file(tmp_path: Path) -> None:
+    """The digest is the SHA-256 of what the export actually wrote."""
+    export_path = tmp_path / "memory.json"
+    proc = make_popen_mock(901)
+    proc.communicate.return_value = (b"", b"")
+    proc.returncode = 0
+
+    def fake_popen(cmd, **kwargs):
+        export_path.write_bytes(b'{"blocks": []}')
+        return proc
+
+    with patch("bernstein.adapters.letta_code.subprocess.Popen", side_effect=fake_popen):
+        digest = export_memory_digest(tmp_path, "agent-77", export_path)
+
+    assert digest == hashlib.sha256(b'{"blocks": []}').hexdigest()
+
+
+def test_export_memory_digest_raises_when_the_cli_fails(tmp_path: Path) -> None:
+    proc = make_popen_mock(901)
+    proc.communicate.return_value = (b"", b"no such agent")
+    proc.returncode = 2
+
+    with (
+        patch("bernstein.adapters.letta_code.subprocess.Popen", return_value=proc),
+        pytest.raises(RuntimeError, match="no such agent"),
+    ):
+        export_memory_digest(tmp_path, "agent-77", tmp_path / "memory.json")
+
+
+def test_export_memory_digest_raises_when_the_cli_writes_nothing(tmp_path: Path) -> None:
+    """A zero exit with no file is a failure, not an empty memory."""
+    proc = make_popen_mock(901)
+    proc.communicate.return_value = (b"", b"")
+    proc.returncode = 0
+
+    with (
+        patch("bernstein.adapters.letta_code.subprocess.Popen", return_value=proc),
+        pytest.raises(RuntimeError, match="wrote no file"),
+    ):
+        export_memory_digest(tmp_path, "agent-77", tmp_path / "memory.json")
+
+
+def test_spawn_publishes_the_post_exit_worker(tmp_path: Path) -> None:
+    """The sidecars are written off-thread, so the caller gets the worker to join.
+
+    Regression: the thread was started and dropped, leaving no way to tell a
+    session whose bookkeeping had finished from one still mid-write.
+    """
     adapter = LettaCodeAdapter()
     proc_mock = make_popen_mock(900)
 
     with patch("bernstein.adapters.letta_code.subprocess.Popen", return_value=proc_mock):
-        adapter.spawn(
+        result = adapter.spawn(
             prompt="fix the bug",
             workdir=tmp_path,
             model_config=ModelConfig(model="sonnet", effort="high"),
             session_id="letta-s1",
         )
+
+    assert result.post_exit_thread is not None
+    result.post_exit_thread.join(timeout=10)
+    assert not result.post_exit_thread.is_alive()
+
+
+def test_post_exit_records_meta_sidecar(tmp_path: Path) -> None:
+    """The envelope parsed out of the log lands in .sdd/runtime/<session>.letta_meta.json."""
+    adapter = LettaCodeAdapter()
+    result = SpawnResult(pid=900, log_path=_log_with_envelope(tmp_path))
+
+    with patch("bernstein.adapters.letta_code.export_memory_digest", return_value="d" * 64):
+        adapter._post_exit(make_popen_mock(900), tmp_path, "letta-s1", result.log_path, result)
 
     meta_path = tmp_path / ".sdd" / "runtime" / "letta-s1.letta_meta.json"
     assert meta_path.exists(), f"Meta sidecar not found at {meta_path}"
-    with open(meta_path) as f:
-        data = json.load(f)
-    assert "agent_id" in data, f"Missing agent_id in {meta_path}"
-    assert "conversation_id" in data, f"Missing conversation_id in {meta_path}"
+    data = json.loads(meta_path.read_text())
+    assert data["agent_id"] == "agent-77"
+    assert data["conversation_id"] == "conv-77"
 
 
-def test_memory_export_digest_recorded(tmp_path: Path, monkeypatch) -> None:
-    """After tasks 3671-A/B: mock letta memory export success, assert digest written."""
-    import json
-
-    def mock_export(*args, **kwargs):
-        return {"agent_id": "test-agent-123", "conversation_id": "test-conv-456", "digest": "abc123digest"}
-
-    monkeypatch.setattr(
-        "bernstein.adapters.letta_code.export_memory_digest",
-        mock_export,
-    )
-
+def test_post_exit_records_memory_digest(tmp_path: Path) -> None:
+    """The digest returned by the export lands in the .sha256 sidecar beside it."""
     adapter = LettaCodeAdapter()
-    proc_mock = make_popen_mock(900)
+    result = SpawnResult(pid=900, log_path=_log_with_envelope(tmp_path))
 
-    with patch("bernstein.adapters.letta_code.subprocess.Popen", return_value=proc_mock):
-        adapter.spawn(
-            prompt="fix the bug",
-            workdir=tmp_path,
-            model_config=ModelConfig(model="sonnet", effort="high"),
-            session_id="letta-s1",
-        )
+    with patch("bernstein.adapters.letta_code.export_memory_digest", return_value="abc123digest"):
+        adapter._post_exit(make_popen_mock(900), tmp_path, "letta-s1", result.log_path, result)
 
-    digest_path = tmp_path / ".sdd" / "runtime" / "pids" / "digest.json"
-    assert digest_path.exists(), f"Digest not found at {digest_path}"
-    with open(digest_path) as f:
-        data = json.load(f)
-    assert data["digest"] == "abc123digest"
+    runtime_dir = tmp_path / ".sdd" / "runtime"
+    sidecars = list(runtime_dir.glob("letta_memory_*.json.sha256"))
+    assert len(sidecars) == 1, f"expected one digest sidecar, found {sidecars}"
+    assert sidecars[0].read_text() == "abc123digest"
+    assert result.finish_reason == ""
 
 
-def test_memory_export_failure_reported(tmp_path: Path, monkeypatch, caplog) -> None:
-    """After tasks 3671-A/B: mock export failure, assert warning logged and finish_reason set."""
-    import logging
-
-    def mock_export_failure(*args, **kwargs):
-        raise RuntimeError("Memory export failed")
-
-    monkeypatch.setattr(
-        "bernstein.adapters.letta_code.export_memory_digest",
-        mock_export_failure,
-    )
-
+def test_post_exit_reports_memory_export_failure(tmp_path: Path, caplog) -> None:
+    """A failed export is named in finish_reason and does not cost us the envelope."""
     adapter = LettaCodeAdapter()
-    proc_mock = make_popen_mock(900)
+    result = SpawnResult(pid=900, log_path=_log_with_envelope(tmp_path))
 
-    with patch("bernstein.adapters.letta_code.subprocess.Popen", return_value=proc_mock):
-        with caplog.at_level(logging.WARNING):
-            result = adapter.spawn(
-                prompt="fix the bug",
-                workdir=tmp_path,
-                model_config=ModelConfig(model="sonnet", effort="high"),
-                session_id="letta-s1",
-            )
+    with (
+        patch(
+            "bernstein.adapters.letta_code.export_memory_digest",
+            side_effect=RuntimeError("Memory export failed"),
+        ),
+        caplog.at_level(logging.WARNING),
+    ):
+        adapter._post_exit(make_popen_mock(900), tmp_path, "letta-s1", result.log_path, result)
 
     assert "Memory export failed" in caplog.text
-    assert result.finish_reason == "memory_export_failure"
+    assert result.finish_reason == MEMORY_EXPORT_FAILURE
+    # The metadata is the record of the run; an export that failed must not take it down.
+    assert (tmp_path / ".sdd" / "runtime" / "letta-s1.letta_meta.json").exists()
+    assert not list((tmp_path / ".sdd" / "runtime").glob("*.sha256"))
 
 
 def test_strategy_override_matches_matrix(tmp_path: Path) -> None:
