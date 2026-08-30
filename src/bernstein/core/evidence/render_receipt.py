@@ -12,6 +12,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any
 
 #: Sentinel epoch for default clock_value when none is supplied.
@@ -20,11 +21,53 @@ _EPOCH_UTC = datetime(1970, 1, 1, tzinfo=timezone.utc)  # noqa: UP017
 __all__ = [
     "A11yNode",
     "ComputedStyle",
+    "DeltaKind",
+    "DeltaSet",
     "EnvironmentDescriptor",
+    "EnvironmentMismatchError",
     "LayoutBox",
+    "PropertyClass",
+    "RenderDelta",
     "RenderReceipt",
+    "UnresolvedDelta",
+    "UnresolvedReason",
     "Viewport",
+    "render_delta",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Property classes and enums for delta comparison
+# ---------------------------------------------------------------------------
+
+
+class PropertyClass(Enum):
+    """Classification of CSS properties for delta analysis."""
+
+    TOKEN = "token"  # Individual tokens (keywords, identifiers, numbers, etc.)
+    GEOMETRY = "geometry"  # Position, size, spacing properties
+    OVERFLOW = "overflow"  # Overflow and clipping properties
+    VISIBILITY = "visibility"  # Display, opacity, visibility properties
+    TYPOGRAPHY = "typography"  # Font, text, spacing properties
+    PAINT = "paint"  # Colors, backgrounds, borders, shadows
+    A11Y = "a11y"  # Accessibility-related properties
+
+
+class UnresolvedReason(Enum):
+    """Reason why a delta could not be resolved during comparison."""
+
+    CANVAS = "canvas"  # Canvas rendering cannot be inspected
+    WEBGL = "webgl"  # WebGL rendering cannot be inspected
+    VIDEO = "video"  # Video elements cannot be inspected
+    CROSS_ORIGIN_IFRAME = "cross_origin_iframe"  # Cross-origin iframe content
+
+
+class DeltaKind(Enum):
+    """Type of change detected between two render receipts."""
+
+    ADDED = "added"  # Element or property appeared in head
+    REMOVED = "removed"  # Element or property disappeared from head
+    CHANGED = "changed"  # Element or property value changed
 
 
 # ---------------------------------------------------------------------------
