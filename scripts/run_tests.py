@@ -28,7 +28,10 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Collection
 
 # Changed paths for which an empty affected set is a coverage hole rather than
 # a legitimate no-op, so the shards fail closed instead of reporting green.
@@ -577,36 +580,47 @@ def discover_affected_files(base: str) -> list[Path]:
     return sorted(paths)
 
 
-def discover_changed_files(base: str) -> list[str]:
-    """Return repo-relative changed paths for empty affected-set decisions."""
+def discover_changed_files(base: str, diff_filter: str | None = None) -> list[str]:
+    """Return repo-relative changed paths for empty affected-set decisions.
+
+    ``diff_filter`` is passed to ``git diff --diff-filter``; ``"D"`` narrows the
+    result to the paths the change removes. Untracked files are only collected
+    for the unfiltered call, since a file that is not in the index cannot have
+    been deleted by the change.
+    """
     root = Path(__file__).parent.parent
+    filter_args = [f"--diff-filter={diff_filter}"] if diff_filter else []
     try:
         if base == "HEAD":
             unstaged = subprocess.run(
-                ["git", "diff", "--name-only", "HEAD"],
+                ["git", "diff", "--name-only", *filter_args, "HEAD"],
                 cwd=root,
                 capture_output=True,
                 text=True,
                 check=True,
             ).stdout.splitlines()
             staged = subprocess.run(
-                ["git", "diff", "--name-only", "--cached"],
+                ["git", "diff", "--name-only", *filter_args, "--cached"],
                 cwd=root,
                 capture_output=True,
                 text=True,
                 check=True,
             ).stdout.splitlines()
-            untracked = subprocess.run(
-                ["git", "ls-files", "--others", "--exclude-standard"],
-                cwd=root,
-                capture_output=True,
-                text=True,
-                check=True,
-            ).stdout.splitlines()
+            untracked = (
+                []
+                if diff_filter
+                else subprocess.run(
+                    ["git", "ls-files", "--others", "--exclude-standard"],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                ).stdout.splitlines()
+            )
             return sorted({path for path in [*unstaged, *staged, *untracked] if path})
         try:
             return subprocess.run(
-                ["git", "diff", "--name-only", f"{base}...HEAD"],
+                ["git", "diff", "--name-only", *filter_args, f"{base}...HEAD"],
                 cwd=root,
                 capture_output=True,
                 text=True,
@@ -616,7 +630,7 @@ def discover_changed_files(base: str) -> list[str]:
             if exc.returncode != 128:
                 raise
             return subprocess.run(
-                ["git", "diff", "--name-only", f"{base}..HEAD"],
+                ["git", "diff", "--name-only", *filter_args, f"{base}..HEAD"],
                 cwd=root,
                 capture_output=True,
                 text=True,
@@ -627,7 +641,10 @@ def discover_changed_files(base: str) -> list[str]:
         sys.exit(exc.returncode)
 
 
-def changed_files_require_tests(changed_files: list[str]) -> bool:
+def changed_files_require_tests(
+    changed_files: list[str],
+    deleted_files: Collection[str] = (),
+) -> bool:
     """Return True when an empty affected set must fail closed.
 
     Paths under ``_SELF_COVERED_TEST_PREFIXES`` are ignored: a dedicated
@@ -636,11 +653,19 @@ def changed_files_require_tests(changed_files: list[str]) -> bool:
     still judged by ``_TEST_REQUIRED_PREFIXES``, so a mixed change that also
     touches source, scripts, workflows, or an indexed test suite keeps failing
     closed on an empty affected set.
+
+    A test file the change *deletes* is ignored for the same reason. The only
+    test the selector could map it to is itself, and it is gone, so no content
+    of the change can ever produce a non-empty affected set: a pull request
+    that only removes a test file would be permanently unmergeable. Deleted
+    paths outside ``tests/`` keep failing closed - a removed module can still
+    be covered by tests that imported it.
     """
+    deleted_tests = {path for path in (Path(raw).as_posix() for raw in deleted_files) if path.startswith("tests/")}
     return any(
         path.startswith(_TEST_REQUIRED_PREFIXES)
         for path in (Path(raw).as_posix() for raw in changed_files)
-        if not path.startswith(_SELF_COVERED_TEST_PREFIXES)
+        if not path.startswith(_SELF_COVERED_TEST_PREFIXES) and path not in deleted_tests
     )
 
 
@@ -717,7 +742,8 @@ def main() -> None:
         if not files:
             if not affected_files:
                 changed_files = discover_changed_files(args.affected)
-                if changed_files_require_tests(changed_files):
+                deleted_files = discover_changed_files(args.affected, diff_filter="D")
+                if changed_files_require_tests(changed_files, deleted_files):
                     print("No affected tests found for code or workflow changes; failing closed.")
                     for changed_file in changed_files:
                         print(f"  {changed_file}")

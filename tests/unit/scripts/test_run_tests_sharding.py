@@ -211,7 +211,9 @@ def test_empty_affected_selection_fails_for_source_changes(
     def no_affected_files(_base: str) -> list[Path]:
         return []
 
-    def changed_source_files(_base: str) -> list[str]:
+    def changed_source_files(_base: str, diff_filter: str | None = None) -> list[str]:
+        if diff_filter == "D":
+            return []
         return ["src/bernstein/core/models.py"]
 
     monkeypatch.setattr(run_tests_module, "discover_affected_files", no_affected_files)
