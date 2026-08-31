@@ -179,6 +179,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `security_floor.py`         | Adapter security-floor spawn preflight with signed refusal receipts (#2515) |
 | `session_id.py`             | Deterministic session-id binding for adapter replay isolation |
 | `skills_injector.py`        | Inject per-task Claude Code skills into the worktree before spawn |
+| `skyvern.py`                | Skyvern adapter: drives an existing Skyvern server over HTTP |
 | `strict_schema.py`          | Strict structured-output validation and user-owned-field protection |
 | `use_cases.py`              | Per-adapter metadata for the ``bernstein integrations list`` command |
 | `ci/`                       | CI system adapters for log parsing and failure extraction |
