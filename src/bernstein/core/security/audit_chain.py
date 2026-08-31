@@ -35,6 +35,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
     from pathlib import Path
 
+    from bernstein.adapters.capability_profile import CapabilityVerdictTable
+
 from bernstein.core.security.agent_card_signer import canonicalize_jcs
 from bernstein.core.security.audit import (
     AGENT_FRESH_RESTART_ON_RETRY as AGENT_FRESH_RESTART_ON_RETRY,
@@ -45,7 +47,6 @@ from bernstein.core.security.audit import (
     ChainScanCursor,
     ChainScanResult,
 )
-from bernstein.adapters.capability_profile import CapabilityVerdictTable
 
 # ---------------------------------------------------------------------------
 # Additive event-type constants

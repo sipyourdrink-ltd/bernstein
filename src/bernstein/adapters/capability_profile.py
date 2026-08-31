@@ -593,7 +593,7 @@ class CapabilityVerdictTable:
             The verdict table.
         """
         rows: list[tuple[str, str, tuple[str, ...]]] = []
-        for profile, (_, unmet) in zip(candidates, unmet_results):
+        for profile, (_, unmet) in zip(candidates, unmet_results, strict=True):
             rows.append((profile.name, profile.profile_hash, unmet))
         return CapabilityVerdictTable(tuple(rows))
 
