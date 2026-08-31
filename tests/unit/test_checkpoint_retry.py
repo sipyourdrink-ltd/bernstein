@@ -288,7 +288,7 @@ class TestDecideRetry:
         )
         assert decision.effective_mode is RetryMode.WARM
         assert decision.workspace_match is True
-        assert decision.downgrade_reason == ""
+        assert decision.downgrade_reason is None
         assert decision.checkpoint_session_id == "sess-abc"
         assert decision.checkpoint_event_hash == "a" * 64
         assert "pytest" in decision.corrective_instruction
@@ -381,7 +381,7 @@ class TestDecideRetry:
             actual_workspace_hash=workspace_hash(tree),
         )
         assert decision.effective_mode is RetryMode.COLD
-        assert decision.downgrade_reason == ""
+        assert decision.downgrade_reason is None
         assert decision.corrective_instruction == ""
 
     def test_fork_downgrades_to_warm_for_resume_only_adapter(self, tmp_path: Path) -> None:
