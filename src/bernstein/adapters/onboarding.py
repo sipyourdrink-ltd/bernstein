@@ -42,6 +42,7 @@ import yaml
 from bernstein.adapters._contract import _run_capture, _sandbox_env
 from bernstein.adapters.capability_profile import AdapterCapabilityProfile, InvocationSpec
 from bernstein.adapters.conformance import GoldenTranscript, StepResult, TranscriptResult, TranscriptStep
+from bernstein.adapters.draft import Draft, draft_from_evidence
 
 #: Per-command timeout for probe invocations.
 _PROBE_TIMEOUT_SECONDS = 30
@@ -59,6 +60,7 @@ __all__ = [
     "HeldOutInvocation",
     "ProbeEvidence",
     "derive_held_out_invocations",
+    "draft_from_probe",
     "probe_cli",
     "record_golden_transcript",
     "replay_held_out_invocations",
@@ -128,6 +130,58 @@ def probe_cli(binary: str, out_dir: Path) -> list[ProbeEvidence]:
         }
         evidence.append(_write_evidence(out_dir, record))
     return evidence
+
+
+def _help_evidence(evidence: Sequence[ProbeEvidence]) -> ProbeEvidence:
+    """Select the ``--help`` capture out of one probe run's evidence list.
+
+    :func:`probe_cli` always emits evidence in the fixed order it declares
+    its commands, but callers should not depend on that order; this walks
+    the list and matches on the recorded command string instead.
+
+    Raises:
+        ValueError: No evidence entry recorded a ``--help`` invocation.
+    """
+    for item in evidence:
+        if item.command.endswith(" --help"):
+            return item
+    raise ValueError("probe evidence has no --help capture to draft from")
+
+
+def draft_from_probe(
+    binary: str,
+    out_dir: Path,
+    *,
+    required_fields: set[str] | None = None,
+) -> Draft:
+    """Probe ``binary`` and draft a capability profile from its ``--help`` capture.
+
+    This is the caller :func:`~bernstein.adapters.draft.draft_from_evidence`
+    was missing (issue #3763): it wires a real, freshly run :func:`probe_cli`
+    capture into drafting, so a candidate profile can be produced from an
+    installed CLI directly rather than only from a hand-written evidence
+    fixture in a test. ``out_dir`` receives the raw probe evidence exactly as
+    :func:`probe_cli` already writes it, so the drafted profile's provenance
+    stays inspectable after this call returns.
+
+    Args:
+        binary: The CLI binary name to probe (resolved via ``PATH``).
+        out_dir: Directory receiving the probe evidence files.
+        required_fields: Forwarded to
+            :func:`~bernstein.adapters.draft.draft_from_evidence`; field
+            names drafting must resolve from evidence or refuse, by name.
+
+    Returns:
+        The :class:`~bernstein.adapters.draft.Draft` built from the probe's
+        ``--help`` capture.
+
+    Raises:
+        ValueError: Drafting could not resolve a required field (see
+            :func:`~bernstein.adapters.draft.draft_from_evidence`).
+    """
+    evidence = probe_cli(binary, out_dir)
+    help_evidence = _help_evidence(evidence)
+    return draft_from_evidence(help_evidence.path, required_fields=required_fields)
 
 
 # ---------------------------------------------------------------------------
