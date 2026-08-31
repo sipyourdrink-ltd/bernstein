@@ -58,12 +58,12 @@ _DOCS = _REPO_ROOT / "docs"
 # ``-based`` and ``-compatible``: "File-based", "Role-based" and
 # "OpenAI-compatible" state how something is implemented or what it
 # interoperates with, which is description, not resemblance.
-_COMPARATIVE_MODIFIER = r"(?:style|styled|inspired|like|esque|flavou?red|clone)"
+_COMPARATIVE_MODIFIER = r"(?:style|styled|inspired|like|esque|flavoured|flavored|clone)"
 
 _HYPHENATED = re.compile(rf"\b([A-Z][A-Za-z0-9.]{{1,24}})-{_COMPARATIVE_MODIFIER}\b")
 
 _PHRASAL = re.compile(
-    r"\b(?:inspired\s+by|similar\s+to|modell?ed\s+(?:on|after)|a\s+port\s+of"
+    r"\b(?:inspired\s+by|similar\s+to|(?:modelled|modeled)\s+(?:on|after)|a\s+port\s+of"
     r"|an?\s+alternative\s+to|compared\s+(?:to|with)|unlike|in\s+the\s+style\s+of"
     r"|equivalent\s+of|answer\s+to|drop-in\s+replacement\s+for)\s+"
     r"([A-Z][A-Za-z0-9.]{1,24})"
