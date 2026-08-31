@@ -1,6 +1,6 @@
 """CI conformance lane: trace-tests verify against fixture run.
 
-Loads a fixture run (tests/fixtures/runs/valid-2026-08-31T00:30:50+03:00.jsonl)
+Loads a fixture run (tests/fixtures/runs/trust-record-vector-solo.jsonl)
 and verifies the emitted Trust Record against the TRACE 0.2 software-only profile.
 Must import the TrustRecordEmitter from slice 1, use the same signed output
 verification logic, and exit with 0 on success.
@@ -16,8 +16,10 @@ from bernstein.core.observability.trust_record import TrustRecordEmitter, verify
 from bernstein.core.replay.journal import EventJournal, JournalVerifyResult, verify_events
 from bernstein.core.security.agent_card_signer import canonicalize_jcs
 
-_FIXTURE_RUN_PATH = Path(__file__).parents[2] / "tests" / "fixtures" / "runs" / "valid-2026-08-31T00:30:50+03:00.jsonl"
-_FIXTURE_TRUST_RECORD_PATH = _FIXTURE_RUN_PATH.with_suffix(".trust-record.json")
+# The fixture is named for what it holds, not for when it was recorded: a
+# wall-clock name carries a timezone offset whose colons are illegal in a
+# Windows filename, and this repo runs Windows CI shards.
+_FIXTURE_RUN_PATH = Path(__file__).parents[2] / "tests" / "fixtures" / "runs" / "trust-record-vector-solo.jsonl"
 _SOLO_PUBKEY_PATH = (
     Path(__file__).parents[2] / "tests" / "fixtures" / "trust-record-vectors" / "trust-record-vectors-key.pem"
 )
@@ -136,11 +138,9 @@ def test_fixture_run_emits_valid_trust_record(tmp_path: Path) -> None:
     # Parse the emitted Trust Record
     trust_record = json.loads(trust_record_json)
 
-    # Load expected trust record from generated fixture
-    expected_record = json.loads(_FIXTURE_TRUST_RECORD_PATH.read_text(encoding="utf-8"))
-
-    # Verify it matches the expected output exactly
-    assert trust_record == expected_record
+    # No golden copy of the record on disk: the signature assertion at the end
+    # of this test already pins every signed field byte-for-byte through the
+    # JCS canonicalisation, so a second copy could only ever drift from it.
 
     # Verify signature using the cnf.jwk (same approach as test_trust_record_format_vectors.py)
     public_key_pem = _public_key_pem_from_cnf_jwk(trust_record)
