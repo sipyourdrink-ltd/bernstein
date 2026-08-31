@@ -11,6 +11,11 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 from enum import Enum
+from inspect import Parameter
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 _PK = inspect.Parameter
 
@@ -34,8 +39,8 @@ class SignatureChange:
 
 
 def _check_removed_or_changed_params(
-    params_before: dict[str, inspect.Parameter],
-    params_after: dict[str, inspect.Parameter],
+    params_before: Mapping[str, Parameter],
+    params_after: Mapping[str, Parameter],
 ) -> list[SignatureChange]:
     """Detect removed required params and parameter kind regressions."""
     changes: list[SignatureChange] = []
@@ -59,8 +64,8 @@ def _check_removed_or_changed_params(
 
 
 def _check_added_required_params(
-    params_before: dict[str, inspect.Parameter],
-    params_after: dict[str, inspect.Parameter],
+    params_before: Mapping[str, Parameter],
+    params_after: Mapping[str, Parameter],
 ) -> list[SignatureChange]:
     """Detect newly added required parameters."""
     changes: list[SignatureChange] = []

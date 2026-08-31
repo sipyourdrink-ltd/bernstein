@@ -1678,7 +1678,8 @@ class TaskNotificationManager:
 
     def __init__(self):
         self.notifications: list[AgentStatusNotification] = []
-        self._subscribers: list[asyncio.Queue] = []
+        # 1. Add generic type to the list
+        self._subscribers: list[asyncio.Queue[AgentStatusNotification]] = []
         self._lock = asyncio.Lock()
         self._max_notifications = 1000  # Keep last 1000 notifications
 
@@ -1699,14 +1700,17 @@ class TaskNotificationManager:
                 except Exception as e:
                     logger.warning(f"Failed to notify subscriber: {e}")
 
-    async def subscribe(self) -> asyncio.Queue:
+    # 2. Add generic type to return value
+    async def subscribe(self) -> asyncio.Queue[AgentStatusNotification]:
         """Subscribe to agent status notifications."""
-        queue = asyncio.Queue()
+        # 3. Add type annotation to the variable
+        queue: asyncio.Queue[AgentStatusNotification] = asyncio.Queue()
         async with self._lock:
             self._subscribers.append(queue)
         return queue
 
-    async def unsubscribe(self, queue: asyncio.Queue) -> None:
+    # 4. Add generic type to parameter
+    async def unsubscribe(self, queue: asyncio.Queue[AgentStatusNotification]) -> None:
         """Unsubscribe from agent status notifications."""
         async with self._lock:
             if queue in self._subscribers:

@@ -106,7 +106,7 @@ from bernstein.core.task_store import TaskStore as TaskStore
 def __getattr__(name: str) -> _Any:
     """Lazy module-level attribute for ``app``."""
     if name == "app":
-        from bernstein.core import server_app
+        from bernstein.core import server_app  # type: ignore[attr-defined]  # meta-path redirect
 
         return server_app.__getattr__("app")
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

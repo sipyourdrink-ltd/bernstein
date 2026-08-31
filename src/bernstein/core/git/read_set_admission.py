@@ -66,7 +66,7 @@ def check_read_set_changed(
     try:
         diff_result = run_git(
             ["diff", "--name-only", base_commit, target_branch],
-            cwd=worktree_root,
+            cwd=Path(worktree_root),
         )
         # Split output into lines and filter out empty lines
         changed_files = set(line.strip() for line in diff_result.stdout.splitlines() if line.strip())
@@ -85,7 +85,7 @@ def check_read_set_changed(
             try:
                 old_commit_output = run_git(
                     ["log", "-1", "--format=%H", base_commit, "--", path],
-                    cwd=worktree_root,
+                    cwd=Path(worktree_root),
                 )
                 old_commit = old_commit_output.stdout.strip()
                 if not old_commit:
@@ -97,7 +97,7 @@ def check_read_set_changed(
             try:
                 new_commit_output = run_git(
                     ["log", "-1", "--format=%H", target_branch, "--", path],
-                    cwd=worktree_root,
+                    cwd=Path(worktree_root),
                 )
                 new_commit = new_commit_output.stdout.strip()
                 if not new_commit:

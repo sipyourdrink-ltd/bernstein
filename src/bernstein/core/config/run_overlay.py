@@ -155,9 +155,9 @@ def _walk_to_repo(workdir: Path) -> tuple[Path, Path] | None:
         return Path(os.path.normpath(root)), Path(os.path.normpath(git_dir))
 
     for candidate in (start, *start.parents):
-        git_dir = _git_dir_from_marker(candidate / _GIT_MARKER)
-        if git_dir is not None:
-            return candidate, git_dir
+        found_git_dir = _git_dir_from_marker(candidate / _GIT_MARKER)
+        if found_git_dir is not None:
+            return candidate, found_git_dir
     return None
 
 

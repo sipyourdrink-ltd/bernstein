@@ -93,6 +93,9 @@ def _ensure_task_enum(value: str, field_name: str) -> str:
     """
     from bernstein.core.tasks.models import Complexity, Scope, TaskType
 
+    # Explicitly annotate the variable so mypy knows it can be any of the three
+    enum_cls: type[Complexity] | type[Scope] | type[TaskType]
+
     if field_name == "complexity":
         enum_cls = Complexity
     elif field_name == "scope":
@@ -107,7 +110,6 @@ def _ensure_task_enum(value: str, field_name: str) -> str:
         valid = ", ".join(m.value for m in enum_cls)
         raise ValueError(f"{field_name} must be one of: {valid}") from None
     return value
-
 
 def _ensure_relative_owned_files(value: list[str]) -> list[str]:
     """Reject ``owned_files`` entries that do not name a path under a workdir.
