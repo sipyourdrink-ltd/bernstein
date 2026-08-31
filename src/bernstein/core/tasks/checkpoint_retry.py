@@ -92,7 +92,8 @@ class RetryMode(StrEnum):
 #: freeform text -- so the resumed session's new input is auditable.
 CORRECTIVE_INSTRUCTION_TEMPLATES: dict[str, str] = {
     "gate_failure": (
-        "Your previous attempt on this task failed the {gate_name} gate.\n"
+        "Task failed. Retry with corrective instruction:\n"
+        "The {gate_name} gate failed.\n"
         "Gate output:\n{gate_output}\n\n"
         "Fix that specific failure, re-run the gate, and finish the task. "
         "Do not redo work that already passed."
@@ -387,7 +388,7 @@ class RetryDecision:
     recorded_workspace_hash: str
     actual_workspace_hash: str
     workspace_match: bool
-    downgrade_reason: str
+    downgrade_reason: str | None
     corrective_template_id: str
     corrective_instruction: str
     decision_hash: str
@@ -475,7 +476,7 @@ def decide_retry(
         checkpoint is not None and bool(actual_workspace_hash) and actual_workspace_hash == checkpoint.workspace_hash
     )
 
-    downgrade_reason = ""
+    downgrade_reason: str | None = None
     if force_cold:
         effective = RetryMode.COLD
         downgrade_reason = "fresh_context_restart"

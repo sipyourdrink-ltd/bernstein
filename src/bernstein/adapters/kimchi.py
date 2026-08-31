@@ -5,17 +5,13 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from bernstein.adapters.acp_channel import iter_process_frames, run_acp_channel, spawn_acp_subprocess
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
-from bernstein.adapters.acp_channel import iter_process_frames, run_acp_channel, spawn_acp_subprocess
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
-
-if TYPE_CHECKING:
-    from bernstein.core.replay.journal import EventJournal
 
 #: Credentials and endpoint overrides forwarded into the spawned environment.
 #: ``KIMCHI_API_KEY`` authenticates hosted execution; the two host variables
@@ -134,6 +130,7 @@ class KimchiAdapter(CLIAdapter):
                 cwd=workdir,
                 env=env,
                 log_path=log_path,
+                stdin=subprocess.DEVNULL,
             )
         except FileNotFoundError as exc:
             raise RuntimeError(

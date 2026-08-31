@@ -70,7 +70,7 @@ def _spawn_and_capture(adapter: KimchiAdapter, tmp_path: Path, **overrides: Any)
     kwargs.update(overrides)
     captured_cmd = []
     captured_popen_kwargs = []
-    
+
     def make_spawn_acp(cmd, **kw):
         captured_cmd.extend(cmd)
         # Create a mock Popen that will be returned by subprocess.Popen
@@ -79,14 +79,14 @@ def _spawn_and_capture(adapter: KimchiAdapter, tmp_path: Path, **overrides: Any)
         # Capture the kwargs that would be passed to subprocess.Popen
         captured_popen_kwargs.append(kw)
         return mock_popen_result
-    
+
     with patch("subprocess.Popen", make_spawn_acp), \
          patch("bernstein.adapters.kimchi.run_acp_channel") as mock_run_acp, \
          patch("bernstein.adapters.kimchi.iter_process_frames") as mock_iter_frames:
         mock_acp_result = MagicMock()
         mock_run_acp.return_value = mock_acp_result
         mock_iter_frames.return_value = iter([b'{}'])  # Mock frame iterator
-        
+
         result = adapter.spawn(**kwargs)
     assert result.pid == 12345
     return captured_cmd, (captured_popen_kwargs[0] if captured_popen_kwargs else {})

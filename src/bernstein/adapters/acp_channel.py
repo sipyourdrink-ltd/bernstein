@@ -116,12 +116,17 @@ def spawn_acp_subprocess(
     cwd: Path,
     env: dict[str, str],
     log_path: Path,
+    stdin: int | None = subprocess.DEVNULL,
 ) -> subprocess.Popen[bytes]:
     """Spawn an upstream CLI as an ACP subprocess with a piped JSON-RPC stdout.
 
     The process's stdout is a pipe (line-delimited JSON-RPC frames the client
     transport reads); stderr is redirected to *log_path* for operator
-    diagnostics. The caller owns draining stdout via
+    diagnostics. stdin defaults to ``DEVNULL`` because an ACP-speaking CLI
+    expects a JSON-RPC peer the orchestrator does not provide here, and
+    inheriting the parent's stdin would leave the process waiting for an
+    ``initialize`` request that never arrives until the timeout watchdog
+    killed it. The caller owns draining stdout via
     :func:`iter_process_frames` and reaping the process.
 
     Args:
@@ -129,6 +134,8 @@ def spawn_acp_subprocess(
         cwd: Working directory for the process.
         env: The filtered environment for the process.
         log_path: File to capture the process's stderr into.
+        stdin: File object/descriptor for the child's stdin. Defaults to
+            ``DEVNULL``; pass ``None`` to inherit the parent's stdin.
 
     Returns:
         The spawned :class:`subprocess.Popen`.
@@ -139,6 +146,7 @@ def spawn_acp_subprocess(
         cmd,
         cwd=cwd,
         env=env,
+        stdin=stdin,
         stdout=subprocess.PIPE,
         stderr=stderr_file,
         start_new_session=True,
