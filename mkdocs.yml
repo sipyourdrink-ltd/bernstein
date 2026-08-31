@@ -593,6 +593,7 @@ nav:
           - Graphs: architecture/graphs.md
           - Dependency resolver: architecture/DEPENDENCY_RESOLVER.md
           - Quality pipeline: architecture/quality-pipeline.md
+          - Merge-tree integration probe: architecture/merge-tree-probe.md
           - Model routing: architecture/model-routing.md
           - State persistence: architecture/state-persistence.md
           - CAS store: architecture/cas-store.md
