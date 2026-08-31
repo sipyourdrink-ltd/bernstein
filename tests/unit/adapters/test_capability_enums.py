@@ -113,17 +113,22 @@ def test_only_the_computer_use_family_declares_artifact_output_mode() -> None:
 
     ``computer_use`` fronts an external agent whose unit of work is the
     signed per-action record, not a commit (#3110); ``garak`` runs a probe
-    suite whose unit of work is the scan report. Every coding adapter keeps
-    ``git-diff`` - growing this set is a deliberate act, not a default drift,
-    and each member needs a comment at its declaration saying what its unit
-    of work is instead.
+    suite whose unit of work is the scan report; ``holmesgpt`` is a read-only
+    investigation CLI whose unit of work is the conclusion artifact (#3123).
+    Every coding adapter keeps ``git-diff`` - growing this set is a deliberate
+    act, not a default drift, and each member needs a comment at its
+    declaration saying what its unit of work is instead.
     """
     non_git_diff = {name for name, s in STRATEGY_MATRIX.items() if s.output_mode is not OutputMode.GIT_DIFF}
-    assert non_git_diff == {"computer_use", "garak"}
+    assert non_git_diff == {"computer_use", "garak", "holmesgpt"}
 
 
 def test_computer_use_declares_artifact_output_mode() -> None:
     assert strategy_for("computer_use").output_mode is OutputMode.ARTIFACT
+
+
+def test_holmesgpt_declares_artifact_output_mode() -> None:
+    assert strategy_for("holmesgpt").output_mode is OutputMode.ARTIFACT
 
 
 def test_output_mode_is_a_closed_two_value_axis() -> None:

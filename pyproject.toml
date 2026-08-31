@@ -487,6 +487,10 @@ artifacts = [
 # `bernstein workflow list` / `... run <name>` resolve immediately
 # without requiring a source checkout.
 "templates/workflows" = "bernstein/_default_templates/workflows"
+# Plan templates (#4877) for `bernstein templates list|use`. They lived at
+# the repo root under plans/, which is the user's own working directory, and
+# so shipped in no wheel at all - the command was dead on every install.
+"templates/plans" = "bernstein/_default_templates/plans"
 # First-class recipe library - parameterised workflows for common
 # operator tasks (refactor-glob, bump-dependency, add-tests-for-module,
 # license-audit, regenerate-docs).  Shipped in the wheel so

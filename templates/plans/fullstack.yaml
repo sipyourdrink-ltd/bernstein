@@ -4,7 +4,7 @@
 # Stages run sequentially; steps within a stage run in parallel.
 #
 # Usage:
-#   cp plans/templates/fullstack.yaml plans/my-app.yaml
+#   bernstein templates use fullstack plans/my-app.yaml
 #   # Edit name, description, and step details
 #   bernstein run plans/my-app.yaml
 
