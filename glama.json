@@ -1,6 +1,6 @@
 {
   "$schema": "https://glama.ai/mcp/schemas/server.json",
-  "description": "Deterministic orchestrator for CLI coding agents. No model in the coordination loop, so parallel runs in per-task git worktrees replay byte-identically. Signed lineage and an opt-in HMAC audit chain, air-gap friendly.",
+  "description": "The open-source governance layer for AI agents. No model in the coordination loop, so parallel runs in per-task git worktrees replay byte-identically. Signed lineage and an opt-in HMAC audit chain, air-gap friendly.",
   "maintainers": [
     "chernistry"
   ]

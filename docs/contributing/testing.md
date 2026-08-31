@@ -29,6 +29,7 @@ locally without waiting for the cloud runner.
 | **diff-cover** (LEVEL 1)    | Changed lines below the committed diff-coverage floor             | PR (advisory)       |
 | **coverage ratchet** (LEVEL 2) | Total coverage dropped below the committed high-water mark      | push to main (advisory) |
 | **import-linter**           | Architecture-contract violations (cross-package imports)          | PR                  |
+| **test-count drop** (#4873) | Touched test module lost collected cases vs merge base            | PR (Repo hygiene)   |
 | **No-network guard**        | Unit tests that open a real outbound connection (flaky by design) | PR (every unit run) |
 | **Spawned-process identity race** | Duplicate run identities hidden by thread-only locking      | PR (identity anchor unit suite) |
 | **ruff** + **typos**        | Lint, format drift, common typos                                  | PR                  |
@@ -48,6 +49,33 @@ isolated VM contexts. They cover stored and system theme resolution, blocked
 storage, unavailable or throwing browser APIs, inaccessible document roots,
 and the matching `ThemeProvider` storage fallback. They do not start a web
 server or make network requests.
+
+Test-count drop vs merge base (#4873)
+
+Repo hygiene compares `pytest --collect-only` counts for every touched
+`test_*.py` / `*_test.py` against the merge base. A drop fails the job
+outright (no committed ratchet baseline — overrides are the escape hatch).
+
+Outcome words are distinct: `OK` means compared and clean; `NOT_RUN` means
+no merge base so the guard never compared (not a clean bill of health).
+
+Parametrized consolidation (N cases → one `@pytest.mark.parametrize` with N
+values) keeps the collected count stable and stays green. Intentional drops
+need a PR-body override a reviewer can see:
+
+```text
+test-count-drop: tests/unit/foo/test_bar.py -3
+```
+
+Unused overrides fail (stale). A deleted test whose matching `src/**/<stem>.py`
+was also deleted is carved out. An import failure under collect-only is named
+`cause=import_error` in the message so it is not mistaken for a silent count
+drop. Locally:
+
+```bash
+uv run python scripts/check_test_count_drop.py --base origin/main
+uv run python scripts/check_test_count_drop.py --base origin/main --pr-body "$(gh pr view --json body -q .body)"
+```
 
 ## Run any of the above locally
 

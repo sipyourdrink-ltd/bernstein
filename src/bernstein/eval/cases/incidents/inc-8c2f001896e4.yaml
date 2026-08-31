@@ -1,0 +1,14 @@
+id: inc-8c2f001896e4
+severity: P2
+source_incident: "dlq:728118b19a19485f"
+owner: qa
+created_at: 1788187313.271
+expected_outcome: "Agent should complete the task; flake-tolerant retry is acceptable. (root cause: max_retries_exceeded)"
+tags:
+  - max_retries_exceeded
+prompt: |
+  Reproduce and resolve the following terminal failure (role=qa).
+  Task: Add test: exported record verifies offline
+  Failure reason: max_retries_exceeded
+  Last error (trimmed):
+  Agent qa-eb00467d died; janitor failed: ['test_passes: uv run pytest tests/unit/cli/test_advanced_cmd_trace.py::test_trace_export_record_verifies_offline -x -q (non-zero exit)']

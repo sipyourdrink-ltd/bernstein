@@ -39,7 +39,7 @@ REDIRECT_LEDGER_POLICY: Final[RedirectLedgerPolicy] = RedirectLedgerPolicy(
     ),
 )
 
-REVIEWED_REDIRECT_MAP_DIGEST: Final[str] = "18052bdf2b5849af03e23ccc51e86638bfa615f2a0dd23b4a0f520b7b2394f84"
+REVIEWED_REDIRECT_MAP_DIGEST: Final[str] = "37372734c9023e9417dd1d44000e2bf536aa1321834c2e9846002eae9e11d8ba"
 
 
 def redirect_map_digest(redirects: Mapping[str, str]) -> str:

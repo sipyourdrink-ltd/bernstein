@@ -78,7 +78,7 @@ def a2a_group() -> None:
 @click.option("--name", default="bernstein-orchestrator", show_default=True, help="Human-readable issuer name.")
 @click.option(
     "--description",
-    default="Bernstein, a deterministic orchestrator for CLI coding agents",
+    default="Bernstein, the open-source governance layer for AI agents",
     show_default=True,
     help="What the issuer does.",
 )

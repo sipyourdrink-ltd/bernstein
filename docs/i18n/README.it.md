@@ -8,14 +8,14 @@
 
 <br>
 
-<img alt="Bernstein - deterministic multi-agent CLI orchestration" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/banner-readme.webp" width="820">
+<img alt="Bernstein - the open-source governance layer for AI agents" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/banner-readme.webp" width="820">
 
 <br>
 
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
-### orchestrazione deterministica di agenti CLI multi-agente
-<!-- l10n: en="deterministic multi-agent CLI orchestration" hash="sha256:2cb1281992f1" -->
+### il layer di governance open source per agenti IA
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:739f0a7ad1af" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -38,7 +38,7 @@
 
 > **Stato: beta.** Mantenuto da una sola persona, in sviluppo attivo. Il numero di versione conta i rilasci, non la maturità: le versioni minori possono modificare le interfacce. Fissa la versione per qualsiasi dipendenza critica; le regressioni vengono risolte rapidamente, [segnalale](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein è un orchestratore deterministico per agenti di codifica CLI (Claude Code, Codex, Gemini CLI e oltre 40 altri). Li esegue in parallelo, controlla ciò che producono tramite gate e registra una quantità di dati sufficiente per consentire verifiche successive. Profilo di installazione air-gap incluso. Apache-2.0.
+Bernstein è il layer di governance open source per agenti IA. Uno scheduler deterministico - nessun modello nel loop di coordinamento - esegue gli agenti in parallelo, filtra ciò che producono con dei gate e registra ogni passo, così un run si può verificare a posteriori, offline, dai soli artefatti. Gli agenti CLI di codice funzionano subito (Claude Code, Codex, Gemini CLI e altri 40+), e lo stesso layer governa qualsiasi carico agentico: il deliverable può essere un diff, un report di ricerca, un dataset o un pacchetto di evidenze di audit. Profilo di installazione air-gap incluso. Apache-2.0.
 
 ### in sintesi
 <!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->
@@ -51,6 +51,87 @@ Quattro elementi lo contraddistinguono; tutto il resto sono dettagli.
 - **Ampio e locale.** Oltre 40 adapter per agenti CLI più un wrapper generico `--prompt`, stato basato su file, nessun passaggio SaaS, nessun piano dati di terze parti.
 
 L'elenco completo è disponibile nella [pagina delle funzionalità](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); la [matrice delle caratteristiche](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) costituisce l'indice esaustivo.
+
+### come appare un run
+<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+
+Un unico file YAML dichiara il run: fasi, ruoli, dipendenze e le condizioni sotto cui un nodo viene eseguito. Lo scheduler lo esegue come Python puro - nulla nel file è un prompt e nessun modello decide cosa succede dopo. Questo grafo produce un pacchetto di evidenze di audit; il file completo è in [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
+
+```yaml
+name: audit-evidence-pack
+version: "1.0.0"
+
+phases:
+  - name: scope
+    allowed_roles: [manager, architect]
+  - name: collect
+  - name: validate
+    allowed_roles: [qa, security]
+  - name: deliver
+    allowed_roles: [security, manager]
+
+nodes:
+  define-control-inventory:
+    phase: scope
+    role: architect
+
+  collect-audit-logs:
+    phase: collect
+    role: security
+    depends_on: [define-control-inventory]
+
+  # three more evidence streams collect in parallel:
+  # collect-sboms-and-attestations, collect-runbooks-and-policies,
+  # collect-eval-results
+
+  assemble-pack:
+    phase: validate
+    role: docs
+    depends_on:
+      - collect-audit-logs
+      - collect-sboms-and-attestations
+      - collect-runbooks-and-policies
+      - collect-eval-results
+
+  mock-auditor-pass:
+    phase: validate
+    role: qa
+    depends_on: [assemble-pack]
+
+  remediate-findings:
+    phase: collect
+    role: docs
+    depends_on:
+      - source: mock-auditor-pass
+        condition: "status == 'failed'"
+    retry:
+      max_attempts: 3
+      until: "status == 'done'"
+
+  sign-and-deliver:
+    phase: deliver
+    role: security
+    depends_on:
+      - source: mock-auditor-pass
+        condition: "status == 'done'"
+```
+
+```mermaid
+flowchart LR
+    inv[define-control-inventory] --> logs[collect-audit-logs]
+    inv --> sbom[collect-sboms-and-attestations]
+    inv --> rb[collect-runbooks-and-policies]
+    inv --> ev[collect-eval-results]
+    logs --> pack[assemble-pack]
+    sbom --> pack
+    rb --> pack
+    ev --> pack
+    pack --> gate{mock-auditor-pass}
+    gate -->|failed| fix["remediate-findings (retry x3)"]
+    gate -->|done| sign[sign-and-deliver]
+```
+
+Ogni nodo viene preso da un agente il cui ruolo è ammesso dalla fase; i recinti di ruolo e i gate di approvazione reggono qualunque cosa l'agente faccia dentro il task. Un nodo di codice termina dietro merge gate nel proprio git worktree. I nodi qui sopra terminano diversamente: un [contratto di artefatto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nomina il deliverable (report, dataset, scansione, log di azioni) e il nodo si chiude con una ricevuta di lineage firmata invece di un commit. Stesso scheduler, stesso journal, stessa verifica offline - che il grafo consegni codice, ricerca, un cambio ops o un mix dei tre. Grafi pronti per software, ricerca, documentazione, enterprise e workflow dei contributor vivono in [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### installazione in 30 secondi
 <!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->

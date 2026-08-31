@@ -8,14 +8,14 @@
 
 <br>
 
-<img alt="Bernstein - deterministic multi-agent CLI orchestration" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/banner-readme.webp" width="820">
+<img alt="Bernstein - the open-source governance layer for AI agents" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/banner-readme.webp" width="820">
 
 <br>
 
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
-### डिटर्मिनिस्टिक मल्टी-एजेंट CLI ऑर्केस्ट्रेशन
-<!-- l10n: en="deterministic multi-agent CLI orchestration" hash="sha256:2cb1281992f1" -->
+### AI एजेंटों के लिए ओपन-सोर्स गवर्नेंस लेयर
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:739f0a7ad1af" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -38,7 +38,7 @@
 
 > **स्थिति: beta।** अकेले मेंटेन किया जा रहा है, सक्रिय विकास में। वर्ज़न नंबर रिलीज़ गिनता है, परिपक्वता नहीं — माइनर वर्ज़न में भी इंटरफ़ेस बदल सकते हैं। जिस पर आप निर्भर हैं उसका वर्ज़न पिन कर लें; रिग्रेशन जल्दी ठीक होते हैं, [उन्हें दर्ज करें](https://github.com/sipyourdrink-ltd/bernstein/issues)।
 
-Bernstein, CLI कोडिंग एजेंट्स (Claude Code, Codex, Gemini CLI और 40 से ज़्यादा) के लिए एक डिटर्मिनिस्टिक ऑर्केस्ट्रेटर है। यह उन्हें समानांतर चलाता है, उनके बनाए काम पर गेट लगाता है, और रन का इतना रिकॉर्ड रखता है कि बाद में आप उसे जाँच सकें। एयर-गैप इंस्टॉल प्रोफ़ाइल साथ आती है। Apache-2.0।
+Bernstein AI एजेंटों के लिए ओपन-सोर्स गवर्नेंस लेयर है। एक डिटर्मिनिस्टिक शेड्यूलर - कोऑर्डिनेशन लूप में कोई मॉडल नहीं - एजेंटों को समानांतर चलाता है, उनके आउटपुट को गेट से जाँचता है और हर कदम रिकॉर्ड करता है, इसलिए रन को बाद में, ऑफ़लाइन, केवल आर्टिफ़ैक्ट्स से सत्यापित किया जा सकता है। CLI कोडिंग एजेंट सीधे काम करते हैं (Claude Code, Codex, Gemini CLI और 40+ अन्य), और यही लेयर किसी भी एजेंट वर्कलोड को गवर्न करती है: डिलिवरेबल एक diff, रिसर्च रिपोर्ट, डेटासेट या ऑडिट एविडेंस पैक हो सकता है। Air-gap इंस्टॉल प्रोफ़ाइल शामिल। Apache-2.0.
 
 ### एक नज़र में
 <!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->
@@ -51,6 +51,87 @@ Bernstein, CLI कोडिंग एजेंट्स (Claude Code, Codex, Gem
 - **व्यापक और लोकल।** 40 से ज़्यादा CLI एजेंट अडैप्टर, साथ में एक जेनेरिक `--prompt` रैपर, फ़ाइल-आधारित स्टेट, कोई SaaS हॉप नहीं, कोई थर्ड-पार्टी डेटा प्लेन नहीं।
 
 पूरी सूची [कैपेबिलिटी पेज](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) पर है; [फ़ीचर मैट्रिक्स](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) संपूर्ण अनुक्रमणिका है।
+
+### एक रन कैसा दिखता है
+<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+
+एक ही YAML फ़ाइल पूरे रन को घोषित करती है: फेज़, रोल, निर्भरताएँ और वे शर्तें जिनके तहत कोई नोड चलता ही है। शेड्यूलर इसे शुद्ध Python की तरह चलाता है - फ़ाइल में कुछ भी प्रॉम्प्ट नहीं है, और आगे क्या होगा यह कोई मॉडल तय नहीं करता। यह ग्राफ़ एक ऑडिट एविडेंस पैक बनाता है; पूरी फ़ाइल [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml) में है।
+
+```yaml
+name: audit-evidence-pack
+version: "1.0.0"
+
+phases:
+  - name: scope
+    allowed_roles: [manager, architect]
+  - name: collect
+  - name: validate
+    allowed_roles: [qa, security]
+  - name: deliver
+    allowed_roles: [security, manager]
+
+nodes:
+  define-control-inventory:
+    phase: scope
+    role: architect
+
+  collect-audit-logs:
+    phase: collect
+    role: security
+    depends_on: [define-control-inventory]
+
+  # three more evidence streams collect in parallel:
+  # collect-sboms-and-attestations, collect-runbooks-and-policies,
+  # collect-eval-results
+
+  assemble-pack:
+    phase: validate
+    role: docs
+    depends_on:
+      - collect-audit-logs
+      - collect-sboms-and-attestations
+      - collect-runbooks-and-policies
+      - collect-eval-results
+
+  mock-auditor-pass:
+    phase: validate
+    role: qa
+    depends_on: [assemble-pack]
+
+  remediate-findings:
+    phase: collect
+    role: docs
+    depends_on:
+      - source: mock-auditor-pass
+        condition: "status == 'failed'"
+    retry:
+      max_attempts: 3
+      until: "status == 'done'"
+
+  sign-and-deliver:
+    phase: deliver
+    role: security
+    depends_on:
+      - source: mock-auditor-pass
+        condition: "status == 'done'"
+```
+
+```mermaid
+flowchart LR
+    inv[define-control-inventory] --> logs[collect-audit-logs]
+    inv --> sbom[collect-sboms-and-attestations]
+    inv --> rb[collect-runbooks-and-policies]
+    inv --> ev[collect-eval-results]
+    logs --> pack[assemble-pack]
+    sbom --> pack
+    rb --> pack
+    ev --> pack
+    pack --> gate{mock-auditor-pass}
+    gate -->|failed| fix["remediate-findings (retry x3)"]
+    gate -->|done| sign[sign-and-deliver]
+```
+
+हर नोड वही एजेंट लेता है जिसका रोल फेज़ अनुमति देता है; रोल की बाड़ और अप्रूवल गेट टिके रहते हैं, एजेंट टास्क के भीतर चाहे जो करे। कोड नोड अपने git worktree में merge गेट्स के पीछे पूरा होता है। ऊपर के नोड अलग तरह से पूरे होते हैं: [आर्टिफ़ैक्ट कॉन्ट्रैक्ट](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) डिलिवरेबल का नाम तय करता है (रिपोर्ट, डेटासेट, स्कैन, एक्शन लॉग), और नोड कमिट की जगह हस्ताक्षरित lineage रसीद पर बंद होता है। वही शेड्यूलर, वही जर्नल, वही ऑफ़लाइन सत्यापन - ग्राफ़ कोड ले जाए, रिसर्च, ops बदलाव या तीनों का मिश्रण। सॉफ़्टवेयर, रिसर्च, डॉक्स, एंटरप्राइज़ और कंट्रीब्यूटर वर्कफ़्लो के तैयार ग्राफ़ [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) में हैं।
 
 ### 30 सेकंड में इंस्टॉल
 <!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->

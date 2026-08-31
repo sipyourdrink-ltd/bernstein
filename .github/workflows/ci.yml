@@ -527,6 +527,25 @@ jobs:
         run: |
           uv run python scripts/render_tui_snapshot.py
           uv run python scripts/bind_webui_renders.py
+      - name: Test-count drop vs merge base (#4873)
+        # Catches a touched test module that still collects but lost cases
+        # relative to the merge base. Parametrized consolidation stays green
+        # (collect-only counts). Override via PR body:
+        #   test-count-drop: tests/unit/foo.py -N
+        # Without a base (non-PR / missing ref) the script skips — never fake-green.
+        env:
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
+          BASE_REF: ${{ github.base_ref || 'main' }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          BASE=""
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            git fetch --no-tags origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}" || true
+            BASE="$(git merge-base "origin/${BASE_REF}" HEAD 2>/dev/null || true)"
+          elif [ "$EVENT_NAME" = "merge_group" ]; then
+            BASE="${{ github.event.merge_group.base_sha }}"
+          fi
+          uv run python scripts/check_test_count_drop.py --base "${BASE}"
 
   lint:
     name: Lint

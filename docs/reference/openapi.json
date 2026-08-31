@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Bernstein Task Server",
-    "description": "Bernstein REST API - deterministic orchestrator for CLI coding agents, one git worktree per task.\n\n## Authentication\n\nAuthentication is ENABLED by default.  Include a Bearer token in all requests:\n\n```\nAuthorization: Bearer <token>\n```\n\nTo run without auth (development only), set `BERNSTEIN_AUTH_DISABLED=1` - this logs a loud warning and passes every request through.\n\nPublic endpoints (no auth required): `/health`, `/health/ready`, `/health/live`, `/ready`, `/alive`, `/.well-known/agent.json`, `/docs`, `/openapi.json`, and the auth-flow endpoints (`/auth/login`, `/auth/oidc/callback`, etc.).\n\nWebhook and hook endpoints (`/webhook`, `/webhooks/*`, `/hooks/{session_id}`) authenticate via HMAC-SHA256 signatures - they do NOT accept Bearer tokens.\n\n## Base URL\n\nDefault: `http://127.0.0.1:8052`. Override with env vars `BERNSTEIN_HOST` and `BERNSTEIN_PORT`.\n\n## Error Format\n\nAll errors return JSON with a `detail` field:\n\n```json\n{\"detail\": \"Task not found: task-xyz\"}\n```\n\n| Status | Meaning |\n|--------|---------|\n| 400 | Bad request (validation error) |\n| 401 | Unauthorized (missing/invalid token) |\n| 403 | Forbidden (IP not in allowlist) |\n| 404 | Resource not found |\n| 409 | Conflict (task already in terminal state) |\n| 429 | Rate limited - respect the `Retry-After` header |\n| 500 | Internal server error |\n",
+    "description": "Bernstein REST API - the open-source governance layer for AI agents, one git worktree per task.\n\n## Authentication\n\nAuthentication is ENABLED by default.  Include a Bearer token in all requests:\n\n```\nAuthorization: Bearer <token>\n```\n\nTo run without auth (development only), set `BERNSTEIN_AUTH_DISABLED=1` - this logs a loud warning and passes every request through.\n\nPublic endpoints (no auth required): `/health`, `/health/ready`, `/health/live`, `/ready`, `/alive`, `/.well-known/agent.json`, `/docs`, `/openapi.json`, and the auth-flow endpoints (`/auth/login`, `/auth/oidc/callback`, etc.).\n\nWebhook and hook endpoints (`/webhook`, `/webhooks/*`, `/hooks/{session_id}`) authenticate via HMAC-SHA256 signatures - they do NOT accept Bearer tokens.\n\n## Base URL\n\nDefault: `http://127.0.0.1:8052`. Override with env vars `BERNSTEIN_HOST` and `BERNSTEIN_PORT`.\n\n## Error Format\n\nAll errors return JSON with a `detail` field:\n\n```json\n{\"detail\": \"Task not found: task-xyz\"}\n```\n\n| Status | Meaning |\n|--------|---------|\n| 400 | Bad request (validation error) |\n| 401 | Unauthorized (missing/invalid token) |\n| 403 | Forbidden (IP not in allowlist) |\n| 404 | Resource not found |\n| 409 | Conflict (task already in terminal state) |\n| 429 | Rate limited - respect the `Retry-After` header |\n| 500 | Internal server error |\n",
     "version": "1.0.0"
   },
   "paths": {
@@ -2971,7 +2971,7 @@
     "/cluster/nodes": {
       "post": {
         "summary": "Register Node",
-        "description": "Register a new node in the cluster.",
+        "description": "Register a node, or update the entry of one that is re-registering.",
         "operationId": "register_node_cluster_nodes_post",
         "requestBody": {
           "required": true,
@@ -11730,7 +11730,7 @@
     "/api/v1/cluster/nodes": {
       "post": {
         "summary": "Register Node",
-        "description": "Register a new node in the cluster.",
+        "description": "Register a node, or update the entry of one that is re-registering.",
         "operationId": "register_node_api_v1_cluster_nodes_post",
         "requestBody": {
           "required": true,

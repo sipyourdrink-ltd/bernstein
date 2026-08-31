@@ -1360,6 +1360,151 @@ def trace_project_cmd(run_id: str, workdir: str, no_stability: bool, as_json: bo
     )
 
 
+@trace_cmd.command("export")
+@click.argument("run_id", required=False)
+@click.option(
+    "--out",
+    "-o",
+    "output",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Write the trust record to PATH instead of stdout.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit the canonical JSON form (same as default output).",
+)
+@click.option(
+    "--last",
+    "latest",
+    is_flag=True,
+    default=False,
+    help="Use the most recently finished run in .sdd/runs/.",
+)
+@click.option(
+    "--sdd-dir",
+    "sdd_dir",
+    type=click.Path(file_okay=False),
+    default=None,
+    help="Path to .sdd/ directory.",
+)
+def trace_export_cmd(
+    run_id: str | None,
+    output: str | None,
+    as_json: bool,
+    latest: bool,
+    sdd_dir: str | None,
+) -> None:
+    """Export ``RUN_ID``'s execution evidence as a TRACE 0.2 Trust Record.
+
+    \b
+    bernstein trace export <RUN_ID> [--out PATH] [--json] [--last]
+
+    The record is a signed JWT-style JSON blob (Ed25519) proving the
+    journal chain is intact and binding the run to the install identity.
+    It is generated entirely offline using local signing keys.
+
+    \b
+    --last: find the newest finished run in .sdd/runs/ (a directory with
+            a non-empty journal.jsonl), sorted by modification time.
+    --out: write the canonical JSON string to a file. Default is stdout.
+    --json: emit the canonical JSON form (identical to the default).
+    --sdd-dir: explicit .sdd/ path; defaults to ./.sdd/ or ./.
+
+    Exit codes: 0 = exported, 1 = run not found / chain broken / emit error.
+    """
+    # Gate on trace extra
+    try:
+        import agentrust_trace as _trace_lib  # type: ignore[import-untyped,unused-ignore]
+
+        del _trace_lib
+    except ImportError:
+        console.print("[red]The trace extra is required:[/red] pip install bernstein[trace]")
+        raise SystemExit(1) from None
+
+    # Resolve SDD_DIR
+    if sdd_dir:
+        sdd_path = Path(sdd_dir)
+    else:
+        cwd = Path.cwd()
+        sdd_path = cwd / ".sdd" if (cwd / ".sdd").exists() else Path(".sdd")
+
+    # Resolve run_id
+    if latest:
+        runs_dir = sdd_path / "runs"
+        if not runs_dir.exists():
+            console.print(f"[red]No runs directory:[/red] {runs_dir}")
+            raise SystemExit(1)
+
+        candidate_dirs: list[Path] = []
+        from bernstein.core.replay.journal import contained_run_journal
+
+        for item in runs_dir.iterdir():
+            if item.is_dir():
+                journal_file = contained_run_journal(runs_dir, item.name, "journal.jsonl")
+                if journal_file is not None and journal_file.exists() and journal_file.stat().st_size > 0:
+                    candidate_dirs.append(item)
+
+        if not candidate_dirs:
+            console.print(f"[yellow]No finished runs found under[/yellow] {runs_dir}")
+            raise SystemExit(1)
+
+        latest_dir = max(candidate_dirs, key=lambda p: p.stat().st_mtime_ns)
+        target_run_id = latest_dir.name
+    else:
+        if not run_id:
+            console.print("[red]Usage:[/red] bernstein trace export <RUN_ID> [--out PATH] [--json] [--last]")
+            raise SystemExit(2)
+        target_run_id = run_id
+
+    # Locate and verify the journal
+    from bernstein.core.replay.journal import JournalPathError, run_journal_path, verify_journal
+
+    try:
+        journal_path = run_journal_path(sdd_path, target_run_id)
+    except JournalPathError:
+        console.print(f"[red]No such run:[/red] {target_run_id}")
+        raise SystemExit(1) from None
+
+    if not journal_path.exists():
+        console.print(f"[red]No such run:[/red] {target_run_id}")
+        raise SystemExit(1)
+
+    try:
+        verification = verify_journal(journal_path)
+    except Exception as e:
+        console.print(f"[red]Failed to verify journal:[/red] {e}")
+        raise SystemExit(1) from e
+
+    if not verification.chain_consistent:
+        console.print(f"[red]Journal chain does not verify:[/red] {target_run_id}")
+        raise SystemExit(1)
+
+    # Emit the trust record
+    from bernstein.core.observability.trust_record import TrustRecordEmitter
+
+    emitter = TrustRecordEmitter()
+    try:
+        trust_record_json = emitter.emit_trust_record(
+            journal_path=journal_path,
+            run_id=target_run_id,
+            exec_id=target_run_id,
+        )
+    except Exception as e:
+        console.print(f"[red]Failed to emit trust record:[/red] {e}")
+        raise SystemExit(1) from e
+
+    # Output
+    if output:
+        Path(output).write_text(trust_record_json, encoding="utf-8")
+        console.print(f"[green]Exported trace to:[/green] {output}")
+    else:
+        click.echo(trust_record_json)
+
+
 @trace_cmd.command("verify-projection")
 @click.argument("run_id")
 @click.option(

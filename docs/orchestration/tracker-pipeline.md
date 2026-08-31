@@ -276,8 +276,8 @@ pipeline.tick()
 
 | Command | Purpose |
 |---------|---------|
-| `bernstein pipeline run --dry-run` | Print resolved pipeline without dispatching. |
-| `bernstein pipeline run` | One non-blocking sweep across configured trackers. |
+| `bernstein pipeline run --dry-run` | Accepted for compatibility; identical to a plain run. |
+| `bernstein pipeline run` | Resolve and print the configured pipeline. Does not dispatch. |
 | `bernstein pipeline status` | Print live (non-expired) handoffs from the SQLite ledger. |
 | `bernstein pipeline status --as-json` | Machine-readable output for dashboards. |
 

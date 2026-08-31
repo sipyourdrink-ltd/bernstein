@@ -154,7 +154,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `mock.py`                   | Mock CLI adapter for zero-API-key demos and testing |
 | `muse.py`                   | Muse Code CLI adapter for Bernstein |
 | `ollama.py`                 | Ollama / OpenAI-compatible local LLM adapter - run coding agents without cloud API keys |
-| `onboarding.py`             | Probe an installed CLI binary and capture its self-description as evidence |
+| `onboarding.py`             | Probe CLI evidence, record a supervised golden transcript, and replay held-out invocations |
 | `open_interpreter.py`       | Open Interpreter CLI adapter |
 | `openai_agents.py`          | OpenAI Agents SDK v2 adapter |
 | `openai_agents_builtins.py` | Opt-in builtin tools for the OpenAI Agents runner |
@@ -211,7 +211,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `install_check.py`      | Installation mismatch detection -- detect multiple Bernstein installs and config conflicts |
 | `keybindings.py`        | Keybinding system for the Bernstein TUI |
 | `live.py`               | Live view helpers for ``bernstein live --classic`` |
-| `main.py`               | CLI entry point for Bernstein -- deterministic orchestrator for CLI coding agents |
+| `main.py`               | CLI entry point for Bernstein -- the open-source governance layer for AI agents |
 | `notebook_traces.py`    | Notebook-aware traces - detect and track Jupyter notebook cell edits |
 | `release_notes.py`      | Release notes display - fetch and format release notes for terminal output |
 | `run.py`                | Enhanced run output for ``bernstein run`` |

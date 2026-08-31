@@ -787,7 +787,7 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     # warm retry sends only the corrective instruction on the assumption the
     # prior session is reattached.
     "kimchi": AdapterStrategy(
-        resume=ResumeStrategy.UNSUPPORTED,
+        resume=ResumeStrategy.FLAG,
         dangerous_mode=DangerousModeStrategy.CLI_FLAG,
         event_channel=EventChannel.ACP,
         output_mode=OutputMode.GIT_DIFF,

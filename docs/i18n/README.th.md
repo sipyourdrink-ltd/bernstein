@@ -8,14 +8,14 @@
 
 <br>
 
-<img alt="Bernstein - deterministic multi-agent CLI orchestration" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/banner-readme.webp" width="820">
+<img alt="Bernstein - the open-source governance layer for AI agents" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/banner-readme.webp" width="820">
 
 <br>
 
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
-### การประสานงาน CLI หลายเอเจนต์แบบกำหนดผลลัพธ์แน่นอน
-<!-- l10n: en="deterministic multi-agent CLI orchestration" hash="sha256:2cb1281992f1" -->
+### เลเยอร์ governance โอเพนซอร์สสำหรับ AI agent
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:739f0a7ad1af" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -38,7 +38,7 @@
 
 > **สถานะ: เบต้า** ดูแลรักษาโดยผู้พัฒนาคนเดียว และอยู่ระหว่างการพัฒนาอย่างต่อเนื่อง หมายเลขเวอร์ชันนับตามรอบการเปิดตัว ไม่ใช่ระดับความสมบูรณ์ — เวอร์ชันย่อย (minor) อาจมีการเปลี่ยนแปลงอินเทอร์เฟซ โปรดตรึงเวอร์ชันสำหรับงานที่ต้องพึ่งพาอย่างยิ่งยวด โดยข้อผิดพลาดที่เกิดขึ้นซ้ำจะได้รับการแก้ไขอย่างรวดเร็ว [แจ้งปัญหาได้ที่นี่](https://github.com/sipyourdrink-ltd/bernstein/issues)
 
-Bernstein เป็นระบบประสานงานแบบกำหนดผลลัพธ์แน่นอน (deterministic orchestrator) สำหรับเอเจนต์เขียนโค้ดบน CLI (Claude Code, Codex, Gemini CLI และอีกกว่า 40 รายการ) โดยสั่งงานเอเจนต์คู่ขนาน ควบคุมผลลัพธ์ผ่านเกตตรวจสอบ (gates) และบันทึกข้อมูลการทำงานอย่างละเอียดเพื่อให้คุณตรวจสอบย้อนหลังได้ มีโปรไฟล์การติดตั้งสำหรับระบบแยกเครือข่าย (air-gap) ในตัว ลิขสิทธิ์ Apache-2.0
+Bernstein คือเลเยอร์ governance โอเพนซอร์สสำหรับ AI agent ตัวจัดตารางแบบดีเทอร์มินิสติก - ไม่มีโมเดลในลูปประสานงาน - รัน agent แบบขนาน คัดกรองผลงานผ่านเกต และบันทึกทุกขั้นตอน ทำให้ตรวจสอบการรันย้อนหลังได้แบบออฟไลน์จากอาร์ติแฟกต์ล้วน ๆ CLI coding agent ใช้ได้ทันที (Claude Code, Codex, Gemini CLI และอีก 40+) และเลเยอร์เดียวกันนี้กำกับเวิร์กโหลด agent ทุกแบบ: ผลส่งมอบจะเป็น diff รายงานวิจัย ชุดข้อมูล หรือแพ็กหลักฐานการตรวจสอบก็ได้ มาพร้อมโปรไฟล์ติดตั้งแบบ air-gap Apache-2.0
 
 ### สรุปภาพรวม
 <!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->
@@ -51,6 +51,87 @@ Bernstein เป็นระบบประสานงานแบบกำห�
 - **ครอบคลุมและทำงานในเครื่อง** มีอะแดปเตอร์เอเจนต์ CLI มากกว่า 40 รายการ พร้อมตัวครอบ `--prompt` ทั่วไป สถานะอิงตามไฟล์ ไม่ต้องพึ่งพา SaaS และไม่มีระนาบข้อมูลภายนอก
 
 ดูรายการทั้งหมดได้ที่ [หน้ารวมความสามารถ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) และ [ตารางเปรียบเทียบฟีเจอร์](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) ซึ่งเป็นดัชนีอย่างละเอียด
+
+### การรันหน้าตาเป็นอย่างไร
+<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+
+ไฟล์ YAML ไฟล์เดียวประกาศการรันทั้งหมด: เฟส บทบาท การพึ่งพา และเงื่อนไขที่โหนดจะถูกรัน ตัวจัดตารางรันมันเป็น Python ล้วน - ไม่มีอะไรในไฟล์เป็นพรอมป์ต และไม่มีโมเดลตัดสินว่าจะเกิดอะไรต่อไป กราฟนี้สร้างแพ็กหลักฐานการตรวจสอบ ไฟล์เต็มอยู่ที่ [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml)
+
+```yaml
+name: audit-evidence-pack
+version: "1.0.0"
+
+phases:
+  - name: scope
+    allowed_roles: [manager, architect]
+  - name: collect
+  - name: validate
+    allowed_roles: [qa, security]
+  - name: deliver
+    allowed_roles: [security, manager]
+
+nodes:
+  define-control-inventory:
+    phase: scope
+    role: architect
+
+  collect-audit-logs:
+    phase: collect
+    role: security
+    depends_on: [define-control-inventory]
+
+  # three more evidence streams collect in parallel:
+  # collect-sboms-and-attestations, collect-runbooks-and-policies,
+  # collect-eval-results
+
+  assemble-pack:
+    phase: validate
+    role: docs
+    depends_on:
+      - collect-audit-logs
+      - collect-sboms-and-attestations
+      - collect-runbooks-and-policies
+      - collect-eval-results
+
+  mock-auditor-pass:
+    phase: validate
+    role: qa
+    depends_on: [assemble-pack]
+
+  remediate-findings:
+    phase: collect
+    role: docs
+    depends_on:
+      - source: mock-auditor-pass
+        condition: "status == 'failed'"
+    retry:
+      max_attempts: 3
+      until: "status == 'done'"
+
+  sign-and-deliver:
+    phase: deliver
+    role: security
+    depends_on:
+      - source: mock-auditor-pass
+        condition: "status == 'done'"
+```
+
+```mermaid
+flowchart LR
+    inv[define-control-inventory] --> logs[collect-audit-logs]
+    inv --> sbom[collect-sboms-and-attestations]
+    inv --> rb[collect-runbooks-and-policies]
+    inv --> ev[collect-eval-results]
+    logs --> pack[assemble-pack]
+    sbom --> pack
+    rb --> pack
+    ev --> pack
+    pack --> gate{mock-auditor-pass}
+    gate -->|failed| fix["remediate-findings (retry x3)"]
+    gate -->|done| sign[sign-and-deliver]
+```
+
+แต่ละโหนดถูกรับโดย agent ที่บทบาทได้รับอนุญาตจากเฟสนั้น รั้วบทบาทและเกตอนุมัติยังคงอยู่ไม่ว่า agent จะทำอะไรในงาน โหนดโค้ดจบหลัง merge gate ใน git worktree ของตัวเอง โหนดข้างบนจบต่างออกไป: [สัญญาอาร์ติแฟกต์](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) ระบุผลส่งมอบ (รายงาน ชุดข้อมูล การสแกน บันทึกการกระทำ) และโหนดปิดด้วยใบรับ lineage ที่ลงนามแทนคอมมิต ตัวจัดตารางเดียวกัน เจอร์นัลเดียวกัน การตรวจสอบออฟไลน์แบบเดียวกัน - ไม่ว่ากราฟจะส่งมอบโค้ด งานวิจัย การเปลี่ยนแปลง ops หรือทั้งสามผสมกัน กราฟสำเร็จรูปสำหรับซอฟต์แวร์ วิจัย เอกสาร องค์กร และเวิร์กโฟลว์ผู้ร่วมพัฒนาอยู่ที่ [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)
 
 ### ติดตั้งใน 30 วินาที
 <!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->

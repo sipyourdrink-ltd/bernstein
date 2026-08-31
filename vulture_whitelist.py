@@ -141,3 +141,8 @@ JsonSchemaValidationError  # noqa
 # Optional keyword on adapter entry points that callers pass but in-repo
 # call sites often leave at the default (e.g. codex_cloudflare.execute).
 timeout_minutes  # noqa
+
+# Protocol method parameters on the TYPE_CHECKING-only SandboxManager stub in
+# browser_driver: bound by keyword at the call site, so the names are part of
+# the contract and cannot be underscore-prefixed away.
+agent_process  # noqa
