@@ -1915,6 +1915,19 @@ def _replay_run_impl(
             detail_parts.append(f"failed: {', '.join(ev['failed_signals'][:3])}")
         if ev.get("tick"):
             detail_parts.append(f"tick #{ev['tick']}")
+        # Add endpoint identity for agent_spawned events
+        if event_name == "agent_spawned":
+            adapter = ev.get("endpoint_adapter_name")
+            model = ev.get("endpoint_model")
+            base_url = ev.get("endpoint_base_url")
+            profile = ev.get("endpoint_profile_name")
+            if adapter and model:
+                adapter_model = f"{adapter} {model}"
+                if base_url:
+                    adapter_model += f"  {base_url}"
+                if profile:
+                    adapter_model += f"  {profile}"
+                detail_parts.append(adapter_model)
         detail = "  ".join(detail_parts)
 
         table.add_row(

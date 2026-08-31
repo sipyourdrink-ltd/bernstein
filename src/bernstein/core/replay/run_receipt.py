@@ -221,6 +221,7 @@ def _binding_block(
     spine_head: str,
     spine_count: int,
     audit_head_sha256: str | None,
+    endpoint_identities: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """The subject binding: one canonical block over every recomputed head.
 
@@ -230,6 +231,13 @@ def _binding_block(
     ``audit_head_sha256`` is omitted (not nulled) when absent so stripping
     the opt-in audit block from a receipt that was signed with it changes
     the binding bytes and collapses verification.
+
+    When ``endpoint_identities`` is provided (non-empty), it is included in
+    the binding block as an ``endpoints`` array. The verifier will only
+    include it when present in journal events, keeping backwards
+    compatibility with existing receipts that have no endpoint identity
+    events (the field is simply absent, and the binding block is built
+    without it).
     """
     block: dict[str, Any] = {
         "journal_event_count": journal_count,
@@ -238,6 +246,8 @@ def _binding_block(
         "spine_entry_count": spine_count,
         "spine_head": spine_head,
     }
+    if endpoint_identities is not None and len(endpoint_identities) > 0:
+        block["endpoints"] = endpoint_identities
     if audit_head_sha256 is not None:
         block["audit_range_head_sha256"] = audit_head_sha256
     return block
@@ -248,6 +258,35 @@ def _signature_preimage(binding_bytes: bytes) -> bytes:
     from bernstein.core.security.audit_dsse import pae
 
     return pae(RUN_RECEIPT_PAYLOAD_TYPE, binding_bytes)
+
+
+def _extract_endpoint_identities(events: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Extract unique endpoint identity tuples from ``agent_spawned`` events.
+
+    Returns a list of canonical dicts with keys ``adapter``, ``model``,
+    ``base_url``, and ``profile``, de-duplicated (sorted for deterministic
+    ordering). Only events that carry ``event == 'agent_spawned'`` and at
+    least an ``endpoint_adapter_name`` contribute. Empty-string values are
+    excluded so the identity is always meaningful.
+    """
+    seen: set[tuple[str, str, str, str]] = set()
+    identities: list[dict[str, str]] = []
+    for event in events:
+        if event.get("event") != "agent_spawned":
+            continue
+        adapter = str(event.get("endpoint_adapter_name") or "")
+        if not adapter:
+            continue
+        model = str(event.get("endpoint_model") or "")
+        base_url = str(event.get("endpoint_base_url") or "")
+        profile = str(event.get("endpoint_profile_name") or "")
+        key = (adapter, model, base_url, profile)
+        if key in seen:
+            continue
+        seen.add(key)
+        identities.append({"adapter": adapter, "model": model, "base_url": base_url, "profile": profile})
+    identities.sort(key=lambda d: (d["adapter"], d["model"], d["base_url"], d["profile"]))
+    return identities
 
 
 def _project_journal_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -553,6 +592,7 @@ def build_run_receipt(
         spine_head=spine_head,
         spine_count=len(spine_rows),
         audit_head_sha256=audit_head,
+        endpoint_identities=_extract_endpoint_identities(journal_rows),
     )
     binding_bytes = _canonical_json_bytes(binding)
     subject_sha256 = hashlib.sha256(binding_bytes).hexdigest()
@@ -761,6 +801,7 @@ def verify_run_receipt(
         audit_head = recomputed_audit_head
 
     # 4. Subject binding: rebuilt from recomputed values only.
+    endpoint_identities = _extract_endpoint_identities(events)
     binding = _binding_block(
         run_id=run_id,
         journal_head=recomputed_journal_head,
@@ -768,6 +809,7 @@ def verify_run_receipt(
         spine_head=recomputed_spine_head,
         spine_count=len(entries),
         audit_head_sha256=audit_head,
+        endpoint_identities=endpoint_identities if endpoint_identities else None,
     )
     binding_bytes = _canonical_json_bytes(binding)
     recomputed_subject = hashlib.sha256(binding_bytes).hexdigest()
