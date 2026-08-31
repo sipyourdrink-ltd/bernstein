@@ -82,8 +82,12 @@ def _discover_registered_names() -> list[str]:
       passes) instead of silently remapping them onto the vendor default.
       Covered by ``test_adapter_muse.py``, which exercises spawn with the
       vendor model plus every refusal path.
+    - ``skyvern`` - HTTP-based adapter that does not spawn a subprocess;
+      covered by ``test_skyvern_adapter.py`` with fully mocked HTTP surface.
     """
-    return sorted(n for n in _ADAPTERS if n not in {"mock", "generic", "iac", "clm", "q_dev", "python_runtime", "muse"})
+    return sorted(
+        n for n in _ADAPTERS if n not in {"mock", "generic", "iac", "clm", "q_dev", "python_runtime", "muse", "skyvern"}
+    )
 
 
 def _make_factory(name: str) -> Any:

@@ -86,4 +86,5 @@ modules =
     bernstein.adapters.qwen
     bernstein.adapters.ralphex
     bernstein.adapters.rovo
+    bernstein.adapters.skyvern
 ignore_imports =
