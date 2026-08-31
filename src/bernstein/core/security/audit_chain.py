@@ -263,6 +263,26 @@ EVENT_SCHEDULE_FIRE_PROJECTION = "schedule.fire_projection"
 #: action, and the resume snapshot sha are recorded -- never journal payloads.
 EVENT_ESCALATION_RECEIPT = "escalation.receipt"
 
+#: Issue #4855 -- evidence-gated escalation ladder hop. Recorded when a
+#: verified failure evidence reference causes the ladder to advance from
+#: step N to N+1. The payload binds task id, from/to step, evidence class,
+#: evidence digest, and ladder policy version so replay recomputes the hop
+#: digest. Never records prompts or model output bodies.
+EVENT_ESCALATION_LADDER_HOP = "escalation.ladder_hop"
+
+#: Issue #4855 -- refusal to escalate. Emitted when an advance is requested
+#: without a qualifying evidence reference (missing digest or unknown
+#: evidence class). The refusal itself is the auditable artefact.
+EVENT_ESCALATION_LADDER_REFUSAL = "escalation.ladder_refusal"
+
+#: Issue #4855 -- ladder exhaustion. Final step failed with qualifying
+#: evidence; no further hop exists. Downstream policy may consume this.
+EVENT_ESCALATION_LADDER_EXHAUSTION = "escalation.ladder_exhaustion"
+
+#: Issue #4855 -- per-task escalation budget stop. Climbing further would
+#: exceed ``escalation_budget_usd``; the stop reason is recorded.
+EVENT_ESCALATION_LADDER_BUDGET_STOP = "escalation.ladder_budget_stop"
+
 #: Issue #2310 -- emitted whenever a webhook-node receipt is anchored in the
 #: webhook-node lineage spine. Inbound receipts bind ``{event_hash,
 #: journal_root}`` for a signed inbound event that spawned a run; outbound
@@ -2916,6 +2936,144 @@ def record_escalation_receipt(
         resource_type="escalation_receipt",
         resource_id=journal_entry_hash,
         details=details,
+    )
+
+
+def record_escalation_ladder_hop(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    task_id: str,
+    from_step: int,
+    to_step: int,
+    evidence_class: str,
+    evidence_digest: str,
+    ladder_policy_version: int,
+    hop_digest: str,
+    escalation_context: str = "",
+    actor: str = "escalation_ladder",
+) -> AuditEvent:
+    """Append an ``escalation.ladder_hop`` event into *chain* (#4855).
+
+    Mirrors one evidence-caused ladder advance. ``hop_digest`` is the
+    content address of the canonical hop projection
+    (:func:`bernstein.core.routing.escalation_ladder.hop_record_digest`);
+    a verifier recomputes it from the recorded fields.
+    """
+    details: dict[str, object] = {
+        "run_id": run_id,
+        "task_id": task_id,
+        "from_step": from_step,
+        "to_step": to_step,
+        "evidence_class": evidence_class,
+        "evidence_digest": evidence_digest,
+        "ladder_policy_version": ladder_policy_version,
+        "hop_digest": hop_digest,
+    }
+    if escalation_context:
+        details["escalation_context"] = escalation_context
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ESCALATION_LADDER_HOP,
+        actor=actor,
+        resource_type="escalation_ladder_hop",
+        resource_id=task_id,
+        details=details,
+    )
+
+
+def record_escalation_ladder_refusal(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    task_id: str,
+    from_step: int,
+    reason: str,
+    evidence_class: str | None = None,
+    ladder_policy_version: int = 1,
+    actor: str = "escalation_ladder",
+) -> AuditEvent:
+    """Append an ``escalation.ladder_refusal`` event into *chain* (#4855).
+
+    An escalation requested without qualifying failure evidence is refused
+    and the refusal is recorded — evidence must cause the advance, not
+    merely accompany a retry counter.
+    """
+    details: dict[str, object] = {
+        "run_id": run_id,
+        "task_id": task_id,
+        "from_step": from_step,
+        "reason": reason,
+        "ladder_policy_version": ladder_policy_version,
+    }
+    if evidence_class is not None:
+        details["evidence_class"] = evidence_class
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ESCALATION_LADDER_REFUSAL,
+        actor=actor,
+        resource_type="escalation_ladder_refusal",
+        resource_id=task_id,
+        details=details,
+    )
+
+
+def record_escalation_ladder_exhaustion(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    task_id: str,
+    from_step: int,
+    evidence_class: str,
+    evidence_digest: str,
+    ladder_policy_version: int,
+    hop_digest: str,
+    actor: str = "escalation_ladder",
+) -> AuditEvent:
+    """Append an ``escalation.ladder_exhaustion`` event into *chain* (#4855)."""
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ESCALATION_LADDER_EXHAUSTION,
+        actor=actor,
+        resource_type="escalation_ladder_exhaustion",
+        resource_id=task_id,
+        details={
+            "run_id": run_id,
+            "task_id": task_id,
+            "from_step": from_step,
+            "to_step": None,
+            "evidence_class": evidence_class,
+            "evidence_digest": evidence_digest,
+            "ladder_policy_version": ladder_policy_version,
+            "hop_digest": hop_digest,
+        },
+    )
+
+
+def record_escalation_ladder_budget_stop(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    task_id: str,
+    from_step: int,
+    reason: str,
+    evidence_class: str,
+    evidence_digest: str,
+    ladder_policy_version: int,
+    actor: str = "escalation_ladder",
+) -> AuditEvent:
+    """Append an ``escalation.ladder_budget_stop`` event into *chain* (#4855)."""
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ESCALATION_LADDER_BUDGET_STOP,
+        actor=actor,
+        resource_type="escalation_ladder_budget_stop",
+        resource_id=task_id,
+        details={
+            "run_id": run_id,
+            "task_id": task_id,
+            "from_step": from_step,
+            "reason": reason,
+            "evidence_class": evidence_class,
+            "evidence_digest": evidence_digest,
+            "ladder_policy_version": ladder_policy_version,
+        },
     )
 
 
@@ -8842,6 +9000,10 @@ __all__ = [
     "EVENT_DASHBOARD_TOKEN_GRANT",
     "EVENT_DELEGATION_MINTED",
     "EVENT_ENDPOINT_CERTIFICATION",
+    "EVENT_ESCALATION_LADDER_BUDGET_STOP",
+    "EVENT_ESCALATION_LADDER_EXHAUSTION",
+    "EVENT_ESCALATION_LADDER_HOP",
+    "EVENT_ESCALATION_LADDER_REFUSAL",
     "EVENT_ESCALATION_RECEIPT",
     "EVENT_EVAL_AB_COMPARISON",
     "EVENT_EVAL_GATE_REVOCATION",
@@ -8988,6 +9150,10 @@ __all__ = [
     "record_dashboard_token_grant",
     "record_delegation_minted",
     "record_endpoint_certification",
+    "record_escalation_ladder_budget_stop",
+    "record_escalation_ladder_exhaustion",
+    "record_escalation_ladder_hop",
+    "record_escalation_ladder_refusal",
     "record_escalation_receipt",
     "record_eval_ab_comparison",
     "record_eval_gate_revocation",

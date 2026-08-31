@@ -211,6 +211,22 @@ class LocalEndpointProfileSchema(BaseModel):
     timeout: float = Field(default=120.0, gt=0)
 
 
+class EscalationLadderStep(BaseModel):
+    """One step of ``role_model_policy.<role>.ladder`` (issue #4855).
+
+    ``model`` is adapter-neutral: it is stored and later passed through to
+    the selected adapter unmodified. ``adapter`` is optional; when set it
+    must name an installed selectable adapter at config-read time (hard
+    failure — unrunnable steps are never skipped).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = Field(min_length=1)
+    adapter: str | None = None
+    max_attempts: int = Field(default=1, ge=1)
+
+
 class RoleModelPolicyEntry(BaseModel):
     """Per-role model/provider policy.
 
@@ -235,6 +251,11 @@ class RoleModelPolicyEntry(BaseModel):
     setting these fields for a role pinned to an adapter that does not
     declare sampling support raises ``SamplingParamsRefusal`` rather than
     silently dropping the override.
+
+    ``ladder`` (issue #4855) is an ordered escalation ladder. When unset,
+    behaviour is byte-identical to prior releases. ``fallback_model`` is
+    deprecated sugar for a two-step ladder ``[model, fallback_model]`` and
+    is mutually exclusive with an explicit ``ladder``.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -270,6 +291,37 @@ class RoleModelPolicyEntry(BaseModel):
     # instead of a single model; ``model``/``base_url``/``api_key_env`` above
     # are then ignored in favor of the council's own per-candidate endpoints.
     council: CouncilConfig | None = None
+    # Ordered escalation ladder (issue #4855). Unset preserves today's
+    # single-hop cascade behaviour in agent_lifecycle until PR2 wires it.
+    ladder: list[EscalationLadderStep] | None = None
+    # Deprecated sugar for a two-step ladder; mutually exclusive with
+    # ``ladder``. Prefer an explicit ``ladder`` in new configs.
+    fallback_model: str | None = Field(
+        default=None,
+        description=(
+            "Deprecated: sugar for a two-step escalation ladder [model, fallback_model]. "
+            "Prefer role_model_policy.<role>.ladder. Mutually exclusive with ladder."
+        ),
+    )
+    # Per-task escalation spend cap consulted before a hop. ``None`` means
+    # no ladder budget guard (generous default until an operator opts in).
+    escalation_budget_usd: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_escalation_ladder_fields(self) -> RoleModelPolicyEntry:
+        if self.ladder is not None and self.fallback_model is not None:
+            raise ValueError(
+                "ladder and fallback_model are mutually exclusive; "
+                "fallback_model is deprecated sugar for a two-step ladder"
+            )
+        if self.ladder is not None and len(self.ladder) == 0:
+            raise ValueError("ladder must be non-empty when set")
+        if self.fallback_model is not None:
+            if not self.fallback_model.strip():
+                raise ValueError("fallback_model must be a non-empty string when set")
+            if self.model is None or not self.model.strip():
+                raise ValueError("fallback_model requires model to be set (two-step sugar)")
+        return self
 
 
 class RoleConfigEntry(BaseModel):
@@ -976,10 +1028,41 @@ class BernsteinConfig(BaseModel):
         # base_url/model/api_key_env so downstream consumers see one shape.
         self._resolve_local_endpoint_references(errors)
 
+        # Escalation ladder adapters (issue #4855): a step naming an
+        # adapter that is not installed hard-fails at config read.
+        self._validate_escalation_ladder_adapters(errors)
+
         if errors:
             raise ValueError("Configuration has conflicting settings:\n" + "\n".join(f"  - {e}" for e in errors))
 
         return self
+
+    def _validate_escalation_ladder_adapters(self, errors: list[str]) -> None:
+        """Hard-fail ladder steps that name a missing selectable adapter."""
+        if not self.role_model_policy:
+            return
+        from bernstein.adapters.registry import selectable_adapter_names
+        from bernstein.core.routing.escalation_ladder import LadderStep, validate_ladder_adapters
+
+        known = selectable_adapter_names()
+        for role, entry in self.role_model_policy.items():
+            steps: list[LadderStep] = []
+            if entry.ladder:
+                steps = [
+                    LadderStep(model=step.model, adapter=step.adapter, max_attempts=step.max_attempts)
+                    for step in entry.ladder
+                ]
+            elif entry.fallback_model and entry.model:
+                steps = [
+                    LadderStep(model=entry.model, max_attempts=1),
+                    LadderStep(model=entry.fallback_model, max_attempts=1),
+                ]
+            if not steps:
+                continue
+            try:
+                validate_ladder_adapters(steps, role=role, known_adapters=known)
+            except ValueError as exc:
+                errors.append(str(exc))
 
     def _resolve_local_endpoint_references(self, errors: list[str]) -> None:
         """Materialize ``endpoint`` profile references onto role entries.
