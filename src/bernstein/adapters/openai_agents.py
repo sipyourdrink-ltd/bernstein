@@ -147,6 +147,7 @@ class OpenAIAgentsAdapter(PluginAdapter):
                 AdapterCapability.SUPPORTS_TEMPERATURE,
                 AdapterCapability.SUPPORTS_TOP_P,
                 AdapterCapability.SUPPORTS_TOP_K,
+                AdapterCapability.SUPPORTS_MAX_TOKENS,
             ),
         )
 

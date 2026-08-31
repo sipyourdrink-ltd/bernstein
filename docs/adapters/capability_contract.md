@@ -187,6 +187,7 @@ capabilities. The overrides travel in the per-spawn `mcp_config` and, for
 | `temperature` | float | Sampling temperature. Absent = provider default. |
 | `top_p` | float | Nucleus sampling. Absent = provider default. |
 | `top_k` | int | Top-k sampling, forwarded for OpenAI-compatible endpoints that accept it. Absent = provider default. |
+| `max_tokens` | int | Per-spawn completion-token cap. Absent = adapter or provider default. |
 | `base_url` | str | OpenAI-compatible endpoint URL. Absent = default endpoint. |
 | `api_key_env` | str | NAME of the environment variable holding the API key for `base_url`. Never a literal key. |
 
@@ -210,8 +211,10 @@ value in its `start` event; only the env var name is ever logged, never
 the key itself.
 
 The spawn path enforces the capability: requesting any of these keys for an
-adapter that does not declare `SUPPORTS_SAMPLING_PARAMS` raises
-`SamplingParamsRefusal` instead of silently dropping the parameters. See
+adapter that declares neither the coarse `SUPPORTS_SAMPLING_PARAMS` capability
+nor the matching narrow per-field capability raises `SamplingParamsRefusal`
+instead of silently dropping the parameters. `max_tokens` maps to
+`SUPPORTS_MAX_TOKENS`; endpoint fields have no narrow capability. See
 `ensure_sampling_params_supported` in
 [`src/bernstein/adapters/plugin_sdk.py`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/adapters/plugin_sdk.py).
 
