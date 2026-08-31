@@ -4,6 +4,12 @@ Skyvern is a maintained, self-hostable, goal-driven browser agent. The operator
 starts the Skyvern server separately (``skyvern server --port 8000``); this
 adapter connects to it over HTTP and drives runs through its REST surface.
 
+This adapter subclasses :class:`bernstein.adapters.computer_use.ComputerUseAdapter`
+so it inherits the computer-use contract (output mode ARTIFACT, POLL_PTY event channel,
+per-task isolation, and capability gating via :attr:`is_computer_use`). It replaces
+the existing SkyvernAdapter (which subclassed CLIAdapter directly) to satisfy
+the goal-driven browser agent fronting requirement (#3116).
+
 We do not import the Skyvern Python SDK or vendor any of its code. The
 integration is HTTP-only so the AGPL-3.0 upstream stays out of our dependency
 set.
