@@ -29,6 +29,7 @@ _spec.loader.exec_module(bench)
 
 BENCH_KEY = bench.BENCH_KEY
 bench_append = bench.bench_append
+bench_journal_append = bench.bench_journal_append
 bench_verify = bench.bench_verify
 build_segmented_chain = bench.build_segmented_chain
 make_details = bench.make_details
@@ -62,6 +63,30 @@ def test_chain_byte_overhead_is_constant_across_sizes(tmp_path: Path) -> None:
     small = bench_append(tmp_path / "s", "small", n=20, warmup=2)
     large = bench_append(tmp_path / "l", "large", n=20, warmup=2)
     assert abs(small.chain_byte_overhead - large.chain_byte_overhead) < 1.0
+
+
+def test_journal_append_case_isolates_the_always_on_chain_cost(tmp_path: Path) -> None:
+    """The journal case measures a real record() against the same row unchained."""
+    result = bench_journal_append(tmp_path, "medium", n=40, warmup=5)
+
+    assert result.chain_on["n"] == 40
+    assert result.plain_append["n"] == 40
+    # The journal adds prev_hash + payload_hash + event_hash (three 64-hex
+    # digests) and the index to every row: a fixed per-entry byte cost.
+    assert result.chain_byte_overhead > 150
+    assert result.chain_on_bytes_per_entry > result.plain_bytes_per_entry
+
+
+def test_journal_rows_written_by_the_bench_form_a_verifiable_chain(tmp_path: Path) -> None:
+    """The chain-on side is a genuine journal: the real verifier accepts it."""
+    from bernstein.core.replay.journal import run_journal_path, verify_journal
+
+    bench_journal_append(tmp_path, "small", n=10, warmup=2)
+
+    journal_path = run_journal_path(tmp_path / "journal-on-small", "bench-journal-small")
+    verdict = verify_journal(journal_path)
+    assert verdict.chain_consistent
+    assert verdict.count == 12
 
 
 def test_build_segmented_chain_is_a_real_verifiable_chain(tmp_path: Path) -> None:
@@ -100,7 +125,9 @@ def test_run_benchmark_renders_without_error(tmp_path: Path) -> None:
         verify_points=((100, 1),),
     )
     assert len(report.append) == 1
+    assert len(report.journal_append) == 1
     assert len(report.verify) == 1
     md = render_markdown(report)
     assert "Append latency" in md
+    assert "Journal append latency" in md
     assert "Verify / scan throughput" in md

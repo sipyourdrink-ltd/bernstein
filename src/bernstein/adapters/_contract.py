@@ -712,6 +712,7 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "rovo": AdapterStrategy(dangerous_mode=DangerousModeStrategy.CLI_FLAG),
     "letta_code": AdapterStrategy(
         dangerous_mode=DangerousModeStrategy.CLI_FLAG,
+        event_channel=EventChannel.STREAM_JSON,
         session_state=SessionState.PERSISTENT_AGENT,
     ),
     # Codex drives unattended via its sandbox/full-auto flag.

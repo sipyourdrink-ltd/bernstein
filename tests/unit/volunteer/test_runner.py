@@ -474,6 +474,47 @@ def test_the_repo_url_allowlist_admits_transports_and_refuses_helpers(url: str, 
     assert (repo_url_problem(url) is not None) is rejected
 
 
+def test_private_github_repository_is_refused_in_volunteer_mode(
+    fixture_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A private GitHub repository is refused during open-source preflight.
+
+    The runner calls urllib.request.urlopen for https://api.github.com/repos/{repo_path}
+    to check repository visibility. When the API returns {"private": true}, the task
+    must be refused with open_source_preflight_failed and a detail containing "private".
+    """
+    import urllib.request
+
+    class _FakeResponse:
+        status = 200
+
+        def read(self):
+            return b'{"private": true, "full_name": "owner/repo"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+    def mock_urlopen(req, *, timeout: int = 10):
+        assert req.full_url.startswith("https://api.github.com/repos/owner/repo")
+        return _FakeResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+    outcome = _run(
+        "https://github.com/owner/repo",
+        tmp_path,
+        agent_argv=mock_agent_argv(fix="off-by-one"),
+    )
+
+    assert isinstance(outcome, TaskRefusal)
+    assert outcome.stage == RefusalStage.REPO_URL
+    assert outcome.reason == "open_source_preflight_failed"
+    assert "private" in outcome.detail.lower()
+
+
 # --------------------------------------------------------------------------
 # The wall clock, against real process trees
 # --------------------------------------------------------------------------

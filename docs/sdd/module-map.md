@@ -13,6 +13,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `dataclass_helpers.py`      | Helpers for preserving dataclass instance types through updates |
 | `defaults.py`               | Centralized default values for the Bernstein orchestrator |
 | `diff_paths.py`             | Which repository-relative paths a unified diff touches |
+| `finding_verify.py`         | FindingVerifyReceipt - lineage-attested receipts for finding verify results |
 | `instrumentation.py`        | Wave-3 per-agent instrumentation: LLM calls, tool calls, and conversation history |
 | `parallel_admission.py`     | Parallel-execution admission from a code graph (#3237, scope step 3) |
 | `path_scope.py`             | Which repository-relative paths fall outside a set of globs |
@@ -133,6 +134,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `forge.py`                  | Forge CLI adapter |
 | `gemini.py`                 | Google Gemini / Antigravity CLI adapter |
 | `generic.py`                | Generic CLI adapter for arbitrary coding agent CLIs |
+| `gitleaks.py`               | Deterministic Gitleaks scanner adapter and SARIF normalization |
 | `goose.py`                  | Goose CLI adapter for Bernstein |
 | `goose_stream_parser.py`    | Parse Goose ``--output-format stream-json`` events |
 | `gptme.py`                  | gptme CLI adapter |

@@ -597,6 +597,7 @@ def run_claimed_task(
         manifest_license=manifest.license,
         manifest_sha256=manifest_sha256,
         comments=comments,
+        adapter_id=adapter_id,
     )
 
     # An abort after a claim was posted releases it; a success leaves the claim
@@ -697,6 +698,7 @@ def _run_sandbox_pipeline(
     manifest_license: str,
     manifest_sha256: str,
     comments: list[dict[str, Any]] | None = None,
+    adapter_id: str | None = None,
 ) -> TaskOutcome:
     """Clone, isolate, spawn under the wall clock, and read the diff.
 
@@ -708,7 +710,7 @@ def _run_sandbox_pipeline(
     # Open-source preflight checks: verify this is a legitimate open-source project
     # before any cloning occurs. This ensures we're running against public repos
     # with proper license declaration and validation.
-    license_problem = _validate_open_source_preflight(task.repo_url, manifest_license)
+    license_problem = _validate_open_source_preflight(task.repo_url, manifest_license, adapter_id)
     if license_problem is not None:
         return refuse(
             RefusalStage.REPO_URL,
@@ -863,74 +865,110 @@ def repo_url_problem(repo_url: str) -> str | None:
     return None
 
 
-def _validate_open_source_preflight(repo_url: str, manifest_license: str) -> str | None:
+def _validate_open_source_preflight(repo_url: str, manifest_license: str, adapter_id: str | None = None) -> str | None:
     """Why this task must not run, based on open-source preflight checks.
 
-    Three checks ensure a volunteer task is running against a legitimate open-source
+    Four checks ensure a volunteer task is running against a legitimate open-source
     project before any cloning occurs:
 
-    1. The repository URL must be public (http, https, git, ssh) - no private
-       registries or internal transports.  This prevents running against code the
-       donor cannot verify is the same as the one the issue references.
-
-    2. The manifest's license must be an OSI-approved SPDX identifier.  This is
-       enforced elsewhere (:func:`~bernstein.core.volunteer.manifest._load_license`),
-       but checked here again as part of the open-source preflight sequence for
-       consistency.
-
-    3. The manifest's license must match the detected license file in the
+    1. The adapter's auth_basis must be compatible with volunteer mode (API key or local).
+    2. The repository URL must be public (not internal or private) - determined by
+       checking with the repository host, not just URL scheme.
+    3. The manifest's license must be an OSI-approved SPDX identifier.
+    4. The manifest's license must match the detected license file in the
        repository.  A README or LICENSE file carries the project's stated intent,
-       and it must agree with the manifest's license field.  This prevents a
-       project from opting into volunteer work with one license while the
-       repository's own file declares another.
+       and it must agree with the manifest's license field.
 
-    The checks are ordered to fail fast: a repository URL is the cheapest
-    validation, so it comes first, and the LICENSE file detection is the
-    most expensive, last.
+    The checks are ordered to fail fast: auth_basis check comes first,
+    then repository visibility check, then license validation, then LICENSE file detection.
 
     Args:
         repo_url: The claimed repository URL (trusted at this point).
         manifest_license: The license field from the validated manifest.
+        adapter_id: Optional adapter identifier. When supplied, the runner
+            validates the adapter's auth_basis and refuses volunteer tasks
+            whose auth_basis is incompatible with volunteer mode.
 
     Returns:
         A refusal reason if a check fails, or ``None`` if all pass.
     """
-    # Check 1: Repository must be public (not internal or private)
+    # Check 1: Adapter auth_basis must be compatible with volunteer mode
+    if adapter_id:
+        auth_problem = _validate_volunteer_auth_basis(adapter_id)
+        if auth_problem is not None:
+            return auth_problem
+
+    from bernstein.core.volunteer.manifest import OSI_APPROVED_LICENSES
+
+    # Check 2: Repository must be public (determined by asking, not parsing)
     url = repo_url.strip()
     if not url:
         return "the repository URL is empty"
 
-    scheme = urlparse(url).scheme
+    parsed = urlparse(url)
+    scheme = parsed.scheme
 
-    # Local filesystem paths (no scheme) are allowed for test fixtures and
-    # special cases where the project explicitly opts in.  The donor can
-    # see exactly what they're executing, so the public-repository restriction
-    # doesn't apply.
+    # Local filesystem paths (no scheme) - we can see what we're executing
     if not scheme:
         # Allow local paths like "/srv/project", "./project", etc.
         # These are projects the donor controls directly.
-        return None
-
-    # Only public schemes are allowed: git, http, https, ssh
-    if scheme.lower() not in {"git", "http", "https", "ssh"}:
-        # file:// URLs have an empty netloc but a valid scheme
-        if scheme.lower() == "file":
-            pass
+        pass  # Continue to license checks
+    elif scheme.lower() == "file":
+        # file:// URLs - we can inspect the local filesystem
+        pass  # Continue to license checks
+    elif scheme.lower() in {"git", "http", "https", "ssh"}:
+        # For remote repositories, we need to verify visibility
+        if scheme.lower() in {"https", "http"}:
+            # Check for GitHub URLs and verify they're public
+            if url.lower().startswith("https://github.com/"):
+                # GitHub repository path
+                repo_path_match = re.match(r"https?://github\.com/([^/]+/[^/]+)/?", url)
+                if repo_path_match:
+                    repo_path = repo_path_match.group(1)
+                    # Use GitHub API to check if repository is public
+                    api_url = f"https://api.github.com/repos/{repo_path}"
+                    try:
+                        req = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github.v3+json"})
+                        with urllib.request.urlopen(req, timeout=10) as response:
+                            if response.status == 200:
+                                repo_data = json.loads(response.read().decode())
+                                if repo_data.get("private", True):
+                                    return "repository is private; volunteer mode only works with public repositories"
+                            elif response.status == 404:
+                                return "repository not found or inaccessible"
+                            else:
+                                # Unexpected status code
+                                return f"unexpected response from repository host: HTTP {response.status}"
+                    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, TimeoutError) as e:
+                        # If we cannot verify visibility, refuse (fail closed)
+                        return f"cannot verify repository visibility: {type(e).__name__}"
+                else:
+                    return f"invalid GitHub repository URL: {url}"
+            else:
+                # For non-GitHub http/https URLs, we cannot easily verify visibility
+                # so we refuse to be safe (fail closed)
+                return f"cannot verify repository visibility for non-GitHub URL: {url}"
         else:
-            return (
-                f"the repository URL scheme {scheme!r} is not permitted; "
-                "only public repository schemes (git, http, https, ssh) are allowed"
-            )
+            # For git/ssh URLs, we cannot easily verify visibility without cloning
+            # so we refuse to be safe (fail closed)
+            return f"cannot verify repository visibility for {scheme} URL: {url}"
+    else:
+        # Unsupported scheme
+        return (
+            f"the repository URL scheme {scheme!r} is not permitted; "
+            "only public repository schemes (git, http, https, ssh) are allowed"
+        )
 
-    # Check 2: Manifest license is validated by _load_license; just verify it's present
+    # Check 3: Manifest license must be OSI-approved
     if not manifest_license:
         return "manifest license is required but missing"
+    if manifest_license not in OSI_APPROVED_LICENSES:
+        return f"license '{manifest_license}' is not OSI-approved"
 
-    # Check 3: LICENSE file detection (if we can get it without cloning)
+    # Check 4: LICENSE file detection (if we can get it without cloning)
     # For public URLs that can be detected without cloning, we can check
     # if it's a GitHub repository and use the GitHub API to detect the license
     if scheme.lower() in {"https", "http"}:
-        # This is a simplistic check for GitHub URLs - extract owner/repo
         github_match = re.match(r"https?://github\.com/([^/]+/[^/]+)", url)
         if github_match:
             repo_path = github_match.group(1)
@@ -952,12 +990,13 @@ def _validate_open_source_preflight(repo_url: str, manifest_license: str) -> str
                             )
                     elif response.status == 404:
                         # No license detected in GitHub API
-                        pass
+                        return "no license detected in repository"
             except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, TimeoutError):
                 # If GitHub API fails, we cannot validate the license match
-                # but we can still proceed as the preflight is best-effort
-                pass
+                return "cannot verify repository license: network error"
 
+    # For non-GitHub URLs or unsupported schemes, we cannot verify license match
+    # without cloning, so we skip this check (best effort)
     return None
 
 

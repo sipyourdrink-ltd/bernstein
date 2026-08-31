@@ -171,17 +171,14 @@ def test_delegated_child_vector_verifies_offline() -> None:
 def test_delegated_child_vector_parent_record_hash_matches_the_committed_parent_bytes() -> None:
     """Documents the exact canonicalization ``delegation.parent_record_hash`` covers.
 
-    The hash is ``sha256:`` + the hex SHA-256 of *exactly* the bytes
-    ``emit_trust_record`` returned for the parent -- the UTF-8 encoding of
-    that canonical JSON string, with no re-canonicalisation and no trailing
-    newline. The committed file carries one trailing newline for POSIX
-    friendliness; ``.rstrip("\\n")`` recovers the in-memory value the
-    generator script actually passed as ``parent_record`` when it minted
-    the child.
+    The hash is ``sha256:`` + the hex SHA-256 of the JCS (RFC 8785)
+    canonicalisation of the complete signed parent record.
     """
     child = _load(_CHILD)
-    parent_bytes = _PARENT.read_text(encoding="utf-8").rstrip("\n")
-    expected = f"sha256:{hashlib.sha256(parent_bytes.encode('utf-8')).hexdigest()}"
+    parent_doc = _load(_PARENT)
+    from bernstein.core.security.agent_card_signer import canonicalize_jcs
+
+    expected = f"sha256:{hashlib.sha256(canonicalize_jcs(parent_doc)).hexdigest()}"
     assert child["delegation"]["parent_record_hash"] == expected
 
 
@@ -238,7 +235,7 @@ def test_aggregate_vector_has_one_member_execution_reference_per_member_no_other
 def test_aggregate_vector_member_references_resolve_to_the_parent_and_child_vectors_by_hash() -> None:
     """The generator gave the aggregate ``[parent_output, child_output, grandchild_output]`` in
     that order -- each reference's ``digest`` must recompute to the
-    corresponding committed member vector's own exact bytes.
+    corresponding committed member vector's JCS canonical hash.
 
     The digest has to be in ``digest``: that is the field §3.1.2 defines as
     binding the reference to specific bytes, and the field a verifier that
@@ -247,13 +244,15 @@ def test_aggregate_vector_member_references_resolve_to_the_parent_and_child_vect
     open -- so this is the only place the difference is caught.
     """
     aggregate = _load(_AGGREGATE)
-    parent_bytes = _PARENT.read_text(encoding="utf-8").rstrip("\n")
-    child_bytes = _CHILD.read_text(encoding="utf-8").rstrip("\n")
-    grandchild_bytes = _GRANDCHILD.read_text(encoding="utf-8").rstrip("\n")
+    from bernstein.core.security.agent_card_signer import canonicalize_jcs
 
-    parent_digest = f"sha256:{hashlib.sha256(parent_bytes.encode('utf-8')).hexdigest()}"
-    child_digest = f"sha256:{hashlib.sha256(child_bytes.encode('utf-8')).hexdigest()}"
-    grandchild_digest = f"sha256:{hashlib.sha256(grandchild_bytes.encode('utf-8')).hexdigest()}"
+    parent_doc = _load(_PARENT)
+    child_doc = _load(_CHILD)
+    grandchild_doc = _load(_GRANDCHILD)
+
+    parent_digest = f"sha256:{hashlib.sha256(canonicalize_jcs(parent_doc)).hexdigest()}"
+    child_digest = f"sha256:{hashlib.sha256(canonicalize_jcs(child_doc)).hexdigest()}"
+    grandchild_digest = f"sha256:{hashlib.sha256(canonicalize_jcs(grandchild_doc)).hexdigest()}"
 
     assert [r["digest"] for r in aggregate["references"]] == [parent_digest, child_digest, grandchild_digest]
     assert [r["id"] for r in aggregate["references"]] == [
@@ -315,12 +314,11 @@ def test_chain_depth_at_least_two_hops() -> None:
     child = _load(_CHILD)
     parent = _load(_PARENT)
 
-    # Compute each record's content hash from its bytes
-    child_bytes = _CHILD.read_text(encoding="utf-8").rstrip("\n")
-    child_hash = f"sha256:{hashlib.sha256(child_bytes.encode('utf-8')).hexdigest()}"
+    from bernstein.core.security.agent_card_signer import canonicalize_jcs
 
-    parent_bytes = _PARENT.read_text(encoding="utf-8").rstrip("\n")
-    parent_hash = f"sha256:{hashlib.sha256(parent_bytes.encode('utf-8')).hexdigest()}"
+    # Compute each record's content hash from its JCS canonical form
+    child_hash = f"sha256:{hashlib.sha256(canonicalize_jcs(child)).hexdigest()}"
+    parent_hash = f"sha256:{hashlib.sha256(canonicalize_jcs(parent)).hexdigest()}"
 
     # Walk the chain: grandchild -> child -> parent
     hop_count = 0

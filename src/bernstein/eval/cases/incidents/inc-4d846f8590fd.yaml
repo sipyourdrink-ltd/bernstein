@@ -1,0 +1,14 @@
+id: inc-4d846f8590fd
+severity: P2
+source_incident: "dlq:a57a6f0371c34edf"
+owner: reviewer
+created_at: 1788114271.222
+expected_outcome: "Agent should complete the task; flake-tolerant retry is acceptable. (root cause: max_retries_exceeded)"
+tags:
+  - max_retries_exceeded
+prompt: |
+  Reproduce and resolve the following terminal failure (role=reviewer).
+  Task: Watchdog triage: Agent silent on task Plan and decompose goal into tasks
+  Failure reason: max_retries_exceeded
+  Last error (trimmed):
+  Dead agent: claimed task held by agent no longer tracked (or confirmed dead)

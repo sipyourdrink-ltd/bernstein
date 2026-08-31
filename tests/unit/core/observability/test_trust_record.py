@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -894,11 +895,48 @@ class TestDelegationClaim:
 
         assert "delegation" not in parsed
 
-    def test_child_delegation_parent_record_hash_is_sha256_prefixed_of_parent_bytes(self, tmp_path: Path) -> None:
+    def test_child_delegation_parent_record_hash_is_sha256_of_jcs_canonical_parent(self, tmp_path: Path) -> None:
         parent_output, child_output = self._emit_parent_and_child(tmp_path)
+        parent_doc = json.loads(parent_output)
 
-        expected = f"sha256:{hashlib.sha256(parent_output.encode('utf-8')).hexdigest()}"
+        expected = f"sha256:{hashlib.sha256(canonicalize_jcs(parent_doc)).hexdigest()}"
         assert json.loads(child_output)["delegation"]["parent_record_hash"] == expected
+        # For an ASCII-only record, the JCS digest matches raw emitted bytes (regression guard).
+        assert expected == f"sha256:{hashlib.sha256(parent_output.encode('utf-8')).hexdigest()}"
+
+    def test_child_delegation_non_ascii_parent_record_hash_matches_jcs_and_diverges_from_raw_bytes(
+        self, tmp_path: Path
+    ) -> None:
+        emitter = _emitter_with_known_key()
+        parent_journal = _create_journal(
+            tmp_path / "parent",
+            [
+                {
+                    "type": "run_started",
+                    "ts": 1.0,
+                    "model_provider": "anthropic",
+                    "model_id": "claude-модель",
+                    "data_class": "конфиденциально",
+                    "gate_config": {"scope": "wide"},
+                },
+                {"type": "run_completed", "ts": 2.0},
+            ],
+        )
+        child_journal = _create_journal(tmp_path / "child", [{"type": "run_completed", "ts": 3.0}])
+        parent_output = emitter.emit_trust_record(parent_journal, "run-1", "exec-parent")
+        child_output = emitter.emit_trust_record(
+            child_journal, "run-1", "exec-child", parent_record=parent_output, credential_id="cred-1"
+        )
+
+        parent_doc = json.loads(parent_output)
+        canonical_parent_hash = f"sha256:{hashlib.sha256(canonicalize_jcs(parent_doc)).hexdigest()}"
+        raw_parent_hash = f"sha256:{hashlib.sha256(parent_output.encode('utf-8')).hexdigest()}"
+
+        # JCS and raw emitted bytes diverge on non-ASCII characters
+        assert canonical_parent_hash != raw_parent_hash
+
+        # child delegation.parent_record_hash must match JCS canonical form
+        assert json.loads(child_output)["delegation"]["parent_record_hash"] == canonical_parent_hash
 
     def test_child_delegation_credential_id_is_passed_through(self, tmp_path: Path) -> None:
         _parent_output, child_output = self._emit_parent_and_child(tmp_path)
@@ -939,15 +977,14 @@ class TestDelegationClaim:
                 credential_id="",
             )
 
-    def test_malformed_parent_record_is_not_required_to_be_valid_json(self, tmp_path: Path) -> None:
-        """delegation.parent_record_hash hashes the parent's raw bytes -- it
-        never parses them, so a malformed string still hashes deterministically."""
+    def test_malformed_parent_record_raises_value_error(self, tmp_path: Path) -> None:
+        """delegation.parent_record_hash parses and canonicalises the parent record,
+        so malformed non-JSON input raises ValueError."""
         emitter = _emitter_with_known_key()
         journal = _create_journal(tmp_path, [{"type": "run_completed", "ts": 1.0}])
 
-        output = emitter.emit_trust_record(journal, "run-1", "exec-1", parent_record="not json", credential_id="c")
-        expected = f"sha256:{hashlib.sha256(b'not json').hexdigest()}"
-        assert json.loads(output)["delegation"]["parent_record_hash"] == expected
+        with pytest.raises(ValueError, match="parent_record is not valid JSON"):
+            emitter.emit_trust_record(journal, "run-1", "exec-1", parent_record="not json", credential_id="c")
 
 
 # ---------------------------------------------------------------------------
@@ -1048,9 +1085,16 @@ class TestAggregateTrustRecord:
         """
         emitter = _emitter_with_known_key()
         parent_output, child_output = self._emit_parent_and_child(tmp_path, emitter)
+        parent_doc = json.loads(parent_output)
+        child_doc = json.loads(child_output)
 
         parsed = json.loads(emitter.emit_aggregate_trust_record("run-1", [parent_output, child_output]))
 
+        assert [r["digest"] for r in parsed["references"]] == [
+            f"sha256:{hashlib.sha256(canonicalize_jcs(parent_doc)).hexdigest()}",
+            f"sha256:{hashlib.sha256(canonicalize_jcs(child_doc)).hexdigest()}",
+        ]
+        # For ASCII records, JCS matches raw emitted bytes (regression guard).
         assert [r["digest"] for r in parsed["references"]] == [
             f"sha256:{hashlib.sha256(parent_output.encode('utf-8')).hexdigest()}",
             f"sha256:{hashlib.sha256(child_output.encode('utf-8')).hexdigest()}",
@@ -1059,6 +1103,35 @@ class TestAggregateTrustRecord:
         # binding in the field that names things, where nothing looks for it.
         for entry in parsed["references"]:
             assert not entry["id"].startswith("sha256:")
+
+    def test_aggregate_references_digest_non_ascii_matches_jcs_and_diverges_from_raw_bytes(
+        self, tmp_path: Path
+    ) -> None:
+        emitter = _emitter_with_known_key()
+        journal = _create_journal(
+            tmp_path / "member",
+            [
+                {
+                    "type": "run_started",
+                    "ts": 1.0,
+                    "model_provider": "anthropic",
+                    "model_id": "claude-модель",
+                    "data_class": "конфиденциально",
+                    "gate_config": {"scope": "wide"},
+                },
+                {"type": "run_completed", "ts": 2.0},
+            ],
+        )
+        member_output = emitter.emit_trust_record(journal, "run-1", "exec-1")
+        member_doc = json.loads(member_output)
+
+        parsed = json.loads(emitter.emit_aggregate_trust_record("run-1", [member_output]))
+
+        canonical_digest = f"sha256:{hashlib.sha256(canonicalize_jcs(member_doc)).hexdigest()}"
+        raw_digest = f"sha256:{hashlib.sha256(member_output.encode('utf-8')).hexdigest()}"
+
+        assert canonical_digest != raw_digest
+        assert parsed["references"][0]["digest"] == canonical_digest
 
     def test_iat_is_the_latest_member_iat(self, tmp_path: Path) -> None:
         emitter = _emitter_with_known_key()
@@ -1483,17 +1556,21 @@ class TestDeterminism:
             "journal = Path(sys.argv[1])\n"
             "print(TrustRecordEmitter().emit_trust_record(journal, sys.argv[2], sys.argv[3]))\n"
         )
+        repo_src = str(Path(__file__).resolve().parents[4] / "src")
+        env = {**os.environ, "PYTHONPATH": repo_src}
         first = subprocess.run(
             [sys.executable, "-c", snippet, str(journal), run_id, exec_id],
             capture_output=True,
             text=True,
             check=True,
+            env=env,
         ).stdout.rstrip("\n")
         second = subprocess.run(
             [sys.executable, "-c", snippet, str(journal), run_id, exec_id],
             capture_output=True,
             text=True,
             check=True,
+            env=env,
         ).stdout.rstrip("\n")
         assert first == second
 
@@ -1517,6 +1594,8 @@ class TestCoreInstallWithoutTraceExtra:
         import subprocess
         import sys
 
+        repo_src = str(Path(__file__).resolve().parents[4] / "src")
+        env = {**os.environ, "PYTHONPATH": repo_src}
         proc = subprocess.run(
             [
                 sys.executable,
@@ -1526,6 +1605,7 @@ class TestCoreInstallWithoutTraceExtra:
             capture_output=True,
             text=True,
             check=True,
+            env=env,
         )
         assert proc.stdout.rstrip("\n") == "[]"
 
@@ -1606,3 +1686,4 @@ class TestModuleDocstringStatesTheSealBoundary:
         doc = trust_record_module.__doc__ or ""
         assert "cannot prove" in doc
         assert "signed software evidence" in doc
+        assert "no re-canonicalisation" not in doc

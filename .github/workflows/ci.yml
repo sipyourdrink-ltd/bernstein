@@ -125,26 +125,27 @@ on:
 #     on the same PR cancel older CI runs so reviewers only ever wait on
 #     the latest push and we don't burn minutes on stale SHAs.
 #
-#   - Pushes to main (and merge_group / dispatch): per-SHA group
-#     (branch + github.sha), cancel-in-progress=false. Every commit that
-#     lands on main runs its own full-matrix CI to completion, so the
-#     commit history carries a real per-commit pass/fail signal instead of
-#     a run of "cancelled" markers left behind when a burst of merges
-#     supersedes each other. A cancelled run on an already-merged commit
-#     reads as red forever and hides genuine failures behind noise; keying
-#     main by SHA removes that class of false red.
+#   - Pushes to main: branch-wide group, cancel-in-progress=true — the
+#     newest landed commit supersedes queued/running CI for the commits
+#     under it. The per-SHA no-cancel policy this replaces assumed merged
+#     PRs arrive too slowly to matter; on 2026-08-30 the merge queue
+#     landed 8 PRs in 2 hours and the stacked full-matrix main runs
+#     (~36 jobs each) saturated the account-wide concurrent-job ceiling
+#     for over 4 hours — merge_group runs starved and the queue froze.
+#     The per-commit pass/fail signal the old policy protected is carried
+#     by main-sha-marker.yml (per-SHA, never cancelled), so a superseded
+#     heavy run loses nothing that survives anyway.
 #
-# Tradeoff: a rapid merge wave now keeps N full main runs alive instead of
-# one (the branch-scoped policy this replaces was chosen after a May 2026
-# wave of 13 merges in 90 min saturated the runner queue). Main pushes are
-# merged PRs, far fewer than PR-branch pushes, so the load is bounded; the
-# durable fix for burst load is the merge queue (ci.yml already triggers on
-# merge_group), which tests each batch once on the prospective merged SHA.
-# PR-branch pushes keep cancel-in-progress=true, so the saturation source
-# (many pushes across many open PRs) stays capped.
+#   - Release bump commits (chore(release)/release: prefixes) keep the
+#     per-SHA group: the auto-release gate keys on the triggering
+#     commit's own successful CI run, so superseding a bump run would
+#     silently drop the tag. Bumps are rare; the exemption costs nothing.
+#
+#   - merge_group / dispatch: per-SHA group, never cancelled — each queue
+#     batch must test its prospective merged SHA to completion.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('branch-{0}-{1}', github.ref, github.sha) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'chore(release)') && !startsWith(github.event.head_commit.message, 'release:')) && format('branch-{0}', github.ref) || format('branch-{0}-{1}', github.ref, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'chore(release)') && !startsWith(github.event.head_commit.message, 'release:')) }}
 
 # Default-deny for the workflow token; individual jobs escalate only
 # the scopes they actually need (Scorecard token-permissions, Sonar S8264).
@@ -457,6 +458,12 @@ jobs:
         # and this job passed all three. Pure stdlib and git, so it runs here
         # ahead of the bootstrap step rather than waiting on the toolchain.
         run: python3 scripts/check_bom.py
+      - name: Reject an unquoted Python heredoc in a workflow
+        # A workflow step assembled its Python source by shell substitution
+        # and died on NameError the first time it ran after merge, leaving a
+        # red check on every pull request opened afterwards. Pure stdlib, so
+        # it runs here ahead of the bootstrap step.
+        run: python3 scripts/check_workflow_heredocs.py
       - name: Check Python syntax in scripts/
         run: |
           ERRORS=""
