@@ -3155,7 +3155,7 @@ class Orchestrator:
             graph_digest_val = graph_digest(graph)
             source_count = graph.source_file_count
             indexed_count = graph.indexed_file_count
-            unparsed_count = len(getattr(graph, "_unparsed_files", []))
+            unparsed_count = len(getattr(graph, "unparsed_files", []))
             all_edges = graph.edges
             inferred_count = sum(1 for e in all_edges if e.origin == EDGE_ORIGIN_INFERRED)
             extracted_count = sum(1 for e in all_edges if e.origin == EDGE_ORIGIN_EXTRACTED)
