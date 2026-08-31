@@ -84,6 +84,7 @@ __all__ = [
     "REASON_NO_CONTRACT",
     "REASON_NO_RECEIPT",
     "REASON_NO_TRANSCRIPT",
+    "REASON_PROJECTION_TAMPERED",
     "REASON_RECEIPT_STALE",
     "REASON_RECEIPT_TAMPERED",
     "REASON_REPLAY_DIVERGED",
@@ -175,6 +176,11 @@ REASON_FINGERPRINT_MISMATCH = "fingerprint_mismatch"
 #: The sealed receipt itself records a refusal.
 REASON_STORED_REFUSAL = "stored_refusal"
 
+#: The installed ``last_green.json`` projection's head digest does not match
+#: the adapters dict it claims to cover. The file has been tampered with or
+#: is from a different canary run than the one the operator expects.
+REASON_PROJECTION_TAMPERED = "projection_tampered"
+
 #: Operator-visible remediation per refusal reason. Every refusal names a
 #: concrete next action, so a withheld adapter is an actionable finding rather
 #: than a dead end. ``{adapter}`` is substituted at receipt-build time.
@@ -231,6 +237,11 @@ REMEDIATION: dict[str, str] = {
     REASON_STORED_REFUSAL: (
         "The sealed admission receipt for {adapter} records a refusal. Clear "
         "the underlying conformance finding, then re-seal."
+    ),
+    REASON_PROJECTION_TAMPERED: (
+        "The installed ``last_green.json`` projection head does not match the "
+        "adapters dict it claims. Re-run ``bernstein canary run`` to regenerate "
+        "a valid projection."
     ),
 }
 
@@ -741,6 +752,7 @@ def evaluate_admission(
     evidence: AdmissionEvidence,
     *,
     ttl_seconds: int = ADMISSION_TTL_SECONDS,
+    last_green_path: Path | None = None,
 ) -> AdmissionDecision:
     """Decide admit / refuse from evidence alone. Pure and deterministic.
 
@@ -766,6 +778,16 @@ def evaluate_admission(
         return _decision(evidence, VERDICT_REFUSE, REASON_REPLAY_DIVERGED, ttl_seconds)
     if evidence.canary_verdict == CANARY_RED:
         return _decision(evidence, VERDICT_REFUSE, REASON_CANARY_RED, ttl_seconds)
+    # Projection-head check: when a last-green path is provided, verify the
+    # file's top-level projection_sha256 matches the adapters dict. A mismatch
+    # means the file was tampered with or is from a different canary run. We
+    # skip the check when the head is missing (pre-v2 file) for backward
+    # compatibility.
+    if last_green_path is not None:
+        from .canary import verify_last_green_head
+
+        if not verify_last_green_head(last_green_path):
+            return _decision(evidence, VERDICT_REFUSE, REASON_PROJECTION_TAMPERED, ttl_seconds)
     return _decision(evidence, VERDICT_ADMIT, "", ttl_seconds)
 
 
@@ -1207,9 +1229,10 @@ def gate_decision(
     *,
     now: datetime,
     ttl_seconds: int,
+    last_green_path: Path | None = None,
 ) -> AdmissionDecision:
     """Fold live evidence and the sealed receipt into the gate's verdict."""
-    live = evaluate_admission(evidence, ttl_seconds=ttl_seconds)
+    live = evaluate_admission(evidence, ttl_seconds=ttl_seconds, last_green_path=last_green_path)
     if not live.admitted:
         return live
     if stored is None:
@@ -1308,7 +1331,14 @@ def preflight_admission(
         canary_verdict=canary_verdict,
     )
     stored, problem = load_admission_receipt(receipts_dir, adapter)
-    decision = gate_decision(evidence, stored, problem, now=clock, ttl_seconds=ttl_seconds)
+    decision = gate_decision(
+        evidence,
+        stored,
+        problem,
+        now=clock,
+        ttl_seconds=ttl_seconds,
+        last_green_path=last_green_path,
+    )
 
     receipt = build_admission_receipt(decision, generated_at=stamp, kind=GATE_RECEIPT_KIND)
     sha = receipt_sha256(receipt)

@@ -3134,6 +3134,63 @@ class Orchestrator:
                 )
         except Exception:
             logger.exception("Audit integrity check failed (non-fatal) - continuing startup")
+
+        # Run-scope code graph anchoring: build the graph once at run start
+        # and anchor its digest in the audit chain before any agents spawn.
+        # This ensures audit-chain integrity for graph-dependent operations
+        # and provides a verifiable record of the repository state at run time.
+        try:
+            from bernstein.core.knowledge.ast_symbol_graph import (
+                EDGE_ORIGIN_EXTRACTED,
+                EDGE_ORIGIN_INFERRED,
+                build_semantic_graph,
+                graph_digest,
+            )
+            from bernstein.core.orchestration.schedule_projection import SCHEDULE_PROJECTION_REV
+            from bernstein.core.security.audit import load_or_create_audit_key
+            from bernstein.core.security.audit_chain import AuditChainStore, record_code_graph_anchored
+
+            # Build the semantic graph once for this run (run-scoped cache)
+            graph = build_semantic_graph(self._workdir)
+            graph_digest_val = graph_digest(graph)
+            source_count = graph.source_file_count
+            indexed_count = graph.indexed_file_count
+            unparsed_count = len(getattr(graph, "unparsed_files", []))
+            all_edges = graph.edges
+            inferred_count = sum(1 for e in all_edges if e.origin == EDGE_ORIGIN_INFERRED)
+            extracted_count = sum(1 for e in all_edges if e.origin == EDGE_ORIGIN_EXTRACTED)
+
+            # Initialize provider audit chain if not already done
+            if self._provider_audit_chain is None:
+                hmac_key = load_or_create_audit_key(self._workdir / ".sdd")
+                self._provider_audit_chain = AuditChainStore(self._workdir / ".sdd" / "audit", key=hmac_key)
+
+            # Anchor the code graph digest in the audit chain
+            record_code_graph_anchored(
+                chain=self._provider_audit_chain,
+                run_id=self._run_id,
+                graph_digest=graph_digest_val,
+                graph_version=SCHEDULE_PROJECTION_REV,
+                source_file_count=source_count,
+                indexed_file_count=indexed_count,
+                unparsed_file_count=unparsed_count,
+                inferred_edge_count=inferred_count,
+                extracted_edge_count=extracted_count,
+                actor="orchestrator",
+            )
+            logger.info(
+                "Code graph anchored in audit chain: digest=%s, source=%d, indexed=%d, "
+                "unparsed=%d, inferred=%d, extracted=%d",
+                graph_digest_val[:16],
+                source_count,
+                indexed_count,
+                unparsed_count,
+                inferred_count,
+                extracted_count,
+            )
+        except Exception as exc:
+            logger.warning("Code graph anchoring failed (non-fatal): %s", sanitize_log(str(exc)))
+
         # Zombie cleanup: terminate orphaned agent processes from prior crashed runs.
         try:
             from bernstein.core.zombie_cleanup import scan_and_cleanup_zombies

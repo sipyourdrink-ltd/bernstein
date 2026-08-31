@@ -11,6 +11,7 @@ import logging
 from importlib.metadata import entry_points
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from bernstein.adapters.gitleaks import GitleaksAdapter
 from bernstein.adapters.scanner import ScannerAdapter
 
 if TYPE_CHECKING:
@@ -148,3 +149,6 @@ def scanner_name_for_provider(provider_name: str | None, model: str) -> str | No
     """
     # Not implemented in slice 2 - external tools are looked up by name directly
     return None
+
+
+register_scanner(GitleaksAdapter.registry_name, GitleaksAdapter)

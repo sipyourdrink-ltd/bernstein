@@ -396,7 +396,7 @@ def test_abort_releases_the_claim(tmp_path: Path) -> None:
     )
 
     assert isinstance(outcome, TaskRefusal)
-    assert outcome.stage == RefusalStage.CLONE
+    assert outcome.stage == RefusalStage.REPO_URL
     assert len(runner.posts) == 1
     assert len(runner.patches) == 1
     assert runner.patches[0]["url"].endswith("/issues/comments/555")
@@ -425,7 +425,7 @@ def test_stale_own_claim_is_not_reused(tmp_path: Path) -> None:
     )
 
     assert isinstance(outcome, TaskRefusal)
-    assert outcome.stage == RefusalStage.CLONE
+    assert outcome.stage == RefusalStage.REPO_URL
     # A fresh claim was posted (id 555) rather than reusing the 20h-old own
     # claim (id 9), and the release on abort edits that new comment.
     assert len(runner.posts) == 1

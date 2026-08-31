@@ -30,6 +30,7 @@ from bernstein.adapters.admission import (
     REASON_NO_CONTRACT,
     REASON_NO_RECEIPT,
     REASON_NO_TRANSCRIPT,
+    REASON_PROJECTION_TAMPERED,
     REASON_RECEIPT_STALE,
     REASON_RECEIPT_TAMPERED,
     RECEIPT_KIND,
@@ -54,7 +55,7 @@ from bernstein.adapters.admission import (
     verify_admission_receipt,
     write_admission_receipt,
 )
-from bernstein.adapters.canary import LastGreenEntry, save_last_green
+from bernstein.adapters.canary import CanaryOutcome, LastGreenEntry, save_last_green, update_last_green
 from bernstein.adapters.conformance import StepResult, TranscriptResult
 from bernstein.adapters.registry import get_adapter
 
@@ -280,6 +281,52 @@ def test_red_canary_refuses() -> None:
     decision = evaluate_admission(_bare_evidence(canary_verdict=CANARY_RED))
 
     assert decision.reason == REASON_CANARY_RED
+
+
+def test_tampered_last_green_projection_refuses(tmp_path: Path) -> None:
+    path = tmp_path / "last_green.json"
+    outcome = CanaryOutcome(
+        adapter="kimi",
+        binary="kimi",
+        model="default",
+        goal="test",
+        installed_version="0.9.1",
+        verdict="pass",
+        failures=(),
+        transcript=(),
+    )
+    entries = update_last_green({}, outcome, receipt_sha="ab" * 32, recorded_at="2026-07-24T12:00:00Z")
+    save_last_green(path, entries)
+    # Tamper with the projection file
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["adapters"]["kimi"]["version"] = "9.9.9"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    decision = evaluate_admission(_bare_evidence(), last_green_path=path)
+
+    assert not decision.admitted
+    assert decision.reason == REASON_PROJECTION_TAMPERED
+    assert decision.remediation
+
+
+def test_valid_last_green_projection_admits(tmp_path: Path) -> None:
+    path = tmp_path / "last_green.json"
+    outcome = CanaryOutcome(
+        adapter="kimi",
+        binary="kimi",
+        model="default",
+        goal="test",
+        installed_version="0.9.1",
+        verdict="pass",
+        failures=(),
+        transcript=(),
+    )
+    entries = update_last_green({}, outcome, receipt_sha="ab" * 32, recorded_at="2026-07-24T12:00:00Z")
+    save_last_green(path, entries)
+
+    decision = evaluate_admission(_bare_evidence(), last_green_path=path)
+
+    assert decision.admitted
 
 
 def test_refusal_forbids_every_capability_including_spawn() -> None:

@@ -92,13 +92,14 @@ __all__ = [
     "skip_fingerprint",
     "update_last_green",
     "verify_canary_receipt",
+    "verify_last_green_head",
     "verify_last_green_projection",
     "write_canary_receipt",
 ]
 
 #: Version stamped into every receipt preimage. Bump only on a wire-format
 #: change.
-CANARY_SCHEMA_VERSION = 1
+CANARY_SCHEMA_VERSION = 2
 
 #: The one pinned tiny goal every canary run uses. Fixed so run-to-run
 #: diffs isolate upstream drift, tiny so daily spend stays bounded.
@@ -246,6 +247,10 @@ class LastGreenEntry:
             this row; the table is a projection of receipts, so every row
             is independently checkable against its receipt file.
         recorded_at: Timestamp the attesting canary run stamped.
+        projection_sha256: SHA-256 digest of the canonical "adapters" dict
+            projection (same form as receipt hashing). Anchors the row to the
+            exact set of passing receipts for this run, guaranteeing that a
+            committed row cannot be tampered with.
     """
 
     adapter: str
@@ -253,6 +258,7 @@ class LastGreenEntry:
     version: str
     receipt_sha256: str
     recorded_at: str
+    projection_sha256: str | None = None
 
 
 @dataclass
@@ -859,6 +865,9 @@ def load_last_green(path: Path | None = None) -> dict[str, LastGreenEntry]:
     this returns feed admission and ``doctor``, which read them as attestations,
     and an attestation assembled from a coerced value attests nothing while
     still presenting as evidence.
+
+    Pre-v2 files (without ``projection_sha256``) are loaded with
+    ``projection_sha256=None`` for full backward compatibility.
     """
     source = path if path is not None else LAST_GREEN_JSON_PATH
     try:
@@ -873,12 +882,14 @@ def load_last_green(path: Path | None = None) -> dict[str, LastGreenEntry]:
         if not isinstance(entry, dict):
             continue
         try:
+            projection_sha256 = entry.get("projection_sha256")
             entries[str(name)] = LastGreenEntry(
                 adapter=str(name),
                 binary=_row_text(entry, "binary"),
                 version=_row_text(entry, "version"),
                 receipt_sha256=_row_receipt_sha256(entry),
                 recorded_at=_row_recorded_at(entry),
+                projection_sha256=projection_sha256 if isinstance(projection_sha256, str) else None,
             )
         except KeyError as exc:
             logger.warning("last-green row %r is missing %s; dropped", name, exc)
@@ -933,8 +944,29 @@ def update_last_green(
 
 
 def save_last_green(path: Path, entries: dict[str, LastGreenEntry]) -> None:
-    """Persist the last-green projection atomically, sorted by adapter."""
+    """Persist the last-green projection atomically, sorted by adapter.
+
+    Computes and writes a top-level ``projection_sha256`` -- a SHA-256 hex
+    digest of the canonical JSON bytes of the ``adapters`` dict, in the same
+    canonical form as receipt hashing (sort_keys, no indent, no extra
+    whitespace). The head is computed over the adapters dict only, not
+    including the ``projection_sha256`` field itself, so a consumer holding
+    only the installed wheel can verify a committed ``last_green.json`` row
+    is untampered.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
+    adapters_dict = {
+        name: {
+            "binary": entry.binary,
+            "version": entry.version,
+            "receipt_sha256": entry.receipt_sha256,
+            "recorded_at": entry.recorded_at,
+        }
+        for name, entry in sorted(entries.items())
+    }
+    canonical = _canonical_bytes(adapters_dict)
+    projection_sha256 = _sha256_hex(canonical)
+
     doc = {
         "schema_version": CANARY_SCHEMA_VERSION,
         "adapters": {
@@ -946,10 +978,54 @@ def save_last_green(path: Path, entries: dict[str, LastGreenEntry]) -> None:
             }
             for name, entry in sorted(entries.items())
         },
+        "projection_sha256": projection_sha256,
     }
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     tmp.replace(path)
+
+
+def verify_last_green_head(path: Path | None = None) -> bool:
+    """Verify the ``projection_sha256`` head of ``last_green.json``.
+
+    A pure function that recomputes the head from the loaded ``adapters``
+    dict and compares it to the recorded ``projection_sha256`` at the top
+    of the file. Returns ``True`` when they match, ``False`` when the head
+    is missing (pre-v2 file), the file is missing, or the head does not
+    match.
+
+    Raises:
+        OSError: When the path cannot be read.
+    """
+    source = path if path is not None else LAST_GREEN_JSON_PATH
+    try:
+        raw = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        if isinstance(exc, OSError):
+            raise
+        return False
+    if not isinstance(raw, dict):
+        return False
+    recorded = raw.get("projection_sha256")
+    if not isinstance(recorded, str):
+        return False
+    adapters = raw.get("adapters")
+    if not isinstance(adapters, dict):
+        return False
+    adapters_dict: dict[str, dict[str, Any]] = {}
+    for name, entry in sorted(adapters.items()):
+        if not isinstance(entry, dict):
+            continue
+        try:
+            adapters_dict[str(name)] = {
+                "binary": _row_text(entry, "binary"),
+                "version": _row_text(entry, "version"),
+                "receipt_sha256": _row_receipt_sha256(entry),
+                "recorded_at": _row_recorded_at(entry),
+            }
+        except (KeyError, ValueError):
+            continue
+    return _sha256_hex(_canonical_bytes(adapters_dict)) == recorded
 
 
 class ReceiptSetError(ValueError):
