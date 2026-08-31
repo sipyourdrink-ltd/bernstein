@@ -50,7 +50,6 @@ from typing import Any, TypedDict, cast
 
 import yaml
 from pydantic import ValidationError
-from scripts.gen_distribution_manifests import PLUGIN_SCHEMA_ID, _schema_errors
 
 from bernstein.core.security.audit import load_or_create_audit_key
 from bernstein.core.security.audit_chain import AuditChainStore, record_skill_install_receipt
@@ -61,6 +60,7 @@ from bernstein.core.security.path_containment import (
 from bernstein.core.skills.lint import LintSeverity, lint_skill
 from bernstein.core.skills.manifest import SkillManifest, parse_skill_md
 from bernstein.core.skills.packaging import tree_content_hash
+from bernstein.core.skills.plugin_schema import PLUGIN_SCHEMA_ID, schema_errors
 from bernstein.core.skills.provenance import InstallReceipt, write_install_receipt
 from bernstein.core.skills.sanitizer import strip_invisible_tags
 
@@ -798,7 +798,7 @@ def is_agent_plugins_layout(source: Path) -> bool:
         logger.debug("Rejecting %s as Agent Plugins layout: missing $schema field", source)
         return False
     schema_spec = {"const": PLUGIN_SCHEMA_ID}
-    errors = _schema_errors(data["$schema"], schema_spec, schema_spec, path="$.$schema")
+    errors = schema_errors(data["$schema"], schema_spec, schema_spec, path="$.$schema")
     if errors:
         logger.debug(
             "Rejecting %s as Agent Plugins layout: unknown $schema (%s)",
@@ -865,7 +865,7 @@ def install_plugin_local(
     if "$schema" not in manifest:
         raise SkillLifecycleError(f"{source}: not an Agent Plugins directory layout (missing $schema field)")
     schema_spec = {"const": PLUGIN_SCHEMA_ID}
-    errors = _schema_errors(manifest["$schema"], schema_spec, schema_spec, path="$.$schema")
+    errors = schema_errors(manifest["$schema"], schema_spec, schema_spec, path="$.$schema")
     if errors:
         raise SkillLifecycleError(
             f"{source}: not an Agent Plugins directory layout (unknown $schema: {'; '.join(errors)})"
