@@ -60,7 +60,6 @@ from bernstein.adapters.q_dev import QDevAdapter
 from bernstein.adapters.qwen import QwenAdapter
 from bernstein.adapters.ralphex import RalphexAdapter
 from bernstein.adapters.rovo import RovoAdapter
-from bernstein.adapters.skyvern import SkyvernAdapter
 
 logger = logging.getLogger(__name__)
 
