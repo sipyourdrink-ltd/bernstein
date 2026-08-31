@@ -393,11 +393,10 @@ def test_desktop_sandbox_driver_unknown_build_version_default() -> None:
         mock_import.return_value = Mock()
 
         driver = DesktopSandboxDriver(
-            sandbox_allocator=mock_allocator,
-            profile_dir=Path("/tmp/test-profile"),
-            # No build_id specified
+            sandbox_allocator=mock_allocator, profile_dir=Path("/tmp/test-profile")
         )
 
         from bernstein.core.orchestration.browser_driver import UNKNOWN_BUILD_VERSION
 
         assert driver.build_id == UNKNOWN_BUILD_VERSION
+
