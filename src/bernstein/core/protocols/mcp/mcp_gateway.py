@@ -31,14 +31,14 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.orchestration.worker_loop_detector import WorkerLoopDetector
+from bernstein.core.persistence.action_cache import open_cache
 from bernstein.core.protocols.mcp.stateless_core import (
     StatelessCallRecord,
     anchor_stateless_call,
     request_span_id,
 )
-from bernstein.core.orchestration.worker_loop_detector import WorkerLoopDetector
 from bernstein.core.security.claude_tool_result_injection import ToolResultInjector
-from bernstein.core.persistence.action_cache import open_cache
 
 logger = logging.getLogger(__name__)
 
@@ -352,11 +352,11 @@ class MCPGateway:
 
         if self._settlement is not None and method == "tools/call":
             response = await self._maybe_settle(message, params, response)
-            
+
         if method == "tools/call" and record and self._journal and "error" not in response:
             meta = params.get("_meta", {})
             content_hash = meta.get("cacheScope", {}).get("content_hash") if isinstance(meta, dict) else None
-            
+
             if content_hash:
                 cache = open_cache(self._journal.path.parents[3])
                 action = cache.resolve_by_content_hash(content_hash)
@@ -375,9 +375,7 @@ class MCPGateway:
                         injector.add_gate_output(
                             gate_name="LoopDetector",
                             passed=False,
-                            errors=[
-                                f"Worker repeated {loop_type} action cycle. Please reconsider your approach."
-                            ],
+                            errors=[f"Worker repeated {loop_type} action cycle. Please reconsider your approach."],
                         )
                         payload = injector.build_payload(fmt="text")
                         response["result"] = payload.to_context_text()
@@ -464,7 +462,7 @@ class MCPGateway:
         settled, latency_ms = await self._send_request(retried, retried_id)
         wal_entry = self._record_wal_and_metrics("tools/call", retried_params, retried_id, settled, latency_ms)
         self._anchor_proxied_call("tools/call", retried_params)
-        
+
         try:
             self._settlement.record_settlement(
                 challenge,

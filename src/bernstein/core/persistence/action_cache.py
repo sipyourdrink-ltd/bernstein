@@ -234,25 +234,24 @@ class ActionCache:
             return None
         digest = derive_key(model_id=model_id, prompt=prompt, tool_name=tool_name, tool_args=tool_args)
         raw = self._store.get(digest)
-        
+
         if raw is None:
             self._misses += 1
             return None
-            
+
         record = _coerce_record(raw)
         if record is None:
             self._misses += 1
             return None
-            
+
         self._hits += 1
         self._savings_usd += record.cost_usd
         _emit_hit_metric(model_id, record.cost_usd)
         return record
 
-
     def resolve_by_content_hash(self, content_hash: str) -> ActionRecord | None:
         """Resolve a known content_hash to its ActionRecord.
-        
+
         Used by orchestration boundaries (e.g. WorkerLoopDetector) to recover
         the canonical (argv, outcome) of a cached action.
         """
