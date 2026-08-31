@@ -477,6 +477,13 @@ jobs:
             exit 1
           fi
       - uses: ./.github/actions/bootstrap
+      - name: Reject collect-empty test modules (#4834)
+        # A test_*.py whose body was emptied still collects cleanly and exits
+        # 0, so a shrinking suite looks green. Naming-convention scope
+        # (test_*.py / *_test.py) excludes conftest/helpers; AST short-circuits
+        # non-empty modules; pytest --collect-only confirms inheritance /
+        # Hypothesis cases. Needs the bootstrapped env for that collect path.
+        run: uv run python scripts/check_empty_test_modules.py
       - name: AGENTS.md cross-CLI sync drift check
         # Fails if AGENTS.md / CLAUDE.md / CONVENTIONS.md / .aider.conf.yml /
         # .goosehints / .cursor/rules/*.mdc drift from `bernstein agents-md

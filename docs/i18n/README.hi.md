@@ -142,9 +142,9 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 रिपॉज़िटरी हाइजीन गेट: `bernstein readme-l10n verify` उस PR को फ़ेल करता है जिसके अनूदित README अंग्रेज़ी स्रोत से भटक गए हों (और बासी सेक्शन का नाम बताता है), `bernstein readme-l10n sync` अंग्रेज़ी में बदलाव के बाद उन्हें दोबारा बाँध देता है। देखिए [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)।
 
 ### समर्थित एजेंट
-<!-- l10n: en="supported agents" hash="sha256:8c94b4cde068" -->
+<!-- l10n: en="supported agents" hash="sha256:c3a0c276b6b6" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen और भी कई। [अडैप्टर इंडेक्स](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) उनमें से 30 के इंस्टॉल कमांड रखता है। `bernstein integrations list` `src/bernstein/adapters/registry.py` से जुड़े हुए सभी 51 इंटीग्रेशन गिनाता है — क्या रिज़ॉल्व होता है, इसका यही इकलौता स्रोत है। उनमें 49 चुनने-योग्य एजेंट अडैप्टर हैं; बाक़ी दो पंक्तियाँ `mock` टेस्ट स्टब और `self-hosted-endpoints` एंडपॉइंट प्रोफ़ाइल हैं। `--prompt` फ़्लैग वाली बाक़ी कोई भी चीज़ जेनेरिक रैपर से चलती है।
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen और भी कई। [अडैप्टर इंडेक्स](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) उनमें से 30 के इंस्टॉल कमांड रखता है। `bernstein integrations list` `src/bernstein/adapters/registry.py` से जुड़े हुए सभी 52 इंटीग्रेशन गिनाता है — क्या रिज़ॉल्व होता है, इसका यही इकलौता स्रोत है। उनमें 50 चुनने-योग्य एजेंट अडैप्टर हैं; बाक़ी दो पंक्तियाँ `mock` टेस्ट स्टब और `self-hosted-endpoints` एंडपॉइंट प्रोफ़ाइल हैं। `--prompt` फ़्लैग वाली बाक़ी कोई भी चीज़ जेनेरिक रैपर से चलती है।
 
 एक ही रन में एजेंट मिलाइए: बॉयलरप्लेट के लिए सस्ते लोकल मॉडल, आर्किटेक्चर के लिए भारी क्लाउड मॉडल। `bernstein integrations list --installed` दिखाता है कि आपकी मशीन पर क्या उपलब्ध है।
 

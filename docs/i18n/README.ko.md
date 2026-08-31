@@ -142,9 +142,9 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 리포지터리 위생 게이트: `bernstein readme-l10n verify`는 번역된 README가 영어 원문에서 벗어난 PR을 오래된 섹션 이름과 함께 실패시킨다. `bernstein readme-l10n sync`는 영어를 편집한 뒤 다시 묶는다. [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)을 보라.
 
 ### 지원하는 에이전트
-<!-- l10n: en="supported agents" hash="sha256:8c94b4cde068" -->
+<!-- l10n: en="supported agents" hash="sha256:c3a0c276b6b6" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen 외 다수. [어댑터 색인](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)에는 그중 30개의 설치 명령이 있다. `bernstein integrations list`는 `src/bernstein/adapters/registry.py`에서 배선된 통합 51건 전부를 나열한다. 이 파일이 무엇이 해결되는지에 대한 유일한 출처다. 그중 49건은 선택 가능한 에이전트 어댑터이고, 나머지 두 줄은 `mock` 테스트 스텁과 `self-hosted-endpoints` 엔드포인트 프로파일이다. `--prompt` 플래그를 가진 그 밖의 것들은 범용 래퍼로 동작한다.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen 외 다수. [어댑터 색인](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)에는 그중 30개의 설치 명령이 있다. `bernstein integrations list`는 `src/bernstein/adapters/registry.py`에서 배선된 통합 52건 전부를 나열한다. 이 파일이 무엇이 해결되는지에 대한 유일한 출처다. 그중 50건은 선택 가능한 에이전트 어댑터이고, 나머지 두 줄은 `mock` 테스트 스텁과 `self-hosted-endpoints` 엔드포인트 프로파일이다. `--prompt` 플래그를 가진 그 밖의 것들은 범용 래퍼로 동작한다.
 
 한 실행 안에서 에이전트를 섞을 수 있다. 정형 작업에는 값싼 로컬 모델을, 설계에는 무거운 클라우드 모델을. `bernstein integrations list --installed`는 자기 머신에서 쓸 수 있는 것을 보여준다.
 

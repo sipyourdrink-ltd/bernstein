@@ -64,3 +64,24 @@ def _reset_scanner_state():
 
     # Restore
     scanner_reg._SCANNERS.update(orig_scanners)
+
+
+def test_register_and_get_scanner_round_trip() -> None:
+    """A registered scanner resolves by name and is instantiable."""
+    from bernstein.adapters import scanner_registry as scanner_reg
+
+    scanner_reg._entrypoints_loaded = True
+    scanner_reg.register_scanner("dummy-test", DummyScanner)
+
+    got = scanner_reg.get_scanner("dummy-test")
+    assert isinstance(got, DummyScanner)
+    assert got.name() == "dummy-test"
+    assert "dummy-test" in scanner_reg.selectable_scanner_names()
+
+
+def test_get_scanner_unknown_name_raises() -> None:
+    from bernstein.adapters import scanner_registry as scanner_reg
+
+    scanner_reg._entrypoints_loaded = True
+    with pytest.raises(ValueError, match="Unknown scanner"):
+        scanner_reg.get_scanner("does-not-exist")
