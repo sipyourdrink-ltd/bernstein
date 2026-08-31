@@ -78,27 +78,40 @@ def test_retro_since_filter_excludes_old_tasks() -> None:
 
 
 def test_retro_since_filter_includes_recent_tasks() -> None:
-    """``--since`` includes tasks within the specified time window."""
+    """``--since`` counts tasks inside the window and drops the ones outside it."""
     runner = CliRunner()
     with runner.isolated_filesystem():
         ad = Path(".sdd/archive")
         ad.mkdir(parents=True)
-        # A recent task (within 2 hours) - use 7200 to account for test execution time
-        (ad / "tasks.jsonl").write_text(
+        # One task inside the 3-hour window and one well outside it. A test with
+        # only the recent task would pass just as happily against a --since that
+        # was ignored entirely, which is the thing worth catching here.
+        rows = [
             json.dumps(
                 {
                     "id": "recent",
                     "title": "Recent Task",
                     "status": "done",
                     "role": "backend",
-                    "completed_at": time.time() - 7200,  # 2 hours ago (safe buffer)
+                    "completed_at": time.time() - 7200,  # 2 hours ago
                 }
-            )
-            + "\n"
-        )
+            ),
+            json.dumps(
+                {
+                    "id": "ancient",
+                    "title": "Ancient Task",
+                    "status": "done",
+                    "role": "backend",
+                    "completed_at": time.time() - 86400,  # 24 hours ago
+                }
+            ),
+        ]
+        (ad / "tasks.jsonl").write_text("\n".join(rows) + "\n")
         result = runner.invoke(retro, ["--since", "3"])
-    assert result.exit_code == 0, result.output
-    assert "Recent Task" in result.output
+        assert result.exit_code == 0, result.output
+        # The report carries counts, not titles, so the filter is asserted on
+        # the total rather than on the presence of a name.
+        assert "1 done / 1 total" in Path(".sdd/runtime/retrospective.md").read_text()
 
 
 def test_retro_output_directory_created() -> None:
@@ -119,7 +132,17 @@ def test_retro_custom_archive_path() -> None:
     """``--archive`` flag overrides the default archive path."""
     runner = CliRunner()
     with runner.isolated_filesystem():
-        # Create archive in non-default location
+        # Populate BOTH archives with different task counts. If --archive were
+        # ignored, the report would count the default archive's two tasks, so
+        # the total is what proves which file was read.
+        default_archive = Path(".sdd/archive")
+        default_archive.mkdir(parents=True)
+        (default_archive / "tasks.jsonl").write_text(
+            "\n".join(
+                json.dumps({"id": f"d{i}", "title": "Default", "status": "done", "role": "backend"}) for i in range(2)
+            )
+            + "\n"
+        )
         custom_archive = Path(".sdd/custom_archive")
         custom_archive.mkdir(parents=True)
         (custom_archive / "tasks.jsonl").write_text(
@@ -127,7 +150,7 @@ def test_retro_custom_archive_path() -> None:
         )
         result = runner.invoke(retro, ["--archive", str(custom_archive / "tasks.jsonl")])
         assert result.exit_code == 0, result.output
-        assert "Custom" in result.output
+        assert "1 done / 1 total" in Path(".sdd/runtime/retrospective.md").read_text()
 
 
 def test_retro_empty_tasks_jsonl() -> None:
@@ -154,8 +177,9 @@ def test_retro_failed_tasks_appear_in_report() -> None:
         )
         result = runner.invoke(retro, [])
         assert result.exit_code == 0, result.output
-        assert "Failed Task" in result.output
-        assert "0%" in result.output or "0%" not in result.output  # 0% completion rate
+        report = Path(".sdd/runtime/retrospective.md").read_text()
+        assert "Failed Task" in report
+        assert "0%" in report
 
 
 def test_retro_completion_rate_calculation() -> None:

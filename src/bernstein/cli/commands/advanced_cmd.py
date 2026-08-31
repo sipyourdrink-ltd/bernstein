@@ -1423,7 +1423,7 @@ def trace_export_cmd(
         del _trace_lib
     except ImportError:
         console.print("[red]The trace extra is required:[/red] pip install bernstein[trace]")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
 
     # Resolve SDD_DIR
     if sdd_dir:
@@ -1465,7 +1465,7 @@ def trace_export_cmd(
         journal_path = run_journal_path(sdd_path, target_run_id)
     except JournalPathError:
         console.print(f"[red]No such run:[/red] {target_run_id}")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
 
     if not journal_path.exists():
         console.print(f"[red]No such run:[/red] {target_run_id}")
@@ -1475,7 +1475,7 @@ def trace_export_cmd(
         verification = verify_journal(journal_path)
     except Exception as e:
         console.print(f"[red]Failed to verify journal:[/red] {e}")
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
     if not verification.chain_consistent:
         console.print(f"[red]Journal chain does not verify:[/red] {target_run_id}")
@@ -1493,7 +1493,7 @@ def trace_export_cmd(
         )
     except Exception as e:
         console.print(f"[red]Failed to emit trust record:[/red] {e}")
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
     # Output
     if output:
@@ -1503,7 +1503,7 @@ def trace_export_cmd(
         click.echo(trust_record_json)
 
 
-@trace_cmd.command("export-projection")
+@trace_cmd.command("verify-projection")
 @click.argument("run_id")
 @click.option(
     "--workdir",
@@ -1520,7 +1520,7 @@ def trace_export_cmd(
     default=None,
     help="Projection path (defaults to .sdd/runs/<run>/projection.otel.json).",
 )
-def trace_export_projection_cmd(run_id: str, workdir: str, projection_path: str | None) -> None:
+def trace_verify_projection_cmd(run_id: str, workdir: str, projection_path: str | None) -> None:
     """Verify ``RUN_ID``'s signed projection and authenticated audit binding.
 
     Rejects a span whose id was altered or whose journal entry hash is absent

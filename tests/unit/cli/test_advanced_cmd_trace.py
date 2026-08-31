@@ -1,6 +1,6 @@
 """Tests for ``bernstein trace export`` command functionality.
 
-Covers the ``trace export`` and ``trace export-projection`` commands and their options.
+Covers the ``trace export`` and ``trace verify-projection`` commands and their options.
 """
 
 from __future__ import annotations
@@ -14,13 +14,22 @@ from bernstein.cli.commands.advanced_cmd import trace_cmd
 
 
 # Helper function to create mock journal files
-def create_mock_run_journal(base_path: Path, run_id: str = "test-run-123"):
-    """Create a mock run journal.jsonl file."""
+def create_mock_run_journal(base_path: Path, run_id: str = "test-run-123", *, with_projection: bool = False):
+    """Create a mock run journal.jsonl file.
+
+    ``verify-projection`` reads ``projection.otel.json`` off disk and exits 1
+    before it reaches anything a test can patch, so a test that wants the
+    verification path has to ask for the projection as well as the journal.
+    """
     runs_dir = base_path / ".sdd" / "runs"
     run_dir = runs_dir / run_id
     run_dir.mkdir(parents=True)
     journal_path = run_dir / "journal.jsonl"
     journal_path.write_text('{"type": "session_start", "ts": 1234567890.0}\n')
+    if with_projection:
+        # Contents are irrelevant: projection_from_dict is patched in the tests
+        # that use this. It only has to exist and parse as JSON.
+        (run_dir / "projection.otel.json").write_text("{}")
     return run_dir
 
 
@@ -35,7 +44,7 @@ def test_trace_export_needs_trace_extra() -> None:
 
 
 def test_trace_export_projection_no_journal_events() -> None:
-    """``bernstein trace export-projection`` with no events fails gracefully."""
+    """``bernstein trace verify-projection`` with no events fails gracefully."""
     runner = CliRunner()
     with runner.isolated_filesystem():
         mock_trace_module = MagicMock()
@@ -43,7 +52,7 @@ def test_trace_export_projection_no_journal_events() -> None:
             # Create empty run directory (no journal.jsonl)
             runs_dir = Path(".sdd/runs/test-run-123")
             runs_dir.mkdir(parents=True)
-            result = runner.invoke(trace_cmd, ["export-projection", "test-run-123"])
+            result = runner.invoke(trace_cmd, ["verify-projection", "test-run-123"])
         assert result.exit_code == 1, result.output
         assert "No event journal" in result.output
 
@@ -97,7 +106,7 @@ def test_trace_export_create_run_structure_and_succeed() -> None:
         mock_trace_module = MagicMock()
         with patch.dict("sys.modules", {"agentrust_trace": mock_trace_module}):
             # Create mock run structure with journal
-            create_mock_run_journal(Path.cwd(), "test-run-123")
+            create_mock_run_journal(Path.cwd(), "test-run-123", with_projection=True)
 
             # Now mock all downstream dependencies
             with patch("bernstein.core.replay.journal.run_journal_path") as mock_journal_path:
@@ -126,7 +135,7 @@ def test_trace_export_create_run_structure_and_output_file() -> None:
         mock_trace_module = MagicMock()
         with patch.dict("sys.modules", {"agentrust_trace": mock_trace_module}):
             # Create mock run structure with journal
-            create_mock_run_journal(Path.cwd(), "test-run-123")
+            create_mock_run_journal(Path.cwd(), "test-run-123", with_projection=True)
 
             # Mock downstream dependencies
             with patch("bernstein.core.replay.journal.run_journal_path") as mock_journal_path:
@@ -149,14 +158,14 @@ def test_trace_export_create_run_structure_and_output_file() -> None:
 
 
 def test_trace_export_projection_create_run_structure_and_succeed() -> None:
-    """Test export-projection success path."""
+    """Test verify-projection success path."""
     runner = CliRunner()
     with runner.isolated_filesystem():
         # Make agentrust_trace importable
         mock_trace_module = MagicMock()
         with patch.dict("sys.modules", {"agentrust_trace": mock_trace_module}):
             # Create mock run structure
-            create_mock_run_journal(Path.cwd(), "test-run-123")
+            create_mock_run_journal(Path.cwd(), "test-run-123", with_projection=True)
 
             # Mock OTel projection verification chain
             with patch("bernstein.cli.commands.advanced_cmd._journal_path_for_run") as mock_journal_path:
@@ -178,20 +187,20 @@ def test_trace_export_projection_create_run_structure_and_succeed() -> None:
                                 mock_load_key.return_value.public_key.return_value = "mock_public_key"
                                 mock_verify.return_value = 0  # Success
 
-                                result = runner.invoke(trace_cmd, ["export-projection", "test-run-123"])
+                                result = runner.invoke(trace_cmd, ["verify-projection", "test-run-123"])
 
         assert result.exit_code == 0, result.output
 
 
 def test_trace_export_projection_create_run_structure_and_custom_path() -> None:
-    """Test export-projection with custom projection path."""
+    """Test verify-projection with custom projection path."""
     runner = CliRunner()
     with runner.isolated_filesystem():
         # Make agentrust_trace importable
         mock_trace_module = MagicMock()
         with patch.dict("sys.modules", {"agentrust_trace": mock_trace_module}):
             # Create mock run structure
-            create_mock_run_journal(Path.cwd(), "test-run-123")
+            create_mock_run_journal(Path.cwd(), "test-run-123", with_projection=True)
 
             # Create a custom projection file
             custom_projection = Path("my_projection.otel.json")
@@ -218,21 +227,21 @@ def test_trace_export_projection_create_run_structure_and_custom_path() -> None:
 
                                 result = runner.invoke(
                                     trace_cmd,
-                                    ["export-projection", "test-run-123", "--projection", "my_projection.otel.json"],
+                                    ["verify-projection", "test-run-123", "--projection", "my_projection.otel.json"],
                                 )
 
         assert result.exit_code == 0, result.output
 
 
 def test_trace_export_projection_verification_fails() -> None:
-    """Test export-projection with verification failure."""
+    """Test verify-projection with verification failure."""
     runner = CliRunner()
     with runner.isolated_filesystem():
         # Make agentrust_trace importable
         mock_trace_module = MagicMock()
         with patch.dict("sys.modules", {"agentrust_trace": mock_trace_module}):
             # Create mock run structure
-            create_mock_run_journal(Path.cwd(), "test-run-123")
+            create_mock_run_journal(Path.cwd(), "test-run-123", with_projection=True)
 
             with patch("bernstein.cli.commands.advanced_cmd._journal_path_for_run") as mock_journal_path:
                 with patch("bernstein.core.replay.journal.load_events") as mock_load_events:
@@ -253,6 +262,6 @@ def test_trace_export_projection_verification_fails() -> None:
                                 mock_load_key.return_value.public_key.return_value = "mock_public_key"
                                 mock_verify.return_value = 2  # Verification failure exit code
 
-                                result = runner.invoke(trace_cmd, ["export-projection", "test-run-123"])
+                                result = runner.invoke(trace_cmd, ["verify-projection", "test-run-123"])
 
         assert result.exit_code == 2, result.output
