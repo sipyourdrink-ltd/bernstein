@@ -75,9 +75,9 @@ class DecompositionEmitter:
                             and t.id != task.id
                             and t.status == TaskStatus.FAILED
                             and t.retry_count >= t.max_retries
+                            and t not in terminal_tasks
                         ):
-                            if t not in terminal_tasks:
-                                terminal_tasks.append(t)
+                            terminal_tasks.append(t)
             except Exception:
                 # If the store query fails, fall back to in-memory aggregation.
                 pass
@@ -87,27 +87,22 @@ class DecompositionEmitter:
             return None
 
         # Build the failure evidence from the terminal tasks.
-        # We concatenate their terminal_reason and result_summary.
-        evidence_parts: list[str] = []
         evidence_digests_set: set[str] = set()
         attempts: list[dict[str, Any]] = []
-        
+
         for t in terminal_tasks:
-            parts = []
+            parts: list[str] = []
             if t.terminal_reason:
                 parts.append(t.terminal_reason)
             if t.result_summary:
                 parts.append(t.result_summary)
-            if parts:
-                evidence_parts.append(f"Task {t.id}: {'; '.join(parts)}")
-            
-            # Build evidence digest for this task
-            import hashlib
+
+            # Build evidence digest for this task.
             task_evidence = "; ".join(parts) if parts else "Unknown failure"
             task_digest = hashlib.sha256(task_evidence.encode("utf-8")).hexdigest()
             evidence_digests_set.add(task_digest)
-            
-            # Add attempt for this task
+
+            # Add attempt for this task.
             attempt = {
                 "attempt_number": t.retry_count + 1,
                 "model": t.metadata.get("model", t.model or "unknown"),
@@ -117,10 +112,9 @@ class DecompositionEmitter:
             }
             attempts.append(attempt)
 
-        failure_evidence = "\n\n".join(evidence_parts) if evidence_parts else "Unknown failure"
         evidence_digests = tuple(evidence_digests_set)
-        
-        # Create the proposal with all attempts and evidence digests
+
+        # Create the proposal with all attempts and evidence digests.
         proposal = DecompositionProposal(
             issue_number=issue_number,
             repo=task.repo or "unknown",

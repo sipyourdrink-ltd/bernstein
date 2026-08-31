@@ -9,8 +9,6 @@ These tests verify:
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from bernstein.core.orchestration.decomposition_proposal import DecompositionProposal

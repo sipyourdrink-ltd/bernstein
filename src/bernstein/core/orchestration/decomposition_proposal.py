@@ -12,9 +12,15 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Dict, List
 
 from bernstein.core.tasks.models import Task
+
+# Import Task only for type checking to avoid circular imports at runtime
+try:
+    from bernstein.core.tasks.models import Task as _Task
+except ImportError:
+    _Task = Task  # type: ignore[assignment, misc]
 
 
 @dataclass(frozen=True)
@@ -78,7 +84,7 @@ class DecompositionProposal:
     @classmethod
     def from_task(
         cls, task: Task, failure_evidence: str
-    ) -> DecompositionProposal:
+    ) -> "DecompositionProposal":
         """Create a DecompositionProposal from a failed task and its evidence.
 
         Args:

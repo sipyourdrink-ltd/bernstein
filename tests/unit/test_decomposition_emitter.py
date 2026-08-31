@@ -9,8 +9,6 @@ These tests verify:
 
 from __future__ import annotations
 
-import pytest
-
 from bernstein.core.orchestration.decomposition_emitter import DecompositionEmitter
 from bernstein.core.orchestration.decomposition_proposal import DecompositionProposal
 from bernstein.core.tasks.models import Task, TaskStatus
