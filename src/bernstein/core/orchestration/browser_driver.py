@@ -57,6 +57,7 @@ if TYPE_CHECKING:
         def current_url(self, agent_process: object) -> str: ...
         def close(self, agent_process: object) -> None: ...
 
+
 __all__ = [
     "UNKNOWN_BUILD_VERSION",
     "BrowserDriver",
