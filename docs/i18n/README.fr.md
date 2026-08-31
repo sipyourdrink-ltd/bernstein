@@ -142,7 +142,7 @@ L'état d'exécution enregistre un point de contrôle dans `.sdd/runs/<run_id>/`
 Contrôles d'hygiène du dépôt : `bernstein readme-l10n verify` invalide une PR dont les READMEs traduits divergent de la source anglaise (en pointant la section obsolète), `bernstein readme-l10n sync` réaligne les liaisons après modification anglaise. Consultez [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### agents pris en charge
-<!-- l10n: en="supported agents" hash="sha256:c3a0c276b6b6" -->
+<!-- l10n: en="supported agents" hash="sha256:3b5ab5fcf9e1" -->
 
 Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen et bien d'autres. L'[index des adaptateurs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) fournit les commandes d'installation pour 30 d'entre eux. `bernstein integrations list` recense les 52 intégrations actives de `src/bernstein/adapters/registry.py`, référence unique de résolution. 50 constituent des adaptateurs sélectionnables ; les deux autres lignes correspondent au bouchon de test `mock` et au profil `self-hosted-endpoints`. Tout autre outil doté d'une option `--prompt` fonctionne via le wrapper générique.
 

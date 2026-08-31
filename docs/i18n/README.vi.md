@@ -142,7 +142,7 @@ Trạng thái phiên chạy được ghi điểm kiểm tra (checkpoint) vào `.
 Cổng kiểm soát chất lượng kho lưu trữ: `bernstein readme-l10n verify` sẽ báo lỗi PR nếu các bản dịch README lệch khỏi bản gốc tiếng Anh (chỉ rõ phần lỗi thời), `bernstein readme-l10n sync` liên kết lại chúng sau khi chỉnh sửa tiếng Anh. Xem [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### các tác tử được hỗ trợ
-<!-- l10n: en="supported agents" hash="sha256:c3a0c276b6b6" -->
+<!-- l10n: en="supported agents" hash="sha256:3b5ab5fcf9e1" -->
 
 Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen và nhiều tác tử khác. [Mục lục bộ điều hợp](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) cung cấp lệnh cài đặt cho 30 tác tử trong số đó. `bernstein integrations list` liệt kê toàn bộ 52 tích hợp sẵn có từ `src/bernstein/adapters/registry.py`, nguồn thông tin chuẩn xác duy nhất. 50 trong số đó là bộ điều hợp tác tử có thể lựa chọn; hai dòng còn lại là stub kiểm thử `mock` và hồ sơ điểm cuối `self-hosted-endpoints`. Mọi công cụ khác có gắn cờ `--prompt` đều hoạt động qua lớp bọc tổng quát.
 
