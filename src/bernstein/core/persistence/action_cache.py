@@ -225,22 +225,43 @@ class ActionCache:
         tool_name: str | None = None,
         tool_args: Mapping[str, Any] | None = None,
     ) -> ActionRecord | None:
-        """Return a cached record for these inputs, or ``None`` on miss."""
+        """Fetch a cached action for the exact model + prompt + tool call.
+
+        Returns ``None`` if the feature is disabled, the record is missing, or
+        the stored payload is corrupt.
+        """
         if self._mode == "off":
             return None
         digest = derive_key(model_id=model_id, prompt=prompt, tool_name=tool_name, tool_args=tool_args)
         raw = self._store.get(digest)
+
         if raw is None:
             self._misses += 1
             return None
+
         record = _coerce_record(raw)
         if record is None:
             self._misses += 1
             return None
+
         self._hits += 1
         self._savings_usd += record.cost_usd
         _emit_hit_metric(model_id, record.cost_usd)
         return record
+
+    def resolve_by_content_hash(self, content_hash: str) -> ActionRecord | None:
+        """Resolve a known content_hash to its ActionRecord.
+
+        Used by orchestration boundaries (e.g. WorkerLoopDetector) to recover
+        the canonical (argv, outcome) of a cached action.
+        """
+        if self._mode == "off" or not content_hash:
+            return None
+        try:
+            digest = bytes.fromhex(content_hash)
+        except (ValueError, TypeError):
+            return None
+        return _coerce_record(self._store.get(digest))
 
     def record(
         self,

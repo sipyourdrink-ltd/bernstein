@@ -28,8 +28,12 @@ import json
 import logging
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from bernstein.core.security.hook_gate import GateOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +74,14 @@ def hook_gate_group() -> None:
     default=None,
     help="Override the receipt seal timestamp (deterministic replay/tests).",
 )
-def hook_gate_check_cmd(session_id: str, event: str, workdir: str, timestamp: int | None) -> None:
+@click.option(
+    "--role",
+    "role",
+    default="worker",
+    show_default=True,
+    help="Agent role recorded on a pending approval (#4543).",
+)
+def hook_gate_check_cmd(session_id: str, event: str, workdir: str, timestamp: int | None, role: str) -> None:
     """Evaluate one hook event in-session and block or allow.
 
     Reads the hook event JSON on stdin. Exits 2 to block (refuse the tool call
@@ -96,25 +107,50 @@ def hook_gate_check_cmd(session_id: str, event: str, workdir: str, timestamp: in
         raise SystemExit(_ALLOW) from None
 
     policy = read_policy(root, session_id)
-    if policy is None or not policy.is_active:
+    policy_active = policy is not None and policy.is_active
+    # Assigned in both branches; the PreToolUse arm may legitimately be None
+    # when no path policy is active and only the approval gate ran.
+    outcome: GateOutcome | None
+
+    if event == "Stop":
         # AC4: no policy -> degrade to the scheduler-side gate, no weakening.
-        raise SystemExit(_ALLOW)
-
-    payload = _read_stdin_json()
-    ts = timestamp if timestamp is not None else int(_now())
-
-    if event == "PreToolUse":
+        if not policy_active or policy is None:
+            raise SystemExit(_ALLOW)
+        _read_stdin_json()
+        ts = timestamp if timestamp is not None else int(_now())
+        outcome = evaluate_completion_gate(policy, workdir=root)
+        receipt_task_id = f"{policy.task_id}#gate:completion:{ts}"
+    else:  # PreToolUse
+        payload = _read_stdin_json()
+        ts = timestamp if timestamp is not None else int(_now())
         tool_name = str(payload.get("tool_name", ""))
         tool_input = payload.get("tool_input")
         if not isinstance(tool_input, dict):
             tool_input = {}
-        outcome = evaluate_path_gate(policy, tool_name=tool_name, tool_input=tool_input, workdir=root)
+
+        # The path policy runs first when one is active: an out-of-scope write
+        # is refused deterministically, never put to an operator.
+        outcome = (
+            evaluate_path_gate(policy, tool_name=tool_name, tool_input=tool_input, workdir=root)
+            if policy_active and policy is not None
+            else None
+        )
         if outcome is None or not outcome.blocked:
+            # #4543 - the interactive approval gate. Deliberately NOT behind
+            # `policy_active`: the path policy and the approval queue are
+            # independent mechanisms, and a session with no owned_files still
+            # gets approvals. `gate_tool_call` is itself a no-op unless the
+            # operator turned approvals on, so the default profile is unchanged.
+            _enforce_approval_gate(
+                session_id=session_id,
+                agent_role=role,
+                tool_name=tool_name,
+                tool_args=tool_input,
+                workdir=root,
+            )
             raise SystemExit(_ALLOW)
+        assert policy is not None  # outcome.blocked implies policy_active
         receipt_task_id = f"{policy.task_id}#gate:pretooluse:{ts}"
-    else:  # Stop
-        outcome = evaluate_completion_gate(policy, workdir=root)
-        receipt_task_id = f"{policy.task_id}#gate:completion:{ts}"
 
     # Seal the receipt (fail-open on seal errors: the decision still stands).
     try:
@@ -150,6 +186,63 @@ def hook_gate_check_cmd(session_id: str, event: str, workdir: str, timestamp: in
         click.echo(outcome.reason or "hook-gate: blocked", err=True)
         raise SystemExit(_BLOCK)
     raise SystemExit(_ALLOW)
+
+
+def _enforce_approval_gate(
+    *,
+    session_id: str,
+    agent_role: str,
+    tool_name: str,
+    tool_args: dict[str, object],
+    workdir: Path,
+) -> None:
+    """Put one tool call to the operator when the profile requires it (#4543).
+
+    Returns normally when the call may proceed. Raises ``SystemExit(_BLOCK)``
+    when the operator rejects it, or when the TTL expires — the queue's
+    existing default-deny path, so the agent observes a denial rather than a
+    hang.
+
+    ``gate_tool_call`` owns the whole decision: the per-tool permission policy
+    runs first and fail-closed, then the classifier (deny wins unconditionally,
+    an APPROVE verdict short-circuits only when the operator opted in, and an
+    ASK verdict falls through to human review), then the always-allow list.
+    Only a call none of those decide reaches the queue, which is what keeps the
+    default profile's behaviour unchanged.
+
+    An *infrastructure* failure degrades to allow-through, matching this
+    command's existing posture for an unreadable policy: the authoritative
+    scheduler-side gate stays the sole enforcement point. A REJECT decision is
+    not an infrastructure failure and always blocks.
+    """
+    from bernstein.core.approval.gate import gate_tool_call
+    from bernstein.core.approval.models import ApprovalDecision, ApprovalTimeoutError
+
+    try:
+        resolved = gate_tool_call(
+            session_id=session_id,
+            agent_role=agent_role,
+            tool_name=tool_name,
+            tool_args=dict(tool_args),
+            workdir=workdir,
+        )
+    except ApprovalTimeoutError:
+        click.echo(
+            f"approval gate: no decision within TTL for {tool_name}; denied",
+            err=True,
+        )
+        raise SystemExit(_BLOCK) from None
+    except Exception as exc:  # a gate defect must never wedge the worker
+        logger.warning("approval gate skipped, exception type %s", type(exc).__name__)
+        return
+
+    if resolved is None:
+        return
+    if resolved.decision is ApprovalDecision.REJECT:
+        # stderr is fed back to the model; exit 2 refuses the action.
+        click.echo(resolved.reason or f"approval gate: {tool_name} rejected", err=True)
+        raise SystemExit(_BLOCK)
+    # ALLOW and ALWAYS both proceed. ALWAYS promotion happens inside the gate.
 
 
 def _read_stdin_json() -> dict[str, object]:
