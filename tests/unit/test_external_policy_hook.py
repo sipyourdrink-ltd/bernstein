@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from bernstein.core.external_policy_hook import (
     CedarHook,
     ExternalPolicyHook,
@@ -23,6 +24,7 @@ class TestCedarHook:
         resp = cedar.evaluate(_req(action="read"))
         assert resp.verdict == HookVerdict.ALLOW
         assert resp.hook_name == "cedar"
+        assert resp.policy_digest != ""
 
     def test_deny_matching_action(self) -> None:
         cedar = CedarHook('forbid (action == "delete");')
@@ -33,6 +35,7 @@ class TestCedarHook:
         cedar = CedarHook('permit (action == "read");')
         resp = cedar.evaluate(_req(action="deploy"))
         assert resp.verdict == HookVerdict.ABSTAIN
+        assert resp.policy_digest != ""
 
     def test_multiple_rules(self) -> None:
         policy = """
@@ -59,6 +62,58 @@ class TestCedarHook:
         cedar = CedarHook('permit (action == "read");')
         resp = cedar.evaluate(_req(action="read"))
         assert resp.latency_ms >= 0
+
+    def test_multi_line_policy_same_verdict(self) -> None:
+        """Multi-line Cedar policy should parse the same as single-line equivalent."""
+        single_line = 'permit (action == "read");'
+        multi_line = """permit
+(action == "read");"""
+
+        cedar_single = CedarHook(single_line)
+        cedar_multi = CedarHook(multi_line)
+
+        resp_single = cedar_single.evaluate(_req(action="read"))
+        resp_multi = cedar_multi.evaluate(_req(action="read"))
+
+        assert resp_single.verdict == resp_multi.verdict
+        assert resp_single.policy_digest != ""
+        assert resp_multi.policy_digest != ""
+
+    def test_forbid_unsupported_when_refused(self) -> None:
+        """Policy with 'when' construct should be refused at construction."""
+        with pytest.raises(ValueError, match="when"):
+            CedarHook('permit (action == "bash") when { context.role == "reviewer" };')
+
+    def test_forbid_unsupported_unless_refused(self) -> None:
+        """Policy with 'unless' construct should be refused at construction."""
+        with pytest.raises(ValueError, match="unless"):
+            CedarHook('permit (action == "bash") unless { context.role == "admin" };')
+
+    def test_forbid_unsupported_principal_refused(self) -> None:
+        """Policy with '?principal' construct should be refused at construction."""
+        with pytest.raises(ValueError, match="\\?principal"):
+            CedarHook('permit (action == "bash") as ?principal;')
+
+    def test_multi_line_permit_single_line_equivalent(self) -> None:
+        """Multi-line permit with action == on its own line should work."""
+        policy = """permit
+  principal,
+  action == "bash",
+  resource;"""
+
+        cedar = CedarHook(policy)
+        resp = cedar.evaluate(_req(action="bash"))
+        assert resp.verdict == HookVerdict.ALLOW
+        assert resp.policy_digest != ""
+
+    def test_policy_digest_64_char_hex(self) -> None:
+        """Policy digest should be a 64-char hex string (SHA-256)."""
+        cedar = CedarHook('permit (action == "read");')
+        resp = cedar.evaluate(_req(action="read"))
+        assert isinstance(resp.policy_digest, str)
+        assert len(resp.policy_digest) == 64  # SHA-256 hex digest length
+        # Verify it's a valid sha256 hex
+        int(resp.policy_digest, 16)
 
 
 class TestOPAHook:
@@ -140,3 +195,12 @@ class TestPolicyHookRegistry:
         registry = PolicyHookRegistry(default_verdict=HookVerdict.DENY)
         resp = registry.first_decisive(_req())
         assert resp.verdict == HookVerdict.DENY
+
+    def test_policy_digest_included_in_responses(self) -> None:
+        """All Cedar responses should include a policy digest."""
+        cedar = CedarHook('permit (action == "read");')
+        resp = cedar.evaluate(_req(action="read"))
+        assert isinstance(resp.policy_digest, str)
+        assert len(resp.policy_digest) == 64  # SHA-256 hex digest length
+        # Verify it's a valid sha256 hex
+        int(resp.policy_digest, 16)
