@@ -356,7 +356,8 @@ _REDIRECT_MAP: dict[str, str] = {
     "oauth_pkce": "bernstein.core.security.oauth_pkce",
     "operator": "bernstein.core.orchestration.operator",
     "orchestrator": "bernstein.core.orchestration.orchestrator",
-    "orchestrator_backlog": "bernstein.core.orchestration.orchestrator_backlog",
+    # orchestrator_backlog: removed - dead code, no production importers. Its
+    # ingest_backlog duplicated Orchestrator.ingest_backlog and had diverged from it.
     "orchestrator_cleanup": "bernstein.core.orchestration.orchestrator_cleanup",
     "orchestrator_config": "bernstein.core.orchestration.orchestrator_config",
     "orchestrator_evolve": "bernstein.core.orchestration.orchestrator_evolve",
