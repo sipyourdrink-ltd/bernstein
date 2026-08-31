@@ -58,9 +58,7 @@ def test_orchestrator_run_paces_through_the_seam_and_never_sleeps_directly() -> 
     direct = [
         node.lineno
         for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "sleep"
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "sleep"
     ]
     assert not direct, (
         f"Orchestrator.run calls time.sleep directly at offset(s) {direct}; pace through "
