@@ -35,26 +35,76 @@ from bernstein.core.security.audit import (
 # ---------------------------------------------------------------------------
 
 
+class _FakeInstant:
+    """A frozen ``datetime`` reading with a fixed timestamp/day pair."""
+
+    def __init__(self, ts: str, day: str) -> None:
+        self._ts = ts
+        self._day = day
+
+    def strftime(self, fmt: str) -> str:
+        if fmt == "%Y-%m-%dT%H:%M:%S.%fZ":
+            return self._ts
+        if fmt == "%Y-%m-%d":
+            return self._day
+        raise AssertionError(f"unexpected strftime format {fmt!r}")
+
+
+class _FakeDatetime:
+    """Hands out queued instants so a test can drive segment dates."""
+
+    def __init__(self, instants: list[_FakeInstant]) -> None:
+        self.queue = list(instants)
+
+    def now(self, tz: object = None) -> _FakeInstant:  # tz kept for signature parity
+        return self.queue.pop(0)
+
+
 def _make_chain(audit_dir: Path, *, key: bytes, segments: int, events_per: int) -> dict:
     """Build a chain of ``segments`` daily JSONL files, each with ``events_per`` events.
 
     Returns a dict with the chain and per-segment content for use by the
     tests. The dates are picked to keep the chain monotonically ordered.
+
+    Each segment is stamped with a distinct UTC date so that
+    :meth:`AuditLog.log` writes to a different ``YYYY-MM-DD.jsonl`` file
+    per loop iteration, producing real daily rotation rather than a single
+    file that swallows every event.
     """
+    import bernstein.core.security.audit as audit_mod
+
     contents: dict[str, bytes] = {}
-    log = AuditLog(audit_dir, key=key)
-    for day in range(segments):
-        for evt in range(events_per):
-            log.log(
-                event_type="test.event",
-                actor="tile-verify-test",
-                resource_type="segment",
-                resource_id=f"day-{day:02d}-evt-{evt:04d}",
-                details={"day": day, "event": evt},
-            )
-    # Read back per-segment content
-    for jsonl in sorted(audit_dir.glob("*.jsonl")):
-        contents[jsonl.name] = jsonl.read_bytes()
+    # One instant per log() call so that the timestamp and segment date
+    # agree for every event. Events for the same logical segment share
+    # the same date but have distinct seconds so they sort within the
+    # same file.
+    instants = [
+        _FakeInstant(
+            f"2026-08-{10 + day:02d}T12:00:{evt * 10:02d}.000000Z",
+            f"2026-08-{10 + day:02d}",
+        )
+        for day in range(segments)
+        for evt in range(events_per)
+    ]
+    fake = _FakeDatetime(instants)
+    real_datetime = audit_mod.datetime
+    audit_mod.datetime = fake  # type: ignore[assignment]
+    try:
+        log = AuditLog(audit_dir, key=key)
+        for day in range(segments):
+            for evt in range(events_per):
+                log.log(
+                    event_type="test.event",
+                    actor="tile-verify-test",
+                    resource_type="segment",
+                    resource_id=f"day-{day:02d}-evt-{evt:04d}",
+                    details={"day": day, "event": evt},
+                )
+        # Read back per-segment content (now there is one file per day)
+        for jsonl in sorted(audit_dir.glob("*.jsonl")):
+            contents[jsonl.name] = jsonl.read_bytes()
+    finally:
+        audit_mod.datetime = real_datetime  # type: ignore[assignment]
     return {"contents": contents, "key": key}
 
 
@@ -83,21 +133,8 @@ def _seal_segments(audit_dir: Path, contents: dict[str, bytes], key: bytes) -> d
     generate_tiles(audit_dir, seal)
     # Each tile needs an end_hmac so the incremental verifier can adopt the
     # chain head. We compute the head by walking the chain ourselves.
-    log = AuditLog(audit_dir, key=key)
     prev = "0" * 64
     for name in sorted(contents):
-        for line in contents[name].splitlines(True):
-            entry = json.loads(line)
-            (
-                log._compute_hmac(  # type: ignore[attr-defined]
-                    entry.get("prev_hmac", prev), entry
-                )
-                if False
-                else None
-            )  # use the AuditLog._verify_log_bytes path? simpler: trust
-            # The hash is whatever AuditLog mints; we look it up directly by
-            # parsing the canonical record. For end_hmac adoption, the tile
-            # just needs the last hmac in chain order.
         # read the last hmac directly
         text = contents[name].decode("utf-8")
         for line in reversed(text.splitlines()):
@@ -143,10 +180,10 @@ def test_hash_mismatch_forces_archived_segment_re_open(tmp_path: Path) -> None:
     import gzip
     import shutil
 
-    gz_path = archive_dir / "2026-08-24.jsonl.gz"
-    if not gz_path.exists():
-        # The chain is in the live JSONL; we have to first compress it to
-        # the archive subdir to simulate retention having aged it out.
+    # The hardcoded ``2026-08-24.jsonl.gz`` below was written against a
+    # single-segment chain; remove it now that segments have real dates.
+    if not list(archive_dir.glob("*.jsonl.gz")):
+        # The chain is in the live JSONL; archive it to simulate retention.
         for jsonl in sorted(audit_dir.glob("*.jsonl")):
             with jsonl.open("rb") as f_in, gzip.open(archive_dir / f"{jsonl.name}.gz", "wb") as f_out:
                 shutil.copyfileobj(f_in, f_out)
@@ -166,13 +203,20 @@ def test_hash_mismatch_forces_archived_segment_re_open(tmp_path: Path) -> None:
     audit_mod.gzip.open = _tracking_gzip_open  # type: ignore[assignment]
     try:
         log = AuditLog(audit_dir, key=key)
-        # Corrupt one segment: flip a byte inside it before compression, or
-        # after, in the .gz itself.
+        # Corrupt one segment: decompress, flip a byte in the plaintext,
+        # and recompress. Flipping a byte inside the gzip stream itself
+        # does not change the decompressed bytes for many real-world
+        # streams (the corrupted bit often lands in a deflated literal
+        # block that decompresses to the same output), so we corrupt at
+        # the content layer where the hash mismatch is guaranteed.
         seg_name = sorted(chain["contents"].keys())[0]
         gz = archive_dir / f"{seg_name}.gz"
-        gz_bytes = bytearray(gz.read_bytes())
-        gz_bytes[20] ^= 0xFF  # flip a byte inside the gzip stream
-        gz.write_bytes(bytes(gz_bytes))
+        with gzip.open(gz, "rb") as f_in:
+            original = f_in.read()
+        corrupted = bytearray(original)
+        corrupted[20] ^= 0xFF
+        with gzip.open(gz, "wb") as f_out:
+            f_out.write(bytes(corrupted))
 
         report = log.verify_incremental()
     finally:
