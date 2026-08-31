@@ -12,6 +12,7 @@ from bernstein.adapters.acp_channel import iter_process_frames, run_acp_channel,
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
+from bernstein.core.replay.journal import EventJournal
 
 #: Credentials and endpoint overrides forwarded into the spawned environment.
 #: ``KIMCHI_API_KEY`` authenticates hosted execution; the two host variables
@@ -137,10 +138,15 @@ class KimchiAdapter(CLIAdapter):
         except PermissionError as exc:
             raise RuntimeError(f"Permission denied executing kimchi: {exc}") from exc
 
-        # Process frames via ACP channel and collect result
+        # Process frames via ACP channel and collect result. The journal is
+        # required, not optional: drive_acp_lifecycle reads its head to build
+        # the lifecycle result, so passing None raised AttributeError on every
+        # spawn. It is namespaced by the run the same way the runtime log above
+        # is.
+        journal = EventJournal(run_id=session_id, sdd_dir=workdir / ".sdd")
         acp_result = run_acp_channel(
             iter_process_frames(proc),
-            journal=None,  # Will be set by caller if needed
+            journal=journal,
             session_id=session_id,
             stop_at_terminal=True,
         )
