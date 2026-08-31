@@ -9,6 +9,7 @@ verification logic, and exit with 0 on success.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from pathlib import Path
 
@@ -182,7 +183,10 @@ def test_fixture_run_emits_valid_trust_record(tmp_path: Path) -> None:
         trust_record["references"][0]["digest"]
         == "sha256:2d5b21544c3ea8dd555673ba7ee243ae5fc75c8676002a3fa99f290aef1bd7ae"
     )
-    assert (
-        trust_record["signature"]
-        == "kC-qZWSz4NhvGRtnIwTjvJEsV3VO7VIzW3vdaOHNvP0Cdy6hx6H-vBP7i_35SVajrYbvk2o3dtT2dIeJ42QXBg"
-    )
+    # Pinning the signature keeps emission byte-reproducible: the same journal
+    # must always mint the same record, which verify_trust_record above cannot
+    # show. It is pinned by digest rather than by the literal because a base64
+    # signature run reads as misspelled prose to the spellchecker (issue #4692),
+    # and excluding a human-authored test module from that scan is the thing
+    # tests/unit/test_trust_record_vectors_spellcheck_scope.py exists to prevent.
+    assert hashlib.sha256(trust_record["signature"].encode()).hexdigest() == ("45c73c60910ed582d48984b82e242c231e76ddc5c19cba9aadd292936cc02961")
