@@ -42,27 +42,12 @@ def test_check_run_result_fields() -> None:
 class TestCheckRunClientCreate:
     def test_create_empty_repo_returns_none(self) -> None:
         """No repo slug → silent no-op."""
-        client = CheckRunClient(repo="", installation_id="42")
+        client = CheckRunClient(repo="")
         result = client.create(head_sha="abc123", task_title="Fix the bug")
         assert result is None
 
-    def test_create_without_installation_id_calls_gh_api(self) -> None:
-        """Auth is delegated to gh; token-authenticated callers pass no installation ID."""
-        client = CheckRunClient(repo="acme/widgets", installation_id=None)
-        response_data = {"id": 999, "html_url": "https://github.com/checks/999"}
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = json.dumps(response_data).encode()
-        mock_result.stderr = b""
-
-        with patch("subprocess.run", return_value=mock_result):
-            result = client.create(head_sha="abc123", task_title="Fix the bug")
-
-        assert result is not None
-        assert result.check_run_id == 999
-
     def test_create_calls_gh_api(self) -> None:
-        client = CheckRunClient(repo="acme/widgets", installation_id="42")
+        client = CheckRunClient(repo="acme/widgets")
         response_data = {"id": 999, "html_url": "https://github.com/checks/999"}
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -82,7 +67,7 @@ class TestCheckRunClientCreate:
         assert "POST" in call_args
 
     def test_create_with_details_url(self) -> None:
-        client = CheckRunClient(repo="acme/widgets", installation_id="42")
+        client = CheckRunClient(repo="acme/widgets")
         response_data = {"id": 100, "html_url": "https://github.com/checks/100"}
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -99,7 +84,7 @@ class TestCheckRunClientCreate:
         assert result is not None
 
     def test_create_gh_failure_returns_none(self) -> None:
-        client = CheckRunClient(repo="acme/widgets", installation_id="42")
+        client = CheckRunClient(repo="acme/widgets")
         mock_result = MagicMock()
         mock_result.returncode = 1
         mock_result.stdout = b""
@@ -111,7 +96,7 @@ class TestCheckRunClientCreate:
         assert result is None
 
     def test_create_file_not_found_returns_none(self) -> None:
-        client = CheckRunClient(repo="acme/widgets", installation_id="42")
+        client = CheckRunClient(repo="acme/widgets")
         with patch("subprocess.run", side_effect=FileNotFoundError("gh not found")):
             result = client.create(head_sha="abc123", task_title="Test")
         assert result is None
@@ -124,12 +109,12 @@ class TestCheckRunClientCreate:
 
 class TestCheckRunClientUpdate:
     def test_update_empty_repo_returns_none(self) -> None:
-        client = CheckRunClient(repo="", installation_id="42")
+        client = CheckRunClient(repo="")
         result = client.update(check_run_id=123, conclusion="success", summary="All good")
         assert result is None
 
     def test_update_success_conclusion(self) -> None:
-        client = CheckRunClient(repo="acme/widgets", installation_id="42")
+        client = CheckRunClient(repo="acme/widgets")
         response_data = {"id": 123, "html_url": "https://github.com/checks/123"}
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -150,7 +135,7 @@ class TestCheckRunClientUpdate:
         assert "PATCH" in call_args
 
     def test_update_failure_conclusion(self) -> None:
-        client = CheckRunClient(repo="acme/widgets", installation_id="42")
+        client = CheckRunClient(repo="acme/widgets")
         response_data = {"id": 456, "html_url": "https://github.com/checks/456"}
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -167,7 +152,7 @@ class TestCheckRunClientUpdate:
         assert result is not None
 
     def test_update_request_body_contains_conclusion(self) -> None:
-        client = CheckRunClient(repo="acme/widgets", installation_id="42")
+        client = CheckRunClient(repo="acme/widgets")
         response_data = {"id": 789, "html_url": ""}
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -196,7 +181,7 @@ class TestCheckRunClientUpdate:
 
 class TestCheckRunClientCreateVerificationCheckRun:
     def test_empty_repo_returns_none(self) -> None:
-        client = CheckRunClient(repo="", installation_id="42")
+        client = CheckRunClient(repo="")
         result = client.create_verification_check_run(
             head_sha="abc123",
             summary="summary",
@@ -205,28 +190,8 @@ class TestCheckRunClientCreateVerificationCheckRun:
         )
         assert result is None
 
-    def test_without_installation_id_posts_check_run(self) -> None:
-        """The receipt verification workflow authenticates via gh and passes no installation ID."""
-        client = CheckRunClient(repo="acme/widgets", installation_id=None)
-        response_data = {"id": 200, "html_url": "https://github.com/checks/200"}
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = json.dumps(response_data).encode()
-        mock_result.stderr = b""
-
-        with patch("subprocess.run", return_value=mock_result):
-            result = client.create_verification_check_run(
-                head_sha="abc123",
-                summary="summary",
-                details="details",
-                conclusion="neutral",
-            )
-
-        assert result is not None
-        assert result.check_run_id == 200
-
     def test_success_returns_comparison_check_run_result(self) -> None:
-        client = CheckRunClient(repo="acme/widgets", installation_id="42")
+        client = CheckRunClient(repo="acme/widgets")
         response_data = {"id": 200, "html_url": "https://github.com/checks/200"}
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -250,7 +215,7 @@ class TestCheckRunClientCreateVerificationCheckRun:
         assert any("/check-runs" in str(a) for a in args)
 
     def test_gh_failure_returns_none(self) -> None:
-        client = CheckRunClient(repo="acme/widgets", installation_id="42")
+        client = CheckRunClient(repo="acme/widgets")
         mock_result = MagicMock()
         mock_result.returncode = 1
         mock_result.stdout = b""
@@ -272,7 +237,7 @@ class TestCheckRunClientCreateVerificationCheckRun:
 
 class TestCheckRunClientUpdateVerificationCheckRun:
     def test_empty_repo_returns_none(self) -> None:
-        client = CheckRunClient(repo="", installation_id="42")
+        client = CheckRunClient(repo="")
         result = client.update_verification_check_run(
             check_run_id=123,
             summary="summary",
@@ -282,7 +247,7 @@ class TestCheckRunClientUpdateVerificationCheckRun:
         assert result is None
 
     def test_success_returns_comparison_check_run_result(self) -> None:
-        client = CheckRunClient(repo="acme/widgets", installation_id="42")
+        client = CheckRunClient(repo="acme/widgets")
         response_data = {"id": 456, "html_url": "https://github.com/checks/456"}
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -305,7 +270,7 @@ class TestCheckRunClientUpdateVerificationCheckRun:
         assert "PATCH" in call_args
 
     def test_gh_failure_returns_none(self) -> None:
-        client = CheckRunClient(repo="acme/widgets", installation_id="42")
+        client = CheckRunClient(repo="acme/widgets")
         mock_result = MagicMock()
         mock_result.returncode = 1
         mock_result.stdout = b""
