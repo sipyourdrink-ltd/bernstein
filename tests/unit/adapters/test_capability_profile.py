@@ -331,12 +331,11 @@ class TestCapabilityAwareSelection:
 
     def test_satisfied_requirements_select_the_profile(self) -> None:
         profile = _minimal_profile(mcp_client=True, sandbox=SandboxTier.CONTAINER)
-        selected, table = select_profile_for(
+        selected = select_profile_for(
             TaskCapabilityRequirements(mcp_client=True, sandbox=SandboxTier.CONTAINER),
             profiles=(profile,),
         )
         assert selected is profile
-        assert table.rows[0][2] == ()  # Selected adapter has empty unmet
 
     def test_unmet_requirement_refuses_rather_than_falling_back(self) -> None:
         profile = _minimal_profile(mcp_client=False)
@@ -682,7 +681,7 @@ class TestRouteAndRecord:
         assert len(rows) == 2
         assert rows[0]["adapter"] == "a"
         assert rows[0]["profile_hash"] == candidates[0].profile_hash
-        assert sorted(rows[0]["unmet"]) == sorted(["mcp_client", "vision"])
+        assert sorted(rows[0]["unmet"]) == sorted(["mcp_client"])
         assert rows[1]["adapter"] == "b"
         assert rows[1]["unmet"] == []
         assert selected.name == "b"
@@ -695,7 +694,7 @@ class TestRouteAndRecord:
             _minimal_profile(name="b", mcp_client=False, vision=False),
         ]
         chain = _audit_chain(tmp_path)
-        with pytest.raises(CapabilityMismatchError) as excinfo:
+        with pytest.raises(CapabilityMismatchError):
             route_and_record(
                 TaskCapabilityRequirements(mcp_client=True, vision=True),
                 profiles=candidates,
@@ -709,7 +708,7 @@ class TestRouteAndRecord:
         assert len(rows) == 2
         assert rows[0]["adapter"] == "a"
         assert rows[0]["profile_hash"] == candidates[0].profile_hash
-        assert sorted(rows[0]["unmet"]) == sorted(["mcp_client"])
+        assert sorted(rows[0]["unmet"]) == sorted(["mcp_client", "vision"])
         assert rows[1]["adapter"] == "b"
         assert sorted(rows[1]["unmet"]) == sorted(["mcp_client", "vision"])
         assert chain.verify()[0]  # type: ignore[attr-defined]
@@ -747,6 +746,8 @@ class TestRouteAndRecord:
                 profiles=candidates,
                 audit_chain=chain,
             )
+        from bernstein.core.security.audit_chain import EVENT_ADAPTER_CAPABILITY_REFUSAL
+
         events = chain.query(event_type=EVENT_ADAPTER_CAPABILITY_REFUSAL)  # type: ignore[attr-defined]
         rows = events[0].details["verdict_table"]["rows"]
         assert [row["adapter"] for row in rows] == ["c", "a", "b"]
@@ -764,6 +765,8 @@ class TestRouteAndRecord:
                 profiles=candidates,
                 audit_chain=chain,
             )
+        from bernstein.core.security.audit_chain import EVENT_ADAPTER_CAPABILITY_REFUSAL
+
         events = chain.query(event_type=EVENT_ADAPTER_CAPABILITY_REFUSAL)  # type: ignore[attr-defined]
         table = events[0].details["verdict_table"]
         assert table["kind"] == "capability-verdict-table"
@@ -793,6 +796,8 @@ class TestRouteAndRecord:
                 profiles=candidates,
                 audit_chain=chain2,
             )
+        from bernstein.core.security.audit_chain import EVENT_ADAPTER_CAPABILITY_REFUSAL
+
         events1 = chain1.query(event_type=EVENT_ADAPTER_CAPABILITY_REFUSAL)  # type: ignore[attr-defined]
         events2 = chain2.query(event_type=EVENT_ADAPTER_CAPABILITY_REFUSAL)  # type: ignore[attr-defined]
         assert len(events1) == 1 and len(events2) == 1

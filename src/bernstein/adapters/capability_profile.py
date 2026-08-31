@@ -696,8 +696,7 @@ def select_profile_for(
         unmet = unmet_requirements(profile, requirements)
         verdict_rows.append((profile.name, tuple(sorted(unmet))))
         if not unmet:
-            table = CapabilityVerdictTable.from_unmet_results(candidates, verdict_rows)
-            return profile, table
+            return profile
         all_unmet.update(unmet)
 
     receipt = CapabilityRefusalReceipt(
@@ -846,7 +845,7 @@ def route_and_record(
             chain was supplied.
     """
     try:
-        selected, table = select_profile_for(requirements, profiles=profiles)
+        selected = select_profile_for(requirements, profiles=profiles)
     except CapabilityMismatchError as exc:
         if audit_chain is not None:
             from bernstein.core.security.audit_chain import record_capability_refusal
@@ -866,6 +865,18 @@ def route_and_record(
             record_capability_selection,
             record_task_tier_decision,
         )
+
+        # Rebuild the verdict table for recording
+        candidates = tuple(
+            profiles
+        ) if profiles is not None else tuple(
+            profile for _, profile in sorted(PROFILES.items())
+        )
+        verdict_rows: list[tuple[str, tuple[str, ...]]] = []
+        for profile in candidates:
+            unmet = unmet_requirements(profile, requirements)
+            verdict_rows.append((profile.name, tuple(sorted(unmet))))
+        table = CapabilityVerdictTable.from_unmet_results(candidates, verdict_rows)
 
         record_capability_selection(
             chain=audit_chain,
