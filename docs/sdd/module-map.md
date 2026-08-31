@@ -180,6 +180,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `session_id.py`             | Deterministic session-id binding for adapter replay isolation |
 | `skills_injector.py`        | Inject per-task Claude Code skills into the worktree before spawn |
 | `strict_schema.py`          | Strict structured-output validation and user-owned-field protection |
+| `trivy.py`                  | Feed-pinned Trivy scanner adapter and SARIF normalization |
 | `use_cases.py`              | Per-adapter metadata for the ``bernstein integrations list`` command |
 | `ci/`                       | CI system adapters for log parsing and failure extraction |
 | `digest/`                   | Tool output digesters registry and ruleset models |
