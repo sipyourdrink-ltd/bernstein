@@ -24,7 +24,10 @@ def test_project_recorded_str_handles_empty_string():
 def test_project_recorded_str_handles_string_unchanged():
     """String values are returned as-is."""
     assert _project_recorded_str("hello", event_id="abc123", field_name="downgrade_reason") == "hello"
-    assert _project_recorded_str("insufficient quota", event_id="abc123", field_name="downgrade_reason") == "insufficient quota"
+    assert (
+        _project_recorded_str("insufficient quota", event_id="abc123", field_name="downgrade_reason")
+        == "insufficient quota"
+    )
 
 
 def test_project_recorded_str_handles_whitespace_string():
