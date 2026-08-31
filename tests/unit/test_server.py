@@ -2183,6 +2183,96 @@ async def test_re_registering_refreshes_the_reported_capacity(cluster_client: As
 
 
 @pytest.mark.anyio
+async def test_a_cordon_survives_the_worker_restarting(cluster_client: AsyncClient) -> None:
+    """Cordoning is an instruction, and a restart is not an answer to it (#4820).
+
+    Both registration handlers rebuild ``NodeInfo`` from the request, and
+    ``status`` defaults to ``ONLINE``, so everything not explicitly carried
+    reset: a cordoned worker returned to ``ONLINE`` the moment it restarted.
+
+    That inverts the property the cordon is for. Cordoning is usually a
+    response to a node misbehaving, and a misbehaving node restarts more often
+    than a healthy one -- so the worse a worker behaved, the more reliably it
+    escaped its cordon.
+
+    Asserted on ``total_capacity`` as well as the status field, because the
+    capacity total is what an operator actually feels: it is the number the
+    scheduler spends.
+    """
+    registered = await cluster_client.post("/cluster/nodes", json=NODE_PAYLOAD)
+    node_id = registered.json()["id"]
+    await cluster_client.post(f"/cluster/nodes/{node_id}/cordon")
+
+    cordoned = await cluster_client.get("/cluster/status")
+    assert cordoned.json()["total_capacity"] == 0, "a cordoned node counted before it even restarted"
+
+    # The worker restarts and re-registers: same name + url, so the same entry.
+    again = await cluster_client.post("/cluster/nodes", json=NODE_PAYLOAD)
+    assert again.status_code == 201
+    assert again.json()["id"] == node_id
+
+    body = (await cluster_client.get("/cluster/status")).json()
+    assert body["total_nodes"] == 1
+    assert body["nodes"][0]["status"] == "cordoned"
+    assert body["total_capacity"] == 0, "restarting released the node's slots back to the scheduler"
+
+
+@pytest.mark.anyio
+async def test_a_draining_node_stays_draining_across_a_restart(cluster_client: AsyncClient) -> None:
+    """Draining is the same kind of fact as cordoning: operator intent.
+
+    Kept as its own case because the two are set by different endpoints, and
+    carrying one without the other would leave a drain that a restart quietly
+    cancels -- the same defect wearing a different label.
+    """
+    registered = await cluster_client.post("/cluster/nodes", json=NODE_PAYLOAD)
+    node_id = registered.json()["id"]
+    await cluster_client.post(f"/cluster/nodes/{node_id}/drain")
+
+    await cluster_client.post("/cluster/nodes", json=NODE_PAYLOAD)
+
+    body = (await cluster_client.get("/cluster/status")).json()
+    assert body["nodes"][0]["status"] == "draining"
+    assert body["total_capacity"] == 0
+
+
+@pytest.mark.anyio
+async def test_a_new_node_registers_online(cluster_client: AsyncClient) -> None:
+    """The over-correction guard: preservation applies only to a node already known.
+
+    A first registration carries no prior operator decision, so it must still
+    start ``ONLINE`` and count toward capacity. Without this, a rule that
+    carried status too eagerly would still pass the cordon cases above.
+    """
+    await cluster_client.post("/cluster/nodes", json=NODE_PAYLOAD)
+
+    body = (await cluster_client.get("/cluster/status")).json()
+    assert body["nodes"][0]["status"] == "online"
+    assert body["total_capacity"] == NODE_PAYLOAD["capacity"]["max_agents"]
+
+
+@pytest.mark.anyio
+async def test_an_uncordoned_node_comes_back_online(cluster_client: AsyncClient) -> None:
+    """Preserving a cordon must not make one impossible to lift.
+
+    ``uncordon`` returns the node to ``ONLINE``, and a later re-registration
+    then has no operator decision left to carry -- so the node stays
+    schedulable. A rule that latched on the first non-online status it saw
+    would strand it out of the cluster.
+    """
+    registered = await cluster_client.post("/cluster/nodes", json=NODE_PAYLOAD)
+    node_id = registered.json()["id"]
+    await cluster_client.post(f"/cluster/nodes/{node_id}/cordon")
+    await cluster_client.post(f"/cluster/nodes/{node_id}/uncordon")
+
+    await cluster_client.post("/cluster/nodes", json=NODE_PAYLOAD)
+
+    body = (await cluster_client.get("/cluster/status")).json()
+    assert body["nodes"][0]["status"] == "online"
+    assert body["total_capacity"] == NODE_PAYLOAD["capacity"]["max_agents"]
+
+
+@pytest.mark.anyio
 async def test_list_nodes_empty(cluster_client: AsyncClient) -> None:
     """GET /cluster/nodes returns [] when no nodes registered."""
     resp = await cluster_client.get("/cluster/nodes")
