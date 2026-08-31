@@ -1,0 +1,14 @@
+id: inc-46003001d68c
+severity: P2
+source_incident: "dlq:ae8d4d888461472e"
+owner: backend
+created_at: 1788217302.547
+expected_outcome: "Agent should complete the task; flake-tolerant retry is acceptable. (root cause: max_retries_exceeded)"
+tags:
+  - max_retries_exceeded
+prompt: |
+  Reproduce and resolve the following terminal failure (role=backend).
+  Task: Implement and delete stub check_nudges_during_tick
+  Failure reason: max_retries_exceeded
+  Last error (trimmed):
+  Agent backend-resume-9ada3fb6 died; janitor failed: ["file_contains: src/bernstein/core/orchestration/nudge_manager.py :: the nudge system is producer-side only (unverified: absence claim for 'src/bernstein/core/orchestration/nudge_manager.py :: the nudge system is producer-side only' has no coverage record)"]
