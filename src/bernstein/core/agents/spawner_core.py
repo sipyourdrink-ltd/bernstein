@@ -4312,6 +4312,27 @@ class AgentSpawner:
             profile_content_sha256=profile_content_sha,
         )
 
+        # Capture endpoint identity at spawn time (issue #4908):
+        # - adapter: the adapter that actually served this spawn
+        # - model: the model that actually served this spawn
+        # - base_url: the normalized endpoint base_url (api_key_env value excluded)
+        # - endpoint_profile_name: the local_endpoints profile name when one applied
+        # Role-model policy may specify endpoint overrides (base_url/api_key_env).
+        # The model resolved here is the one the adapter actually runs.
+        role_policy = self._role_model_policy.get(tasks[0].role) or {}
+        endpoint_profile_name = role_policy.get("endpoint", "")
+        endpoint_base_url = role_policy.get("base_url", "")
+        # Strip the api_key_env value - only the variable name is acceptable, never its value
+        api_key_env = role_policy.get("api_key_env", "")
+        if api_key_env:
+            # We keep the env var name reference but not its value
+            pass
+        # If profile is set, base_url from profile takes precedence; otherwise use resolved model's base_url
+        resolved_endpoint_base_url = endpoint_base_url
+        resolved_endpoint_profile_name = endpoint_profile_name
+        resolved_endpoint_adapter_name = self._adapter.name()
+        resolved_endpoint_model = model_config.model
+
         session = AgentSession(
             id=session_id,
             role=role,
@@ -4327,6 +4348,11 @@ class AgentSpawner:
             response_profile=style_resolution.style,
             profile_content_sha256=profile_content_sha,
             context_receipt=receipt.to_dict()["entries"] if receipt else [],
+            # Endpoint identity fields (issue #4908)
+            endpoint_adapter_name=resolved_endpoint_adapter_name,
+            endpoint_model=resolved_endpoint_model,
+            endpoint_base_url=resolved_endpoint_base_url,
+            endpoint_profile_name=resolved_endpoint_profile_name,
         )
 
         # Zero-trust: issue a short-lived, task-scoped JWT for this agent.
@@ -5291,6 +5317,27 @@ class AgentSpawner:
             workdir=self._workdir,
             default_model=self._default_model or _policy_preview.get("model"),
         )
+        # Mirror the model-resolution step from the fresh-spawn path so that
+        # role_model_policy.model overrides (tier-model resolution, effort
+        # mapping) are applied to the resume session's model_config too.
+        _task_metadata = tasks[0].metadata or {}
+        _task_model_is_pinned = bool(_task_metadata.get("pinned_model"))
+        _task_model_blocks_role_policy = bool(tasks[0].model) and _task_model_is_pinned
+        _effective_role_model, _tier_decision_record = self._resolve_tier_model(tasks[0], _policy_preview)
+        if not _task_model_blocks_role_policy and _effective_role_model:
+            model_config = ModelConfig(
+                model=_effective_role_model,
+                effort=_policy_preview.get("effort", model_config.effort),
+                max_tokens=model_config.max_tokens,
+                is_batch=model_config.is_batch,
+            )
+        elif not tasks[0].effort and _policy_preview.get("effort"):
+            model_config = ModelConfig(
+                model=model_config.model,
+                effort=_policy_preview["effort"],
+                max_tokens=model_config.max_tokens,
+                is_batch=model_config.is_batch,
+            )
         role = tasks[0].role
         session_id = f"{role}-resume-{uuid.uuid4().hex[:8]}"
 
@@ -5352,6 +5399,13 @@ class AgentSpawner:
             model_config=model_config,
             status="starting",
             context_receipt=receipt.to_dict()["entries"],
+            # Endpoint identity fields (issue #4908) - resume resolves the
+            # same way the primary spawn path does: role policy overrides
+            # the adapter and model that actually serve this spawn.
+            endpoint_adapter_name=self._adapter.name(),
+            endpoint_model=model_config.model,
+            endpoint_base_url=_policy_preview.get("base_url", ""),
+            endpoint_profile_name=_policy_preview.get("endpoint", ""),
         )
 
         # Record declared context on resume exactly like a fresh spawn

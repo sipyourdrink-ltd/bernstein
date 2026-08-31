@@ -5020,6 +5020,7 @@ def record_capability_selection(
     adapter: str,
     profile_hash: str,
     requirements: dict[str, Any],
+    verdict_table: dict[str, Any] | None = None,
     actor: str = "capability_router",
 ) -> AuditEvent:
     """Append an ``adapter.capability_selection`` event into *chain* (#2663).
@@ -5041,23 +5042,32 @@ def record_capability_selection(
             presented (its :attr:`profile_hash`).
         requirements: Canonical form of the task requirements the profile
             satisfied.
+        verdict_table: Optional per-candidate verdict table already in its
+            canonical JSON-safe form, one row per candidate adapter with its
+            profile hash and the unmet axes that prevented it from being
+            selected (empty for the chosen adapter). When present, the table
+            enriches the selection event with the per-candidate breakdown
+            without affecting the profile_hash.
         actor: Recorded actor; defaults to ``"capability_router"``.
 
     Returns:
         The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
         its details payload.
     """
+    details: dict[str, Any] = {
+        "run_id": run_id,
+        "adapter": adapter,
+        "profile_hash": profile_hash,
+        "requirements": dict(sorted(requirements.items())),
+    }
+    if verdict_table is not None:
+        details["verdict_table"] = verdict_table
     return chain.log_with_prev_digest(
         event_type=EVENT_ADAPTER_CAPABILITY_SELECTION,
         actor=actor,
         resource_type="adapter_capability_selection",
         resource_id=adapter,
-        details={
-            "run_id": run_id,
-            "adapter": adapter,
-            "profile_hash": profile_hash,
-            "requirements": dict(sorted(requirements.items())),
-        },
+        details=details,
     )
 
 
@@ -5120,6 +5130,7 @@ def record_capability_refusal(
     requirements: dict[str, Any],
     candidates: list[list[str]],
     unmet: list[str],
+    verdict_table: dict[str, Any] | None = None,
     actor: str = "capability_router",
 ) -> AuditEvent:
     """Append an ``adapter.capability_refusal`` event into *chain* (#2663).
@@ -5142,24 +5153,33 @@ def record_capability_refusal(
         candidates: ``[adapter name, profile hash]`` pairs considered, in the
             order they were offered.
         unmet: Sorted union of every unmet capability axis across candidates.
+        verdict_table: Optional per-candidate verdict table already in its
+            canonical JSON-safe form, one row per candidate adapter with its
+            profile hash and the unmet axes that prevented it from being
+            selected (empty for the chosen adapter). When present, the table
+            enriches the refusal event with the per-candidate breakdown
+            without affecting the receipt_hash.
         actor: Recorded actor; defaults to ``"capability_router"``.
 
     Returns:
         The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
         its details payload.
     """
+    details: dict[str, Any] = {
+        "run_id": run_id,
+        "receipt_hash": receipt_hash,
+        "requirements": dict(sorted(requirements.items())),
+        "candidates": [list(pair) for pair in candidates],
+        "unmet": list(unmet),
+    }
+    if verdict_table is not None:
+        details["verdict_table"] = verdict_table
     return chain.log_with_prev_digest(
         event_type=EVENT_ADAPTER_CAPABILITY_REFUSAL,
         actor=actor,
         resource_type="adapter_capability_refusal",
         resource_id=receipt_hash,
-        details={
-            "run_id": run_id,
-            "receipt_hash": receipt_hash,
-            "requirements": dict(sorted(requirements.items())),
-            "candidates": [list(pair) for pair in candidates],
-            "unmet": list(unmet),
-        },
+        details=details,
     )
 
 

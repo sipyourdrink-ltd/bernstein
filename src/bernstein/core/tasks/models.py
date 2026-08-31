@@ -1245,6 +1245,16 @@ class AgentSession:
     spawn_prompt_utilization_pct: float = 0.0  # percentage of context window consumed by prompt
     spawn_prompt_over_budget: bool = False  # True when prompt exceeded the budget threshold
 
+    # Endpoint identity resolved at spawn time (issue #4908):
+    # - adapter: the adapter name that actually served this spawn
+    # - model: the model that actually served this spawn
+    # - base_url: the normalized endpoint base URL (api_key_env value excluded)
+    # - endpoint_profile_name: the local_endpoints profile name when one applied
+    endpoint_adapter_name: str = ""  # adapter name
+    endpoint_model: str = ""  # model served
+    endpoint_base_url: str = ""  # normalized base_url (no secrets)
+    endpoint_profile_name: str = ""  # local_endpoints profile name
+
 
 class IsolationMode(StrEnum):
     """Agent isolation mode."""

@@ -494,6 +494,87 @@ class _TemperatureAndTopPStubAdapter(_StubPluginAdapter):
         )
 
 
+class TestCoarseSamplingCapabilityAssertion:
+    """Assert that adapters declaring the coarse SUPPORTS_SAMPLING_PARAMS
+    capability also declare every narrow capability in _SAMPLING_KEY_CAPABILITY.
+
+    ``ensure_sampling_params_supported`` short-circuits on the coarse flag
+    without checking narrow capabilities, so a coarse declarer that omits a
+    narrow cap silently promises more than it delivers.  This test guards
+    against that drift as SAMPLING_PARAM_KEYS grows.
+    """
+
+    def test_sampling_key_capability_values_are_valid_enum_members(self) -> None:
+        """Every value in _SAMPLING_KEY_CAPABILITY must be a real AdapterCapability."""
+        from bernstein.adapters.plugin_sdk import _SAMPLING_KEY_CAPABILITY
+
+        for key, cap in _SAMPLING_KEY_CAPABILITY.items():
+            assert isinstance(cap, AdapterCapability), (
+                f"_SAMPLING_KEY_CAPABILITY[{key!r}] = {cap!r} is not an AdapterCapability member"
+            )
+
+    def test_openai_agents_has_all_narrow_caps(self) -> None:
+        """openai_agents is the sole real coarse declarer; verify it owns every narrow cap."""
+        from bernstein.adapters.openai_agents import OpenAIAgentsAdapter
+        from bernstein.adapters.plugin_sdk import _SAMPLING_KEY_CAPABILITY
+
+        adapter = OpenAIAgentsAdapter()
+        caps = adapter.plugin_info().capabilities
+        missing = [cap for cap in _SAMPLING_KEY_CAPABILITY.values() if cap not in caps]
+        assert not missing, (
+            f"Adapter {adapter.name()!r} declares coarse SUPPORTS_SAMPLING_PARAMS "
+            f"but is missing narrow capabilities: {missing}"
+        )
+
+    def test_stub_coarse_declarer_without_narrow_caps_fails(self) -> None:
+        """A _StubPluginAdapter that declares coarse but not narrow caps must fail the assertion."""
+
+        class _CoarseOnlyStubAdapter(_StubPluginAdapter):
+            """Stub that claims the coarse capability but skips the narrow ones."""
+
+            def plugin_info(self) -> AdapterPluginInfo:
+                return AdapterPluginInfo(
+                    name="coarse-only-stub",
+                    version="1.0.0",
+                    capabilities=(AdapterCapability.SUPPORTS_SAMPLING_PARAMS,),
+                )
+
+        from bernstein.adapters.plugin_sdk import _SAMPLING_KEY_CAPABILITY
+
+        adapter = _CoarseOnlyStubAdapter()
+        caps = adapter.plugin_info().capabilities
+        missing = [cap for cap in _SAMPLING_KEY_CAPABILITY.values() if cap not in caps]
+        assert missing, (
+            "Expected assertion to detect missing narrow capabilities; assertion passed when it should have failed"
+        )
+
+    def test_narrow_declarer_with_all_narrow_caps_passes(self) -> None:
+        """An adapter that declares every narrow cap (but not the coarse cap) also passes."""
+
+        from bernstein.adapters.plugin_sdk import _SAMPLING_KEY_CAPABILITY
+
+        # Derived from the map rather than listed by hand: a new sampling key
+        # adds a capability here the moment it is registered, so this fixture
+        # cannot fall behind the set it claims to cover.
+        _all_narrow = tuple(_SAMPLING_KEY_CAPABILITY.values())
+
+        class _AllNarrowStubAdapter(_StubPluginAdapter):
+            def plugin_info(self) -> AdapterPluginInfo:
+                return AdapterPluginInfo(
+                    name="all-narrow-stub",
+                    version="1.0.0",
+                    capabilities=_all_narrow,
+                )
+
+        adapter = _AllNarrowStubAdapter()
+        caps = adapter.plugin_info().capabilities
+        missing = [cap for cap in _SAMPLING_KEY_CAPABILITY.values() if cap not in caps]
+        assert not missing, (
+            f"Adapter {adapter.name()!r} declares all narrow capabilities "
+            f"but assertion still reports missing: {missing}"
+        )
+
+
 class TestEnsureSamplingParamsSupportedNarrowCapabilities:
     """PR3: an adapter that declares only a narrow per-field capability
     (not the coarse SUPPORTS_SAMPLING_PARAMS) should be allowed to honour

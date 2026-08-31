@@ -126,11 +126,14 @@ class CapabilityMismatchError(ProfileError):
     Carries the content-addressed :attr:`receipt` describing exactly
     which requirements went unmet and which candidates were considered,
     so a routing refusal is auditable rather than a silent fallback.
+    Also carries the :attr:`verdict_table` with the per-candidate
+    breakdown of which axes each candidate failed.
     """
 
-    def __init__(self, message: str, receipt: CapabilityRefusalReceipt) -> None:
+    def __init__(self, message: str, receipt: CapabilityRefusalReceipt, verdict_table: CapabilityVerdictTable) -> None:
         super().__init__(message)
         self.receipt = receipt
+        self.verdict_table = verdict_table
 
 
 # ---------------------------------------------------------------------------
@@ -561,6 +564,71 @@ class CapabilityRefusalReceipt:
         return hashlib.sha256(payload).hexdigest()
 
 
+@dataclass(frozen=True)
+class CapabilityVerdictTable:
+    """Per-candidate verdict table computed during routing.
+
+    Represents the deterministic selection decision for a task:
+    one row per candidate adapter in consideration order, with its
+    profile hash and the unmet capability axes that prevented it from
+    being selected (empty for the chosen adapter).
+
+    Args:
+        rows: Verdict rows for each candidate considered, in iteration order.
+    """
+
+    rows: tuple[tuple[str, str, tuple[str, ...]], ...]
+
+    @classmethod
+    def from_unmet_results(
+        cls,
+        candidates: Iterable[AdapterCapabilityProfile],
+        unmet_results: Iterable[tuple[str, tuple[str, ...]]],
+    ) -> CapabilityVerdictTable:
+        """Build a verdict table from candidate profiles and their unmet axes.
+
+        Args:
+            candidates: The candidate adapter profiles, in consideration order.
+            unmet_results: Parallel iterable over (adapter name, unmet axes).
+
+        Returns:
+            The verdict table.
+        """
+        rows: list[tuple[str, str, tuple[str, ...]]] = []
+        for profile, (_, unmet) in zip(candidates, unmet_results, strict=True):
+            rows.append((profile.name, profile.profile_hash, unmet))
+        return CapabilityVerdictTable(tuple(rows))
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        """Return the sorted, JSON-safe form for content addressing."""
+        return {
+            "kind": "capability-verdict-table",
+            "rows": [
+                {
+                    "adapter": adapter,
+                    "profile_hash": profile_hash,
+                    "unmet": sorted(unmet),
+                }
+                for adapter, profile_hash, unmet in self.rows
+            ],
+        }
+
+    @property
+    def verdict_hash(self) -> str:
+        """SHA-256 over the canonical form.
+
+        Deterministic for a given set of candidates and their unmet axes,
+        so two operators reconstructing the same table derive the same identifier.
+        """
+        payload = json.dumps(
+            self.to_canonical_dict(),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+
 def _assert_capability_axes_are_requestable() -> None:
     """Fail at import when an axis exists that no task could ever require.
 
@@ -624,9 +692,11 @@ def select_profile_for(
     """
     candidates = tuple(profiles) if profiles is not None else tuple(profile for _, profile in sorted(PROFILES.items()))
 
+    verdict_rows: list[tuple[str, tuple[str, ...]]] = []
     all_unmet: set[str] = set()
     for profile in candidates:
         unmet = unmet_requirements(profile, requirements)
+        verdict_rows.append((profile.name, tuple(sorted(unmet))))
         if not unmet:
             return profile
         all_unmet.update(unmet)
@@ -636,11 +706,13 @@ def select_profile_for(
         candidates=tuple((profile.name, profile.profile_hash) for profile in candidates),
         unmet=tuple(sorted(all_unmet)),
     )
+    table = CapabilityVerdictTable.from_unmet_results(candidates, verdict_rows)
     considered = ", ".join(profile.name for profile in candidates) or "<none>"
     raise CapabilityMismatchError(
         f"no adapter satisfies the declared task requirements: unmet {', '.join(receipt.unmet) or '<none>'} "
         f"(considered: {considered}; refusal receipt {receipt.receipt_hash})",
         receipt,
+        table,
     )
 
 
@@ -787,6 +859,7 @@ def route_and_record(
                 requirements=exc.receipt.requirements,
                 candidates=[list(pair) for pair in exc.receipt.candidates],
                 unmet=list(exc.receipt.unmet),
+                verdict_table=exc.verdict_table.to_canonical_dict(),
             )
         raise
     if audit_chain is not None:
@@ -795,12 +868,23 @@ def route_and_record(
             record_task_tier_decision,
         )
 
+        # Rebuild the verdict table for recording
+        candidates = (
+            tuple(profiles) if profiles is not None else tuple(profile for _, profile in sorted(PROFILES.items()))
+        )
+        verdict_rows: list[tuple[str, tuple[str, ...]]] = []
+        for profile in candidates:
+            unmet = unmet_requirements(profile, requirements)
+            verdict_rows.append((profile.name, tuple(sorted(unmet))))
+        table = CapabilityVerdictTable.from_unmet_results(candidates, verdict_rows)
+
         record_capability_selection(
             chain=audit_chain,
             run_id=run_id,
             adapter=selected.name,
             profile_hash=selected.profile_hash,
             requirements=requirements.to_canonical_dict(),
+            verdict_table=table.to_canonical_dict(),
         )
         if tier_decision is not None:
             record_task_tier_decision(

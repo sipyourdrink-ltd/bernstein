@@ -1,4 +1,4 @@
-"""Bernstein - deterministic orchestrator for CLI coding agents.
+"""Bernstein - the open-source governance layer for AI agents.
 
 Bernstein runs a crew of CLI coding agents (Claude Code, Codex, Gemini CLI, and
 40+ more) against a single goal in per-task git worktrees. There is no model in

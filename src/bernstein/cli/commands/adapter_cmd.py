@@ -270,6 +270,18 @@ def _register_verify_subcommand() -> None:
 _register_verify_subcommand()
 
 
+def _register_draft_subcommand() -> None:
+    """Attach the probe-to-draft onboarding subcommand (#3763)."""
+    try:
+        from bernstein.cli.commands.adapters_draft_cmd import register_adapters_draft
+    except Exception:  # pragma: no cover -- defensive
+        return
+    register_adapters_draft(adapters_group)
+
+
+_register_draft_subcommand()
+
+
 @adapters_group.command("list")
 @click.option(
     "--json",

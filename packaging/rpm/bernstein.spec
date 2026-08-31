@@ -39,7 +39,7 @@ Version:        1.4.11
 # version would keep it. Bumping the release makes the change an unambiguous
 # upgrade on every host, whatever it has installed.
 Release:        2%{?dist}
-Summary:        Deterministic orchestrator for CLI coding agents
+Summary:        The open-source governance layer for AI agents
 License:        Apache-2.0
 URL:            https://github.com/sipyourdrink-ltd/bernstein
 
@@ -71,7 +71,7 @@ Requires:       %{python_pkg}
 %global __brp_python_bytecompile %{nil}
 
 %description
-Deterministic orchestrator for CLI coding agents. Runs Claude Code, Codex,
+The open-source governance layer for AI agents. Runs Claude Code, Codex,
 Gemini CLI and 40+ others in parallel with per-task git worktree isolation
 and quality gates. No model sits in the coordination loop, so the same plan
 replays to a byte-identical task graph.

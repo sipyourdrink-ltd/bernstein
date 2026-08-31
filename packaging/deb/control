@@ -29,7 +29,7 @@ Depends:
  python3-click,
  python3-pydantic,
  python3-dotenv,
-Description: Deterministic orchestrator for CLI coding agents
+Description: The open-source governance layer for AI agents
  Bernstein spawns short-lived CLI coding agents, coordinates them
  via a file-based state directory, and works with any CLI agent
  (Claude Code, Codex, Gemini CLI, and 40+ more).

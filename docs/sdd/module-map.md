@@ -211,7 +211,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `install_check.py`      | Installation mismatch detection -- detect multiple Bernstein installs and config conflicts |
 | `keybindings.py`        | Keybinding system for the Bernstein TUI |
 | `live.py`               | Live view helpers for ``bernstein live --classic`` |
-| `main.py`               | CLI entry point for Bernstein -- deterministic orchestrator for CLI coding agents |
+| `main.py`               | CLI entry point for Bernstein -- the open-source governance layer for AI agents |
 | `notebook_traces.py`    | Notebook-aware traces - detect and track Jupyter notebook cell edits |
 | `release_notes.py`      | Release notes display - fetch and format release notes for terminal output |
 | `run.py`                | Enhanced run output for ``bernstein run`` |

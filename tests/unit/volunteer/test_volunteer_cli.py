@@ -12,17 +12,30 @@ from __future__ import annotations
 
 import errno
 import json
+import subprocess
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
 from click.testing import CliRunner
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from bernstein.cli.commands.volunteer_cmd import volunteer_group
+from bernstein.core.security.audit_dsse import export_public_key_pem, keyid_from_public_key
+from bernstein.core.security.result_receipt_bundle import (
+    GENESIS_ANCHOR,
+    ChainLink,
+    GateResult,
+    ResultBundle,
+    TaskRef,
+    build_result_bundle,
+)
 from bernstein.core.volunteer import (
     VOLUNTEER_MANIFEST_PATH,
     load_manifest_from_repo,
     manifest_digest,
 )
+from bernstein.core.volunteer.clean_room import load_clean_room_receipt, verify_clean_room_receipt
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -413,3 +426,117 @@ def test_the_hub_refusal_happens_before_the_port_is_bound(
     # against a hub that booted and then died.
     assert isinstance(result.exception, SystemExit)
     assert "refusing to boot" in str(result.exception)
+
+
+# --------------------------------------------------------------------------
+# ``bernstein volunteer verify-bundle`` (#3871)
+#
+# The core clean-room matrix (patch conflict, workspace side effects, gate
+# nondeterminism, receipt chaining) lives in
+# tests/unit/volunteer/test_clean_room_verify.py -- deliberately a separate
+# file, since tests/unit/volunteer/test_clean_room.py already covers an
+# unrelated same-named function (task_finish.clean_room, worktree cleanup).
+# The two tests here cover only the CLI wiring itself: argument parsing,
+# invoking verify_in_clean_room, and (with --receipt-out) producing a
+# receipt a downstream verifier can actually load and check.
+# --------------------------------------------------------------------------
+
+_GIT_IDENTITY = ["-c", "user.name=fixture", "-c", "user.email=fixture@invalid"]
+
+
+def _cli_fixture_repo(tmp_path: Path) -> tuple[Path, str]:
+    repo = tmp_path / "fixture-repo"
+    (repo / ".bernstein").mkdir(parents=True)
+    manifest = {**VALID, "gates": [[sys.executable, "-c", "print('gate ok')"]]}
+    (repo / VOLUNTEER_MANIFEST_PATH).write_text(json.dumps(manifest), encoding="utf-8")
+    (repo / "README.md").write_text("hello\n", encoding="utf-8")
+    subprocess.run(["git", "init", "--initial-branch=main", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", *_GIT_IDENTITY, "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", *_GIT_IDENTITY, "commit", "-qm", "fixture"], cwd=repo, check=True)
+    base_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    return repo, base_commit
+
+
+def _cli_honest_bundle_path(tmp_path: Path) -> tuple[Path, Path]:
+    """A real, signed, honest bundle file plus the repo it verifies against."""
+    repo, base_commit = _cli_fixture_repo(tmp_path)
+    argv = [sys.executable, "-c", "print('gate ok')"]
+    result = subprocess.run(argv, cwd=repo, capture_output=True, text=True, check=True)
+    gate = GateResult(command=" ".join(argv), exit_code=result.returncode, log=result.stdout + result.stderr)
+
+    key = Ed25519PrivateKey.from_private_bytes(bytes([11]) * 32)
+    pub = key.public_key()
+    bundle = ResultBundle(
+        task=TaskRef(repo="fixture/repo", commit_sha=base_commit, issue_number=3871),
+        patch="",
+        gates=(gate,),
+        manifest_sha256="unused-in-this-test",
+        adapter_id="adapter.test",
+        model_id="test-model",
+        sandbox_profile="restricted-net-off",
+        selection_receipt="sel-receipt-test",
+        created_at="2026-08-30T00:00:00Z",
+        worker_keyid=keyid_from_public_key(pub),
+        worker_public_key_pem=export_public_key_pem(pub).decode("ascii"),
+        chain=ChainLink(anchor=GENESIS_ANCHOR, length=1),
+    )
+    envelope = build_result_bundle(bundle, signing_key=key)
+    bundle_path = tmp_path / "bundle.json"
+    bundle_path.write_text(json.dumps(envelope.to_dict()), encoding="utf-8")
+    return bundle_path, repo
+
+
+def test_verify_bundle_reports_a_reproduced_bundle_as_passing(tmp_path: Path) -> None:
+    bundle_path, repo = _cli_honest_bundle_path(tmp_path)
+
+    result = CliRunner().invoke(
+        volunteer_group,
+        ["verify-bundle", str(bundle_path), "--repo", str(repo)],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "reproduced bundle" in result.output
+
+
+def test_verify_bundle_receipt_out_writes_a_receipt_that_verifies(tmp_path: Path) -> None:
+    """The one thing worth checking about ``--receipt-out``: what it writes is real.
+
+    A receipt file that merely exists proves nothing -- it has to be the
+    kind of file :func:`verify_clean_room_receipt` accepts, signed by a key
+    whose public half the command also reports.
+    """
+    bundle_path, repo = _cli_honest_bundle_path(tmp_path)
+    receipt_path = tmp_path / "receipt.json"
+
+    result = CliRunner().invoke(
+        volunteer_group,
+        [
+            "verify-bundle",
+            str(bundle_path),
+            "--repo",
+            str(repo),
+            "--receipt-out",
+            str(receipt_path),
+            "--json",
+        ],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["passed"] is True
+    assert payload["receipt_digest"]
+    assert receipt_path.is_file()
+
+    envelope = load_clean_room_receipt(receipt_path)
+    statement = envelope.statement
+    verifier_pem = statement["predicate"]["receipt"]["verifier"]["public_key_pem"]
+    from cryptography.hazmat.primitives.serialization import load_pem_public_key
+
+    verifier_key = load_pem_public_key(verifier_pem.encode("ascii"))
+    verification = verify_clean_room_receipt(envelope, verifier_key)
+    assert verification.ok, verification.errors
+    assert verification.digest == payload["receipt_digest"]

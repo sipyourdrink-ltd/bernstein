@@ -342,6 +342,8 @@ class TestCapabilityAwareSelection:
         with pytest.raises(CapabilityMismatchError) as excinfo:
             select_profile_for(TaskCapabilityRequirements(mcp_client=True), profiles=(profile,))
         assert "mcp_client" in str(excinfo.value)
+        # Verify verdict_table is present on the exception
+        assert excinfo.value.verdict_table.rows[0][2] == ("mcp_client",)
 
     def test_refusal_carries_a_content_addressed_receipt(self) -> None:
         profile = _minimal_profile(vision=False)
@@ -350,16 +352,21 @@ class TestCapabilityAwareSelection:
         receipt = excinfo.value.receipt
         assert receipt.unmet == ("vision",)
         assert len(receipt.receipt_hash) == 64
+        # Verify verdict_table is present
+        assert excinfo.value.verdict_table.rows[0][2] == ("vision",)
 
     def test_refusal_receipt_is_deterministic(self) -> None:
         profile = _minimal_profile(vision=False)
         requirements = TaskCapabilityRequirements(vision=True)
         hashes = []
+        tables = []
         for _ in range(2):
             with pytest.raises(CapabilityMismatchError) as excinfo:
                 select_profile_for(requirements, profiles=(profile,))
             hashes.append(excinfo.value.receipt.receipt_hash)
+            tables.append(excinfo.value.verdict_table)
         assert hashes[0] == hashes[1]
+        assert tables[0].verdict_hash == tables[1].verdict_hash
 
     def test_parallel_worker_shortfall_is_refused(self) -> None:
         profile = _minimal_profile(max_parallel_workers=2)
@@ -652,6 +659,150 @@ class TestRouteAndRecord:
         assert events[0].details["unmet"] == ["vision"]
         assert events[0].details["candidates"] == [[profile.name, profile.profile_hash]]
         assert chain.verify()[0]  # type: ignore[attr-defined]
+
+    def test_match_records_verdict_table_on_selection(self, tmp_path: Path) -> None:
+        from bernstein.core.security.audit_chain import EVENT_ADAPTER_CAPABILITY_SELECTION
+
+        candidates = [
+            _minimal_profile(name="a", mcp_client=False, vision=False),
+            _minimal_profile(name="b", mcp_client=True, vision=False),
+        ]
+        chain = _audit_chain(tmp_path)
+        selected = route_and_record(
+            TaskCapabilityRequirements(mcp_client=True),
+            profiles=candidates,
+            audit_chain=chain,
+            run_id="run-1",
+        )
+        events = chain.query(event_type=EVENT_ADAPTER_CAPABILITY_SELECTION)  # type: ignore[attr-defined]
+        assert len(events) == 1
+        table = events[0].details.get("verdict_table", {})
+        rows = table.get("rows", [])
+        assert len(rows) == 2
+        assert rows[0]["adapter"] == "a"
+        assert rows[0]["profile_hash"] == candidates[0].profile_hash
+        assert sorted(rows[0]["unmet"]) == sorted(["mcp_client"])
+        assert rows[1]["adapter"] == "b"
+        assert rows[1]["unmet"] == []
+        assert selected.name == "b"
+
+    def test_refusal_records_verdict_table_on_refusal(self, tmp_path: Path) -> None:
+        from bernstein.core.security.audit_chain import EVENT_ADAPTER_CAPABILITY_REFUSAL
+
+        candidates = [
+            _minimal_profile(name="a", mcp_client=False),
+            _minimal_profile(name="b", mcp_client=False, vision=False),
+        ]
+        chain = _audit_chain(tmp_path)
+        with pytest.raises(CapabilityMismatchError):
+            route_and_record(
+                TaskCapabilityRequirements(mcp_client=True, vision=True),
+                profiles=candidates,
+                audit_chain=chain,
+                run_id="run-1",
+            )
+        events = chain.query(event_type=EVENT_ADAPTER_CAPABILITY_REFUSAL)  # type: ignore[attr-defined]
+        assert len(events) == 1
+        table = events[0].details.get("verdict_table", {})
+        rows = table.get("rows", [])
+        assert len(rows) == 2
+        assert rows[0]["adapter"] == "a"
+        assert rows[0]["profile_hash"] == candidates[0].profile_hash
+        assert sorted(rows[0]["unmet"]) == sorted(["mcp_client", "vision"])
+        assert rows[1]["adapter"] == "b"
+        assert sorted(rows[1]["unmet"]) == sorted(["mcp_client", "vision"])
+        assert chain.verify()[0]  # type: ignore[attr-defined]
+
+    def test_verdict_table_does_not_change_receipt_hash(self, tmp_path: Path) -> None:
+        candidates = [
+            _minimal_profile(name="a", mcp_client=False),
+            _minimal_profile(name="b", mcp_client=False, vision=False),
+        ]
+        with pytest.raises(CapabilityMismatchError) as excinfo:
+            route_and_record(
+                TaskCapabilityRequirements(mcp_client=True, vision=True),
+                profiles=candidates,
+                audit_chain=None,
+            )
+        expected = excinfo.value.receipt.receipt_hash
+        with pytest.raises(CapabilityMismatchError) as excinfo:
+            route_and_record(
+                TaskCapabilityRequirements(mcp_client=True, vision=True),
+                profiles=candidates,
+                audit_chain=_audit_chain(tmp_path),
+            )
+        assert excinfo.value.receipt.receipt_hash == expected
+
+    def test_verdict_table_row_order_matches_candidate_order(self, tmp_path: Path) -> None:
+        candidates = [
+            _minimal_profile(name="c", vision=False),
+            _minimal_profile(name="a", mcp_client=False),
+            _minimal_profile(name="b", mcp_client=False, vision=False),
+        ]
+        chain = _audit_chain(tmp_path)
+        with pytest.raises(CapabilityMismatchError):
+            route_and_record(
+                TaskCapabilityRequirements(mcp_client=True, vision=True),
+                profiles=candidates,
+                audit_chain=chain,
+            )
+        from bernstein.core.security.audit_chain import EVENT_ADAPTER_CAPABILITY_REFUSAL
+
+        events = chain.query(event_type=EVENT_ADAPTER_CAPABILITY_REFUSAL)  # type: ignore[attr-defined]
+        rows = events[0].details["verdict_table"]["rows"]
+        assert [row["adapter"] for row in rows] == ["c", "a", "b"]
+        assert chain.verify()[0]  # type: ignore[attr-defined]
+
+    def test_verdict_table_contains_only_names_hashes_and_axis_names(self, tmp_path: Path) -> None:
+        candidates = [
+            _minimal_profile(name="a", mcp_client=False),
+            _minimal_profile(name="b", mcp_client=False, vision=False),
+        ]
+        chain = _audit_chain(tmp_path)
+        with pytest.raises(CapabilityMismatchError):
+            route_and_record(
+                TaskCapabilityRequirements(mcp_client=True, vision=True),
+                profiles=candidates,
+                audit_chain=chain,
+            )
+        from bernstein.core.security.audit_chain import EVENT_ADAPTER_CAPABILITY_REFUSAL
+
+        events = chain.query(event_type=EVENT_ADAPTER_CAPABILITY_REFUSAL)  # type: ignore[attr-defined]
+        table = events[0].details["verdict_table"]
+        assert table["kind"] == "capability-verdict-table"
+        for row in table["rows"]:
+            assert set(row.keys()) == {"adapter", "profile_hash", "unmet"}
+            assert isinstance(row["adapter"], str)
+            assert isinstance(row["profile_hash"], str)
+            for axis in row["unmet"]:
+                assert isinstance(axis, str)
+
+    def test_verdict_table_is_byte_identical_across_processes(self, tmp_path: Path) -> None:
+        candidates = [
+            _minimal_profile(name="a", mcp_client=False, vision=False),
+            _minimal_profile(name="b", mcp_client=False),
+        ]
+        chain1 = _audit_chain(tmp_path / "c1")
+        chain2 = _audit_chain(tmp_path / "c2")
+        with pytest.raises(CapabilityMismatchError):
+            route_and_record(
+                TaskCapabilityRequirements(mcp_client=True, vision=True),
+                profiles=candidates,
+                audit_chain=chain1,
+            )
+        with pytest.raises(CapabilityMismatchError):
+            route_and_record(
+                TaskCapabilityRequirements(mcp_client=True, vision=True),
+                profiles=candidates,
+                audit_chain=chain2,
+            )
+        from bernstein.core.security.audit_chain import EVENT_ADAPTER_CAPABILITY_REFUSAL
+
+        events1 = chain1.query(event_type=EVENT_ADAPTER_CAPABILITY_REFUSAL)  # type: ignore[attr-defined]
+        events2 = chain2.query(event_type=EVENT_ADAPTER_CAPABILITY_REFUSAL)  # type: ignore[attr-defined]
+        assert len(events1) == 1 and len(events2) == 1
+        assert events1[0].details["verdict_table"] == events2[0].details["verdict_table"]
+        assert chain1.verify()[0] and chain2.verify()[0]  # type: ignore[attr-defined]
 
     def test_no_chain_still_selects_without_recording(self, tmp_path: Path) -> None:
         """A chainless call keeps working: recording is opt-in, not required."""

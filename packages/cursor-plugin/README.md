@@ -1,6 +1,6 @@
 # Bernstein Plugin for Cursor
 
-Drive Bernstein, a deterministic orchestrator for CLI coding agents, from Cursor. Monitor tasks, agents, costs, approve plans - all from the chat.
+Drive Bernstein, the open-source governance layer for AI agents, from Cursor. Monitor tasks, agents, costs, approve plans - all from the chat.
 
 ## Skills
 

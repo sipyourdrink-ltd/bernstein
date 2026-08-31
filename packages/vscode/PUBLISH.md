@@ -118,8 +118,8 @@ OPEN_VSX_TOKEN=YOUR_TOKEN npm run publish:ovsx
 ### VS Code Marketplace
 - Search for "Bernstein" on [marketplace.visualstudio.com](https://marketplace.visualstudio.com)
 - Check that:
-  - Display name is "Bernstein - Orchestrator for CLI Coding Agents"
-  - Description shows "Deterministic orchestrator for CLI coding agents..."
+  - Display name is "Bernstein - Governance Layer for AI Agents"
+  - Description shows "The open-source governance layer for AI agents..."
   - Icon appears correctly
   - README displays properly
   - CHANGELOG is visible
