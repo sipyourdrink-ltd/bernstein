@@ -60,6 +60,7 @@ from bernstein.adapters.q_dev import QDevAdapter
 from bernstein.adapters.qwen import QwenAdapter
 from bernstein.adapters.ralphex import RalphexAdapter
 from bernstein.adapters.rovo import RovoAdapter
+from bernstein.adapters.skyvern import SkyvernAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "qwen": QwenAdapter,
     "ralphex": RalphexAdapter,
     "rovo": RovoAdapter,
+    "skyvern": SkyvernAdapter,
 }
 
 # Agents tracked as declarative capability profiles rather than as

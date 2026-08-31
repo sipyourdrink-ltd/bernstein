@@ -6,14 +6,13 @@ adapter connects to it over HTTP and drives runs through its REST surface.
 
 This adapter subclasses :class:`bernstein.adapters.computer_use.ComputerUseAdapter`
 so it inherits the computer-use contract (output mode ARTIFACT, POLL_PTY event channel,
-per-task isolation, and capability gating via :attr:`is_computer_use`). It replaces
-the existing SkyvernAdapter (which subclassed CLIAdapter directly) to satisfy
-the goal-driven browser agent fronting requirement (#3116).
+per-task isolation, and capability gating via :attr:`is_computer_use`).
 
 We do not import the Skyvern Python SDK or vendor any of its code. The
 integration is HTTP-only so the AGPL-3.0 upstream stays out of our dependency
 set.
 """
+
 from __future__ import annotations
 
 import json
@@ -30,6 +29,7 @@ from bernstein.core.lineage.identity import AgentCard, generate_keypair
 from bernstein.core.lineage.signed_write import SignedLineageLog
 from bernstein.core.lineage.store import LineageStore
 from bernstein.core.persistence.cas_store import CASStore
+from bernstein.core.security.audit import load_or_create_audit_key
 from bernstein.core.security.audit_chain import AuditChainStore
 
 if TYPE_CHECKING:
@@ -109,7 +109,6 @@ class SkyvernAdapter(ComputerUseAdapter):
         cas = CASStore(workdir / ".sdd" / "computer-use" / session_id / "cas")
         audit_chain = AuditChainStore(
             audit_dir=workdir / ".sdd" / "computer-use" / session_id / "audit",
-            key=b"k" * 32,
         )
         lineage_store = LineageStore(workdir / ".sdd" / "computer-use" / session_id / "lineage")
         priv_key, pub_key = generate_keypair()
@@ -124,7 +123,10 @@ class SkyvernAdapter(ComputerUseAdapter):
             worktree_id=session_id,
             cas=cas,
             audit_chain=audit_chain,
-            lineage_recorder=SignedLineageLog(lineage_store, operator_hmac_key=b"h" * 32),
+            lineage_recorder=SignedLineageLog(
+                lineage_store,
+                operator_hmac_key=load_or_create_audit_key(),
+            ),
             agent_card=agent_card,
             private_key_pem=priv_key,
             run_byte_cap=64 * 1024 * 1024,  # 64 MiB per-run cap
@@ -132,10 +134,12 @@ class SkyvernAdapter(ComputerUseAdapter):
 
         # Build the run task payload. Skyvern accepts at minimum a prompt
         # and optionally a target url.
-        payload = json.dumps({
-            "prompt": prompt,
-            "user_data_dir": str(profile_dir),
-        }).encode()
+        payload = json.dumps(
+            {
+                "prompt": prompt,
+                "user_data_dir": str(profile_dir),
+            }
+        ).encode()
 
         url = f"{self._base_url}/v1/run/tasks"
         req = urllib.request.Request(
@@ -172,13 +176,17 @@ class SkyvernAdapter(ComputerUseAdapter):
         # and the lineage layer can bind the run id to the evidence set.
         run_dir = workdir / ".sdd" / "computer-use" / session_id
         run_dir.mkdir(parents=True, exist_ok=True)
-        (run_dir / "run.json").write_text(json.dumps({
-            "run_id": run_id,
-            "session_id": session_id,
-            "prompt": prompt,
-            "base_url": self._base_url,
-            "profile_dir": str(profile_dir),
-        }))
+        (run_dir / "run.json").write_text(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "session_id": session_id,
+                    "prompt": prompt,
+                    "base_url": self._base_url,
+                    "profile_dir": str(profile_dir),
+                }
+            )
+        )
 
         # Persist the task id so workers can retrieve artifacts later.
         (workdir / ".sdd" / "runtime" / f"{session_id}.task_id").write_text(str(run_id))

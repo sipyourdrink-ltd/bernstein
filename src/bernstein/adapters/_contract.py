@@ -735,6 +735,7 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     # branch, so it declares ``artifact`` output (#3110): completion is the
     # signed lineage receipt and the commit check never fires for it.
     "computer_use": AdapterStrategy(event_channel=EventChannel.POLL_PTY, output_mode=OutputMode.ARTIFACT),
+    "skyvern": AdapterStrategy(event_channel=EventChannel.POLL_PTY, output_mode=OutputMode.ARTIFACT),
     "cody": AdapterStrategy(),
     "composio": AdapterStrategy(event_channel=EventChannel.HOOKS),
     "continue": AdapterStrategy(),
