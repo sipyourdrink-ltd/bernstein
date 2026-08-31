@@ -5317,6 +5317,27 @@ class AgentSpawner:
             workdir=self._workdir,
             default_model=self._default_model or _policy_preview.get("model"),
         )
+        # Mirror the model-resolution step from the fresh-spawn path so that
+        # role_model_policy.model overrides (tier-model resolution, effort
+        # mapping) are applied to the resume session's model_config too.
+        _task_metadata = tasks[0].metadata or {}
+        _task_model_is_pinned = bool(_task_metadata.get("pinned_model"))
+        _task_model_blocks_role_policy = bool(tasks[0].model) and _task_model_is_pinned
+        _effective_role_model, _tier_decision_record = self._resolve_tier_model(tasks[0], _policy_preview)
+        if not _task_model_blocks_role_policy and _effective_role_model:
+            model_config = ModelConfig(
+                model=_effective_role_model,
+                effort=_policy_preview.get("effort", model_config.effort),
+                max_tokens=model_config.max_tokens,
+                is_batch=model_config.is_batch,
+            )
+        elif not tasks[0].effort and _policy_preview.get("effort"):
+            model_config = ModelConfig(
+                model=model_config.model,
+                effort=_policy_preview["effort"],
+                max_tokens=model_config.max_tokens,
+                is_batch=model_config.is_batch,
+            )
         role = tasks[0].role
         session_id = f"{role}-resume-{uuid.uuid4().hex[:8]}"
 
