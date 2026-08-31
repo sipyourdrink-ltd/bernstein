@@ -142,7 +142,7 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 שערי היגיינה של המאגר: `bernstein readme-l10n verify` מכשיל PR שבו קובצי README מתורגמים סטו מהמקור האנגלי (תוך ציון החלק המיושן), ו-`bernstein readme-l10n sync` מצמיד אותם מחדש לאחר עריכה באנגלית. ראה [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### סוכנים נתמכים
-<!-- l10n: en="supported agents" hash="sha256:9b5a2261797c" -->
+<!-- l10n: en="supported agents" hash="sha256:8c94b4cde068" -->
 
 Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen ועוד. [אינדקס המתאמים](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) כולל פקודות התקנה עבור 30 מהם. הפקודה `bernstein integrations list` מונה את כל 51 האינטגרציות המחוברות מ-`src/bernstein/adapters/registry.py`, מקור האמת היחיד. 49 מהן הן מתאמי סוכנים לבחירה; שתי השורות האחרות הן רכיב הבדיקה `mock` ופרופיל נקודות הקצה `self-hosted-endpoints`. כל כלי אחר עם דגל `--prompt` פועל דרך המעטפת הגנרית.
 

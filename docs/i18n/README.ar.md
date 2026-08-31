@@ -142,7 +142,7 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 بوابات سلامة المستودع: يفشل `bernstein readme-l10n verify` أي طلب سحب تباعدت ملفات README المترجمة فيه عن الأصل الإنجليزي (مع تسمية القسم القديم)، بينما يعيد `bernstein readme-l10n sync` ربطها بعد التعديل الإنجليزي. انظر [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### الوكلاء المدعومون
-<!-- l10n: en="supported agents" hash="sha256:9b5a2261797c" -->
+<!-- l10n: en="supported agents" hash="sha256:8c94b4cde068" -->
 
 Claude Code وCodex CLI وGemini CLI وGitHub Copilot CLI وCursor وAider وGoose وMuse Code وOpenAI Agents SDK وAmp وCody وContinue وDevin Terminal وJunie وKilo وKiro وAWS Q Developer وOllama وOpenCode وOpenHands وOpen Interpreter وgptme وPlandex وAIChat وLetta Code وQwen وغيرهم. يحتوي [فهرس المحولات](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) على أوامر تثبيت لـ 30 منهم. تسرد `bernstein integrations list` جميع عمليات التكامل الـ 51 المتصلة من `src/bernstein/adapters/registry.py`، المصدر الوحيد للحقيقة. 49 منها عبارة عن محولات وكلاء قابلة للاختيار؛ والسطران الآخران هما نموذج الاختبار `mock` وملف تعريف نقطة النهاية `self-hosted-endpoints`. أي أداة أخرى تدعم خيار `--prompt` تعمل من خلال الغلاف العام.
 

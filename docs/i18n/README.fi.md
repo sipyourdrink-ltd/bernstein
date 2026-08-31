@@ -142,7 +142,7 @@ Ajon tila tallennetaan tarkistuspisteenä hakemistoon `.sdd/runs/<run_id>/` joka
 Koodihygieniaportit: `bernstein readme-l10n verify` hylkää PR:n, jonka käännetyt README-tiedostot poikkeavat englanninkielisestä lähteestä (nimetten vanhentuneen osion), ja `bernstein readme-l10n sync` päivittää sidokset englanninkielisten muokkausten jälkeen. Katso [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### tuetut agentit
-<!-- l10n: en="supported agents" hash="sha256:9b5a2261797c" -->
+<!-- l10n: en="supported agents" hash="sha256:8c94b4cde068" -->
 
 Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen ja muita. [Sovitinindeksi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) sisältää asennuskomennot 30 agentille. `bernstein integrations list` luettelee kaikki 51 kytkettyä integraatiota tiedostosta `src/bernstein/adapters/registry.py`, joka on ainoa totuuden lähde. 49 niistä on valittavia agenttisovittimia; kaksi muuta riviä ovat testivastine `mock` ja päätepisteprofiili `self-hosted-endpoints`. Kaikki muut työkalut, joissa on `--prompt`-valitsin, toimivat yleisen kääreen kautta.
 
