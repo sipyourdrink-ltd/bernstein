@@ -102,6 +102,7 @@ PLAYWRIGHT_DRIVER_PACKAGE = "playwright>=1.40"
 _INSTALL_COMMANDS: dict[str, str] = {
     "browser_use": f"pip install '{BROWSER_DRIVER_PACKAGE}'",
     "playwright": f"pip install '{PLAYWRIGHT_DRIVER_PACKAGE}' && playwright install chromium",
+    "desktop_sandbox": "pip install 'cua>=0.1.0' && docker daemon start",
 }
 
 
@@ -770,66 +771,138 @@ class DesktopSandboxDriver(BrowserDriver):
     agent execution. It implements the BrowserDriver protocol and launches an
     external desktop agent process within the sandbox, enforcing sandbox teardown
     on all terminal states.
+
+    The driver owns the sandbox lifecycle: it allocates it on demand (lazy), runs
+    the desktop agent within it, and tears it down when ``close()`` is called or
+    the driver is garbage-collected. Two concurrent tasks receive disjoint
+    sandboxes by construction: their ``profile_dir`` directories are different,
+    and each SandboxAllocator is bound to a task id.
+
+    Args:
+        sandbox_allocator: Object that allocates and manages sandbox instances.
+            Must implement :meth:`start` to launch a sandbox, and the returned
+            process object must support the agent protocol verbs.
+        profile_dir: Isolated directory for this task's sandbox state. Used as a
+            token for sandbox identity tracking; never directly written by the driver
+            (the sandbox process may mount or use it, but that is the allocator's
+            responsibility).
+        build_id: The build identity string ("sandbox-<version>") for reproducibility.
     """
 
-    def __init__(self, sandbox_profile_dir: Path, sandbox_manager: SandboxManager) -> None:
+    def __init__(self, *, sandbox_allocator: object, profile_dir: Path, build_id: str = UNKNOWN_BUILD_VERSION) -> None:
         """Initialize the desktop sandbox driver.
 
         Args:
-            sandbox_profile_dir: Isolated directory for this task's sandbox state.
-            sandbox_manager: Object managing sandbox lifecycle (e.g., Docker, VM provider).
+            sandbox_allocator: Object managing sandbox lifecycle via ``start()`` method.
+            profile_dir: Per-task profile directory token.
+            build_id: Sandbox runtime version identifier.
         """
-        self.profile_dir = sandbox_profile_dir
-        self._sandbox_manager = sandbox_manager
+        self.profile_dir = profile_dir
+        self._sandbox_allocator = sandbox_allocator
+        self.build_id = build_id
         self._desktop_agent_process: object | None = None
         self._closed = False
 
+    def _ensure_running(self) -> object:
+        """Lazily start the desktop agent. Called once per driver lifetime.
+
+        Returns:
+            The agent process object for use with sandbox manager verbs.
+
+        Raises:
+            BrowserDriverError: When the sandbox fails to start.
+        """
+        if self._desktop_agent_process is not None:
+            return self._desktop_agent_process
+        try:
+            start_method = getattr(self._sandbox_allocator, "start", None)
+            if start_method is None:
+                raise BrowserDriverError("Sandbox allocator does not expose 'start' method")
+            self._desktop_agent_process = start_method()
+            if self._desktop_agent_process is None:
+                raise BrowserDriverError("Sandbox allocator start() returned None")
+            return self._desktop_agent_process
+        except BrowserDriverError:
+            raise
+        except Exception as exc:
+            raise BrowserDriverError(f"Failed to start desktop sandbox: {type(exc).__name__}: {exc}") from exc
+
     def navigate(self, url: str) -> None:
         """Navigate to *url* in the desktop agent."""
-        if self._desktop_agent_process is None:
-            raise BrowserDriverError("Desktop agent not running")
-        # Delegate to the desktop agent's navigate method
+        agent = self._ensure_running()
         try:
-            self._sandbox_manager.navigate(self._desktop_agent_process, url)
+            navigate_method = getattr(agent, "navigate", None)
+            if navigate_method is None:
+                raise BrowserDriverError("Desktop agent does not expose 'navigate' method")
+            navigate_method(url)
+        except BrowserDriverError:
+            raise
         except Exception as exc:
             raise BrowserDriverError(f"Desktop agent navigate failed: {type(exc).__name__}") from exc
 
     def act(self, action: Action) -> None:
         """Perform *action* against the desktop agent."""
-        if self._desktop_agent_process is None:
-            raise BrowserDriverError("Desktop agent not running")
-        # Map ActionKind to desktop agent commands
+        agent = self._ensure_running()
         try:
-            self._sandbox_manager.act(self._desktop_agent_process, action)
+            act_method = getattr(agent, "act", None)
+            if act_method is None:
+                raise BrowserDriverError("Desktop agent does not expose 'act' method")
+            act_method(action)
+        except BrowserDriverError:
+            raise
         except Exception as exc:
             raise BrowserDriverError(f"Desktop agent act failed: {type(exc).__name__}") from exc
 
     def screenshot(self) -> bytes:
         """Return the current viewport screenshot bytes from the desktop agent."""
-        if self._desktop_agent_process is None:
-            raise BrowserDriverError("Desktop agent not running")
+        agent = self._ensure_running()
         try:
-            raw = self._sandbox_manager.screenshot(self._desktop_agent_process)
-            return raw if isinstance(raw, bytes) else str(raw).encode("utf-8")
+            screenshot_method = getattr(agent, "screenshot", None)
+            if screenshot_method is None:
+                raise BrowserDriverError("Desktop agent does not expose 'screenshot' method")
+            raw = screenshot_method()
+            if not isinstance(raw, bytes):
+                if not raw:
+                    raise BrowserDriverError("Desktop agent screenshot returned empty bytes")
+                raw = str(raw).encode("utf-8")
+            if not raw:
+                raise BrowserDriverError("Desktop agent screenshot returned empty bytes")
+            return raw
+        except BrowserDriverError:
+            raise
         except Exception as exc:
             raise BrowserDriverError(f"Desktop agent screenshot failed: {type(exc).__name__}") from exc
 
     def dom_snapshot(self) -> bytes:
         """Return the current DOM / accessibility snapshot bytes from the desktop agent."""
-        if self._desktop_agent_process is None:
-            raise BrowserDriverError("Desktop agent not running")
+        agent = self._ensure_running()
         try:
-            raw = self._sandbox_manager.dom_snapshot(self._desktop_agent_process)
-            return raw if isinstance(raw, bytes) else str(raw).encode("utf-8")
+            dom_method = getattr(agent, "dom_snapshot", None)
+            if dom_method is None:
+                raise BrowserDriverError("Desktop agent does not expose 'dom_snapshot' method")
+            raw = dom_method()
+            if not isinstance(raw, bytes):
+                if not raw:
+                    raise BrowserDriverError("Desktop agent dom_snapshot returned empty bytes")
+                raw = str(raw).encode("utf-8")
+            if not raw:
+                raise BrowserDriverError("Desktop agent dom_snapshot returned empty bytes")
+            return raw
+        except BrowserDriverError:
+            raise
         except Exception as exc:
             raise BrowserDriverError(f"Desktop agent dom_snapshot failed: {type(exc).__name__}") from exc
 
     def current_url(self) -> str:
         """Return the current page URL from the desktop agent."""
-        if self._desktop_agent_process is None:
-            raise BrowserDriverError("Desktop agent not running")
+        agent = self._ensure_running()
         try:
-            return str(self._sandbox_manager.current_url(self._desktop_agent_process))
+            url_method = getattr(agent, "current_url", None)
+            if url_method is None:
+                raise BrowserDriverError("Desktop agent does not expose 'current_url' method")
+            return str(url_method())
+        except BrowserDriverError:
+            raise
         except Exception as exc:
             raise BrowserDriverError(f"Desktop agent current_url failed: {type(exc).__name__}") from exc
 
@@ -840,9 +913,16 @@ class DesktopSandboxDriver(BrowserDriver):
         self._closed = True
         if self._desktop_agent_process is not None:
             with suppress(Exception):
-                self._sandbox_manager.close(self._desktop_agent_process)
+                close_method = getattr(self._desktop_agent_process, "close", None)
+                if close_method is not None:
+                    close_method()
             self._desktop_agent_process = None
-        # Teardown the sandbox profile
+        # Teardown the sandbox allocator and profile
+        with suppress(Exception):
+            stop_method = getattr(self._sandbox_allocator, "stop", None)
+            if stop_method is not None:
+                stop_method()
+        # Teardown the profile directory
         with suppress(Exception):
             shutil.rmtree(self.profile_dir, ignore_errors=True)
 
