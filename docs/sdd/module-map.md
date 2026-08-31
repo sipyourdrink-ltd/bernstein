@@ -131,6 +131,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `env_isolation.py`          | Environment variable isolation for spawned agents |
 | `floor_refresh.py`          | Adapter security-floor refresh pipeline with signed update receipts (#2515) |
 | `forge.py`                  | Forge CLI adapter |
+| `garak.py`                  | Garak adversarial probe adapter |
 | `gemini.py`                 | Google Gemini / Antigravity CLI adapter |
 | `generic.py`                | Generic CLI adapter for arbitrary coding agent CLIs |
 | `goose.py`                  | Goose CLI adapter for Bernstein |
