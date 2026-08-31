@@ -400,7 +400,7 @@ class RunActor:
         # Before the drain, so nothing can publish into an actor that is on its way down. The
         # registry is the only route a sync writer has, so leaving it first is what makes "stopped"
         # mean unreachable rather than merely draining.
-        run_actor_registry.unregister(self._state.session_id)
+        run_actor_registry.unregister(self._state.session_id, self)
         self._stopped.set()
         # Submit a no-op so the loop wakes up and observes the flag.
         await self._queue.put((Event(kind="watchdog_tick", source="stop"), None))

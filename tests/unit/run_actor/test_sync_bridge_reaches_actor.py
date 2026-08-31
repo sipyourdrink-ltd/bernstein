@@ -91,3 +91,61 @@ async def test_two_actors_do_not_collide() -> None:
     finally:
         await first.stop()
         await second.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_superseded_actor_stopping_leaves_the_live_one_reachable() -> None:
+    """A reconnect registers a second actor under the same session id.
+
+    The first actor stopping afterwards must not detach the second: the
+    registry keys by session, so an unconditional pop would make the live
+    actor unreachable and silently send every later event down the legacy
+    path.
+    """
+    first = RunActor("sess-reconnect")
+    second = RunActor("sess-reconnect")
+    await first.start()
+    await second.start()
+    try:
+        assert run_actor_registry.get("sess-reconnect") is second
+        await first.stop()
+        assert run_actor_registry.get("sess-reconnect") is second
+        assert (
+            run_actor_registry.publish_event_sync(
+                "sess-reconnect",
+                Event(kind="watchdog_tick", source="test"),
+            )
+            is True
+        )
+    finally:
+        await second.stop()
+
+
+def test_publishing_into_a_dead_loop_retires_the_entry() -> None:
+    """An actor whose loop closed without stop() must not be pinned forever.
+
+    Registration only became reachable once actors register themselves, so
+    this is the first point at which a leak is possible: the entry holds the
+    actor, its replay buffer, and the dead loop.
+    """
+
+    async def _start() -> RunActor:
+        actor = RunActor("sess-dead-loop")
+        await actor.start()
+        return actor
+
+    loop = asyncio.new_event_loop()
+    try:
+        actor = loop.run_until_complete(_start())
+    finally:
+        loop.close()
+
+    assert run_actor_registry.get("sess-dead-loop") is actor
+    assert (
+        run_actor_registry.publish_event_sync(
+            "sess-dead-loop",
+            Event(kind="watchdog_tick", source="test"),
+        )
+        is False
+    )
+    assert run_actor_registry.get("sess-dead-loop") is None
