@@ -9,10 +9,13 @@ every content hash. A tampered journal entry or a divergent stored blob fails.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 from bernstein.cli.commands.activity_cmd import activity_group
 from bernstein.core.orchestration.activity import dispatch_activity
@@ -202,7 +205,7 @@ def test_research_run_completes_with_default_fetch_synthesize(project: Path) -> 
         ["research", "run", "--input", str(input_path), "--run", run_id, "--workdir", str(project)],
     )
     assert result.exit_code == 0, result.output
-    assert run_id in result.output
+    assert run_id in _ANSI_RE.sub("", result.output)
 
 
 def test_research_run_json_output(project: Path) -> None:
