@@ -31,7 +31,14 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from bernstein.core.protocols.mcp.stateless_core import anchor_stateless_call, request_span_id
+from bernstein.core.orchestration.worker_loop_detector import WorkerLoopDetector
+from bernstein.core.persistence.action_cache import open_cache
+from bernstein.core.protocols.mcp.stateless_core import (
+    StatelessCallRecord,
+    anchor_stateless_call,
+    request_span_id,
+)
+from bernstein.core.security.claude_tool_result_injection import ToolResultInjector
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +203,7 @@ class MCPGateway:
         # never invokes the interlock because it has no connector side effect.
         self._attestation_interlock = attestation_interlock
         self._metrics: dict[str, ToolMetrics] = {}
+        self._loop_detector = WorkerLoopDetector()
         self._proc: asyncio.subprocess.Process | None = None
         self._pending: dict[Any, asyncio.Future[dict[str, Any]]] = {}
         self._reader_task: asyncio.Task[None] | None = None
@@ -340,10 +348,37 @@ class MCPGateway:
         await self._prepare_tool_dispatch(message, method, params, req_id)
         response, latency_ms = await self._send_request(message, req_id)
         self._record_wal_and_metrics(method, params, req_id, response, latency_ms)
-        self._anchor_proxied_call(method, params)
+        record = self._anchor_proxied_call(method, params)
 
         if self._settlement is not None and method == "tools/call":
             response = await self._maybe_settle(message, params, response)
+
+        if method == "tools/call" and record and self._journal and "error" not in response:
+            meta = params.get("_meta", {})
+            content_hash = meta.get("cacheScope", {}).get("content_hash") if isinstance(meta, dict) else None
+
+            if content_hash:
+                cache = open_cache(self._journal.path.parents[3])
+                action = cache.resolve_by_content_hash(content_hash)
+                if action:
+                    loop_type = self._loop_detector.observe(action)
+                    if loop_type:
+                        self._journal.record(
+                            "worker_loop_intervention",
+                            loop_type=loop_type,
+                            repetition_count=self._loop_detector.threshold,
+                            threshold=self._loop_detector.threshold,
+                            action_identity=content_hash,
+                            intervention_number=self._loop_detector._interventions_used,
+                        )
+                        injector = ToolResultInjector()
+                        injector.add_gate_output(
+                            gate_name="LoopDetector",
+                            passed=False,
+                            errors=[f"Worker repeated {loop_type} action cycle. Please reconsider your approach."],
+                        )
+                        payload = injector.build_payload(fmt="text")
+                        response["result"] = payload.to_context_text()
 
         return response
 
@@ -446,7 +481,7 @@ class MCPGateway:
 
         return settled
 
-    def _anchor_proxied_call(self, method: str, params: dict[str, Any]) -> None:
+    def _anchor_proxied_call(self, method: str, params: dict[str, Any]) -> StatelessCallRecord | None:
         """Anchor a proxied call into the run journal and audit chain.
 
         Mirrors the WAL record with a chain-anchored continuity record
@@ -458,7 +493,7 @@ class MCPGateway:
         if self._journal is None:
             return
         try:
-            anchor_stateless_call(
+            return anchor_stateless_call(
                 journal=self._journal,
                 method=method,
                 params=params,

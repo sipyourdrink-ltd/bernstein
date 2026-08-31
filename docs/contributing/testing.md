@@ -363,13 +363,28 @@ uv run python scripts/run_tests.py --shard 1/4
 uv run python scripts/run_tests.py --shard 1/4 --affected origin/main
 ```
 
-The partition is **position-modulo over the sorted file list**: shard
-`i` owns every file whose index `j` satisfies `j % N == i - 1`. That
-makes it deterministic and stable (a failing shard reruns the identical
-slice), complete and disjoint (the union of all `N` shards is exactly
-the full list, no file runs twice), and balanced (shard sizes differ by
-at most one). An empty shard (when `N` exceeds the file count) is a
-legitimate no-op that exits 0.
+The partition prefers **duration-weighted LPT** when
+`tests/fixtures/ci/test-shard-durations.json` is present: files are ordered by
+recorded seconds and each lands in the currently lightest shard. That keeps
+the union complete and disjoint while collapsing the multi-minute wall spread
+that count-modulo leaves between shards (issue #4840). Without that file, the
+fallback is **position-modulo** over the sorted file list (shard `i` owns
+every file whose index `j` satisfies `j % N == i - 1`). Both paths are
+deterministic and stable (a failing shard reruns the identical slice). An
+empty shard (when `N` exceeds the file count) is a legitimate no-op that
+exits 0.
+
+Refresh the committed timings from a successful merge-group run:
+
+```
+uv run python scripts/refresh_test_shard_durations.py --run-id <github-run-id>
+```
+
+Or merge live measurements while running:
+
+```
+uv run python scripts/run_tests.py --shard 1/4 --record-durations
+```
 
 In CI the `ubuntu`/`windows` `Test` cells fan out across a `shard`
 matrix dimension; the rolled-up `needs.test.result` the `CI gate`

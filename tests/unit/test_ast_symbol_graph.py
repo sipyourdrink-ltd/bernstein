@@ -512,3 +512,29 @@ def test_graph_from_document_still_accepts_an_honestly_truncated_index(
 
     assert graph_document(rebuilt) == document
     assert rebuilt.indexed_file_count < rebuilt.source_file_count
+
+
+def test_graph_document_includes_unparsed_files_and_edge_origin_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Coverage block reports unparsed files and counts by edge origin."""
+    _write(tmp_path / "valid.py", "def valid_func() -> int:\n    return 42\n")
+    _write(tmp_path / "syntax_err.py", "def broken(:\n")
+    files = ["valid.py", "syntax_err.py"]
+    monkeypatch.setattr(semantic_graph, "_git_ls_files", lambda _w: files)
+
+    graph = build_semantic_graph(tmp_path)
+    assert graph.unparsed_files == [{"path": "syntax_err.py", "reason": "parse_failed"}]
+
+    doc_bytes = graph_document(graph)
+    payload = json.loads(doc_bytes.decode("utf-8"))
+
+    coverage = payload["coverage"]
+    assert coverage["unparsed_files"] == [{"path": "syntax_err.py", "reason": "parse_failed"}]
+    assert coverage["inferred_edge_count"] == 0
+    assert coverage["extracted_edge_count"] == 0
+    assert coverage["inferred_edge_count"] + coverage["extracted_edge_count"] == len(payload["edges"])
+
+    rebuilt = graph_from_document(doc_bytes)
+    assert rebuilt.unparsed_files == [{"path": "syntax_err.py", "reason": "parse_failed"}]
+    assert graph_document(rebuilt) == doc_bytes

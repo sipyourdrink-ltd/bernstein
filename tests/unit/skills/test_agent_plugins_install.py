@@ -22,6 +22,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from scripts.gen_distribution_manifests import PLUGIN_SCHEMA_ID
 
 from bernstein.core.skills.lifecycle import (
     InstallScope,
@@ -56,7 +57,7 @@ def _write_skill(path: Path, name: str, description: str = "Plugin skill for tes
 def _write_manifest(path: Path, *, name: str, skills: str = "./skills/") -> None:
     """Write a minimal Agent Plugins v1.0.0-style plugin.json."""
     path.write_text(
-        json.dumps({"name": name, "version": "1.0.0", "skills": skills}),
+        json.dumps({"$schema": PLUGIN_SCHEMA_ID, "name": name, "version": "1.0.0", "skills": skills}),
         encoding="utf-8",
     )
 
@@ -95,7 +96,7 @@ def test_layout_detection_rejects_manifest_without_name_field(tmp_path: Path) ->
     (root / "skills" / "alpha").mkdir(parents=True)
     _write_skill(root / "skills" / "alpha" / "SKILL.md", "alpha")
     (root / "plugin.json").write_text(
-        json.dumps({"version": "1.0.0", "skills": "./skills/"}),
+        json.dumps({"$schema": PLUGIN_SCHEMA_ID, "version": "1.0.0", "skills": "./skills/"}),
         encoding="utf-8",
     )
     assert is_agent_plugins_layout(root) is False
@@ -107,6 +108,56 @@ def test_layout_detection_rejects_invalid_manifest_json(tmp_path: Path) -> None:
     _write_skill(root / "skills" / "alpha" / "SKILL.md", "alpha")
     (root / "plugin.json").write_text("not json {", encoding="utf-8")
     assert is_agent_plugins_layout(root) is False
+
+
+def test_missing_schema_rejects_plugin(tmp_path: Path) -> None:
+    """A plugin.json without a $schema field is rejected."""
+    root = tmp_path / "no-schema"
+    (root / "skills" / "alpha").mkdir(parents=True)
+    _write_skill(root / "skills" / "alpha" / "SKILL.md", "alpha")
+    (root / "plugin.json").write_text(
+        json.dumps({"name": "no-schema", "version": "1.0.0", "skills": "./skills/"}),
+        encoding="utf-8",
+    )
+    assert is_agent_plugins_layout(root) is False
+
+
+def test_unknown_schema_rejects_plugin(tmp_path: Path) -> None:
+    """An unknown $schema rejects layout detection."""
+    root = tmp_path / "unknown-schema"
+    (root / "skills" / "alpha").mkdir(parents=True)
+    _write_skill(root / "skills" / "alpha" / "SKILL.md", "alpha")
+    (root / "plugin.json").write_text(
+        json.dumps(
+            {
+                "$schema": "https://agent-plugins.org/schemas/9.9.9/plugin.schema.json",
+                "name": "unknown-schema",
+                "version": "1.0.0",
+                "skills": "./skills/",
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert is_agent_plugins_layout(root) is False
+
+
+def test_known_schema_accepts_plugin(tmp_path: Path) -> None:
+    """A valid agent-plugins.org 1.0.0 $schema accepts layout detection."""
+    root = tmp_path / "known-schema"
+    (root / "skills" / "alpha").mkdir(parents=True)
+    _write_skill(root / "skills" / "alpha" / "SKILL.md", "alpha")
+    (root / "plugin.json").write_text(
+        json.dumps(
+            {
+                "$schema": PLUGIN_SCHEMA_ID,
+                "name": "known-schema",
+                "version": "1.0.0",
+                "skills": "./skills/",
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert is_agent_plugins_layout(root) is True
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,14 @@
+id: inc-fa3717d1a08f
+severity: P2
+source_incident: "dlq:3730ef10e2ed4079"
+owner: manager
+created_at: 1788114786.653
+expected_outcome: "Agent should complete the task; flake-tolerant retry is acceptable. (root cause: max_retries_exceeded)"
+tags:
+  - max_retries_exceeded
+prompt: |
+  Reproduce and resolve the following terminal failure (role=manager).
+  Task: [GATE-REPAIR] Plan and decompose goal into tasks
+  Failure reason: max_retries_exceeded
+  Last error (trimmed):
+  Dead agent: claimed task held by agent no longer tracked (or confirmed dead)

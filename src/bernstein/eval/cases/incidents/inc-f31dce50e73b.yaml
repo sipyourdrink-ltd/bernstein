@@ -1,0 +1,14 @@
+id: inc-f31dce50e73b
+severity: P2
+source_incident: "dlq:9316bdb174f045b5"
+owner: backend
+created_at: 1788109460.768
+expected_outcome: "Agent should complete the task; flake-tolerant retry is acceptable. (root cause: max_retries_exceeded)"
+tags:
+  - max_retries_exceeded
+prompt: |
+  Reproduce and resolve the following terminal failure (role=backend).
+  Task: Implement PaperQA2 synthesiser adapter and corpus identity binding
+  Failure reason: max_retries_exceeded
+  Last error (trimmed):
+  Agent backend-1ce0c6f4 died; janitor failed: ['path_exists: src/bernstein/core/orchestration/pqa_synthesiser.py (not found)']

@@ -1,0 +1,88 @@
+id: web-app-full
+name: Full Web Application Security Assessment
+description: Comprehensive engagement spanning recon through report — from attack surface discovery to remediation validation
+tags: [pentest, web, compliance, full-engagement]
+version: "1.0"
+
+# scope_ref: content-addressed grant reference to the EngagementMandate that
+# authorizes this engagement's scope. The orchestrator gates every phase action
+# on the mandate scope check before dispatching.
+#
+# Format: sha256:<hex> — resolved at runtime by the EngagementMandate resolver
+scope_ref: "scope:web-app-target"
+
+phases:
+  - name: Recon
+    action: scanner
+    scanners:
+      - adapter: "nuclei"
+        config:
+          templates: "cves,dubs,exposures"
+          rate_limit: 50
+      - adapter: "subfinder"
+        config:
+          sources: "crtsh,passivetotal,virustotal"
+    scope_ref: "scope:web-app-target"
+    config:
+      output_format: sarif
+      max_duration_seconds: 900
+
+  - name: Enumeration
+    action: scanner
+    scanners:
+      - adapter: "wpscan"
+        config:
+          enumerate: "vp,vt,vu,vd"
+          risk: "2"
+      - adapter: "httpx"
+        config:
+          status_code: true
+          content_length: true
+          title: true
+    scope_ref: "scope:web-app-target"
+    config:
+      output_format: json
+      max_duration_seconds: 600
+
+  - name: Scan
+    action: scanner
+    scanners:
+      - adapter: "nikto"
+        config:
+          plugins: "all"
+          follow_redirects: true
+      - adapter: "sqlmap"
+        config:
+          risk: "3"
+          level: "5"
+          batch: true
+    scope_ref: "scope:web-app-target"
+    config:
+      output_format: json
+      max_duration_seconds: 1800
+      risk_threshold: medium
+
+  - name: Verify
+    action: verify
+    scope_ref: "scope:web-app-target"
+    config:
+      verifiers:
+        - type: "retest"
+          confidence_threshold: 0.85
+        - type: "false_positive_elimination"
+          required_evidence: ["proof_of_concept", "impact_statement"]
+      report_format: markdown
+
+  - name: Report
+    action: report
+    scope_ref: "scope:web-app-target"
+    config:
+      sections:
+        - "executive_summary"
+        - "methodology"
+        - "findings"
+        - "remediation"
+        - "appendix"
+      severity_threshold: low
+      output_format: html
+      include_recommendations: true

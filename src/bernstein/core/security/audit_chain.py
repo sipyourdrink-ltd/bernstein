@@ -220,6 +220,17 @@ EVENT_REVIEW_RECEIPT = "review.receipt"
 #: chain entries rather than trusting a session id.
 EVENT_MCP_STATELESS_CALL = "mcp.stateless_call"
 
+#: Issue #3610 (slice 1) -- emitted when a run's semantic code graph digest
+#: is anchored in the HMAC chain. This event records the graph digest, the
+#: run id, the graph version, the source/indexed file counts, the unparsed
+#: file count, the inferred and extracted edge counts, and the previous chain
+#: digest so a verifier can prove the run admitted exactly this graph state
+#: rather than a divergent or stale view of the repository. A verifier holding
+#: the graph digest and its run id can recompute the canonical graph
+#: byte-identically (via :func:`graph_from_document`) and re-derive the event
+#: to confirm the run had the graph it claims.
+EVENT_CODE_GRAPH_ANCHORED = "code_graph.anchored"
+
 #: Issue #2308 -- emitted whenever a deterministic outer-plan node delegates
 #: mechanical execution to a native subagent (Claude Code, Codex, ...). The
 #: event binds the plan-node hash (a pure function of the outer plan, so it is
@@ -3525,6 +3536,62 @@ def record_trigger_receipt(
         actor=actor,
         resource_type="automation_trigger",
         resource_id=trigger_id,
+        details=details,
+    )
+
+
+def record_code_graph_anchored(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    graph_digest: str,
+    graph_version: int,
+    source_file_count: int,
+    indexed_file_count: int,
+    unparsed_file_count: int,
+    inferred_edge_count: int,
+    extracted_edge_count: int,
+    actor: str = "orchestrator",
+) -> AuditEvent:
+    """Append a ``code_graph.anchored`` event into *chain* (#3610 slice 1).
+
+    Anchors the semantic code graph digest in the HMAC chain to ensure
+    audit-chain integrity for graph-dependent operations. This event
+    records the graph digest and key coverage metrics so a verifier can
+    prove the run admitted exactly this graph state rather than a divergent
+    or stale view of the repository.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The current orchestrator run ID.
+        graph_digest: SHA256 digest of the canonical graph document.
+        graph_version: Version of the graph document format.
+        source_file_count: Number of Python files found via git ls-files.
+        indexed_file_count: Number of Python files actually parsed.
+        unparsed_file_count: Number of files that failed to parse.
+        inferred_edge_count: Number of edges with EDGE_ORIGIN_INFERRED origin.
+        extracted_edge_count: Number of edges with EDGE_ORIGIN_EXTRACTED origin.
+        actor: Recorded actor; defaults to "orchestrator".
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    details: dict[str, Any] = {
+        "run_id": run_id,
+        "graph_digest": graph_digest,
+        "graph_version": graph_version,
+        "source_file_count": source_file_count,
+        "indexed_file_count": indexed_file_count,
+        "unparsed_file_count": unparsed_file_count,
+        "inferred_edge_count": inferred_edge_count,
+        "extracted_edge_count": extracted_edge_count,
+    }
+    return chain.log_with_prev_digest(
+        event_type=EVENT_CODE_GRAPH_ANCHORED,
+        actor=actor,
+        resource_type="code_graph",
+        resource_id=run_id,
         details=details,
     )
 
@@ -8762,6 +8829,7 @@ __all__ = [
     "EVENT_CHECKPOINT_RETRY",
     "EVENT_CLAIM_JOURNAL_RECEIPT",
     "EVENT_CLEAN_RUN_ATTESTATION",
+    "EVENT_CODE_GRAPH_ANCHORED",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
     "EVENT_COMPUTER_USE_ACTION",

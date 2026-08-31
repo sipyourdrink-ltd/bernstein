@@ -61,5 +61,6 @@
       "version": "0.22.3"
     }
   },
-  "schema_version": 1
+  "projection_sha256": "27dab1d48c5ed056f1395f1842f8efd2454758a71a220f1553bb3f3d27f2dfa2",
+  "schema_version": 2
 }
