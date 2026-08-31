@@ -38,7 +38,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = REPO_ROOT / "src" / "bernstein" / "core" / "orchestration"
 SEARCHED = ("src", "tests", "scripts")
 
-#: The 35 already unreachable when this guard landed. Pre-existing debt, deliberately NOT
+#: The 27 already unreachable when this guard landed. Pre-existing debt, deliberately NOT
 #: fixed here: this change removes one dead run loop, and deleting three more modules in
 #: the same breath would put unrelated judgement calls behind one review.
 #:
@@ -64,14 +64,6 @@ KNOWN_UNREACHABLE: frozenset[str] = frozenset(
         "orchestrator_backlog.py:_ingest_backlog_one_by_one",
         "orchestrator_backlog.py:_parse_candidates",
         "orchestrator_backlog.py:ingest_backlog",
-        "phase_gates.py:_extract_edges",
-        "phase_gates.py:_has_cycle",
-        "phase_gates.py:_r001",
-        "phase_gates.py:_r002",
-        "phase_gates.py:_r003",
-        "phase_gates.py:_r004",
-        "phase_gates.py:_r005",
-        "phase_gates.py:register_rule",
         "run_actor_registry.py:register",
         "run_actor_registry.py:unregister",
         "tick_pipeline.py:check_nudges_during_tick",
@@ -183,6 +175,17 @@ def _unreachable_in(path: Path, source: str, refs: dict[str, set[str]]) -> list[
         # function, so neither shows up in the call graph above.
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             roots |= names_in(node)
+            continue
+        # A DECORATED function is reachable by construction: the decorator runs at import and can
+        # put the function anywhere - a registry, a router, a dispatch table - without any caller
+        # naming it. `phase_gates._r001` through `_r005` are exactly this, registered with
+        # `@register_rule(...)` and dispatched by `evaluate_boundary`; reading them as dead would
+        # invite deleting live gate rules, which is the one direction of wrong this guard must not
+        # be. The decorator's own arguments are scanned too, since a rule can be named there.
+        if node.decorator_list:
+            roots.add(node.name)
+            for decorator in node.decorator_list:
+                roots |= names_in(decorator)
     roots |= refs.get(path.stem, set()) & funcs.keys()
 
     seen: set[str] = set()
