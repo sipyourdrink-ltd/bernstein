@@ -504,9 +504,9 @@ class TestCoarseSamplingCapabilityAssertion:
         from bernstein.adapters.plugin_sdk import _SAMPLING_KEY_CAPABILITY
 
         for key, cap in _SAMPLING_KEY_CAPABILITY.items():
-            assert isinstance(
-                cap, AdapterCapability
-            ), f"_SAMPLING_KEY_CAPABILITY[{key!r}] = {cap!r} is not an AdapterCapability member"
+            assert isinstance(cap, AdapterCapability), (
+                f"_SAMPLING_KEY_CAPABILITY[{key!r}] = {cap!r} is not an AdapterCapability member"
+            )
 
     def test_openai_agents_has_all_narrow_caps(self) -> None:
         """openai_agents is the sole real coarse declarer; verify it owns every narrow cap."""
@@ -515,9 +515,7 @@ class TestCoarseSamplingCapabilityAssertion:
 
         adapter = OpenAIAgentsAdapter()
         caps = adapter.plugin_info().capabilities
-        missing = [
-            cap for cap in _SAMPLING_KEY_CAPABILITY.values() if cap not in caps
-        ]
+        missing = [cap for cap in _SAMPLING_KEY_CAPABILITY.values() if cap not in caps]
         assert not missing, (
             f"Adapter {adapter.name()!r} declares coarse SUPPORTS_SAMPLING_PARAMS "
             f"but is missing narrow capabilities: {missing}"
@@ -540,12 +538,9 @@ class TestCoarseSamplingCapabilityAssertion:
 
         adapter = _CoarseOnlyStubAdapter()
         caps = adapter.plugin_info().capabilities
-        missing = [
-            cap for cap in _SAMPLING_KEY_CAPABILITY.values() if cap not in caps
-        ]
+        missing = [cap for cap in _SAMPLING_KEY_CAPABILITY.values() if cap not in caps]
         assert missing, (
-            "Expected assertion to detect missing narrow capabilities; "
-            "assertion passed when it should have failed"
+            "Expected assertion to detect missing narrow capabilities; assertion passed when it should have failed"
         )
 
     def test_narrow_declarer_with_all_narrow_caps_passes(self) -> None:
@@ -567,9 +562,7 @@ class TestCoarseSamplingCapabilityAssertion:
 
         adapter = _AllNarrowStubAdapter()
         caps = adapter.plugin_info().capabilities
-        missing = [
-            cap for cap in _SAMPLING_KEY_CAPABILITY.values() if cap not in caps
-        ]
+        missing = [cap for cap in _SAMPLING_KEY_CAPABILITY.values() if cap not in caps]
         assert not missing, (
             f"Adapter {adapter.name()!r} declares all narrow capabilities "
             f"but assertion still reports missing: {missing}"
