@@ -735,6 +735,13 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     # branch, so it declares ``artifact`` output (#3110): completion is the
     # signed lineage receipt and the commit check never fires for it.
     "computer_use": AdapterStrategy(event_channel=EventChannel.POLL_PTY, output_mode=OutputMode.ARTIFACT),
+    # Fronts the self-hostable Skyvern goal-driven browser agent, driven over
+    # HTTP. The adapter submits runs and polls for completion; artifacts
+    # (screenshots, recordings) are hashed and bound into the signed lineage.
+    # It declares ``artifact`` output so completion checks the signed lineage
+    # rather than workspace HEAD. The dangerous-mode default is UNSUPPORTED
+    # because the external agent controls its own safety boundaries.
+    "skyvern": AdapterStrategy(event_channel=EventChannel.POLL_PTY, output_mode=OutputMode.ARTIFACT),
     "cody": AdapterStrategy(),
     "composio": AdapterStrategy(event_channel=EventChannel.HOOKS),
     "continue": AdapterStrategy(),
