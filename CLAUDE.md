@@ -3,7 +3,7 @@
 
 ## Overview
 
-Bernstein is a deterministic orchestrator for CLI coding agents (Claude Code, Codex, Gemini CLI, and 40+ more). It runs them in parallel, gates what they produce, and records enough of the run that you can check it afterwards. Air-gap install profile included. Apache-2.0.
+Bernstein is the open-source governance layer for AI agents. A deterministic scheduler - no model in the coordination loop - runs agents in parallel, gates what they produce, and records every step, so a run can be verified after the fact, offline, from the artifacts alone. CLI coding agents work out of the box (Claude Code, Codex, Gemini CLI, and 40+ more), and the same layer governs any agent workload: the deliverable can be a diff, a research report, a dataset, or an audit evidence pack. Air-gap install profile included. Apache-2.0.
 
 ## Module map
 

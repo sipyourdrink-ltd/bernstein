@@ -132,7 +132,7 @@ _package_repo_url = package_repo_url
 # a client that starts a run and then polls wrongly pays for a second run.
 # Budget and tool-name accuracy are asserted in tests/unit/test_mcp_server.py.
 _SERVER_INSTRUCTIONS = (
-    "Bernstein is a deterministic orchestrator for CLI coding agents, one git "
+    "Bernstein is the open-source governance layer for AI agents, one git "
     "worktree per task, so runs replay byte-identically. Verifying the audit "
     "chain offline needs the install audit key.\n"
     "Driving a run:\n"

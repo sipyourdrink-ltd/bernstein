@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use Bernstein in academic or industry work, please cite it using the metadata below."
 type: software
-title: "Bernstein: a deterministic Python orchestrator for CLI coding agents"
+title: "Bernstein: a deterministic, open-source governance layer for AI agents"
 abstract: >-
   Bernstein is a deterministic orchestrator that runs a crew of CLI coding
   agents (Claude Code, Codex, Gemini CLI, and 40+ more) against a single
@@ -36,7 +36,7 @@ version: "3.18.2"
 date-released: "2026-08-28"
 preferred-citation:
   type: software
-  title: "Bernstein: a deterministic Python orchestrator for CLI coding agents"
+  title: "Bernstein: a deterministic, open-source governance layer for AI agents"
   authors:
     - given-names: Alex
       family-names: Chernysh
