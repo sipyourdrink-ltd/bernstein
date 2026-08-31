@@ -2,15 +2,16 @@
 
 Subcommands:
 
-* ``pipeline run`` - one sweep across configured trackers (used by
-  cron/timers; not a long-running loop).
+* ``pipeline run`` - resolve and report the configured trackers. It
+  does not dispatch: the adapter registry is not wired to this command.
 * ``pipeline status`` - print open handoffs for the configured
   trackers from the in-process ledger and (optionally) JSON.
 
 The CLI is deliberately thin: every meaningful decision lives in
 :class:`bernstein.core.orchestration.tracker_pipeline.TrackerPipeline`.
-The CLI is responsible only for resolving ``bernstein.yaml``, wiring
-adapters from the registered tracker module, and rendering output.
+The CLI is responsible only for resolving ``bernstein.yaml`` and
+rendering output. Wiring adapters from the registered tracker module is
+the part that does not exist yet.
 """
 
 from __future__ import annotations
@@ -66,7 +67,7 @@ def pipeline_group() -> None:
     "--dry-run",
     is_flag=True,
     default=False,
-    help="Kept for compatibility; dispatch is not wired, so this prints the same as a plain run.",
+    help="Kept for compatibility. Dispatch is not wired, so a plain run does not dispatch either.",
 )
 def run_cmd(
     *,
@@ -79,8 +80,8 @@ def run_cmd(
     Every surface of this command used to promise a sweep it does not
     perform. It said "Run a single sweep", claimed each invocation
     "walks every configured tracker once", and offered ``--dry-run`` to
-    print the config "without dispatching" - while both paths print the
-    same thing and neither dispatches anything. An operator following
+    print the config "without dispatching" - while neither path
+    dispatches anything at all. An operator following
     the advice to schedule it via systemd or cron got a printout on
     every tick and no work, with nothing to indicate why.
 
@@ -92,19 +93,23 @@ def run_cmd(
     Operators who need dispatch today should construct the pipeline
     programmatically with a single-entry ``trackers`` mapping.
     """
+    # Accepted so existing invocations keep working; there is no second
+    # behaviour left for it to select.
+    del dry_run
     config = _resolve_config(workflow_path or config_path)
     if not config.pipeline_stages:
         console.print(
             "[yellow]No pipeline stages configured under orchestration.tracker_pipeline; nothing to do.[/yellow]"
         )
         return
-    if dry_run:
-        _print_config(config)
-        return
     # This comment used to say the command "invokes it through the trackers registry at
     # runtime". It does not, and never has: ``build_pipeline_from_yaml`` has no caller
     # anywhere in the tree. Saying so here is the difference between a reader trusting the
     # printout and a reader going to look for the dispatch that did not happen.
+    #
+    # The banner is printed on both paths on purpose. --dry-run is the flag an operator
+    # reaches for precisely when they want to know nothing was dispatched, so it is the
+    # last place the disclaimer should be missing.
     console.print(
         "[yellow]No dispatch: the tracker adapter registry is not wired to this command, "
         "so nothing was swept.[/yellow] The config below resolved and validated."
@@ -185,7 +190,13 @@ def _resolve_config(path: Path) -> PipelineConfig:
     with the useful line buried in the middle, which reads as a crash in Bernstein rather
     than a mistake in the file the operator just edited.
     """
-    raw = _load_pipeline_block(path)
+    try:
+        raw = _load_pipeline_block(path)
+    except yaml.YAMLError as exc:
+        # The commoner mistake of the two: a bad indent or an unclosed quote
+        # reached the operator as a ParserError traceback, which reads as a
+        # crash in bernstein rather than a typo in the file they just edited.
+        raise click.ClickException(f"{path}: {exc}") from exc
     try:
         return PipelineConfig.from_dict(raw)
     except TrackerPipelineError as exc:

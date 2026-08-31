@@ -41,6 +41,15 @@ orchestration:
       - role: engineer
 """
 
+# A bad indent, which is the commoner of the two operator mistakes.
+_BAD_YAML = """
+orchestration:
+  tracker_pipeline:
+    pipeline_stages:
+      - role: engineer
+       claim_status: claimed
+"""
+
 
 def _run(tmp_path: Path, config: str, *args: str) -> tuple[int, str]:
     (tmp_path / "bernstein.yaml").write_text(config, encoding="utf-8")
@@ -90,4 +99,18 @@ def test_dry_run_and_a_plain_run_agree(tmp_path: Path) -> None:
     """
     _, plain = _run(tmp_path, _VALID)
     _, dry = _run(tmp_path, _VALID, "--dry-run")
-    assert "engineer" in plain and "engineer" in dry
+    assert plain == dry
+    assert "No dispatch" in dry
+
+
+def test_a_yaml_syntax_error_is_an_error_message_not_a_traceback(tmp_path: Path) -> None:
+    """The parser error is the operator's typo, not a crash in bernstein.
+
+    Wrapping only ``TrackerPipelineError`` left this half uncovered: a missing
+    key was reported cleanly while a bad indent - the mistake people actually
+    make - still surfaced as a ``ParserError`` with an empty CLI output.
+    """
+    code, output = _run(tmp_path, _BAD_YAML)
+    assert code != 0
+    assert "Error:" in output
+    assert "Traceback" not in output
