@@ -5917,6 +5917,15 @@ class Orchestrator:
                 provider=session.provider,
                 task_ids=session.task_ids,
                 agent_source=session.agent_source,
+                # Issue #4908: record the resolved endpoint identity
+                # (adapter, model, base_url, endpoint_profile_name) so
+                # operators can answer "which model server produced this
+                # work" from the run record alone. Only the api_key_env
+                # variable *name* is recorded; its value is never exposed.
+                endpoint_adapter_name=session.endpoint_adapter_name,
+                endpoint_model=session.endpoint_model,
+                endpoint_base_url=session.endpoint_base_url,
+                endpoint_profile_name=session.endpoint_profile_name,
             )
             # Issue #3375: pin the declared context files the spawner resolved
             # for this session at their content addresses. Recorded only when
