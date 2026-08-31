@@ -1,4 +1,4 @@
-"""Probe an installed CLI binary and capture its self-description as evidence.
+"""Probe CLI evidence, record a supervised golden transcript, and replay held-out invocations.
 
 Issue #3762: no probe step turns an installed CLI's own output into evidence
 Bernstein can admit from. This module closes that gap: it runs the binary's
