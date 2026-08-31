@@ -145,6 +145,7 @@ class SemanticGraph:
     #: Python files actually parsed. Lower than ``source_file_count`` when the
     #: cut applied, which means the graph is missing edges it cannot know about.
     indexed_file_count: int = 0
+    unparsed_files: list[dict[str, str]] = field(default_factory=list)
 
     # Name → symbol ID index for resolution
     _name_index: dict[str, list[str]] = field(default_factory=dict, repr=False)
@@ -547,6 +548,8 @@ def build_semantic_graph(workdir: Path) -> SemanticGraph:
             all_file_symbols.append(parsed)
             for sym in parsed.symbols:
                 graph.add_node(sym)
+        else:
+            graph.unparsed_files.append({"path": fpath, "reason": "parse_failed"})
 
     for fs in all_file_symbols:
         for caller_id, callee_name in fs.calls:
@@ -558,6 +561,7 @@ def build_semantic_graph(workdir: Path) -> SemanticGraph:
         len(graph.edges),
         len(graph.file_symbols),
     )
+
     return graph
 
 
@@ -664,6 +668,14 @@ def graph_document(graph: SemanticGraph) -> bytes:
     Returns:
         UTF-8 canonical JSON. Keys sorted, no insignificant whitespace.
     """
+    inferred_edge_count = sum(1 for edge in graph.edges if edge.origin == EDGE_ORIGIN_INFERRED)
+    extracted_edge_count = sum(1 for edge in graph.edges if edge.origin == EDGE_ORIGIN_EXTRACTED)
+
+    unparsed_files = [
+        {"path": item["path"], "reason": item["reason"]}
+        for item in sorted(graph.unparsed_files, key=lambda f: (f["path"], f["reason"]))
+    ]
+
     document = {
         "version": GRAPH_DOCUMENT_VERSION,
         "coverage": {
@@ -671,6 +683,9 @@ def graph_document(graph: SemanticGraph) -> bytes:
             "indexed_file_count": graph.indexed_file_count,
             "truncated": graph.indexed_file_count < graph.source_file_count,
             "max_files": _MAX_FILES,
+            "unparsed_files": unparsed_files,
+            "inferred_edge_count": inferred_edge_count,
+            "extracted_edge_count": extracted_edge_count,
         },
         "nodes": [graph.nodes[nid].to_dict() for nid in sorted(graph.nodes)],
         "edges": sorted(
@@ -894,6 +909,14 @@ def graph_from_document(document: bytes) -> SemanticGraph:
         graph.add_edge(edge)
 
     graph.source_file_count, graph.indexed_file_count = _coverage_from_payload(payload)
+
+    raw_unparsed = payload.get("coverage", {}).get("unparsed_files", [])
+    if isinstance(raw_unparsed, list):
+        graph.unparsed_files = [
+            {"path": _entry_str(item, "path"), "reason": _entry_str(item, "reason")}
+            for item in raw_unparsed
+            if isinstance(item, dict)
+        ]
 
     if graph_document(graph) != document:
         raise ValueError("graph document is not the canonical serialisation of the graph it describes")

@@ -1,0 +1,7 @@
+title = "Bernstein Gitleaks adapter fixture"
+
+[[rules]]
+id = "bernstein-test-token"
+description = "Bernstein synthetic test token"
+regex = '''bernstein_test_secret_[a-z0-9]{20}'''
+keywords = ["bernstein_test_secret_"]

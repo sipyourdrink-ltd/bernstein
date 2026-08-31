@@ -535,7 +535,8 @@ def test_stdlib_schema_evaluator_agrees_with_jsonschema() -> None:
     """
     import jsonschema
 
-    module = _load_gen_module()
+    from bernstein.core.skills.plugin_schema import schema_errors
+
     cases: list[tuple[str, object]] = [
         ("plugin.schema.json", json.loads((_REPO / "plugin.json").read_text(encoding="utf-8"))),
         ("mcp.schema.json", json.loads((_REPO / "mcp.json").read_text(encoding="utf-8"))),
@@ -550,7 +551,7 @@ def test_stdlib_schema_evaluator_agrees_with_jsonschema() -> None:
     for schema_file, document in cases:
         schema = json.loads((_AGENT_PLUGINS_SCHEMA_DIR / schema_file).read_text(encoding="utf-8"))
         reference_valid = jsonschema.Draft202012Validator(schema).is_valid(document)
-        stdlib_errors = module._schema_errors(document, schema, schema)
+        stdlib_errors = schema_errors(document, schema, schema)
         assert (not stdlib_errors) == reference_valid, (
             f"evaluator disagreement on {schema_file} for {document!r}: "
             f"jsonschema valid={reference_valid}, stdlib errors={stdlib_errors}"

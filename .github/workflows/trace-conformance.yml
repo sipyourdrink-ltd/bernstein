@@ -1,0 +1,104 @@
+name: trace-conformance
+
+# Holds the committed trust-record vectors to the published TRACE conformance
+# suite, so a suite update that our records no longer satisfy is named on the
+# pull request instead of discovered by an operator mid-audit.
+#
+# Deliberately NOT in the required set: the suite versions independently of
+# this repo, so an upstream release must not be able to block every merge.
+# Promoting it to required is a one-line change once it has been green for a
+# while.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/bernstein/core/observability/trust_record.py'
+      - 'tests/fixtures/trust-record-vectors/**'
+      - 'tests/unit/test_trust_record_conformance.py'
+      - 'tests/unit/test_trace_conformance.py'
+      - 'schemas/trace-spec/**'
+      - '.github/workflows/trace-conformance.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/bernstein/core/observability/trust_record.py'
+      - 'tests/fixtures/trust-record-vectors/**'
+      - 'tests/unit/test_trust_record_conformance.py'
+      - 'tests/unit/test_trace_conformance.py'
+      - 'schemas/trace-spec/**'
+      - '.github/workflows/trace-conformance.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trace-conformance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The vectors are signed under a frozen 2023-11-14 clock rather than
+  # wall-clock time, so the suite's freshness check has to be stood down or
+  # every run fails on age alone.
+  TRACE_MAX_AGE: '999999999999'
+  TRACE_SUITE: 'agentrust-trace-tests==0.5.1'
+
+jobs:
+  trace-tests:
+    name: trace-tests verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Emit a record from the fixture journal and verify it
+        run: uv run pytest tests/unit/test_trace_conformance.py tests/unit/test_trust_record_conformance.py -x -q
+
+      - name: Verify every committed vector against the published suite
+        # Level 0 is the level this runtime can actually reach. Level 1+ asserts
+        # a hardware-attested platform (TR-RTE-001) and a verifier-supplied
+        # nonce (TR-RTE-004); bernstein runs software-only, so a level-1 gate
+        # here would be red on every run for a property the producer is not
+        # claiming. The report step below still records the highest level each
+        # record reaches, so a future hardware profile shows up without an edit.
+        run: |
+          set -euo pipefail
+          for record in tests/fixtures/trust-record-vectors/*-trust-record.json; do
+            echo "::group::verify $(basename "$record")"
+            uv run --with "$TRACE_SUITE" trace-tests verify \
+              --record "$record" --level 0 --max-age "$TRACE_MAX_AGE"
+            echo "::endgroup::"
+          done
+
+      - name: Build a conformance report per vector
+        # --fail-under is omitted on purpose: the report is evidence, and the
+        # verify step above is what decides the job.
+        run: |
+          set -euo pipefail
+          mkdir -p trace-conformance-report
+          for record in tests/fixtures/trust-record-vectors/*-trust-record.json; do
+            name="$(basename "$record" .json)"
+            uv run --with "$TRACE_SUITE" trace-tests report \
+              --record "$record" --max-age "$TRACE_MAX_AGE" \
+              --json "trace-conformance-report/${name}.json" \
+              --html "trace-conformance-report/${name}.html"
+          done
+
+      - name: Upload the conformance report
+        # Runs even when verify failed -- a failing module (TR-ENV, TR-SIG,
+        # TR-POL, TR-RTE, TR-SCA) is then readable from the run page instead of
+        # only reproducible locally, which is the point of keeping the report.
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: trace-conformance-report
+          path: trace-conformance-report/
+          if-no-files-found: warn
