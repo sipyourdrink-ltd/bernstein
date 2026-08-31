@@ -133,9 +133,7 @@ class KimchiAdapter(CLIAdapter):
                 stdin=subprocess.DEVNULL,
             )
         except FileNotFoundError as exc:
-            raise RuntimeError(
-                "kimchi not found in PATH. Install with `brew install getkimchi/tap/kimchi`"
-            ) from exc
+            raise RuntimeError("kimchi not found in PATH. Install with `brew install getkimchi/tap/kimchi`") from exc
         except PermissionError as exc:
             raise RuntimeError(f"Permission denied executing kimchi: {exc}") from exc
 
