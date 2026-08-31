@@ -1,0 +1,27 @@
+name: trace-conformance
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  trace-tests:
+    name: trace-tests verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run trace conformance tests
+        run: uv run pytest tests/unit/test_trace_conformance.py -x -q
+        continue-on-error: false
