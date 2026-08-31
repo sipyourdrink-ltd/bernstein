@@ -14,6 +14,7 @@ For a gate-capable adapter, Bernstein renders two hooks at spawn time:
 |---|---|---|
 | Tool-permission matcher | `PreToolUse` on `Write` / `Edit` / `MultiEdit` / `NotebookEdit` | Refuses a write whose target falls outside the task's path allowlist. Realpath containment refuses a `..` traversal or an in-scope symlink that resolves outside the worktree. |
 | Completion gate | `Stop` | Runs the task's *required* evidence producers in-session; refuses to let the turn end while any of them fail. |
+| Interactive approval gate | `PreToolUse` | Puts a tool call the classifier does not auto-decide to the operator, and blocks the agent until it is resolved or the TTL expires. Off unless `approvals.interactive` is set. |
 
 Both hooks shell out to:
 
@@ -65,3 +66,61 @@ a pass-through: both hooks always allow.
 `src/bernstein/core/security/hook_gate.py` (policy model and gate
 evaluation), `src/bernstein/cli/commands/hook_gate_cmd.py`
 (`bernstein hook-gate check`).
+
+
+## Interactive tool-call approvals
+
+Opt-in. With `approvals.interactive: false` — the default — nothing below
+happens and the `PreToolUse` hook behaves exactly as it did before.
+
+```yaml
+# bernstein.yaml
+approvals:
+  interactive: true
+  timeout_seconds: 600      # TTL; expiry denies, it does not hang
+  smart_auto_approve: false # a classifier APPROVE verdict skips human review
+```
+
+With it on, a tool call reaching the `PreToolUse` hook is decided in this
+order, and only a call none of these settle reaches the operator:
+
+| Step | Outcome |
+|---|---|
+| Per-tool permission policy | A fail-closed profile rejects here regardless of whether approvals are on, so turning the queue off cannot bypass it. |
+| Classifier deny-list | Denies unconditionally, headless included. |
+| Classifier APPROVE | Skips the queue **only** when `smart_auto_approve` is set. |
+| Classifier ASK | Falls through to human review — this is what enqueues. |
+| Always-allow list | A matching tool+args pattern proceeds without asking. |
+| Otherwise | Enqueued as a pending approval; the hook blocks. |
+
+While a call is pending it is visible to all three resolution surfaces, which
+share one queue under `.sdd/runtime/approvals`:
+
+```
+GET  /approvals/queue              # HTTP
+POST /approvals/{id}/resolve
+bernstein approve --tool           # CLI
+```
+
+...plus the TUI `ApprovalPanel`, which polls the same queue. Resolving through
+any of them releases the same pending.
+
+The agent observes the decision as the hook's exit code: an allow (or an
+always-allow promotion) lets the call proceed, a reject refuses it with the
+operator's reason on stderr, and **TTL expiry is a denial, not a hang** — the
+worker is never left waiting on an operator who never came back.
+
+### Coverage caveat
+
+The `PreToolUse` matcher is registered for write tools only
+(`Write|Edit|MultiEdit|NotebookEdit`), so those are the calls the gate
+currently sees. Bash and other tools do not reach it, even though the
+classifier is largely written about shell commands. Widening the matcher is a
+separate change.
+
+### Failure posture
+
+An infrastructure failure inside the gate degrades to allow-through, matching
+this command's existing behaviour for an unreadable policy: the authoritative
+scheduler-side gate stays the sole enforcement point. A reject decision is not
+an infrastructure failure and always blocks.
