@@ -288,7 +288,7 @@ class TestDecideRetry:
         )
         assert decision.effective_mode is RetryMode.WARM
         assert decision.workspace_match is True
-        assert decision.downgrade_reason is None
+        assert decision.downgrade_reason == ""
         assert decision.checkpoint_session_id == "sess-abc"
         assert decision.checkpoint_event_hash == "a" * 64
         assert "pytest" in decision.corrective_instruction
@@ -381,8 +381,38 @@ class TestDecideRetry:
             actual_workspace_hash=workspace_hash(tree),
         )
         assert decision.effective_mode is RetryMode.COLD
-        assert decision.downgrade_reason is None
+        assert decision.downgrade_reason == ""
         assert decision.corrective_instruction == ""
+
+    def test_no_downgrade_sentinel_is_an_empty_string(self, tmp_path: Path) -> None:
+        """The "no downgrade" sentinel is ``""`` -- never ``None``.
+
+        ``downgrade_reason`` is not a private field: it is written verbatim
+        into the resume receipt and read back by
+        ``verify_suspension_continuity`` as
+        ``str(details.get("downgrade_reason", ""))``. A ``None`` sentinel
+        serialises to JSON ``null``, and because the key is *present* the
+        ``""`` default never applies -- it reads back as the literal string
+        ``"None"``, which is truthy and is rendered by ``bernstein audit`` as
+        a downgrade reason on a continuation that was never downgraded.
+
+        It is also one of the fields hashed into ``decision_hash``, so the
+        sentinel is replay-critical: changing it silently re-hashes every
+        clean decision and breaks byte-identical replay of already-sealed
+        records. Pin the type, not just the value.
+        """
+        tree = _make_worktree(tmp_path)
+        ref = _ref(tree)
+        decision = decide_retry(
+            task_id="t1",
+            requested_mode="warm",
+            checkpoint=ref,
+            actual_workspace_hash=workspace_hash(tree),
+        )
+        assert decision.downgrade_reason == ""
+        assert isinstance(decision.downgrade_reason, str)
+        # The round-trip the continuity verifier actually performs.
+        assert str(json.loads(json.dumps(decision.to_dict()))["downgrade_reason"]) == ""
 
     def test_fork_downgrades_to_warm_for_resume_only_adapter(self, tmp_path: Path) -> None:
         tree = _make_worktree(tmp_path)

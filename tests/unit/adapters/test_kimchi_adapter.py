@@ -240,9 +240,9 @@ def test_retry_capability_matches_what_the_spawn_can_deliver(tmp_path: Path) -> 
         gate_output="1 failed",
     )
     assert decision.effective_mode is RetryMode.WARM
-    assert decision.downgrade_reason is None
+    assert decision.downgrade_reason == ""
     assert build_retry_prompt(decision, cold_prompt="the full original task").startswith(
-        "Task failed. Retry with corrective instruction:"
+        "Your previous attempt on this task failed the tests gate."
     )
 
 
