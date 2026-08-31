@@ -4447,10 +4447,15 @@ class AgentSpawner:
                     self._worktree_paths[session_id] = spawn_cwd
                     self._worktree_roots[session_id] = worktree_repo_root
                 except WorktreeError as exc:
-                    raise SpawnError(
-                        f"Cannot create workspace for agent {session_id}: {exc}. "
-                        "Fix: run 'bernstein stop' then restart, or delete .sdd/worktrees/ manually"
-                    ) from exc
+                    logger.warning(
+                        "Worktree creation failed for session %s (%s), falling back to main workdir: %s",
+                        session_id,
+                        exc,
+                        self._workdir,
+                    )
+                    spawn_cwd = self._workdir
+                    self._worktree_paths[session_id] = self._workdir
+                    self._worktree_roots[session_id] = worktree_repo_root
 
         # Leak guard (issue #2996): from here to the success return, any
         # exception that escapes this spawn - a sampling-params refusal, a
