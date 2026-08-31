@@ -562,6 +562,8 @@ class CapabilityRefusalReceipt:
             ensure_ascii=True,
         ).encode("utf-8")
         return hashlib.sha256(payload).hexdigest()
+
+
 @dataclass(frozen=True)
 class CapabilityVerdictTable:
     """Per-candidate verdict table computed during routing.
@@ -867,10 +869,8 @@ def route_and_record(
         )
 
         # Rebuild the verdict table for recording
-        candidates = tuple(
-            profiles
-        ) if profiles is not None else tuple(
-            profile for _, profile in sorted(PROFILES.items())
+        candidates = (
+            tuple(profiles) if profiles is not None else tuple(profile for _, profile in sorted(PROFILES.items()))
         )
         verdict_rows: list[tuple[str, tuple[str, ...]]] = []
         for profile in candidates:
