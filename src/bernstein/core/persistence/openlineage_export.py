@@ -142,7 +142,7 @@ def load_task_outcomes_from_audit(sdd_dir: Path, run_id: str) -> dict[str, TaskO
 
 def _blank_signature(event: dict[str, Any]) -> dict[str, Any]:
     """Return a deep-ish copy with ``bernstein_chain.signature`` set to ``\"\"``."""
-    clone = json.loads(json.dumps(event, sort_keys=True))
+    clone: dict[str, Any] = json.loads(json.dumps(event, sort_keys=True))
     facets = clone.get("run", {}).get("facets", {})
     facet = facets.get(_FACET_NAME)
     if isinstance(facet, dict):
