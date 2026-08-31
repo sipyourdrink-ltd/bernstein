@@ -782,36 +782,6 @@ def compute_total_spent(workdir: Path) -> float:
 # ---------------------------------------------------------------------------
 
 
-def check_nudges_during_tick() -> None:
-    """Check and process orchestrator nudges during tick (T567)."""
-    from bernstein.core.orchestration.orchestrator import get_orchestrator_nudges
-
-    nudges = get_orchestrator_nudges(priority_threshold=2)  # Medium+ priority
-
-    for nudge in nudges:
-        logger.info(f"Processing orchestrator nudge: {nudge.nudge_type} - {nudge.message}")
-
-        # Process different nudge types
-        match nudge.nudge_type:
-            case "increase_parallelism":
-                logger.info("Nudge: Increasing parallelism for better throughput")
-                # Implementation would adjust parallelism settings
-            case "reduce_cost":
-                logger.info("Nudge: Reducing cost by using cheaper models")
-                # Implementation would adjust model selection
-            case "improve_quality":
-                logger.info("Nudge: Improving quality with more thorough verification")
-                # Implementation would adjust quality gates
-            case "speed_up":
-                logger.info("Nudge: Speeding up with faster models")
-                # Implementation would adjust speed/quality tradeoff
-
-        # Acknowledge the nudge
-        from bernstein.core.orchestration.orchestrator import nudge_manager
-
-        nudge_manager.acknowledge_nudge(nudge)
-
-
 # ---------------------------------------------------------------------------
 # Context collapse integration (T418)
 # ---------------------------------------------------------------------------
