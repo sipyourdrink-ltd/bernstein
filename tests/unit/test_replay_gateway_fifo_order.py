@@ -19,7 +19,13 @@ from bernstein.core.replay import (
     GatewayMode,
     ReplayGateway,
     ReplayMissError,
+    derive_replay_key,
 )
+
+
+def _sk(caller_key: str) -> str:
+    """Scheme-prefixed storage key for a hand-written fixture row."""
+    return derive_replay_key(caller_key)
 
 
 def _write_events(run_dir: Path, rows: list[dict[str, object]]) -> None:
@@ -46,9 +52,9 @@ def test_bykey_hit_does_not_corrupt_bykind_fifo_with_dup_values(tmp_path: Path) 
     _write_events(
         run_dir,
         [
-            {"seq": 1, "kind": "tool", "key": "A", "response": "R"},
-            {"seq": 2, "kind": "tool", "key": "B", "response": "R"},
-            {"seq": 3, "kind": "tool", "key": "C", "response": "S"},
+            {"seq": 1, "kind": "tool", "key": _sk("A"), "response": "R"},
+            {"seq": 2, "kind": "tool", "key": _sk("B"), "response": "R"},
+            {"seq": 3, "kind": "tool", "key": _sk("C"), "response": "S"},
         ],
     )
 
@@ -78,9 +84,9 @@ def test_bykey_hit_steals_wrong_bykind_slot_corrupts_fallback(tmp_path: Path) ->
     _write_events(
         run_dir,
         [
-            {"seq": 1, "kind": "tool", "key": "A", "response": "R"},
-            {"seq": 2, "kind": "tool", "key": "B", "response": "S"},
-            {"seq": 3, "kind": "tool", "key": "C", "response": "R"},
+            {"seq": 1, "kind": "tool", "key": _sk("A"), "response": "R"},
+            {"seq": 2, "kind": "tool", "key": _sk("B"), "response": "S"},
+            {"seq": 3, "kind": "tool", "key": _sk("C"), "response": "R"},
         ],
     )
 
@@ -99,9 +105,9 @@ def test_pure_bykey_replay_with_repeated_values_in_order(tmp_path: Path) -> None
     _write_events(
         run_dir,
         [
-            {"seq": 1, "kind": "llm", "key": "k1", "response": "same"},
-            {"seq": 2, "kind": "llm", "key": "k2", "response": "same"},
-            {"seq": 3, "kind": "llm", "key": "k1", "response": "diff"},
+            {"seq": 1, "kind": "llm", "key": _sk("k1"), "response": "same"},
+            {"seq": 2, "kind": "llm", "key": _sk("k2"), "response": "same"},
+            {"seq": 3, "kind": "llm", "key": _sk("k1"), "response": "diff"},
         ],
     )
 
@@ -118,9 +124,9 @@ def test_bykind_fallback_strict_seq_order_with_dups(tmp_path: Path) -> None:
     _write_events(
         run_dir,
         [
-            {"seq": 1, "kind": "tool", "key": "a", "response": {"ok": True}},
-            {"seq": 2, "kind": "tool", "key": "b", "response": {"ok": True}},
-            {"seq": 3, "kind": "tool", "key": "c", "response": {"ok": False}},
+            {"seq": 1, "kind": "tool", "key": _sk("a"), "response": {"ok": True}},
+            {"seq": 2, "kind": "tool", "key": _sk("b"), "response": {"ok": True}},
+            {"seq": 3, "kind": "tool", "key": _sk("c"), "response": {"ok": False}},
         ],
     )
 
@@ -137,10 +143,10 @@ def test_mixed_interleave_returns_recorded_position(tmp_path: Path) -> None:
     _write_events(
         run_dir,
         [
-            {"seq": 1, "kind": "tool", "key": "A", "response": "R"},
-            {"seq": 2, "kind": "tool", "key": "B", "response": "R"},
-            {"seq": 3, "kind": "tool", "key": "C", "response": "R"},
-            {"seq": 4, "kind": "tool", "key": "D", "response": "R"},
+            {"seq": 1, "kind": "tool", "key": _sk("A"), "response": "R"},
+            {"seq": 2, "kind": "tool", "key": _sk("B"), "response": "R"},
+            {"seq": 3, "kind": "tool", "key": _sk("C"), "response": "R"},
+            {"seq": 4, "kind": "tool", "key": _sk("D"), "response": "R"},
         ],
     )
 
@@ -161,9 +167,9 @@ def test_replay_is_byte_identical_across_two_runs_with_dups(tmp_path: Path) -> N
     """Replaying a duplicate-value recording twice yields identical output."""
     run_dir = tmp_path / "runs" / "dup-5"
     rows = [
-        {"seq": 1, "kind": "tool", "key": "A", "response": "R"},
-        {"seq": 2, "kind": "tool", "key": "B", "response": "R"},
-        {"seq": 3, "kind": "tool", "key": "C", "response": "S"},
+        {"seq": 1, "kind": "tool", "key": _sk("A"), "response": "R"},
+        {"seq": 2, "kind": "tool", "key": _sk("B"), "response": "R"},
+        {"seq": 3, "kind": "tool", "key": _sk("C"), "response": "S"},
     ]
     _write_events(run_dir, rows)
 
