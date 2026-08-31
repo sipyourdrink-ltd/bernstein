@@ -63,6 +63,7 @@ modules =
     bernstein.adapters.goose
     bernstein.adapters.gptme
     bernstein.adapters.hermes
+    bernstein.adapters.holmesgpt
     bernstein.adapters.iac
     bernstein.adapters.junie
     bernstein.adapters.kilo

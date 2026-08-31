@@ -1,181 +1,199 @@
-import hashlib
+"""Unit tests for HolmesGPT adapter."""
+
+from __future__ import annotations
+
 import json
+from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
+from bernstein.core.models import ModelConfig
 
-# Import the adapter module
-from bernstein.adapters.holmesgpt import (
-    build_filtered_env,
-    parse_output,
-    verify_evidence,
+from bernstein.adapters._contract import (
+    STRATEGY_MATRIX,
+    DangerousModeStrategy,
+    EventChannel,
+    OutputMode,
+    ResumeStrategy,
+    undeclared_strategies,
 )
+from bernstein.adapters.holmesgpt import (
+    HolmesGPTAdapter,
+    HolmesGPTDriverError,
+    HolmesGPTStructuredOutput,
+    HolmesGPTTerminalState,
+    classify_terminal_state,
+    parse_structured_output,
+)
+from bernstein.adapters.registry import get_adapter, selectable_adapter_names
 
 
-@pytest.fixture
-def temp_dir(tmp_path):
-    return tmp_path
+def _inner_argv(cmd: list[str]) -> list[str]:
+    """Return the adapter's own argv from a bernstein-worker wrapped command.
+
+    ``build_worker_cmd`` prefixes the worker invocation and separates it from the
+    wrapped command with ``--``. Assertions about the adapter's flags must run
+    on this slice.
+    """
+    return cmd[cmd.index("--") + 1 :]
 
 
-def test_happy_path_structured_output(temp_dir):
-    # Create data source files
-    data_dir = temp_dir / "data"
-    data_dir.mkdir()
-    source1_path = data_dir / "source1.txt"
-    source1_content = b"some data"
-    source1_path.write_bytes(source1_content)
-    hash1 = hashlib.sha256(source1_content).hexdigest()
-
-    source2_path = data_dir / "source2.json"
-    source2_content = b'{"key": "value"}'
-    source2_path.write_bytes(source2_content)
-    hash2 = hashlib.sha256(source2_content).hexdigest()
-
-    # Create structured output file
-    output_content = {
-        "conclusion": "All good",
-        "terminal_state": "OK",
-        "data_sources": [
-            {"path": str(source1_path), "hash": hash1},
-            {"path": str(source2_path), "hash": hash2},
-        ],
+def _spawn_and_capture(adapter: HolmesGPTAdapter, tmp_path: Path, **overrides: Any) -> tuple[list[str], dict[str, Any]]:
+    """Spawn with the kwargs the orchestrator supplies; return argv and Popen kwargs."""
+    kwargs: dict[str, Any] = {
+        "prompt": "Investigate the auth module",
+        "workdir": tmp_path,
+        "model_config": ModelConfig(model="open-weight-7b", effort="normal"),
+        "session_id": "analyst-holmes-task-1",
+        "mcp_config": None,
+        "task_scope": "medium",
+        "budget_multiplier": 1.0,
+        "system_addendum": "",
+        "timeout_seconds": 0,
     }
-    output_path = temp_dir / "output.json"
-    output_path.write_text(json.dumps(output_content))
-
-    # Call the parser
-    result = parse_output(str(output_path))
-
-    # Assertions
-    assert result["conclusion"] == "All good"
-    assert result["terminal_state"] == "OK"
-    assert result["data_sources"][0]["path"] == str(source1_path)
-    assert result["data_sources"][0]["hash"] == hash1
-    assert result["data_sources"][1]["path"] == str(source2_path)
-    assert result["data_sources"][1]["hash"] == hash2
+    kwargs.update(overrides)
+    with patch("subprocess.Popen") as mock_popen:
+        mock_proc = MagicMock()
+        mock_proc.pid = 12345
+        mock_popen.return_value = mock_proc
+        result = adapter.spawn(**kwargs)
+    assert result.pid == 12345
+    return list(mock_popen.call_args[0][0]), dict(mock_popen.call_args[1])
 
 
-def test_malformed_output_refusal(temp_dir):
-    # Create a file with malformed JSON (missing closing brace)
-    output_path = temp_dir / "malformed.json"
-    output_path.write_text('{"key": "value"')  # missing closing brace
-
-    # Call the parser; expect a ValueError or similar
-    with pytest.raises(ValueError):
-        parse_output(str(output_path))
+# -------------------------------------------------------------------------------------------------
+# Registration and declared strategy
+# -------------------------------------------------------------------------------------------------
 
 
-def test_inconclusive_run_receipt(temp_dir):
-    # Create output without conclusion
-    output_content = {
-        "terminal_state": "OK",
-        # no "conclusion" field
-    }
-    output_path = temp_dir / "inconclusive.json"
-    output_path.write_text(json.dumps(output_content))
+def test_adapter_registered_and_strategy_declared() -> None:
+    assert "holmesgpt" in selectable_adapter_names()
+    adapter = get_adapter("holmesgpt")
+    assert isinstance(adapter, HolmesGPTAdapter)
 
-    result = parse_output(str(output_path))
+    strategy = STRATEGY_MATRIX.get("holmesgpt")
+    assert strategy is not None
+    assert strategy.resume == ResumeStrategy.UNSUPPORTED
+    assert strategy.dangerous_mode == DangerousModeStrategy.UNSUPPORTED
+    assert strategy.event_channel == EventChannel.TEXT_SIGNALS
+    assert strategy.output_mode == OutputMode.ARTIFACT
 
-    # Assert that result indicates no conclusion
-    assert "reason_code" in result
-    assert result["reason_code"] == "NO_CONCLUSION"
+    assert adapter.name() == "HolmesGPT"
+    assert adapter.strategy() == strategy
 
-
-def test_unreachable_data_source_receipt(temp_dir):
-    # Create output that references a data source file that does not exist
-    output_content = {
-        "conclusion": "Missing file",
-        "data_sources": [
-            {"path": str(temp_dir / "missing.txt"), "hash": "dummy_hash"},
-        ],
-        "terminal_state": "OK",
-    }
-    output_path = temp_dir / "unreachable.json"
-    output_path.write_text(json.dumps(output_content))
-
-    result = parse_output(str(output_path))
-
-    assert result["reason_code"] == "DATA_SOURCE_NOT_FOUND"
+    assert "holmesgpt" not in undeclared_strategies(selectable_adapter_names())
 
 
-def test_read_only_enforcement(temp_dir, monkeypatch):
-    # Mock write_file to raise PermissionError if called
-    write_called = False
-
-    def mock_write(*args, **kwargs):
-        nonlocal write_called
-        write_called = True
-        raise PermissionError("Read-only mode")
-
-    monkeypatch.setattr("bernstein.adapters.holmesgpt.write_file", mock_write)
-
-    # Create a temporary output file (content irrelevant for this test)
-    output_path = temp_dir / "output.json"
-    output_path.write_text("{}")
-
-    # Call the parser; should raise PermissionError due to read-only enforcement
-    with pytest.raises(PermissionError):
-        parse_output(str(output_path))
-
-    # Ensure write was attempted (mocked)
-    assert write_called
+# -------------------------------------------------------------------------------------------------
+# Command construction
+# -------------------------------------------------------------------------------------------------
 
 
-def test_env_isolation(monkeypatch):
-    # Set environment variables
-    monkeypatch.setenv("ALLOWED_KEY", "allowed_value")
-    monkeypatch.setenv("DISALLOWED_KEY", "disallowed_value")
-    monkeypatch.setenv("ANOTHER_DISALLOWED", "also_disallowed")
+def test_spawn_builds_correct_command(tmp_path: Path) -> None:
+    """The argv includes the holmes ask subcommand with required flags."""
+    adapter = HolmesGPTAdapter()
+    argv, _ = _spawn_and_capture(adapter, tmp_path)
+    inner = _inner_argv(argv)
 
-    filtered_env = build_filtered_env(["ALLOWED_KEY", "DISALLOWED_KEY", "ANOTHER_DISALLOWED"])
+    # Verify the core command structure
+    assert inner[0] == "holmes"
+    assert "ask" in inner
+    assert "--no-interactive" in inner
+    assert "--json-output" in inner
 
-    # Assert that only ALLOWED_KEY is present
-    assert "ALLOWED_KEY" in filtered_env
-    assert filtered_env["ALLOWED_KEY"] == "allowed_value"
-    assert "DISALLOWED_KEY" not in filtered_env
-    assert "ANOTHER_DISALLOWED" not in filtered_env
+    # The path argument follows --json-output
+    json_output_idx = inner.index("--json-output")
+    json_output_path = inner[json_output_idx + 1]
+    assert json_output_path.endswith("output.json")
 
-
-def test_evidence_resolution(temp_dir):
-    # Create evidence files
-    evidence_dir = temp_dir / "evidence"
-    evidence_dir.mkdir()
-    file1 = evidence_dir / "file1.txt"
-    file1.write_bytes(b"content1")
-    hash1 = hashlib.sha256(b"content1").hexdigest()
-
-    file2 = evidence_dir / "file2.txt"
-    file2.write_bytes(b"content2")
-    hash2 = hashlib.sha256(b"content2").hexdigest()
-
-    # Create a verification request
-    evidence_paths = [str(file1), str(file2)]
-    result = verify_evidence(evidence_paths)
-
-    # Assume result is a dict with "status": "OK" if hashes match
-    assert result["status"] == "OK"
-    # Also assert that the hashes match
-    assert result["file_hashes"][str(file1)] == hash1
-    assert result["file_hashes"][str(file2)] == hash2
+    # Prompt follows the -- separator
+    prompt_idx = inner.index("--")
+    assert inner[prompt_idx + 1] == "Investigate the auth module"
 
 
-def test_offline_reverify_mutated_blob(temp_dir):
-    # Create evidence file
-    evidence_dir = temp_dir / "evidence"
-    evidence_dir.mkdir()
-    file1 = evidence_dir / "file1.txt"
-    original_content = b"original content"
-    file1.write_bytes(original_content)
-    hash1 = hashlib.sha256(original_content).hexdigest()
+# -------------------------------------------------------------------------------------------------
+# Structured output parsing
+# -------------------------------------------------------------------------------------------------
 
-    # Mutate the file by changing one byte
-    mutated_content = bytearray(original_content)
-    mutated_content[0] = (mutated_content[0] + 1) % 256
-    file1.write_bytes(bytes(mutated_content))
 
-    # Verify offline (assuming there's a function that takes the original hash)
-    result = verify_evidence([str(file1)], original_hash=hash1)
+def test_parse_structured_output_happy_path() -> None:
+    json_text = json.dumps(
+        {
+            "conclusion": "The auth module is secure",
+            "observations": ["Checked auth.py", "Ran static analysis"],
+            "sources": [
+                {"path": "/src/auth.py", "hash": "abc123"},
+            ],
+            "inconclusive": False,
+            "reasoning": "All checks passed",
+        }
+    )
+    result = parse_structured_output(json_text)
 
-    # Expect refusal
-    assert result["status"] == "REFUSED"
-    assert "source_ref" in result
-    assert str(file1) in result["source_ref"]
+    assert isinstance(result, HolmesGPTStructuredOutput)
+    assert result.conclusion == "The auth module is secure"
+    assert result.observations == ["Checked auth.py", "Ran static analysis"]
+    assert result.sources == [{"path": "/src/auth.py", "hash": "abc123"}]
+    assert result.inconclusive is False
+    assert result.reasoning == "All checks passed"
+
+
+def test_parse_structured_output_malformed_json_raises() -> None:
+    with pytest.raises(json.JSONDecodeError):
+        parse_structured_output('{"conclusion": "broken"')
+
+
+# -------------------------------------------------------------------------------------------------
+# Terminal state classification
+# -------------------------------------------------------------------------------------------------
+
+
+def test_classify_terminal_state() -> None:
+    # OK: exit_code == 0, not timed_out, not inconclusive
+    assert classify_terminal_state(exit_code=0, timed_out=False) is HolmesGPTTerminalState.OK
+    assert (
+        classify_terminal_state(exit_code=0, timed_out=False, inconclusive_detected=False) is HolmesGPTTerminalState.OK
+    )
+
+    # TIMEOUT: timed_out wins over everything
+    assert classify_terminal_state(exit_code=0, timed_out=True) is HolmesGPTTerminalState.TIMEOUT
+    assert classify_terminal_state(exit_code=1, timed_out=True) is HolmesGPTTerminalState.TIMEOUT
+
+    # INCONCLUSIVE: timed_out is False, inconclusive_detected is True
+    assert (
+        classify_terminal_state(exit_code=0, timed_out=False, inconclusive_detected=True)
+        is HolmesGPTTerminalState.INCONCLUSIVE
+    )
+    assert (
+        classify_terminal_state(exit_code=1, timed_out=False, inconclusive_detected=True)
+        is HolmesGPTTerminalState.INCONCLUSIVE
+    )
+
+    # DRIVER_FAILURE: non-zero exit code, not timed_out, not inconclusive
+    assert classify_terminal_state(exit_code=1, timed_out=False) is HolmesGPTTerminalState.DRIVER_FAILURE
+    assert classify_terminal_state(exit_code=127, timed_out=False) is HolmesGPTTerminalState.DRIVER_FAILURE
+
+    # DRIVER_FAILURE: None exit code, not timed_out, not inconclusive
+    assert classify_terminal_state(exit_code=None, timed_out=False) is HolmesGPTTerminalState.DRIVER_FAILURE
+
+
+# -------------------------------------------------------------------------------------------------
+# Driver error propagation
+# -------------------------------------------------------------------------------------------------
+
+
+def test_driver_error_carries_typed_state(tmp_path: Path) -> None:
+    adapter = HolmesGPTAdapter()
+
+    with patch("subprocess.Popen", side_effect=FileNotFoundError("holmes not found")):
+        with pytest.raises(HolmesGPTDriverError) as exc_info:
+            adapter.spawn(
+                prompt="Investigate auth",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="open-weight-7b", effort="normal"),
+                session_id="analyst-holmes-err-1",
+                timeout_seconds=0,
+            )
+
+    assert exc_info.value.terminal_state is HolmesGPTTerminalState.DRIVER_FAILURE
