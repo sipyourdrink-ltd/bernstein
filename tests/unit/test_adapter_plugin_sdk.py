@@ -551,19 +551,20 @@ class TestCoarseSamplingCapabilityAssertion:
     def test_narrow_declarer_with_all_narrow_caps_passes(self) -> None:
         """An adapter that declares every narrow cap (but not the coarse cap) also passes."""
 
+        from bernstein.adapters.plugin_sdk import _SAMPLING_KEY_CAPABILITY
+
+        # Derived from the map rather than listed by hand: a new sampling key
+        # adds a capability here the moment it is registered, so this fixture
+        # cannot fall behind the set it claims to cover.
+        _all_narrow = tuple(_SAMPLING_KEY_CAPABILITY.values())
+
         class _AllNarrowStubAdapter(_StubPluginAdapter):
             def plugin_info(self) -> AdapterPluginInfo:
                 return AdapterPluginInfo(
                     name="all-narrow-stub",
                     version="1.0.0",
-                    capabilities=(
-                        AdapterCapability.SUPPORTS_TEMPERATURE,
-                        AdapterCapability.SUPPORTS_TOP_P,
-                        AdapterCapability.SUPPORTS_TOP_K,
-                    ),
+                    capabilities=_all_narrow,
                 )
-
-        from bernstein.adapters.plugin_sdk import _SAMPLING_KEY_CAPABILITY
 
         adapter = _AllNarrowStubAdapter()
         caps = adapter.plugin_info().capabilities
