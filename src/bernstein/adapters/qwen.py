@@ -160,15 +160,13 @@ class QwenAdapter(CLIAdapter):
             # sampling flag that is not in its surface aborts the run instead
             # of being ignored. None are wired; plugin_info() declares no
             # sampling capability, so a spawn carrying one of the enforced keys
-            # is refused before reaching here. ``max_tokens`` is the exception:
-            # it is absent from SAMPLING_PARAM_KEYS, so nothing refuses it and
-            # this warning is the only signal the value was dropped (#3586).
+            # is refused before reaching here. Direct adapter.spawn() callers can
+            # bypass the composition gate, so retain a warning for those calls.
             for dropped_key in ("temperature", "top_p", "top_k", "max_tokens"):
                 if mcp_config.get(dropped_key) is not None:
                     logger.warning(
                         "qwen adapter: %s=%r requested but not wired (qwen CLI has no matching "
-                        "flag) - ensure_sampling_params_supported should have refused this spawn "
-                        "before reaching here",
+                        "flag); call ensure_sampling_params_supported before spawning",
                         dropped_key,
                         mcp_config.get(dropped_key),
                     )

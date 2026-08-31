@@ -77,10 +77,7 @@ class AdapterCapability(Enum):
     #: SDK parameter (PR3).
     SUPPORTS_TOP_K = "supports_top_k"
     #: Adapter wires an incoming ``max_tokens`` override to a real CLI flag
-    #: or SDK parameter (PR3). Note ``max_tokens`` is NOT a member of
-    #: :data:`SAMPLING_PARAM_KEYS` (that tuple predates this capability and
-    #: is gated separately) - this capability exists for adapters/callers
-    #: that want to probe max_tokens support specifically.
+    #: or SDK parameter (PR3).
     SUPPORTS_MAX_TOKENS = "supports_max_tokens"
 
 
@@ -94,6 +91,7 @@ SAMPLING_PARAM_KEYS: tuple[str, ...] = (
     "temperature",
     "top_p",
     "top_k",
+    "max_tokens",
     "base_url",
     "api_key_env",
 )
@@ -110,6 +108,7 @@ _SAMPLING_KEY_CAPABILITY: dict[str, AdapterCapability] = {
     "temperature": AdapterCapability.SUPPORTS_TEMPERATURE,
     "top_p": AdapterCapability.SUPPORTS_TOP_P,
     "top_k": AdapterCapability.SUPPORTS_TOP_K,
+    "max_tokens": AdapterCapability.SUPPORTS_MAX_TOKENS,
 }
 
 

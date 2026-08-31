@@ -144,6 +144,7 @@ class OpenAIAgentsAdapter(PluginAdapter):
                 AdapterCapability.RATE_LIMIT_DETECTION,
                 AdapterCapability.STRUCTURED_OUTPUT,
                 AdapterCapability.SUPPORTS_SAMPLING_PARAMS,
+                AdapterCapability.SUPPORTS_MAX_TOKENS,
             ),
         )
 

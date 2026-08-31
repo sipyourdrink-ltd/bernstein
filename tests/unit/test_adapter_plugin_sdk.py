@@ -428,6 +428,11 @@ class TestEnsureSamplingParamsSupported:
         with pytest.raises(SamplingParamsRefusal, match="temperature"):
             ensure_sampling_params_supported(_StubPluginAdapter(), {"temperature": 0.2})
 
+    def test_raises_for_max_tokens_without_capability(self) -> None:
+        with pytest.raises(SamplingParamsRefusal) as excinfo:
+            ensure_sampling_params_supported(_StubPluginAdapter(), {"max_tokens": 4096})
+        assert excinfo.value.requested_keys == ("max_tokens",)
+
     def test_error_names_adapter_and_keys(self) -> None:
         with pytest.raises(SamplingParamsRefusal) as excinfo:
             ensure_sampling_params_supported(
