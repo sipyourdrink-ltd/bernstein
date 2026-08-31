@@ -578,8 +578,6 @@ _REDIRECT_MAP: dict[str, str] = {
     "workflow": "bernstein.core.planning.workflow",
     "workflow_dsl": "bernstein.core.planning.workflow_dsl",
     "workflow_importer": "bernstein.core.planning.workflow_importer",
-    # workload_prediction: removed - dead code, no production importers. Built as a
-    # feature and never wired to any caller, CLI command, doc or test (#4904).
     "workspace": "bernstein.core.persistence.workspace",
     "worktree": "bernstein.core.git.worktree",
     "worktree_claude_md": "bernstein.core.git.worktree_claude_md",
