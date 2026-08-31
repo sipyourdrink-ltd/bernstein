@@ -20,6 +20,13 @@ through ``pytest --collect-only`` so inheritance (conformance bases) and
 Hypothesis ``RuleBasedStateMachine.TestCase`` assignments are not
 false-positives.
 
+AST counting and pytest collection disagree on a module that fails to
+import: pytest reports zero collected items while the AST still sees the
+``test_*`` / ``Test*`` definitions. That gap is intentional here — a
+collection/import error already fails the test run elsewhere, so preferring
+AST when it proves non-empty is the speed trade for Repo hygiene, not an
+oversight that a broken import would be treated as "has tests".
+
 Usage::
 
     python scripts/check_empty_test_modules.py
@@ -130,7 +137,11 @@ def pytest_collect_count(path: Path, *, python: str = sys.executable, cwd: Path 
 
 
 def collected_test_count(path: Path, *, python: str = sys.executable, cwd: Path | None = None) -> int:
-    """Return collected count, preferring AST when it already proves non-empty."""
+    """Return collected count, preferring AST when it already proves non-empty.
+
+    See the module docstring for why AST may disagree with pytest on an
+    import-broken module (collection errors fail the run elsewhere).
+    """
     source = path.read_text(encoding="utf-8")
     ast_count = ast_defined_test_count(source)
     if ast_count > 0:
