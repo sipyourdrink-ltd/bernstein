@@ -12,10 +12,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from bernstein.core.orchestration.gpt_researcher import (
-    GptResearcherUnavailableError,
     GptResearcherSynthesiser,
+    GptResearcherUnavailableError,
 )
-from bernstein.core.orchestration.research_worker import ClaimDraft, FetchedSource, SpanRef
 
 
 def test_gpt_researcher_unavailable_error():
@@ -58,15 +57,11 @@ def test_parse_report_to_claims_basic():
             "claims": [
                 {
                     "claim": "Python 3.13 has an optional free-threaded build.",
-                    "supports": [
-                        {"content": "optional free-threaded build", "source": "https://example.com/a"}
-                    ],
+                    "supports": [{"content": "optional free-threaded build", "source": "https://example.com/a"}],
                 },
                 {
                     "claim": "Module foo is deprecated.",
-                    "supports": [
-                        {"content": "deprecated and slated for removal", "source": "https://example.com/b"}
-                    ],
+                    "supports": [{"content": "deprecated and slated for removal", "source": "https://example.com/b"}],
                 },
             ]
         }
@@ -112,9 +107,7 @@ def test_parse_report_to_claims_claim_without_spans():
                 },
                 {
                     "claim": "Another claim",
-                    "supports": [
-                        {"content": "quote", "source": "https://example.com"}
-                    ],
+                    "supports": [{"content": "quote", "source": "https://example.com"}],
                 },
             ]
         }
