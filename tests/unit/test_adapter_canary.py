@@ -58,6 +58,7 @@ from bernstein.adapters.canary import (
     skip_fingerprint,
     update_last_green,
     verify_canary_receipt,
+    verify_last_green_head,
     verify_last_green_projection,
     write_canary_receipt,
     write_last_green_doc,
@@ -948,6 +949,41 @@ class TestLastGreen:
         text = LAST_GREEN_DOC_PATH.read_text(encoding="utf-8")
         assert "<!-- last-green:begin -->" in text
         assert "<!-- last-green:end -->" in text
+
+    def test_verify_last_green_head_valid(self, tmp_path: Path) -> None:
+        path = tmp_path / "last_green.json"
+        outcome = _outcome(verdict="pass", failures=())
+        entries = update_last_green({}, outcome, receipt_sha="ab" * 32, recorded_at=_GENERATED_AT)
+        save_last_green(path, entries)
+        assert verify_last_green_head(path) is True
+
+    def test_verify_last_green_head_tampered_adapters(self, tmp_path: Path) -> None:
+        path = tmp_path / "last_green.json"
+        outcome = _outcome(verdict="pass", failures=())
+        entries = update_last_green({}, outcome, receipt_sha="ab" * 32, recorded_at=_GENERATED_AT)
+        save_last_green(path, entries)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["adapters"]["agy"]["version"] = "9.9.9"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        assert verify_last_green_head(path) is False
+
+    def test_verify_last_green_head_missing_head(self, tmp_path: Path) -> None:
+        path = tmp_path / "last_green.json"
+        path.write_text(json.dumps({"schema_version": 1, "adapters": {}}), encoding="utf-8")
+        assert verify_last_green_head(path) is False
+
+    def test_verify_last_green_head_missing_file(self, tmp_path: Path) -> None:
+        path = tmp_path / "nonexistent.json"
+        with pytest.raises(OSError):
+            verify_last_green_head(path)
+
+    def test_verify_last_green_head_corrupted_json(self, tmp_path: Path) -> None:
+        path = tmp_path / "corrupted.json"
+        path.write_text("not-json", encoding="utf-8")
+        assert verify_last_green_head(path) is False
+
+    def test_packaged_last_green_head_verifies(self) -> None:
+        assert verify_last_green_head() is True
 
 
 # ---------------------------------------------------------------------------

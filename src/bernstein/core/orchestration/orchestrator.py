@@ -3060,6 +3060,19 @@ class Orchestrator:
         except OSError as exc:
             logger.warning("failed to write .finalized marker: %s", exc)
 
+    def _pace(self, seconds: float) -> None:
+        """Sleep between ticks. The run loop's only pacing seam.
+
+        ``time.sleep`` is one function object shared by the whole process,
+        so a test that patches it observes every sleep anything performs
+        while ``run()`` is on the stack - including CPython's own
+        ``subprocess.Popen`` reaping loop, whose 1ms/2ms/4ms/8ms busy-wait
+        lands in the record before the loop's first tick has paced at all.
+        Routing the loop's pacing through one method lets a test watch the
+        schedule this loop chooses and nothing else.
+        """
+        time.sleep(seconds)
+
     def run(self) -> None:
         """Run the orchestrator loop until stopped.
 
@@ -3134,6 +3147,63 @@ class Orchestrator:
                 )
         except Exception:
             logger.exception("Audit integrity check failed (non-fatal) - continuing startup")
+
+        # Run-scope code graph anchoring: build the graph once at run start
+        # and anchor its digest in the audit chain before any agents spawn.
+        # This ensures audit-chain integrity for graph-dependent operations
+        # and provides a verifiable record of the repository state at run time.
+        try:
+            from bernstein.core.knowledge.ast_symbol_graph import (
+                EDGE_ORIGIN_EXTRACTED,
+                EDGE_ORIGIN_INFERRED,
+                build_semantic_graph,
+                graph_digest,
+            )
+            from bernstein.core.orchestration.schedule_projection import SCHEDULE_PROJECTION_REV
+            from bernstein.core.security.audit import load_or_create_audit_key
+            from bernstein.core.security.audit_chain import AuditChainStore, record_code_graph_anchored
+
+            # Build the semantic graph once for this run (run-scoped cache)
+            graph = build_semantic_graph(self._workdir)
+            graph_digest_val = graph_digest(graph)
+            source_count = graph.source_file_count
+            indexed_count = graph.indexed_file_count
+            unparsed_count = len(getattr(graph, "unparsed_files", []))
+            all_edges = graph.edges
+            inferred_count = sum(1 for e in all_edges if e.origin == EDGE_ORIGIN_INFERRED)
+            extracted_count = sum(1 for e in all_edges if e.origin == EDGE_ORIGIN_EXTRACTED)
+
+            # Initialize provider audit chain if not already done
+            if self._provider_audit_chain is None:
+                hmac_key = load_or_create_audit_key(self._workdir / ".sdd")
+                self._provider_audit_chain = AuditChainStore(self._workdir / ".sdd" / "audit", key=hmac_key)
+
+            # Anchor the code graph digest in the audit chain
+            record_code_graph_anchored(
+                chain=self._provider_audit_chain,
+                run_id=self._run_id,
+                graph_digest=graph_digest_val,
+                graph_version=SCHEDULE_PROJECTION_REV,
+                source_file_count=source_count,
+                indexed_file_count=indexed_count,
+                unparsed_file_count=unparsed_count,
+                inferred_edge_count=inferred_count,
+                extracted_edge_count=extracted_count,
+                actor="orchestrator",
+            )
+            logger.info(
+                "Code graph anchored in audit chain: digest=%s, source=%d, indexed=%d, "
+                "unparsed=%d, inferred=%d, extracted=%d",
+                graph_digest_val[:16],
+                source_count,
+                indexed_count,
+                unparsed_count,
+                inferred_count,
+                extracted_count,
+            )
+        except Exception as exc:
+            logger.warning("Code graph anchoring failed (non-fatal): %s", sanitize_log(str(exc)))
+
         # Zombie cleanup: terminate orphaned agent processes from prior crashed runs.
         try:
             from bernstein.core.zombie_cleanup import scan_and_cleanup_zombies
@@ -3177,15 +3247,15 @@ class Orchestrator:
             server_failures = getattr(self, "_consecutive_server_failures", 0)
             if server_failures > 0:
                 # Backoff: 5s, 10s, 15s, 20s, 30s (capped)
-                time.sleep(min(5.0 * server_failures, 30.0))
+                self._pace(min(5.0 * server_failures, 30.0))
             elif tick_result is not None and (
                 tick_result.spawned or tick_result.verified or tick_result.retried or tick_result.open_tasks > 0
             ):
                 self._idle_multiplier = 1
-                time.sleep(self._config.poll_interval_s)
+                self._pace(self._config.poll_interval_s)
             else:
                 self._idle_multiplier = min(self._idle_multiplier * 2, 8)
-                time.sleep(min(self._config.poll_interval_s * self._idle_multiplier, 30.0))
+                self._pace(min(self._config.poll_interval_s * self._idle_multiplier, 30.0))
 
             # Hot-reload bernstein.yaml config (mutable fields only)
             self._maybe_reload_config()

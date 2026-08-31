@@ -145,8 +145,8 @@ jobs:
           )
           pr_body = pr_body_result.stdout
 
-          # Initialize check run client (no installation_id for GITHUB_TOKEN-based auth)
-          check_run_client = CheckRunClient(repo_slug, None)
+          # Initialize check run client (auth is delegated to the gh CLI)
+          check_run_client = CheckRunClient(repo_slug)
 
           # Run verification
           result = run_verification_check(
@@ -229,7 +229,7 @@ jobs:
 
           conclusion = result['conclusion']
 
-          check_run_client = CheckRunClient(os.environ['REPO_SLUG'], None)
+          check_run_client = CheckRunClient(os.environ['REPO_SLUG'])
 
           check_run_result = check_run_client.create_verification_check_run(
               head_sha=os.environ['HEAD_SHA'],

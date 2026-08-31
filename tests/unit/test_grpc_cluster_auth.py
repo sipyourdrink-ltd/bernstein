@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import grpc
 import pytest
-from bernstein.core.models import ClusterConfig
+from bernstein.core.models import ClusterConfig, NodeStatus
 
 from bernstein.core.grpc_gen import cluster_pb2
 from bernstein.core.protocols.cluster import NodeRegistry
@@ -401,6 +401,91 @@ class TestReRegistrationIsIdempotent:
 
         assert first.node.id != second.node.id
         assert len(registry.list_nodes()) == 2
+
+
+class TestCordonSurvivesReRegistration:
+    """A cordon is operator intent, and a restart is not an answer to it (#4820).
+
+    ``NodeRegistry.register`` set ``ONLINE`` unconditionally when updating an
+    existing entry, so a cordoned worker became schedulable again by restarting
+    -- on this surface and the REST one alike, since both end in that one call.
+
+    Asserted through ``cluster_summary``'s capacity totals as well as the status
+    field: the total is the number the scheduler actually spends, and a test
+    watching only the status would not notice the slots coming back.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_cordoned_node_is_still_cordoned_after_it_re_registers(self) -> None:
+        registry = _registry()
+        service = ClusterServiceImpl(registry)
+
+        first = await _register_one(service, max_agents=4)
+        registry.cordon(first.node.id)
+        assert registry.cluster_summary()["total_capacity"] == 0
+
+        await _register_one(service, max_agents=4)
+
+        assert registry.get(first.node.id).status is NodeStatus.CORDONED
+        summary = registry.cluster_summary()
+        assert summary["total_nodes"] == 1
+        assert summary["total_capacity"] == 0, "restarting handed the node's slots back"
+
+    @pytest.mark.asyncio
+    async def test_a_draining_node_is_still_draining_after_it_re_registers(self) -> None:
+        registry = _registry()
+        service = ClusterServiceImpl(registry)
+
+        first = await _register_one(service, max_agents=4)
+        registry.start_drain(first.node.id)
+
+        await _register_one(service, max_agents=4)
+
+        assert registry.get(first.node.id).status is NodeStatus.DRAINING
+        assert registry.cluster_summary()["total_capacity"] == 0
+
+    @pytest.mark.asyncio
+    async def test_a_first_registration_still_starts_online(self) -> None:
+        # The over-correction guard: there is no operator decision to preserve
+        # on a node nobody has seen before, so it must be schedulable at once.
+        registry = _registry()
+
+        first = await _register_one(ClusterServiceImpl(registry), max_agents=4)
+
+        assert registry.get(first.node.id).status is NodeStatus.ONLINE
+        assert registry.cluster_summary()["total_capacity"] == 4
+
+    @pytest.mark.asyncio
+    async def test_observed_health_resets_where_operator_intent_does_not(self) -> None:
+        # DEGRADED describes a process the server watched misbehave. That
+        # process re-registering is direct evidence the observation no longer
+        # holds -- unlike a cordon, which is a decision nobody has revisited.
+        registry = _registry()
+        service = ClusterServiceImpl(registry)
+
+        first = await _register_one(service, max_agents=4)
+        registry.get(first.node.id).status = NodeStatus.DEGRADED
+
+        await _register_one(service, max_agents=4)
+
+        assert registry.get(first.node.id).status is NodeStatus.ONLINE
+        assert registry.cluster_summary()["total_capacity"] == 4
+
+    @pytest.mark.asyncio
+    async def test_an_uncordoned_node_returns_to_service(self) -> None:
+        # Preserving a cordon must not make one impossible to lift: once
+        # uncordoned there is no intent left to carry, so the node stays online.
+        registry = _registry()
+        service = ClusterServiceImpl(registry)
+
+        first = await _register_one(service, max_agents=4)
+        registry.cordon(first.node.id)
+        registry.uncordon(first.node.id)
+
+        await _register_one(service, max_agents=4)
+
+        assert registry.get(first.node.id).status is NodeStatus.ONLINE
+        assert registry.cluster_summary()["total_capacity"] == 4
 
 
 class TestNodeRegistryFindByIdentity:

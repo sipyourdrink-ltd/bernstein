@@ -217,3 +217,8 @@ REVIEW-*.md
 
 # Qwen Code internal files (never part of the repo)
 *.qwen*.json
+
+# Web-research notes an orchestrated run writes beside the checkout while it
+# works. They are inputs to one run, not part of the tree; one of them was
+# committed by an agent pass and would have shipped in the pull request.
+/web-research/

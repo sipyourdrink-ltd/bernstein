@@ -134,10 +134,12 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `forge.py`                  | Forge CLI adapter |
 | `gemini.py`                 | Google Gemini / Antigravity CLI adapter |
 | `generic.py`                | Generic CLI adapter for arbitrary coding agent CLIs |
+| `gitleaks.py`               | Deterministic Gitleaks scanner adapter and SARIF normalization |
 | `goose.py`                  | Goose CLI adapter for Bernstein |
 | `goose_stream_parser.py`    | Parse Goose ``--output-format stream-json`` events |
 | `gptme.py`                  | gptme CLI adapter |
 | `hermes.py`                 | Hermes Agent (Nous Research) CLI adapter |
+| `holmesgpt.py`              | HolmesGPT adapter for Bernstein |
 | `hook_gate_render.py`       | Render in-process verification-gate hooks for capable adapters (issue #2360) |
 | `http_429_classifier.py`    | Data-driven classifier for HTTP 429 responses |
 | `iac.py`                    | Infrastructure-as-Code (Terraform/Pulumi) adapter for Bernstein |

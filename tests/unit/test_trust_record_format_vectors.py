@@ -204,7 +204,7 @@ def test_committed_public_key_matches_the_key_recovered_from_cnf_jwk() -> None:
     """
     doc = _load(_SOLO)
     from_cnf = _public_key_pem_from_cnf_jwk(doc)
-    pinned = _PUBKEY.read_bytes().replace(b"\r\n", b"\n")
+    pinned = _PUBKEY.read_bytes()
     assert from_cnf == pinned
 
 
