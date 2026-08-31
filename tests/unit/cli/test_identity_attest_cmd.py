@@ -178,7 +178,7 @@ def test_show_does_not_create_a_missing_audit_key(tmp_path: Path, monkeypatch: p
 
     assert result.exit_code == identity_attest_cmd.EXIT_FAILURE
     assert "Failed to load audit key" in result.output
-    assert "will not create key material" in result.output
+    assert "will not create key material" in " ".join(result.output.split())
     assert not audit_key_path.exists()
 
 

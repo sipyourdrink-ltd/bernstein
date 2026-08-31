@@ -4,7 +4,7 @@
 # Stages run sequentially; steps within a stage run in parallel.
 #
 # Usage:
-#   cp plans/templates/library.yaml plans/my-library.yaml
+#   bernstein templates use library plans/my-library.yaml
 #   # Edit name, description, and step details
 #   bernstein run plans/my-library.yaml
 

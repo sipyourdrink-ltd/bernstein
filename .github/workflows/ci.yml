@@ -477,6 +477,13 @@ jobs:
             exit 1
           fi
       - uses: ./.github/actions/bootstrap
+      - name: Reject collect-empty test modules (#4834)
+        # A test_*.py whose body was emptied still collects cleanly and exits
+        # 0, so a shrinking suite looks green. Naming-convention scope
+        # (test_*.py / *_test.py) excludes conftest/helpers; AST short-circuits
+        # non-empty modules; pytest --collect-only confirms inheritance /
+        # Hypothesis cases. Needs the bootstrapped env for that collect path.
+        run: uv run python scripts/check_empty_test_modules.py
       - name: AGENTS.md cross-CLI sync drift check
         # Fails if AGENTS.md / CLAUDE.md / CONVENTIONS.md / .aider.conf.yml /
         # .goosehints / .cursor/rules/*.mdc drift from `bernstein agents-md
@@ -520,6 +527,25 @@ jobs:
         run: |
           uv run python scripts/render_tui_snapshot.py
           uv run python scripts/bind_webui_renders.py
+      - name: Test-count drop vs merge base (#4873)
+        # Catches a touched test module that still collects but lost cases
+        # relative to the merge base. Parametrized consolidation stays green
+        # (collect-only counts). Override via PR body:
+        #   test-count-drop: tests/unit/foo.py -N
+        # Without a base (non-PR / missing ref) the script skips — never fake-green.
+        env:
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
+          BASE_REF: ${{ github.base_ref || 'main' }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          BASE=""
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            git fetch --no-tags origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}" || true
+            BASE="$(git merge-base "origin/${BASE_REF}" HEAD 2>/dev/null || true)"
+          elif [ "$EVENT_NAME" = "merge_group" ]; then
+            BASE="${{ github.event.merge_group.base_sha }}"
+          fi
+          uv run python scripts/check_test_count_drop.py --base "${BASE}"
 
   lint:
     name: Lint

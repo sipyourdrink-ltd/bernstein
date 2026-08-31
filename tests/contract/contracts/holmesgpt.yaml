@@ -1,0 +1,24 @@
+# Contract for the HolmesGPT adapter (adapter: holmesgpt).
+#
+# This adapter fronts the HolmesGPT CLI for read-only investigation tasks.
+# It content-addresses every consulted data source, binds them to conclusions,
+# and produces inconclusive receipts when appropriate.
+adapter: holmesgpt
+binary: holmes
+install:
+  method: none
+  spec: ""
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: ""
+  basis: unknown
+required_flags:
+  - "--no-interactive"
+  - "--json-output"
+required_subcommands:
+  - "ask"
+  - "investigate"
+expected_models:
+  command: []
+  required_present: []

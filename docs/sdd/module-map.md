@@ -139,6 +139,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `goose_stream_parser.py`    | Parse Goose ``--output-format stream-json`` events |
 | `gptme.py`                  | gptme CLI adapter |
 | `hermes.py`                 | Hermes Agent (Nous Research) CLI adapter |
+| `holmesgpt.py`              | HolmesGPT adapter for Bernstein |
 | `hook_gate_render.py`       | Render in-process verification-gate hooks for capable adapters (issue #2360) |
 | `http_429_classifier.py`    | Data-driven classifier for HTTP 429 responses |
 | `iac.py`                    | Infrastructure-as-Code (Terraform/Pulumi) adapter for Bernstein |
@@ -153,7 +154,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `mock.py`                   | Mock CLI adapter for zero-API-key demos and testing |
 | `muse.py`                   | Muse Code CLI adapter for Bernstein |
 | `ollama.py`                 | Ollama / OpenAI-compatible local LLM adapter - run coding agents without cloud API keys |
-| `onboarding.py`             | Probe an installed CLI binary and capture its self-description as evidence |
+| `onboarding.py`             | Probe CLI evidence, record a supervised golden transcript, and replay held-out invocations |
 | `open_interpreter.py`       | Open Interpreter CLI adapter |
 | `openai_agents.py`          | OpenAI Agents SDK v2 adapter |
 | `openai_agents_builtins.py` | Opt-in builtin tools for the OpenAI Agents runner |

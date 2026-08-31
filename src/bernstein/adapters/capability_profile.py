@@ -55,6 +55,7 @@ import hashlib
 import json
 import logging
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -720,6 +721,8 @@ def route_and_record(
     profiles: Iterable[AdapterCapabilityProfile] | None = None,
     audit_chain: Any | None = None,
     run_id: str = "",
+    tier_decision: dict[str, Any] | None = None,
+    task_id: str = "",
 ) -> AdapterCapabilityProfile:
     """Select an adapter for a task and anchor the decision in the audit chain.
 
@@ -737,6 +740,9 @@ def route_and_record(
       HMAC chain *before* the :class:`CapabilityMismatchError` propagates, so
       the refusal is a signed record rather than a silent fallback to a weaker
       adapter.
+    * When ``tier_decision`` is supplied (opt-in ``tier_models`` path, #4854),
+      the tier + feature digest are recorded on the same seam immediately
+      after the capability selection event.
 
     Recording is opt-in: when ``audit_chain`` is ``None`` the function selects
     (or refuses) exactly as :func:`select_profile_for` does, without touching a
@@ -754,6 +760,11 @@ def route_and_record(
             module-level dependency on :mod:`bernstein.core.security`.
         run_id: The run the routing decision is made for, recorded on the
             anchored event.
+        tier_decision: Optional precomputed :meth:`TierDecision.to_record`
+            payload from :mod:`bernstein.core.routing.task_tier`. Passed in
+            already-computed so this module never imports the classifier
+            (import-linter forbids ``adapters`` → ``core.routing``).
+        task_id: Task id recorded with ``tier_decision`` when present.
 
     Returns:
         The first profile satisfying ``requirements``.
@@ -779,7 +790,10 @@ def route_and_record(
             )
         raise
     if audit_chain is not None:
-        from bernstein.core.security.audit_chain import record_capability_selection
+        from bernstein.core.security.audit_chain import (
+            record_capability_selection,
+            record_task_tier_decision,
+        )
 
         record_capability_selection(
             chain=audit_chain,
@@ -788,6 +802,17 @@ def route_and_record(
             profile_hash=selected.profile_hash,
             requirements=requirements.to_canonical_dict(),
         )
+        if tier_decision is not None:
+            record_task_tier_decision(
+                chain=audit_chain,
+                run_id=run_id,
+                task_id=task_id or run_id,
+                tier=str(tier_decision.get("tier", "")),
+                tier_policy_version=int(tier_decision.get("tier_policy_version", 0)),
+                feature_digest=str(tier_decision.get("feature_digest", "")),
+                features=dict(tier_decision.get("features") or {}),
+                score=int(tier_decision.get("score", 0)),
+            )
     return selected
 
 
@@ -998,6 +1023,102 @@ class ProfileAdapter(CLIAdapter):
         if timeout_seconds > 0:
             result.timeout_timer = self._start_timeout_watchdog(proc.pid, timeout_seconds, session_id)
         return result
+
+
+def _profile_tokens(value: Iterable[str] | None, field_name: str) -> tuple[str, ...]:
+    """Normalise a YAML token list and reject scalar or non-string values."""
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        raise ProfileValidationError(f"RecordedProfileAdapter {field_name} must be a list of strings")
+    if isinstance(value, Mapping):
+        raise ProfileValidationError(f"RecordedProfileAdapter {field_name} must be a list of strings")
+    try:
+        tokens = tuple(value)
+    except TypeError as exc:
+        raise ProfileValidationError(f"RecordedProfileAdapter {field_name} must be a list of strings") from exc
+    if any(not isinstance(token, str) for token in tokens):
+        raise ProfileValidationError(f"RecordedProfileAdapter {field_name} must be a list of strings")
+    return tokens
+
+
+class RecordedProfileAdapter(ProfileAdapter):
+    """Replay bridge for an operator-recorded capability profile.
+
+    The constructor deliberately accepts only primitive, YAML-safe values so
+    :class:`~bernstein.adapters.conformance.GoldenTranscript` can instantiate
+    this class in a fresh process.  The invocation is rebuilt before the base
+    adapter is initialised, leaving the inherited :meth:`ProfileAdapter.spawn`
+    as the single process-launch implementation.
+    """
+
+    def __init__(
+        self,
+        registry_name: str,
+        display_name: str,
+        binary: str,
+        subcommands: Iterable[str] = (),
+        model_flag: str | None = None,
+        prompt_flag: str | None = None,
+        prompt_positional: bool = True,
+        extra_args: Iterable[str] = (),
+        env_passthrough: Iterable[str] = (),
+        *,
+        environment_allowlist: Iterable[str] | None = None,
+    ) -> None:
+        """Build a replayable adapter from explicit serialized fields.
+
+        Args:
+            registry_name: Registry key used by admission and session
+                namespacing.
+            display_name: Human-readable adapter name.
+            binary: CLI executable name or path.
+            subcommands: Ordered subcommand tokens.
+            model_flag: Model option, or ``None`` for model-less CLIs.
+            prompt_flag: Prompt option, or ``None`` for positional prompts.
+            prompt_positional: Whether a flag-less prompt is positional.
+            extra_args: Ordered tokens emitted on every invocation.
+            env_passthrough: Environment names allowed through isolation.
+            environment_allowlist: Backward-compatible spelling for
+                ``env_passthrough`` when loading hand-authored YAML.
+
+        Raises:
+            ProfileValidationError: A serialized field cannot form a valid
+                :class:`AdapterCapabilityProfile`.
+        """
+        if not isinstance(registry_name, str) or not registry_name.strip():
+            raise ProfileValidationError("RecordedProfileAdapter requires a non-empty registry_name")
+        if not isinstance(display_name, str) or not display_name.strip():
+            raise ProfileValidationError("RecordedProfileAdapter requires a non-empty display_name")
+        if not isinstance(binary, str):
+            raise ProfileValidationError("RecordedProfileAdapter binary must be a string")
+        if model_flag is not None and not isinstance(model_flag, str):
+            raise ProfileValidationError("RecordedProfileAdapter model_flag must be a string or None")
+        if prompt_flag is not None and not isinstance(prompt_flag, str):
+            raise ProfileValidationError("RecordedProfileAdapter prompt_flag must be a string or None")
+        if not isinstance(prompt_positional, bool):
+            raise ProfileValidationError("RecordedProfileAdapter prompt_positional must be a boolean")
+        if environment_allowlist is not None:
+            if tuple(env_passthrough) != ():
+                raise ProfileValidationError("provide only one of env_passthrough and environment_allowlist")
+            env_passthrough = environment_allowlist
+
+        invocation = InvocationSpec(
+            binary=binary,
+            subcommands=_profile_tokens(subcommands, "subcommands"),
+            model_flag=model_flag,
+            prompt_flag=prompt_flag,
+            prompt_positional=prompt_positional,
+            extra_args=_profile_tokens(extra_args, "extra_args"),
+            env_passthrough=_profile_tokens(env_passthrough, "env_passthrough"),
+        )
+        self.profile = AdapterCapabilityProfile(
+            name=registry_name,
+            display_name=display_name,
+            invocation=invocation,
+        )
+        super().__init__()
+        self.registry_name = registry_name
 
 
 def _class_name_for(profile: AdapterCapabilityProfile) -> str:
@@ -1301,6 +1422,7 @@ __all__ = [
     "ProfileError",
     "ProfileImplementation",
     "ProfileValidationError",
+    "RecordedProfileAdapter",
     "SandboxTier",
     "TaskCapabilityRequirements",
     "UnknownProfileError",
