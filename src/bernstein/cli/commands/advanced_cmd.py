@@ -1440,10 +1440,12 @@ def trace_export_cmd(
             raise SystemExit(1)
 
         candidate_dirs: list[Path] = []
+        from bernstein.core.replay.journal import contained_run_journal
+
         for item in runs_dir.iterdir():
             if item.is_dir():
-                journal_file = item / "journal.jsonl"
-                if journal_file.exists() and journal_file.stat().st_size > 0:
+                journal_file = contained_run_journal(runs_dir, item.name, "journal.jsonl")
+                if journal_file is not None and journal_file.exists() and journal_file.stat().st_size > 0:
                     candidate_dirs.append(item)
 
         if not candidate_dirs:
