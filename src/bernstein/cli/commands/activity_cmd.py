@@ -1,7 +1,7 @@
 """``bernstein activity``: verify typed activity boundary crossings (#2311).
 
 Bernstein's deterministic scheduler takes any agent modality -- research,
-browser/computer-use, data, ops, coding -- behind one typed activity boundary,
+browser/computer-use, data, ops -- behind one typed activity boundary,
 anchoring each crossing into the run's canonical event journal as an
 ``activity.result`` entry that pins the ``evidence_set_hash`` (a pure function of
 the content-addressed evidence the activity gathered).
@@ -22,8 +22,8 @@ codes: 0 = verified, 1 = no run / no activity, 2 = mismatch (tamper).
 The ``browser`` subgroup submits and inspects browser activities -- site checks
 and UI flows -- alongside coding tasks::
 
-    bernstein activity browser run --flow flow.json --run <run> --stage <stage>
-    bernstein activity browser verify <run> --stage <stage>
+    bernstein activity browser run --flow flow.json --run run-42 --stage browser-0
+    bernstein activity browser verify run-42 --stage browser-0
 
 ``run`` drives the flow through the browser worker and dispatches the result down
 the same deterministic path a coding spawn uses. With ``--recording`` it drives a
@@ -31,6 +31,10 @@ recorded observation tape instead of a live browser, which is how a completed ru
 is re-executed offline to prove the action sequence and verdict reproduce
 byte-for-byte. ``verify`` resolves a completed run's anchored chain from the
 content store alone, naming the exact step index or check id on any divergence.
+
+The ``research`` subgroup submits and inspects research activities::
+
+    bernstein activity research run --query "What is the capital of France?" --sources https://en.wikipedia.org/wiki/France --run run-42 --stage research-0
 """
 
 from __future__ import annotations
@@ -61,6 +65,7 @@ def activity_group() -> None:
       bernstein activity verify run-42 --json
       bernstein activity browser run --flow checkout.json --run run-42 --stage browser-0
       bernstein activity browser verify run-42 --stage browser-0
+      bernstein activity research run --query "What is AI?" --sources https://example.com --run run-42 --stage research-0
     """
 
 
@@ -233,7 +238,7 @@ def _parse_flow(
         try:
             kind = ActionKind(str(raw_action.get("kind", "")))
         except ValueError as exc:
-            raise click.BadParameter(f"step {position}: unknown action kind {raw_action.get('kind')!r}") from exc
+            raise click.BadParameter(f"step {position}: unknown action kind {raw_action.get("kind")!r}") from exc
         steps.append(
             Step(
                 action=Action(
@@ -519,4 +524,184 @@ def browser_verify_cmd(run: str, stage_id: str, workdir: str, as_json: bool) -> 
     raise SystemExit(0)
 
 
-__all__ = ["activity_group", "browser_group"]
+# ---------------------------------------------------------------------------
+# research activities
+# ---------------------------------------------------------------------------
+
+
+@activity_group.group("research")
+def research_group() -> None:
+    """Submit and inspect research activities: sourced reports with citation lineage.
+
+    \b
+    Examples:
+      bernstein activity research run --query "What is the capital of France?" --sources https://en.wikipedia.org/wiki/France --run run-42 --stage research-0
+    """
+
+
+def _parse_sources(sources: tuple[str, ...]) -> list[str]:
+    """Parse source references from comma-separated or repeated options."""
+    parsed: list[str] = []
+    for source in sources:
+        parsed.extend([s.strip() for s in source.split(",") if s.strip()])
+    return parsed
+
+
+@research_group.command("run")
+@click.option("--query", required=True, help="The research question.")
+@click.option(
+    "--sources",
+    "sources",
+    multiple=True,
+    required=True,
+    help="Source references to consult (repeatable or comma-separated).",
+)
+@click.option(
+    "--budget-max-fetches",
+    type=int,
+    default=10,
+    show_default=True,
+    help="Maximum number of source fetches.",
+)
+@click.option(
+    "--budget-max-cost",
+    type=float,
+    default=float("inf"),
+    show_default=True,
+    help="Maximum total cost the run may spend.",
+)
+@click.option(
+    "--budget-cost-per-fetch",
+    type=float,
+    default=1.0,
+    show_default=True,
+    help="Cost charged per fetch.",
+)
+@click.option("--run", "run_id", required=True, help="Run the activity anchors into.")
+@click.option("--stage", "stage_id", default="research-0", show_default=True, help="Scheduler stage id.")
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit machine-readable JSON.")
+def research_run_cmd(
+    query: str,
+    sources: tuple[str, ...],
+    budget_max_fetches: int,
+    budget_max_cost: float,
+    budget_cost_per_fetch: float,
+    run_id: str,
+    stage_id: str,
+    workdir: str,
+    as_json: bool,
+) -> None:
+    """Run a research activity and anchor the result into RUN's journal.
+
+    The research worker fetches each source through the rendering fetcher,
+    content-addresses every page at fetch time, applies the cost cap, and uses
+    the injected GPT Researcher synthesiser to draft claims. The result is
+    dispatched through the same deterministic path as coding spawns. Exit codes:
+    0 = completed, 2 = refused / failed / timed out.
+    """
+    from bernstein.core.orchestration.activity import ActivityRejected, TerminalState, dispatch_activity
+    from bernstein.core.orchestration.activity_modalities import ContentStore
+    from bernstein.core.orchestration.gpt_researcher import GptResearcherUnavailableError, GptResearcherSynthesiser
+    from bernstein.core.orchestration.rendering_fetcher import make_rendering_fetcher
+    from bernstein.core.orchestration.research_worker import (
+        ResearchBudgetExceeded,
+        ResearchWorker,
+    )
+    from bernstein.core.replay.journal import EventJournal
+
+    root = Path(workdir).resolve()
+    sdd_dir = root / ".sdd"
+
+    try:
+        synthesise = GptResearcherSynthesiser()
+    except GptResearcherUnavailableError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    try:
+        worker = ResearchWorker(
+            store=ContentStore(sdd_dir / "cas"),
+            budget=ResearchBudget(
+                max_fetches=budget_max_fetches,
+                max_cost_units=budget_max_cost,
+                cost_per_fetch=budget_cost_per_fetch,
+            ),
+        )
+    except Exception as exc:
+        raise click.ClickException(f"failed to initialise research worker: {exc}") from exc
+
+    parsed_sources = _parse_sources(sources)
+    fetch_fn = make_rendering_fetcher()
+
+    try:
+        run = worker.run(
+            query=query,
+            sources=parsed_sources,
+            fetch_fn=fetch_fn,
+            synthesise=synthesise,
+        )
+    except ResearchBudgetExceeded as exc:
+        # A cost cap is a refusal before the work happens, so nothing is anchored
+        # and there is no partial result to report.
+        raise click.ClickException(f"research run refused by its cost cap: {exc}") from exc
+    except ActivityRejected as exc:
+        raise click.ClickException(f"research report refused at the activity boundary: {exc}") from exc
+    dispatch_activity(run.result, stage_id=stage_id, journal=EventJournal(run_id=run_id, sdd_dir=sdd_dir))
+
+    if as_json:
+        console.print_json(
+            json.dumps(
+                {
+                    "run": run_id,
+                    "stage_id": stage_id,
+                    "query": run.report.query,
+                    "terminal_state": run.result.terminal_state.value,
+                    "reason_code": run.result.reason_code,
+                    "artifact_hash": run.result.artifact_hash,
+                    "evidence_set_hash": run.result.evidence_set_hash,
+                    "claims": [
+                        {
+                            "claim_id": claim.claim_id,
+                            "statement": claim.statement,
+                            "citations": [
+                                {
+                                    "claim_id": citation.claim_id,
+                                    "quote": citation.quote,
+                                    "source_ref": citation.source_ref,
+                                    "page_content_hash": citation.page_content_hash,
+                                }
+                                for citation in claim.citations
+                            ],
+                        }
+                        for claim in run.report.claims
+                    ],
+                    "fetched_count": len(run.fetched),
+                }
+            )
+        )
+    else:
+        console.print()
+        console.print(f"[bold]Research activity[/bold] query='{run.report.query}' run={run_id} stage={stage_id}")
+        console.print(f"  terminal={run.result.terminal_state.value} reason={run.result.reason_code}")
+        console.print(f"  sources fetched: {len(run.fetched)}")
+        console.print(f"  claims drafted: {len(run.report.claims)}")
+        for claim in run.report.claims:
+            console.print(f"  claim={claim.claim_id}: {claim.statement}")
+            for citation in claim.citations:
+                console.print(f"    -> [{citation.source_ref}] \"{citation.quote}\"")
+        if run.result.terminal_state is TerminalState.COMPLETED:
+            console.print("[green]completed[/green] -- research report assembled and anchored.")
+
+    if run.result.terminal_state is not TerminalState.COMPLETED:
+        raise SystemExit(3)
+    raise SystemExit(2)
+
+
+__all__ = ["activity_group", "browser_group", "research_group"]

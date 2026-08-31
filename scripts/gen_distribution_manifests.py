@@ -108,8 +108,6 @@ def _load_vendored_schema(filename: str) -> dict[str, object]:
     return schema
 
 
-
-
 def _require_schema_valid(document: object, schema_file: str, manifest_name: str) -> None:
     """Raise :class:`ManifestValidationError` if *document* violates the vendored schema."""
     schema = _load_vendored_schema(schema_file)
