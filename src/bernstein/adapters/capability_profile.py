@@ -859,7 +859,7 @@ def route_and_record(
                 requirements=exc.receipt.requirements,
                 candidates=[list(pair) for pair in exc.receipt.candidates],
                 unmet=list(exc.receipt.unmet),
-                verdict_table=exc.verdict_table,
+                verdict_table=exc.verdict_table.to_canonical_dict(),
             )
         raise
     if audit_chain is not None:
@@ -884,7 +884,7 @@ def route_and_record(
             adapter=selected.name,
             profile_hash=selected.profile_hash,
             requirements=requirements.to_canonical_dict(),
-            verdict_table=table,
+            verdict_table=table.to_canonical_dict(),
         )
         if tier_decision is not None:
             record_task_tier_decision(

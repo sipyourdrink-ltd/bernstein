@@ -35,8 +35,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
     from pathlib import Path
 
-    from bernstein.adapters.capability_profile import CapabilityVerdictTable
-
 from bernstein.core.security.agent_card_signer import canonicalize_jcs
 from bernstein.core.security.audit import (
     AGENT_FRESH_RESTART_ON_RETRY as AGENT_FRESH_RESTART_ON_RETRY,
@@ -5022,7 +5020,7 @@ def record_capability_selection(
     adapter: str,
     profile_hash: str,
     requirements: dict[str, Any],
-    verdict_table: CapabilityVerdictTable | None = None,
+    verdict_table: dict[str, Any] | None = None,
     actor: str = "capability_router",
 ) -> AuditEvent:
     """Append an ``adapter.capability_selection`` event into *chain* (#2663).
@@ -5044,11 +5042,12 @@ def record_capability_selection(
             presented (its :attr:`profile_hash`).
         requirements: Canonical form of the task requirements the profile
             satisfied.
-        verdict_table: Optional per-candidate verdict table, one row per
-            candidate adapter with its profile hash and the unmet axes that
-            prevented it from being selected (empty for the chosen adapter).
-            When present, the table enriches the selection event with
-            per-candidate breakdown without affecting the profile_hash.
+        verdict_table: Optional per-candidate verdict table already in its
+            canonical JSON-safe form, one row per candidate adapter with its
+            profile hash and the unmet axes that prevented it from being
+            selected (empty for the chosen adapter). When present, the table
+            enriches the selection event with the per-candidate breakdown
+            without affecting the profile_hash.
         actor: Recorded actor; defaults to ``"capability_router"``.
 
     Returns:
@@ -5062,7 +5061,7 @@ def record_capability_selection(
         "requirements": dict(sorted(requirements.items())),
     }
     if verdict_table is not None:
-        details["verdict_table"] = verdict_table.to_canonical_dict()
+        details["verdict_table"] = verdict_table
     return chain.log_with_prev_digest(
         event_type=EVENT_ADAPTER_CAPABILITY_SELECTION,
         actor=actor,
@@ -5131,7 +5130,7 @@ def record_capability_refusal(
     requirements: dict[str, Any],
     candidates: list[list[str]],
     unmet: list[str],
-    verdict_table: CapabilityVerdictTable | None = None,
+    verdict_table: dict[str, Any] | None = None,
     actor: str = "capability_router",
 ) -> AuditEvent:
     """Append an ``adapter.capability_refusal`` event into *chain* (#2663).
@@ -5154,11 +5153,12 @@ def record_capability_refusal(
         candidates: ``[adapter name, profile hash]`` pairs considered, in the
             order they were offered.
         unmet: Sorted union of every unmet capability axis across candidates.
-        verdict_table: Optional per-candidate verdict table, one row per
-            candidate adapter with its profile hash and the unmet axes that
-            prevented it from being selected (empty for the chosen adapter).
-            When present, the table enriches the refusal event with
-            per-candidate breakdown without affecting the receipt_hash.
+        verdict_table: Optional per-candidate verdict table already in its
+            canonical JSON-safe form, one row per candidate adapter with its
+            profile hash and the unmet axes that prevented it from being
+            selected (empty for the chosen adapter). When present, the table
+            enriches the refusal event with the per-candidate breakdown
+            without affecting the receipt_hash.
         actor: Recorded actor; defaults to ``"capability_router"``.
 
     Returns:
@@ -5173,7 +5173,7 @@ def record_capability_refusal(
         "unmet": list(unmet),
     }
     if verdict_table is not None:
-        details["verdict_table"] = verdict_table.to_canonical_dict()
+        details["verdict_table"] = verdict_table
     return chain.log_with_prev_digest(
         event_type=EVENT_ADAPTER_CAPABILITY_REFUSAL,
         actor=actor,
