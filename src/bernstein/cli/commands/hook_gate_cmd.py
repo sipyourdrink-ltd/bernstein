@@ -81,9 +81,7 @@ def hook_gate_group() -> None:
     show_default=True,
     help="Agent role recorded on a pending approval (#4543).",
 )
-def hook_gate_check_cmd(
-    session_id: str, event: str, workdir: str, timestamp: int | None, role: str
-) -> None:
+def hook_gate_check_cmd(session_id: str, event: str, workdir: str, timestamp: int | None, role: str) -> None:
     """Evaluate one hook event in-session and block or allow.
 
     Reads the hook event JSON on stdin. Exits 2 to block (refuse the tool call

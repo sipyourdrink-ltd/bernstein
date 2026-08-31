@@ -73,9 +73,7 @@ def _enable_interactive(workdir: Path, *, timeout_seconds: int = 600) -> None:
     """Turn the gate on. Off by default, which is the no-behaviour-change path."""
     workdir.mkdir(parents=True, exist_ok=True)
     (workdir / "bernstein.yaml").write_text(
-        "approvals:\n"
-        "  interactive: true\n"
-        f"  timeout_seconds: {timeout_seconds}\n",
+        f"approvals:\n  interactive: true\n  timeout_seconds: {timeout_seconds}\n",
         encoding="utf-8",
     )
 
@@ -106,9 +104,7 @@ def _pretooluse(
             "--timestamp",
             "1700000000",
         ],
-        input=json.dumps(
-            {"tool_name": tool_name, "tool_input": tool_input or {"file_path": "a.py"}}
-        ),
+        input=json.dumps({"tool_name": tool_name, "tool_input": tool_input or {"file_path": "a.py"}}),
         catch_exceptions=False,
     )
     return result.exit_code, result.output
@@ -121,9 +117,7 @@ def _pending_ids(workdir: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 # 1. A gated call enqueues and blocks until resolved
 # ---------------------------------------------------------------------------
-def test_gated_tool_call_enqueues_and_blocks_until_resolved(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_gated_tool_call_enqueues_and_blocks_until_resolved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The producer end. Before #4543 the queue could not receive this at all.
 
     The CLI blocks in ``wait_for``, so the resolution is written from a thread
@@ -166,9 +160,7 @@ def test_gated_tool_call_enqueues_and_blocks_until_resolved(
 # ---------------------------------------------------------------------------
 # 2. TTL expiry denies rather than hangs
 # ---------------------------------------------------------------------------
-def test_ttl_expiry_denies_rather_than_hangs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ttl_expiry_denies_rather_than_hangs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The queue's default-deny path, observed by the agent as a denial.
 
     A hang here would be worse than a denial: the worker would sit on the tool
@@ -205,9 +197,7 @@ def test_auto_decided_calls_never_reach_the_queue_when_gate_is_off(
     assert _pending_ids(tmp_path) == [], "a default-profile call must not enqueue"
 
 
-def test_a_rejected_approval_blocks_the_tool_call(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_rejected_approval_blocks_the_tool_call(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The other half of resolution: REJECT must exit 2, feeding the model a
     permission error rather than silently proceeding."""
     import threading
@@ -293,9 +283,7 @@ def test_each_resolution_surface_releases_the_same_pending(
 # ---------------------------------------------------------------------------
 # The wiring itself - a control for the defect this issue is about
 # ---------------------------------------------------------------------------
-def test_the_dispatch_point_actually_calls_the_gate(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_the_dispatch_point_actually_calls_the_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """#4543 was not a broken gate, it was an uncalled one.
 
     A test that only asserts on queue contents would pass again if someone
