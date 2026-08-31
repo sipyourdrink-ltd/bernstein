@@ -58,6 +58,7 @@ modules =
     bernstein.adapters.devin_terminal
     bernstein.adapters.droid
     bernstein.adapters.forge
+    bernstein.adapters.garak
     bernstein.adapters.gemini
     bernstein.adapters.generic
     bernstein.adapters.goose

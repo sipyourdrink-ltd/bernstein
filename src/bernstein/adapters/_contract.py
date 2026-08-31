@@ -744,6 +744,9 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "devin_terminal": AdapterStrategy(event_channel=EventChannel.POLL_PTY),
     "droid": AdapterStrategy(),
     "forge": AdapterStrategy(),
+    # garak runs a probe suite and its unit of work is the scan report, not a
+    # commit, so it declares ``artifact``: the run completes when the report
+    # lands and the commit check never fires for it.
     "garak": AdapterStrategy(output_mode=OutputMode.ARTIFACT),
     "generic": AdapterStrategy(),
     # Goose emits NDJSON under --output-format stream-json whose events carry
