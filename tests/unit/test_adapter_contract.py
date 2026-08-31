@@ -82,8 +82,13 @@ def _discover_registered_names() -> list[str]:
       passes) instead of silently remapping them onto the vendor default.
       Covered by ``test_adapter_muse.py``, which exercises spawn with the
       vendor model plus every refusal path.
+    - ``garak`` - spawn() requires a target of the form ``<type>:<name>``;
+      the contract test provides ``prompt="test prompt`` which does not
+      satisfy garak's target format.  Covered by ``tests/unit/test_adapter_garak.py``.
     """
-    return sorted(n for n in _ADAPTERS if n not in {"mock", "generic", "iac", "clm", "q_dev", "python_runtime", "muse"})
+    return sorted(
+        n for n in _ADAPTERS if n not in {"mock", "generic", "iac", "clm", "q_dev", "python_runtime", "muse", "garak"}
+    )
 
 
 def _make_factory(name: str) -> Any:
