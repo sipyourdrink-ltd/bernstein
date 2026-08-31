@@ -888,9 +888,7 @@ def _parse_ladder_step(role: str, index: int, raw: object) -> dict[str, str | in
     adapter = raw.get("adapter")
     if adapter is not None:
         if not isinstance(adapter, str) or not adapter.strip():
-            raise SeedError(
-                f"role_model_policy[{role!r}].ladder[{index}].adapter must be a non-empty string when set"
-            )
+            raise SeedError(f"role_model_policy[{role!r}].ladder[{index}].adapter must be a non-empty string when set")
         from bernstein.adapters.registry import selectable_adapter_names
 
         known = selectable_adapter_names()
@@ -905,16 +903,12 @@ def _parse_ladder_step(role: str, index: int, raw: object) -> dict[str, str | in
 
     max_attempts = raw.get("max_attempts", 1)
     if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or max_attempts < 1:
-        raise SeedError(
-            f"role_model_policy[{role!r}].ladder[{index}].max_attempts must be a positive integer"
-        )
+        raise SeedError(f"role_model_policy[{role!r}].ladder[{index}].max_attempts must be a positive integer")
     parsed["max_attempts"] = max_attempts
 
     unknown_keys = sorted(set(raw) - _LADDER_STEP_KEYS)
     if unknown_keys:
-        raise SeedError(
-            f"role_model_policy[{role!r}].ladder[{index}] has unknown keys: {', '.join(unknown_keys)}"
-        )
+        raise SeedError(f"role_model_policy[{role!r}].ladder[{index}] has unknown keys: {', '.join(unknown_keys)}")
     return parsed
 
 
@@ -1156,17 +1150,14 @@ def _parse_single_role_policy(
                 f"role_model_policy[{role!r}][{_ROLE_POLICY_FALLBACK_MODEL_KEY!r}] must be a non-empty string"
             )
         if "model" not in normalized:
-            raise SeedError(
-                f"role_model_policy[{role!r}]: fallback_model requires model to be set (two-step sugar)"
-            )
+            raise SeedError(f"role_model_policy[{role!r}]: fallback_model requires model to be set (two-step sugar)")
         normalized[_ROLE_POLICY_FALLBACK_MODEL_KEY] = raw_fallback.strip()
 
     raw_budget = settings.get(_ROLE_POLICY_ESCALATION_BUDGET_KEY)
     if raw_budget is not None:
         if isinstance(raw_budget, bool) or not isinstance(raw_budget, (int, float)) or float(raw_budget) < 0:
             raise SeedError(
-                f"role_model_policy[{role!r}][{_ROLE_POLICY_ESCALATION_BUDGET_KEY!r}] "
-                "must be a non-negative number"
+                f"role_model_policy[{role!r}][{_ROLE_POLICY_ESCALATION_BUDGET_KEY!r}] must be a non-negative number"
             )
         normalized[_ROLE_POLICY_ESCALATION_BUDGET_KEY] = float(raw_budget)
 
