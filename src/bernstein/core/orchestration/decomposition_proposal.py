@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any
 
 from bernstein.core.tasks.models import Task
 
@@ -84,7 +84,7 @@ class DecompositionProposal:
     @classmethod
     def from_task(
         cls, task: Task, failure_evidence: str
-    ) -> "DecompositionProposal":
+    ) -> DecompositionProposal:
         """Create a DecompositionProposal from a failed task and its evidence.
 
         Args:
