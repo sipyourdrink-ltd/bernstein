@@ -455,6 +455,68 @@ def test_verify_continuity_accepts_honored_fork(tmp_path: Path) -> None:
     assert result.downgrade_reason == ""
 
 
+def test_verify_continuity_null_downgrade_reason_projects_to_empty(tmp_path: Path) -> None:
+    """A resume receipt with JSON null downgrade_reason must project to ''.
+
+    The read shape ``str(resume_event.details.get("downgrade_reason", ""))``
+    converts JSON ``null`` to the four-character string ``"None"``, which is
+    truthy and renders a downgrade reason on a continuation that was never
+    downgraded.  This was discovered the hard way: #4879 briefly changed the
+    writer's no-downgrade sentinel from ``""`` to ``None``, and a clean
+    honored fork round-tripped to the literal ``'None'``.
+
+    The fix uses ``_project_recorded_str`` so that absent, null, and empty
+    are one outcome (the empty string) and any other value is used as
+    recorded.  This test proves the projection by injecting a resume receipt
+    whose ``downgrade_reason`` is JSON null and asserting the verifier
+    reports no downgrade reason.
+    """
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    park = park_task(
+        sdd_dir=sdd,
+        task_id="T-null",
+        adapter="claude",
+        session_id="s",
+        worktree_path=wt,
+        envelope="subscription",
+        reserved_usd=5.0,
+        spent_usd=0.0,
+        chain=chain,
+    )
+    resume = resume_task(
+        sdd_dir=sdd,
+        suspend_row=park.suspend_row,
+        new_worktree_path=wt,
+        chain=chain,
+        suspend_receipt_hash=park.suspend_receipt_hash,
+        requested_mode=RetryMode.FORK,
+    )
+    assert resume.decision.downgrade_reason == ""
+
+    # Inject JSON null into the resume receipt's downgrade_reason.
+    audit_files = sorted((tmp_path / "audit").glob("*.jsonl"))
+    for log in audit_files:
+        lines = log.read_text(encoding="utf-8").splitlines()
+        new_lines = []
+        for line in lines:
+            entry = json.loads(line)
+            if entry.get("event_type") == EVENT_TASK_RESUMED and entry.get("details", {}).get("task_id") == "T-null":
+                entry["details"]["downgrade_reason"] = None
+            new_lines.append(json.dumps(entry, sort_keys=True))
+        log.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+    # Reopen the chain so it picks up the tampered receipt.
+    reopened = AuditChainStore(tmp_path / "audit", key=_KEY)
+    result = verify_suspension_continuity(sdd_dir=sdd, task_id="T-null", chain=reopened)
+    # The projection must treat JSON null the same as absent/empty: no
+    # downgrade reason is rendered.  The chain itself is broken by the
+    # tamper, but the projection is what we are testing.
+    assert result.downgrade_reason == "", f"expected '', got {result.downgrade_reason!r}"
+    assert result.effective_mode == "fork"
+
+
 def test_mutating_suspend_row_fails_verification_at_that_index(tmp_path: Path) -> None:
     sdd = tmp_path / ".sdd"
     chain = _chain(tmp_path)
