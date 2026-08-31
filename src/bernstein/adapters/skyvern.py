@@ -10,17 +10,25 @@ set.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult
 from bernstein.adapters.computer_use import ComputerUseAdapter, ComputerUseDriverError, ComputerUseTerminalState
 from bernstein.adapters.env_isolation import build_filtered_env
+from bernstein.core.agents.computer_use import Action, ActionKind, digest_typed_value
+from bernstein.core.agents.computer_use_attestation import ComputerUseSession
+from bernstein.core.lineage.identity import AgentCard, generate_keypair
+from bernstein.core.lineage.signed_write import SignedLineageLog
+from bernstein.core.lineage.store import LineageStore
 from bernstein.core.models import ModelConfig
+from bernstein.core.persistence.cas_store import CASStore
+from bernstein.core.security.audit_chain import AuditChainStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -80,12 +88,43 @@ class SkyvernAdapter(ComputerUseAdapter):
         The adapter connects to the existing Skyvern HTTP server, posts the
         task, and returns immediately with the run id so the orchestrator
         can poll for completion.
+
+        The run is instrumented with per-action recording via the computer-use
+        attestation layer: each step the agent reports lands as an Observation
+        content-addressed at retrieval time, followed by the action receipt it
+        justifies, in that order. Artifacts (screenshots, recordings, downloaded
+        files) are hashed at retrieval and bound into the evidence set.
         """
         self.refuse_multimodal_if_needed(multimodal_context)
 
         profile_dir = self.prepare_isolation(workdir=workdir, session_id=session_id)
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Initialize the computer-use session for per-action recording.
+        cas = CASStore(workdir / ".sdd" / "computer-use" / session_id / "cas")
+        audit_chain = AuditChainStore(
+            audit_dir=workdir / ".sdd" / "computer-use" / session_id / "audit",
+            key=b"k" * 32,
+        )
+        lineage_store = LineageStore(workdir / ".sdd" / "computer-use" / session_id / "lineage")
+        priv_key, pub_key = generate_keypair()
+        agent_card = AgentCard(
+            agent_id=f"agent:skyvern-{session_id}",
+            kid="kid-skyvern",
+            public_key_pem=pub_key,
+        )
+        session = ComputerUseSession(
+            run_id=session_id,
+            worker_id=f"agent:skyvern-{session_id}",
+            worktree_id=session_id,
+            cas=cas,
+            audit_chain=audit_chain,
+            lineage_recorder=SignedLineageLog(lineage_store, operator_hmac_key=b"h" * 32),
+            agent_card=agent_card,
+            private_key_pem=priv_key,
+            run_byte_cap=64 * 1024 * 1024,  # 64 MiB per-run cap
+        )
 
         # Build the run task payload. Skyvern accepts at minimum a prompt
         # and optionally a target url.

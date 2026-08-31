@@ -186,7 +186,7 @@ def compute_action_anchor(*, prev_anchor: str, observation_hash: str, action: Ac
 #: Registry names of adapters that advertise computer-use capability. Kept as a
 #: frozenset mirroring ``_MULTIMODAL_ADAPTERS`` in
 #: :mod:`bernstein.core.agents.multimodal`.
-_COMPUTER_USE_ADAPTERS: frozenset[str] = frozenset({"computer_use"})
+_COMPUTER_USE_ADAPTERS: frozenset[str] = frozenset({"computer_use", "skyvern"})
 
 
 def is_computer_use_capable(adapter_name: str) -> bool:
