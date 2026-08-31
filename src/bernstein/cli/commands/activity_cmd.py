@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import importlib
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -519,4 +520,280 @@ def browser_verify_cmd(run: str, stage_id: str, workdir: str, as_json: bool) -> 
     raise SystemExit(0)
 
 
-__all__ = ["activity_group", "browser_group"]
+# ---------------------------------------------------------------------------
+# research activities
+# ---------------------------------------------------------------------------
+
+
+@activity_group.group("research")
+def research_group() -> None:
+    """Submit research activities: sourced reports with offline-resolvable citations.
+
+    \b
+    Examples:
+      bernstein activity research run --input research.json --run run-42
+      bernstein activity research run --input research.json --fetch-fn pkg.fetch --synthesise-fn pkg.synth --run run-42
+    """
+
+
+def _import_callable(ref: str) -> Any:
+    """Resolve a dotted ``module:attribute`` reference to a callable.
+
+    Args:
+        ref: A dotted import path of the form ``package.module:attr``.
+
+    Raises:
+        click.BadParameter: When the reference is malformed or does not resolve
+            to a callable.
+    """
+    if ":" not in ref:
+        raise click.BadParameter(f"expected 'module:attribute', got {ref!r}")
+    module_name, attr = ref.split(":", 1)
+    if not module_name or not attr:
+        raise click.BadParameter(f"expected 'module:attribute', got {ref!r}")
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError as exc:
+        raise click.BadParameter(f"cannot import {module_name!r}: {exc}") from exc
+    try:
+        value = getattr(module, attr)
+    except AttributeError as exc:
+        raise click.BadParameter(f"{ref!r} did not resolve to an attribute") from exc
+    if not callable(value):
+        raise click.BadParameter(f"{ref!r} did not resolve to a callable")
+    return value
+
+
+@research_group.command("run")
+@click.option(
+    "--input",
+    "input_path",
+    type=click.Path(dir_okay=False, exists=True),
+    required=True,
+    help="Research input JSON document.",
+)
+@click.option("--run", "run_id", required=True, help="Run the activity anchors into.")
+@click.option("--stage", "stage_id", default="research-0", show_default=True, help="Scheduler stage id.")
+@click.option(
+    "--fetch-fn",
+    "fetch_fn_ref",
+    default=None,
+    help="Dotted 'module:attr' resolving to fetch_fn (default: synthetic).",
+)
+@click.option(
+    "--synthesise-fn",
+    "synthesise_ref",
+    default=None,
+    help="Dotted 'module:attr' resolving to synthesise (default: synthetic).",
+)
+@click.option(
+    "--max-fetches",
+    "max_fetches",
+    type=int,
+    default=16,
+    show_default=True,
+    help="Cost cap: max number of source fetches.",
+)
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit machine-readable JSON.")
+def research_run_cmd(
+    input_path: str,
+    run_id: str,
+    stage_id: str,
+    fetch_fn_ref: str | None,
+    synthesise_ref: str | None,
+    max_fetches: int,
+    workdir: str,
+    as_json: bool,
+) -> None:
+    """Drive a research INPUT and anchor the result into RUN's journal.
+
+    Each fetched page is content-addressed at fetch time and folded into a Merkle
+    chain whose head is the run identity, then dispatched down the same path a
+    coding spawn uses. A claim that cites a source not actually fetched is
+    refused at the boundary before it reaches the journal. Exit codes:
+    0 = completed with every claim carrying citations, 2 = completed with
+    a failing claim, 3 = refused / failed / timed out.
+    """
+    from bernstein.core.orchestration.activity import ActivityRejected, TerminalState, dispatch_activity
+    from bernstein.core.orchestration.activity_modalities import ContentStore
+    from bernstein.core.orchestration.research_report import (
+        ClaimVerdict,
+        ResearchReportVerdict,
+        verify_research_report,
+    )
+    from bernstein.core.orchestration.research_worker import (
+        ClaimDraft,
+        FetchedSource,
+        ResearchBudget,
+        ResearchBudgetExceeded,
+        ResearchWorker,
+        SpanRef,
+    )
+    from bernstein.core.replay.journal import EventJournal
+
+    document = _load_json(Path(input_path), label="research input")
+    raw_queries = document.get("queries")
+    if not isinstance(raw_queries, list) or not raw_queries:
+        raise click.BadParameter("research input must carry a non-empty queries list")
+
+    fetch_fn: Any = None
+    if fetch_fn_ref is not None:
+        fetch_fn = _import_callable(fetch_fn_ref)
+    synthesise: Any = None
+    if synthesise_ref is not None:
+        synthesise = _import_callable(synthesise_ref)
+
+    queries: list[dict[str, str]] = []
+    for position, row in enumerate(raw_queries):
+        if not isinstance(row, dict):
+            raise click.BadParameter(f"query {position}: must be an object")
+        query = str(row.get("query", "")).strip()
+        if not query:
+            raise click.BadParameter(f"query {position}: must carry a non-empty 'query'")
+        ref = str(row.get("ref", ""))
+        queries.append({"query": query, "ref": ref})
+
+    root = Path(workdir).resolve()
+    sdd_dir = root / ".sdd"
+    cas_dir = sdd_dir / "cas"
+    store = ContentStore(cas_dir)
+
+    def default_fetch(source_ref: str) -> bytes:
+        # Synthesise deterministic stub content from the source ref so a run
+        # without an injected fetch_fn still produces content-addressed
+        # observations and a reproducible report.
+        return f"synthetic research source: {source_ref}".encode()
+
+    def default_synthesise(query: str, fetched: tuple[FetchedSource, ...]) -> list[ClaimDraft]:
+        # Emit one claim per fetched source so the default mode still produces
+        # a citation-lineage report, with the source ref as the quote so the
+        # span is bound to the content hash the worker just recorded.
+        drafts: list[ClaimDraft] = []
+        for index, source in enumerate(fetched, start=1):
+            drafts.append(
+                ClaimDraft(
+                    statement=f"Source {source.source_ref!r} supports query {query!r}.",
+                    spans=(SpanRef(source_ref=source.source_ref, quote=source.source_ref),),
+                    claim_id=f"c{index}",
+                )
+            )
+        return drafts
+
+    worker = ResearchWorker(
+        store=store,
+        budget=ResearchBudget(max_fetches=max_fetches),
+    )
+
+    last_outcome: tuple[Any, Any, list[Any]] | None = None
+    terminal_state = TerminalState.COMPLETED
+    reason_code = "ok"
+    refused_queries: list[dict[str, str]] = []
+    failed_queries: list[dict[str, str]] = []
+
+    for position, query_row in enumerate(queries):
+        query = query_row["query"]
+        ref = query_row["ref"]
+        candidate_sources = [ref] if ref else [f"query://{position}/{query}"]
+        try:
+            run = worker.run(
+                query=query,
+                sources=candidate_sources,
+                fetch_fn=fetch_fn if fetch_fn is not None else default_fetch,
+                synthesise=synthesise if synthesise is not None else default_synthesise,
+                summary=query,
+            )
+        except ResearchBudgetExceeded as exc:
+            refused_queries.append({"query": query, "ref": ref, "reason": str(exc)})
+            terminal_state = TerminalState.REFUSED
+            reason_code = "budget_exhausted"
+            continue
+        except ActivityRejected as exc:
+            failed_queries.append({"query": query, "ref": ref, "reason": str(exc)})
+            terminal_state = TerminalState.FAILED
+            reason_code = "claim_refused"
+            continue
+
+        dispatch_activity(
+            run.result,
+            stage_id=f"{stage_id}-{position}" if len(queries) > 1 else stage_id,
+            journal=EventJournal(run_id=run_id, sdd_dir=sdd_dir),
+        )
+        verdict: ResearchReportVerdict = verify_research_report(run.report, store=store)
+        verdict_map = {cv.claim_id: cv.ok for cv in verdict.claims}
+        failed_claims_list = [c.claim_id for c in run.report.claims if not verdict_map.get(c.claim_id, False)]
+        if failed_claims_list:
+            failed_claims_string = ",".join(str(c) for c in failed_claims_list)
+            failed_queries.append({"query": query, "ref": ref, "claims": failed_claims_string})
+            terminal_state = TerminalState.FAILED
+            reason_code = "claim_failed"
+        last_outcome = (run, verdict, failed_claims_list)
+
+    if last_outcome is None and not refused_queries and not failed_queries:
+        # No queries were processed at all -- treat as a refusal so the exit
+        # code communicates the boundary never crossed.
+        terminal_state = TerminalState.REFUSED
+        reason_code = "no_queries"
+
+    if as_json:
+        payload: dict[str, Any] = {
+            "run": run_id,
+            "stage_id": stage_id,
+            "terminal_state": terminal_state.value,
+            "reason_code": reason_code,
+            "queries": queries,
+            "refused_queries": refused_queries,
+            "failed_queries": failed_queries,
+        }
+        if last_outcome is not None:
+            run, verdict, failed_claims = last_outcome
+            payload.update(
+                {
+                    "query": run.plan.query,
+                    "artifact_hash": run.result.artifact_hash,
+                    "evidence_set_hash": run.result.evidence_set_hash,
+                    "fetched": [{"source_ref": s.source_ref, "content_hash": s.content_hash} for s in run.fetched],
+                    "claim_verdicts": [cv.to_dict() for cv in verdict.claims],
+                    "failed_claims": failed_claims,
+                }
+            )
+        console.print_json(json.dumps(payload))
+    else:
+        console.print()
+        console.print(f"[bold]Research activity[/bold] run={run_id} stage={stage_id}")
+        console.print(f"  terminal={terminal_state.value} reason={reason_code}")
+        if last_outcome is not None:
+            run, verdict, failed_claims = last_outcome
+            console.print(
+                f"  queries planned: {len(queries)}, sources fetched: {len(run.fetched)}, "
+                f"claims drafted: {len(run.report.claims)}"
+            )
+            for cv in verdict.claims:
+                cv_obj: ClaimVerdict = cv
+                tag = "[green]cite OK[/green]" if cv_obj.ok else "[red]cite FAIL[/red]"
+                detail = f" -- {cv_obj.reason}" if not cv_obj.ok and cv_obj.reason else ""
+                console.print(f"    {tag} claim={cv_obj.claim_id} ({cv_obj.citations_checked} checked){detail}")
+            for failed in failed_queries:
+                console.print(f"  [red]FAIL[/red] query={failed.get('query')!r} claims={failed.get('claims', [])}")
+            for refused in refused_queries:
+                console.print(f"  [red]REFUSED[/red] query={refused.get('query')!r} -- {refused.get('reason')}")
+        else:
+            for refused in refused_queries:
+                console.print(f"  [red]REFUSED[/red] query={refused.get('query')!r} -- {refused.get('reason')}")
+            for failed in failed_queries:
+                console.print(f"  [red]FAIL[/red] query={failed.get('query')!r} -- {failed.get('reason')}")
+
+    if terminal_state is not TerminalState.COMPLETED:
+        raise SystemExit(3)
+    failed_claims_out: list[Any] = last_outcome[2] if last_outcome is not None else []
+    raise SystemExit(2 if failed_claims_out else 0)
+
+
+__all__ = ["activity_group", "browser_group", "research_group"]

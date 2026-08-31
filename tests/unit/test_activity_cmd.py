@@ -186,3 +186,56 @@ def test_verify_fails_naming_claim_when_source_altered(project: Path) -> None:
     stage = payload["stages"][0]
     assert cited_hash in stage["reason"]
     assert any(not v["ok"] for v in stage["claim_verdicts"])
+
+
+def test_research_run_completes_with_default_fetch_synthesize(project: Path) -> None:
+    """Research run with default fetch and synthesize functions completes."""
+    run_id = "run-research-1"
+    input_path = project / "research_input.json"
+    input_path.write_text(
+        json.dumps({"queries": [{"query": "test query", "ref": "https://example.com/test"}]}),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        activity_group,
+        ["research", "run", "--input", str(input_path), "--run", run_id, "--workdir", str(project)],
+    )
+    assert result.exit_code == 0, result.output
+    assert run_id in result.output
+
+
+def test_research_run_json_output(project: Path) -> None:
+    """Research run with --json flag produces machine-readable output."""
+    run_id = "run-research-json"
+    input_path = project / "research_input.json"
+    input_path.write_text(
+        json.dumps({"queries": [{"query": "test query", "ref": "https://example.com/test"}]}),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        activity_group,
+        ["research", "run", "--input", str(input_path), "--run", run_id, "--json", "--workdir", str(project)],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["run"] == run_id
+    assert payload["terminal_state"] == "completed"
+    assert "fetched" in payload
+
+
+def test_research_run_fails_on_invalid_input(project: Path) -> None:
+    """Research run with invalid input fails appropriately."""
+    run_id = "run-research-fail"
+    input_path = project / "invalid_research.json"
+    input_path.write_text(
+        json.dumps({"queries": []}),  # Empty queries list should fail
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        activity_group,
+        ["research", "run", "--input", str(input_path), "--run", run_id, "--workdir", str(project)],
+    )
+    assert result.exit_code == 2  # BadParameter exit
