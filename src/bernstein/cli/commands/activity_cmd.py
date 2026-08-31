@@ -833,7 +833,7 @@ def ops_run_cmd(
     guaranteeing a replay recomputes the same plan hash from the same inputs.
     Exit codes: 0 = completed, 2 = completed with a failing side effect.
     """
-    from bernstein.core.orchestration.activity import ActivityRejected, TerminalState, dispatch_activity
+    from bernstein.core.orchestration.activity import dispatch_activity
     from bernstein.core.orchestration.activity_modalities import ContentStore, OpsActivity, verify_data_ops_receipt
     from bernstein.core.replay.journal import EventJournal
 
@@ -1022,4 +1022,236 @@ def ops_verify_cmd(run: str, stage_id: str, workdir: str, as_json: bool) -> None
     raise SystemExit(0)
 
 
-__all__ = ["activity_group", "browser_group", "ops_group", "research_group"]
+# ---------------------------------------------------------------------------
+# data activities
+# ---------------------------------------------------------------------------
+
+
+@activity_group.group("data")
+def data_group() -> None:
+    """Submit and inspect data activities: deterministic transform plans over signed I/O.
+
+    \\b
+    Examples:
+      bernstein activity data run --input input.json --run run-42 --stage data-0
+      bernstein activity data verify run-42 --stage data-0
+    """
+
+
+@data_group.command("run")
+@click.option(
+    "--input",
+    "input_path",
+    type=click.Path(dir_okay=False, exists=True),
+    required=True,
+    help="Data input JSON document.",
+)
+@click.option("--run", "run_id", required=True, help="Run the activity anchors into.")
+@click.option("--stage", "stage_id", default="data-0", show_default=True, help="Scheduler stage id.")
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit machine-readable JSON.")
+def data_run_cmd(
+    input_path: str,
+    run_id: str,
+    stage_id: str,
+    workdir: str,
+    as_json: bool,
+) -> None:
+    """Drive a data INPUT and anchor the signed receipt into RUN's journal.
+
+    Each input and output is content-addressed and Ed25519-signed with the
+    install key. The deterministic plan is derived from the signed inputs,
+    guaranteeing a replay recomputes the same plan hash from the same inputs.
+    Exit codes: 0 = completed, 2 = completed with a failing side effect.
+    """
+    from bernstein.core.orchestration.activity import dispatch_activity
+    from bernstein.core.orchestration.activity_modalities import ContentStore, DataActivity, verify_data_ops_receipt
+    from bernstein.core.replay.journal import EventJournal
+
+    document = _load_json(Path(input_path), label="data input")
+
+    root = Path(workdir).resolve()
+    sdd_dir = root / ".sdd"
+    cas_dir = sdd_dir / "cas"
+    store = ContentStore(cas_dir)
+
+    inputs = document.get("inputs", [])
+    if not isinstance(inputs, list):
+        raise click.BadParameter("data input must carry a non-empty inputs list")
+
+    private_key_pem = document.get("private_key_pem", "")
+    public_key_pem = document.get("public_key_pem", "")
+    if not private_key_pem or not public_key_pem:
+        raise click.BadParameter("data input must carry both private_key_pem and public_key_pem")
+
+    activity = DataActivity(
+        store=store,
+        private_key_pem=private_key_pem,
+        public_key_pem=public_key_pem,
+    )
+
+    for position, row in enumerate(inputs):
+        if not isinstance(row, dict):
+            raise click.BadParameter(f"input {position}: must be an object")
+        ref = str(row.get("ref", "")).strip()
+        content_b64 = str(row.get("content_b64", "")).strip()
+        if not ref:
+            raise click.BadParameter(f"input {position}: must carry a non-empty 'ref'")
+        if not content_b64:
+            raise click.BadParameter(f"input {position}: must carry a non-empty 'content_b64'")
+
+        try:
+            content = base64.b64decode(content_b64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise click.BadParameter(f"input {position}: content_b64 is not valid base64: {exc}") from exc
+
+        activity.add_input(ref=ref, content=content)
+
+    steps = document.get("steps", [])
+    if not isinstance(steps, list):
+        raise click.BadParameter("data input steps must be a list")
+    activity.plan(steps)
+
+    outputs = document.get("outputs", [])
+    if isinstance(outputs, list):
+        for position, row in enumerate(outputs):
+            if not isinstance(row, dict):
+                raise click.BadParameter(f"output {position}: must be an object")
+            ref = str(row.get("ref", "")).strip()
+            content_b64 = str(row.get("content_b64", "")).strip()
+            if not ref:
+                raise click.BadParameter(f"output {position}: must carry a non-empty 'ref'")
+            if not content_b64:
+                raise click.BadParameter(f"output {position}: must carry a non-empty 'content_b64'")
+
+            try:
+                content = base64.b64decode(content_b64, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise click.BadParameter(f"output {position}: content_b64 is not valid base64: {exc}") from exc
+
+            activity.add_output(ref=ref, content=content)
+
+    result = activity.finish()
+    from bernstein.core.orchestration.activity_modalities import DataOpsReceipt
+
+    verdict = verify_data_ops_receipt(DataOpsReceipt.from_dict(result.artifact), store=store)
+
+    dispatch_activity(result, stage_id=stage_id, journal=EventJournal(run_id=run_id, sdd_dir=sdd_dir))
+
+    if as_json:
+        console.print_json(
+            json.dumps(
+                {
+                    "run": run_id,
+                    "stage_id": stage_id,
+                    "terminal_state": result.terminal_state.value,
+                    "reason_code": result.reason_code,
+                    "artifact_hash": result.artifact_hash,
+                    "evidence_set_hash": result.evidence_set_hash,
+                    "verified": verdict.ok,
+                    "signatures_ok": verdict.signatures_ok,
+                    "plan_ok": verdict.plan_ok,
+                    "inputs": [{"ref": i.ref, "content_hash": i.content_hash} for i in activity._inputs],
+                    "outputs": [{"ref": o.ref, "content_hash": o.content_hash} for o in activity._outputs],
+                }
+            )
+        )
+    else:
+        console.print()
+        console.print(f"[bold]Data activity[/bold] run={run_id} stage={stage_id}")
+        console.print(f"  terminal={result.terminal_state.value} reason={result.reason_code}")
+        console.print(f"  artifact hash: {result.artifact_hash}")
+        console.print(f"  inputs: {len(activity._inputs)}, outputs: {len(activity._outputs)}")
+        if verdict.ok:
+            console.print("[green]completed[/green] -- plan and signatures verified.")
+
+    raise SystemExit(0 if verdict.ok else 2)
+
+
+@data_group.command("verify")
+@click.argument("run")
+@click.option("--stage", "stage_id", default="", help="Verify only this stage id.")
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit machine-readable JSON.")
+def data_verify_cmd(run: str, stage_id: str, workdir: str, as_json: bool) -> None:
+    """Replay RUN's data activities offline and recompute every verdict.
+
+    Reattaches each signed input/output evidence bytes from the content store,
+    recomputes the anchor chain from genesis, and re-evaluates the signed receipt
+    and signatures -- so a tampered input fails naming the ref and a forged
+    receipt fails signature verification. Exit codes: 0 = verified, 1 = no run /
+    no data activity, 2 = mismatch (tamper).
+    """
+    from bernstein.core.orchestration.activity import ActivityKind
+    from bernstein.core.orchestration.activity_modalities import (
+        ContentStore,
+        verify_run_activities,
+    )
+
+    root = Path(workdir).resolve()
+    sdd_dir = root / ".sdd"
+    cas_dir = sdd_dir / "cas"
+    store = ContentStore(cas_dir) if cas_dir.exists() else None
+
+    result = verify_run_activities(sdd_dir, run_id=run, store=store)
+    stages = [
+        s for s in result.stages if s.kind == ActivityKind.DATA.value and (not stage_id or s.stage_id == stage_id)
+    ]
+
+    if as_json:
+        console.print_json(
+            json.dumps(
+                {
+                    "run": result.run_id,
+                    "found": bool(stages),
+                    "ok": bool(stages) and result.chain_ok and all(s.ok for s in stages),
+                    "chain_ok": result.chain_ok,
+                    "stages": [
+                        {
+                            "stage_id": s.stage_id,
+                            "ok": s.ok,
+                            "reason": s.reason,
+                            "evidence_reattached": s.evidence_reattached,
+                            "signed_receipt_verified": s.signed_receipt_verified,
+                        }
+                        for s in stages
+                    ],
+                }
+            )
+        )
+    else:
+        console.print()
+        console.print(f"[bold]Data activity verify[/bold] run={result.run_id}")
+        if not stages:
+            console.print("[yellow]NO DATA ACTIVITY[/yellow] -- no anchored data stage in this run.")
+        for stage in stages:
+            tag = "[green]OK[/green]" if stage.ok else "[red]MISMATCH[/red]"
+            detail = "" if stage.ok else f" -- {stage.reason}"
+            console.print(f"  {tag} {stage.stage_id}{detail}")
+            if stage.evidence_reattached:
+                console.print(f"    evidence reattached: {stage.stage_id}")
+            if stage.signed_receipt_verified:
+                console.print(f"    signed receipt verified: {stage.stage_id}")
+
+    if not stages:
+        raise SystemExit(1)
+    if not (result.chain_ok and all(s.ok for s in stages)):
+        raise SystemExit(2)
+    raise SystemExit(0)
+
+
+__all__ = ["activity_group", "browser_group", "data_group", "ops_group", "research_group"]
