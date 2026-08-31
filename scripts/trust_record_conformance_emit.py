@@ -28,15 +28,14 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest import mock
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from bernstein.core.observability.trust_record import TrustRecordEmitter
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "src"))
+
+from bernstein.core.observability.trust_record import TrustRecordEmitter  # noqa: E402
 
 #: Deterministic constants -- never reused outside this fixture script.
 _SIGN_SEED = b"k" * 32
