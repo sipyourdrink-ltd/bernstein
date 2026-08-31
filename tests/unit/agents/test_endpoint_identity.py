@@ -81,9 +81,7 @@ def _build_spawner(
 
 
 class TestFreshSpawnEndpointIdentity:
-    def test_spawn_records_adapter_model_base_url_profile_name(
-        self, tmp_path: Path, make_task: Any
-    ) -> None:
+    def test_spawn_records_adapter_model_base_url_profile_name(self, tmp_path: Path, make_task: Any) -> None:
         """A fresh spawn stamps adapter name, model, base_url, and profile_name."""
         adapter = _SamplingCapableAdapter("MockCLI")
         spawner = _build_spawner(
@@ -107,9 +105,7 @@ class TestFreshSpawnEndpointIdentity:
 
 
 class TestResumeEndpointIdentity:
-    def test_resume_records_endpoint_identity(
-        self, tmp_path: Path, make_task: Any
-    ) -> None:
+    def test_resume_records_endpoint_identity(self, tmp_path: Path, make_task: Any) -> None:
         """spawn_for_resume stamps the same four fields as a fresh spawn."""
         adapter = _SamplingCapableAdapter("MockCLI")
         spawner = _build_spawner(
@@ -136,9 +132,7 @@ class TestResumeEndpointIdentity:
 
 
 class TestPerRoleOverride:
-    def test_per_role_override(
-        self, tmp_path: Path, make_task: Any
-    ) -> None:
+    def test_per_role_override(self, tmp_path: Path, make_task: Any) -> None:
         """A per-role base_url in role_policy is reflected in endpoint_base_url."""
         adapter = _SamplingCapableAdapter("MockCLI")
         spawner = _build_spawner(
@@ -161,9 +155,7 @@ class TestPerRoleOverride:
 
 
 class TestDefaultNoOverride:
-    def test_profile_default_no_override(
-        self, tmp_path: Path, make_task: Any
-    ) -> None:
+    def test_profile_default_no_override(self, tmp_path: Path, make_task: Any) -> None:
         """When no per-role override is configured, endpoint_base_url is empty."""
         adapter = _SamplingCapableAdapter("MockCLI")
         spawner = _build_spawner(tmp_path, adapter, role_model_policy={})
@@ -175,9 +167,7 @@ class TestDefaultNoOverride:
         assert session.endpoint_base_url == ""
         assert session.endpoint_profile_name == ""
 
-    def test_resume_default_no_override(
-        self, tmp_path: Path, make_task: Any
-    ) -> None:
+    def test_resume_default_no_override(self, tmp_path: Path, make_task: Any) -> None:
         """spawn_for_resume with no role override leaves endpoint_base_url empty."""
         adapter = _SamplingCapableAdapter("MockCLI")
         spawner = _build_spawner(tmp_path, adapter, role_model_policy={})
@@ -194,9 +184,7 @@ class TestDefaultNoOverride:
 
 
 class TestWorkflowAgentNodePath:
-    def test_workflow_agent_node_records_endpoint_identity(
-        self, tmp_path: Path, make_task: Any
-    ) -> None:
+    def test_workflow_agent_node_records_endpoint_identity(self, tmp_path: Path, make_task: Any) -> None:
         """The agent-typed workflow node path (via spawn_for_tasks) records identity.
 
         Workflow agent nodes build a Task from the node's role/prompt and call
