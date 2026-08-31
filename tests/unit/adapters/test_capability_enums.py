@@ -113,15 +113,21 @@ def test_only_the_computer_use_family_declares_artifact_output_mode() -> None:
 
     ``computer_use`` fronts an external agent whose unit of work is the
     signed per-action record, not a commit (#3110), so it declares
-    ``artifact``. Every coding adapter keeps ``git-diff`` - growing this set
-    is a deliberate act, not a default drift.
+    ``artifact``. ``holmesgpt`` is a read-only investigation CLI whose unit
+    of work is the conclusion artifact, not a commit (#3123), so it also
+    declares ``artifact``. Every coding adapter keeps ``git-diff`` - growing
+    this set is a deliberate act, not a default drift.
     """
     non_git_diff = {name for name, s in STRATEGY_MATRIX.items() if s.output_mode is not OutputMode.GIT_DIFF}
-    assert non_git_diff == {"computer_use"}
+    assert non_git_diff == {"computer_use", "holmesgpt"}
 
 
 def test_computer_use_declares_artifact_output_mode() -> None:
     assert strategy_for("computer_use").output_mode is OutputMode.ARTIFACT
+
+
+def test_holmesgpt_declares_artifact_output_mode() -> None:
+    assert strategy_for("holmesgpt").output_mode is OutputMode.ARTIFACT
 
 
 def test_output_mode_is_a_closed_two_value_axis() -> None:

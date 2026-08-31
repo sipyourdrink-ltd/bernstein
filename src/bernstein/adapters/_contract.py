@@ -761,6 +761,17 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     # it unsupported reads as "cannot be driven unattended", which understates
     # what an operator is authorising when they select this adapter.
     "hermes": AdapterStrategy(dangerous_mode=DangerousModeStrategy.ALWAYS_ON),
+    # HolmesGPT is a read-only investigation CLI. It has no native resume,
+    # runs non-interactively with --no-interactive, and emits lifecycle
+    # signals as a JSON output file rather than a structured stream. Its
+    # unit of work is the investigation artifact (conclusion + observations),
+    # not a commit, so completion is the signed lineage receipt.
+    "holmesgpt": AdapterStrategy(
+        resume=ResumeStrategy.UNSUPPORTED,
+        dangerous_mode=DangerousModeStrategy.UNSUPPORTED,
+        event_channel=EventChannel.TEXT_SIGNALS,
+        output_mode=OutputMode.ARTIFACT,
+    ),
     "iac": AdapterStrategy(),
     "junie": AdapterStrategy(),
     # Kilo documents native ACP support; it declares the ACP event channel so

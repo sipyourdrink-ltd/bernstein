@@ -38,6 +38,7 @@ from bernstein.adapters.generic import GenericAdapter
 from bernstein.adapters.goose import GooseAdapter
 from bernstein.adapters.gptme import GptmeAdapter
 from bernstein.adapters.hermes import HermesAdapter
+from bernstein.adapters.holmesgpt import HolmesGPTAdapter
 from bernstein.adapters.iac import IaCAdapter
 from bernstein.adapters.junie import JunieAdapter
 from bernstein.adapters.kilo import KiloAdapter
@@ -118,6 +119,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "goose": GooseAdapter,
     "gptme": GptmeAdapter,
     "hermes": HermesAdapter,
+    "holmesgpt": HolmesGPTAdapter,
     "iac": IaCAdapter,
     "junie": JunieAdapter,
     "kilo": KiloAdapter,
