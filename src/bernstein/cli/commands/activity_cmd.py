@@ -807,7 +807,13 @@ def research_run_cmd(
 
 
 @ops_group.command("run")
-@click.option("--input", "input_path", type=click.Path(dir_okay=False, exists=True), required=True, help="Ops input JSON document.")
+@click.option(
+    "--input",
+    "input_path",
+    type=click.Path(dir_okay=False, exists=True),
+    required=True,
+    help="Ops input JSON document.",
+)
 @click.option("--run", "run_id", required=True, help="Run the activity anchors into.")
 @click.option("--stage", "stage_id", default="ops-0", show_default=True, help="Scheduler stage id.")
 @click.option(
