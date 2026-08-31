@@ -111,6 +111,7 @@ def _ensure_task_enum(value: str, field_name: str) -> str:
         raise ValueError(f"{field_name} must be one of: {valid}") from None
     return value
 
+
 def _ensure_relative_owned_files(value: list[str]) -> list[str]:
     """Reject ``owned_files`` entries that do not name a path under a workdir.
 

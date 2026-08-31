@@ -323,7 +323,7 @@ def merge_with_conflict_detection(
                     from bernstein.core.security.audit import AuditLog
 
                     sdd_dir = _Path(worktree_root).parent.parent
-                    audit_log = AuditLog.load_from_file(str(sdd_dir / "runtime" / "audit.log")) # type: ignore[attr-defined]  # runtime method
+                    audit_log = AuditLog.load_from_file(str(sdd_dir / "runtime" / "audit.log"))  # type: ignore[attr-defined]  # runtime method
                     chain = AuditChainStore(audit_log)
                     receipt = refuse_read_set(
                         chain=chain,
@@ -331,7 +331,7 @@ def merge_with_conflict_detection(
                         task_id=task_id,
                         base_commit=base_commit,
                         target_branch=branch,
-                        changed_paths=changed_paths, # type: ignore[arg-type]  # structural match
+                        changed_paths=changed_paths,  # type: ignore[arg-type]  # structural match
                         private_key_pem="",
                         public_key_pem="",
                     )
