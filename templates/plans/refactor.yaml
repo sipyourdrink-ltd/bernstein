@@ -4,7 +4,7 @@
 # Tests-first ensures regressions are caught before the refactor ships.
 #
 # Usage:
-#   cp plans/templates/refactor.yaml plans/my-refactor.yaml
+#   bernstein templates use refactor plans/my-refactor.yaml
 #   # Edit name, description, and step details
 #   bernstein run plans/my-refactor.yaml
 
