@@ -1,0 +1,14 @@
+id: inc-550591ab9333
+severity: P2
+source_incident: "dlq:a417f27284b64daf"
+owner: backend
+created_at: 1788206857.659
+expected_outcome: "Agent should complete the task; flake-tolerant retry is acceptable. (root cause: max_retries_exceeded)"
+tags:
+  - max_retries_exceeded
+prompt: |
+  Reproduce and resolve the following terminal failure (role=backend).
+  Task: test
+  Failure reason: max_retries_exceeded
+  Last error (trimmed):
+  Transport failure: agent backend-b17235ba exited cleanly after 15.2s having consumed 0 tokens -- it never reached the model, so the task was never attempted
