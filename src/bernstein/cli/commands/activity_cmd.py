@@ -238,7 +238,7 @@ def _parse_flow(
         try:
             kind = ActionKind(str(raw_action.get("kind", "")))
         except ValueError as exc:
-            raise click.BadParameter(f"step {position}: unknown action kind {raw_action.get("kind")!r}") from exc
+            raise click.BadParameter(f"step {position}: unknown action kind {raw_action.get('kind')!r}") from exc
         steps.append(
             Step(
                 action=Action(
@@ -609,7 +609,7 @@ def research_run_cmd(
     """
     from bernstein.core.orchestration.activity import ActivityRejected, TerminalState, dispatch_activity
     from bernstein.core.orchestration.activity_modalities import ContentStore
-    from bernstein.core.orchestration.gpt_researcher import GptResearcherUnavailableError, GptResearcherSynthesiser
+    from bernstein.core.orchestration.gpt_researcher import GptResearcherSynthesiser, GptResearcherUnavailableError
     from bernstein.core.orchestration.rendering_fetcher import make_rendering_fetcher
     from bernstein.core.orchestration.research_worker import (
         ResearchBudgetExceeded,
@@ -695,7 +695,7 @@ def research_run_cmd(
         for claim in run.report.claims:
             console.print(f"  claim={claim.claim_id}: {claim.statement}")
             for citation in claim.citations:
-                console.print(f"    -> [{citation.source_ref}] \"{citation.quote}\"")
+                console.print(f'    -> [{citation.source_ref}] "{citation.quote}"')
         if run.result.terminal_state is TerminalState.COMPLETED:
             console.print("[green]completed[/green] -- research report assembled and anchored.")
 

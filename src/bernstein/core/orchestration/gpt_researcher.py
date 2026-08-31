@@ -46,8 +46,8 @@ if TYPE_CHECKING:
     )
 
 __all__ = [
-    "GptResearcherUnavailableError",
     "GptResearcherSynthesiser",
+    "GptResearcherUnavailableError",
 ]
 
 

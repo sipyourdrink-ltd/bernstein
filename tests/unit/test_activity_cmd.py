@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -21,7 +21,6 @@ from bernstein.core.orchestration.activity_modalities import ContentStore, Resea
 from bernstein.core.orchestration.research_worker import (
     ClaimDraft,
     ResearchBudget,
-    ResearchRunResult,
     ResearchWorker,
     SpanRef,
 )
@@ -259,12 +258,18 @@ def test_research_run_handles_budget_options(project: Path) -> None:
     result = CliRunner().invoke(
         activity_group,
         [
-            "research", "run",
-            "--query", "What is AI?",
-            "--sources", "https://example.com",
-            "--run", "test-run",
-            "--budget-max-fetches", "5",
-            "--budget-max-cost", "10.0",
+            "research",
+            "run",
+            "--query",
+            "What is AI?",
+            "--sources",
+            "https://example.com",
+            "--run",
+            "test-run",
+            "--budget-max-fetches",
+            "5",
+            "--budget-max-cost",
+            "10.0",
         ],
     )
     # Should fail due to missing gpt-researcher, not budget parsing
@@ -279,11 +284,16 @@ def test_research_run_refuses_on_unavailable_gpt_researcher(project: Path) -> No
         result = CliRunner().invoke(
             activity_group,
             [
-                "research", "run",
-                "--query", "What is AI?",
-                "--sources", "https://example.com",
-                "--run", "test-run",
-                "--workdir", str(project),
+                "research",
+                "run",
+                "--query",
+                "What is AI?",
+                "--sources",
+                "https://example.com",
+                "--run",
+                "test-run",
+                "--workdir",
+                str(project),
             ],
         )
         # Should fail with module not found or unavailable error
@@ -298,4 +308,3 @@ def test_research_run_command_json_output(project: Path) -> None:
         ["research", "run", "--help"],
     )
     assert "--json" in result.output
-
