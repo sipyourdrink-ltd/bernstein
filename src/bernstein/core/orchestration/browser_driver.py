@@ -35,7 +35,6 @@ them onto the closed
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import shutil
 from contextlib import ExitStack, suppress
@@ -962,7 +961,7 @@ def desktop_sandbox_driver(*, profile_dir: Path) -> DesktopSandboxDriver:
     if factory is None:
         raise BrowserDriverUnavailable(driver_name="desktop_sandbox", extra=BROWSER_EXTRA)
     sandbox_manager = factory()
-    return DesktopSandboxDriver(profile_dir, sandbox_manager)
+    return DesktopSandboxDriver(sandbox_allocator=sandbox_manager, profile_dir=profile_dir)
 
 
 def record_tape_from_driver(
