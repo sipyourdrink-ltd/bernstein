@@ -879,6 +879,7 @@ def ops_run_cmd(
             raise click.BadParameter(f"input {position}: must carry a non-empty 'content_b64'")
 
         import base64
+
         try:
             content = base64.b64decode(content_b64, validate=True)
         except (binascii.Error, ValueError) as exc:
@@ -906,6 +907,7 @@ def ops_run_cmd(
                 raise click.BadParameter(f"output {position}: must carry a non-empty 'content_b64'")
 
             import base64
+
             try:
                 content = base64.b64decode(content_b64, validate=True)
             except (binascii.Error, ValueError) as exc:
@@ -915,6 +917,7 @@ def ops_run_cmd(
 
     result = activity.finish()
     from bernstein.core.orchestration.activity_modalities import DataOpsReceipt
+
     verdict = verify_data_ops_receipt(DataOpsReceipt.from_dict(result.artifact), store=store)
 
     dispatch_activity(result, stage_id=stage_id, journal=EventJournal(run_id=run_id, sdd_dir=sdd_dir))
@@ -982,9 +985,7 @@ def ops_verify_cmd(run: str, stage_id: str, workdir: str, as_json: bool) -> None
     store = ContentStore(cas_dir) if cas_dir.exists() else None
 
     result = verify_run_activities(sdd_dir, run_id=run, store=store)
-    stages = [
-        s for s in result.stages if s.kind == ActivityKind.OPS.value and (not stage_id or s.stage_id == stage_id)
-    ]
+    stages = [s for s in result.stages if s.kind == ActivityKind.OPS.value and (not stage_id or s.stage_id == stage_id)]
 
     if as_json:
         console.print_json(

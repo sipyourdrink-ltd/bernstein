@@ -735,9 +735,7 @@ def validate_dag(dag: WorkflowDAG) -> ValidationResult:
     # Check activity kinds.
     for node in dag.nodes:
         if node.activity_kind is not None and not isinstance(node.activity_kind, ActivityKind):
-            result.errors.append(
-                f"Node {node.id!r} has invalid activity_kind: {node.activity_kind!r}"
-            )
+            result.errors.append(f"Node {node.id!r} has invalid activity_kind: {node.activity_kind!r}")
 
     node_map = dag.node_map
     phase_index = {name: i for i, name in enumerate(phase_names)}
