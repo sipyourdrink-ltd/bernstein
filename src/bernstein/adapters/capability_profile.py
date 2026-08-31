@@ -720,6 +720,8 @@ def route_and_record(
     profiles: Iterable[AdapterCapabilityProfile] | None = None,
     audit_chain: Any | None = None,
     run_id: str = "",
+    tier_decision: dict[str, Any] | None = None,
+    task_id: str = "",
 ) -> AdapterCapabilityProfile:
     """Select an adapter for a task and anchor the decision in the audit chain.
 
@@ -737,6 +739,9 @@ def route_and_record(
       HMAC chain *before* the :class:`CapabilityMismatchError` propagates, so
       the refusal is a signed record rather than a silent fallback to a weaker
       adapter.
+    * When ``tier_decision`` is supplied (opt-in ``tier_models`` path, #4854),
+      the tier + feature digest are recorded on the same seam immediately
+      after the capability selection event.
 
     Recording is opt-in: when ``audit_chain`` is ``None`` the function selects
     (or refuses) exactly as :func:`select_profile_for` does, without touching a
@@ -754,6 +759,11 @@ def route_and_record(
             module-level dependency on :mod:`bernstein.core.security`.
         run_id: The run the routing decision is made for, recorded on the
             anchored event.
+        tier_decision: Optional precomputed :meth:`TierDecision.to_record`
+            payload from :mod:`bernstein.core.routing.task_tier`. Passed in
+            already-computed so this module never imports the classifier
+            (import-linter forbids ``adapters`` → ``core.routing``).
+        task_id: Task id recorded with ``tier_decision`` when present.
 
     Returns:
         The first profile satisfying ``requirements``.
@@ -779,7 +789,10 @@ def route_and_record(
             )
         raise
     if audit_chain is not None:
-        from bernstein.core.security.audit_chain import record_capability_selection
+        from bernstein.core.security.audit_chain import (
+            record_capability_selection,
+            record_task_tier_decision,
+        )
 
         record_capability_selection(
             chain=audit_chain,
@@ -788,6 +801,17 @@ def route_and_record(
             profile_hash=selected.profile_hash,
             requirements=requirements.to_canonical_dict(),
         )
+        if tier_decision is not None:
+            record_task_tier_decision(
+                chain=audit_chain,
+                run_id=run_id,
+                task_id=task_id or run_id,
+                tier=str(tier_decision.get("tier", "")),
+                tier_policy_version=int(tier_decision.get("tier_policy_version", 0)),
+                feature_digest=str(tier_decision.get("feature_digest", "")),
+                features=dict(tier_decision.get("features") or {}),
+                score=int(tier_decision.get("score", 0)),
+            )
     return selected
 
 

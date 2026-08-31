@@ -452,6 +452,13 @@ EVENT_ADAPTER_ADMISSION_RECEIPT = "adapter.admission_receipt"
 #: named by the adapter rather than as unexplained behaviour change.
 EVENT_ADAPTER_CAPABILITY_SELECTION = "adapter.capability_selection"
 
+#: Issue #4854 -- emitted when an opt-in ``tier_models`` mapping selects a
+#: model from a pure task-tier classification. Records the tier, policy
+#: version, and feature-vector digest so replay recomputes the decision and
+#: names a changed ``tier_policy_version`` as a divergence. The reserved
+#: ``error`` marker is recorded when the classifier raises at the call site.
+EVENT_TASK_TIER_DECISION = "task.tier_decision"
+
 #: Issue #2663 -- emitted when capability-aware routing refuses a task because
 #: no candidate adapter's declared profile satisfied its requirements. The event
 #: anchors the content-addressed refusal receipt (its hash, the unmet axes, and
@@ -4987,6 +4994,57 @@ def record_capability_selection(
     )
 
 
+def record_task_tier_decision(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    task_id: str,
+    tier: str,
+    tier_policy_version: int,
+    feature_digest: str,
+    features: dict[str, Any],
+    score: int,
+    actor: str = "task_tier",
+) -> AuditEvent:
+    """Append a ``task.tier_decision`` event into *chain* (#4854).
+
+    Anchors one opt-in task-tier classification at the same dispatch seam as
+    :func:`record_capability_selection`: the tier, the policy version, and a
+    digest of the ordered feature vector. Replay recomputes the classification
+    under the current policy and names a version bump as
+    ``tier_policy_version diverged`` rather than a silent model change.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run the decision was made for.
+        task_id: Task whose artefacts fed the classifier.
+        tier: Closed-set tier or the reserved ``error`` marker.
+        tier_policy_version: Classifier policy version recorded at decision time.
+        feature_digest: SHA-256 hex of the ordered feature vector + version.
+        features: Ordered feature map (names → ints).
+        score: Scalar score that selected the band.
+        actor: Recorded actor; defaults to ``"task_tier"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_TASK_TIER_DECISION,
+        actor=actor,
+        resource_type="task_tier_decision",
+        resource_id=task_id,
+        details={
+            "run_id": run_id,
+            "task_id": task_id,
+            "tier": tier,
+            "tier_policy_version": tier_policy_version,
+            "feature_digest": feature_digest,
+            "features": dict(sorted(features.items())),
+            "score": score,
+        },
+    )
+
+
 def record_capability_refusal(
     *,
     chain: AuditChainStore,
@@ -8745,6 +8803,7 @@ __all__ = [
     "EVENT_ADAPTER_CANARY_RECEIPT",
     "EVENT_ADAPTER_CAPABILITY_REFUSAL",
     "EVENT_ADAPTER_CAPABILITY_SELECTION",
+    "EVENT_TASK_TIER_DECISION",
     "EVENT_ADAPTER_FLOOR_UPDATE",
     "EVENT_ADAPTER_SPAWN_PREFLIGHT",
     "EVENT_ADAPTER_VERSION_POSTURE",
@@ -8907,6 +8966,7 @@ __all__ = [
     "record_capability_delta",
     "record_capability_refusal",
     "record_capability_selection",
+    "record_task_tier_decision",
     "record_checkpoint_retry",
     "record_claim_journal_receipt",
     "record_clean_run_attestation",
