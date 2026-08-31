@@ -342,6 +342,19 @@ The added PR-time jobs target ≤8 min wall-clock each and run in
 parallel after the lint job clears (so a typo PR fails fast in <2
 min without burning compute on the heavy stack).
 
+## Collect-empty test modules
+
+A `test_*.py` (or `*_test.py`) whose body was emptied still collects cleanly
+and exits 0, so a shrinking suite looks green. Repo hygiene runs
+`scripts/check_empty_test_modules.py` to fail those modules. Scope is by
+**naming convention** (pytest's `python_files`), not a helper allowlist:
+`conftest.py`, `__init__.py`, and shared helpers are out of scope
+automatically. See issue #4834.
+
+```
+uv run python scripts/check_empty_test_modules.py
+```
+
 ## Sharded unit suite
 
 `scripts/run_tests.py` runs each `tests/unit/test_*.py` file in its own
