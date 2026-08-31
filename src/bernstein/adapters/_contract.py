@@ -744,6 +744,7 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "devin_terminal": AdapterStrategy(event_channel=EventChannel.POLL_PTY),
     "droid": AdapterStrategy(),
     "forge": AdapterStrategy(),
+    "garak": AdapterStrategy(output_mode=OutputMode.ARTIFACT),
     "generic": AdapterStrategy(),
     # Goose emits NDJSON under --output-format stream-json whose events carry
     # tokens/cost_usd and an error event (the authoritative failure signal;
