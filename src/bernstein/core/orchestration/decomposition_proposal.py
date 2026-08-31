@@ -82,9 +82,7 @@ class DecompositionProposal:
         return content_hash(self.canonical_bytes())
 
     @classmethod
-    def from_task(
-        cls, task: Task, failure_evidence: str
-    ) -> DecompositionProposal:
+    def from_task(cls, task: Task, failure_evidence: str) -> DecompositionProposal:
         """Create a DecompositionProposal from a failed task and its evidence.
 
         Args:

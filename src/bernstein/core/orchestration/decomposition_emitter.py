@@ -31,9 +31,7 @@ class DecompositionEmitter:
     seen_digests: set[str] = field(default_factory=set)
     tasks_by_issue: dict[int, list[Task]] = field(default_factory=dict)
 
-    def check_exhaustion(
-        self, task: Task, task_store: Any = None
-    ) -> DecompositionProposal | None:
+    def check_exhaustion(self, task: Task, task_store: Any = None) -> DecompositionProposal | None:
         """Check if a task's retry exhaustion warrants a decomposition proposal.
 
         Args:
@@ -131,9 +129,7 @@ class DecompositionEmitter:
 
         return proposal
 
-    def emit_proposal(
-        self, proposal: DecompositionProposal, gh_client: Any, issue_number: int
-    ) -> bool:
+    def emit_proposal(self, proposal: DecompositionProposal, gh_client: Any, issue_number: int) -> bool:
         """Post the decomposition proposal as a comment on the GitHub issue.
 
         Args:

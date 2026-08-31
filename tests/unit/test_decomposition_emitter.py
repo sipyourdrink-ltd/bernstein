@@ -140,13 +140,15 @@ class TestDecompositionEmitter:
             issue_number=42,
             repo="owner/repo",
             evidence_digests=("abc123",),
-            attempts=[{
-                "attempt_number": 1,
-                "model": "claude-3-opus",
-                "effort": "medium",
-                "failure_reason": "test timeout",
-                "terminal_reason": "retry_exhausted",
-            }],
+            attempts=[
+                {
+                    "attempt_number": 1,
+                    "model": "claude-3-opus",
+                    "effort": "medium",
+                    "failure_reason": "test timeout",
+                    "terminal_reason": "retry_exhausted",
+                }
+            ],
         )
 
         mock_gh_client = Mock()
@@ -166,13 +168,15 @@ class TestDecompositionEmitter:
             issue_number=42,
             repo="owner/repo",
             evidence_digests=("abc123",),
-            attempts=[{
-                "attempt_number": 1,
-                "model": "claude-3-opus",
-                "effort": "medium",
-                "failure_reason": "test timeout",
-                "terminal_reason": "retry_exhausted",
-            }],
+            attempts=[
+                {
+                    "attempt_number": 1,
+                    "model": "claude-3-opus",
+                    "effort": "medium",
+                    "failure_reason": "test timeout",
+                    "terminal_reason": "retry_exhausted",
+                }
+            ],
         )
 
         mock_gh_client = Mock()
