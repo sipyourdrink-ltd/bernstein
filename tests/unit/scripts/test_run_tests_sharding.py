@@ -175,9 +175,21 @@ def test_shard_files_rejects_out_of_range_index(run_tests_module: ModuleType) ->
 def test_shard_files_duration_partition_covers_every_file_exactly_once(
     run_tests_module: ModuleType,
 ) -> None:
-    """Duration-weighted path: union across shards equals input, no overlaps."""
+    """Duration-weighted path: union across shards equals input, no overlaps.
+
+    The map deliberately covers only half the files so the unknown-key
+    fallback (``DEFAULT_SHARD_DURATION_S``) is on the live path. A refactor
+    that dropped unmapped files from the partition would still pass a
+    fully-populated map while silently omitting every test added since the
+    last durations refresh — the failure mode #4840 is about.
+    """
     files = _fixed_files(128)
-    durations = {run_tests_module.durations_key(path): float((index % 7) + 1) for index, path in enumerate(files)}
+    durations = {
+        run_tests_module.durations_key(path): float((index % 7) + 1)
+        for index, path in enumerate(files)
+        if index % 2 == 0
+    }
+    assert len(durations) == len(files) // 2
     shards = [run_tests_module.shard_files(files, i, 4, durations=durations) for i in range(1, 5)]
     _assert_complete_disjoint(files, shards)
 
