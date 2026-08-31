@@ -32,7 +32,6 @@ def _init_repo(root: Path) -> None:
     _git(root, "init")
     _git(root, "config", "user.email", "test@example.com")
     _git(root, "config", "user.name", "test")
-    # Default branch name varies; pin it.
     _git(root, "checkout", "-b", "main")
 
 
@@ -54,9 +53,13 @@ test-count-drop: tests/unit/test_bar.py -1
     }
 
 
-def test_skip_without_base(check_module: ModuleType, tmp_path: Path) -> None:
+def test_not_run_without_base_is_not_ok(check_module: ModuleType, tmp_path: Path) -> None:
+    """An unrun guard must not share the OK outcome word."""
     report = check_module.build_report(tmp_path, base=None)
-    assert report.skipped is not None
+    assert report.not_run is not None
+    text = check_module.format_report(report)
+    assert text.startswith("NOT_RUN:")
+    assert not text.startswith("OK:")
     assert check_module.main(["--root", str(tmp_path)]) == 0
 
 
@@ -80,8 +83,9 @@ def test_drop_turns_red(check_module: ModuleType, tmp_path: Path) -> None:
     _commit_all(repo, "drop one test")
 
     report = check_module.build_report(repo, base=base, python=sys.executable)
-    assert report.drops == [("tests/unit/test_sample.py", 3, 2)]
+    assert report.drops == [("tests/unit/test_sample.py", 3, 2, "count_drop")]
     assert check_module.main(["--root", str(repo), "--base", base]) == 1
+    assert "cause=count_drop" in check_module.format_report(report)
 
 
 def test_parametrize_consolidation_stays_green(check_module: ModuleType, tmp_path: Path) -> None:
@@ -106,7 +110,37 @@ def test_parametrize_consolidation_stays_green(check_module: ModuleType, tmp_pat
     report = check_module.build_report(repo, base=base, python=sys.executable)
     assert report.drops == []
     assert report.stale_overrides == []
+    assert check_module.format_report(report).startswith("OK:")
     assert check_module.main(["--root", str(repo), "--base", base]) == 0
+
+
+def test_import_error_named_in_drop_message(check_module: ModuleType, tmp_path: Path) -> None:
+    """A module that stops importing is a drop with cause=import_error, not silent zero."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    test_dir = repo / "tests" / "unit"
+    test_dir.mkdir(parents=True)
+    (test_dir / "test_sample.py").write_text(
+        "def test_a():\n    assert True\n\ndef test_b():\n    assert True\n",
+        encoding="utf-8",
+    )
+    base = _commit_all(repo, "two tests")
+
+    (test_dir / "test_sample.py").write_text(
+        "import definitely_not_a_real_module_4873  # noqa: F401\n\ndef test_a():\n    assert True\n",
+        encoding="utf-8",
+    )
+    _commit_all(repo, "break import")
+
+    report = check_module.build_report(repo, base=base, python=sys.executable)
+    assert len(report.drops) == 1
+    rel, base_n, head_n, cause = report.drops[0]
+    assert rel == "tests/unit/test_sample.py"
+    assert base_n == 2
+    assert head_n == 0
+    assert cause == "import_error"
+    assert "cause=import_error" in check_module.format_report(report)
 
 
 def test_override_excuses_drop_and_stale_fails(check_module: ModuleType, tmp_path: Path) -> None:
@@ -172,4 +206,22 @@ def test_deleted_test_without_subject_fails(check_module: ModuleType, tmp_path: 
     _commit_all(repo, "delete test only")
 
     report = check_module.build_report(repo, base=base, python=sys.executable)
-    assert report.drops == [("tests/unit/test_widget.py", 1, 0)]
+    assert report.drops == [("tests/unit/test_widget.py", 1, 0, "missing")]
+
+
+def test_guard_discriminates_when_a_drop_exists(check_module: ModuleType, tmp_path: Path) -> None:
+    """Counterfactual: with a real drop the report is non-empty (not vacuously OK)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    test_dir = repo / "tests" / "unit"
+    test_dir.mkdir(parents=True)
+    (test_dir / "test_sample.py").write_text(
+        "def test_a():\n    assert True\n\ndef test_b():\n    assert True\n",
+        encoding="utf-8",
+    )
+    base = _commit_all(repo, "two")
+    (test_dir / "test_sample.py").write_text("def test_a():\n    assert True\n", encoding="utf-8")
+    _commit_all(repo, "one")
+    report = check_module.build_report(repo, base=base, python=sys.executable)
+    assert report.drops, "a real drop must surface; otherwise the guard is vacuous"

@@ -9,6 +9,19 @@ Counts come from ``pytest --collect-only``, not AST ``def test_*`` counts, so
 folding N one-off cases into one ``@pytest.mark.parametrize`` with N values
 keeps the collected count stable and stays green without an override.
 
+Base and head are collected under the **same** isolated temp environment
+(``git show`` bytes into sibling files, one pytest invocation style) so the
+delta measures the diff, not the ambient tree.
+
+Outcome words (never collapse these)::
+
+    OK       compared touched modules; no unexplained drop
+    NOT_RUN  no merge base — guard did not compare (not a clean bill of health)
+    FAIL     unexplained drop and/or stale override
+
+A module that fails to import collects zero; the message names
+``import_error`` so it is not read as a silent false-positive count drop.
+
 Override (PR body, reviewable)::
 
     test-count-drop: tests/unit/foo/test_bar.py -3
@@ -18,8 +31,10 @@ name a module with no drop are stale and fail the check. There is no
 path-less global budget.
 
 A deleted test module whose matching subject under ``src/`` was also deleted
-in the same diff is carved out. Needs ``--base`` (CI merge base); without a
-base the check skips with a clear message rather than a fake green.
+in the same diff is carved out.
+
+Policy choice: drops fail outright against the merge base (no committed
+ratchet baseline). Stricter on refactors; override is the escape hatch.
 
 Usage::
 
@@ -37,6 +52,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -44,17 +60,33 @@ OVERRIDE_RE = re.compile(
     r"(?m)^[ \t]*test-count-drop:[ \t]+(\S+)[ \t]+-(\d+)[ \t]*$",
 )
 _TEST_NAME_RE = re.compile(r"^(?:test_(.+)|(.+)_test)$")
+_IMPORT_ERROR_RE = re.compile(
+    r"(ImportError|ModuleNotFoundError|ERROR collecting|Interrupted:)",
+    re.IGNORECASE,
+)
+
+CollectStatus = Literal["ok", "missing", "import_error"]
+
+
+@dataclass(frozen=True)
+class CollectResult:
+    """One collect-only attempt under the shared isolation environment."""
+
+    status: CollectStatus
+    count: int = 0
+    detail: str = ""
 
 
 @dataclass
 class DropReport:
     """Result of comparing collected counts for touched test modules."""
 
-    drops: list[tuple[str, int, int]] = field(default_factory=list)  # path, base, head
-    excused: list[tuple[str, int, int, int]] = field(default_factory=list)  # path, base, head, allowed
+    # path, base_count, head_count, head_status
+    drops: list[tuple[str, int, int, str]] = field(default_factory=list)
+    excused: list[tuple[str, int, int, int]] = field(default_factory=list)
     carved: list[str] = field(default_factory=list)
     stale_overrides: list[str] = field(default_factory=list)
-    skipped: str | None = None
+    not_run: str | None = None
     checked: int = 0
 
 
@@ -138,8 +170,36 @@ def subject_deleted(test_path: str, deleted_paths: set[str]) -> bool:
     )
 
 
-def pytest_collect_count(path: Path, *, python: str = sys.executable, cwd: Path | None = None) -> int:
-    """Return how many items pytest collects from *path*."""
+def _parse_collect_output(result: subprocess.CompletedProcess[str]) -> CollectResult:
+    """Interpret pytest --collect-only stdout/stderr into a :class:`CollectResult`."""
+    blob = f"{result.stdout}\n{result.stderr}"
+    if result.returncode != 0 and _IMPORT_ERROR_RE.search(blob):
+        snippet = next(
+            (line.strip() for line in blob.splitlines() if line.strip()),
+            "collection failed",
+        )
+        return CollectResult(status="import_error", count=0, detail=snippet[:200])
+    if re.search(r"\bno tests collected\b", blob, re.IGNORECASE):
+        return CollectResult(status="ok", count=0)
+    match = re.search(r"(\d+)\s+tests?\s+collected", blob, re.IGNORECASE)
+    if match:
+        return CollectResult(status="ok", count=int(match.group(1)))
+    if result.returncode != 0:
+        snippet = next(
+            (line.strip() for line in blob.splitlines() if line.strip()),
+            "collection failed",
+        )
+        return CollectResult(status="import_error", count=0, detail=snippet[:200])
+    lines = [
+        line
+        for line in result.stdout.splitlines()
+        if line.strip() and not line.startswith("=") and "collected" not in line.lower()
+    ]
+    return CollectResult(status="ok", count=len(lines))
+
+
+def pytest_collect_file(path: Path, *, python: str, cwd: Path) -> CollectResult:
+    """Run collect-only on *path* with cwd=*cwd* (shared isolation root)."""
     result = subprocess.run(
         [
             python,
@@ -151,35 +211,15 @@ def pytest_collect_count(path: Path, *, python: str = sys.executable, cwd: Path 
             "--no-header",
             "--no-cov",
         ],
-        cwd=cwd or path.parent,
+        cwd=cwd,
         capture_output=True,
         text=True,
         check=False,
     )
-    blob = f"{result.stdout}\n{result.stderr}"
-    if re.search(r"\bno tests collected\b", blob, re.IGNORECASE):
-        return 0
-    match = re.search(r"(\d+)\s+tests?\s+collected", blob, re.IGNORECASE)
-    if match:
-        return int(match.group(1))
-    # pytest -q lists one node id per line when collection succeeds without a
-    # summary line (or with an older summary format).
-    lines = [
-        line
-        for line in result.stdout.splitlines()
-        if line.strip() and not line.startswith("=") and "collected" not in line.lower()
-    ]
-    return len(lines)
+    return _parse_collect_output(result)
 
 
-def collect_count_at_revision(
-    repo: Path,
-    rev: str,
-    rel_path: str,
-    *,
-    python: str = sys.executable,
-) -> int | None:
-    """Collect-count for ``rel_path`` as it existed at *rev*, or ``None`` if absent."""
+def _git_show_bytes(repo: Path, rev: str, rel_path: str) -> bytes | None:
     show = subprocess.run(
         ["git", "show", f"{rev}:{rel_path}"],
         cwd=repo,
@@ -188,19 +228,40 @@ def collect_count_at_revision(
     )
     if show.returncode != 0:
         return None
+    return show.stdout
+
+
+def collect_pair(
+    repo: Path,
+    *,
+    base: str,
+    head: str,
+    rel_path: str,
+    python: str = sys.executable,
+) -> tuple[CollectResult, CollectResult]:
+    """Collect base and head under one shared temp environment.
+
+    Both revisions are materialised as sibling files and collected with the
+    same interpreter and cwd, so the delta is the file content, not ambient
+    conftest / import-path drift between worktree and isolation.
+    """
+    base_bytes = _git_show_bytes(repo, base, rel_path)
+    head_bytes = _git_show_bytes(repo, head, rel_path)
     with tempfile.TemporaryDirectory(prefix="bernstein-test-count-") as tmp:
-        target = Path(tmp) / Path(rel_path).name
-        target.write_bytes(show.stdout)
-        # Isolate from the live tree's conftest by collecting in the temp dir.
-        return pytest_collect_count(target, python=python, cwd=Path(tmp))
-
-
-def collect_count_at_head(repo: Path, rel_path: str, *, python: str = sys.executable) -> int | None:
-    """Collect-count for ``rel_path`` in the working tree, or ``None`` if missing."""
-    path = repo / rel_path
-    if not path.is_file():
-        return None
-    return pytest_collect_count(path, python=python, cwd=repo)
+        root = Path(tmp)
+        base_path = root / f"base_{Path(rel_path).name}"
+        head_path = root / f"head_{Path(rel_path).name}"
+        if base_bytes is None:
+            base_result = CollectResult(status="missing")
+        else:
+            base_path.write_bytes(base_bytes)
+            base_result = pytest_collect_file(base_path, python=python, cwd=root)
+        if head_bytes is None:
+            head_result = CollectResult(status="missing")
+        else:
+            head_path.write_bytes(head_bytes)
+            head_result = pytest_collect_file(head_path, python=python, cwd=root)
+        return base_result, head_result
 
 
 def build_report(
@@ -214,7 +275,7 @@ def build_report(
     """Compare collected counts for test modules touched between *base* and *head*."""
     report = DropReport()
     if not base:
-        report.skipped = "no merge base (--base); skip rather than fake-green"
+        report.not_run = "no merge base (--base); guard did not compare"
         return report
 
     overrides = parse_overrides(pr_body)
@@ -224,31 +285,37 @@ def build_report(
 
     consumed: set[str] = set()
     for rel in sorted(touched):
-        base_count = collect_count_at_revision(repo, base, rel, python=python)
-        head_count = collect_count_at_head(repo, rel, python=python)
-        if base_count is None:
-            continue  # new test module at head — not a drop
-        head_n = 0 if head_count is None else head_count
-        if head_n >= base_count:
+        base_result, head_result = collect_pair(repo, base=base, head=head, rel_path=rel, python=python)
+        if base_result.status == "missing":
+            continue  # new at head — not a drop
+        base_n = base_result.count
+        if head_result.status == "missing":
+            head_n = 0
+            head_status = "missing"
+        else:
+            head_n = head_result.count
+            head_status = head_result.status
+        if head_n >= base_n and head_status == "ok":
             continue
-        drop = base_count - head_n
-        if head_count is None and subject_deleted(rel, deleted):
+        if head_n >= base_n:
+            continue
+        drop = base_n - head_n
+        if head_result.status == "missing" and subject_deleted(rel, deleted):
             report.carved.append(rel)
             continue
+        cause = head_status if head_status != "ok" else "count_drop"
         allowed = overrides.get(rel)
         if allowed is not None:
             consumed.add(rel)
             if drop <= allowed:
-                report.excused.append((rel, base_count, head_n, allowed))
+                report.excused.append((rel, base_n, head_n, allowed))
                 continue
-            # Override too small for the actual drop — still a failure.
-            report.drops.append((rel, base_count, head_n))
+            report.drops.append((rel, base_n, head_n, cause))
             continue
-        report.drops.append((rel, base_count, head_n))
+        report.drops.append((rel, base_n, head_n, cause))
 
     for rel, allowed in sorted(overrides.items()):
         if rel not in consumed:
-            # Stale: named a module with no drop (or not in the touched set).
             report.stale_overrides.append(f"{rel} -{allowed}")
 
     return report
@@ -257,20 +324,30 @@ def build_report(
 def format_report(report: DropReport) -> str:
     """Human-readable report for CI logs."""
     lines: list[str] = []
-    if report.skipped:
-        lines.append(f"SKIP: {report.skipped}")
+    if report.not_run is not None:
+        # Distinct from OK: an unrun guard must not read as a clean bill of health.
+        lines.append(f"NOT_RUN: {report.not_run}")
         return "\n".join(lines)
     if report.drops:
-        lines.append("Test modules lost collected cases vs merge base (issue #4873):")
-        for rel, base_n, head_n in report.drops:
-            lines.append(f"  {rel}: {base_n} -> {head_n} (drop {base_n - head_n})")
+        lines.append("FAIL: test modules lost collected cases vs merge base (issue #4873):")
+        for rel, base_n, head_n, cause in report.drops:
+            if cause == "import_error":
+                lines.append(
+                    f"  {rel}: {base_n} -> {head_n} (drop {base_n - head_n}; "
+                    "cause=import_error — module failed to import under collect-only, "
+                    "not necessarily deleted tests)"
+                )
+            elif cause == "missing":
+                lines.append(f"  {rel}: {base_n} -> 0 (file deleted at head)")
+            else:
+                lines.append(f"  {rel}: {base_n} -> {head_n} (drop {base_n - head_n}; cause=count_drop)")
         lines.append(
             "Restore the cases, consolidate via parametrize (collected count must stay "
             "stable), carve out a deleted subject, or add a PR-body override: "
             "`test-count-drop: <path> -<N>`."
         )
     if report.stale_overrides:
-        lines.append("Stale test-count-drop overrides (no drop for that path):")
+        lines.append("FAIL: stale test-count-drop overrides (no drop for that path):")
         for entry in report.stale_overrides:
             lines.append(f"  {entry}")
     if report.excused:
@@ -301,7 +378,7 @@ def main(argv: list[str] | None = None) -> int:
     base = args.base.strip() or None
     report = build_report(args.root, base=base, head=args.head, pr_body=args.pr_body)
     print(format_report(report))
-    if report.skipped:
+    if report.not_run is not None:
         return 0
     return 1 if report.drops or report.stale_overrides else 0
 

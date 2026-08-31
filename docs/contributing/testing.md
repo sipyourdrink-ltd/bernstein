@@ -50,10 +50,14 @@ storage, unavailable or throwing browser APIs, inaccessible document roots,
 and the matching `ThemeProvider` storage fallback. They do not start a web
 server or make network requests.
 
-## Test-count drop vs merge base (#4873)
+Test-count drop vs merge base (#4873)
 
 Repo hygiene compares `pytest --collect-only` counts for every touched
-`test_*.py` / `*_test.py` against the merge base. A drop fails the job.
+`test_*.py` / `*_test.py` against the merge base. A drop fails the job
+outright (no committed ratchet baseline — overrides are the escape hatch).
+
+Outcome words are distinct: `OK` means compared and clean; `NOT_RUN` means
+no merge base so the guard never compared (not a clean bill of health).
 
 Parametrized consolidation (N cases → one `@pytest.mark.parametrize` with N
 values) keeps the collected count stable and stays green. Intentional drops
@@ -64,7 +68,9 @@ test-count-drop: tests/unit/foo/test_bar.py -3
 ```
 
 Unused overrides fail (stale). A deleted test whose matching `src/**/<stem>.py`
-was also deleted is carved out. Locally:
+was also deleted is carved out. An import failure under collect-only is named
+`cause=import_error` in the message so it is not mistaken for a silent count
+drop. Locally:
 
 ```bash
 uv run python scripts/check_test_count_drop.py --base origin/main
