@@ -488,7 +488,7 @@ def handle_stalled_manager(orch: Any) -> StalledManagerDiagnostic | None:
     Returns the diagnostic on detection (also written to logs + failures dir);
     returns ``None`` when no stall is present. Setting ``_running = False`` on
     the orchestrator triggers the existing clean-drain path in
-    ``orchestrator_run._run_loop`` - no generic-watchdog kill is required.
+    ``Orchestrator.run`` - no generic-watchdog kill is required.
     """
     # Avoid emitting the same diagnostic on every tick.
     if getattr(orch, "_stalled_manager_emitted", False):
