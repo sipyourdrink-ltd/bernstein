@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -29,6 +30,8 @@ from bernstein.core.security.result_receipt_bundle import (
     FieldError,
 )
 from bernstein.core.volunteer.manifest import VolunteerManifest, load_manifest_from_repo
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from bernstein.core.github_app.check_runs import CheckRunClient
@@ -92,6 +95,7 @@ class AcceptanceVerificationResult:
     mapping: dict[str, str] = field(default_factory=dict)
     unproven: list[str] = field(default_factory=list)
     invalid_tests: list[str] = field(default_factory=list)
+    reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -453,6 +457,15 @@ def _format_comparison_table(comparisons: list[GateComparison]) -> str:
     return "\n".join(lines)
 
 
+def _normalize_criterion(c: str) -> str:
+    import string
+
+    c = c.casefold()
+    c = c.rstrip(string.punctuation)
+    c = re.sub(r"\s+", " ", c).strip()
+    return c
+
+
 def _verify_acceptance_evidence(
     pr_body: str,
     repo_slug: str,
@@ -472,7 +485,15 @@ def _verify_acceptance_evidence(
 
     # 2. Retrieve/parse issue checklist
     client = IssuePRClient()
-    issue = client.get_issue(repo_slug, issue_number)
+    try:
+        issue = client.get_issue(repo_slug, issue_number)
+    except Exception as e:
+        logger.warning(f"Failed to fetch issue #{issue_number}: {e!s}")
+        return AcceptanceVerificationResult(
+            status="neutral",
+            reason=f"Failed to fetch linked issue #{issue_number} from GitHub API.",
+        )
+
     issue_body = issue.get("body") or ""
 
     checklist_match = re.search(
@@ -484,12 +505,14 @@ def _verify_acceptance_evidence(
         return AcceptanceVerificationResult(status="neutral")
 
     issue_criteria = []
+    issue_norm_map = {}
     for line in checklist_match.group(1).splitlines():
         line = line.strip()
         if line.startswith("- [ ]") or line.startswith("- [x]") or line.startswith("- [X]"):
             crit = line[5:].strip()
             if crit:
                 issue_criteria.append(crit)
+                issue_norm_map[_normalize_criterion(crit)] = crit
 
     if not issue_criteria:
         return AcceptanceVerificationResult(status="neutral")
@@ -497,6 +520,7 @@ def _verify_acceptance_evidence(
     # 3. Parse PR evidence block
     marker = "<!-- bernstein:acceptance-evidence -->"
     mapping = {}
+    mapped_norm_map = {}
     if marker in pr_body:
         mapping_section = pr_body.split(marker)[1]
         for line in mapping_section.splitlines():
@@ -520,41 +544,70 @@ def _verify_acceptance_evidence(
                 test_ref = parts[1].strip().strip("`'\"")
                 if crit and test_ref:
                     mapping[crit] = test_ref
+                    mapped_norm_map[_normalize_criterion(crit)] = crit
 
     # 4. Compare issue criteria vs mapped criteria
-    issue_crit_set = set(issue_criteria)
-    mapped_crit_set = set(mapping.keys())
-    missing_criteria = sorted(list(issue_crit_set - mapped_crit_set))
-    extra_criteria = sorted(list(mapped_crit_set - issue_crit_set))
+    issue_crit_set = set(issue_norm_map.keys())
+    mapped_crit_set = set(mapped_norm_map.keys())
+    missing_norms = issue_crit_set - mapped_crit_set
+    extra_norms = mapped_crit_set - issue_crit_set
 
-    unproven = missing_criteria[:]
+    unproven = sorted([issue_norm_map[n] for n in missing_norms])
+    extra_criteria = sorted([mapped_norm_map[n] for n in extra_norms])
     invalid_tests = []
 
     # 5. Call build_report().collected
     script_path = Path(workspace_path) / "scripts" / "check_test_collection.py"
     collected: dict[str, set[str]] = {}
-    if script_path.exists():
-        alias = "_ci_check_test_collection"
-        spec = importlib.util.spec_from_file_location(alias, script_path)
-        if spec and spec.loader:
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[alias] = module
-            try:
-                spec.loader.exec_module(module)
-                collected = module.build_report().collected
-            except Exception:
-                pass
+    if not script_path.exists():
+        return AcceptanceVerificationResult(
+            status="neutral",
+            reason="Test collection script is missing, unable to verify evidence.",
+        )
+
+    alias = "_ci_check_test_collection"
+    spec = importlib.util.spec_from_file_location(alias, script_path)
+    if not spec or not spec.loader:
+        return AcceptanceVerificationResult(
+            status="neutral",
+            reason="Failed to load test collection script spec, unable to verify evidence.",
+        )
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[alias] = module
+    try:
+        spec.loader.exec_module(module)
+        collected = module.build_report().collected
+    except (ImportError, AttributeError, SyntaxError) as e:
+        logger.warning(f"Expected error loading check_test_collection: {e!s}")
+        return AcceptanceVerificationResult(
+            status="neutral",
+            reason="Failed to execute test collection script, unable to verify evidence.",
+        )
+    except Exception as e:
+        logger.warning(f"Unexpected error loading check_test_collection: {e!s}")
+        return AcceptanceVerificationResult(
+            status="neutral",
+            reason="Unexpected error loading test collection script, unable to verify evidence.",
+        )
 
     # 6. Check referenced tests against collected set
     for crit, test_ref in mapping.items():
         if crit in extra_criteria:
             continue
         # Extract file path (e.g. tests/unit/test_foo.py::test_bar -> tests/unit/test_foo.py)
-        file_path = test_ref.split("::")[0].strip()
+        parts = test_ref.split("::")
+        file_path = parts[0].strip()
         if file_path not in collected:
             invalid_tests.append(test_ref)
             if crit not in unproven:
                 unproven.append(crit)
+        elif len(parts) > 1:
+            node_id = parts[1].strip()
+            if node_id not in collected[file_path]:
+                invalid_tests.append(test_ref)
+                if crit not in unproven:
+                    unproven.append(crit)
 
     unproven = sorted(list(set(unproven)))
 
@@ -760,6 +813,9 @@ def run_verification_check(
                 details += "\n**Mapped Evidence:**\n"
                 for crit, test_ref in acceptance_evidence.mapping.items():
                     details += f"- `{crit}` → `{test_ref}`\n"
+    elif acceptance_evidence.reason:
+        details += "\n\n### Acceptance Criteria Verification\n\n"
+        details += f"**NEUTRAL**: {acceptance_evidence.reason}\n"
 
     return VerificationCheckRunResult(
         bundle_verification=bundle_verification,
