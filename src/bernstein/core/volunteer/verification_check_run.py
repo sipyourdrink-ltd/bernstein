@@ -19,7 +19,7 @@ import hashlib
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -85,6 +85,16 @@ class GateComparison:
 
 
 @dataclass(frozen=True, slots=True)
+class AcceptanceVerificationResult:
+    """Result of PR acceptance criteria to evidence mapping."""
+
+    status: Literal["pass", "fail", "neutral"]
+    mapping: dict[str, str] = field(default_factory=dict)
+    unproven: list[str] = field(default_factory=list)
+    invalid_tests: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
 class VerificationCheckRunResult:
     """Result of a volunteer receipt verification check run."""
 
@@ -94,6 +104,7 @@ class VerificationCheckRunResult:
     conclusion: Conclusion
     summary: str
     details: str
+    acceptance_evidence: AcceptanceVerificationResult | None = None
 
     @property
     def overall_passed(self) -> bool:
@@ -442,6 +453,125 @@ def _format_comparison_table(comparisons: list[GateComparison]) -> str:
     return "\n".join(lines)
 
 
+def _verify_acceptance_evidence(
+    pr_body: str,
+    repo_slug: str,
+    workspace_path: str,
+) -> AcceptanceVerificationResult:
+    """Verify that every PR acceptance criterion is mapped to an existing test."""
+    import importlib.util
+    import sys
+
+    from bernstein.core.orchestration.issue_to_pr import IssuePRClient
+
+    # 1. Extract linked issue
+    m = re.search(r"(?:[Cc]loses|[Ff]ixes|[Rr]esolves)\s+#(\d+)", pr_body)
+    if not m:
+        return AcceptanceVerificationResult(status="neutral")
+    issue_number = int(m.group(1))
+
+    # 2. Retrieve/parse issue checklist
+    client = IssuePRClient()
+    issue = client.get_issue(repo_slug, issue_number)
+    issue_body = issue.get("body") or ""
+
+    checklist_match = re.search(
+        r"^##\s+Acceptance\s+[Cc]riteria\s*$(.*?)(?=^#|\Z)",
+        issue_body,
+        re.MULTILINE | re.IGNORECASE | re.DOTALL,
+    )
+    if not checklist_match:
+        return AcceptanceVerificationResult(status="neutral")
+
+    issue_criteria = []
+    for line in checklist_match.group(1).splitlines():
+        line = line.strip()
+        if line.startswith("- [ ]") or line.startswith("- [x]") or line.startswith("- [X]"):
+            crit = line[5:].strip()
+            if crit:
+                issue_criteria.append(crit)
+
+    if not issue_criteria:
+        return AcceptanceVerificationResult(status="neutral")
+
+    # 3. Parse PR evidence block
+    marker = "<!-- bernstein:acceptance-evidence -->"
+    mapping = {}
+    if marker in pr_body:
+        mapping_section = pr_body.split(marker)[1]
+        for line in mapping_section.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith("- "):
+                line = line[2:].strip()
+            else:
+                break
+
+            if "→" in line:
+                parts = line.split("→")
+            elif "->" in line:
+                parts = line.split("->")
+            else:
+                continue
+
+            if len(parts) == 2:
+                crit = parts[0].strip().strip("\"'")
+                test_ref = parts[1].strip().strip("`'\"")
+                if crit and test_ref:
+                    mapping[crit] = test_ref
+
+    # 4. Compare issue criteria vs mapped criteria
+    issue_crit_set = set(issue_criteria)
+    mapped_crit_set = set(mapping.keys())
+    missing_criteria = sorted(list(issue_crit_set - mapped_crit_set))
+    extra_criteria = sorted(list(mapped_crit_set - issue_crit_set))
+
+    unproven = missing_criteria[:]
+    invalid_tests = []
+
+    # 5. Call build_report().collected
+    script_path = Path(workspace_path) / "scripts" / "check_test_collection.py"
+    collected: dict[str, set[str]] = {}
+    if script_path.exists():
+        alias = "_ci_check_test_collection"
+        spec = importlib.util.spec_from_file_location(alias, script_path)
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[alias] = module
+            try:
+                spec.loader.exec_module(module)
+                collected = module.build_report().collected
+            except Exception:
+                pass
+
+    # 6. Check referenced tests against collected set
+    for crit, test_ref in mapping.items():
+        if crit in extra_criteria:
+            continue
+        # Extract file path (e.g. tests/unit/test_foo.py::test_bar -> tests/unit/test_foo.py)
+        file_path = test_ref.split("::")[0].strip()
+        if file_path not in collected:
+            invalid_tests.append(test_ref)
+            if crit not in unproven:
+                unproven.append(crit)
+
+    unproven = sorted(list(set(unproven)))
+
+    if unproven or extra_criteria:
+        # extra criteria can be treated as unproven or we can just fail
+        for ec in extra_criteria:
+            invalid_tests.append(f"Mapped unknown criterion: {ec}")
+        return AcceptanceVerificationResult(
+            status="fail",
+            mapping=mapping,
+            unproven=unproven,
+            invalid_tests=invalid_tests,
+        )
+
+    return AcceptanceVerificationResult(status="pass", mapping=mapping)
+
+
 def run_verification_check(
     *,
     pr_number: int,
@@ -610,6 +740,27 @@ def run_verification_check(
 
     details = "\n".join(details_parts)
 
+    acceptance_evidence = _verify_acceptance_evidence(pr_body, repo_slug, workspace_path)
+
+    if acceptance_evidence.status != "neutral":
+        details += "\n\n### Acceptance Criteria Verification\n\n"
+        if acceptance_evidence.status == "pass":
+            details += f"**PASSED**: {len(acceptance_evidence.mapping)} criteria mapped to collected tests.\n"
+        else:
+            details += "**UNPROVEN / FAILED**\n"
+            if acceptance_evidence.unproven:
+                details += "\n**Unproven Criteria:**\n"
+                for uc in acceptance_evidence.unproven:
+                    details += f"- {uc}\n"
+            if acceptance_evidence.invalid_tests:
+                details += "\n**Invalid Evidence:**\n"
+                for it in acceptance_evidence.invalid_tests:
+                    details += f"- `{it}`\n"
+            if acceptance_evidence.mapping:
+                details += "\n**Mapped Evidence:**\n"
+                for crit, test_ref in acceptance_evidence.mapping.items():
+                    details += f"- `{crit}` → `{test_ref}`\n"
+
     return VerificationCheckRunResult(
         bundle_verification=bundle_verification,
         gate_comparisons=gate_comparisons,
@@ -617,6 +768,7 @@ def run_verification_check(
         conclusion=conclusion,
         summary=summary,
         details=details,
+        acceptance_evidence=acceptance_evidence,
     )
 
 
