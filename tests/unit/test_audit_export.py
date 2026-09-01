@@ -40,8 +40,8 @@ def _make_entry(event_type: str = "task.created", sequence: int = 1) -> AuditEnt
         action="create",
         outcome="success",
         details={"role": "backend"},
-        hmac="abc123",
-        prev_hmac="prev456",
+        hmac=f"hmac{sequence}",
+        prev_hmac=f"prev{sequence}",
         sequence=sequence,
     )
 
@@ -59,7 +59,7 @@ def _make_entries(count: int) -> list[AuditEntry]:
 class TestAuditEntry:
     def test_has_prev_hmac_field(self) -> None:
         entry = _make_entry()
-        assert entry.prev_hmac == "prev456"
+        assert entry.prev_hmac == "prev1"
 
     def test_has_sequence_field(self) -> None:
         entry = _make_entry()
