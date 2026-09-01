@@ -11,6 +11,8 @@ from bernstein.core.governance.playbook import (
     GovernancePlaybook,
     PlaybookSchema,
     PlaybookValidationError,
+)
+from bernstein.core.governance.playbook import (
     Surface as PlaybookSurface,
 )
 
@@ -19,8 +21,8 @@ __all__ = [
     "GovernanceClause",
     "GovernancePlaybook",
     "PlaybookSchema",
-    "PlaybookValidationError",
     "PlaybookSurface",
+    "PlaybookValidationError",
     "Surface",
     "SurfaceInventory",
     "discover_surfaces",
