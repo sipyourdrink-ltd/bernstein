@@ -107,9 +107,7 @@ class Surface(BaseModel):
     @classmethod
     def _check_surface_id(cls, value: str) -> str:
         if not _ID_PATTERN.match(value):
-            raise ValueError(
-                f"surface_id {value!r} must match pattern {_ID_PATTERN.pattern}"
-            )
+            raise ValueError(f"surface_id {value!r} must match pattern {_ID_PATTERN.pattern}")
         return value
 
 
@@ -134,9 +132,7 @@ class Ceiling(BaseModel):
     @classmethod
     def _check_ceiling_id(cls, value: str) -> str:
         if not _ID_PATTERN.match(value):
-            raise ValueError(
-                f"ceiling_id {value!r} must match pattern {_ID_PATTERN.pattern}"
-            )
+            raise ValueError(f"ceiling_id {value!r} must match pattern {_ID_PATTERN.pattern}")
         return value
 
 
@@ -159,18 +155,14 @@ class GovernanceClause(BaseModel):
     @classmethod
     def _check_surface_ref(cls, value: str) -> str:
         if not _ID_PATTERN.match(value):
-            raise ValueError(
-                f"surface_ref {value!r} must match pattern {_ID_PATTERN.pattern}"
-            )
+            raise ValueError(f"surface_ref {value!r} must match pattern {_ID_PATTERN.pattern}")
         return value
 
     @field_validator("ceiling_ref")
     @classmethod
     def _check_ceiling_ref(cls, value: str) -> str:
         if not _ID_PATTERN.match(value):
-            raise ValueError(
-                f"ceiling_ref {value!r} must match pattern {_ID_PATTERN.pattern}"
-            )
+            raise ValueError(f"ceiling_ref {value!r} must match pattern {_ID_PATTERN.pattern}")
         return value
 
 
@@ -210,9 +202,7 @@ class GovernancePlaybook(BaseModel):
     @classmethod
     def _check_playbook_id(cls, value: str) -> str:
         if not _ID_PATTERN.match(value):
-            raise ValueError(
-                f"playbook_id {value!r} must match pattern {_ID_PATTERN.pattern}"
-            )
+            raise ValueError(f"playbook_id {value!r} must match pattern {_ID_PATTERN.pattern}")
         return value
 
     @field_validator("version")
@@ -337,21 +327,15 @@ def load_playbook_from_text(text: str) -> GovernancePlaybook:
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
-        raise PlaybookValidationError(
-            [("yaml", f"malformed YAML: {exc}")]
-        ) from exc
+        raise PlaybookValidationError([("yaml", f"malformed YAML: {exc}")]) from exc
 
     if not isinstance(data, dict):
-        raise PlaybookValidationError(
-            [("structure", "playbook must be a mapping at the top level")]
-        )
+        raise PlaybookValidationError([("structure", "playbook must be a mapping at the top level")])
 
     try:
         return GovernancePlaybook.model_validate(data)
     except Exception as exc:
-        raise PlaybookValidationError(
-            [("schema", str(exc))]
-        ) from exc
+        raise PlaybookValidationError([("schema", str(exc))]) from exc
 
 
 def load_playbook(path: Any) -> GovernancePlaybook:
@@ -371,8 +355,6 @@ def load_playbook(path: Any) -> GovernancePlaybook:
     p = Path(path) if not isinstance(path, Path) else path
 
     if not p.is_file():
-        raise PlaybookValidationError(
-            [("file", f"playbook not found: {p}")]
-        )
+        raise PlaybookValidationError([("file", f"playbook not found: {p}")])
 
     return load_playbook_from_text(p.read_text(encoding="utf-8"))
