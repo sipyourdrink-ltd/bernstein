@@ -136,6 +136,10 @@ class LineageEntry:
     # both mis-type the relation and make every attached linear write look
     # like a merge in the tip projection.
     attachment_digests: list[str] | None = None
+    # Additive, optional (issue #5037). ``None`` is dropped from the canonical
+    # bytes so every historical entry keeps its exact wire form, signature and
+    # HMAC. When not None must be a valid ModelRef instance.
+    model_ref: ModelRef | None = None
 
     def __post_init__(self) -> None:
         if self.v != LINEAGE_ENTRY_VERSION:
@@ -157,6 +161,9 @@ class LineageEntry:
             for d in self.attachment_digests:
                 if len(d) != 64 or not _HEX64.match(d):
                     raise ValueError(f"attachment digest must be 64 lower-case hex chars, got {d!r}")
+        if self.model_ref is not None:
+            if not isinstance(self.model_ref, ModelRef):
+                raise ValueError(f"model_ref must be a ModelRef instance, got {type(self.model_ref).__name__}")
 
 
 def _canonical_body(entry: LineageEntry) -> dict[str, object]:
