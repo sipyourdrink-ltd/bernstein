@@ -2386,10 +2386,7 @@ def verify_export_cmd(
     # --- 4. Verify the segment receipt signature ---
     if isinstance(receipt, dict) and "signature" in receipt:
         try:
-            if key_path:
-                key = Path(key_path).read_bytes().strip()
-            else:
-                key = load_audit_key()
+            key = Path(key_path).read_bytes().strip() if key_path else load_audit_key()
         except (AuditKeyMissingError, OSError) as exc:
             console.print(f"[yellow]Cannot load audit key: {exc}[/yellow]")
             console.print("[yellow]Segment receipt signature verification skipped (no key).[/yellow]")
