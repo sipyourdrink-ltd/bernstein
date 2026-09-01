@@ -38,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
 
-    result = subprocess.run([sys.executable, str(_VERIFIER_SCRIPT)] + argv, check=False)
+    result = subprocess.run([sys.executable, str(_VERIFIER_SCRIPT), *argv], check=False)
     return result.returncode
 
 

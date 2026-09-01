@@ -18,10 +18,8 @@ import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import pytest
-
 # Subject under test
-from bernstein.core.verifier.audit_receipt_verifier import main, _PROJECT_ROOT, _VERIFIER_SCRIPT
+from bernstein.core.verifier.audit_receipt_verifier import _PROJECT_ROOT, _VERIFIER_SCRIPT, main
 
 # Test artifacts
 _TEST_ROOT = Path(__file__).resolve().parent.parent
@@ -45,7 +43,7 @@ def test_verifier_script_imports_no_bernstein() -> None:
     for line in source.splitlines():
         stripped = line.strip()
         if stripped.startswith(("import bernstein", "from bernstein")):
-            assert False, f"verifier imports bernstein: {stripped}"
+            raise AssertionError(f"verifier imports bernstein: {stripped}")
 
 
 def test_project_root_resolution() -> None:
@@ -181,7 +179,7 @@ def test_auditor_script_execution_without_pin_still_passes() -> None:
 def test_audit_receipt_verifier_module_has_expected_structure() -> None:
     """The module exports the expected public API."""
     # Import the module correctly
-    from bernstein.core.verifier import audit_receipt_verifier  # noqa: F401
+    from bernstein.core.verifier import audit_receipt_verifier
     assert "main" in dir(audit_receipt_verifier)
     # Check module docstring exists and is descriptive
     assert audit_receipt_verifier.__doc__ is not None
