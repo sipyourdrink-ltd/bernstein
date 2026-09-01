@@ -54,7 +54,8 @@ __all__ = [
 class GptResearcherUnavailableError(RuntimeError):
     """Raised when ``gpt-researcher`` is not installed.
 
-    This error follows the pattern used by :class:`~bernstein.core.orchestration.browser_driver.BrowserDriverUnavailable`
+    This error follows the pattern used by
+    :class:`~bernstein.core.orchestration.browser_driver.BrowserDriverUnavailable`
     and names the exact package to install (``gpt-researcher``).
 
     The error is raised at import time for this module, so attempting to use
