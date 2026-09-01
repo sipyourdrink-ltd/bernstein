@@ -84,9 +84,7 @@ class Playbook:
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Playbook:
         """Rebuild a playbook from a serialized dict."""
-        clauses = tuple(
-            PlaybookClause.from_dict(c) for c in raw.get("clauses", [])
-        )
+        clauses = tuple(PlaybookClause.from_dict(c) for c in raw.get("clauses", []))
         return cls(clauses=clauses)
 
     def content_hash(self) -> str:
@@ -117,4 +115,3 @@ __all__ = [
     "Playbook",
     "PlaybookClause",
 ]
-

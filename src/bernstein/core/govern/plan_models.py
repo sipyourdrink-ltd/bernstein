@@ -154,9 +154,7 @@ class GovernPlan:
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> GovernPlan:
         """Rebuild a plan from a serialized dict."""
-        entries = tuple(
-            PlanEntry.from_dict(e) for e in raw.get("entries", [])
-        )
+        entries = tuple(PlanEntry.from_dict(e) for e in raw.get("entries", []))
         return cls(
             run_id=str(raw["run_id"]),
             entries=entries,

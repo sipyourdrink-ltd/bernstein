@@ -70,9 +70,7 @@ class Inventory:
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Inventory:
         """Rebuild an inventory from a serialized dict."""
-        surfaces = tuple(
-            Surface.from_dict(s) for s in raw.get("surfaces", [])
-        )
+        surfaces = tuple(Surface.from_dict(s) for s in raw.get("surfaces", []))
         return cls(surfaces=surfaces)
 
     def content_hash(self) -> str:
@@ -106,4 +104,3 @@ __all__ = [
     "Inventory",
     "Surface",
 ]
-

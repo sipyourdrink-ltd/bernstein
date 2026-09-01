@@ -347,4 +347,3 @@ class TestRoundTrip:
         d = original.to_dict()
         restored = Playbook.from_dict(d)
         assert restored.content_hash() == original.content_hash()
-
