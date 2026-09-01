@@ -1,0 +1,45 @@
+[
+  {
+    "traceId": "deadbeefdeadbeefdeadbeefdeadbeef",
+    "spanId": "cafebabecafebabe",
+    "name": "gen_ai.chat",
+    "kind": "SPAN_KIND_CLIENT",
+    "attributes": [
+      {"key": "gen_ai.system", "value": {"stringValue": "anthropic"}},
+      {"key": "gen_ai.request.model", "value": {"stringValue": "claude-sonnet-4-6"}},
+      {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+      {"key": "gen_ai.usage.prompt_tokens", "value": {"intValue": "128"}},
+      {"key": "gen_ai.usage.completion_tokens", "value": {"intValue": "64"}},
+      {"key": "gen_ai.tool.name", "value": {"stringValue": "bash"}},
+      {"key": "gen_ai.tool.call.id", "value": {"stringValue": "tool_abc123"}},
+      {"key": "service.name", "value": {"stringValue": "my-collector"}},
+      {"key": "service.namespace", "value": {"stringValue": "prod"}}
+    ]
+  },
+  {
+    "traceId": "deadbeefdeadbeefdeadbeefdeadbeef",
+    "spanId": "1234567812345678",
+    "name": "http.request",
+    "kind": "SPAN_KIND_CLIENT",
+    "attributes": [
+      {"key": "http.method", "value": {"stringValue": "GET"}},
+      {"key": "http.url", "value": {"stringValue": "https://api.example.com/health"}},
+      {"key": "http.status_code", "value": {"intValue": "200"}}
+    ]
+  },
+  {
+    "traceId": "fafafafafafafafafafafafafafafafa",
+    "spanId": "abcdefabcdef",
+    "name": "gen_ai.execute_tool",
+    "kind": "SPAN_KIND_INTERNAL",
+    "attributes": [
+      {"key": "gen_ai.system", "value": {"stringValue": "openai"}},
+      {"key": "gen_ai.request.model", "value": {"stringValue": "gpt-4o"}},
+      {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
+      {"key": "gen_ai.usage.prompt_tokens", "value": {"intValue": "512"}},
+      {"key": "gen_ai.usage.completion_tokens", "value": {"intValue": "128"}},
+      {"key": "gen_ai.tool.name", "value": {"stringValue": "web_search"}},
+      {"key": "gen_ai.tool.call.id", "value": {"stringValue": "call_xyz789"}}
+    ]
+  }
+]

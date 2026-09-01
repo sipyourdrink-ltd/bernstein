@@ -1,0 +1,53 @@
+[
+  {
+    "traceId": "0123456789abcdef0123456789abcdef",
+    "spanId": "fedcba9876543210",
+    "name": "chat",
+    "kind": "SPAN_KIND_CLIENT",
+    "attributes": {
+      "gen_ai.system": "google-gemini",
+      "gen_ai.request.model": "gemini-2.5-flash",
+      "gen_ai.operation.name": "chat",
+      "gen_ai.usage.prompt_tokens": 256,
+      "gen_ai.usage.completion_tokens": 100,
+      "gen_ai.tool.name": "python",
+      "gen_ai.tool.call.id": "call-gemini-001"
+    }
+  },
+  {
+    "traceId": "0123456789abcdef0123456789abcdef",
+    "spanId": "1111111122222222",
+    "name": "tool_calls",
+    "kind": "SPAN_KIND_CLIENT",
+    "attributes": {
+      "gen_ai.system": "google-gemini",
+      "gen_ai.request.model": "gemini-2.5-flash",
+      "gen_ai.operation.name": "generate_content",
+      "gen_ai.usage.prompt_tokens": 512,
+      "gen_ai.usage.completion_tokens": 250
+    }
+  },
+  {
+    "traceId": "abcabcabcabcabcabcabcabcabcabcabca",
+    "spanId": "3333333344444444",
+    "name": "anonymous_span",
+    "kind": "SPAN_KIND_INTERNAL",
+    "attributes": {
+      "custom.metric": "value",
+      "custom.count": 42,
+      "custom.flag": true
+    }
+  },
+  {
+    "traceId": "deadbeefdeadbeefdeadbeefdeadbeef",
+    "spanId": "5555555566666666",
+    "name": "gen_ai.chat",
+    "kind": "SPAN_KIND_CLIENT",
+    "attributes": [
+      {"key": "gen_ai.system", "value": {"stringValue": "anthropic"}},
+      {"key": "gen_ai.request.model", "value": {"stringValue": "claude-3-7-sonnet-20250219"}},
+      {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+      {"key": "gen_ai.usage.reasoning_tokens", "value": {"intValue": "2000"}}
+    ]
+  }
+]
