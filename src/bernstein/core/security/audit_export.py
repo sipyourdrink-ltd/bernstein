@@ -939,7 +939,6 @@ class FileExporter(BaseSIEMExporter):
             Exception: Any transport error. ``flush()`` catches it and
                 records it as an audit chain event.
         """
-        start = time.time()
         # Validate export path stays within .sdd/ to prevent traversal
         sdd_root = Path.cwd().resolve() / ".sdd"
         safe_name = Path(self._file.path).name  # strip any directory components
@@ -957,7 +956,6 @@ class FileExporter(BaseSIEMExporter):
             existing.extend(formatted)
             out_path.write_text(json.dumps(existing, indent=2))
 
-        duration = time.time() - start
         self._total_exported += len(batch)
         self._buffer = self._buffer[self._config.batch_size :]
         self._last_flush = time.time()
