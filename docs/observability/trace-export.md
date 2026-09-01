@@ -85,16 +85,24 @@ Install it (or resolve it via `uv run --with`):
 pip install agentrust-trace-tests
 ```
 
-Then verify a record file against the TRACE v0.2 schema at Level 1
-(checks claims beyond the bare schema, including cross-field invariants):
+Then verify a record file against the TRACE v0.2 schema:
 
 ```bash
-trace-tests verify --record <file> --level 1
+trace-tests verify --record <file> --level 0
 ```
 
-Level 0 validates the schema and signature only; Level 1 adds
-cross-field invariants such as SPIFFE subject scoping and delegation
-parent-child hash binding. Use Level 1 for production records.
+Level 0 validates the schema, the SPIFFE subject, the `cnf.jwk` key type,
+the Ed25519 signature, the policy and runtime digests, and the build
+provenance — eight checks. Every record this exporter writes passes it.
+
+**Level 1 is not reachable from a software-only install, by design.** It
+adds two requirements that are properties of the deployment rather than of
+the record: `runtime.platform` must name a hardware TEE (`software-only`
+is rejected as development-mode), and the verifier must supply its own
+expected nonce. Running `--level 1` against a software-only record fails
+`TR-RTE-001` and `TR-RTE-004` while every other check passes. Claim Level 0
+for a software-only deployment; Level 1 describes a record produced inside
+a TEE and checked by a verifier that issued the nonce.
 
 ### Vectors for testing
 
@@ -112,7 +120,7 @@ Run the reference suite against any one:
 ```bash
 uv run --with agentrust-trace-tests==0.5.1 trace-tests verify \
     --record tests/fixtures/trust-record-vectors/single-execution-trust-record.json \
-    --level 1 --max-age 999999999999
+    --level 0 --max-age 999999999999
 ```
 
 (`--max-age` is set far above the default 24 h window because the
