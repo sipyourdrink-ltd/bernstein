@@ -214,6 +214,7 @@ def test_tamper_evidence_byte_flip_breaks_verification(tmp_path: Path) -> None:
 def test_details_dataclass_to_dict(tmp_path: Path) -> None:
     """``MCPCapabilityDriftDetails.to_dict`` round-trips all fields."""
     details = MCPCapabilityDriftDetails(
+        run_id="test-run-123",
         server_name="test-server",
         previous_digest="sha256:" + "a" * 64,
         current_digest="sha256:" + "b" * 64,
@@ -223,6 +224,7 @@ def test_details_dataclass_to_dict(tmp_path: Path) -> None:
     )
     d = details.to_dict()
     assert d == {
+        "run_id": "test-run-123",
         "server_name": "test-server",
         "previous_digest": "sha256:" + "a" * 64,
         "current_digest": "sha256:" + "b" * 64,
