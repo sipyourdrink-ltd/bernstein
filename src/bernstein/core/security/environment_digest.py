@@ -12,16 +12,14 @@ class DigestMismatchError(Exception):
         self.expected = expected
         self.actual = actual
         self.details = details
-        super().__init__(
-            f"Environment digest mismatch. Expected: {expected}, Actual: {actual}. Details: {details}"
-        )
+        super().__init__(f"Environment digest mismatch. Expected: {expected}, Actual: {actual}. Details: {details}")
 
 
 def _hash_file(filepath: str) -> str:
     """Return the SHA256 hash of a file's content as a hex string."""
     hasher = hashlib.sha256()
-    with open(filepath, 'rb') as f:
-        for chunk in iter(lambda: f.read(65536), b''):
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
             hasher.update(chunk)
     return hasher.hexdigest()
 
@@ -29,23 +27,17 @@ def _hash_file(filepath: str) -> str:
 def _get_git_head(repo_root: str) -> str:
     """Get the current git HEAD commit SHA."""
     try:
-        result = subprocess.run(
-            ['git', 'rev-parse', 'HEAD'],
-            cwd=repo_root,
-            capture_output=True,
-            check=True,
-            text=True
-        )
+        result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root, capture_output=True, check=True, text=True)
         return result.stdout.strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
         # Fallback to reading HEAD file directly
-        head_path = os.path.join(repo_root, '.git', 'HEAD')
+        head_path = os.path.join(repo_root, ".git", "HEAD")
         if not os.path.exists(head_path):
             return "HEAD_UNKNOWN"
         with open(head_path) as f:
             ref = f.read().strip()
-        if ref.startswith('ref: '):
-            ref_path = os.path.join(repo_root, '.git', ref[5:])
+        if ref.startswith("ref: "):
+            ref_path = os.path.join(repo_root, ".git", ref[5:])
             if os.path.exists(ref_path):
                 with open(ref_path) as f:
                     return f.read().strip()
@@ -72,8 +64,8 @@ def compute_environment_digest(repo_root: str, plan) -> str:
     git_head = _get_git_head(repo_root)
 
     # Get touched files and config files from plan
-    touched_files = getattr(plan, 'touched_files', [])
-    config_files = getattr(plan, 'config_files', [])
+    touched_files = getattr(plan, "touched_files", [])
+    config_files = getattr(plan, "config_files", [])
 
     # Compute hashes for touched files
     touched_hashes = []

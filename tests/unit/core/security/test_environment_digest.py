@@ -1,7 +1,6 @@
 """Tests for environment digest computation."""
 
-
-from src.bernstein.core.security.environment_digest import (
+from bernstein.core.security.environment_digest import (
     DigestMismatchError,
     compare_digests,
     compute_environment_digest,
@@ -20,13 +19,15 @@ def test_compare_digests_mismatch():
 
 def test_compute_digest_includes_git_head():
     """Digest should include git HEAD SHA."""
-    from src.bernstein.core.security.environment_digest import _get_git_head
+    from bernstein.core.security.environment_digest import _get_git_head
+
     head = _get_git_head("/work/proj")
     assert head == "run-20260901T104032p1019178Z" or len(head) == 40
 
 
 def test_compute_digest_include_touched_files():
     """Digest should include touched file hashes."""
+
     # Create a simple plan-like object
     class FakePlan:
         touched_files = ["pyproject.toml", "README.md"]
@@ -39,6 +40,7 @@ def test_compute_digest_include_touched_files():
 
 def test_compute_digest_include_config_files():
     """Digest should include config file hashes."""
+
     class FakePlan:
         touched_files = ["pyproject.toml"]
         config_files = ["bernstein.yaml"]
@@ -51,7 +53,8 @@ def test_compute_digest_include_config_files():
 def test_compute_digest_mismatch():
     """DigestMismatchError should be raised on comparison failure."""
     try:
-        from src.bernstein.core.security.environment_digest import compare_digests
+        from bernstein.core.security.environment_digest import compare_digests
+
         # Just test the function exists and works
         result = compare_digests("expected", "actual")
         assert result is False
@@ -62,6 +65,7 @@ def test_compute_digest_mismatch():
 
 def test_digest_is_deterministic():
     """Digest should be deterministic across repeated calls."""
+
     class Plan1:
         touched_files = ["pyproject.toml"]
         config_files = []
@@ -73,4 +77,3 @@ def test_digest_is_deterministic():
     digest1 = compute_environment_digest("/work/proj", Plan1())
     digest2 = compute_environment_digest("/work/proj", Plan2())
     assert digest1 == digest2
-
