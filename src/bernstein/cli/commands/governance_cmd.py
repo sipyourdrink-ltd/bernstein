@@ -1,7 +1,7 @@
-"""``bernstein governance``: verify RBAC + budget decisions as chain projections.
+"""``bernstein governance`` and ``bernstein govern`` -- verify, validate, and inventory.
 
 Issue #2309. Recomputes every access and budget decision recorded for a run from
-the signed lineage spine and confirms the recorded verdicts:
+the signed lineage spine and confirms the recorded verdicts::
 
     bernstein governance verify <run> --bindings <file> [--ledger <file>]
 
@@ -11,12 +11,19 @@ recompute per-subject spend from the cost ledger (never a stored counter) and
 re-derive the verdict. A tampered verdict, a widened permission binding, or a
 diverged ledger fails the check.
 
-Issue #4979. Governance playbook schema and validation:
+Issue #4979. Governance playbook schema and validation::
 
     bernstein governance validate playbook.yaml
 
 Validates playbook structure, referential integrity (surface_refs and
 ceiling_refs), and absence of duplicates.
+
+Issue #4973. Governance surface inventory::
+
+    bernstein govern inventory --output inventory.json
+
+Discovers and catalogs governable surfaces (MCP tools, API endpoints, file
+paths) with a content hash for audit trail.
 """
 
 from __future__ import annotations
@@ -44,8 +51,17 @@ def _lineage_root(workdir: Path) -> Path:
 def governance_group() -> None:
     """Verify RBAC and budget decisions as projections over the audit chain.
 
-    \b
+    \\b
       bernstein governance verify <run> --bindings b.json --ledger ledger.jsonl
+    """
+
+
+@click.group("govern")
+def govern_group() -> None:
+    """Governance surface management commands.
+
+    \\b
+      bernstein govern inventory   discover and catalog governable surfaces
     """
 
 
@@ -115,7 +131,7 @@ def governance_validate_cmd(playbook_file: str) -> None:
 
     Exit codes: 0 = valid, 1 = validation failed.
 
-    \b
+    \\b
     Example:
       bernstein governance validate playbook.yaml
     """
@@ -138,3 +154,93 @@ def governance_validate_cmd(playbook_file: str) -> None:
 
     console.print(f"[green]OK[/green] -- {path} is a valid governance playbook")
     sys.exit(0)
+
+
+@govern_group.command("inventory")
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Write inventory JSON to this path. Omit to print to stdout.",
+)
+@click.option(
+    "--workspace",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Workspace root to scan for surfaces.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit raw JSON to stdout (overrides --output).",
+)
+def govern_inventory_cmd(
+    output: Path | None,
+    workspace: str,
+    as_json: bool,
+) -> None:
+    """Discover and catalog governable surfaces in the workspace.
+
+    Scans for:
+    - MCP tools from ``.mcp.json``
+    - API endpoints from OpenAPI/Swagger specs
+    - File paths from ``bernstein.yaml`` worktree config
+
+    Writes a JSON inventory with ``inventory_hash`` (content digest) and
+    ``timestamp`` for audit trail. The inventory is consumed by
+    ``bernstein govern propose`` when drafting governance playbooks.
+
+    Exit codes: 0 = success, 1 = error.
+    """
+    from bernstein.core.governance.inventory import SurfaceInventory, discover_surfaces
+
+    root = Path(workspace).resolve()
+
+    try:
+        inventory = discover_surfaces(root)
+    except Exception as exc:
+        console.print(f"[red]Discovery failed:[/red] {exc}")
+        sys.exit(1)
+
+    data = inventory.to_dict()
+
+    if as_json:
+        click.echo(json.dumps(data, indent=2, sort_keys=True))
+        return
+
+    if output is not None:
+        try:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+        except OSError as exc:
+            console.print(f"[red]Failed to write inventory:[/red] {exc}")
+            sys.exit(1)
+        console.print(f"[green]Wrote[/green] {output}")
+        console.print(f"  surfaces       : {len(inventory.surfaces)}")
+        console.print(f"  inventory_hash : {inventory.inventory_hash[:16]}...")
+        console.print(f"  timestamp      : {inventory.timestamp}")
+        return
+
+    console.print(f"[bold]Governance Inventory[/bold] -- {root}")
+    console.print(f"  surfaces       : {len(inventory.surfaces)}")
+    console.print(f"  inventory_hash : {inventory.inventory_hash[:16]}...")
+    console.print(f"  timestamp      : {inventory.timestamp}")
+    console.print()
+
+    if not inventory.surfaces:
+        console.print("[dim]No surfaces discovered. Check .mcp.json, OpenAPI specs, or bernstein.yaml.[/dim]")
+        return
+
+    surface_by_kind: dict[str, list] = {}
+    for s in inventory.surfaces:
+        surface_by_kind.setdefault(s.kind, []).append(s)
+
+    for kind, surfaces in sorted(surface_by_kind.items()):
+        console.print(f"  [cyan]{kind}[/cyan] ({len(surfaces)})")
+        for s in surfaces:
+            console.print(f"    {s.identifier}")
