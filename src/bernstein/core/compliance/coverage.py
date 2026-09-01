@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from bernstein.core.lineage.entry import LineageEntry
@@ -192,7 +192,7 @@ def assess_control_coverage(
         artefact_kind = spec.get("required_artefact_kind", "")
         control_id = f"{policy_id}-control"
 
-        if not required:
+        if not required or not required.issubset(set(_BEHAVIOUR_SUFFIXES)):
             results.append(
                 ControlCoverageResult(
                     policy_id=policy_id,
@@ -213,7 +213,9 @@ def assess_control_coverage(
                     policy_id=policy_id,
                     control_id=control_id,
                     status=ControlCoverageStatus.EVIDENCED,
-                    evidence_summary=f"Chain contains {len(entries)} entries; required behaviour '{list(required)[0]}' observed.",
+                    evidence_summary=(
+                        f"Chain contains {len(entries)} entries; required behaviour '{next(iter(required))}' observed."
+                    ),
                     missing_inputs=[],
                     reason="Required chain events observed in the evidence set.",
                 )
@@ -224,9 +226,12 @@ def assess_control_coverage(
                     policy_id=policy_id,
                     control_id=control_id,
                     status=ControlCoverageStatus.PARTIALLY_EVIDENCED,
-                    evidence_summary=f"Entries of kind '{artefact_kind}' present but no event matching required behaviour '{list(required)[0]}'.",
+                    evidence_summary=(
+                        f"Entries of kind '{artefact_kind}' present but no event matching required behaviour "
+                        f"'{next(iter(required))}'."
+                    ),
                     missing_inputs=list(missing),
-                    reason=f"No run in the period emitted the required '{list(required)[0]}' event.",
+                    reason=f"No run in the period emitted the required '{next(iter(required))}' event.",
                 )
             )
         else:
@@ -237,7 +242,7 @@ def assess_control_coverage(
                     status=ControlCoverageStatus.PARTIALLY_EVIDENCED,
                     evidence_summary=f"No entries of kind '{artefact_kind}' observed in the chain.",
                     missing_inputs=list(missing),
-                    reason=f"No run in the period emitted the required '{list(required)[0]}' event.",
+                    reason=f"No run in the period emitted the required '{next(iter(required))}' event.",
                 )
             )
 
