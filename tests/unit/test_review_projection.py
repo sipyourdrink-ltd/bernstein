@@ -38,6 +38,7 @@ def _receipt(tmp_path: Path):
         verdict="approve",
         task_id="task-1",
         timestamp=1000,
+        resolution_hash="sha256:" + "a" * 64,
     )
 
 

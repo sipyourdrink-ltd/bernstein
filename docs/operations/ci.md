@@ -87,7 +87,11 @@ opt-in `cluster_e2e` marker). Those files execute no assertions here.
 `scripts/run_tests.py` reports them as `NO TESTS` rather than `PASS`, and
 totals them separately (`Files: P passed, F failed, N ran no tests, T
 total`), so the passing count is a count of files that actually executed
-something. A file that ran nothing is not a failure - a credential-gated
+something. Each file in that bucket is then named on its own line
+(`  ran no tests: tests/...`): the per-file lines are printed only for
+failures, so on a green shard the totals are the whole record, and a bare
+count of several hundred files leaves no way to check which file executed
+nothing. A file that ran nothing is not a failure - a credential-gated
 suite and an empty impact-based selection are both legitimate - but it is
 not evidence either. A file that exits 0 without a pytest terminal summary
 *is* a failure: pytest prints one on every completed run, so its absence

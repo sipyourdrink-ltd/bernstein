@@ -60,6 +60,7 @@ from bernstein.adapters.conformance import (
     assert_strategies_declared,
     load_golden_transcripts,
 )
+from bernstein.adapters.draft import Draft
 from bernstein.adapters.registry import get_adapter, iter_adapter_specs
 from bernstein.core.agents.multimodal import is_multimodal_capable
 
@@ -342,6 +343,8 @@ class TestCapabilityAwareSelection:
         with pytest.raises(CapabilityMismatchError) as excinfo:
             select_profile_for(TaskCapabilityRequirements(mcp_client=True), profiles=(profile,))
         assert "mcp_client" in str(excinfo.value)
+        # Verify verdict_table is present on the exception
+        assert excinfo.value.verdict_table.rows[0][2] == ("mcp_client",)
 
     def test_refusal_carries_a_content_addressed_receipt(self) -> None:
         profile = _minimal_profile(vision=False)
@@ -350,16 +353,21 @@ class TestCapabilityAwareSelection:
         receipt = excinfo.value.receipt
         assert receipt.unmet == ("vision",)
         assert len(receipt.receipt_hash) == 64
+        # Verify verdict_table is present
+        assert excinfo.value.verdict_table.rows[0][2] == ("vision",)
 
     def test_refusal_receipt_is_deterministic(self) -> None:
         profile = _minimal_profile(vision=False)
         requirements = TaskCapabilityRequirements(vision=True)
         hashes = []
+        tables = []
         for _ in range(2):
             with pytest.raises(CapabilityMismatchError) as excinfo:
                 select_profile_for(requirements, profiles=(profile,))
             hashes.append(excinfo.value.receipt.receipt_hash)
+            tables.append(excinfo.value.verdict_table)
         assert hashes[0] == hashes[1]
+        assert tables[0].verdict_hash == tables[1].verdict_hash
 
     def test_parallel_worker_shortfall_is_refused(self) -> None:
         profile = _minimal_profile(max_parallel_workers=2)
@@ -653,6 +661,150 @@ class TestRouteAndRecord:
         assert events[0].details["candidates"] == [[profile.name, profile.profile_hash]]
         assert chain.verify()[0]  # type: ignore[attr-defined]
 
+    def test_match_records_verdict_table_on_selection(self, tmp_path: Path) -> None:
+        from bernstein.core.security.audit_chain import EVENT_ADAPTER_CAPABILITY_SELECTION
+
+        candidates = [
+            _minimal_profile(name="a", mcp_client=False, vision=False),
+            _minimal_profile(name="b", mcp_client=True, vision=False),
+        ]
+        chain = _audit_chain(tmp_path)
+        selected = route_and_record(
+            TaskCapabilityRequirements(mcp_client=True),
+            profiles=candidates,
+            audit_chain=chain,
+            run_id="run-1",
+        )
+        events = chain.query(event_type=EVENT_ADAPTER_CAPABILITY_SELECTION)  # type: ignore[attr-defined]
+        assert len(events) == 1
+        table = events[0].details.get("verdict_table", {})
+        rows = table.get("rows", [])
+        assert len(rows) == 2
+        assert rows[0]["adapter"] == "a"
+        assert rows[0]["profile_hash"] == candidates[0].profile_hash
+        assert sorted(rows[0]["unmet"]) == sorted(["mcp_client"])
+        assert rows[1]["adapter"] == "b"
+        assert rows[1]["unmet"] == []
+        assert selected.name == "b"
+
+    def test_refusal_records_verdict_table_on_refusal(self, tmp_path: Path) -> None:
+        from bernstein.core.security.audit_chain import EVENT_ADAPTER_CAPABILITY_REFUSAL
+
+        candidates = [
+            _minimal_profile(name="a", mcp_client=False),
+            _minimal_profile(name="b", mcp_client=False, vision=False),
+        ]
+        chain = _audit_chain(tmp_path)
+        with pytest.raises(CapabilityMismatchError):
+            route_and_record(
+                TaskCapabilityRequirements(mcp_client=True, vision=True),
+                profiles=candidates,
+                audit_chain=chain,
+                run_id="run-1",
+            )
+        events = chain.query(event_type=EVENT_ADAPTER_CAPABILITY_REFUSAL)  # type: ignore[attr-defined]
+        assert len(events) == 1
+        table = events[0].details.get("verdict_table", {})
+        rows = table.get("rows", [])
+        assert len(rows) == 2
+        assert rows[0]["adapter"] == "a"
+        assert rows[0]["profile_hash"] == candidates[0].profile_hash
+        assert sorted(rows[0]["unmet"]) == sorted(["mcp_client", "vision"])
+        assert rows[1]["adapter"] == "b"
+        assert sorted(rows[1]["unmet"]) == sorted(["mcp_client", "vision"])
+        assert chain.verify()[0]  # type: ignore[attr-defined]
+
+    def test_verdict_table_does_not_change_receipt_hash(self, tmp_path: Path) -> None:
+        candidates = [
+            _minimal_profile(name="a", mcp_client=False),
+            _minimal_profile(name="b", mcp_client=False, vision=False),
+        ]
+        with pytest.raises(CapabilityMismatchError) as excinfo:
+            route_and_record(
+                TaskCapabilityRequirements(mcp_client=True, vision=True),
+                profiles=candidates,
+                audit_chain=None,
+            )
+        expected = excinfo.value.receipt.receipt_hash
+        with pytest.raises(CapabilityMismatchError) as excinfo:
+            route_and_record(
+                TaskCapabilityRequirements(mcp_client=True, vision=True),
+                profiles=candidates,
+                audit_chain=_audit_chain(tmp_path),
+            )
+        assert excinfo.value.receipt.receipt_hash == expected
+
+    def test_verdict_table_row_order_matches_candidate_order(self, tmp_path: Path) -> None:
+        candidates = [
+            _minimal_profile(name="c", vision=False),
+            _minimal_profile(name="a", mcp_client=False),
+            _minimal_profile(name="b", mcp_client=False, vision=False),
+        ]
+        chain = _audit_chain(tmp_path)
+        with pytest.raises(CapabilityMismatchError):
+            route_and_record(
+                TaskCapabilityRequirements(mcp_client=True, vision=True),
+                profiles=candidates,
+                audit_chain=chain,
+            )
+        from bernstein.core.security.audit_chain import EVENT_ADAPTER_CAPABILITY_REFUSAL
+
+        events = chain.query(event_type=EVENT_ADAPTER_CAPABILITY_REFUSAL)  # type: ignore[attr-defined]
+        rows = events[0].details["verdict_table"]["rows"]
+        assert [row["adapter"] for row in rows] == ["c", "a", "b"]
+        assert chain.verify()[0]  # type: ignore[attr-defined]
+
+    def test_verdict_table_contains_only_names_hashes_and_axis_names(self, tmp_path: Path) -> None:
+        candidates = [
+            _minimal_profile(name="a", mcp_client=False),
+            _minimal_profile(name="b", mcp_client=False, vision=False),
+        ]
+        chain = _audit_chain(tmp_path)
+        with pytest.raises(CapabilityMismatchError):
+            route_and_record(
+                TaskCapabilityRequirements(mcp_client=True, vision=True),
+                profiles=candidates,
+                audit_chain=chain,
+            )
+        from bernstein.core.security.audit_chain import EVENT_ADAPTER_CAPABILITY_REFUSAL
+
+        events = chain.query(event_type=EVENT_ADAPTER_CAPABILITY_REFUSAL)  # type: ignore[attr-defined]
+        table = events[0].details["verdict_table"]
+        assert table["kind"] == "capability-verdict-table"
+        for row in table["rows"]:
+            assert set(row.keys()) == {"adapter", "profile_hash", "unmet"}
+            assert isinstance(row["adapter"], str)
+            assert isinstance(row["profile_hash"], str)
+            for axis in row["unmet"]:
+                assert isinstance(axis, str)
+
+    def test_verdict_table_is_byte_identical_across_processes(self, tmp_path: Path) -> None:
+        candidates = [
+            _minimal_profile(name="a", mcp_client=False, vision=False),
+            _minimal_profile(name="b", mcp_client=False),
+        ]
+        chain1 = _audit_chain(tmp_path / "c1")
+        chain2 = _audit_chain(tmp_path / "c2")
+        with pytest.raises(CapabilityMismatchError):
+            route_and_record(
+                TaskCapabilityRequirements(mcp_client=True, vision=True),
+                profiles=candidates,
+                audit_chain=chain1,
+            )
+        with pytest.raises(CapabilityMismatchError):
+            route_and_record(
+                TaskCapabilityRequirements(mcp_client=True, vision=True),
+                profiles=candidates,
+                audit_chain=chain2,
+            )
+        from bernstein.core.security.audit_chain import EVENT_ADAPTER_CAPABILITY_REFUSAL
+
+        events1 = chain1.query(event_type=EVENT_ADAPTER_CAPABILITY_REFUSAL)  # type: ignore[attr-defined]
+        events2 = chain2.query(event_type=EVENT_ADAPTER_CAPABILITY_REFUSAL)  # type: ignore[attr-defined]
+        assert len(events1) == 1 and len(events2) == 1
+        assert events1[0].details["verdict_table"] == events2[0].details["verdict_table"]
+        assert chain1.verify()[0] and chain2.verify()[0]  # type: ignore[attr-defined]
+
     def test_no_chain_still_selects_without_recording(self, tmp_path: Path) -> None:
         """A chainless call keeps working: recording is opt-in, not required."""
         profile = _minimal_profile(mcp_client=True)
@@ -745,3 +897,148 @@ class TestCapabilityRequirementsFromTokens:
     def test_non_integer_worker_count_is_refused(self) -> None:
         with pytest.raises(ProfileValidationError):
             capability_requirements_from_tokens(["capability:max_parallel_workers=lots"])
+
+
+# ---------------------------------------------------------------------------
+# Draft profile discovery
+# ---------------------------------------------------------------------------
+
+
+class TestDraftProfileDiscovery:
+    """Draft profiles from .sdd/adapters/drafts/ integrate into the registry."""
+
+    def test_discover_draft_profiles_from_directory(self, tmp_path: Path) -> None:
+        """Draft YAML files are discovered and loaded as profiles."""
+        from bernstein.adapters.capability_profile import (
+            InvocationSpec,
+            ProfileImplementation,
+            _discover_draft_profiles,
+        )
+        from bernstein.adapters.draft import write_draft_yaml
+
+        # Create a draft file
+        drafts_dir = tmp_path / "drafts"
+        drafts_dir.mkdir(parents=True)
+
+        draft = Draft(
+            invocation=InvocationSpec(
+                binary="test-agent",
+                model_flag="--model",
+                prompt_flag="--prompt",
+            ),
+            evidence_byte_range=(10, 20),
+        )
+        write_draft_yaml(draft, drafts_dir / "test-agent.yaml")
+
+        # Discover drafts
+        profiles = _discover_draft_profiles(drafts_dir)
+
+        assert "test-agent" in profiles
+        assert profiles["test-agent"].invocation.binary == "test-agent"
+        assert profiles["test-agent"].implementation == ProfileImplementation.FACTORY
+
+    def test_discover_draft_profiles_handles_missing_directory(self, tmp_path: Path) -> None:
+        """Missing drafts directory returns empty dict, not error."""
+        from bernstein.adapters.capability_profile import _discover_draft_profiles
+
+        non_existent = tmp_path / "does-not-exist"
+        profiles = _discover_draft_profiles(non_existent)
+
+        assert profiles == {}
+
+    def test_discover_draft_profiles_skips_malformed_files(self, tmp_path: Path) -> None:
+        """Malformed draft files are skipped gracefully."""
+        from bernstein.adapters.capability_profile import _discover_draft_profiles
+
+        drafts_dir = tmp_path / "drafts"
+        drafts_dir.mkdir(parents=True)
+
+        # Write a malformed YAML file
+        bad_file = drafts_dir / "bad-draft.yaml"
+        bad_file.write_text("not: valid\nmissing: required_sections\n")
+
+        profiles = _discover_draft_profiles(drafts_dir)
+
+        assert profiles == {}
+
+    def test_iter_profiles_includes_drafts(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """iter_profiles yields both shipped and draft profiles."""
+        from bernstein.adapters import capability_profile
+        from bernstein.adapters.capability_profile import (
+            PROFILES,
+            InvocationSpec,
+            iter_profiles,
+        )
+        from bernstein.adapters.draft import write_draft_yaml
+
+        # Patch DEFAULT_DRAFTS_DIR to use temp directory
+        drafts_dir = tmp_path / "drafts"
+        drafts_dir.mkdir(parents=True)
+        monkeypatch.setattr(capability_profile, "DEFAULT_DRAFTS_DIR", drafts_dir)
+
+        # Create a draft
+        draft = Draft(
+            invocation=InvocationSpec(binary="drafted-agent"),
+        )
+        write_draft_yaml(draft, drafts_dir / "drafted-agent.yaml")
+
+        # Collect all profiles (explicitly include drafts)
+        all_profiles = dict(iter_profiles(include_drafts=True))
+
+        # Shipped profiles are present
+        for name in PROFILES:
+            assert name in all_profiles
+
+        # Draft is also present
+        assert "drafted-agent" in all_profiles
+
+    def test_get_profile_finds_draft(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """get_profile returns a draft profile when not in shipped profiles."""
+        from bernstein.adapters import capability_profile
+        from bernstein.adapters.capability_profile import (
+            InvocationSpec,
+            UnknownProfileError,
+            get_profile,
+        )
+        from bernstein.adapters.draft import write_draft_yaml
+
+        # Patch DEFAULT_DRAFTS_DIR
+        drafts_dir = tmp_path / "drafts"
+        drafts_dir.mkdir(parents=True)
+        monkeypatch.setattr(capability_profile, "DEFAULT_DRAFTS_DIR", drafts_dir)
+
+        # Create a draft
+        draft = Draft(
+            invocation=InvocationSpec(binary="unique-draft"),
+        )
+        write_draft_yaml(draft, drafts_dir / "unique-draft.yaml")
+
+        # get_profile finds it (explicitly include drafts)
+        profile = get_profile("unique-draft", include_drafts=True)
+        assert profile.invocation.binary == "unique-draft"
+
+        # Non-existent raises
+        with pytest.raises(UnknownProfileError):
+            get_profile("no-such-profile")
+
+    def test_draft_profiles_preserve_provenance(self, tmp_path: Path) -> None:
+        """Draft profiles preserve evidence byte range through load round-trip."""
+        from bernstein.adapters.capability_profile import InvocationSpec
+        from bernstein.adapters.draft import load_profile_from_draft, write_draft_yaml
+
+        drafts_dir = tmp_path / "drafts"
+        drafts_dir.mkdir(parents=True)
+
+        # Create a draft with provenance
+        draft = Draft(
+            invocation=InvocationSpec(
+                binary="prov-agent",
+                model_flag="--model",
+            ),
+            evidence_byte_range=(42, 48),
+        )
+        write_draft_yaml(draft, drafts_dir / "prov-agent.yaml")
+
+        # Load via load_profile_from_draft to verify provenance
+        loaded_draft = load_profile_from_draft(drafts_dir / "prov-agent.yaml")
+        assert loaded_draft.evidence_byte_range == (42, 48)

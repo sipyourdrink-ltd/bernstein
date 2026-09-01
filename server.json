@@ -1,25 +1,25 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.sipyourdrink-ltd/bernstein",
-  "description": "Deterministic orchestrator for CLI coding agents. Byte-identical replay, 40+ adapters, air-gap.",
+  "description": "The open-source governance layer for AI agents. Byte-identical run receipts, 40+ adapters, air-gap.",
   "websiteUrl": "https://bernstein.run",
   "repository": {
     "url": "https://github.com/sipyourdrink-ltd/bernstein",
     "source": "github"
   },
-  "version": "3.18.2",
+  "version": "3.19.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "bernstein",
-      "version": "3.18.2",
+      "version": "3.19.0",
       "transport": {
         "type": "stdio"
       }
     },
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/sipyourdrink-ltd/bernstein:3.18.2",
+      "identifier": "ghcr.io/sipyourdrink-ltd/bernstein:3.19.0",
       "transport": {
         "type": "stdio"
       }

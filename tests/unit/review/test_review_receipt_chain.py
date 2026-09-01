@@ -48,6 +48,7 @@ def _emit_chain(tmp_path: Path, *, verdicts: tuple[str, ...] = ("request_changes
                 verdict=verdict,
                 ruleset_digest=_RULES_DIGEST,
                 prev_entry_hash=prev,
+                resolution_hash="sha256:" + "a" * 64,
             )
         )
         anchors.append(prev)
@@ -202,6 +203,7 @@ def test_single_pass_receipt_binding_is_unchanged_by_the_contour_fields(tmp_path
         verdict="approve",
         task_id="task-1",
         timestamp=1000,
+        resolution_hash="sha256:" + "a" * 64,
     )
 
     binding = json.loads(receipt.to_canonical_bytes())

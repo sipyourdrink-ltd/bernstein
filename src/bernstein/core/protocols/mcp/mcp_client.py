@@ -998,6 +998,32 @@ class MCPClientSession:
         return {}
 
 
+@dataclass(frozen=True)
+class MCPManifestInfo:
+    """Manifest digest and merge report produced at injection time (issue #3682).
+
+    Carries the canonical merged tool set, its aggregate SHA-256 digest,
+    per-server digests, name collisions discovered across servers, and an
+    injection digest that lets callers detect discovery-to-injection drift.
+
+    Attributes:
+        aggregate_digest: SHA-256 of the canonical merged tool set.
+        per_server_digests: Per-server SHA-256 digests keyed by server name.
+        merged_tools: Canonical merged tool set as
+            ``(server, name, description, input_schema)`` tuples.
+        name_collisions: Pairs of ``(tool_name, [server, ...])`` where two or
+            more servers advertise the same tool name.
+        injection_digest: SHA-256 of the agent-config payload after injection,
+            used to detect drift between discovery and injection.
+    """
+
+    aggregate_digest: str
+    per_server_digests: dict[str, str]
+    merged_tools: list[tuple[str, str, str, dict[str, Any]]]
+    name_collisions: list[tuple[str, list[str]]]
+    injection_digest: str
+
+
 class MCPClientManager:
     """Manage connections to multiple remote MCP servers.
 
@@ -1208,46 +1234,107 @@ class MCPClientManager:
                 logger.warning("Error closing session '%s': %s", session.server_name, exc)
         self._sessions.clear()
 
+    @staticmethod
+    def _compute_aggregate_digest(
+        merged_tools: list[tuple[str, str, str, dict[str, Any]]],
+    ) -> str:
+        """Return SHA-256 digest of the canonical merged tool set.
+
+        The canonical form is a JSON array of objects sorted by
+        ``(server, name)`` to guarantee stable ordering across calls.
+        """
+        canonical = [
+            {"server": server, "name": name, "description": desc, "inputSchema": schema}
+            for server, name, desc, schema in sorted(merged_tools, key=lambda x: (x[0], x[1]))
+        ]
+        return hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _compute_server_digest(
+        server_name: str,
+        tools: list[tuple[str, str, dict[str, Any]]],
+    ) -> str:
+        """Return SHA-256 digest of a single server's tool set.
+
+        The canonical form is a JSON array of objects sorted by tool name.
+        """
+        canonical = [
+            {"name": name, "description": desc, "inputSchema": schema}
+            for name, desc, schema in sorted(tools, key=lambda x: x[0])
+        ]
+        return hashlib.sha256(
+            json.dumps(
+                {"server": server_name, "tools": canonical},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+
+    @staticmethod
+    def _compute_injection_digest(config: dict[str, Any]) -> str:
+        """Return SHA-256 digest of the agent-config after MCP injection."""
+        return hashlib.sha256(json.dumps(config, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
     def inject_into_agent_config(
         self,
         agent_config: dict[str, Any],
         server_names: list[str] | None = None,
-    ) -> dict[str, Any]:
-        """Inject remote MCP server configs into agent spawn config.
+    ) -> tuple[dict[str, Any], MCPManifestInfo]:
+        """Inject remote MCP server configs into agent spawn config (issue #3682).
 
         For Claude Code agents, adds entries to the ``mcpServers`` structure.
         For other agents, generates tool descriptions in the system prompt.
+
+        Builds a canonical merged tool set across all targeted servers, computes
+        SHA-256 digests (aggregate + per-server), detects name collisions
+        across servers, and emits an :class:`MCPManifestInfo` so callers can
+        detect discovery-to-injection drift.
 
         Args:
             agent_config: Agent configuration dict to augment.
             server_names: Subset of servers to include. Defaults to all.
 
         Returns:
-            Updated agent configuration dict.
+            Tuple of ``(updated_agent_config, MCPManifestInfo)``.
+
+        Raises:
+            ValueError: If two or more targeted servers advertise the same
+                tool name (name collision).
         """
         config = agent_config.copy()
         targets = server_names or list(self._sessions.keys())
 
         mcp_servers: dict[str, Any] = {}
         tool_descriptions: list[str] = []
+        merged_tools: list[tuple[str, str, str, dict[str, Any]]] = []
+        per_server_digests: dict[str, str] = {}
+        name_owners: dict[str, list[str]] = {}
 
         for name in targets:
             session = self._sessions.get(name)
             if session is None or not session.is_connected:
                 continue
 
-            # Find the config for this session
             server_cfg = session._config
 
-            # Build mcpServers entry for Claude Code
             entry: dict[str, Any] = {"url": server_cfg.url}
             if server_cfg.auth_type == "bearer" and server_cfg.auth_token:
                 entry["headers"] = {"Authorization": f"Bearer {server_cfg.auth_token}"}
             mcp_servers[name] = entry
 
-            # Build tool descriptions for non-Claude agents
             for tool in session.tools:
                 tool_descriptions.append(f"- {tool.name}: {tool.description} (server: {name})")
+                schema = cast("dict[str, Any]", tool.input_schema) if isinstance(tool.input_schema, dict) else {}
+                merged_tools.append((name, tool.name, tool.description, schema))
+                name_owners.setdefault(tool.name, []).append(name)
+
+        name_collisions: list[tuple[str, list[str]]] = sorted(
+            (name, sorted(owners)) for name, owners in name_owners.items() if len(owners) > 1
+        )
+        if name_collisions:
+            rendered = ", ".join(f"{n}={servers}" for n, servers in name_collisions)
+            logger.error("MCP manifest name collision across servers: %s", rendered)
+            raise ValueError(f"MCP name collision across servers: {rendered}")
 
         if mcp_servers:
             existing = config.get("mcp_config", {})
@@ -1261,4 +1348,20 @@ class MCPClientManager:
         if tool_descriptions:
             config["remote_tools_description"] = "\n".join(tool_descriptions)
 
-        return config
+        aggregate_digest = self._compute_aggregate_digest(merged_tools)
+
+        for name, session in self._sessions.items():
+            if name in targets and session.is_connected:
+                server_tools = [(t.name, t.description, t.input_schema) for t in session.tools]
+                per_server_digests[name] = self._compute_server_digest(name, server_tools)
+
+        injection_digest = self._compute_injection_digest(config)
+
+        manifest_info = MCPManifestInfo(
+            aggregate_digest=aggregate_digest,
+            per_server_digests=per_server_digests,
+            merged_tools=merged_tools,
+            name_collisions=name_collisions,
+            injection_digest=injection_digest,
+        )
+        return config, manifest_info

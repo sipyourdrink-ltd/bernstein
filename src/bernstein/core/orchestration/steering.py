@@ -42,6 +42,7 @@ from bernstein.core.communication.task_mailbox import STEER_MESSAGE_KINDS
 from bernstein.core.security.audit_chain import (
     EVENT_STEERING_RECEIPT,
     record_steering_receipt,
+    record_steering_rejection,
     record_task_mailbox_message,
 )
 from bernstein.core.server.dashboard_tokens import SCOPE_OPERATOR
@@ -697,8 +698,9 @@ def consume_steering(
     per-step journal row (the step hash binds the receipt), so a steered run
     replays byte-identically and a second host walking the same journal
     computes identical step hashes. A message whose receipt is absent from the
-    chain is rejected (no effect, no journal row): an effect cannot exist
-    without its receipt.
+    chain is rejected by appending a ``steer.rejected`` journal row and
+    recording a ``steering.rejection`` audit event, so the refusal is an
+    audit-chain event rather than a dropped message.
 
     Args:
         mailbox: The delivery mailbox.
@@ -731,6 +733,32 @@ def consume_steering(
                 message.kind,
                 message.seq,
                 task_id,
+            )
+            # Reject the message by recording a steer.rejected journal row and
+            # a steering.rejection audit event. The refusal itself is an
+            # audit-chain event so a steered run is distinguishable from a
+            # tampered one.
+            journal.append(
+                input_hash=message.body_hash,
+                tool_call={
+                    "steer": "rejected",
+                    "reason": "missing_receipt_hash",
+                    "rejected_seq": message.seq,
+                    "entry_hash": message.entry_hash,
+                    "body_hash": message.body_hash,
+                },
+                tool_result={"rejected": True},
+            )
+            record_steering_rejection(
+                chain=chain,
+                task_id=task_id,
+                mailbox_seq=message.seq,
+                kind=kind,
+                receipt_hash=receipt_hash,
+                payload_hash=payload_hash,
+                entry_hash=message.entry_hash,
+                body_hash=message.body_hash,
+                reason="missing_receipt_hash",
             )
             result.rejected.append((message.seq, receipt_hash))
             continue

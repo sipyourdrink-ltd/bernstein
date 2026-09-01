@@ -76,3 +76,12 @@ def test_the_recording_and_the_receipt_describe_the_same_run() -> None:
 
     # The verdict the loop rests on must be the provenance-grade one.
     assert "OK (provenance: pinned key)" in text
+
+
+def test_the_demo_receipt_has_a_non_empty_lineage_spine() -> None:
+    """The published demo run receipt must carry a non-empty lineage spine
+    (issue #3570).
+    """
+    receipt = json.loads(_RECEIPT.read_text(encoding="utf-8"))
+    assert receipt["spine"]["entry_count"] > 0
+    assert bool(receipt["spine"]["head_hash"])

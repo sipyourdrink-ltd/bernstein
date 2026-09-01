@@ -149,6 +149,21 @@ make -C examples/lineage demo-healthcare
 make -C examples/lineage demo-eu-mfg
 ```
 
+## Foreign attestations
+
+An external attestation is typed metadata beside a lineage record, never an
+entry in Bernstein's HMAC chain.  The first verifier slice accepts a
+protocol-neutral envelope containing an issuer, issuer key id, content hash,
+claimed subject, trust class, format, and payload hash.  It preserves the
+foreign trust class and reports a structurally valid envelope as
+`unverifiable` until an issuer- and format-specific verifier is available.
+
+`unverifiable` does not mean Bernstein rejected the foreign claim, and it
+does not mean Bernstein verified it.  A malformed envelope fails closed at
+`public` trust.  Unknown formats remain `unverifiable` rather than being
+parsed as Bernstein data.  Neither result changes whether Bernstein's own
+lineage chain verifies or upgrades a foreign claim into a Bernstein finding.
+
 ## Failure modes you should know
 
 | Symptom | Likely cause | Action |

@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from bernstein.adapters._contract import AuthBasis
 from bernstein.core.volunteer.manifest import load_manifest
 from bernstein.core.volunteer.runner import (
     AgentInvocation,
@@ -126,12 +127,14 @@ def _run(
     manifest: Any = None,
     donor: DonorLimits | None = None,
     budget: WallClockBudget | None = None,
+    adapter_id: str | None = None,
 ) -> TaskDiff | TaskRefusal:
     return run_claimed_task(
         task if task is not None else _task(repo),
         manifest if manifest is not None else _manifest(),
         donor=donor if donor is not None else _donor(),
         workspace=tmp_path / "run",
+        adapter_id=adapter_id,
         agent_argv=agent_argv,
         sanitize=_passthrough,
         budget=budget,
@@ -331,6 +334,96 @@ def test_an_agent_that_exits_non_zero_is_a_refusal_rather_than_a_patch(fixture_r
     assert outcome.wall_clock["exit_code"] == 3
 
 
+# ---------------------------------------------------------------------------
+# Provider-terms auth_basis preflight
+# ---------------------------------------------------------------------------
+
+
+def test_auth_basis_subscription_oauth_is_refused_in_volunteer_mode(fixture_repo: Path, tmp_path: Path) -> None:
+    """adapter with auth_basis=subscription_oauth is refused in volunteer mode.
+
+    The refusal receipt must name the compliant alternatives (API key or
+    local endpoint), not just say "no".
+    """
+    outcome = _run(
+        fixture_repo,
+        tmp_path,
+        agent_argv=mock_agent_argv(fix="off-by-one"),
+        adapter_id="copilot",  # copilot has subscription_oauth
+    )
+    assert isinstance(outcome, TaskRefusal)
+    assert outcome.stage == RefusalStage.AGENT
+    assert outcome.reason == "provider_terms_unavailable"
+    record = outcome.as_record()
+    assert "subscription OAuth" in record["detail"]
+    assert "API-key adapter" in record["detail"]
+    assert "local endpoint adapter" in record["detail"]
+
+
+def test_auth_basis_unknown_is_refused_in_volunteer_mode(fixture_repo: Path, tmp_path: Path) -> None:
+    """adapter with unknown auth_basis is refused in volunteer mode.
+
+    computer_use carries an unknown auth_basis in its contract; the gate
+    must refuse it and name compliant paths.
+    """
+    outcome = _run(
+        fixture_repo,
+        tmp_path,
+        agent_argv=mock_agent_argv(fix="off-by-one"),
+        adapter_id="computer_use",  # computer_use has unknown auth_basis
+    )
+    assert isinstance(outcome, TaskRefusal)
+    assert outcome.stage == RefusalStage.AGENT
+    assert outcome.reason == "provider_terms_unavailable"
+    record = outcome.as_record()
+    assert "unknown" in record["detail"].lower()
+    assert "API-key adapter" in record["detail"]
+    assert "local endpoint adapter" in record["detail"]
+
+
+def test_auth_basis_api_key_is_accepted_in_volunteer_mode(fixture_repo: Path, tmp_path: Path) -> None:
+    """adapter with auth_basis=api_key is accepted in volunteer mode."""
+    outcome = _run(
+        fixture_repo,
+        tmp_path,
+        agent_argv=mock_agent_argv(fix="off-by-one"),
+        adapter_id="claude",  # claude has api_key
+    )
+    assert isinstance(outcome, TaskDiff)
+    assert outcome.as_record()["outcome"] == "diff"
+
+
+def test_auth_basis_local_is_accepted_in_volunteer_mode(
+    fixture_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """adapter with auth_basis=local is accepted in volunteer mode.
+
+    No shipped adapter carries a local auth_basis, so a local profile is
+    injected via the registry and the runner must accept it the same way
+    it accepts api_key.
+    """
+    from bernstein.adapters.capability_profile import PROFILES, AdapterCapabilityProfile, InvocationSpec
+
+    monkeypatch.setitem(
+        PROFILES,
+        "local-adapter",
+        AdapterCapabilityProfile(
+            name="local-adapter",
+            display_name="Local Adapter",
+            invocation=InvocationSpec(binary="local"),
+            auth_basis=AuthBasis.LOCAL,
+        ),
+    )
+    outcome = _run(
+        fixture_repo,
+        tmp_path,
+        agent_argv=mock_agent_argv(fix="off-by-one"),
+        adapter_id="local-adapter",
+    )
+    assert isinstance(outcome, TaskDiff)
+    assert outcome.as_record()["outcome"] == "diff"
+
+
 def test_a_run_that_changed_nothing_is_a_refusal_rather_than_an_empty_patch(fixture_repo: Path, tmp_path: Path) -> None:
     """An empty submission is not a submission."""
     outcome = _run(fixture_repo, tmp_path, agent_argv=_python_agent("pass\n"))
@@ -379,6 +472,47 @@ def test_a_repo_url_that_names_a_transport_helper_is_refused_before_git_runs(tmp
 def test_the_repo_url_allowlist_admits_transports_and_refuses_helpers(url: str, rejected: bool) -> None:
     """An allowlist of transports, not a denylist of the ones we thought of."""
     assert (repo_url_problem(url) is not None) is rejected
+
+
+def test_private_github_repository_is_refused_in_volunteer_mode(
+    fixture_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A private GitHub repository is refused during open-source preflight.
+
+    The runner calls urllib.request.urlopen for https://api.github.com/repos/{repo_path}
+    to check repository visibility. When the API returns {"private": true}, the task
+    must be refused with open_source_preflight_failed and a detail containing "private".
+    """
+    import urllib.request
+
+    class _FakeResponse:
+        status = 200
+
+        def read(self):
+            return b'{"private": true, "full_name": "owner/repo"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+    def mock_urlopen(req, *, timeout: int = 10):
+        assert req.full_url.startswith("https://api.github.com/repos/owner/repo")
+        return _FakeResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+    outcome = _run(
+        "https://github.com/owner/repo",
+        tmp_path,
+        agent_argv=mock_agent_argv(fix="off-by-one"),
+    )
+
+    assert isinstance(outcome, TaskRefusal)
+    assert outcome.stage == RefusalStage.REPO_URL
+    assert outcome.reason == "open_source_preflight_failed"
+    assert "private" in outcome.detail.lower()
 
 
 # --------------------------------------------------------------------------

@@ -84,8 +84,8 @@ receipt.
 
 ## Replay classification
 
-Because every consumed steering message is a journal step, a steered run
-replays byte-identically and is distinguishable from a tampered one:
+Because every consumed steering message is a journal step, a steered run's
+journal replays byte-identically and is distinguishable from a tampered one:
 `classify_steering_run()` reads a worker's journal and returns one of:
 
 - `clean` - the journal's Merkle chain verifies and carries no steering

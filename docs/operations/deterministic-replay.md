@@ -372,4 +372,7 @@ operator's view is an attestable projection of what executed.
 - Sibling subsystem with the same miss contract:
   `src/bernstein/core/replay/gateway.py` (`ReplayMissError`); its replay
   fixtures consume in recorded `seq` order, so duplicate response values cannot
-  desync the by-kind FIFO fallback.
+  desync the by-kind FIFO fallback. Stored fixture keys are scheme-prefixed
+  digests (`v1:<64 hex>`, see `key_scheme.py`); a corpus recorded under an
+  older scheme raises `ReplayKeySchemeMismatchError` rather than comparing as
+  divergence or falling through FIFO (#4867).

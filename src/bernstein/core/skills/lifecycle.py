@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import tomllib
@@ -50,13 +51,20 @@ from typing import Any, TypedDict, cast
 import yaml
 from pydantic import ValidationError
 
+from bernstein.core.security.audit import load_or_create_audit_key
+from bernstein.core.security.audit_chain import AuditChainStore, record_skill_install_receipt
 from bernstein.core.security.path_containment import (
     PathContainmentError,
     contained_subpath,
 )
 from bernstein.core.skills.lint import LintSeverity, lint_skill
 from bernstein.core.skills.manifest import SkillManifest, parse_skill_md
+from bernstein.core.skills.packaging import tree_content_hash
+from bernstein.core.skills.plugin_schema import PLUGIN_SCHEMA_ID, schema_errors
+from bernstein.core.skills.provenance import InstallReceipt, write_install_receipt
 from bernstein.core.skills.sanitizer import strip_invisible_tags
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Public constants
@@ -701,6 +709,9 @@ PLUGIN_MANIFEST_FILENAME: str = "plugin.json"
 #: Lockfile ``source`` tag for skills installed from a plugin directory.
 _PLUGIN_LOCK_SOURCE: str = "plugin"
 
+#: Key used in spine_anchors dict for the plugin-tree receipt anchor.
+_PLUGIN_TREE_ANCHOR_KEY: str = "(plugin-tree)"
+
 
 @dataclass(frozen=True)
 class SkippedSkill:
@@ -716,6 +727,7 @@ class PluginInstallResult:
 
     installed: list[InstallResult]
     skipped: list[SkippedSkill]
+    spine_anchors: dict[str, str]
 
 
 def _resolve_plugin_skills_dir(source: Path, data: dict[str, object]) -> Path | None:
@@ -747,11 +759,25 @@ def is_agent_plugins_layout(source: Path) -> bool:
     """Strict Agent Plugins v1.0.0 layout detection.
 
     A directory counts as an Agent Plugins layout only when a root
-    ``plugin.json`` parses with a non-empty ``name`` field and a ``skills``
-    field that resolves to a ``skills/`` subdirectory. Strict by design
-    (#3772 decision): avoids misfiring on unrelated directories that merely
-    happen to contain a ``skills/`` folder. The ``skills`` field must stay
-    inside the plugin root (see :func:`_resolve_plugin_skills_dir`).
+    ``plugin.json`` parses with a non-empty ``name`` field, a ``$schema``
+    field whose value is the exact string
+    ``https://agent-plugins.org/schemas/1.0.0/plugin.schema.json`` (any other
+    value, including no value at all, is rejected), and a ``skills`` field
+    that resolves to a directory inside the plugin root (see
+    :func:`_resolve_plugin_skills_dir`).
+
+    Strictness rules (#3772, #3540 decision):
+
+    - Missing ``$schema`` field: rejected.
+    - Unknown ``$schema`` value (e.g. a different version URL or arbitrary
+      string): rejected with a debug log message naming the offending value.
+    - ``$schema`` present with the correct 1.0.0 URL: accepted.
+    - Non-dictionary JSON root: rejected.
+    - Missing or empty ``name``: rejected.
+    - ``skills`` field absent or resolves outside the plugin root: rejected.
+
+    These rules prevent misfiring on unrelated directories that merely happen
+    to contain a ``skills/`` folder or a file named ``plugin.json``.
     """
     if not source.is_dir():
         return False
@@ -767,6 +793,18 @@ def is_agent_plugins_layout(source: Path) -> bool:
     data = cast("dict[str, object]", raw)
     name = data.get("name")
     if not isinstance(name, str) or not name:
+        return False
+    if "$schema" not in data:
+        logger.debug("Rejecting %s as Agent Plugins layout: missing $schema field", source)
+        return False
+    schema_spec = {"const": PLUGIN_SCHEMA_ID}
+    errors = schema_errors(data["$schema"], schema_spec, schema_spec, path="$.$schema")
+    if errors:
+        logger.debug(
+            "Rejecting %s as Agent Plugins layout: unknown $schema (%s)",
+            source,
+            "; ".join(errors),
+        )
         return False
     skills_dir = _resolve_plugin_skills_dir(source, data)
     return skills_dir is not None and skills_dir.is_dir()
@@ -823,6 +861,14 @@ def install_plugin_local(
         raise SkillLifecycleError(
             f"{source}: not an Agent Plugins directory layout "
             f"(root {PLUGIN_MANIFEST_FILENAME} with name + skills/ required)"
+        )
+    if "$schema" not in manifest:
+        raise SkillLifecycleError(f"{source}: not an Agent Plugins directory layout (missing $schema field)")
+    schema_spec = {"const": PLUGIN_SCHEMA_ID}
+    errors = schema_errors(manifest["$schema"], schema_spec, schema_spec, path="$.$schema")
+    if errors:
+        raise SkillLifecycleError(
+            f"{source}: not an Agent Plugins directory layout (unknown $schema: {'; '.join(errors)})"
         )
     # Resolved once, containment-checked: the same value is used for the
     # walk below and for the lockfile paths, never re-joined from the raw
@@ -882,8 +928,111 @@ def install_plugin_local(
             skipped.append(SkippedSkill(name=name, reason=str(exc)))
 
     if installed:
-        _record_plugin_lock(installed, skills_dir, workdir=workdir, pack=str(name_field) if name_field else None)
-    return PluginInstallResult(installed=installed, skipped=skipped)
+        spine_anchors = _record_plugin_receipts(installed, source, workdir=workdir)
+        _record_plugin_lock(
+            installed,
+            skills_dir,
+            workdir=workdir,
+            pack=str(name_field) if name_field else None,
+            plugin_tree_receipt=spine_anchors.get(_PLUGIN_TREE_ANCHOR_KEY),
+        )
+    else:
+        spine_anchors = {}
+    return PluginInstallResult(installed=installed, skipped=skipped, spine_anchors=spine_anchors)
+
+
+def _record_plugin_receipts(
+    installed: list[InstallResult],
+    plugin_root: Path,
+    *,
+    workdir: Path,
+) -> dict[str, str]:
+    """Write per-skill install receipts and a plugin-tree receipt, anchor them in the lineage spine.
+
+    Mirrors the pattern used by the catalog installer: every installed skill
+    gets an :class:`~bernstein.core.skills.provenance.InstallReceipt` written
+    to ``.sdd/skills/receipts/`` and anchored in the ``skills`` lineage spine.
+    The audit chain receives a ``skill.install_receipt`` event per skill.
+    The plugin tree as a whole (the directory containing ``plugin.json``) also
+    receives a content-addressed receipt so provenance_graph can attribute skill
+    usage back to the originating plugin pack.
+
+    Args:
+        installed: List of successful per-skill install results.
+        plugin_root: Root of the plugin pack (the directory with ``plugin.json``).
+        workdir: Project root; receipts land under ``.sdd/skills/receipts/``.
+
+    Returns:
+        A dict mapping skill names (and ``"(plugin-tree)"``) to their spine
+        entry hashes.
+    """
+    import time
+
+    hmac_key = load_or_create_audit_key()
+    lineage_root = workdir / ".sdd" / "lineage"
+    spine_anchors: dict[str, str] = {}
+    timestamp = int(time.time())
+
+    for result in installed:
+        skill_hash = result.digest.digest
+        skill_md_path = result.install_dir / "SKILL.md"
+        manifest_hash = hashlib.sha256(skill_md_path.read_bytes()).hexdigest()
+        install_id = f"plugin:{plugin_root.name}:{result.name}:{timestamp}"
+
+        receipt = InstallReceipt(
+            skill_hash=skill_hash,
+            manifest_hash=manifest_hash,
+            install_id=install_id,
+            timestamp=timestamp,
+        )
+        anchor = write_install_receipt(
+            workdir=workdir,
+            lineage_root=lineage_root,
+            hmac_key=hmac_key,
+            receipt=receipt,
+        )
+        spine_anchors[result.name] = anchor
+
+        chain = AuditChainStore(workdir / ".sdd" / "audit", key=hmac_key)
+        record_skill_install_receipt(
+            chain=chain,
+            skill_hash=skill_hash,
+            manifest_hash=manifest_hash,
+            install_id=install_id,
+            spine_anchor=anchor,
+            actor="skill_provenance.plugin",
+        )
+
+    plugin_tree_hash = tree_content_hash(plugin_root)
+    plugin_tree_manifest_path = plugin_root / PLUGIN_MANIFEST_FILENAME
+    plugin_tree_manifest_hash = hashlib.sha256(plugin_tree_manifest_path.read_bytes()).hexdigest()
+    plugin_tree_install_id = f"plugin:{plugin_root.name}:tree:{timestamp}"
+
+    tree_receipt = InstallReceipt(
+        skill_hash=plugin_tree_hash,
+        manifest_hash=plugin_tree_manifest_hash,
+        install_id=plugin_tree_install_id,
+        timestamp=timestamp,
+    )
+    tree_anchor = write_install_receipt(
+        workdir=workdir,
+        lineage_root=lineage_root,
+        hmac_key=hmac_key,
+        receipt=tree_receipt,
+    )
+    spine_anchors[_PLUGIN_TREE_ANCHOR_KEY] = tree_anchor
+
+    chain = AuditChainStore(workdir / ".sdd" / "audit", key=hmac_key)
+    record_skill_install_receipt(
+        chain=chain,
+        skill_hash=plugin_tree_hash,
+        manifest_hash=plugin_tree_manifest_hash,
+        install_id=plugin_tree_install_id,
+        spine_anchor=tree_anchor,
+        actor="skill_provenance.plugin",
+    )
+
+    return spine_anchors
 
 
 def _record_plugin_lock(
@@ -892,6 +1041,7 @@ def _record_plugin_lock(
     *,
     workdir: Path,
     pack: str | None = None,
+    plugin_tree_receipt: str | None = None,
 ) -> None:
     """Merge plugin-installed skills into ``skills.lock`` ([[skills]] rows).
 
@@ -908,6 +1058,7 @@ def _record_plugin_lock(
             path=str(skills_dir / result.name),
             digest=result.digest.digest,
             pack=pack,
+            plugin_tree_receipt=plugin_tree_receipt,
         )
     _write_lock(lock_path, list(entries.values()))
 
@@ -1011,6 +1162,7 @@ class LockEntry:
     path: str
     digest: str
     pack: str | None = None
+    plugin_tree_receipt: str | None = None
 
 
 def _read_lock(path: Path) -> dict[str, LockEntry]:
@@ -1034,14 +1186,23 @@ def _read_lock(path: Path) -> dict[str, LockEntry]:
         path_value = item_dict.get("path")
         digest = item_dict.get("digest")
         pack = item_dict.get("pack")
+        plugin_tree_receipt = item_dict.get("plugin_tree_receipt")
         if (
             isinstance(name, str)
             and isinstance(source, str)
             and isinstance(path_value, str)
             and isinstance(digest, str)
             and (pack is None or isinstance(pack, str))
+            and (plugin_tree_receipt is None or isinstance(plugin_tree_receipt, str))
         ):
-            out[name] = LockEntry(name=name, source=source, path=path_value, digest=digest, pack=pack)
+            out[name] = LockEntry(
+                name=name,
+                source=source,
+                path=path_value,
+                digest=digest,
+                pack=pack,
+                plugin_tree_receipt=plugin_tree_receipt,
+            )
     return out
 
 
@@ -1070,6 +1231,8 @@ def _write_lock(path: Path, entries: list[LockEntry]) -> None:
         )
         if entry.pack is not None:
             lines.append(f"pack = {_toml_quote(entry.pack)}")
+        if entry.plugin_tree_receipt is not None:
+            lines.append(f"plugin_tree_receipt = {_toml_quote(entry.plugin_tree_receipt)}")
         lines.append("")
 
     path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")

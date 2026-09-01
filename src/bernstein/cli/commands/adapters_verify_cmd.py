@@ -38,7 +38,6 @@ from typing import cast
 import click
 
 from bernstein.adapters.admission import (
-    ADMISSION_EXEMPT,
     ADMISSION_TTL_SECONDS,
     build_admission_receipt,
     evaluate_admission,
@@ -115,7 +114,7 @@ def _execute_verify(
     clock = now if now is not None else datetime.now(UTC)
     stamp = clock.isoformat()
 
-    if name in ADMISSION_EXEMPT:
+    if name == "mock":
         click.echo(
             f"Adapter {name!r} is exempt from receipt-gated admission "
             "(no pinned upstream surface to prove); nothing to verify.",

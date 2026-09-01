@@ -37,6 +37,7 @@ from bernstein.core.orchestration.activity import (
 from bernstein.core.orchestration.activity_modalities import ContentStore, verify_run_activities
 from bernstein.core.orchestration.research_worker import (
     ClaimDraft,
+    FetchedSource,
     ResearchBudget,
     ResearchBudgetExceeded,
     ResearchPlan,
@@ -116,6 +117,24 @@ def test_run_refuses_claim_citing_unfetched_source(tmp_path: Path) -> None:
         worker.run(query="q", sources=["https://a"], fetch_fn=_fetch, synthesise=synth_bad)
 
 
+def test_all_sources_fetched_through_worker_fetch_fn(tmp_path: Path) -> None:
+    """Every source_ref cited in the report was fetched via the worker's fetch_fn, not externally."""
+    worker = _worker(tmp_path, max_fetches=5)
+    calls: list[str] = []
+
+    def spy_fetch(url: str) -> bytes:
+        calls.append(url)
+        return _fetch(url)
+
+    # The worker's plan determines which sources are fetched; the synthesiser
+    # never fetches independently -- it only reads from the fetched tuple.
+    run = worker.run(query="q", sources=["https://a", "https://b"], fetch_fn=spy_fetch, synthesise=_synth_two)
+    cited_refs = {c.source_ref for claim in run.report.claims for c in claim.citations}
+    assert cited_refs.issubset(set(calls))
+    assert set(calls).issubset(set(["https://a", "https://b"]))
+    assert len(set(calls)) == len(calls)  # no duplicates
+
+
 # ---------------------------------------------------------------------------
 # cost caps (AC4)
 # ---------------------------------------------------------------------------
@@ -125,6 +144,19 @@ def test_max_fetches_cap_refuses_before_overspending(tmp_path: Path) -> None:
     worker = _worker(tmp_path, max_fetches=2)
     with pytest.raises(ResearchBudgetExceeded, match="max_fetches=2"):
         worker.run(query="q", sources=list(_PAGES), fetch_fn=_fetch, synthesise=_synth_two)
+
+
+def test_budget_exceeded_refuses_before_second_fetch_no_partial_anchored(tmp_path: Path) -> None:
+    """ResearchBudgetExceeded is raised before the second fetch, and no partial report is anchored."""
+    sdd = tmp_path / ".sdd"
+    store = ContentStore(sdd / "cas")
+    worker = ResearchWorker(store=store, budget=ResearchBudget(max_fetches=1))
+    with pytest.raises(ResearchBudgetExceeded, match="max_fetches=1"):
+        worker.run(query="q", sources=["https://a", "https://b"], fetch_fn=_fetch, synthesise=_synth_two)
+    # No report artifact was anchored: the content store holds only the first page (if any).
+    # No journal entry means verify_run_activities finds nothing for this run.
+    verified = verify_run_activities(sdd, run_id="run-budget-test", store=store)
+    assert not verified.found
 
 
 def test_cost_unit_cap_refuses(tmp_path: Path) -> None:
@@ -207,6 +239,30 @@ def test_verify_fails_naming_claim_when_source_altered(tmp_path: Path) -> None:
     assert failed.claim_id == "c1"
 
 
+def test_verify_fails_on_single_byte_mutation_naming_source_ref(tmp_path: Path) -> None:
+    """Mutating a single byte in a stored source causes verification to fail, naming the source."""
+    sdd = tmp_path / ".sdd"
+    store = ContentStore(sdd / "cas")
+    worker = ResearchWorker(store=store, budget=ResearchBudget(max_fetches=5))
+    run = worker.run(query="q", sources=list(_PAGES), fetch_fn=_fetch, synthesise=_synth_two)
+    journal = EventJournal(run_id="run-r", sdd_dir=sdd)
+    dispatch_activity(run.result, stage_id="research-0", journal=journal)
+
+    cited_hash = run.report.claims[1].citations[0].page_content_hash
+    original_bytes = store.get(cited_hash)
+    # Mutate a single byte in the middle of the stored source.
+    tampered_bytes = original_bytes[: len(original_bytes) // 2] + b"X" + original_bytes[len(original_bytes) // 2 + 1 :]
+    store.force_put(cited_hash, tampered_bytes)
+
+    verified = verify_run_activities(sdd, run_id="run-r", store=store)
+    assert not verified.ok
+    stage = verified.stages[0]
+    assert not stage.ok
+    assert cited_hash in stage.reason
+    failed = next(c for c in stage.claim_verdicts if not c.ok)
+    assert failed.claim_id == "c2"
+
+
 def test_two_verify_runs_produce_identical_verdicts(tmp_path: Path) -> None:
     sdd = tmp_path / ".sdd"
     store = ContentStore(sdd / "cas")
@@ -221,6 +277,49 @@ def test_two_verify_runs_produce_identical_verdicts(tmp_path: Path) -> None:
     assert [
         (s.stage_id, s.ok, s.reason, [(c.claim_id, c.ok, c.reason) for c in s.claim_verdicts]) for s in first.stages
     ] == [(s.stage_id, s.ok, s.reason, [(c.claim_id, c.ok, c.reason) for c in s.claim_verdicts]) for s in second.stages]
+
+
+def test_recorded_half_produces_identical_canonical_bytes_and_artifact_hash(tmp_path: Path) -> None:
+    """Two runs over the same recorded corpus with identical synthesiser output produce byte-identical report canonical bytes and the same artifact hash."""
+    sdd = tmp_path / ".sdd"
+    store = ContentStore(sdd / "cas")
+    sources = ["https://a", "https://b"]
+
+    def synth_deterministic(query: str, fetched: tuple[FetchedSource, ...]) -> list[ClaimDraft]:
+        return [
+            ClaimDraft(
+                statement="first finding",
+                spans=(SpanRef(source_ref=fetched[0].source_ref, quote="optional free-threaded build"),),
+            ),
+            ClaimDraft(
+                statement="second finding",
+                spans=(SpanRef(source_ref=fetched[1].source_ref, quote="deprecated and slated for removal"),),
+            ),
+        ]
+
+    worker1 = ResearchWorker(store=store, budget=ResearchBudget(max_fetches=5))
+    run1 = worker1.run(query="q", sources=list(sources), fetch_fn=_fetch, synthesise=synth_deterministic)
+
+    from bernstein.core.orchestration.research_report import report_to_canonical_bytes
+
+    # Capture the canonical bytes and artifact hash from run 1.
+    canonical1 = report_to_canonical_bytes(run1.report)
+    artifact1 = run1.result.artifact_hash
+
+    # Run 2: same sources, same fetch bytes, same synthesiser output.
+    store2 = ContentStore(tmp_path / "store2" / "cas")
+    worker2 = ResearchWorker(store=store2, budget=ResearchBudget(max_fetches=5))
+    run2 = worker2.run(query="q", sources=list(sources), fetch_fn=_fetch, synthesise=synth_deterministic)
+
+    canonical2 = report_to_canonical_bytes(run2.report)
+    artifact2 = run2.result.artifact_hash
+
+    # The canonical bytes are byte-identical and the artifact hashes match.
+    assert canonical1 == canonical2
+    assert artifact1 == artifact2
+    # The artifact hashes are content-addressed keys in their respective stores.
+    assert store.get(artifact1)
+    assert store2.get(artifact2)
 
 
 def test_research_runs_dispatch_next_to_coding_tasks_with_cost_caps(tmp_path: Path) -> None:

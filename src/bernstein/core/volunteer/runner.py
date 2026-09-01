@@ -102,8 +102,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sys
 import time
+import urllib.error
+import urllib.request
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -111,6 +114,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol
 from urllib.parse import urlparse
 
+from bernstein.adapters._contract import AuthBasis
 from bernstein.core.git.worktree import WorktreeError, WorktreeManager
 from bernstein.core.integrations.tickets import TicketParseError, fetch_ticket
 from bernstein.core.volunteer.claim import (
@@ -439,6 +443,7 @@ def run_claimed_task(
     claim_fingerprint: str | None = None,
     claim_staleness: timedelta = DEFAULT_CLAIM_STALENESS,
     now: Callable[[], datetime] | None = None,
+    adapter_id: str | None = None,
 ) -> TaskOutcome:
     """Run one claimed task inside the volunteer sandbox.
 
@@ -476,6 +481,9 @@ def run_claimed_task(
             task is treated as free again.
         now: Clock for the staleness comparison; injected for deterministic
             tests.  Defaults to :func:`datetime.now` in UTC.
+        adapter_id: Optional adapter identifier.  When supplied, the runner
+            validates the adapter's auth_basis and refuses volunteer tasks
+            whose auth_basis is incompatible with volunteer mode.
 
     Returns:
         :class:`TaskDiff` when the agent produced a patch, otherwise
@@ -509,6 +517,17 @@ def run_claimed_task(
     url_problem = repo_url_problem(task.repo_url)
     if url_problem is not None:
         return refuse(RefusalStage.REPO_URL, "unsupported_repo_url", url_problem)
+
+    # Provider-terms preflight: a volunteer task runs on a stranger's machine
+    # with no credentials of its own, so it may only run behind an adapter that
+    # authenticates in a way compatible with that boundary.  Subscription OAuth
+    # ties the run to a paid account the donor does not possess, and an unknown
+    # basis means no contract has pinned what authentication the adapter needs,
+    # so neither is safe here.  API key and local are fine: the former carries
+    # no session entitlement and the latter needs no remote auth at all.
+    auth_problem = _validate_volunteer_auth_basis(adapter_id)
+    if auth_problem is not None:
+        return refuse(RefusalStage.AGENT, "provider_terms_unavailable", auth_problem)
 
     # --- claim etiquette: read the issue, skip a duplicate, post a claim ------
     # Best-effort and coordinator-free: a gh failure yields no state and the run
@@ -575,8 +594,10 @@ def run_claimed_task(
         clone_path=clone_path,
         env=env,
         profile=profile,
+        manifest_license=manifest.license,
         manifest_sha256=manifest_sha256,
         comments=comments,
+        adapter_id=adapter_id,
     )
 
     # An abort after a claim was posted releases it; a success leaves the claim
@@ -594,6 +615,58 @@ def run_claimed_task(
             build_release_body(fingerprint=resolve_fingerprint(claim_fingerprint), reason=outcome.reason),
         )
     return outcome
+
+
+def _validate_volunteer_auth_basis(adapter_id: str | None) -> str | None:
+    """Preflight gate for adapter auth_basis in volunteer mode.
+
+    Volunteer tasks run on a donor's machine with no provider subscription
+    in scope.  Only adapters pinned to api_key or local auth_basis are
+    allowed; subscription_oauth or unknown are refused with a receipt
+    naming the compliant alternatives (API key or local endpoint).
+
+    Args:
+        adapter_id: Adapter registry name.  ``None`` or empty skips the gate.
+
+    Returns:
+        Structured refusal reason when refused, else ``None``.
+    """
+    if not adapter_id:
+        return None
+    from bernstein.adapters._contract import ContractSpec
+    from bernstein.adapters.capability_profile import UnknownProfileError, get_profile
+
+    try:
+        profile = get_profile(adapter_id)
+    except UnknownProfileError:
+        # No registered profile for this adapter — fall back to the contract,
+        # which may still declare an auth_basis even if no capability profile
+        # is registered.
+        try:
+            auth_basis = ContractSpec.load(adapter_id).auth_basis
+        except Exception:
+            # No contract either — treat as unknown auth_basis rather than
+            # crashing the pipeline.
+            return (
+                f"adapter '{adapter_id}' has no pinned auth_basis (unknown); "
+                "use API-key adapter (e.g. claude, qwen) or local endpoint adapter"
+            )
+    else:
+        auth_basis = profile.auth_basis
+
+    if auth_basis is AuthBasis.API_KEY or auth_basis is AuthBasis.LOCAL:
+        return None
+    if auth_basis is AuthBasis.SUBSCRIPTION_OAUTH:
+        return (
+            f"adapter '{adapter_id}' requires subscription OAuth; "
+            "use an API-key adapter (e.g. claude, qwen, gemini) "
+            "or a local endpoint adapter"
+        )
+    # AuthBasis.UNKNOWN
+    return (
+        f"adapter '{adapter_id}' has unknown auth_basis; "
+        "use API-key adapter (e.g. claude, qwen) or local endpoint adapter"
+    )
 
 
 def _utc_now() -> datetime:
@@ -622,8 +695,10 @@ def _run_sandbox_pipeline(
     clone_path: Path,
     env: Mapping[str, str],
     profile: VolunteerSandboxProfile,
+    manifest_license: str,
     manifest_sha256: str,
     comments: list[dict[str, Any]] | None = None,
+    adapter_id: str | None = None,
 ) -> TaskOutcome:
     """Clone, isolate, spawn under the wall clock, and read the diff.
 
@@ -632,8 +707,23 @@ def _run_sandbox_pipeline(
     without threading release logic through every early return.  The containment
     reasoning lives in the module docstring; this function changes none of it.
     """
+    # Open-source preflight checks: verify this is a legitimate open-source project
+    # before any cloning occurs. This ensures we're running against public repos
+    # with proper license declaration and validation.
+    license_problem = _validate_open_source_preflight(task.repo_url, manifest_license, adapter_id)
+    if license_problem is not None:
+        return refuse(
+            RefusalStage.REPO_URL,
+            "open_source_preflight_failed",
+            license_problem,
+        )
+
     if run_budget.exhausted:
-        return refuse(RefusalStage.CLONE, "budget_exhausted", "the run budget was spent before the clone started")
+        return refuse(
+            RefusalStage.CLONE,
+            "budget_exhausted",
+            "the run budget was spent before the clone started",
+        )
     clone_outcome, _, clone_stderr = run_under_wall_clock(
         _clone_argv(task, clone_path),
         limit_seconds=run_budget.phase_limit_seconds(),
@@ -772,6 +862,141 @@ def repo_url_problem(repo_url: str) -> str | None:
         return None
     if scheme.lower() not in ALLOWED_REPO_SCHEMES:
         return f"the repository URL scheme {scheme!r} is not one of {', '.join(ALLOWED_REPO_SCHEMES)}"
+    return None
+
+
+def _validate_open_source_preflight(repo_url: str, manifest_license: str, adapter_id: str | None = None) -> str | None:
+    """Why this task must not run, based on open-source preflight checks.
+
+    Four checks ensure a volunteer task is running against a legitimate open-source
+    project before any cloning occurs:
+
+    1. The adapter's auth_basis must be compatible with volunteer mode (API key or local).
+    2. The repository URL must be public (not internal or private) - determined by
+       checking with the repository host, not just URL scheme.
+    3. The manifest's license must be an OSI-approved SPDX identifier.
+    4. The manifest's license must match the detected license file in the
+       repository.  A README or LICENSE file carries the project's stated intent,
+       and it must agree with the manifest's license field.
+
+    The checks are ordered to fail fast: auth_basis check comes first,
+    then repository visibility check, then license validation, then LICENSE file detection.
+
+    Args:
+        repo_url: The claimed repository URL (trusted at this point).
+        manifest_license: The license field from the validated manifest.
+        adapter_id: Optional adapter identifier. When supplied, the runner
+            validates the adapter's auth_basis and refuses volunteer tasks
+            whose auth_basis is incompatible with volunteer mode.
+
+    Returns:
+        A refusal reason if a check fails, or ``None`` if all pass.
+    """
+    # Check 1: Adapter auth_basis must be compatible with volunteer mode
+    if adapter_id:
+        auth_problem = _validate_volunteer_auth_basis(adapter_id)
+        if auth_problem is not None:
+            return auth_problem
+
+    from bernstein.core.volunteer.manifest import OSI_APPROVED_LICENSES
+
+    # Check 2: Repository must be public (determined by asking, not parsing)
+    url = repo_url.strip()
+    if not url:
+        return "the repository URL is empty"
+
+    parsed = urlparse(url)
+    scheme = parsed.scheme
+
+    # Local filesystem paths (no scheme) - we can see what we're executing
+    if not scheme:
+        # Allow local paths like "/srv/project", "./project", etc.
+        # These are projects the donor controls directly.
+        pass  # Continue to license checks
+    elif scheme.lower() == "file":
+        # file:// URLs - we can inspect the local filesystem
+        pass  # Continue to license checks
+    elif scheme.lower() in {"git", "http", "https", "ssh"}:
+        # For remote repositories, we need to verify visibility
+        if scheme.lower() in {"https", "http"}:
+            # Check for GitHub URLs and verify they're public
+            if url.lower().startswith("https://github.com/"):
+                # GitHub repository path
+                repo_path_match = re.match(r"https?://github\.com/([^/]+/[^/]+)/?", url)
+                if repo_path_match:
+                    repo_path = repo_path_match.group(1)
+                    # Use GitHub API to check if repository is public
+                    api_url = f"https://api.github.com/repos/{repo_path}"
+                    try:
+                        req = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github.v3+json"})
+                        with urllib.request.urlopen(req, timeout=10) as response:
+                            if response.status == 200:
+                                repo_data = json.loads(response.read().decode())
+                                if repo_data.get("private", True):
+                                    return "repository is private; volunteer mode only works with public repositories"
+                            elif response.status == 404:
+                                return "repository not found or inaccessible"
+                            else:
+                                # Unexpected status code
+                                return f"unexpected response from repository host: HTTP {response.status}"
+                    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, TimeoutError) as e:
+                        # If we cannot verify visibility, refuse (fail closed)
+                        return f"cannot verify repository visibility: {type(e).__name__}"
+                else:
+                    return f"invalid GitHub repository URL: {url}"
+            else:
+                # For non-GitHub http/https URLs, we cannot easily verify visibility
+                # so we refuse to be safe (fail closed)
+                return f"cannot verify repository visibility for non-GitHub URL: {url}"
+        else:
+            # For git/ssh URLs, we cannot easily verify visibility without cloning
+            # so we refuse to be safe (fail closed)
+            return f"cannot verify repository visibility for {scheme} URL: {url}"
+    else:
+        # Unsupported scheme
+        return (
+            f"the repository URL scheme {scheme!r} is not permitted; "
+            "only public repository schemes (git, http, https, ssh) are allowed"
+        )
+
+    # Check 3: Manifest license must be OSI-approved
+    if not manifest_license:
+        return "manifest license is required but missing"
+    if manifest_license not in OSI_APPROVED_LICENSES:
+        return f"license '{manifest_license}' is not OSI-approved"
+
+    # Check 4: LICENSE file detection (if we can get it without cloning)
+    # For public URLs that can be detected without cloning, we can check
+    # if it's a GitHub repository and use the GitHub API to detect the license
+    if scheme.lower() in {"https", "http"}:
+        github_match = re.match(r"https?://github\.com/([^/]+/[^/]+)", url)
+        if github_match:
+            repo_path = github_match.group(1)
+            # Use GitHub API to detect license without cloning
+            headers = {"Accept": "application/vnd.github.v3+json"}
+            api_url = f"https://api.github.com/repos/{repo_path}/license"
+
+            try:
+                req = urllib.request.Request(api_url, headers=headers)
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    if response.status == 200:
+                        license_data = json.loads(response.read().decode())
+                        detected_license = license_data.get("spdx_id")
+                        if detected_license and detected_license != manifest_license:
+                            return (
+                                f"license mismatch: repository declares "
+                                f"'{detected_license}' but manifest specifies "
+                                f"'{manifest_license}'"
+                            )
+                    elif response.status == 404:
+                        # No license detected in GitHub API
+                        return "no license detected in repository"
+            except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, TimeoutError):
+                # If GitHub API fails, we cannot validate the license match
+                return "cannot verify repository license: network error"
+
+    # For non-GitHub URLs or unsupported schemes, we cannot verify license match
+    # without cloning, so we skip this check (best effort)
     return None
 
 

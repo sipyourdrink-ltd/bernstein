@@ -142,6 +142,39 @@ def test_empty_change_set_does_not_fail_closed(run_tests_module: ModuleType) -> 
     assert run_tests_module.changed_files_require_tests([]) is False
 
 
+def test_deleted_test_file_alone_does_not_fail_closed(run_tests_module: ModuleType) -> None:
+    """Removing a test file is the unsatisfiable case, not a coverage hole.
+
+    The only test the selector could map ``tests/unit/test_scanner.py`` to is
+    itself, and the change deletes it. Judging the path anyway makes a pull
+    request that only removes a test permanently unmergeable.
+    """
+    changed = ["tests/unit/test_scanner.py"]
+    assert run_tests_module.changed_files_require_tests(changed, changed) is False
+
+
+def test_deleted_test_file_mixed_with_source_still_fails_closed(
+    run_tests_module: ModuleType,
+) -> None:
+    """The exemption applies per path, so a deletion cannot launder a source change."""
+    changed = ["tests/unit/test_scanner.py", "src/bernstein/core/wal.py"]
+    deleted = ["tests/unit/test_scanner.py"]
+    assert run_tests_module.changed_files_require_tests(changed, deleted) is True
+
+
+def test_deleted_source_file_still_fails_closed(run_tests_module: ModuleType) -> None:
+    """Only deleted tests are exempt: a removed module can still have covering tests."""
+    changed = ["src/bernstein/core/wal.py"]
+    assert run_tests_module.changed_files_require_tests(changed, changed) is True
+
+
+def test_modified_test_file_is_not_mistaken_for_a_deleted_one(
+    run_tests_module: ModuleType,
+) -> None:
+    """A test file that is edited rather than removed keeps failing closed."""
+    assert run_tests_module.changed_files_require_tests(["tests/unit/test_wal.py"], []) is True
+
+
 # --- drift guards on the exemption list ------------------------------------
 
 

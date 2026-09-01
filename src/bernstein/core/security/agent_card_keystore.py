@@ -48,6 +48,7 @@ from __future__ import annotations
 import datetime as _dt
 import logging
 import os
+import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -272,7 +273,7 @@ class AgentCardKeystore:
             msg = f"agent-card private key missing at {self._private_path}"
             raise FileNotFoundError(msg) from exc
 
-        if stat.st_mode & _PRIVATE_MODE_MASK:
+        if sys.platform != "win32" and (stat.st_mode & _PRIVATE_MODE_MASK):
             msg = (
                 f"agent-card private key {self._private_path} has unsafe permissions "
                 f"{stat.st_mode & 0o777:#o} - refusing to load. Run "

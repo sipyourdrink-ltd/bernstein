@@ -18,7 +18,7 @@ meta:
 about:
   title: Bernstein
   description: >-
-    Deterministic orchestrator for CLI coding agents. Submit a goal and
+    The open-source governance layer for AI agents. Submit a goal and
     Bernstein decomposes it into tasks, runs agents in per-task git worktrees,
     and records every run in a replay journal with lineage tracking and an
     opt-in HMAC-chained audit log. No model sits in the coordination loop, so

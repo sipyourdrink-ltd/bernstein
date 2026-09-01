@@ -1,0 +1,246 @@
+name: Volunteer receipt verification check run
+
+# Reusable workflow for verifying volunteer receipt bundles in PRs.
+#
+# Trigger: pull requests carrying a volunteer receipt bundle (signed DSSE envelope).
+# - Uses `pull_request_target` for fork safety - attacker-controlled text never
+#   reaches a `run:` block. The steward mapping lives in the trusted base ref,
+#   and only the PR number and author login (used for equality checks) pass through
+#   as env variables.
+# - Default-deny at workflow scope; the job re-asserts the narrow scopes it
+#   actually needs (Scorecard token-permissions).
+#
+# What it does:
+#  1. Checks out the trusted base ref (see the safety note below)
+#  2. Loads the project's volunteer manifest
+#  3. Extracts the DSSE envelope from the PR body
+#  4. Verifies the bundle offline (internal consistency checks)
+#  5. Re-runs the manifest gates in CI environment
+#  6. Compares attested gate results vs CI re-run results
+#  7. Posts/updates a GitHub check run with comparison details
+#
+# The workflow is reusable so downstream callers can invoke it as a workflow_call
+# and customize permissions (e.g., for GitHub Apps) if they need to.
+#
+# Safety note (zizmor dangerous-triggers): the privileged context here
+# executes nothing from the PR head. The job:
+#   - checks out with no `ref:`, so it takes the workflow's own ref - the
+#     trusted base - and never the fork's head. Everything the job then
+#     installs and imports (the bootstrap action, `pyproject.toml`, the
+#     bernstein package) comes from that base checkout.
+#   - never interpolates PR-controlled text into a `run:` block. The only
+#     PR-controlled input is the pull request body, fetched through the API
+#     and handed to `run_verification_check` as data.
+#   - holds `checks: write` and nothing else, with no secrets beyond
+#     `GITHUB_TOKEN`.
+#
+# Adding a `ref:` to the checkout step would make this trigger genuinely
+# unsafe, because the job installs and imports the tree it checks out.
+#
+# `.github/workflows/area-steward-review.yml` uses the same trigger under the
+# stricter rule of having no checkout at all.
+
+on:  # zizmor: ignore[dangerous-triggers]
+  pull_request_target:
+    types: [opened, reopened, ready_for_review]
+
+concurrency:
+  group: volunteer-verify-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Default-deny for the workflow token; individual jobs escalate only
+# the scopes they actually need (Scorecard token-permissions).
+permissions: {}
+
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  verify:
+    name: Verify volunteer receipt
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout base ref
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: ./.github/actions/bootstrap
+        with:
+          python-version: '3.13'
+
+      - name: Install bernstein
+        run: |
+          uv sync --group dev
+
+      - name: Extract PR metadata
+        id: meta
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          REPO_SLUG: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          {
+            echo "pr_number=$PR_NUMBER"
+            echo "pr_author=$PR_AUTHOR"
+            echo "repo_slug=$REPO_SLUG"
+            echo "head_sha=$HEAD_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run volunteer receipt verification
+        id: verification
+        env:
+          PR_NUMBER: ${{ steps.meta.outputs.pr_number }}
+          REPO_SLUG: ${{ steps.meta.outputs.repo_slug }}
+          HEAD_SHA: ${{ steps.meta.outputs.head_sha }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Load the volunteer manifest from the checked-out workspace
+          MANIFEST_PATH=".bernstein/volunteer.json"
+          if [ ! -f "$MANIFEST_PATH" ]; then
+            echo "::error::No volunteer manifest found in PR head"
+            exit 1
+          fi
+
+          # Run the verification check
+          uv run python << 'PYEOF'
+          import os
+          import sys
+          import json
+          from pathlib import Path
+
+          from bernstein.github_app.check_runs import CheckRunClient
+          from bernstein.core.volunteer.manifest import load_manifest_from_repo
+          from bernstein.core.volunteer.verification_check_run import run_verification_check
+
+          pr_number = int(os.environ['PR_NUMBER'])
+          repo_slug = os.environ['REPO_SLUG']
+          head_sha = os.environ['HEAD_SHA']
+
+          # Load manifest from workspace
+          workspace_path = Path.cwd()
+          manifest = load_manifest_from_repo(workspace_path)
+          expected_manifest_sha256 = manifest.digest
+
+          # Extract PR body from GitHub API via gh
+          import subprocess
+          pr_body_result = subprocess.run(
+              ['gh', 'api', f'repos/{repo_slug}/pulls/{pr_number}', '--jq', '.body // ""'],
+              capture_output=True, text=True, timeout=30
+          )
+          pr_body = pr_body_result.stdout
+
+          # Initialize check run client (auth is delegated to the gh CLI)
+          check_run_client = CheckRunClient(repo_slug)
+
+          # Run verification
+          result = run_verification_check(
+              pr_number=pr_number,
+              repo_slug=repo_slug,
+              workspace_path=str(workspace_path),
+              pr_body=pr_body,
+              check_run_client=check_run_client,
+              expected_manifest_sha256=expected_manifest_sha256,
+          )
+
+          # Store result in output files for the next step
+          result_path = Path('.qwen/verification_result.json')
+          result_path.parent.mkdir(parents=True, exist_ok=True)
+
+          gate_comparisons_serializable = []
+          for comp in result.gate_comparisons:
+              gate_comparisons_serializable.append({
+                  'command': comp.command,
+                  'attested_exit_code': comp.attested_exit_code,
+                  'attested_log_sha256': comp.attested_log_sha256,
+                  'ci_exit_code': comp.ci_exit_code,
+                  'ci_log_sha256': comp.ci_log_sha256,
+                  'passed': comp.passed,
+                  'mismatch_reason': comp.mismatch_reason,
+              })
+
+          with open(result_path, 'w') as f:
+              json.dump({
+                  'conclusion': result.conclusion,
+                  'overall_passed': result.overall_passed,
+                  'summary': result.summary,
+                  'details': result.details,
+                  'bundle_verification': {
+                      'ok': result.bundle_verification.ok,
+                      'errors': [{'field': e.field, 'message': e.message} for e in result.bundle_verification.errors],
+                  },
+                  'manifest_digest_match': result.manifest_digest_match,
+                  'gate_comparisons': gate_comparisons_serializable,
+              }, f, indent=2)
+
+          print(f"Verification completed. Conclusion: {result.conclusion}")
+          print(f"Summary: {result.summary}")
+          PYEOF
+
+          echo "verification_result_path=.qwen/verification_result.json" >> "$GITHUB_OUTPUT"
+
+      - name: Post or update verification check run
+        env:
+          PR_NUMBER: ${{ steps.meta.outputs.pr_number }}
+          REPO_SLUG: ${{ steps.meta.outputs.repo_slug }}
+          HEAD_SHA: ${{ steps.meta.outputs.head_sha }}
+          VERIFICATION_RESULT_PATH: ${{ steps.verification.outputs.verification_result_path }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Check if there's a verification result file
+          if [ ! -f "$VERIFICATION_RESULT_PATH" ]; then
+            echo "::warning::No verification result file found, skipping check run"
+            exit 0
+          fi
+
+          # Create check run client and post/update check run.
+          #
+          # The conclusion is decided by `run_verification_check` and carried in
+          # the result file - notably `neutral` for a PR that is not a volunteer
+          # submission, which must not be reported as a failure. Values reach
+          # Python through the environment (quoted heredoc), never through shell
+          # interpolation into the script body.
+          uv run python << 'PYEOF'
+          import json
+          import os
+          import sys
+
+          from bernstein.github_app.check_runs import CheckRunClient
+
+          with open(os.environ['VERIFICATION_RESULT_PATH']) as f:
+              result = json.load(f)
+
+          conclusion = result['conclusion']
+
+          check_run_client = CheckRunClient(os.environ['REPO_SLUG'])
+
+          check_run_result = check_run_client.create_verification_check_run(
+              head_sha=os.environ['HEAD_SHA'],
+              summary=result['summary'],
+              details=result['details'],
+              conclusion=conclusion,
+          )
+
+          if check_run_result is None:
+              print("Failed to create verification check run")
+              sys.exit(1)
+
+          print(f"Posted verification check run ({conclusion}): {check_run_result.check_run_id}")
+          PYEOF

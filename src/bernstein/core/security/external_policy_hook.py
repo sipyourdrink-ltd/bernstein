@@ -40,6 +40,12 @@ class HookVerdict(StrEnum):
     ALLOW = "allow"
     DENY = "deny"
     ABSTAIN = "abstain"  # Hook has no opinion
+    #: The engine did not produce an answer: binary missing, non-zero exit, timeout,
+    #: unparseable output, or an exception. Distinct from ABSTAIN on purpose - "no rule
+    #: matched" is a decision the policy made, and this is the absence of one. Collapsing
+    #: them makes an unreachable policy engine indistinguishable from a permissive one,
+    #: which is the wrong default for a decision boundary (#4912).
+    UNAVAILABLE = "unavailable"
 
 
 @dataclass(frozen=True)
@@ -73,6 +79,7 @@ class HookResponse:
         reason: Explanation of the verdict.
         latency_ms: Time taken for the hook evaluation in milliseconds.
         error: Error message if the hook failed.
+        policy_digest: SHA-256 digest of the policy text that produced this verdict (for Cedar).
     """
 
     hook_name: str
@@ -80,6 +87,7 @@ class HookResponse:
     reason: str
     latency_ms: float = 0.0
     error: str = ""
+    policy_digest: str = ""
 
 
 class ExternalPolicyHook(ABC):
@@ -184,7 +192,7 @@ class OPAHook(ExternalPolicyHook):
             if result.returncode != 0:
                 return HookResponse(
                     hook_name=self.name,
-                    verdict=HookVerdict.ABSTAIN,
+                    verdict=HookVerdict.UNAVAILABLE,
                     reason=f"OPA evaluation failed: {result.stderr.strip()}",
                     latency_ms=latency,
                     error=result.stderr.strip(),
@@ -209,6 +217,9 @@ class OPAHook(ExternalPolicyHook):
                     latency_ms=latency,
                 )
 
+            # Deliberately ABSTAIN, not UNAVAILABLE: OPA ran, exited zero and answered
+            # with nothing, which is a genuine no-match rather than an engine that could
+            # not be reached. The distinction this verdict draws is about availability.
             return HookResponse(
                 hook_name=self.name,
                 verdict=HookVerdict.ABSTAIN,
@@ -220,7 +231,7 @@ class OPAHook(ExternalPolicyHook):
             latency = (time.monotonic() - start) * 1000
             return HookResponse(
                 hook_name=self.name,
-                verdict=HookVerdict.ABSTAIN,
+                verdict=HookVerdict.UNAVAILABLE,
                 reason="OPA binary not found",
                 latency_ms=latency,
                 error="opa not found on PATH",
@@ -229,16 +240,18 @@ class OPAHook(ExternalPolicyHook):
             latency = (time.monotonic() - start) * 1000
             return HookResponse(
                 hook_name=self.name,
-                verdict=HookVerdict.ABSTAIN,
+                verdict=HookVerdict.UNAVAILABLE,
                 reason="OPA evaluation timed out",
                 latency_ms=latency,
                 error="timeout",
             )
         except Exception as exc:
+            # json.JSONDecodeError lands here too: output we cannot parse is output the
+            # engine did not give us, whatever its exit code said.
             latency = (time.monotonic() - start) * 1000
             return HookResponse(
                 hook_name=self.name,
-                verdict=HookVerdict.ABSTAIN,
+                verdict=HookVerdict.UNAVAILABLE,
                 reason=f"OPA hook error: {exc}",
                 latency_ms=latency,
                 error=str(exc),
@@ -263,6 +276,7 @@ class CedarHook(ExternalPolicyHook):
         self._policy_text = policy_text
         self._allow_patterns: list[str] = []
         self._deny_patterns: list[str] = []
+        self._policy_digest: str = ""
         self._parse_policy()
 
     def _parse_policy(self) -> None:
@@ -270,19 +284,117 @@ class CedarHook(ExternalPolicyHook):
 
         This is a simplified parser for the subset of Cedar used in
         Bernstein.  Full Cedar evaluation would require a Cedar engine.
+
+        Parses whole policy statements (to the terminating `;`), not lines,
+        so conventional multi-line formatting is read correctly. Rejects any
+        policy containing unsupported constructs at construction time.
+
+        Raises:
+            ValueError: If the policy contains unsupported constructs.
         """
-        for line in self._policy_text.splitlines():
-            stripped = line.strip()
-            if stripped.startswith("permit") and "action ==" in stripped:
-                start = stripped.find('"')
-                end = stripped.find('"', start + 1)
-                if start != -1 and end != -1:
-                    self._allow_patterns.append(stripped[start + 1 : end])
-            elif stripped.startswith("forbid") and "action ==" in stripped:
-                start = stripped.find('"')
-                end = stripped.find('"', start + 1)
-                if start != -1 and end != -1:
-                    self._deny_patterns.append(stripped[start + 1 : end])
+        # Compute digest of the original policy text for verdicts
+        self._policy_digest = self._compute_digest(self._policy_text)
+
+        # Parse the policy text into statements
+        statements = self._split_into_statements(self._policy_text)
+
+        for stmt in statements:
+            stmt = stmt.strip()
+            if not stmt:
+                continue
+
+            # Parse the statement into components
+            parsed = self._parse_statement(stmt)
+
+            # Extract action patterns from parsed statement
+            if parsed["type"] == "permit":
+                if parsed["has_when"]:
+                    raise ValueError(f"Unsupported construct 'when' in policy statement: {stmt}")
+                for action in parsed["actions"]:
+                    self._allow_patterns.append(action)
+            elif parsed["type"] == "forbid":
+                if parsed["has_when"]:
+                    raise ValueError(f"Unsupported construct 'when' in policy statement: {stmt}")
+                for action in parsed["actions"]:
+                    self._deny_patterns.append(action)
+            else:
+                raise ValueError(f"Unsupported statement type in policy: {parsed['type']}")
+
+    def _compute_digest(self, text: str) -> str:
+        """Compute a digest of the policy text for verdicts."""
+        import hashlib
+
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    def _split_into_statements(self, policy_text: str) -> list[str]:
+        """Split policy text into individual statements delimited by semicolons.
+
+        This handles multi-line statements by finding the matching semicolon
+        that terminates each complete policy statement.
+        """
+        statements = []
+        current = []
+        bracket_depth = 0
+        paren_depth = 0
+
+        for char in policy_text:
+            current.append(char)
+            if char == "(":
+                paren_depth += 1
+            elif char == ")":
+                paren_depth -= 1
+            elif char == "{":
+                bracket_depth += 1
+            elif char == "}":
+                bracket_depth -= 1
+            elif char == ";" and paren_depth == 0 and bracket_depth == 0:
+                statements.append("".join(current))
+                current = []
+
+        # Add any remaining text as a partial statement
+        if current:
+            statements.append("".join(current))
+
+        return statements
+
+    def _parse_statement(self, stmt: str) -> dict:
+        """Parse a single policy statement into components.
+
+        Returns a dict with:
+        - type: "permit" or "forbid"
+        - actions: list of action strings
+        - has_when: True if statement contains 'when' clause
+        """
+        # Normalize whitespace
+        stmt = " ".join(stmt.split())
+
+        # Extract statement type
+        if stmt.startswith("permit"):
+            stmt_type = "permit"
+        elif stmt.startswith("forbid"):
+            stmt_type = "forbid"
+        else:
+            raise ValueError(f"Unsupported statement type: {stmt}")
+
+        # Check for unsupported constructs
+        if "when" in stmt:
+            raise ValueError(f"Unsupported construct 'when' in policy statement: {stmt}")
+        if "unless" in stmt:
+            raise ValueError(f"Unsupported construct 'unless' in policy statement: {stmt}")
+        if "?principal" in stmt:
+            raise ValueError(f"Unsupported construct '?principal' in policy statement: {stmt}")
+
+        # Extract actions from "action == \"...\""
+        import re
+
+        action_pattern = r'action\s*==\s*"([^"]+)"'
+        actions = re.findall(action_pattern, stmt)
+
+        return {
+            "type": stmt_type,
+            "actions": actions,
+            "has_when": "when" in stmt,
+        }
 
     @property
     def name(self) -> str:
@@ -306,6 +418,7 @@ class CedarHook(ExternalPolicyHook):
                 verdict=HookVerdict.DENY,
                 reason=f"Denied by Cedar policy for action {request.action!r}",
                 latency_ms=latency,
+                policy_digest=self._policy_digest,
             )
 
         if request.action in self._allow_patterns:
@@ -315,6 +428,7 @@ class CedarHook(ExternalPolicyHook):
                 verdict=HookVerdict.ALLOW,
                 reason=f"Allowed by Cedar policy for action {request.action!r}",
                 latency_ms=latency,
+                policy_digest=self._policy_digest,
             )
 
         latency = (time.monotonic() - start) * 1000
@@ -323,6 +437,7 @@ class CedarHook(ExternalPolicyHook):
             verdict=HookVerdict.ABSTAIN,
             reason=f"No Cedar policy for action {request.action!r}",
             latency_ms=latency,
+            policy_digest=self._policy_digest,
         )
 
 
@@ -332,9 +447,18 @@ class PolicyHookRegistry:
     Hooks are evaluated in registration order.  The first non-ABSTAIN
     verdict wins.  If all hooks abstain, the default verdict applies.
 
+    An engine that could not answer is decisive and DENIES. UNAVAILABLE is never
+    collapsed into the all-abstained default: "the policy engine is unreachable" and
+    "no rule matched" have opposite safety properties, and reporting the first as the
+    second makes a broken decision boundary look like a permissive one (#4912).
+
     Args:
         default_verdict: Verdict when all hooks abstain.
-        fail_open: If True, hook errors result in ALLOW; if False, DENY.
+        fail_open: If True, an engine that cannot answer is treated as having no
+            opinion and evaluation continues; if False (the default), it denies.
+            This used to be consulted only for exceptions escaping ``hook.evaluate``,
+            which cannot happen because that method catches everything - so the flag
+            was unreachable. It is now the per-deployment switch it was written to be.
     """
 
     def __init__(
@@ -375,11 +499,15 @@ class PolicyHookRegistry:
                 response = hook.evaluate(request)
                 responses.append(response)
             except Exception as exc:
-                verdict = HookVerdict.ALLOW if self._fail_open else HookVerdict.DENY
+                # An escaping exception is an engine that did not answer, like any other
+                # unavailability. Reported as UNAVAILABLE rather than resolved to
+                # ALLOW/DENY here so that ONE place decides what unavailability means -
+                # `first_decisive`, which honours `fail_open`. Deciding it twice is how
+                # the flag came to be consulted on a path that could never run.
                 responses.append(
                     HookResponse(
                         hook_name=hook.name,
-                        verdict=verdict,
+                        verdict=HookVerdict.UNAVAILABLE,
                         reason=f"Hook error: {exc}",
                         error=str(exc),
                     ),
@@ -387,7 +515,12 @@ class PolicyHookRegistry:
         return responses
 
     def first_decisive(self, request: HookRequest) -> HookResponse:
-        """Evaluate hooks and return the first non-ABSTAIN response.
+        """Evaluate hooks and return the first decisive response.
+
+        An UNAVAILABLE engine is decisive and denies, unless ``fail_open`` is set, in
+        which case it is treated as having no opinion and evaluation continues. Either
+        way the verdict says which happened: the caller is never handed "all hooks
+        abstained" about an engine that was never reached.
 
         Args:
             request: The permission request.
@@ -397,6 +530,17 @@ class PolicyHookRegistry:
         """
         responses = self.evaluate(request)
         for resp in responses:
+            if resp.verdict == HookVerdict.UNAVAILABLE:
+                if self._fail_open:
+                    continue
+                return HookResponse(
+                    hook_name=resp.hook_name,
+                    verdict=HookVerdict.DENY,
+                    reason=f"Policy engine unavailable, denying: {resp.reason}",
+                    latency_ms=resp.latency_ms,
+                    error=resp.error,
+                    policy_digest=resp.policy_digest,
+                )
             if resp.verdict != HookVerdict.ABSTAIN:
                 return resp
         return HookResponse(

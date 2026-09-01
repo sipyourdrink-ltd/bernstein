@@ -187,6 +187,9 @@ class SpawnDefaults:
     disk_free_threshold_gb: float = 1.0  # refuse spawns below 1 GiB free
     spawn_failure_cooldown_s: float = 300.0  # 5 min
     lesson_cache_ttl_s: float = 300.0  # 5 min
+    memory_lessons_horizon_s: float = 7 * 24 * 3600  # 7 days horizon for lessons
+    memory_lessons_weight_decay_factor: float = 0.5  # stepwise decay per age bucket
+    memory_lessons_max_per_author: int = 3  # cap lessons per author in window
 
 
 @dataclass(frozen=True)
@@ -596,6 +599,11 @@ class JanitorDefaults:
     # Persistent fingerprint memoization store cap (MiB).  See
     # bernstein.core.persistence.fingerprint.MemoStore.
     memo_max_mb: int = 200
+
+    # CAS blob retention window (days).  Unreferenced blobs older than this
+    # are eligible for GC via ``bernstein gc cas``.  See
+    # bernstein.core.persistence.cas_gc.
+    cas_retention_days: int = 30
 
 
 # ---------------------------------------------------------------------------

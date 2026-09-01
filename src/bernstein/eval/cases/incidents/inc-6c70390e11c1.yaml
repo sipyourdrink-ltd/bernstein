@@ -1,0 +1,14 @@
+id: inc-6c70390e11c1
+severity: P2
+source_incident: "dlq:8094fff023284522"
+owner: backend
+created_at: 1788019385.739
+expected_outcome: "Agent should complete the task; flake-tolerant retry is acceptable. (root cause: max_retries_exceeded)"
+tags:
+  - max_retries_exceeded
+prompt: |
+  Reproduce and resolve the following terminal failure (role=backend).
+  Task: [GATE-REPAIR] Add Disposition ledger model
+  Failure reason: max_retries_exceeded
+  Last error (trimmed):
+  Agent backend-9d631067 died; deferred death judgment re-evaluated and no liveness signal advanced past the pid-exit snapshot

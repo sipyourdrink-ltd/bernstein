@@ -24,7 +24,7 @@ when they appear; if one goes dead, open an issue or a PR.
 [jamesmurdza/awesome-ai-devtools](https://github.com/jamesmurdza/awesome-ai-devtools),
 [jim-schwoebel/awesome_ai_agents](https://github.com/jim-schwoebel/awesome_ai_agents),
 [Piebald-AI/awesome-gemini-cli](https://github.com/Piebald-AI/awesome-gemini-cli),
-[ComposioHQ/awesome-codex-skills](https://github.com/ComposioHQ/awesome-codex-skills),
+[composio-community/awesome-codex-skills](https://github.com/composio-community/awesome-codex-skills),
 [punkpeye/awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers),
 [jxzhangjhu/Awesome-LLM-RAG](https://github.com/jxzhangjhu/Awesome-LLM-RAG),
 [rohitg00/awesome-claude-code-toolkit](https://github.com/rohitg00/awesome-claude-code-toolkit),
@@ -34,11 +34,10 @@ when they appear; if one goes dead, open an issue or a PR.
 [milisp/awesome-codex-cli](https://github.com/milisp/awesome-codex-cli),
 [yaolifeng0629/Awesome-independent-tools](https://github.com/yaolifeng0629/Awesome-independent-tools),
 [caramaschiHG/awesome-ai-agents-2026](https://github.com/caramaschiHG/awesome-ai-agents-2026),
-[ai-for-developers/awesome-vibe-coding](https://github.com/ai-for-developers/awesome-vibe-coding),
+[awesome-vibe-coding/awesome-vibe-coding](https://github.com/awesome-vibe-coding/awesome-vibe-coding),
 [taishi-i/awesome-ChatGPT-repositories](https://github.com/taishi-i/awesome-ChatGPT-repositories),
 [eudk/awesome-ai-tools](https://github.com/eudk/awesome-ai-tools),
 [killop/anything_about_game](https://github.com/killop/anything_about_game),
-[vinta/awesome-python](https://github.com/vinta/awesome-python),
 [Zijian-Ni/awesome-ai-agents-2026](https://github.com/Zijian-Ni/awesome-ai-agents-2026),
 [rohitg00/awesome-devops-mcp-servers](https://github.com/rohitg00/awesome-devops-mcp-servers),
 [yzfly/Awesome-MCP-ZH](https://github.com/yzfly/Awesome-MCP-ZH),
@@ -91,7 +90,7 @@ Places where somebody else did the packaging work:
 - [AllStreets/SMADP](https://github.com/AllStreets/SMADP/blob/main/catalog/profiles/bernstein.json)
 - [Yashagarwal9798/Agentstack](https://github.com/Yashagarwal9798/Agentstack)
 - [soe1hom-arch/developer-hub](https://github.com/soe1hom-arch/developer-hub/blob/main/cli-tools/bernstein.json)
-- [thoughtforge-us/library-of-alexander](https://github.com/thoughtforge-us/library-of-alexander/blob/main/08-ai-agents/README.md)
+- [donn-duinn/library-of-alexander-tf](https://github.com/donn-duinn/library-of-alexander-tf/blob/main/08-ai-agents/README.md)
 - [zwl4488-new/aiagent-club](https://github.com/zwl4488-new/aiagent-club)
 - [patrickclery/awesomer](https://github.com/patrickclery/awesomer)
 - [jaimevalero/managing-awesome-lists-frontend](https://github.com/jaimevalero/managing-awesome-lists-frontend)

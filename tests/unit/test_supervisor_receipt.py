@@ -107,6 +107,12 @@ def test_recommended_action_escalate_for_manager_no_children() -> None:
     assert action == RecommendedAction.ESCALATE
 
 
+def test_recommended_action_inspect_for_cohort_laggard() -> None:
+    """Cohort-laggard stalls require human inspection before respawn."""
+    action = recommend_action(StallReason.COHORT_LAGGARD, _audit_slice())
+    assert action == RecommendedAction.INSPECT
+
+
 def test_recommended_action_string_reason_coerced() -> None:
     """Raw string reasons are coerced into the StallReason enum."""
     action = recommend_action("respawn_budget_exhausted", _audit_slice())

@@ -19,6 +19,7 @@ auth:
     - "FACTORY_API_KEY"
     - "ANTHROPIC_API_KEY"
     - "OPENAI_API_KEY"
+  basis: api_key
 required_flags: []
 required_subcommands: []
 help_command: ["droid", "--help"]

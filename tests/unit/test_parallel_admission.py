@@ -151,6 +151,35 @@ def test_depth_zero_keeps_the_seeds_only(tmp_path: Path, monkeypatch: pytest.Mon
     assert result.neighborhood == result.seed_symbols
 
 
+def test_depth_one_vs_two_differentiation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """depth=1 reaches immediate neighbors; depth=2 reaches one more hop over extracted edges.
+
+    A chain A -> B -> C ensures depth=1 gives {A, B} while depth=2 gives {A, B, C}.
+    """
+    chain = {
+        "src/pkg/alpha.py": "def alpha_func() -> int:\n    return 1\n",
+        "src/pkg/beta.py": "from pkg.alpha import alpha_func\n\ndef beta_func() -> int:\n    return alpha_func()\n",
+        "src/pkg/main.py": "from pkg.beta import beta_func\n\ndef main() -> int:\n    return beta_func()\n",
+    }
+    for rel, body in chain.items():
+        _write(tmp_path / rel, body)
+    listing = sorted(chain)
+    monkeypatch.setattr(semantic_graph, "_git_ls_files", lambda _w: listing)
+
+    graph = SemanticCodeGraph(build_semantic_graph(tmp_path))
+
+    # depth=1: seeds + 1 hop
+    result_1 = attribute_task(graph, "t1", ["src/pkg/main.py"], depth=1)
+    # depth=2: seeds + 2 hops
+    result_2 = attribute_task(graph, "t1", ["src/pkg/main.py"], depth=2)
+
+    assert result_1.neighborhood != result_2.neighborhood
+    # depth=1 should include seeds and beta_func (1 hop)
+    assert "src/pkg/beta.py::beta_func" in result_1.neighborhood
+    # depth=2 should additionally include alpha_func (2 hops)
+    assert "src/pkg/alpha.py::alpha_func" in result_2.neighborhood
+
+
 def test_negative_depth_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     graph = _graph_for(tmp_path, _DISJOINT, monkeypatch)
     with pytest.raises(ValueError, match="depth must be >= 0"):
@@ -162,6 +191,49 @@ def test_semantic_code_graph_satisfies_the_protocol(tmp_path: Path, monkeypatch:
     assert isinstance(graph, CodeGraph)
     assert graph.digest().startswith("sha256:")
     assert graph.document()
+
+
+def test_graph_node_insertion_stability(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Adding an unrelated node does not change an existing task's attribution.
+
+    The attribute_task output should depend only on the paths and symbols the
+    task actually touches, not on what other symbols exist in the graph.
+    """
+    # Build initial graph with alpha only
+    alpha_only = {
+        "src/pkg/alpha.py": "def alpha_helper() -> int:\n    return 1\n",
+        "src/pkg/alpha_main.py": (
+            "from pkg.alpha import alpha_helper\n\ndef alpha_run() -> int:\n    return alpha_helper()\n"
+        ),
+    }
+    for rel, body in alpha_only.items():
+        _write(tmp_path / rel, body)
+    listing = sorted(alpha_only)
+    monkeypatch.setattr(semantic_graph, "_git_ls_files", lambda _w: listing)
+
+    graph1 = SemanticCodeGraph(build_semantic_graph(tmp_path))
+    result1 = attribute_task(graph1, "t1", ["src/pkg/alpha_main.py"])
+
+    # Add an unrelated node (beta) that no task touches
+    beta_only = {
+        "src/pkg/beta.py": "def beta_helper() -> int:\n    return 2\n",
+        "src/pkg/beta_main.py": (
+            "from pkg.beta import beta_helper\n\ndef beta_run() -> int:\n    return beta_helper()\n"
+        ),
+    }
+    for rel, body in beta_only.items():
+        _write(tmp_path / rel, body)
+
+    listing2 = sorted(alpha_only) + sorted(beta_only)
+    monkeypatch.setattr(semantic_graph, "_git_ls_files", lambda _w: listing2)
+
+    graph2 = SemanticCodeGraph(build_semantic_graph(tmp_path))
+    result2 = attribute_task(graph2, "t1", ["src/pkg/alpha_main.py"])
+
+    # The node set should be identical - alpha task's attribution is stable
+    assert result1.neighborhood == result2.neighborhood
+    assert result1.seed_symbols == result2.seed_symbols
+    assert result1.verdict == result2.verdict
 
 
 # ---------------------------------------------------------------------------
@@ -558,3 +630,25 @@ def test_unloadable_document_is_a_mismatch_not_an_exception() -> None:
 
     assert result.status == RECEIPT_GRAPH_MISMATCH
     assert any("could not be loaded" in d for d in result.divergences)
+
+
+def test_unparseable_file_attribution_is_unproven(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A file with syntax errors yields an unproven attribution.
+
+    parse_file_symbols() returns None on SyntaxError, which propagates to
+    TaskNodeSet as UNPROVEN with REASON_PATH_NOT_INDEXED.
+    """
+    files = {
+        "src/pkg/syntax_error.py": "def broken() -> int:\n    return 1\n# missing colon below\nif True\n    pass\n",
+        "src/pkg/valid.py": "def valid_func() -> int:\n    return 1\n",
+    }
+    for rel, body in files.items():
+        _write(tmp_path / rel, body)
+    listing = sorted(files)
+    monkeypatch.setattr(semantic_graph, "_git_ls_files", lambda _w: listing)
+
+    graph = SemanticCodeGraph(build_semantic_graph(tmp_path))
+    result = attribute_task(graph, "t1", ["src/pkg/syntax_error.py"])
+
+    assert result.verdict == ATTRIBUTION_UNPROVEN
+    assert REASON_PATH_NOT_INDEXED in result.reasons

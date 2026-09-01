@@ -123,6 +123,12 @@ class StallReason(StrEnum):
     #: falls through to ``INSPECT`` for it, so no existing decision changes.
     INTENT_DRIFT = "intent_drift"
 
+    #: The worker is lagging behind its assigned cohort — e.g. a
+    #: parallel branch completed while this worker is still catching
+    #: up. Additive; ``recommend_action`` falls through to ``INSPECT``
+    #: for it, so no existing decision changes.
+    COHORT_LAGGARD = "cohort_laggard"
+
     #: Fallback when an upstream detector produces a structured reason
     #: the supervisor does not know about. Carries the original token
     #: in ``details["raw_reason"]`` so a verifier can still inspect it.
@@ -370,7 +376,9 @@ def recommend_action(
     5. :data:`StallReason.HEARTBEAT_STALE` / :data:`StallReason.NO_PROGRESS`
        yield ``RESPAWN`` only when there is budget remaining AND fewer
        than two recent failures in the slice; otherwise ``ESCALATE``.
-    6. :data:`StallReason.UNKNOWN` yields ``INSPECT`` so an unrecognised
+    6. :data:`StallReason.COHORT_LAGGARD` yields ``INSPECT`` - a laggard
+       worker needs human review before a respawn is attempted.
+    7. :data:`StallReason.UNKNOWN` yields ``INSPECT`` so an unrecognised
        reason never silently downgrades into a destructive action.
 
     Args:
@@ -411,6 +419,9 @@ def recommend_action(
         if respawn_budget_remaining > 0 and failures < 2:
             return RecommendedAction.RESPAWN
         return RecommendedAction.ESCALATE
+
+    if reason == StallReason.COHORT_LAGGARD:
+        return RecommendedAction.INSPECT
 
     return RecommendedAction.INSPECT
 

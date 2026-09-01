@@ -23,7 +23,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Literal, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -450,6 +450,15 @@ class AgentActivitySummary:
         )
 
 
+DEFAULT_MESSAGE_TYPE_WEIGHTS: dict[str, float] = {
+    "blocker": 5.0,
+    "alert": 4.0,
+    "finding": 3.0,
+    "dependency": 2.0,
+    "status": 1.0,
+}
+
+
 @dataclass
 class BulletinBoard:
     """Append-only message log for cross-agent communication.
@@ -711,23 +720,105 @@ class BulletinBoard:
             f.writelines(json.dumps(asdict(msg), default=str) + "\n" for msg in messages)
         return len(messages)
 
-    def summary(self, limit: int = 10) -> str:
-        """Return the last *limit* messages as a human-readable string.
+    def summary(
+        self,
+        limit: int = 10,
+        *,
+        horizon: int | None = None,
+        max_per_author: int | None = None,
+        per_author_cap: int | None = None,
+        step_size: int = 5,
+        step_decay: float = 0.1,
+        type_weights: Mapping[str, float] | None = None,
+        current_sequence: int | None = None,
+        current_tick: int | None = None,
+    ) -> str:
+        """Return a formatted summary of recent messages with age bounding and weighting.
 
-        Useful for injecting recent team activity into an agent's prompt.
+        Filters messages within a configurable horizon (measured in sequence
+        distance / tick offset), weights messages stepwise by age and message type,
+        applies an optional per-author cap to avoid single-agent starvation, and
+        returns the top *limit* messages ordered by (weight, recency).
 
         Args:
-            limit: Maximum number of messages to include (most recent first).
+            limit: Maximum number of messages to include in the summary.
+            horizon: Maximum sequence age (ticks/sequence distance) to consider.
+                Messages older than this horizon are excluded. If ``None``, all
+                messages are eligible.
+            max_per_author: Maximum number of messages from a single agent.
+            per_author_cap: Alias for *max_per_author*.
+            step_size: Number of sequence steps per age degradation step.
+            step_decay: Weight reduction per age step.
+            type_weights: Mapping of message type to base weight. Defaults to
+                :data:`DEFAULT_MESSAGE_TYPE_WEIGHTS`.
+            current_sequence: Explicit current sequence counter. Defaults to the
+                total number of messages on the board.
+            current_tick: Alias for *current_sequence*.
 
         Returns:
-            Multi-line string, one message per line, or empty string if the
-            board is empty.
+            Multi-line string with one formatted message per line, or an empty
+            string if no messages match.
         """
-        with self._lock:
-            recent = self._messages[-limit:]
-        if not recent:
+        if limit <= 0:
             return ""
-        lines = [f"- {m.agent_id}: {m.content}" for m in recent]
+
+        effective_cap = max_per_author if max_per_author is not None else per_author_cap
+        if effective_cap is not None and effective_cap <= 0:
+            return ""
+
+        if horizon is not None and horizon <= 0:
+            return ""
+
+        with self._lock:
+            messages = list(self._messages)
+
+        if not messages:
+            return ""
+
+        total = len(messages)
+        cur_seq = (
+            current_sequence if current_sequence is not None else (current_tick if current_tick is not None else total)
+        )
+        if cur_seq < total:
+            cur_seq = total
+
+        weights_map = type_weights if type_weights is not None else DEFAULT_MESSAGE_TYPE_WEIGHTS
+        step_sz = max(1, step_size)
+
+        candidates: list[tuple[float, int, BulletinMessage]] = []
+        for i, msg in enumerate(messages):
+            age = cur_seq - 1 - i
+            if age < 0:
+                continue
+            if horizon is not None and age >= horizon:
+                continue
+            step = age // step_sz
+            base_w = weights_map.get(msg.type, 1.0)
+            weight = base_w - (step * step_decay)
+            candidates.append((weight, i, msg))
+
+        if not candidates:
+            return ""
+
+        # Order by (weight, recency/sequence_index) descending
+        candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+
+        author_counts: dict[str, int] = {}
+        selected: list[BulletinMessage] = []
+        for _, _, msg in candidates:
+            if effective_cap is not None:
+                count = author_counts.get(msg.agent_id, 0)
+                if count >= effective_cap:
+                    continue
+            selected.append(msg)
+            author_counts[msg.agent_id] = author_counts.get(msg.agent_id, 0) + 1
+            if len(selected) >= limit:
+                break
+
+        if not selected:
+            return ""
+
+        lines = [f"- {m.agent_id}: {m.content}" for m in selected]
         return "\n".join(lines)
 
     def post_file_created(

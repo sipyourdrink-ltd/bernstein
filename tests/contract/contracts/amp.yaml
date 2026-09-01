@@ -16,6 +16,7 @@ auth:
   required_for_help: false
   required_for_models: false
   secret_env: "AMP_API_KEY"
+  basis: api_key
 required_flags:
   - "--mode"
   - "--execute"

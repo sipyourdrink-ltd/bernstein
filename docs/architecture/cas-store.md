@@ -165,10 +165,17 @@ Pruning is the responsibility of higher-level subsystems that know
 which digests are still referenced. Today GC happens during these
 operations:
 
+- **Safe incremental pruning / `bernstein gc cas`.** Performs a
+  mark-and-sweep over the CAS store, deleting unreferenced blobs
+   older than a configured retention window (default 30 days). Uses
+   reachability analysis over durable roots (WAL, audit seals,
+   lineage spines, backlog tasks) and preserves referenced or young
+   entries. The operation writes a prune receipt to the CAS store for
+   verification. Recommended for regular CAS maintenance.
 - **Project reset / `bernstein cleanup`.** Removes the entire
   `.sdd/cas/` tree along with the rest of `.sdd/runtime/`. Use this if
   you've confirmed nothing in the durable state still points at CAS
-  digests.
+  digests. **Dangerous: this deletes everything in CAS unconditionally.**
 - **Disaster-recovery snapshot rotation.** Old `bernstein dr` snapshots
   drop their reference to CAS digests; a follow-up sweep can delete
   any blob whose digest is no longer referenced by any snapshot
@@ -176,14 +183,112 @@ operations:
 - **Audit seal expiry.** When a Merkle seal ages out, the CAS entries
   it referenced can be deleted via `store.delete(digest)`.
 
+The `bernstein gc cas` command is the safe, incremental approach to
+CAS maintenance, designed to minimize the risk of accidentally deleting
+referenced content while still reclaiming storage from unused artifacts.
+
+## `bernstein gc cas`
+
+### When to use
+
+Use `bernstein gc cas` for routine CAS maintenance to reclaim storage
+from unreferenced artifacts while protecting referenced content.
+
+### Safety guarantees
+
+The command provides several safety guarantees:
+
+1. **Retention window** – By default, only blobs older than 30 days
+   are eligible for deletion. You can adjust this with `--days N`.
+
+2. **Reachability analysis** – The command scans durable roots to
+   determine what is still referenced:
+   - WAL entries (`.sdd/runtime/wal/*.wal.jsonl`)
+   - Audit Merkle seals (`.sdd/audit/merkle/seal-*.json`)
+   - Lineage spines (`.sdd/lineage/*/spine.jsonl`)
+   - Backlog tasks (`.sdd/backlog/*/{*.yaml,*.yml}`)
+
+   Only blobs whose digests are NOT in this referenced set are
+   candidates for deletion.
+
+3. **Preserve young entries** – Blobs created within the retention
+   window are preserved even if unreferenced.
+
+4. **Prune receipts** – Each successful `gc cas` operation writes a
+   prune receipt to the CAS store itself. This receipt documents what
+   was deleted and serves as verification that the operation
+   completed as expected.
+
+### Command usage
+
+```bash
+# Show help
+bernstein gc cas --help
+
+# Dry-run: see what would be deleted without actually deleting
+bernstein gc cas --dry-run
+
+# Run GC with 60-day retention
+bernstein gc cas --days 60
+
+# Force immediate cleanup (dangerous: may delete young artifacts)
+bernstein gc cas --days 0
+```
+
+### Key options
+
+- `--days N` – Delete blobs older than N days (default 30, 0 = immediate)
+- `--dry-run` – Preview deletions without modifying the store
+- `--workdir PATH` – Root directory containing `.sdd/` (default `.sdd`)
+
+### What happens during GC
+
+1. **Mark phase** – Collect all referenced digests from durable roots
+2. **Sweep phase** – Delete unreferenced blobs older than retention window
+3. **Receipt** – Write prune receipt documenting the operation
+
+### Common scenarios
+
+**Snapshot rotation cleanup**
+
+When you rotate old `bernstein dr` snapshots, they drop references to CAS
+blobs. Run `bernstein gc cas` after rotation to delete the now-unreferenced
+blobs:
+
+```bash
+# Rotate snapshots
+bernstein dr --rotate --keep 30
+
+# Clean up unreferenced CAS
+bernstein gc cas
+```
+
+**Storage recovery after artifact churn**
+
+If your workflow generates many temporary artifacts (e.g. heavy snapshot
+rotation, build caches), run periodic GC to prevent CAS store growth:
+
+```bash
+# Weekly cleanup (crontab entry)
+bernstein gc cas --days 7
+```
+
+### Migration notes
+
+If you were previously using `bernstein cleanup` for CAS maintenance,
+replace it with `bernstein gc cas` for incremental, safer pruning. Use
+`bernstein cleanup` only when you need to reset the entire project
+and can confirm no running tasks or backups still reference CAS digests.
+
 Because `delete()` is explicit and per-digest, GC is essentially "find
 the orphans and call delete on each one". A reference scan over WAL +
 snapshots + audit seals produces the live set; everything in
 `store.list_entries()` not in the live set is orphaned.
 
-There is no built-in mark-and-sweep job. If your workload churns
-through artifacts (e.g. heavy snapshot rotation), wire one up against
-your reference set and run it as a periodic CLI step.
+There is no built-in mark-and-sweep job for other content (WAL, audit
+logs, etc.). If your workload churns through artifacts (e.g. heavy
+snapshot rotation), wire one up against your reference set and run it
+as a periodic CLI step.
 
 ---
 

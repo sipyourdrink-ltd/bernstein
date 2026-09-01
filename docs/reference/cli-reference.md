@@ -920,6 +920,8 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `bernstein volunteer` | Volunteer-worker surfaces for opt-in projects (group): `verify` validates a project's `.bernstein/volunteer.json` through the same loader a donor's worker uses and prints the manifest digest a receipt binds to as `manifest_sha256`. | `cli/commands/volunteer_cmd.py` |
 | `bernstein gate verify <run>` | Verify a maker-checker / judge-panel gate's signed adjudication record: recompute `inputs_hash` from `--inputs` and confirm the panel saw exactly those inputs, then confirm the spine anchor still verifies. Exit 1 when no record, 2 on mismatch. | `cli/commands/gate_cmd.py` |
 | `bernstein governance verify <run>` | Recompute every RBAC access and per-subject budget decision recorded for a run from the signed spine and confirm the recorded verdicts: re-resolve roles from the signed `--bindings`, re-project spend from the `--ledger`, and match. Exit 1 when no records, 2 on mismatch. | `cli/commands/governance_cmd.py` |
+| `bernstein pool` | Named sandbox pool ops (group): `register`, `list`, `show`, `verify`. Projected from audit chain. Distinct from `bernstein limits pool`. | `cli/commands/pool_cmd.py` |
+| `bernstein limits` | Lease-backed admission and concurrency limits (group): `pool`, `tag`, `rate`, `queue`, `status`, `verify`. Projected from admission ledger. Distinct from `bernstein pool`. | `cli/commands/limits_cmd.py` |
 
 > Task-level `approve` / `reject` are different commands - see [Plan & tasks](#plan-tasks). Both also accept `--tool <id>` to resolve tool-call approvals (the flag form of `approve-tool` / `reject-tool`).
 
@@ -1085,6 +1087,35 @@ advisory-only, `1` on any critical/high finding, `2` when there is no diff.
 | `--as-json` | off | Emit findings as JSON. |
 | `--fail-on-any` | off | Exit non-zero on any finding, not just critical/high. |
 
+#### `bernstein pool`
+
+Define and govern named sandbox pools projected from the HMAC audit chain.
+
+| Subcommand | Purpose |
+|---|---|
+| `register SPEC_FILE` | Register or update a sandbox pool from a JSON manifest spec file. `--workdir DIR`, `--json`. |
+| `list` | List active sandbox pools projected from the audit chain. `--workdir DIR`, `--json`. |
+| `show NAME` | Show canonical manifest and hash for an active sandbox pool. `--workdir DIR`. |
+| `verify` | Verify sandbox pool bodies in the content-addressed store and placement receipts offline. `--workdir DIR`. |
+
+> **Deliberate distinction (#3138):** `bernstein pool` defines and verifies execution sandbox environments (backends, capability ceilings, egress classes, templates) projected from the HMAC audit chain (`.sdd/audit/`) and content-addressed store (`.sdd/sandbox/`). It is distinct from `bernstein limits pool`, which manages admission slot concurrency in the hash-chained admission work ledger (`.sdd/admission/`).
+
+#### `bernstein limits`
+
+Named resource pools with lease-backed admission (verify, status, CRUD) projected from the admission work ledger.
+
+| Subcommand | Purpose |
+|---|---|
+| `pool create NAME` | Create or update a named admission slot pool (e.g. `staging-env --slots 1`). `--slots N`, `--posture {enforce\|advise\|off}`, `--workdir DIR`, `--json`. |
+| `tag set TAG` | Set concurrency ceiling over a task tag (`--limit 0` quarantines). `--limit N`, `--posture {enforce\|advise\|off}`, `--workdir DIR`, `--json`. |
+| `rate set NAME` | Define a fleet-wide named rate limit with adaptive decay. `--base-limit N`, `--floor N`, `--posture {enforce\|advise\|off}`, `--workdir DIR`, `--json`. |
+| `queue create NAME` | Create or update an operator-defined named queue. `--priority N`, `--workdir DIR`, `--json`. |
+| `queue pause NAME` | Pause or resume a named queue. `--resume`, `--workdir DIR`, `--json`. |
+| `status` | Show projected admission state (pools, tags, rates, queues, active grants, waivers, quarantines). `--workdir DIR`, `--json`. |
+| `verify` | Recompute admission state from genesis over the admission ledger and fail closed on drift. `--workdir DIR`, `--json`. |
+
+> **Deliberate distinction (#3138):** `bernstein limits pool` manages lease-backed concurrency slot pools in the admission work ledger (`.sdd/admission/`). It is distinct from `bernstein pool`, which defines sandbox execution environments in the HMAC audit chain.
+
 #### `bernstein approve-tool` / `bernstein reject-tool`
 
 Tool-call approval gate. When an agent requests a sensitive tool call (network egress, file write outside its worktree, exec outside its sandbox), the orchestrator pauses and writes a request to `.sdd/runtime/tool_approvals/`. Resolve with these commands.
@@ -1191,6 +1222,7 @@ receipt that no longer recomputes fails exactly like a tampered chain entry.
 | Command | Purpose | Source |
 |---|---|---|
 | `bernstein cleanup` | Clean worktrees / logs. | `cli/maintenance_cmd.py:162` |
+| `bernstein gc` | Reclaim storage held by durable stores (group). | `cli/commands/gc_cmd.py:gc_group` |
 | `bernstein daemon` | systemd / launchd unit (group). | `cli/commands/daemon_cmd.py:76` |
 | `bernstein dr` | Disaster recovery (group). | `cli/commands/disaster_recovery_cmd.py:12` |
 | `bernstein debug bundle` | Bug-report bundle. | `cli/debug_bundle.py:bundle_cmd` |
@@ -1209,6 +1241,20 @@ receipt that no longer recomputes fails exactly like a tampered chain entry.
 | `bernstein notify` | Outbound notification drivers (group). | `cli/commands/notify_cmd.py:63` |
 | `bernstein triggers` | Trigger sources (group). | `cli/commands/triggers_cmd.py:17` |
 | `bernstein issue-to-pr trace --repo OWNER/NAME N` | Print the read-only issue-to-PR pipeline state snapshot. | `cli/commands/issue_to_pr_cmd.py:trace_cmd` |
+
+#### `bernstein gc cas`
+
+Mark-and-sweep of the content-addressed store. Referenced digests are collected
+from the durable roots -- the write-ahead log, snapshots, audit seals, lineage
+records and the backlog -- so a blob reachable from any of them survives
+regardless of its age. Exits non-zero if the sweep fails.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--workdir PATH` | current directory | Root directory containing `.sdd/`. |
+| `--days N` | configured retention window | Delete unreferenced blobs older than N days; `0` deletes immediately. |
+| `--dry-run` | off | Report what would be deleted without modifying the store. |
+| `--yes` | off | Skip the confirmation prompt. |
 
 #### `bernstein doctor`
 
@@ -1298,7 +1344,32 @@ bernstein completions --shell zsh > ~/.zsh/completion/_bernstein
 | `clone` | Clone all missing repos defined in the workspace. |
 | `validate` | Check workspace health: all repos exist and are valid git checkouts. |
 
-For worktree lifecycle (inspection / reaping) use `bernstein worktrees list` / `bernstein worktrees gc`.
+For worktree lifecycle (inspection / reaping) use the `bernstein worktrees` group below.
+
+#### `bernstein worktrees`
+
+| Subcommand | Purpose |
+|---|---|
+| `list` | Tabular dump of every worktree, with its classified state. |
+| `gc` | Reap orphan worktrees. `--dry` to preview, `--yes` to skip the prompt. |
+| `unlock` | Release a stale GC lock left by an interrupted run. |
+| `graph` | Render one fan-out's sealed run graph, branch by branch (below). |
+
+##### `bernstein worktrees graph`
+
+Render one fan-out's sealed run graph, branch by branch, from the receipt under `.sdd/run-graph/`.
+
+| Argument / flag | Purpose |
+|---|---|
+| `FANOUT_ID` | The receipt hash, or any unique prefix of it. An ambiguous prefix lists its candidates rather than choosing one. |
+| `--run-id SESSION=RUN` | Pair a branch's session id with the run whose spine recorded it. Repeatable. |
+| `--verify` | Re-derive the whole receipt and report the verdict. Needs `--public-key`. |
+| `--json` | Emit the signed receipt verbatim and nothing else. |
+| `--public-key FILE` | PEM public key the receipt was signed with. |
+| `--workdir DIRECTORY` | Project root holding `.sdd` (default: the current directory). |
+
+Exits non-zero when a branch's spine no longer verifies, or when `--verify` refuses the receipt.
+A branch with no `--run-id` is reported as unresolved, not as failing: it was not checked, so it did not fail.
 
 #### `bernstein session`
 

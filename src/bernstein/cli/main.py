@@ -1,4 +1,4 @@
-"""CLI entry point for Bernstein -- deterministic orchestrator for CLI coding agents.
+"""CLI entry point for Bernstein -- the open-source governance layer for AI agents.
 
 This module defines the top-level click group and registers all
 subcommand modules from:
@@ -70,6 +70,7 @@ from bernstein.cli.commands.events_cmd import events_group
 from bernstein.cli.commands.export_cmd import export_cmd
 from bernstein.cli.commands.fleet_cmd import fleet_group
 from bernstein.cli.commands.fork_cmd import fork_cmd
+from bernstein.cli.commands.gc_cmd import gc_group
 from bernstein.cli.commands.impact_cmd import (
     blast_radius_alias_group,
     dep_impact_alias_cmd,
@@ -82,6 +83,7 @@ from bernstein.cli.commands.pool_cmd import pool_group
 from bernstein.cli.commands.receipt_cmd import receipt_group
 from bernstein.cli.commands.resume_cmd import resume_cmd
 from bernstein.cli.commands.role_adapter_policy_cmd import security_group as _role_adapter_security_group
+from bernstein.cli.commands.run_graph_cmd import run_graph_cmd
 from bernstein.cli.commands.run_names_cmd import run_lookup_cmd
 from bernstein.cli.commands.skills_cmd import skills_group
 from bernstein.cli.commands.spec_cmd import spec_group
@@ -408,8 +410,8 @@ def print_rich_help() -> None:
     c.print()
     c.print(
         Panel(
-            "[bold]bernstein[/bold]  deterministic orchestrator for CLI coding agents.\n"
-            "  No model in the coordination loop, so runs replay byte-identically.\n"
+            "[bold]bernstein[/bold]  the open-source governance layer for AI agents.\n"
+            "  No model in the coordination loop, so a plan replays to the same task graph.\n"
             "  40+ adapters, per-task git worktrees, opt-in HMAC-SHA256 audit chain (RFC 2104).",
             border_style="blue",
             padding=(0, 2),
@@ -759,9 +761,9 @@ def cli(
     refine_spec: str | None,
     unsafe_allow_unicode_tags: bool,
 ) -> None:
-    """Deterministic orchestrator for CLI coding agents.
+    """The open-source governance layer for AI agents.
 
-    Parallel runs in per-task git worktrees, byte-identical replay, signed
+    Parallel runs in per-task git worktrees, byte-identical run receipts, signed
     lineage that checks offline from the artefacts. Replaying the HMAC audit
     chain additionally needs the install audit key.
     """
@@ -999,6 +1001,7 @@ cli.add_command(config_group)
 # From advanced_cmd module - groups and commands
 cli.add_command(benchmark_alias_group, "benchmark")
 cli.add_command(cache_group, "cache")
+cli.add_command(gc_group, "gc")
 cli.add_command(eval_group)
 cli.add_command(best_of_n_group)
 cli.add_command(dashboard)
@@ -1160,6 +1163,12 @@ cli.add_command(self_group, "self")
 cli.add_command(undo_cmd, "undo")
 cli.add_command(worker, "worker")
 cli.add_command(worktrees_group, "worktrees")
+# `bernstein worktrees graph <fanout-id>`: a fan-out's branches *are*
+# worktrees, and this group already owns the classifier surface they are read
+# through. The alternative reading, `bernstein run graph`, is not available:
+# `run` is a command (`bernstein run plan.yaml`), not a group, and turning it
+# into one would change how every existing invocation parses.
+worktrees_group.add_command(run_graph_cmd, "graph")
 cli.add_command(diff_cmd, "diff")
 cli.add_command(merge_cmd, "merge")
 cli.add_command(migrate_cmd, "migrate")

@@ -56,6 +56,19 @@ _HELP_TIMEOUT_SECONDS = 30
 _MODELS_TIMEOUT_SECONDS = 60
 
 
+class AuthBasis(StrEnum):
+    """Authentication mechanism declared by an adapter contract."""
+
+    #: Adapter authenticates via an API key (e.g. ANTHROPIC_API_KEY).
+    API_KEY = "api_key"
+    #: Adapter is local-only, no remote authentication required.
+    LOCAL = "local"
+    #: OAuth-based subscription authentication.
+    SUBSCRIPTION_OAUTH = "subscription_oauth"
+    #: Unknown or unspecified authentication mechanism.
+    UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True)
 class ContractSpec:
     """Parsed contract YAML for a single adapter."""
@@ -96,6 +109,8 @@ class ContractSpec:
     security_floor: str | None = None
     #: Bernstein-local advisory id backing :attr:`security_floor`, or ``None``.
     security_advisory_id: str | None = None
+    #: Authentication mechanism declared in the contract YAML.
+    auth_basis: AuthBasis = AuthBasis.UNKNOWN
 
     @classmethod
     def load(cls, name: str, contracts_dir: Path | None = None) -> ContractSpec:
@@ -132,6 +147,8 @@ class ContractSpec:
         _advisory = ADAPTER_MIN_SAFE_VERSIONS.get(str(data.get("adapter", name)))
         security_floor = _advisory.min_safe_version if _advisory is not None else None
         security_advisory_id = _advisory.advisory_id if _advisory is not None else None
+        raw_auth_basis = auth.get("basis")
+        auth_basis = AuthBasis(raw_auth_basis) if raw_auth_basis else AuthBasis.UNKNOWN
         return cls(
             adapter=str(data.get("adapter", name)),
             binary=str(data.get("binary", name)),
@@ -149,6 +166,7 @@ class ContractSpec:
             auth_secret_envs=secret_envs,
             security_floor=security_floor,
             security_advisory_id=security_advisory_id,
+            auth_basis=auth_basis,
         )
 
     def resolved_help_command(self) -> list[str]:
@@ -694,6 +712,7 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "rovo": AdapterStrategy(dangerous_mode=DangerousModeStrategy.CLI_FLAG),
     "letta_code": AdapterStrategy(
         dangerous_mode=DangerousModeStrategy.CLI_FLAG,
+        event_channel=EventChannel.STREAM_JSON,
         session_state=SessionState.PERSISTENT_AGENT,
     ),
     # Codex drives unattended via its sandbox/full-auto flag.
@@ -716,6 +735,7 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     # branch, so it declares ``artifact`` output (#3110): completion is the
     # signed lineage receipt and the commit check never fires for it.
     "computer_use": AdapterStrategy(event_channel=EventChannel.POLL_PTY, output_mode=OutputMode.ARTIFACT),
+    "skyvern": AdapterStrategy(event_channel=EventChannel.POLL_PTY, output_mode=OutputMode.ARTIFACT),
     "cody": AdapterStrategy(),
     "composio": AdapterStrategy(event_channel=EventChannel.HOOKS),
     "continue": AdapterStrategy(),
@@ -725,6 +745,10 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "devin_terminal": AdapterStrategy(event_channel=EventChannel.POLL_PTY),
     "droid": AdapterStrategy(),
     "forge": AdapterStrategy(),
+    # garak runs a probe suite and its unit of work is the scan report, not a
+    # commit, so it declares ``artifact``: the run completes when the report
+    # lands and the commit check never fires for it.
+    "garak": AdapterStrategy(output_mode=OutputMode.ARTIFACT),
     "generic": AdapterStrategy(),
     # Goose emits NDJSON under --output-format stream-json whose events carry
     # tokens/cost_usd and an error event (the authoritative failure signal;
@@ -742,6 +766,17 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     # it unsupported reads as "cannot be driven unattended", which understates
     # what an operator is authorising when they select this adapter.
     "hermes": AdapterStrategy(dangerous_mode=DangerousModeStrategy.ALWAYS_ON),
+    # HolmesGPT is a read-only investigation CLI. It has no native resume,
+    # runs non-interactively with --no-interactive, and emits lifecycle
+    # signals as a JSON output file rather than a structured stream. Its
+    # unit of work is the investigation artifact (conclusion + observations),
+    # not a commit, so completion is the signed lineage receipt.
+    "holmesgpt": AdapterStrategy(
+        resume=ResumeStrategy.UNSUPPORTED,
+        dangerous_mode=DangerousModeStrategy.UNSUPPORTED,
+        event_channel=EventChannel.TEXT_SIGNALS,
+        output_mode=OutputMode.ARTIFACT,
+    ),
     "iac": AdapterStrategy(),
     "junie": AdapterStrategy(),
     # Kilo documents native ACP support; it declares the ACP event channel so
@@ -757,7 +792,7 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     # warm retry sends only the corrective instruction on the assumption the
     # prior session is reattached.
     "kimchi": AdapterStrategy(
-        resume=ResumeStrategy.UNSUPPORTED,
+        resume=ResumeStrategy.FLAG,
         dangerous_mode=DangerousModeStrategy.CLI_FLAG,
         event_channel=EventChannel.ACP,
         output_mode=OutputMode.GIT_DIFF,
@@ -1207,3 +1242,120 @@ def system_addendum_channel(adapter_name: str) -> SystemAddendumChannel:
 SYSTEM_ADDENDUM_CHANNEL_MATRIX: dict[str, SystemAddendumChannel] = {
     name: system_addendum_channel(name) for name in STRATEGY_MATRIX
 }
+
+
+# ---------------------------------------------------------------------------
+# Scanner adapter capability declarations (issue #3617, slice 2 of #2953)
+# ---------------------------------------------------------------------------
+
+
+class ScannerDeterminism(StrEnum):
+    """The determinism tier a scanner adapter promises.
+
+    An adapter that declares the wrong tier fails conformance rather than
+    degrading quietly.  The tier drives what the conformance suite *demands*,
+    not what the scanner happens to produce on any given run.
+
+    ``deterministic``           -- two runs on identical input yield identical
+                                  finding hashes (no clock / PID / random noise).
+    ``feed_pinned``            -- reproducible as-of a recorded feed digest:
+                                  identical hashes given the *same* recorded digest.
+    ``transcript_anchored``    -- not byte-deterministic; a transcript is recorded
+                                  that a later verify step can diff.
+    """
+
+    DETERMINISTIC = "deterministic"
+    FEED_PINNED = "feed_pinned"
+    TRANSCRIPT_ANCHORED = "transcript_anchored"
+
+
+class ScannerOutputFormat(StrEnum):
+    """The parseable output format the scanner emits."""
+
+    SARIF = "sarif"
+    JSON = "json"
+    XML = "xml"
+
+
+class ScannerCategory(StrEnum):
+    """The class of analysis the scanner performs."""
+
+    SAST = "sast"
+    SCA = "sca"
+    SECRET = "secret"
+    IAC = "iac"
+    RECON = "recon"
+    DAST = "dast"
+
+
+#: Per-scanner capability declarations, keyed by registry name.
+#: Scanner adapters declare their capabilities directly on the class (output_format,
+#: determinism, pinned_inputs, category); this matrix is the authoritative
+#: declaration registry so the conformance suite can look up any adapter
+#: without instantiating it.
+_SCANNER_CAPABILITIES: dict[str, dict[str, Any]] = {}
+
+
+def register_scanner_capabilities(
+    name: str,
+    output_format: ScannerOutputFormat,
+    determinism: ScannerDeterminism,
+    pinned_inputs: tuple[str, ...],
+    category: ScannerCategory,
+) -> None:
+    """Register a scanner adapter's capability declaration.
+
+    Call this once per scanner module (after the class definition) so the
+    conformance suite can look up capabilities without instantiating the adapter.
+    """
+    _SCANNER_CAPABILITIES[name] = {
+        "output_format": output_format,
+        "determinism": determinism,
+        "pinned_inputs": pinned_inputs,
+        "category": category,
+    }
+
+
+def scanner_capabilities(name: str) -> dict[str, Any] | None:
+    """Return the capability declaration for scanner ``name``, or None if unregistered."""
+    return _SCANNER_CAPABILITIES.get(name)
+
+
+def scanner_determinism(name: str) -> ScannerDeterminism:
+    """Return the declared determinism tier for scanner ``name``."""
+    cap = _SCANNER_CAPABILITIES.get(name)
+    if cap is not None:
+        return ScannerDeterminism(cap["determinism"])
+    return ScannerDeterminism.TRANSCRIPT_ANCHORED
+
+
+def scanner_output_format(name: str) -> ScannerOutputFormat:
+    """Return the declared output format for scanner ``name``."""
+    cap = _SCANNER_CAPABILITIES.get(name)
+    if cap is not None:
+        return ScannerOutputFormat(cap["output_format"])
+    return ScannerOutputFormat.JSON
+
+
+def scanner_pinned_inputs(name: str) -> tuple[str, ...]:
+    """Return the declared pinned_inputs for scanner ``name``."""
+    cap = _SCANNER_CAPABILITIES.get(name)
+    if cap is not None:
+        return tuple(cap["pinned_inputs"])
+    return ()
+
+
+def scanner_category(name: str) -> ScannerCategory:
+    """Return the declared category for scanner ``name``."""
+    cap = _SCANNER_CAPABILITIES.get(name)
+    if cap is not None:
+        return ScannerCategory(cap["category"])
+    return ScannerCategory.SAST
+
+
+def undeclared_scanner_capabilities(scanner_names: list[str]) -> list[str]:
+    """Return the subset of scanner names absent from the capability registry.
+
+    An empty list means every scanner has declared its capabilities.
+    """
+    return sorted(name for name in scanner_names if name not in _SCANNER_CAPABILITIES)

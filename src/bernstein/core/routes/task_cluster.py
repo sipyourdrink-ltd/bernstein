@@ -85,7 +85,7 @@ def _verify_cluster_auth(request: Request, required_scope: str) -> None:
 
 @router.post("/cluster/nodes", status_code=201, responses=_AUTH_RESPONSES)
 def register_node(body: NodeRegisterRequest, request: Request) -> NodeResponse:
-    """Register a new node in the cluster."""
+    """Register a node, or update the entry of one that is re-registering."""
     from bernstein.core.cluster_auth import SCOPE_NODE_REGISTER
 
     _verify_cluster_auth(request, SCOPE_NODE_REGISTER)
@@ -97,6 +97,15 @@ def register_node(body: NodeRegisterRequest, request: Request) -> NodeResponse:
         gpu_available=body.capacity.gpu_available,
         supported_models=body.capacity.supported_models,
     )
+    # Re-registration is keyed on the node's operator-visible identity
+    # (name + url), not on a per-call id -- the same rule the gRPC
+    # RegisterNode handler follows (grpc_server.py). A worker that restarts
+    # has no memory of the id the server gave it, so minting a fresh NodeInfo
+    # per call left the old entry behind: the registry carried one row per
+    # restart, and cluster_summary counted that worker's capacity once per
+    # row. The request already carries the whole identity, so this is a
+    # lookup before the register call rather than a schema change.
+    existing = node_registry.find_by_identity(body.name, body.url)
     node = NodeInfo(
         name=body.name,
         url=body.url,
@@ -104,6 +113,8 @@ def register_node(body: NodeRegisterRequest, request: Request) -> NodeResponse:
         labels=body.labels,
         cell_ids=body.cell_ids,
     )
+    if existing is not None:
+        node.id = existing.id
     registered = node_registry.register(node)
     return node_to_response(registered)
 

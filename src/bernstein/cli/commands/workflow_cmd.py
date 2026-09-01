@@ -407,6 +407,130 @@ def _run_dsl_cmd(path: Path, *, dry_run: bool, console: Any) -> None:
     raise SystemExit(1)
 
 
+@workflow_group.command("resume")
+@click.argument("run_id")
+@click.option("-g", "--goal", default="", help="Goal text substituted into {goal} placeholders.")
+@click.option(
+    "-m",
+    "--manifest",
+    "manifest_arg",
+    default=None,
+    help="Path or name of the manifest (re-resolves to validate digest). "
+    "If omitted, re-resolves from the path stored at run start.",
+)
+def resume_cmd(run_id: str, goal: str, manifest_arg: str | None) -> None:
+    """Resume a previously killed or interrupted workflow run.
+
+    Re-resolves the original manifest, validates its spec digest against
+    the snapshot recorded at run start, and re-enters the DAG at the
+    first non-completed node.
+
+    \b
+    Example:
+      bernstein workflow run idea-to-pr -g "Add JWT auth"  # prints run_id
+      bernstein workflow resume <run_id> -g "Add JWT auth"
+      bernstein workflow resume <run_id> -m ./my-flow.yaml
+    """
+    from rich.console import Console
+    from rich.table import Table
+
+    from bernstein.core.workflows import NodeStatus, WorkflowRunError, WorkflowRunner, WorkflowSpecError
+    from bernstein.core.workflows.workflow_runner import (
+        load_spec_snapshot,
+        run_complete_marker_exists,
+    )
+    from bernstein.core.workflows.workflow_spec import resolve_workflow
+
+    console = Console()
+    workdir = Path.cwd()
+
+    # Refuse to resume a finished run.
+    completion = run_complete_marker_exists(workdir, run_id)
+    if completion is not None:
+        console.print(
+            f"[yellow]Run {run_id} already completed (succeeded={completion.get('succeeded')}). "
+            "No-op: start a new run with `workflow run`.[/yellow]"
+        )
+        return
+
+    snapshot = load_spec_snapshot(workdir, run_id)
+    if snapshot is None:
+        console.print(
+            f"[bold red]No workflow run state for run_id {run_id!r} under {workdir / '.sdd/runs'}.[/bold red]"
+        )
+        console.print("Start a new run with `bernstein workflow run` first.")
+        raise SystemExit(1)
+
+    # Re-resolve the manifest: prefer --manifest, then the stored source path/name.
+    if manifest_arg is not None:
+        try:
+            path, spec = resolve_workflow(manifest_arg, workdir=workdir)
+        except WorkflowSpecError as exc:
+            console.print(f"[bold red]Resolve failed:[/bold red] {exc}")
+            raise SystemExit(1) from exc
+    else:
+        stored_source = snapshot.get("source")
+        if stored_source is None:
+            console.print(
+                "[bold red]Cannot resume: the manifest path was not recorded at run start. "
+                "Re-run with --manifest <path-or-name> to validate the spec digest.[/bold red]"
+            )
+            raise SystemExit(1)
+        try:
+            path, spec = resolve_workflow(stored_source, workdir=workdir)
+        except WorkflowSpecError as exc:
+            # The stored path may be absolute; try resolving it directly.
+            candidate = Path(stored_source)
+            if candidate.is_absolute() and candidate.is_file():
+                path = candidate
+                from bernstein.core.workflows import load_workflow_spec
+
+                try:
+                    spec = load_workflow_spec(path)
+                except WorkflowSpecError as exc2:
+                    console.print(f"[bold red]Resolve failed:[/bold red] {exc2}")
+                    raise SystemExit(1) from exc2
+            else:
+                console.print(f"[bold red]Resolve failed:[/bold red] {exc}")
+                raise SystemExit(1) from exc
+
+    console.print(f"[bold]Workflow:[/bold] {spec.name} ({path})")
+    console.print(f"[dim]Resuming run {run_id} - {len(spec.nodes)} node(s).[/dim]\n")
+
+    runner = WorkflowRunner(workdir=workdir)
+    try:
+        execution = runner.resume(spec, goal=goal, run_id=run_id)
+    except (WorkflowSpecError, WorkflowRunError) as exc:
+        console.print(f"[bold red]Resume failed:[/bold red] {exc}")
+        raise SystemExit(1) from exc
+
+    table = Table(title=f"Resume {run_id}")
+    table.add_column("Node")
+    table.add_column("Status")
+    table.add_column("Iters", justify="right")
+    table.add_column("Exit", justify="right")
+    table.add_column("Wall (s)", justify="right")
+    table.add_column("Note")
+    for node_exec in execution.nodes:
+        if node_exec.status == NodeStatus.SUCCESS:
+            colour = "green"
+        elif node_exec.status == NodeStatus.FAILED:
+            colour = "red"
+        else:
+            colour = "yellow"
+        table.add_row(
+            node_exec.node_id,
+            f"[{colour}]{node_exec.status.value}[/{colour}]",
+            str(node_exec.iterations),
+            "-" if node_exec.exit_code is None else str(node_exec.exit_code),
+            f"{node_exec.wall_time_seconds:.2f}",
+            node_exec.error or "",
+        )
+    console.print(table)
+    if not execution.succeeded:
+        raise SystemExit(1)
+
+
 @workflow_group.command("run")
 @click.argument("name_or_path")
 @click.option("-g", "--goal", default="", help="Goal text substituted into {goal} placeholders.")

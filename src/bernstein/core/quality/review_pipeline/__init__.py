@@ -88,6 +88,11 @@ from bernstein.core.quality.review_pipeline.schema import (
     load_pipeline,
     parse_pipeline_yaml,
 )
+from bernstein.core.quality.review_pipeline.scope import (
+    ScopeResolution,
+    compute_resolution_hash,
+    resolve_scope,
+)
 from bernstein.core.quality.review_pipeline.verdict import (
     AgentVerdict,
     FinalVerdict,
@@ -135,6 +140,7 @@ __all__ = [
     "ReviewState",
     "ReviewVerdict",
     "RulesSpec",
+    "ScopeResolution",
     "StageSpec",
     "StageVerdict",
     "aggregate_pipeline",
@@ -143,6 +149,7 @@ __all__ = [
     "check_rollup_from_pr",
     "chunk_for_review",
     "command_fix_runner",
+    "compute_resolution_hash",
     "diff_from_pr",
     "diff_from_task",
     "gh_pr_view_json",
@@ -152,6 +159,7 @@ __all__ = [
     "parse_ruleset",
     "parse_structured_verdict",
     "receipt_emitter",
+    "resolve_scope",
     "rollup_from_payload",
     "run_pipeline",
     "run_pipeline_sync",

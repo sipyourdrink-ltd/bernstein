@@ -296,9 +296,11 @@ def _format_memory_lesson(entry: dict[str, Any]) -> str:
 def _render_memory_lessons_block(workdir: Path) -> str:
     """Read the most recent memory lessons and render the injection block.
 
-    The block is sandwiched between :data:`_MEMORY_LESSONS_OPEN` and
-    :data:`_MEMORY_LESSONS_CLOSE` so the orchestrator-side renderer can
-    grep for it deterministically (e.g. when auditing prompts).
+    Applies age bounding, stepwise weighting, and per-author caps to the
+    lessons before rendering them into the prompt. The block is sandwiched
+    between :data:`_MEMORY_LESSONS_OPEN` and :data:`_MEMORY_LESSONS_CLOSE`
+    so the orchestrator-side renderer can grep for it deterministically
+    (e.g. when auditing prompts).
 
     Args:
         workdir: Project working directory.  The JSONL log lives at
@@ -319,10 +321,71 @@ def _render_memory_lessons_block(workdir: Path) -> str:
     if not entries:
         return ""
 
-    # Tail-window - the most recent N entries, oldest-first inside the window.
-    recent = entries[-_MEMORY_LESSONS_MAX:]
+    now = _time.time()
+    horizon = SPAWN.memory_lessons_horizon_s
+
+    # 1. Age bounding - filter entries older than horizon
+    recent_entries = []
+    for idx, entry in enumerate(entries):
+        ts = entry.get("timestamp")
+        if ts is None:
+            # No timestamp - treat as newest for age bounding (always include)
+            age = 0.0
+            weight = 1.0
+        else:
+            age = now - ts
+            if age >= horizon + 1.0:
+                continue
+            # Compute weight with stepwise decay based on age
+            bucket_size = horizon * SPAWN.memory_lessons_weight_decay_factor
+            if bucket_size <= 0:
+                bucket_size = horizon / 2
+            bucket = int(age // bucket_size)
+            weight = SPAWN.memory_lessons_weight_decay_factor**bucket
+        entry_copy = dict(entry)
+        entry_copy["_weight"] = weight
+        entry_copy["_age"] = age
+        entry_copy["_has_ts"] = ts is not None
+        entry_copy["_insertion_order"] = idx
+        recent_entries.append(entry_copy)
+
+    # 2. Sort all entries for deterministic output
+    # Entries with timestamps: sort by (age asc = newer first, weight desc = higher weight first)
+    # Entries without timestamps: preserve FIFO order (newest = highest insertion_order kept first)
+    def _sort_key(e: dict[str, Any]) -> tuple:
+        if e["_has_ts"]:
+            # Timestamped: age ascending (newest first), then weight desc, then insertion
+            return (0, e["_age"], -e["_weight"], e["_insertion_order"])
+        else:
+            # Untimestamped: insertion_order descending (newest last = kept first)
+            return (1, -e["_insertion_order"])
+
+    recent_entries.sort(key=_sort_key)
+
+    # 3. Apply global cap
+    capped_by_global = recent_entries[:_MEMORY_LESSONS_MAX]
+
+    # 4. Per-author cap - only for timestamped entries (not for backward compat)
+    ts_capped = [e for e in capped_by_global if e["_has_ts"]]
+    no_ts_capped = [e for e in capped_by_global if not e["_has_ts"]]
+
+    # Apply per-author cap only to timestamped entries
+    author_entries: dict[str, list[dict[str, Any]]] = {}
+    for entry in ts_capped:
+        author = entry.get("author", "")
+        if author not in author_entries:
+            author_entries[author] = []
+        author_entries[author].append(entry)
+
+    ts_final: list[dict[str, Any]] = []
+    for _author, entries_list in author_entries.items():
+        ts_final.extend(entries_list[: SPAWN.memory_lessons_max_per_author])
+
+    # Untimestamped entries already capped globally, just pass through
+    final_entries = no_ts_capped + ts_final
+
     bullets: list[str] = []
-    for entry in recent:
+    for entry in final_entries:
         rendered = _format_memory_lesson(entry)
         if rendered:
             bullets.append(rendered)

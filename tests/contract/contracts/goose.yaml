@@ -20,6 +20,7 @@ auth:
   required_for_help: false
   required_for_models: false
   secret_env: "ANTHROPIC_API_KEY"
+  basis: api_key
 #
 # These are flags the CLI must still advertise in ``goose run --help``; the
 # list is not an assertion that every spawn passes each one. ``--model`` is

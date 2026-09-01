@@ -29,6 +29,7 @@ locally without waiting for the cloud runner.
 | **diff-cover** (LEVEL 1)    | Changed lines below the committed diff-coverage floor             | PR (advisory)       |
 | **coverage ratchet** (LEVEL 2) | Total coverage dropped below the committed high-water mark      | push to main (advisory) |
 | **import-linter**           | Architecture-contract violations (cross-package imports)          | PR                  |
+| **test-count drop** (#4873) | Touched test module lost collected cases vs merge base            | PR (Repo hygiene)   |
 | **No-network guard**        | Unit tests that open a real outbound connection (flaky by design) | PR (every unit run) |
 | **Spawned-process identity race** | Duplicate run identities hidden by thread-only locking      | PR (identity anchor unit suite) |
 | **ruff** + **typos**        | Lint, format drift, common typos                                  | PR                  |
@@ -48,6 +49,33 @@ isolated VM contexts. They cover stored and system theme resolution, blocked
 storage, unavailable or throwing browser APIs, inaccessible document roots,
 and the matching `ThemeProvider` storage fallback. They do not start a web
 server or make network requests.
+
+Test-count drop vs merge base (#4873)
+
+Repo hygiene compares `pytest --collect-only` counts for every touched
+`test_*.py` / `*_test.py` against the merge base. A drop fails the job
+outright (no committed ratchet baseline — overrides are the escape hatch).
+
+Outcome words are distinct: `OK` means compared and clean; `NOT_RUN` means
+no merge base so the guard never compared (not a clean bill of health).
+
+Parametrized consolidation (N cases → one `@pytest.mark.parametrize` with N
+values) keeps the collected count stable and stays green. Intentional drops
+need a PR-body override a reviewer can see:
+
+```text
+test-count-drop: tests/unit/foo/test_bar.py -3
+```
+
+Unused overrides fail (stale). A deleted test whose matching `src/**/<stem>.py`
+was also deleted is carved out. An import failure under collect-only is named
+`cause=import_error` in the message so it is not mistaken for a silent count
+drop. Locally:
+
+```bash
+uv run python scripts/check_test_count_drop.py --base origin/main
+uv run python scripts/check_test_count_drop.py --base origin/main --pr-body "$(gh pr view --json body -q .body)"
+```
 
 ## Run any of the above locally
 
@@ -342,6 +370,19 @@ The added PR-time jobs target ≤8 min wall-clock each and run in
 parallel after the lint job clears (so a typo PR fails fast in <2
 min without burning compute on the heavy stack).
 
+## Collect-empty test modules
+
+A `test_*.py` (or `*_test.py`) whose body was emptied still collects cleanly
+and exits 0, so a shrinking suite looks green. Repo hygiene runs
+`scripts/check_empty_test_modules.py` to fail those modules. Scope is by
+**naming convention** (pytest's `python_files`), not a helper allowlist:
+`conftest.py`, `__init__.py`, and shared helpers are out of scope
+automatically. See issue #4834.
+
+```
+uv run python scripts/check_empty_test_modules.py
+```
+
 ## Sharded unit suite
 
 `scripts/run_tests.py` runs each `tests/unit/test_*.py` file in its own
@@ -363,13 +404,28 @@ uv run python scripts/run_tests.py --shard 1/4
 uv run python scripts/run_tests.py --shard 1/4 --affected origin/main
 ```
 
-The partition is **position-modulo over the sorted file list**: shard
-`i` owns every file whose index `j` satisfies `j % N == i - 1`. That
-makes it deterministic and stable (a failing shard reruns the identical
-slice), complete and disjoint (the union of all `N` shards is exactly
-the full list, no file runs twice), and balanced (shard sizes differ by
-at most one). An empty shard (when `N` exceeds the file count) is a
-legitimate no-op that exits 0.
+The partition prefers **duration-weighted LPT** when
+`tests/fixtures/ci/test-shard-durations.json` is present: files are ordered by
+recorded seconds and each lands in the currently lightest shard. That keeps
+the union complete and disjoint while collapsing the multi-minute wall spread
+that count-modulo leaves between shards (issue #4840). Without that file, the
+fallback is **position-modulo** over the sorted file list (shard `i` owns
+every file whose index `j` satisfies `j % N == i - 1`). Both paths are
+deterministic and stable (a failing shard reruns the identical slice). An
+empty shard (when `N` exceeds the file count) is a legitimate no-op that
+exits 0.
+
+Refresh the committed timings from a successful merge-group run:
+
+```
+uv run python scripts/refresh_test_shard_durations.py --run-id <github-run-id>
+```
+
+Or merge live measurements while running:
+
+```
+uv run python scripts/run_tests.py --shard 1/4 --record-durations
+```
 
 In CI the `ubuntu`/`windows` `Test` cells fan out across a `shard`
 matrix dimension; the rolled-up `needs.test.result` the `CI gate`

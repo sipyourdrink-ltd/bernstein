@@ -28,7 +28,10 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Collection, Mapping
 
 # Changed paths for which an empty affected set is a coverage hole rather than
 # a legitimate no-op, so the shards fail closed instead of reporting green.
@@ -64,6 +67,12 @@ TEST_FILE_TIMEOUT_ENV = "BERNSTEIN_TEST_FILE_TIMEOUT_SECONDS"
 # this default, and scripts/check_test_collection.py reads this constant to
 # derive what the shards collect, so the two cannot drift apart.
 DEFAULT_TEST_DIR = "tests/unit"
+
+# Committed per-file timings used by ``shard_files`` to duration-balance CI
+# shards (issue #4840). Missing keys fall back to ``DEFAULT_SHARD_DURATION_S``.
+DEFAULT_SHARD_DURATIONS_REL = "tests/fixtures/ci/test-shard-durations.json"
+DEFAULT_SHARD_DURATION_S = 1.0
+SHARD_DURATIONS_SCHEMA_VERSION = 1
 
 # A heavily-parallel shard can transiently exhaust the OS thread table, which
 # surfaces as this CPython error rather than a genuine test failure. A single
@@ -252,24 +261,127 @@ def parse_shard_spec(spec: str) -> tuple[int, int]:
     return shard_index, shard_count
 
 
-def shard_files(files: list[Path], shard_index: int, shard_count: int) -> list[Path]:
+def default_shard_durations_path() -> Path:
+    """Return the committed durations file path (repo-root relative layout)."""
+    return Path(__file__).resolve().parent.parent / DEFAULT_SHARD_DURATIONS_REL
+
+
+def durations_key(path: Path, root: Path | None = None) -> str:
+    """Normalize *path* to a repo-root-relative POSIX key for the durations map."""
+    base = root if root is not None else Path(__file__).resolve().parent.parent
+    resolved = path if path.is_absolute() else (Path.cwd() / path)
+    try:
+        return resolved.resolve().relative_to(base.resolve()).as_posix()
+    except ValueError:
+        return path.as_posix().replace("\\", "/")
+
+
+def load_shard_durations(path: Path | None = None) -> dict[str, float]:
+    """Load ``{relative_posix_path: seconds}`` from the committed durations file.
+
+    Returns an empty dict when the file is absent or unreadable so callers can
+    fall back to the count-balanced modulo partition.
+    """
+    target = path if path is not None else default_shard_durations_path()
+    try:
+        raw: object = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    doc = cast("dict[str, object]", raw)
+    durations_raw = doc.get("durations_s", doc)
+    if not isinstance(durations_raw, dict):
+        return {}
+    out: dict[str, float] = {}
+    for key_obj, value_obj in cast("dict[str, object]", durations_raw).items():
+        if not isinstance(key_obj, str):
+            continue
+        if isinstance(value_obj, bool) or not isinstance(value_obj, int | float):
+            continue
+        if float(value_obj) < 0:
+            continue
+        out[key_obj.replace("\\", "/")] = float(value_obj)
+    return out
+
+
+def write_shard_durations(path: Path, durations: Mapping[str, float], *, merge: bool = True) -> None:
+    """Write a deterministic durations document; optionally merge with *path*."""
+    merged: dict[str, float] = load_shard_durations(path) if merge and path.exists() else {}
+    for key, value in durations.items():
+        if value < 0:
+            continue
+        merged[key.replace("\\", "/")] = float(value)
+    doc = {
+        "schema_version": SHARD_DURATIONS_SCHEMA_VERSION,
+        "durations_s": {key: merged[key] for key in sorted(merged)},
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(doc, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+
+
+def partition_files_by_duration(
+    files: list[Path],
+    shard_count: int,
+    durations: Mapping[str, float],
+    *,
+    default_duration_s: float = DEFAULT_SHARD_DURATION_S,
+    root: Path | None = None,
+) -> list[list[Path]]:
+    """Greedy LPT partition of *files* into ``shard_count`` duration-balanced shards.
+
+    Files are ordered by ``(-duration, durations_key)`` so ties are path-stable.
+    Each file lands in the currently lightest shard (lowest index on a tie).
+    Within each shard, files are restored to their original *files* order so
+    execution order stays a subsequence of discovery order.
+    """
+    bucket_files: list[list[Path]] = [[] for _ in range(shard_count)]
+    bucket_durations = [0.0] * shard_count
+    timed = [(path, float(durations.get(durations_key(path, root), default_duration_s))) for path in files]
+    timed.sort(key=lambda item: (-item[1], durations_key(item[0], root)))
+    for path, duration in timed:
+        lightest = min(range(shard_count), key=lambda index: bucket_durations[index])
+        bucket_files[lightest].append(path)
+        bucket_durations[lightest] += duration
+
+    index_of = {path: index for index, path in enumerate(files)}
+    for bucket in bucket_files:
+        bucket.sort(key=lambda path: index_of[path])
+    return bucket_files
+
+
+def shard_files(
+    files: list[Path],
+    shard_index: int,
+    shard_count: int,
+    durations: Mapping[str, float] | None = None,
+) -> list[Path]:
     """Return the deterministic 1-based ``shard_index`` of ``shard_count`` shards.
 
-    Partition by position modulo ``shard_count`` over the (already sorted)
-    ``files`` list: shard ``i`` owns every file whose index ``j`` satisfies
-    ``j % shard_count == i - 1``. This is:
+    When *durations* is non-empty, partition with greedy longest-processing-time
+    first over those timings (unknown files use ``DEFAULT_SHARD_DURATION_S``).
+    Otherwise fall back to position modulo over the (already sorted) ``files``
+    list: shard ``i`` owns every file whose index ``j`` satisfies
+    ``j % shard_count == i - 1``.
+
+    Both paths are:
 
     - **deterministic + stable** - no hashing, no salt; the same inputs always
       yield the same slice across runs and machines (the repo's determinism
       contract);
     - **complete + disjoint** - every file lands in exactly one shard;
-    - **balanced** - shard sizes differ by at most one;
     - **order-preserving** - each shard is a subsequence of ``files``.
+
+    The modulo path is also count-balanced (sizes differ by at most one). The
+    durations path is duration-balanced instead: that is what collapses the
+    multi-minute wall spread between CI shards (issue #4840).
     """
     if shard_count < 1:
         raise ValueError(f"shard count must be >= 1 (got {shard_count})")
     if not 1 <= shard_index <= shard_count:
         raise ValueError(f"shard index {shard_index} out of range 1..{shard_count}")
+    if durations:
+        return partition_files_by_duration(files, shard_count, durations)[shard_index - 1]
     return [f for j, f in enumerate(files) if j % shard_count == shard_index - 1]
 
 
@@ -401,20 +513,36 @@ def _report_file_result(label: str, code: int, duration: float, output: str) -> 
     return outcome
 
 
-def _print_totals(passed: int, failed: int, no_tests: int, total: int) -> None:
-    """Print the per-file totals with ran-nothing broken out."""
-    print(f"Files: {passed} passed, {failed} failed, {no_tests} ran no tests, {total} total")
+def _print_totals(passed: int, failed: int, no_tests: Collection[Path], total: int) -> None:
+    """Print the per-file totals with ran-nothing broken out, naming each file.
+
+    The per-file lines are printed only for failures, so on a green shard the
+    totals are the whole record. "1 ran no tests" out of several hundred names
+    nothing: a reader cannot tell which file executed nothing, and cannot check
+    whether the file they care about was among the ones that ran at all. The
+    names are cheap -- this bucket is a handful of files on a normal shard --
+    and they are what makes the count auditable.
+    """
+    print(f"Files: {passed} passed, {failed} failed, {len(no_tests)} ran no tests, {total} total")
+    for path in sorted(no_tests):
+        print(f"  ran no tests: {path}")
 
 
-def run_sequential(files: list[Path], extra_args: list[str], fail_fast: bool, coverage: bool = False) -> int:
+def run_sequential(
+    files: list[Path],
+    extra_args: list[str],
+    fail_fast: bool,
+    coverage: bool = False,
+    recorded_durations: dict[str, float] | None = None,
+) -> int:
     """Run test files one by one."""
     passed = 0
     failed = 0
-    no_tests = 0
+    no_tests: list[Path] = []
     total_duration = 0.0
 
     for i, path in enumerate(files, 1):
-        label = f"[{i}/{len(files)}] {path.name}"
+        label = f"[{i}/{len(files)}] {durations_key(path)}"
         try:
             _fpath, code, duration, output = run_file(path, extra_args, coverage=coverage)
         except subprocess.TimeoutExpired as exc:
@@ -430,11 +558,13 @@ def run_sequential(files: list[Path], extra_args: list[str], fail_fast: bool, co
             code, duration, output = retry
 
         total_duration += duration
+        if recorded_durations is not None:
+            recorded_durations[durations_key(path)] = duration
         outcome = _report_file_result(label, code, duration, output)
         if outcome == OUTCOME_PASSED:
             passed += 1
         elif outcome == OUTCOME_NO_TESTS:
-            no_tests += 1
+            no_tests.append(path)
         else:
             failed += 1
             if fail_fast:
@@ -447,14 +577,19 @@ def run_sequential(files: list[Path], extra_args: list[str], fail_fast: bool, co
 
 
 def run_parallel(
-    files: list[Path], extra_args: list[str], workers: int, fail_fast: bool, coverage: bool = False
+    files: list[Path],
+    extra_args: list[str],
+    workers: int,
+    fail_fast: bool,
+    coverage: bool = False,
+    recorded_durations: dict[str, float] | None = None,
 ) -> int:
     """Run test files in parallel using concurrent.futures."""
     from concurrent.futures import ProcessPoolExecutor, as_completed
 
     passed = 0
     failed = 0
-    no_tests = 0
+    no_tests: list[Path] = []
     done = 0
     total = len(files)
     abort = False
@@ -477,7 +612,7 @@ def run_parallel(
             except Exception as exc:
                 fpath = futures[future]
                 done += 1
-                print(f"  ERROR [{done}/{total}] {fpath.name}: {exc}")
+                print(f"  ERROR [{done}/{total}] {durations_key(fpath)}: {exc}")
                 failed += 1
                 if fail_fast:
                     abort = True
@@ -487,16 +622,18 @@ def run_parallel(
 
             retry = retry_on_thread_exhaustion(fpath, extra_args, code, output, coverage=coverage)
             if retry is not None:
-                print(f"  RETRIED (thread exhaustion) {fpath.name}")
+                print(f"  RETRIED (thread exhaustion) {durations_key(fpath)}")
                 code, duration, output = retry
 
             done += 1
-            label = f"[{done}/{total}] {fpath.name}"
+            label = f"[{done}/{total}] {durations_key(fpath)}"
+            if recorded_durations is not None:
+                recorded_durations[durations_key(fpath)] = duration
             outcome = _report_file_result(label, code, duration, output)
             if outcome == OUTCOME_PASSED:
                 passed += 1
             elif outcome == OUTCOME_NO_TESTS:
-                no_tests += 1
+                no_tests.append(fpath)
             else:
                 failed += 1
                 if fail_fast:
@@ -514,7 +651,7 @@ def run_parallel(
                 fpath, code, duration, output = run_file(f, extra_args, coverage)
             except Exception as exc:
                 done += 1
-                print(f"  ERROR [{done}/{total}] {f.name}: {exc}")
+                print(f"  ERROR [{done}/{total}] {durations_key(f)}: {exc}")
                 failed += 1
                 if fail_fast:
                     abort = True
@@ -522,16 +659,18 @@ def run_parallel(
 
             retry = retry_on_thread_exhaustion(fpath, extra_args, code, output, coverage=coverage)
             if retry is not None:
-                print(f"  RETRIED (thread exhaustion) {fpath.name}")
+                print(f"  RETRIED (thread exhaustion) {durations_key(fpath)}")
                 code, duration, output = retry
 
             done += 1
-            label = f"[{done}/{total}] {f.name}"
+            label = f"[{done}/{total}] {durations_key(f)}"
+            if recorded_durations is not None:
+                recorded_durations[durations_key(fpath)] = duration
             outcome = _report_file_result(label, code, duration, output)
             if outcome == OUTCOME_PASSED:
                 passed += 1
             elif outcome == OUTCOME_NO_TESTS:
-                no_tests += 1
+                no_tests.append(fpath)
             else:
                 failed += 1
                 if fail_fast:
@@ -577,36 +716,47 @@ def discover_affected_files(base: str) -> list[Path]:
     return sorted(paths)
 
 
-def discover_changed_files(base: str) -> list[str]:
-    """Return repo-relative changed paths for empty affected-set decisions."""
+def discover_changed_files(base: str, diff_filter: str | None = None) -> list[str]:
+    """Return repo-relative changed paths for empty affected-set decisions.
+
+    ``diff_filter`` is passed to ``git diff --diff-filter``; ``"D"`` narrows the
+    result to the paths the change removes. Untracked files are only collected
+    for the unfiltered call, since a file that is not in the index cannot have
+    been deleted by the change.
+    """
     root = Path(__file__).parent.parent
+    filter_args = [f"--diff-filter={diff_filter}"] if diff_filter else []
     try:
         if base == "HEAD":
             unstaged = subprocess.run(
-                ["git", "diff", "--name-only", "HEAD"],
+                ["git", "diff", "--name-only", *filter_args, "HEAD"],
                 cwd=root,
                 capture_output=True,
                 text=True,
                 check=True,
             ).stdout.splitlines()
             staged = subprocess.run(
-                ["git", "diff", "--name-only", "--cached"],
+                ["git", "diff", "--name-only", *filter_args, "--cached"],
                 cwd=root,
                 capture_output=True,
                 text=True,
                 check=True,
             ).stdout.splitlines()
-            untracked = subprocess.run(
-                ["git", "ls-files", "--others", "--exclude-standard"],
-                cwd=root,
-                capture_output=True,
-                text=True,
-                check=True,
-            ).stdout.splitlines()
+            untracked = (
+                []
+                if diff_filter
+                else subprocess.run(
+                    ["git", "ls-files", "--others", "--exclude-standard"],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                ).stdout.splitlines()
+            )
             return sorted({path for path in [*unstaged, *staged, *untracked] if path})
         try:
             return subprocess.run(
-                ["git", "diff", "--name-only", f"{base}...HEAD"],
+                ["git", "diff", "--name-only", *filter_args, f"{base}...HEAD"],
                 cwd=root,
                 capture_output=True,
                 text=True,
@@ -616,7 +766,7 @@ def discover_changed_files(base: str) -> list[str]:
             if exc.returncode != 128:
                 raise
             return subprocess.run(
-                ["git", "diff", "--name-only", f"{base}..HEAD"],
+                ["git", "diff", "--name-only", *filter_args, f"{base}..HEAD"],
                 cwd=root,
                 capture_output=True,
                 text=True,
@@ -627,7 +777,10 @@ def discover_changed_files(base: str) -> list[str]:
         sys.exit(exc.returncode)
 
 
-def changed_files_require_tests(changed_files: list[str]) -> bool:
+def changed_files_require_tests(
+    changed_files: list[str],
+    deleted_files: Collection[str] = (),
+) -> bool:
     """Return True when an empty affected set must fail closed.
 
     Paths under ``_SELF_COVERED_TEST_PREFIXES`` are ignored: a dedicated
@@ -636,11 +789,19 @@ def changed_files_require_tests(changed_files: list[str]) -> bool:
     still judged by ``_TEST_REQUIRED_PREFIXES``, so a mixed change that also
     touches source, scripts, workflows, or an indexed test suite keeps failing
     closed on an empty affected set.
+
+    A test file the change *deletes* is ignored for the same reason. The only
+    test the selector could map it to is itself, and it is gone, so no content
+    of the change can ever produce a non-empty affected set: a pull request
+    that only removes a test file would be permanently unmergeable. Deleted
+    paths outside ``tests/`` keep failing closed - a removed module can still
+    be covered by tests that imported it.
     """
+    deleted_tests = {path for path in (Path(raw).as_posix() for raw in deleted_files) if path.startswith("tests/")}
     return any(
         path.startswith(_TEST_REQUIRED_PREFIXES)
         for path in (Path(raw).as_posix() for raw in changed_files)
-        if not path.startswith(_SELF_COVERED_TEST_PREFIXES)
+        if not path.startswith(_SELF_COVERED_TEST_PREFIXES) and path not in deleted_tests
     )
 
 
@@ -674,8 +835,22 @@ def main() -> None:
         help=(
             "Run only shard i of N (1-based, e.g. '1/4'). The discovered file "
             "list is partitioned deterministically so reruns are reproducible "
-            "and the union of all N shards covers every file exactly once."
+            "and the union of all N shards covers every file exactly once. "
+            "When "
+            f"{DEFAULT_SHARD_DURATIONS_REL} "
+            "is present, shards are balanced by recorded duration; otherwise "
+            "by file count."
         ),
+    )
+    parser.add_argument(
+        "--durations-file",
+        metavar="PATH",
+        help=(f"Per-file duration map used to balance --shard partitions (default: {DEFAULT_SHARD_DURATIONS_REL})."),
+    )
+    parser.add_argument(
+        "--record-durations",
+        action="store_true",
+        help=("Merge measured per-file durations into --durations-file after the run (creates the file if missing)."),
     )
     parser.add_argument(
         "extra",
@@ -707,17 +882,22 @@ def main() -> None:
             print(f"Invalid --shard {args.shard!r}: {exc}")
             sys.exit(2)
 
+    durations_path = Path(args.durations_file) if args.durations_file else default_shard_durations_path()
+    shard_durations = load_shard_durations(durations_path)
+    recorded_durations: dict[str, float] | None = {} if args.record_durations else None
+
     if args.affected is not None:
         affected_files = discover_affected_files(args.affected)
         files = affected_files
         if args.keyword:
             files = [f for f in files if args.keyword in f.stem]
         if shard is not None:
-            files = shard_files(files, *shard)
+            files = shard_files(files, *shard, durations=shard_durations or None)
         if not files:
             if not affected_files:
                 changed_files = discover_changed_files(args.affected)
-                if changed_files_require_tests(changed_files):
+                deleted_files = discover_changed_files(args.affected, diff_filter="D")
+                if changed_files_require_tests(changed_files, deleted_files):
                     print("No affected tests found for code or workflow changes; failing closed.")
                     for changed_file in changed_files:
                         print(f"  {changed_file}")
@@ -728,9 +908,25 @@ def main() -> None:
         print(f"Running {len(files)} affected test files{shard_label} (each in its own process)")
         print(f"{'=' * 60}")
         if workers > 1:
-            code = run_parallel(files, extra_args, workers, args.fail_fast, args.coverage)
+            code = run_parallel(
+                files,
+                extra_args,
+                workers,
+                args.fail_fast,
+                args.coverage,
+                recorded_durations=recorded_durations,
+            )
         else:
-            code = run_sequential(files, extra_args, args.fail_fast, args.coverage)
+            code = run_sequential(
+                files,
+                extra_args,
+                args.fail_fast,
+                args.coverage,
+                recorded_durations=recorded_durations,
+            )
+        if recorded_durations is not None:
+            write_shard_durations(durations_path, recorded_durations, merge=True)
+            print(f"Wrote {len(recorded_durations)} durations to {durations_path}")
         if args.coverage:
             _finalize_coverage()
         sys.exit(code)
@@ -747,7 +943,7 @@ def main() -> None:
         files = discover_test_files(test_dir, args.keyword)
 
     if shard is not None:
-        files = shard_files(files, *shard)
+        files = shard_files(files, *shard, durations=shard_durations or None)
     if not files:
         _report_empty_selection(shard, context="")
         sys.exit(0)
@@ -758,9 +954,26 @@ def main() -> None:
     print(f"{'=' * 60}")
 
     if workers > 1:
-        code = run_parallel(files, extra_args, workers, args.fail_fast, args.coverage)
+        code = run_parallel(
+            files,
+            extra_args,
+            workers,
+            args.fail_fast,
+            args.coverage,
+            recorded_durations=recorded_durations,
+        )
     else:
-        code = run_sequential(files, extra_args, args.fail_fast, args.coverage)
+        code = run_sequential(
+            files,
+            extra_args,
+            args.fail_fast,
+            args.coverage,
+            recorded_durations=recorded_durations,
+        )
+
+    if recorded_durations is not None:
+        write_shard_durations(durations_path, recorded_durations, merge=True)
+        print(f"Wrote {len(recorded_durations)} durations to {durations_path}")
 
     if args.coverage:
         _finalize_coverage()

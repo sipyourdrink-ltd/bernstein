@@ -84,6 +84,7 @@ class PipelineVerdict:
         stages: All stage verdicts in execution order.
         block_on_fail: Mirrors :attr:`ReviewPipeline.block_on_fail` - drives
             janitor block-on-fail behaviour.
+        unscoped_paths: Changed paths matched by no convention at resolution time.
     """
 
     verdict: FinalVerdict
@@ -91,6 +92,7 @@ class PipelineVerdict:
     pass_score: float
     stages: list[StageVerdict]
     block_on_fail: bool = True
+    unscoped_paths: tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def issues(self) -> list[str]:
@@ -249,6 +251,8 @@ def _summarise_stage(
 def aggregate_pipeline(
     pipeline: ReviewPipeline,
     stage_verdicts: list[StageVerdict],
+    *,
+    unscoped_paths: tuple[str, ...] = (),
 ) -> PipelineVerdict:
     """Fold stage verdicts into a final pipeline verdict.
 
@@ -260,6 +264,7 @@ def aggregate_pipeline(
     Args:
         pipeline: The pipeline spec.
         stage_verdicts: Stage verdicts in execution order.
+        unscoped_paths: Changed paths matched by no convention at resolution time.
 
     Returns:
         :class:`PipelineVerdict`.
@@ -271,6 +276,7 @@ def aggregate_pipeline(
             pass_score=1.0,
             stages=[],
             block_on_fail=pipeline.block_on_fail,
+            unscoped_paths=unscoped_paths,
         )
 
     total = len(stage_verdicts)
@@ -303,4 +309,5 @@ def aggregate_pipeline(
         pass_score=score,
         stages=stage_verdicts.copy(),
         block_on_fail=pipeline.block_on_fail,
+        unscoped_paths=unscoped_paths,
     )

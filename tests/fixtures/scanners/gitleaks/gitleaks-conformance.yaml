@@ -1,0 +1,17 @@
+name: gitleaks-recorded-sarif
+adapter_class: bernstein.adapters.gitleaks.GitleaksAdapter
+ctor_kwargs:
+  config_path: tests/fixtures/scanners/gitleaks/gitleaks.toml
+steps:
+  - target: tests/fixtures/scanners/gitleaks/target
+    scope:
+      roots:
+        - tests/fixtures/scanners/gitleaks/target
+    expected_finding_hashes:
+      - 3330329f898a6c6cac9e3dabdfc3b845dc2025a08cceb8cb6a37562b4e8167af
+  - target: tests/fixtures/scanners/gitleaks/target
+    scope:
+      roots:
+        - tests/fixtures/scanners/gitleaks/target
+    expected_finding_hashes:
+      - 3330329f898a6c6cac9e3dabdfc3b845dc2025a08cceb8cb6a37562b4e8167af

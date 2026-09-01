@@ -237,7 +237,7 @@ Never commit `.sdd/runtime/` or `.sdd/worktrees/`. The shipped
 | Stale-claim recovery | `src/bernstein/core/tasks/task_store_core.py` | `recover_stale_claimed_tasks` |
 | CAS store | `src/bernstein/core/persistence/cas_store.py` | `CASStore` |
 | Merkle seal builder | `src/bernstein/core/persistence/merkle.py` | `file_leaf_hash`, tree builder |
-| Backlog ingest (open → claimed) | `src/bernstein/core/orchestration/orchestrator_backlog.py` | `ingest_backlog`, `_claim_backlog_file` |
+| Backlog ingest (open → claimed) | `src/bernstein/core/orchestration/orchestrator.py` | `Orchestrator.ingest_backlog`, `Orchestrator._claim_backlog_file` |
 | Backlog sync (yaml ↔ task server) | `src/bernstein/core/persistence/sync.py` | `BacklogTask` |
 | Disaster-recovery backup paths | `src/bernstein/core/persistence/disaster_recovery.py` | `_BACKUP_DIRS` |
 

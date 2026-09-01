@@ -795,7 +795,7 @@ def _parse_role_model_policy(
     raw: object,
     *,
     local_endpoints: dict[str, dict[str, str]] | None = None,
-) -> dict[str, dict[str, str | int | dict[str, object]]] | None:
+) -> dict[str, dict[str, _RolePolicyValue]] | None:
     """Parse optional role-specific provider/model overrides.
 
     ``local_endpoints`` is the parsed ``local_endpoints`` section (profile
@@ -808,7 +808,7 @@ def _parse_role_model_policy(
     if not isinstance(raw, dict):
         raise SeedError("role_model_policy must be a mapping of role -> settings")
 
-    parsed: dict[str, dict[str, str | int | dict[str, object]]] = {}
+    parsed: dict[str, dict[str, _RolePolicyValue]] = {}
     for role, settings in raw.items():
         if not isinstance(role, str) or not role:
             raise SeedError("role_model_policy keys must be non-empty role strings")
@@ -859,12 +859,93 @@ _ROLE_POLICY_COUNCIL_KEY = "council"
 # even though the schema path (``load_and_validate``) accepted the same file.
 _ROLE_POLICY_ENDPOINT_KEY = "endpoint"
 
+# Escalation ladder keys (issue #4855). Parsed separately from scalar string
+# keys: ``ladder`` is a list of step mappings; ``fallback_model`` is deprecated
+# sugar for a two-step ladder; ``escalation_budget_usd`` is an optional float.
+_ROLE_POLICY_LADDER_KEY = "ladder"
+_ROLE_POLICY_FALLBACK_MODEL_KEY = "fallback_model"
+_ROLE_POLICY_ESCALATION_BUDGET_KEY = "escalation_budget_usd"
+
+# Opt-in task-tier → model map (#4854). Nested mapping, validated separately.
+_ROLE_POLICY_TIER_MODELS_KEY = "tier_models"
+
+# One parsed ``role_model_policy.<role>`` setting. ``tier_models`` is spelled
+# out separately from ``dict[str, object]``: dict is invariant in its value
+# type, so the narrower parse result is not assignable to the wider member.
+_RolePolicyValue = str | int | float | list[dict[str, str | int]] | dict[str, str] | dict[str, object]
+
 # Endpoint fields that the ``endpoint`` profile reference pins; setting any of
 # them inline alongside ``endpoint`` is a conflict (the profile is the single
 # source of truth for the certified endpoint).
 _ROLE_POLICY_ENDPOINT_PINNED_KEYS: tuple[str, ...] = ("base_url", "model", "api_key_env")
 
+_ALLOWED_TIERS: frozenset[str] = frozenset({"light", "standard", "heavy", "critical"})
+
+
+def _parse_tier_models(role: str, raw: object) -> dict[str, str]:
+    """Parse ``role_model_policy.<role>.tier_models`` (#4854)."""
+    if not isinstance(raw, dict):
+        raise SeedError(f"role_model_policy[{role!r}].tier_models must be a mapping")
+    parsed: dict[str, str] = {}
+    for tier, model in raw.items():
+        if not isinstance(tier, str) or tier not in _ALLOWED_TIERS:
+            allowed = ", ".join(sorted(_ALLOWED_TIERS))
+            raise SeedError(
+                f"role_model_policy[{role!r}].tier_models has unknown tier {tier!r}; "
+                f"allowed: {allowed} (reserved marker 'error' is not a configurable tier)"
+            )
+        if not isinstance(model, str) or not model.strip():
+            raise SeedError(f"role_model_policy[{role!r}].tier_models[{tier!r}] must be a non-empty string")
+        parsed[tier] = model.strip()
+    return parsed
+
+
 _COUNCIL_CANDIDATE_KEYS: tuple[str, ...] = ("model", "base_url", "api_key_env")
+
+_LADDER_STEP_KEYS: frozenset[str] = frozenset({"model", "adapter", "max_attempts"})
+
+
+def _parse_ladder_step(role: str, index: int, raw: object) -> dict[str, str | int]:
+    """Parse one ``ladder[]`` step for ``role_model_policy.<role>``."""
+    if not isinstance(raw, dict):
+        raise SeedError(f"role_model_policy[{role!r}].ladder[{index}] must be a mapping")
+    model = raw.get("model")
+    if not isinstance(model, str) or not model.strip():
+        raise SeedError(f"role_model_policy[{role!r}].ladder[{index}].model must be a non-empty string")
+    parsed: dict[str, str | int] = {"model": model.strip()}
+
+    adapter = raw.get("adapter")
+    if adapter is not None:
+        if not isinstance(adapter, str) or not adapter.strip():
+            raise SeedError(f"role_model_policy[{role!r}].ladder[{index}].adapter must be a non-empty string when set")
+        from bernstein.adapters.registry import selectable_adapter_names
+
+        known = selectable_adapter_names()
+        if adapter.strip() not in known:
+            known_list = ", ".join(sorted(known)) or "(none)"
+            raise SeedError(
+                f"role_model_policy[{role!r}].ladder[{index}].adapter={adapter!r} is not an "
+                f"installed selectable adapter. Known: {known_list}. Unrunnable ladder steps "
+                "are a hard configuration failure (not skipped)."
+            )
+        parsed["adapter"] = adapter.strip()
+
+    max_attempts = raw.get("max_attempts", 1)
+    if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or max_attempts < 1:
+        raise SeedError(f"role_model_policy[{role!r}].ladder[{index}].max_attempts must be a positive integer")
+    parsed["max_attempts"] = max_attempts
+
+    unknown_keys = sorted(set(raw) - _LADDER_STEP_KEYS)
+    if unknown_keys:
+        raise SeedError(f"role_model_policy[{role!r}].ladder[{index}] has unknown keys: {', '.join(unknown_keys)}")
+    return parsed
+
+
+def _parse_ladder(role: str, raw: object) -> list[dict[str, str | int]]:
+    """Parse ``role_model_policy.<role>.ladder`` (issue #4855)."""
+    if not isinstance(raw, list) or not raw:
+        raise SeedError(f"role_model_policy[{role!r}].ladder must be a non-empty list")
+    return [_parse_ladder_step(role, i, entry) for i, entry in enumerate(raw)]
 
 
 def _parse_council_candidate(role: str, member: str, raw: object) -> dict[str, str]:
@@ -957,7 +1038,7 @@ def _parse_single_role_policy(
     settings: object,
     *,
     local_endpoints: dict[str, dict[str, str]] | None = None,
-) -> dict[str, str | int | dict[str, object]]:
+) -> dict[str, _RolePolicyValue]:
     """Parse and validate a single role's model policy settings.
 
     ``endpoint`` names a ``local_endpoints`` profile (see
@@ -1000,11 +1081,17 @@ def _parse_single_role_policy(
     worktree, relative to ``.bernstein/``. The runner
     (``openai_agents_runner._load_council_config``) is what actually
     resolves and loads it, at spawn/run time, not here.
+
+    ``ladder`` / ``fallback_model`` / ``escalation_budget_usd`` (issue #4855)
+    declare an evidence-gated escalation ladder. Unset preserves today's
+    behaviour. ``fallback_model`` is deprecated sugar for a two-step ladder
+    and is mutually exclusive with ``ladder``. A step ``adapter`` that is
+    not installed hard-fails at parse time.
     """
     if not isinstance(settings, dict):
         raise SeedError(f"role_model_policy[{role!r}] must be a mapping")
 
-    normalized: dict[str, str | int | dict[str, object]] = {}
+    normalized: dict[str, _RolePolicyValue] = {}
     for key in _ROLE_POLICY_KEYS:
         value = settings.get(key)
         if value is None:
@@ -1077,10 +1164,57 @@ def _parse_single_role_policy(
         for key, value in profile.items():
             normalized[key] = value
 
+    raw_ladder = settings.get(_ROLE_POLICY_LADDER_KEY)
+    raw_fallback = settings.get(_ROLE_POLICY_FALLBACK_MODEL_KEY)
+    if raw_ladder is not None and raw_fallback is not None:
+        raise SeedError(
+            f"role_model_policy[{role!r}]: ladder and fallback_model are mutually exclusive; "
+            "fallback_model is deprecated sugar for a two-step ladder"
+        )
+    if raw_ladder is not None:
+        normalized[_ROLE_POLICY_LADDER_KEY] = _parse_ladder(role, raw_ladder)
+    if raw_fallback is not None:
+        if not isinstance(raw_fallback, str) or not raw_fallback.strip():
+            raise SeedError(
+                f"role_model_policy[{role!r}][{_ROLE_POLICY_FALLBACK_MODEL_KEY!r}] must be a non-empty string"
+            )
+        if "model" not in normalized:
+            raise SeedError(f"role_model_policy[{role!r}]: fallback_model requires model to be set (two-step sugar)")
+        normalized[_ROLE_POLICY_FALLBACK_MODEL_KEY] = raw_fallback.strip()
+
+    raw_budget = settings.get(_ROLE_POLICY_ESCALATION_BUDGET_KEY)
+    if raw_budget is not None:
+        if isinstance(raw_budget, bool) or not isinstance(raw_budget, (int, float)) or float(raw_budget) < 0:
+            raise SeedError(
+                f"role_model_policy[{role!r}][{_ROLE_POLICY_ESCALATION_BUDGET_KEY!r}] must be a non-negative number"
+            )
+        normalized[_ROLE_POLICY_ESCALATION_BUDGET_KEY] = float(raw_budget)
+    raw_tier_models = settings.get(_ROLE_POLICY_TIER_MODELS_KEY)
+    if raw_tier_models is not None:
+        normalized[_ROLE_POLICY_TIER_MODELS_KEY] = _parse_tier_models(role, raw_tier_models)
+    # ``tier_models`` and ``ladder`` both choose a model, so an entry that
+    # declares both leaves unstated which one a hop follows. Refuse the pair,
+    # the way ``ladder`` and ``fallback_model`` already refuse each other. This
+    # can be relaxed later into "tiers pick the entry point, the ladder
+    # escalates from there"; an unstated interaction cannot be taken back.
+    if normalized.get(_ROLE_POLICY_LADDER_KEY) is not None and normalized.get(_ROLE_POLICY_TIER_MODELS_KEY):
+        raise SeedError(
+            f"role_model_policy[{role!r}]: ladder and tier_models are mutually exclusive; "
+            "both select a model and their interaction is undefined"
+        )
+
     allowed_keys = (
         set(_ROLE_POLICY_KEYS)
         | set(_ROLE_POLICY_INT_KEYS)
-        | {_ROLE_POLICY_COUNCIL_KEY, _ROLE_POLICY_STYLE_KEY, _ROLE_POLICY_ENDPOINT_KEY}
+        | {
+            _ROLE_POLICY_COUNCIL_KEY,
+            _ROLE_POLICY_STYLE_KEY,
+            _ROLE_POLICY_ENDPOINT_KEY,
+            _ROLE_POLICY_LADDER_KEY,
+            _ROLE_POLICY_FALLBACK_MODEL_KEY,
+            _ROLE_POLICY_ESCALATION_BUDGET_KEY,
+            _ROLE_POLICY_TIER_MODELS_KEY,
+        }
     )
     unknown_keys = sorted(set(settings) - allowed_keys)
     if unknown_keys:

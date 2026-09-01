@@ -15,6 +15,7 @@ auth:
     - "COPILOT_GITHUB_TOKEN"
     - "GH_TOKEN"
     - "GITHUB_TOKEN"
+  basis: subscription_oauth
 required_flags:
   - "-p"
   - "-s"

@@ -111,12 +111,10 @@ UNDOCUMENTED_EXEMPTIONS: dict[str, str] = {
     "integrations": "Third-party integrations list group (#2550)",
     "intent": "Intent recognition group (#2550)",
     "knowledge": "Knowledge base management group (#2550)",
-    "limits": "Rate and resource limit inspection group (#2550)",
     "migrate": "Database and schema migration group (#2550)",
     "mission": "Mission statement and goal tracking group (#2550)",
     "payment-mandate": "Signed payment mandates group (#2612)",
     "pipeline": "Workflow pipeline group (#2550)",
-    "pool": "Named sandbox pool management (#2547)",
     "quality": "Quality metric inspection group (#2550)",
     "readme-l10n": "Translated README drift gate (#3425)",
     "recipes": "Recipe execution group (#2550)",
@@ -137,7 +135,6 @@ UNDOCUMENTED_EXEMPTIONS: dict[str, str] = {
     "trend-scan": "Metric trend scanner (#2550)",
     "var": "Fleet configuration variable group (#2550)",
     "wheelhouse": "Wheelhouse package cache group (#2550)",
-    "worktrees": "Git worktree management group (#2550)",
 }
 
 # ---------------------------------------------------------------------------

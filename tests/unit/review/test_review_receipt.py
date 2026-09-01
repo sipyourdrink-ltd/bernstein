@@ -62,6 +62,7 @@ def _emit(tmp_path: Path, *, diff: bytes = _DIFF, findings: tuple[Finding, ...] 
         verdict="approve",
         task_id="task-1",
         timestamp=1000,
+        resolution_hash="sha256:" + "a" * 64,
     )
 
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 import datetime as _dt
 import os
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -35,14 +36,15 @@ class TestFirstRun:
 
         Anything wider leaks the signing key to any local user - the
         keystore explicitly enforces the permission bits both at
-        generation time and on every load.
+        generation time and on every load (POSIX systems).
         """
         ks = AgentCardKeystore(tmp_path / "keys")
         ks.load_or_generate()
 
         priv = tmp_path / "keys" / "agent-card.ed25519"
         mode = priv.stat().st_mode & 0o777
-        assert mode == 0o600, f"private key permissions are {oct(mode)}, expected 0o600"
+        if sys.platform != "win32":
+            assert mode == 0o600, f"private key permissions are {oct(mode)}, expected 0o600"
 
     def test_uses_o_excl_so_two_processes_cannot_clobber(self, tmp_path: Path) -> None:
         """Concurrent first-run callers must not race over the same file.
@@ -66,15 +68,76 @@ class TestFirstRun:
         assert priv_path.exists()
         assert pub_path.exists()
 
-    def test_load_refuses_unsafe_permissions(self, tmp_path: Path) -> None:
-        """A private file with group/world perms must raise on load."""
+    def test_load_refuses_unsafe_permissions(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A private file with group/world perms must raise on load on POSIX."""
         ks = AgentCardKeystore(tmp_path / "keys")
         ks.load_or_generate()
         priv = tmp_path / "keys" / "agent-card.ed25519"
         os.chmod(priv, 0o644)
+        monkeypatch.setattr("sys.platform", "linux")
+
+        real_stat = os.stat
+
+        def _mock_stat(path: os.PathLike[str] | str | bytes | int, *args: object, **kwargs: object) -> os.stat_result:
+            st = real_stat(path, *args, **kwargs)
+            if str(path).endswith("agent-card.ed25519"):
+                # Ensure group/other bits are set for the test
+                return os.stat_result(
+                    (
+                        st.st_mode | 0o044,
+                        st.st_ino,
+                        st.st_dev,
+                        st.st_nlink,
+                        st.st_uid,
+                        st.st_gid,
+                        st.st_size,
+                        st.st_atime,
+                        st.st_mtime,
+                        st.st_ctime,
+                    )
+                )
+            return st
+
+        monkeypatch.setattr("os.stat", _mock_stat)
+
         ks2 = AgentCardKeystore(tmp_path / "keys")
-        with pytest.raises(PermissionError):
+        with pytest.raises(PermissionError, match="unsafe permissions"):
             ks2.load_or_generate()
+
+    def test_load_permits_windows_permissions(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """On Windows (non-POSIX), unsafe-looking mode bits do not raise PermissionError (#4765)."""
+        ks = AgentCardKeystore(tmp_path / "keys")
+        priv_a, pub_a = ks.load_or_generate()
+        monkeypatch.setattr("sys.platform", "win32")
+
+        real_stat = os.stat
+
+        def _mock_stat(path: os.PathLike[str] | str | bytes | int, *args: object, **kwargs: object) -> os.stat_result:
+            st = real_stat(path, *args, **kwargs)
+            if str(path).endswith("agent-card.ed25519"):
+                # Permissive-looking bits from Windows ACL representation
+                return os.stat_result(
+                    (
+                        st.st_mode | 0o066,
+                        st.st_ino,
+                        st.st_dev,
+                        st.st_nlink,
+                        st.st_uid,
+                        st.st_gid,
+                        st.st_size,
+                        st.st_atime,
+                        st.st_mtime,
+                        st.st_ctime,
+                    )
+                )
+            return st
+
+        monkeypatch.setattr("os.stat", _mock_stat)
+
+        ks2 = AgentCardKeystore(tmp_path / "keys")
+        priv_b, pub_b = ks2.load_or_generate()
+        assert priv_a == priv_b
+        assert pub_a == pub_b
 
 
 # ---------------------------------------------------------------------------
@@ -184,9 +247,11 @@ class TestRotation:
         ks.rotate()
         priv = tmp_path / "keys" / "agent-card.ed25519"
         mode = priv.stat().st_mode & 0o777
-        assert mode == 0o600
+        if sys.platform != "win32":
+            assert mode == 0o600
 
         # Archived private should also retain restrictive bits.
         archived_priv = next((tmp_path / "keys" / "archive").iterdir()) / "agent-card.ed25519"
         archived_mode = stat.S_IMODE(archived_priv.stat().st_mode)
-        assert archived_mode == 0o600
+        if sys.platform != "win32":
+            assert archived_mode == 0o600

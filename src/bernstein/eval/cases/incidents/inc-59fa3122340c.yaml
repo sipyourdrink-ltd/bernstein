@@ -1,0 +1,14 @@
+id: inc-59fa3122340c
+severity: P2
+source_incident: "dlq:d7f281a78b074b88"
+owner: manager
+created_at: 1788202221.345
+expected_outcome: "Agent should complete the task; flake-tolerant retry is acceptable. (root cause: max_retries_exceeded)"
+tags:
+  - max_retries_exceeded
+prompt: |
+  Reproduce and resolve the following terminal failure (role=manager).
+  Task: Plan and decompose goal into tasks
+  Failure reason: max_retries_exceeded
+  Last error (trimmed):
+  Transport failure: agent manager-resume-b6dd112e exited cleanly after 9.4s having consumed 0 tokens -- it never reached the model, so the task was never attempted

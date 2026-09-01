@@ -57,7 +57,7 @@ def test_only_commits_that_landed_green_contribute(tmp_path: Path) -> None:
 
 
 def test_a_commit_whose_subject_merely_starts_with_revert_still_counts(tmp_path: Path) -> None:
-    """"Revert" in a subject line is prose, not evidence that anything was undone.
+    """ "Revert" in a subject line is prose, not evidence that anything was undone.
 
     "Revert to the previous retry policy" is a perfectly ordinary change, and
     dropping it costs the map the tests that landed with it. The trailer that

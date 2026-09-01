@@ -189,6 +189,60 @@ def test_sequential_totals_count_ran_nothing_separately(
     assert code == 0
 
 
+def test_sequential_totals_name_the_files_that_ran_nothing(
+    run_tests_module: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Each ran-nothing file is named, so the count can be checked against paths.
+
+    The per-file lines only appear for failures, so a shard that reports
+    "1 ran no tests" out of several hundred gives a reader no way to tell
+    which file executed nothing -- or whether the file they care about was
+    among the ones that ran at all.
+    """
+    files = [Path("tests/unit/test_a.py"), Path("tests/unit/test_b.py"), Path("tests/unit/test_c.py")]
+    monkeypatch.setattr(
+        run_tests_module,
+        "run_file",
+        _stub_run_file(
+            {
+                "test_a.py": (0, "4 passed in 0.10s"),
+                "test_b.py": (0, "13 skipped in 3.10s"),
+                "test_c.py": (5, "no tests ran in 0.01s"),
+            }
+        ),
+    )
+
+    run_tests_module.run_sequential(files, [], fail_fast=False)
+
+    captured = capsys.readouterr().out
+    assert "ran no tests: tests/unit/test_b.py" in captured
+    assert "ran no tests: tests/unit/test_c.py" in captured
+    assert "ran no tests: tests/unit/test_a.py" not in captured
+
+
+def test_totals_name_the_files_in_a_deterministic_order(
+    run_tests_module: ModuleType,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Both runners report through this one function, so it is where the naming lives.
+
+    The parallel runner completes files in whatever order the pool returns
+    them; sorting here keeps two runs of the same shard byte-identical.
+    """
+    run_tests_module._print_totals(
+        1,
+        0,
+        [Path("tests/unit/test_z.py"), Path("tests/unit/test_b.py")],
+        3,
+    )
+
+    captured = capsys.readouterr().out
+    assert "Files: 1 passed, 0 failed, 2 ran no tests, 3 total" in captured
+    assert captured.index("test_b.py") < captured.index("test_z.py")
+
+
 def test_sequential_totals_fail_on_a_replaced_process(
     run_tests_module: ModuleType,
     monkeypatch: pytest.MonkeyPatch,

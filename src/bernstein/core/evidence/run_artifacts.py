@@ -37,8 +37,8 @@ import threading
 import time
 import unicodedata
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict, cast
 
 from bernstein.core.defaults import (
     ARTIFACT_TYPE_FINDING,
@@ -121,6 +121,13 @@ class ReportArtifactContent(TypedDict):
 
     type: Literal["report"]
     body: str
+    #: Present only when the report cites findings. Absent -- not an empty
+    #: list -- otherwise: this payload is what ``content_hash`` is taken over,
+    #: so a key that appears unconditionally would re-hash every report
+    #: artifact ever recorded, including those written before the field
+    #: existed, and a caller re-deriving the digest from what they posted
+    #: would no longer arrive at the recorded one.
+    finding_references: NotRequired[list[dict[str, str]]]
 
 
 class TableArtifactContent(TypedDict):
@@ -360,13 +367,33 @@ class ArtifactPayload:
     url: str = ""
     link_kind: str = ""
     finding_json: str = ""
+    finding_references: list[dict[str, str]] = field(default_factory=list)
 
     @staticmethod
-    def report(body: str) -> ArtifactPayload:
-        """A markdown report artifact."""
+    def report(body: str, finding_references: list[dict[str, str]] | None = None) -> ArtifactPayload:
+        """A markdown report artifact.
+
+        Args:
+            body: The markdown report body.
+            finding_references: Optional list of finding reference dicts
+                to include as sidecar alongside the report body.
+        """
         if not isinstance(body, str) or not body:
             raise ArtifactValidationError("report artifact requires a non-empty markdown body")
-        return ArtifactPayload(artifact_type=ARTIFACT_TYPE_REPORT, body=body)
+        # Normalize finding_references to list of dicts
+        if finding_references is None:
+            finding_references = []
+        elif not isinstance(finding_references, list):
+            raise ArtifactValidationError("finding_references must be a list")
+        else:
+            for ref in finding_references:
+                if not isinstance(ref, dict):
+                    raise ArtifactValidationError("each finding_reference must be a dict")
+        return ArtifactPayload(
+            artifact_type=ARTIFACT_TYPE_REPORT,
+            body=body,
+            finding_references=finding_references,
+        )
 
     @staticmethod
     def table(columns: Sequence[str], rows: Sequence[Sequence[Any]]) -> ArtifactPayload:
@@ -418,7 +445,13 @@ class ArtifactPayload:
     def to_content_dict(self) -> ArtifactContent:
         """Return the type-specific fields that define the artifact content."""
         if self.artifact_type == ARTIFACT_TYPE_REPORT:
-            return cast(ReportArtifactContent, {"type": ARTIFACT_TYPE_REPORT, "body": self.body})
+            report_content: dict[str, Any] = {
+                "type": ARTIFACT_TYPE_REPORT,
+                "body": self.body,
+            }
+            if self.finding_references:
+                report_content["finding_references"] = self.finding_references
+            return cast(ReportArtifactContent, report_content)
         if self.artifact_type == ARTIFACT_TYPE_TABLE:
             return cast(
                 TableArtifactContent,
@@ -845,7 +878,7 @@ def verify_run_artifacts(sdd_dir: Path, task_id: str, *, hmac_key: bytes) -> lis
 
     results: list[ArtifactVerifyResult] = []
     for record in rows:
-        reason = _verify_one_artifact(record, journal_ok, store, spine_ok, spine_by_hash)
+        reason = _verify_one_artifact(record, journal_ok, store, spine_ok, spine_by_hash, sdd_dir)
         results.append(
             ArtifactVerifyResult(
                 ok=not reason,
@@ -861,12 +894,110 @@ def verify_run_artifacts(sdd_dir: Path, task_id: str, *, hmac_key: bytes) -> lis
     return results
 
 
+def _verify_finding_references_in_report(
+    blob: bytes,
+    sdd_dir: Path,
+    where: str,
+    store: EvidenceStore,
+) -> str:
+    """Verify finding references in a report artifact against the task store.
+
+    Each sidecar entry lists ``{claim -> finding-id -> finding-hash}``. At
+    verify time we re-resolve the referenced finding and recompute its current
+    receipt hash, then compare against the hash the report recorded at build
+    time. Altering the finding receipt *elsewhere* (leaving the report bytes
+    and its recorded hash unchanged) changes the recomputed hash and fails
+    verification -- the design correction from the audit of #2956.
+    """
+    try:
+        content = json.loads(blob)
+        if not isinstance(content, dict):
+            return f"report payload is not a JSON object ({where})"
+        finding_refs = content.get("finding_references", [])
+        if not isinstance(finding_refs, list):
+            return f"report finding_references must be a list ({where})"
+
+        for ref in finding_refs:
+            if not isinstance(ref, dict):
+                return f"report finding_reference must be a dict ({where})"
+            task_id = ref.get("task_id")
+            key = ref.get("key")
+            version = ref.get("version")
+            recorded_hash = ref.get("finding_hash")
+
+            if not isinstance(task_id, str) or not task_id:
+                return f"report finding_reference missing task_id ({where})"
+            if not isinstance(key, str) or not key:
+                return f"report finding_reference missing key ({where})"
+
+            # Read all artifact rows for the referenced task
+            rows = read_artifact_rows(sdd_dir, task_id, verify=False)
+            if not rows:
+                return f"referenced finding task {task_id!r} has no artifacts ({where})"
+
+            # Filter rows by key and artifact type (finding)
+            matching_rows = [row for row in rows if row.key == key and row.artifact_type == ARTIFACT_TYPE_FINDING]
+
+            if not matching_rows:
+                return f"referenced finding {task_id!r}:{key!r} not found or not a finding artifact ({where})"
+
+            # If version specified, find that exact version
+            if version is not None:
+                if not isinstance(version, int) or version < 1:
+                    return f"referenced finding version must be a positive integer ({where})"
+                versioned_rows = [row for row in matching_rows if row.version == version]
+                if not versioned_rows:
+                    return f"referenced finding {task_id!r}:{key!r} version {version} not found ({where})"
+                selected = versioned_rows[0]
+            else:
+                selected = matching_rows[-1]
+
+            # Re-resolve the finding's current receipt hash and compare against
+            # the hash the report recorded at build time. This is what makes
+            # altering a referenced finding receipt *elsewhere* fail: the report
+            # bytes and its recorded hash are unchanged, but the recomputed
+            # hash no longer matches.
+            # Recompute from the stored blob, not from the journal row. The
+            # row's ``content_hash`` is metadata that a tamperer editing the
+            # finding's bytes never touches, so comparing against it compares
+            # the recorded hash with itself and reports a tampered finding as
+            # intact. Hashing what is actually on disk is what makes a change
+            # to a referenced finding surface in the report that cites it.
+            blob_bytes = store.get(selected.content_hash)
+            current_hash = _sha256_bytes(blob_bytes) if blob_bytes is not None else None
+
+            # Fail closed. A reference with no recorded hash is not a
+            # reference this function can check: there is nothing to compare
+            # the re-resolved receipt against, so altering the finding would
+            # pass. Skipping the comparison in that case made the check report
+            # a clean report for a tampered one.
+            if not isinstance(recorded_hash, str) or not recorded_hash:
+                return (
+                    f"report finding_reference for {task_id!r}:{key!r} records no finding_hash, "
+                    f"so a change to the referenced finding cannot be detected ({where})"
+                )
+            if not recorded_hash.startswith("sha256:"):
+                return f"report finding_reference for {task_id!r}:{key!r} has malformed finding_hash ({where})"
+            if current_hash is None:
+                return f"referenced finding {task_id!r}:{key!r} receipt is not in the evidence store ({where})"
+            if current_hash != recorded_hash:
+                return (
+                    f"referenced finding {task_id!r}:{key!r} receipt hash {current_hash} "
+                    f"does not match report's recorded finding_hash {recorded_hash} ({where})"
+                )
+
+        return ""
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        return f"report payload does not parse as JSON: {exc} ({where})"
+
+
 def _verify_one_artifact(
     record: RunArtifactRecord,
     journal_ok: bool,
     store: EvidenceStore,
     spine_ok: bool,
     spine_by_hash: dict[str, str],
+    sdd_dir: Path,
 ) -> str:
     """Return an empty string when the artifact verifies, else the reason."""
     where = f"key={record.key!r} version={record.version} index={record.journal_index}"
@@ -887,6 +1018,8 @@ def _verify_one_artifact(
         return f"spine anchor binds {anchored}, journal row says {record.content_hash} ({where})"
     if record.artifact_type == ARTIFACT_TYPE_FINDING:
         return _verify_finding_content(blob, where)
+    if record.artifact_type == ARTIFACT_TYPE_REPORT:
+        return _verify_finding_references_in_report(blob, sdd_dir, where, store)
     return ""
 
 

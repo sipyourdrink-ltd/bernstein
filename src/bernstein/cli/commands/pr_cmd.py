@@ -186,11 +186,20 @@ def _enrich_summary_with_git(summary: SessionSummary, cwd: Path) -> SessionSumma
     base_rev = _base_rev(cwd, summary.base_branch)
     errors: list[str] = []
 
-    diff_stat = summary.diff_stat
-    if not diff_stat:
-        diff_stat, error = _diff_stat(cwd, base_rev, branch)
-        if error:
-            errors.append(f"diff --stat: {error}")
+    # Asked of git every time, never taken from the state file. The wrap-up
+    # records what was in the agent's worktree when it finished, which is a
+    # different question: files the run touched and a later stage removed from
+    # the commit are still in that snapshot. Published as "Full diff-stat" it
+    # named `bernstein.yaml` on four branches that do not contain it -- so the
+    # body leaked a config change the strip stage had already taken out of the
+    # diff, and a reviewer comparing the block to the Files tab saw two
+    # different changes. The commits and the provenance hash below are already
+    # asked of `base..branch`; this now comes from the same place, so every
+    # number in the body describes the same bytes.
+    diff_stat, error = _diff_stat(cwd, base_rev, branch)
+    if error:
+        errors.append(f"diff --stat: {error}")
+        diff_stat = summary.diff_stat
 
     commits = summary.commits
     if not commits:

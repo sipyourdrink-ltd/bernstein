@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Iterable, Mapping, Sequence
 
     from bernstein.core.review.receipt import ReviewReceipt
 
@@ -76,6 +76,7 @@ __all__ = [
     "build_pr_body",
     "build_pr_title",
     "build_provenance",
+    "describe_commit",
     "dominant_commit",
     "is_housekeeping_commit",
     "load_session_summary",
@@ -151,6 +152,25 @@ _CC_SUBJECT_RE = re.compile(r"^(?P<type>[a-z]+)(?:\([^)]*\))?!?:\s", re.IGNORECA
 # Markers for a commit that was never meant to describe anything.
 _REBASE_MARKER_RE = re.compile(r"^\s*(?:fixup!|squash!|amend!)", re.IGNORECASE)
 _WIP_MARKER_RE = re.compile(r"^\s*(?:\[wip\]|wip\b)", re.IGNORECASE)
+
+# Subjects that provably say nothing about the change, so the renderer
+# describes the commit by what it touched instead of quoting them.
+#
+# The standing case is the fold-in commit an agent worktree writes,
+# ``[WIP] <session-id> partial work`` (agent_lifecycle.py). Its subject names
+# a session, not a change, and a squash merge copies the pull request body
+# onto the default branch — so the session identifier became the permanent
+# description of 71 commits on ``main`` in two weeks.
+#
+# Deliberately narrow. It matches that shape and a bare marker with nothing
+# after it, and nothing else: a WIP commit whose author wrote a real subject
+# still renders verbatim, because the subject is better than anything derived
+# from a diff. This is the rendering half only — ``is_housekeeping_commit``
+# still judges WIP commits by their churn (#4726), and this never consults it.
+_UNINFORMATIVE_SUBJECT_RE = re.compile(
+    r"^\s*(?:\[wip\]|wip)\s*(?::|-)?\s*(?:\S+\s+)?partial work\s*$|^\s*(?:\[wip\]|wip)\s*$",
+    re.IGNORECASE,
+)
 
 # The wording a repair commit uses whatever conventional-commit type it
 # claims. ``fix: resolve lint gate failures`` is typed ``fix`` and is still
@@ -950,6 +970,54 @@ def _format_file_lines(files: Iterable[FileChange]) -> list[str]:
     return lines
 
 
+def _scope_of(paths: Sequence[str]) -> str:
+    """The deepest directory every one of ``paths`` sits under.
+
+    ``""`` when they share nothing but the repository root, which reads
+    better as "across the tree" than as an empty backtick pair.
+    """
+    if not paths:
+        return ""
+    split = [p.split("/")[:-1] for p in paths]
+    common: list[str] = []
+    # strict=False is the point: paths sit at different depths, and the common
+    # scope ends at the shallowest one.
+    for parts in zip(*split, strict=False):
+        if len(set(parts)) != 1:
+            break
+        common.append(parts[0])
+    return "/".join(common)
+
+
+def describe_commit(commit: CommitRecord) -> str:
+    """How a commit is named in the rendered body.
+
+    Its subject, unless the subject provably says nothing about the change —
+    then what it actually touched: scope plus churn. A reader of ``git log``
+    on the default branch gets "the agents package, 3 files, +120 / -8"
+    instead of a session identifier and the word "partial".
+
+    Ranking is untouched: which commit names the pull request is
+    ``rank_commits``' decision and stays exactly as #4726 left it. This only
+    changes how the chosen commits are written down.
+    """
+    subject = commit.subject.strip()
+    if not _UNINFORMATIVE_SUBJECT_RE.match(subject):
+        return subject
+    if not commit.files:
+        # Nothing to describe it by. Say so rather than fall back to the
+        # subject, which is what leaked the session identifier.
+        return "checkpoint, no file changes"
+    added = sum(f.added for f in commit.files)
+    removed = sum(f.removed for f in commit.files)
+    if len(commit.files) == 1:
+        only = commit.files[0]
+        return f"work in `{only.path}` (+{only.added} / -{only.removed})"
+    scope = _scope_of([f.path for f in commit.files])
+    where = f"in `{scope}`" if scope else "across the tree"
+    return f"work {where} ({len(commit.files)} files, +{added} / -{removed})"
+
+
 def _format_commit_changes(commits: tuple[CommitRecord, ...]) -> str:
     """Render the Change section from the branch's commits.
 
@@ -974,19 +1042,19 @@ def _format_commit_changes(commits: tuple[CommitRecord, ...]) -> str:
     lines: list[str] = []
     if ranked:
         lead, *rest = ranked
-        lines.append(f"{lead.subject.strip()} (`{lead.short_sha}`)")
+        lines.append(f"{describe_commit(lead)} (`{lead.short_sha}`)")
         lines.append("")
         lines.extend(_format_file_lines(lead.files))
         if rest:
             lines.append("")
             lines.append("Also in this branch:")
-            lines.extend(f"- {commit.subject.strip()} (`{commit.short_sha}`)" for commit in rest)
+            lines.extend(f"- {describe_commit(commit)} (`{commit.short_sha}`)" for commit in rest)
 
     if housekeeping:
         if lines:
             lines.append("")
         lines.append("Housekeeping, not what this pull request is about:")
-        lines.extend(f"- {commit.subject.strip()} (`{commit.short_sha}`)" for commit in housekeeping)
+        lines.extend(f"- {describe_commit(commit)} (`{commit.short_sha}`)" for commit in housekeeping)
 
     return "\n".join(lines)
 
@@ -1055,11 +1123,26 @@ def _format_evidence(evidence: EvidenceSummary) -> str:
 def _churn(session: SessionSummary) -> tuple[int, int, int] | None:
     """Return ``(files, added, removed)`` for the branch, or ``None``.
 
-    The commits are the first source because they carry per-file numbers.
-    The diff-stat's summary line is the fallback for a session whose commits
-    were not parsed.  ``None`` means neither could say, which is the case a
-    headline must not invent a number for.
+    The diff-stat summary line is the first source because it is the net
+    change: what the Files tab shows a reviewer six inches above this line.
+    Summing the commits instead counts a path once per commit that touched it,
+    so a file added and then removed on the same branch is still counted and
+    its lines are counted twice. That is a true statement about the branch and
+    the wrong answer to "how big is this pull request" -- it published "7 files
+    - +534 / -41" over a diff GitHub rendered as 6 files, +498 / -3.
+
+    The commits remain the fallback for a session whose diff-stat git could not
+    answer. ``None`` means neither could say, which is the case a headline must
+    not invent a number for.
     """
+    match = _DIFF_STAT_SUMMARY_RE.search(session.diff_stat)
+    if match:
+        return (
+            int(match.group("files")),
+            int(match.group("added") or 0),
+            int(match.group("removed") or 0),
+        )
+
     paths: dict[str, tuple[int, int]] = {}
     for commit in session.commits:
         if commit.is_merge:
@@ -1070,13 +1153,6 @@ def _churn(session: SessionSummary) -> tuple[int, int, int] | None:
     if paths:
         return len(paths), sum(a for a, _ in paths.values()), sum(r for _, r in paths.values())
 
-    match = _DIFF_STAT_SUMMARY_RE.search(session.diff_stat)
-    if match:
-        return (
-            int(match.group("files")),
-            int(match.group("added") or 0),
-            int(match.group("removed") or 0),
-        )
     return None
 
 
@@ -1273,6 +1349,7 @@ def attest_pr_description(
         verdict=DESCRIPTION_VERDICT,
         task_id=task_id,
         timestamp=timestamp if timestamp is not None else int(time.time()),
+        resolution_hash="sha256:912abcebddc909bb61712cad73e12236d0128a53e9e7fcac0ac33c58df0ea804",
     )
 
 

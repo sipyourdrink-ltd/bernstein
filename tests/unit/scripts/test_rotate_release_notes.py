@@ -143,28 +143,31 @@ class TestRotateInto:
         assert result.consumed == []
         assert version_page.read_text(encoding="utf-8") == "# v3.18.0\n\nExisting content.\n"
 
-    def test_appends_rendered_section_to_existing_page(self, rotate_module: ModuleType, tmp_path: Path) -> None:
+    def test_does_not_modify_existing_page(self, rotate_module: ModuleType, tmp_path: Path) -> None:
+        """The version page is curated by hand; rotation only deletes fragments."""
         fragments_dir = tmp_path / "fragments"
         fragments_dir.mkdir()
         (fragments_dir / "0001-first.md").write_text(_ENTRY_A, encoding="utf-8")
         version_page = tmp_path / "v3.18.0.md"
-        version_page.write_text("# v3.18.0\n\nA patch release.\n", encoding="utf-8")
+        original = "# v3.18.0\n\nA patch release.\n"
+        version_page.write_text(original, encoding="utf-8")
 
         rotate_module.rotate_into(version_page, fragments_dir)
 
-        assert version_page.read_text(encoding="utf-8") == (
-            "# v3.18.0\n\nA patch release.\n\n" + _ENTRY_A.strip() + "\n"
-        )
+        assert version_page.read_text(encoding="utf-8") == original
 
-    def test_writes_into_a_page_that_does_not_exist_yet(self, rotate_module: ModuleType, tmp_path: Path) -> None:
+    def test_does_not_create_page_when_missing(self, rotate_module: ModuleType, tmp_path: Path) -> None:
+        """A missing version page is left alone; fragments are not deleted either."""
         fragments_dir = tmp_path / "fragments"
         fragments_dir.mkdir()
-        (fragments_dir / "0001-first.md").write_text(_ENTRY_A, encoding="utf-8")
+        fragment = fragments_dir / "0001-first.md"
+        fragment.write_text(_ENTRY_A, encoding="utf-8")
         version_page = tmp_path / "v3.18.0.md"
 
-        rotate_module.rotate_into(version_page, fragments_dir)
+        result = rotate_module.rotate_into(version_page, fragments_dir)
 
-        assert version_page.read_text(encoding="utf-8") == _ENTRY_A.strip() + "\n"
+        assert not version_page.exists()
+        assert result.consumed == []
 
     def test_deletes_consumed_fragments(self, rotate_module: ModuleType, tmp_path: Path) -> None:
         fragments_dir = tmp_path / "fragments"
@@ -183,7 +186,8 @@ class TestRotateInto:
         assert rotate_module.collect_fragments(fragments_dir) == []
         assert {p.name for p in result.consumed} == {"0001-first.md", "0002-second.md"}
 
-    def test_returns_the_rendered_section(self, rotate_module: ModuleType, tmp_path: Path) -> None:
+    def test_returns_empty_rendered_section(self, rotate_module: ModuleType, tmp_path: Path) -> None:
+        """Rotation no longer renders fragments; the version page is curated by hand."""
         fragments_dir = tmp_path / "fragments"
         fragments_dir.mkdir()
         (fragments_dir / "0001-first.md").write_text(_ENTRY_A, encoding="utf-8")
@@ -192,7 +196,7 @@ class TestRotateInto:
 
         result = rotate_module.rotate_into(version_page, fragments_dir)
 
-        assert result.rendered == _ENTRY_A.strip()
+        assert result.rendered == ""
 
 
 # --- notes_gate_ok (dual-accept during the fragments transition) ---
@@ -259,6 +263,144 @@ class TestMain:
     def test_check_gate_subcommand_exits_nonzero_on_fail(self, rotate_module: ModuleType) -> None:
         rc = rotate_module.main(["check-gate", "src/bernstein/core/foo.py"])
         assert rc != 0
+
+
+# --- Issue #4947: Render correctness (no collision, no duplication, reference integrity) ---
+
+
+class TestRenderFragmentsIssue4947:
+    """Tests verifying render_fragments does not collide headings, duplicate content, or misattribute references."""
+
+    def test_no_heading_collision_when_second_fragment_lacks_heading(
+        self, rotate_module: ModuleType, tmp_path: Path
+    ) -> None:
+        """Given two fragments where the second has no ## heading, the rendered output does not place the second
+        fragment's text under the first fragment's heading.
+
+        Each fragment should remain independent - a missing heading in one fragment should not cause its content
+        to merge with the previous fragment's section.
+        """
+        fragments_dir = tmp_path / "fragments"
+        fragments_dir.mkdir()
+        # First fragment has a proper heading
+        (fragments_dir / "0001-first.md").write_text(
+            "## Feature A is now available\n\nDescription of feature A.\n", encoding="utf-8"
+        )
+        # Second fragment has NO heading - just body text
+        (fragments_dir / "0002-second.md").write_text("Some additional notes without a heading.\n", encoding="utf-8")
+
+        rendered = rotate_module.render_fragments(fragments_dir)
+
+        # The second fragment's text must NOT appear under the first fragment's heading
+        # It should be a separate paragraph, not part of the "Feature A" section
+        assert "## Feature A is now available" in rendered
+        assert "Some additional notes without a heading." in rendered
+        # Verify the heading only appears once and content is properly separated
+        heading_count = rendered.count("## Feature A is now available")
+        assert heading_count == 1, "Heading should appear exactly once"
+        # The second fragment's text should be a separate block, not merged into first section
+        sections = rendered.split("\n\n")
+        assert any("Feature A" in s and "##" in s for s in sections), "First section should have the heading"
+        assert any("Some additional notes" in s and "##" not in s for s in sections), (
+            "Second fragment should be separate"
+        )
+
+    def test_no_duplication_section_body_is_not_substring_of_earlier_section(
+        self, rotate_module: ModuleType, tmp_path: Path
+    ) -> None:
+        """The rendered output contains no section whose body is a substring of an earlier section's body.
+
+        This catches a bug where fragment content might be duplicated across sections, either through
+        incorrect concatenation or through the old append flow that would double-render.
+        """
+        fragments_dir = tmp_path / "fragments"
+        fragments_dir.mkdir()
+        # Two distinct fragments with different content
+        (fragments_dir / "0001-first.md").write_text(
+            "## First feature\n\nThis is the description of the first feature.\n", encoding="utf-8"
+        )
+        (fragments_dir / "0002-second.md").write_text(
+            "## Second feature\n\nThis is the description of the second feature.\n", encoding="utf-8"
+        )
+
+        rendered = rotate_module.render_fragments(fragments_dir)
+
+        # Parse sections by ## headings
+        sections = [s.strip() for s in rendered.split("## ") if s.strip()]
+        assert len(sections) == 2, f"Expected exactly 2 sections, got {len(sections)}: {sections}"
+
+        # Extract body (text after the heading line) from each section
+        def extract_body(section: str) -> str:
+            lines = section.split("\n", 1)
+            return lines[1].strip() if len(lines) > 1 else ""
+
+        body1 = extract_body(sections[0])
+        body2 = extract_body(sections[1])
+
+        # Neither body should be a substring of the other
+        assert body1 not in body2, f"Body 1 should not be substring of body 2: {body1!r} in {body2!r}"
+        assert body2 not in body1, f"Body 2 should not be substring of body 1: {body2!r} in {body1!r}"
+
+    def test_reference_integrity_fragment_name_links_to_correct_issue(
+        self, rotate_module: ModuleType, tmp_path: Path
+    ) -> None:
+        """A fragment named `<issue>-<slug>.md` produces a reference to `<issue>` and to no other issue number
+        that is not in its own text.
+
+        The fragment filename determines which issue is referenced. Any #NNNN in the rendered output must
+        match an issue number explicitly written in a fragment's content, not inferred from filename alone.
+        """
+        fragments_dir = tmp_path / "fragments"
+        fragments_dir.mkdir()
+        # Fragment filename references issue #1234
+        # Fragment content explicitly references #1234 and #5678
+        (fragments_dir / "1234-add-new-feature.md").write_text(
+            "## New feature added\n\nThis feature implements #1234 and builds on work from #5678.\n", encoding="utf-8"
+        )
+        # Another fragment references #9999
+        (fragments_dir / "9999-fix-bug.md").write_text(
+            "## Bug fixed\n\nFixed the issue reported in #9999.\n", encoding="utf-8"
+        )
+
+        rendered = rotate_module.render_fragments(fragments_dir)
+
+        import re
+
+        # Extract all #NNNN references from the rendered output
+        found_issues = set(int(m.group(1)) for m in re.finditer(r"#(\d{4,5})", rendered))
+
+        # Only issues explicitly mentioned in fragment content should appear
+        # 1234 and 5678 are in the first fragment, 9999 is in the second
+        expected_issues = {1234, 5678, 9999}
+        assert found_issues == expected_issues, f"Expected issues {expected_issues}, found {found_issues}"
+
+        # The filename-derived issue (1234) should indeed be in the content
+        # But if a fragment had filename 1234-xyz.md and NO #1234 in content, it should NOT appear
+        # This test verifies that - the reference comes from content, not filename parsing
+        assert 1234 in found_issues, "Issue #1234 should be referenced (it's in the content)"
+
+    def test_reference_integrity_filename_issue_not_in_content_not_rendered(
+        self, rotate_module: ModuleType, tmp_path: Path
+    ) -> None:
+        """If a fragment is named `<issue>-<slug>.md` but the issue number is NOT in its content,
+        the rendered output should NOT include a reference to that issue.
+
+        This ensures we don't fabricate references from filenames.
+        """
+        fragments_dir = tmp_path / "fragments"
+        fragments_dir.mkdir()
+        # Filename suggests issue #5555, but content doesn't mention it
+        (fragments_dir / "5555-some-change.md").write_text(
+            "## Some change\n\nThis change does something unrelated.\n", encoding="utf-8"
+        )
+
+        rendered = rotate_module.render_fragments(fragments_dir)
+
+        import re
+
+        found_issues = set(int(m.group(1)) for m in re.finditer(r"#(\d{4,5})", rendered))
+        assert 5555 not in found_issues, "Issue #5555 should NOT appear - it's not in the fragment content"
+        assert found_issues == set(), f"Expected no issue references, found {found_issues}"
 
 
 # --- Merge-queue conflict freedom (acceptance criterion, exercised with real git) ---

@@ -7,9 +7,10 @@ Check run lifecycle:
   1. ``create`` - called when a fix/QA task is picked up; status=in_progress
   2. ``update`` - called when the task completes; status=completed + conclusion
 
-All operations degrade gracefully when the required environment variables
-(``GITHUB_APP_ID``, ``GITHUB_APP_PRIVATE_KEY``, ``GITHUB_INSTALLATION_ID``)
-are not set - the methods return ``None`` instead of raising.
+Authentication is delegated to the ``gh`` CLI (its token environment), so
+this client needs only the repository slug.  All operations degrade
+gracefully when the slug is missing - the methods return ``None`` instead
+of raising.
 
 GitHub API reference:
   https://docs.github.com/en/rest/checks/runs
@@ -21,13 +22,15 @@ import json
 import logging
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # Check run name shown in the GitHub UI
 _CHECK_RUN_NAME = "bernstein / agent verification"
+# Check run name for volunteer receipt verification
+_VERIFICATION_CHECK_RUN_NAME = "bernstein / volunteer receipt verification"
 
 
 @dataclass
@@ -43,23 +46,36 @@ class CheckRunResult:
     html_url: str
 
 
+@dataclass
+class ComparisonCheckRunResult:
+    """Result of a comparison check run operation.
+
+    This extends CheckRunResult with comparison-specific details.
+    """
+
+    check_run_id: int
+    html_url: str
+    errors: list[str] = field(default_factory=list)
+
+
 class CheckRunClient:
     """Thin wrapper around the GitHub Check Runs API via ``gh`` CLI.
 
+    Authentication is delegated entirely to ``gh`` (its token environment),
+    so the client itself needs only the repository slug to operate.
+
     Args:
-        repo: ``owner/repo`` slug.  Required for all API calls.
-        installation_id: GitHub App installation ID.  Required; if ``None``
-            or empty all operations are no-ops.
+        repo: ``owner/repo`` slug.  Required; if empty all operations are
+            no-ops.
     """
 
-    def __init__(self, repo: str, installation_id: str | None = None) -> None:
+    def __init__(self, repo: str) -> None:
         self._repo = repo
-        self._installation_id = installation_id
 
     @property
     def _configured(self) -> bool:
         """True if the client has enough config to make API calls."""
-        return bool(self._repo and self._installation_id)
+        return bool(self._repo)
 
     def create(
         self,
@@ -133,6 +149,102 @@ class CheckRunClient:
             body["details_url"] = details_url
 
         return self._api_patch(f"/repos/{self._repo}/check-runs/{check_run_id}", body)
+
+    def create_verification_check_run(
+        self,
+        head_sha: str,
+        summary: str,
+        details: str = "",
+        conclusion: str = "neutral",
+        details_url: str = "",
+    ) -> ComparisonCheckRunResult | None:
+        """Create a comparison check run for volunteer receipt verification.
+
+        Args:
+            head_sha: Git SHA of the commit being checked.
+            summary: Markdown summary shown in the GitHub UI.
+            details: Detailed markdown content shown in the check run details.
+            conclusion: One of ``"success"``, ``"failure"``, ``"neutral"``,
+                ``"cancelled"``, ``"timed_out"``, ``"action_required"``.
+            details_url: Optional URL linking back to the Bernstein dashboard.
+
+        Returns:
+            ``ComparisonCheckRunResult`` on success, ``None`` on error.
+        """
+        if not self._configured:
+            logger.debug("CheckRunClient not configured - skipping verification check run create")
+            return None
+
+        body: dict[str, Any] = {
+            "name": _VERIFICATION_CHECK_RUN_NAME,
+            "head_sha": head_sha,
+            "status": "completed",
+            "conclusion": conclusion,
+            "completed_at": _iso_now(),
+            "output": {
+                "title": f"Volunteer receipt verification: {conclusion}",
+                "summary": summary,
+                "details": details,
+            },
+        }
+        if details_url:
+            body["details_url"] = details_url
+
+        result = self._api_post(f"/repos/{self._repo}/check-runs", body)
+        if result is None:
+            return None
+
+        return ComparisonCheckRunResult(
+            check_run_id=result.check_run_id,
+            html_url=result.html_url,
+        )
+
+    def update_verification_check_run(
+        self,
+        check_run_id: int,
+        summary: str,
+        details: str = "",
+        conclusion: str = "neutral",
+        details_url: str = "",
+    ) -> ComparisonCheckRunResult | None:
+        """Update an existing comparison check run for volunteer receipt verification.
+
+        Args:
+            check_run_id: GitHub check run ID from a previous ``create_verification_check_run`` call.
+            summary: Markdown summary shown in the GitHub UI.
+            details: Detailed markdown content shown in the check run details.
+            conclusion: One of ``"success"``, ``"failure"``, ``"neutral"``,
+                ``"cancelled"``, ``"timed_out"``, ``"action_required"``.
+            details_url: Optional URL linking back to the Bernstein dashboard.
+
+        Returns:
+            ``ComparisonCheckRunResult`` on success, ``None`` on error.
+        """
+        if not self._configured:
+            logger.debug("CheckRunClient not configured - skipping verification check run update")
+            return None
+
+        body: dict[str, Any] = {
+            "status": "completed",
+            "conclusion": conclusion,
+            "completed_at": _iso_now(),
+            "output": {
+                "title": f"Volunteer receipt verification: {conclusion}",
+                "summary": summary,
+                "details": details,
+            },
+        }
+        if details_url:
+            body["details_url"] = details_url
+
+        result = self._api_patch(f"/repos/{self._repo}/check-runs/{check_run_id}", body)
+        if result is None:
+            return None
+
+        return ComparisonCheckRunResult(
+            check_run_id=result.check_run_id,
+            html_url=result.html_url,
+        )
 
     def _api_post(self, path: str, body: dict[str, Any]) -> CheckRunResult | None:
         """POST to a GitHub API path and return the parsed result."""

@@ -340,6 +340,7 @@ class PassReceiptRequest:
     verdict: str
     ruleset_digest: str
     prev_entry_hash: str = ""
+    resolution_hash: str = ""
 
 
 class PassReceiptEmitter(Protocol):
@@ -410,6 +411,7 @@ def receipt_emitter(
             pass_index=request.pass_index,
             ruleset_digest=request.ruleset_digest,
             prev_entry_hash=request.prev_entry_hash,
+            resolution_hash=request.resolution_hash,
         )
         record_review_receipt(
             chain=AuditChainStore(root / ".sdd" / "audit", key=key),

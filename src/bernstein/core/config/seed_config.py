@@ -428,7 +428,7 @@ class SeedConfig:
     secrets: SecretsConfig | None = None
     key_rotation: KeyRotationConfig | None = None
     model_policy: dict[str, Any] | None = None
-    role_model_policy: dict[str, dict[str, str]] | None = None
+    role_model_policy: dict[str, dict[str, Any]] | None = None
     compliance: ComplianceConfig | None = None
     visual: VisualConfig | None = None
     sandbox: DockerSandbox | None = None

@@ -44,6 +44,10 @@ Last updated: 2026-07-16
 
 The detailed comparison matrix with cost tier, reasoning grade, and recommended use cases lives in [`ADAPTER_GUIDE.md`](ADAPTER_GUIDE.md).
 
+### Auth basis and volunteer-mode status
+
+Every adapter contract declares an `auth.basis` (`api_key`, `local`, `subscription_oauth`, or `unknown`). Volunteer donor budgets gate selection by auth basis and `local_models`: `local_only=True` budgets admit only local-capable adapters; `subscription_oauth` adapters are refused under `local_only`. See [`auth-basis-volunteer-mode.md`](auth-basis-volunteer-mode.md) for the full table.
+
 ### Support modules
 
 The adapter package also ships cross-cutting support modules (caching, conformance testing, environment isolation, plugin SDK, registry, skill injection, and more). The canonical table lives in [`ADAPTER_GUIDE.md`](ADAPTER_GUIDE.md#support-modules).

@@ -15,14 +15,21 @@ It is hermetic and reproducible:
   ``TemporaryDirectory`` from :func:`main`); nothing touches the real
   ``.sdd/audit`` tree or the user's audit key.
 
-Two questions, two comparisons:
+Three questions, three comparisons:
 
-* **Append.** ``chain_on`` is a real :meth:`AuditLog.log`. ``plain_append`` is
-  the same canonical row written straight to a JSONL file with no ``prev_hmac``
-  / ``hmac`` and no chain-tail recovery. The gap between them is the marginal
-  cost attributable to the chain itself, on top of a line you would write
-  anyway; ``chain_on`` alone is the absolute per-decision cost versus today's
-  default of writing nothing.
+* **Audit append.** ``chain_on`` is a real :meth:`AuditLog.log`. ``plain_append``
+  is the same canonical row written straight to a JSONL file with no
+  ``prev_hmac`` / ``hmac`` and no chain-tail recovery. The gap between them is
+  the marginal cost attributable to the chain itself, on top of a line you
+  would write anyway; ``chain_on`` alone is the absolute per-decision cost
+  versus today's default of writing nothing.
+* **Journal append.** The always-on path every run pays, which the audit case
+  cannot stand in for: ``chain_on`` is a real :meth:`EventJournal.record`
+  (canonical-JSON payload hash plus Merkle event hash), ``plain_append`` is the
+  same stored row minus the derived chain fields (``index``, ``prev_hash``,
+  ``payload_hash``, ``event_hash``) written straight to JSONL. The gap is the
+  mandatory chain's marginal cost; ``chain_on`` alone is the absolute per-event
+  recording cost of the always-on path.
 * **Verify.** Full-chain :meth:`AuditLog.verify` and cold
   :meth:`AuditLog.scan_verified` walk every byte; a warm cursor scan re-reads
   only what was appended since. Reported as events/second so the number scales
@@ -49,6 +56,8 @@ from typing import Any
 
 from bernstein.core.audit import AuditLog
 
+from bernstein.core.replay.journal import EventJournal
+
 #: Fixed key so the benchmark never mints or reads a real audit key.
 BENCH_KEY = b"benchmark-key-2690-deterministic"
 
@@ -56,6 +65,9 @@ BENCH_KEY = b"benchmark-key-2690-deterministic"
 _EVENT_TYPE = "schedule.decision"
 _ACTOR = "orchestrator"
 _RESOURCE_TYPE = "task"
+
+#: A representative always-on journal event type (a task lifecycle decision).
+_JOURNAL_EVENT = "task_state_changed"
 
 
 def make_details(size: str) -> dict[str, Any]:
@@ -148,6 +160,7 @@ class BenchReport:
     """Full benchmark output: append + verify tables plus provenance."""
 
     append: list[AppendResult] = field(default_factory=list)
+    journal_append: list[AppendResult] = field(default_factory=list)
     verify: list[VerifyResult] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
 
@@ -211,6 +224,74 @@ def bench_append(
         off_lat.append(time.perf_counter_ns() - start)
     off_bytes = off_path.stat().st_size
     plain_bytes_per_entry = off_bytes / (warmup + n)
+
+    return AppendResult(
+        size=size,
+        chain_on=_summarize(on_lat),
+        plain_append=_summarize(off_lat),
+        chain_on_bytes_per_entry=chain_on_bytes_per_entry,
+        plain_bytes_per_entry=plain_bytes_per_entry,
+    )
+
+
+def bench_journal_append(
+    workdir: Path,
+    size: str,
+    *,
+    n: int = 2000,
+    warmup: int = 200,
+) -> AppendResult:
+    """Measure the always-on journal append against the same row unchained.
+
+    ``chain_on`` drives a real :class:`EventJournal` -- the mandatory
+    canonical-JSON-plus-hash append every run pays for every event, lock and
+    bookkeeping included. ``plain_append`` writes the same stored row minus
+    the derived chain fields (``index``, ``prev_hash``, ``payload_hash``,
+    ``event_hash``) straight to a JSONL file, isolating the mandatory chain's
+    marginal cost from the line write itself. Wall-clock fields stay on both
+    rows, as they do on real journal rows.
+    """
+    details = make_details(size)
+
+    # --- chain on: real EventJournal.record ---
+    on_dir = workdir / f"journal-on-{size}"
+    journal = EventJournal(f"bench-journal-{size}", on_dir)
+    for _ in range(warmup):
+        journal.record(_JOURNAL_EVENT, task_id="warmup", **details)
+    on_lat: list[int] = []
+    for i in range(n):
+        start = time.perf_counter_ns()
+        journal.record(_JOURNAL_EVENT, task_id=f"task-{i}", **details)
+        on_lat.append(time.perf_counter_ns() - start)
+    chain_on_bytes_per_entry = journal.path.stat().st_size / (warmup + n)
+
+    # --- chain off: the same stored row minus the derived chain fields ---
+    off_dir = workdir / f"journal-off-{size}"
+    off_dir.mkdir(parents=True, exist_ok=True)
+    off_path = off_dir / "plain.jsonl"
+    ts = time.time()
+
+    def _row(task_id: str) -> str:
+        entry = {
+            "ts": ts,
+            "elapsed_s": 0.0,
+            "event": _JOURNAL_EVENT,
+            "task_id": task_id,
+            **details,
+        }
+        return json.dumps(entry, sort_keys=True) + "\n"
+
+    for _ in range(warmup):
+        with off_path.open("a", encoding="utf-8", newline="") as fh:
+            fh.write(_row("warmup"))
+    off_lat: list[int] = []
+    for i in range(n):
+        row = _row(f"task-{i}")
+        start = time.perf_counter_ns()
+        with off_path.open("a", encoding="utf-8", newline="") as fh:
+            fh.write(row)
+        off_lat.append(time.perf_counter_ns() - start)
+    plain_bytes_per_entry = off_path.stat().st_size / (warmup + n)
 
     return AppendResult(
         size=size,
@@ -326,6 +407,8 @@ def run_benchmark(
     report = BenchReport()
     for size in sizes:
         report.append.append(bench_append(workdir, size, n=append_n))
+    for size in sizes:
+        report.journal_append.append(bench_journal_append(workdir, size, n=append_n))
     for events, segments in verify_points:
         report.verify.append(bench_verify(workdir, events=events, segments=segments))
     report.meta = {
@@ -349,6 +432,14 @@ def render_markdown(report: BenchReport) -> str:
     lines.append("| entry size | chain-on mean | chain-on p95 | plain-append mean | chain marginal mean |")
     lines.append("|---|--:|--:|--:|--:|")
     for r in report.append:
+        lines.append(
+            f"| {r.size} | {r.chain_on['mean_us']:.2f} us | {r.chain_on['p95_us']:.2f} us "
+            f"| {r.plain_append['mean_us']:.2f} us | {r.marginal_mean_us:+.2f} us |"
+        )
+    lines.append("\n### Journal append latency (always-on path, per event)\n")
+    lines.append("| entry size | journal mean | journal p95 | plain-append mean | chain marginal mean |")
+    lines.append("|---|--:|--:|--:|--:|")
+    for r in report.journal_append:
         lines.append(
             f"| {r.size} | {r.chain_on['mean_us']:.2f} us | {r.chain_on['p95_us']:.2f} us "
             f"| {r.plain_append['mean_us']:.2f} us | {r.marginal_mean_us:+.2f} us |"
@@ -381,6 +472,7 @@ def render_markdown(report: BenchReport) -> str:
 def _report_to_dict(report: BenchReport) -> dict[str, Any]:
     return {
         "append": [asdict(r) for r in report.append],
+        "journal_append": [asdict(r) for r in report.journal_append],
         "verify": [asdict(v) for v in report.verify],
         "meta": report.meta,
     }

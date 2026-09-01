@@ -111,7 +111,7 @@ Full configuration (key kinds, HSM / TPM / KMS integration via the
 ## Producing the export
 
 ```bash
-bernstein lineage export <run_id> --format <csv|jsonld|html> \
+bernstein lineage export <run_id> --format <csv|jsonld|html|openlineage> \
                          --output <path> [--workdir .]
 ```
 
@@ -121,11 +121,12 @@ The exporter walks every lineage record for the run from
 `.sdd/runtime/wal/`, flattens each record into a row, and renders the
 chosen format. The output file is overwritten if it exists.
 
-| Format   | When to use                                                                            |
-| -------- | -------------------------------------------------------------------------------------- |
-| `csv`    | Analyst spreadsheets, GRC vendors that ingest CSV, ad-hoc filtering in Excel / Sheets. |
-| `jsonld` | Evidence packs for graph-walking auditors; shaped against schema.org `Action`.         |
-| `html`   | Human auditor review; single self-contained file (no JS / fonts / external assets).    |
+| Format        | When to use                                                                            |
+| ------------- | -------------------------------------------------------------------------------------- |
+| `csv`         | Analyst spreadsheets, GRC vendors that ingest CSV, ad-hoc filtering in Excel / Sheets. |
+| `jsonld`      | Evidence packs for graph-walking auditors; shaped against schema.org `Action`.         |
+| `html`        | Human auditor review; single self-contained file (no JS / fonts / external assets).    |
+| `openlineage` | Existing lineage/catalog stacks that speak OpenLineage (issue #4914). JSONL RunEvents. |
 
 Exit codes:
 
@@ -150,7 +151,22 @@ bernstein lineage export r-2026-05-05 --format csv \
 # JSON-LD for a graph-walking verifier.
 bernstein lineage export r-2026-05-05 --format jsonld \
   --output /tmp/r-2026-05-05.jsonld
+
+# OpenLineage JSONL for an existing lineage collector / catalog.
+bernstein lineage export r-2026-05-05 --format openlineage \
+  --output /tmp/r-2026-05-05.openlineage.jsonl
 ```
+
+### OpenLineage projection (#4914)
+
+`--format openlineage` is a **post-hoc projection** of the WAL lineage
+chain (and optional audit task outcomes), not a second source of truth.
+Two exports of the same finished run are byte-identical. Each event
+carries a custom `bernstein_chain` run facet with the WAL
+`chain_head_hash`, lineage record id, and a detached projection
+signature so a consumer that has the chain can verify the event was not
+edited in transit. HTTP collector transport is out of scope for this
+slice — file output only. Schema: `schemas/openlineage/1-0-5/`.
 
 The HTML form is suitable for direct inclusion in an evidence package
 (open in any browser, print to PDF, attach to the audit ticket).
