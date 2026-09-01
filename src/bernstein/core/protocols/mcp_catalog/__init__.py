@@ -25,12 +25,10 @@ Install pattern::
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, FrozenSet, Optional
 
 from bernstein.core.protocols.mcp_catalog.audit import (
     AUDIT_ACTOR,
@@ -95,8 +93,6 @@ __all__ = [
     "DEFAULT_MIRROR_URL",
     "DEFAULT_REVALIDATE_SECONDS",
     "LOCAL_MANIFESTS_DIR",
-    "MCPServerCapabilities",
-    "ServerCapabilitiesStore",
     "SERVERS_KEY",
     "CacheEntry",
     "Catalog",
@@ -114,7 +110,9 @@ __all__ = [
     "InstallOutcome",
     "InstallPreview",
     "InstalledEntry",
+    "MCPServerCapabilities",
     "SandboxRunner",
+    "ServerCapabilitiesStore",
     "UpgradeOutcome",
     "default_cache_path",
     "default_user_config_path",
@@ -142,9 +140,14 @@ class MCPServerCapabilities:
         first_contact_at: ISO timestamp of first observed capabilities.
     """
     server_name: str
-    tool_names: FrozenSet[str]
+    tool_names: frozenset[str]
     capability_digest: str
     first_contact_at: str
+
+
+def _canonicalize_tool_names(tool_names: frozenset[str]) -> str:
+    """Return JSON-canonicalized sorted tool name list for digest."""
+    return json.dumps(sorted(tool_names), separators=(",", ":"))
 
 
 class ServerCapabilitiesStore:
@@ -157,14 +160,14 @@ class ServerCapabilitiesStore:
     def __init__(self, sdd_dir: str):
         self._sdd_dir = sdd_dir
         self._file_path = os.path.join(sdd_dir, ".sdd", "mcp_server_capabilities.json")
-        self._capabilities: Dict[str, MCPServerCapabilities] = {}
+        self._capabilities: dict[str, MCPServerCapabilities] = {}
         self.load()
 
     def load(self) -> None:
         """Load capabilities from JSON file."""
         if os.path.exists(self._file_path):
             try:
-                with open(self._file_path, 'r') as f:
+                with open(self._file_path) as f:
                     data = json.load(f)
                 for server_name, caps_data in data.items():
                     tool_names = frozenset(caps_data["tool_names"])
@@ -191,7 +194,7 @@ class ServerCapabilitiesStore:
         with open(self._file_path, 'w') as f:
             json.dump(data, f, indent=2)
 
-    def get_digest(self, server_name: str) -> Optional[str]:
+    def get_digest(self, server_name: str) -> str | None:
         """Get current capability digest for server."""
         caps = self._capabilities.get(server_name)
         return caps.capability_digest if caps else None
@@ -199,9 +202,9 @@ class ServerCapabilitiesStore:
     def set_capabilities(
         self,
         server_name: str,
-        tool_names: FrozenSet[str],
+        tool_names: frozenset[str],
         capability_digest: str
-    ) -> Optional[MCPServerCapabilities]:
+    ) -> MCPServerCapabilities | None:
         """Update server capabilities and detect drift.
 
         Args:
@@ -226,6 +229,6 @@ class ServerCapabilitiesStore:
             return old
         return None
 
-    def get_capabilities(self, server_name: str) -> Optional[MCPServerCapabilities]:
+    def get_capabilities(self, server_name: str) -> MCPServerCapabilities | None:
         """Get full capabilities record for server."""
         return self._capabilities.get(server_name)
