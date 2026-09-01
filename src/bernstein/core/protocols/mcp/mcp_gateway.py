@@ -240,9 +240,7 @@ class MCPGateway:
             return
         # Get run_id from the wal_writer for the audit chain event
         run_id = self._wal_writer._run_id
-        self._capabilities_store.set_capabilities(
-            self._server_name, frozenset(tool_names), digest
-        )
+        self._capabilities_store.set_capabilities(self._server_name, frozenset(tool_names), digest)
         try:
             record_mcp_capability_drift(
                 chain=self._audit_chain,

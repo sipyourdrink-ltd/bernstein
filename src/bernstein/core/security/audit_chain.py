@@ -9043,8 +9043,6 @@ class CapabilityDeltaDetails:
         }
 
 
-
-
 def record_capability_delta(
     *,
     chain: AuditChainStore,

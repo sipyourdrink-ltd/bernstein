@@ -139,6 +139,7 @@ class MCPServerCapabilities:
         capability_digest: SHA256 digest of sorted canonical JSON.
         first_contact_at: ISO timestamp of first observed capabilities.
     """
+
     server_name: str
     tool_names: frozenset[str]
     capability_digest: str
@@ -175,7 +176,7 @@ class ServerCapabilitiesStore:
                         server_name=server_name,
                         tool_names=tool_names,
                         capability_digest=caps_data["capability_digest"],
-                        first_contact_at=caps_data["first_contact_at"]
+                        first_contact_at=caps_data["first_contact_at"],
                     )
             except (json.JSONDecodeError, KeyError):
                 # Corrupt file - start fresh
@@ -189,9 +190,9 @@ class ServerCapabilitiesStore:
             data[server_name] = {
                 "tool_names": sorted(caps.tool_names),
                 "capability_digest": caps.capability_digest,
-                "first_contact_at": caps.first_contact_at
+                "first_contact_at": caps.first_contact_at,
             }
-        with open(self._file_path, 'w') as f:
+        with open(self._file_path, "w") as f:
             json.dump(data, f, indent=2)
 
     def get_digest(self, server_name: str) -> str | None:
@@ -200,10 +201,7 @@ class ServerCapabilitiesStore:
         return caps.capability_digest if caps else None
 
     def set_capabilities(
-        self,
-        server_name: str,
-        tool_names: frozenset[str],
-        capability_digest: str
+        self, server_name: str, tool_names: frozenset[str], capability_digest: str
     ) -> MCPServerCapabilities | None:
         """Update server capabilities and detect drift.
 
@@ -221,7 +219,7 @@ class ServerCapabilitiesStore:
             server_name=server_name,
             tool_names=tool_names,
             capability_digest=capability_digest,
-            first_contact_at=now if old is None else old.first_contact_at
+            first_contact_at=now if old is None else old.first_contact_at,
         )
         self._capabilities[server_name] = new_caps
         self.save()
