@@ -347,7 +347,8 @@ def test_round_trip_genai_attrs_are_preserved(adapter: OTLPIngestAdapter) -> Non
 def test_non_dict_payload_raises(adapter: OTLPIngestAdapter) -> None:
     """A top-level payload that is not a dict or list raises OTLPIngestError."""
     with pytest.raises(OTLPIngestError):
-        adapter.ingest_payload("not a span"  # type: ignore[arg-type]
+        adapter.ingest_payload(
+            "not a span"  # type: ignore[arg-type]
         )
 
 
@@ -414,9 +415,11 @@ def test_bad_attributes_in_list_error(adapter: OTLPIngestAdapter) -> None:
 
 def test_attributes_otlp_json_list_form(adapter: OTLPIngestAdapter) -> None:
     """Attributes in OTLP/JSON list form (list of {key, value}) are parsed."""
-    span = _genai_span(extra_attrs=[
-        {"key": "custom.attr", "value": {"stringValue": "custom-value"}},
-    ])
+    span = _genai_span(
+        extra_attrs=[
+            {"key": "custom.attr", "value": {"stringValue": "custom-value"}},
+        ]
+    )
     result = adapter.ingest_span(span)
     assert result.is_typed
     activity = result.typed
@@ -524,10 +527,12 @@ def test_source_label_in_chain_event(adapter: OTLPIngestAdapter) -> None:
 
 def test_untyped_preserves_extra_attributes(adapter: OTLPIngestAdapter) -> None:
     """Untyped activity preserves non-GenAI extra attributes verbatim."""
-    span = _untyped_span(extra_attrs=[
-        {"key": "http.method", "value": {"stringValue": "POST"}},
-        {"key": "http.status_code", "value": {"intValue": "200"}},
-    ])
+    span = _untyped_span(
+        extra_attrs=[
+            {"key": "http.method", "value": {"stringValue": "POST"}},
+            {"key": "http.status_code", "value": {"intValue": "200"}},
+        ]
+    )
     result = adapter.ingest_span(span)
     assert result.is_untyped
     attrs = result.untyped.extra_attributes

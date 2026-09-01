@@ -270,15 +270,17 @@ def _span_attributes(attributes: list[dict[str, Any]] | dict[str, Any] | None) -
     return {}
 
 
-_GEN_AI_ATTRS = frozenset({
-    "gen_ai.system",
-    "gen_ai.request.model",
-    "gen_ai.operation.name",
-    "gen_ai.usage.prompt_tokens",
-    "gen_ai.usage.completion_tokens",
-    "gen_ai.tool.name",
-    "gen_ai.tool.call.id",
-})
+_GEN_AI_ATTRS = frozenset(
+    {
+        "gen_ai.system",
+        "gen_ai.request.model",
+        "gen_ai.operation.name",
+        "gen_ai.usage.prompt_tokens",
+        "gen_ai.usage.completion_tokens",
+        "gen_ai.tool.name",
+        "gen_ai.tool.call.id",
+    }
+)
 
 
 def _is_genai_span(attrs: dict[str, Any]) -> bool:
@@ -337,13 +339,9 @@ class OTLPIngestAdapter:
         span_id = raw.get("spanId") or raw.get("span_id")
 
         if not isinstance(trace_id, str) or not trace_id:
-            return IngestSpanResult(
-                parse_error=f"span has no traceId (got {type(trace_id).__name__!r})"
-            )
+            return IngestSpanResult(parse_error=f"span has no traceId (got {type(trace_id).__name__!r})")
         if not isinstance(span_id, str) or not span_id:
-            return IngestSpanResult(
-                parse_error=f"span has no spanId (got {type(span_id).__name__!r})"
-            )
+            return IngestSpanResult(parse_error=f"span has no spanId (got {type(span_id).__name__!r})")
 
         # Normalise: OTLP/JSON uses camelCase; snake_case is also accepted.
         name = str(raw.get("name") or raw.get("span_name", ""))
@@ -371,17 +369,9 @@ class OTLPIngestAdapter:
                     completion_tokens=int(attrs["gen_ai.usage.completion_tokens"])
                     if "gen_ai.usage.completion_tokens" in attrs
                     else None,
-                    tool_name=str(attrs["gen_ai.tool.name"])
-                    if "gen_ai.tool.name" in attrs
-                    else None,
-                    tool_call_id=str(attrs["gen_ai.tool.call.id"])
-                    if "gen_ai.tool.call.id" in attrs
-                    else None,
-                    extra_attributes={
-                        k: v
-                        for k, v in attrs.items()
-                        if k not in _GEN_AI_ATTRS
-                    },
+                    tool_name=str(attrs["gen_ai.tool.name"]) if "gen_ai.tool.name" in attrs else None,
+                    tool_call_id=str(attrs["gen_ai.tool.call.id"]) if "gen_ai.tool.call.id" in attrs else None,
+                    extra_attributes={k: v for k, v in attrs.items() if k not in _GEN_AI_ATTRS},
                 )
             )
 
@@ -418,9 +408,7 @@ class OTLPIngestAdapter:
         elif isinstance(payload, list):
             spans = payload
         else:
-            raise OTLPIngestError(
-                f"OTLP ingest payload must be a list or dict, got {type(payload).__name__!r}"
-            )
+            raise OTLPIngestError(f"OTLP ingest payload must be a list or dict, got {type(payload).__name__!r}")
 
         if not spans:
             raise OTLPIngestError("OTLP ingest payload is an empty list")
