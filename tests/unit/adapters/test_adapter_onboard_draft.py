@@ -271,3 +271,104 @@ def test_write_draft_yaml_round_trips_through_a_real_file_preserving_provenance(
     # write, not just the in-memory object.
     start, end = draft.evidence_byte_range
     assert loaded["provenance"]["model_flag"] == {"start": start, "end": end}
+
+
+# ---------------------------------------------------------------------------
+# load_profile_from_draft: consume persisted drafts back into Draft objects
+# (task 23955c80b223 - the consumer side of the YAML persistence flow).
+# ---------------------------------------------------------------------------
+
+
+def test_load_profile_from_draft_reads_yaml_and_returns_validated_draft(tmp_path: Path) -> None:
+    """load_profile_from_draft(path) reads a draft YAML and returns a validated Draft.
+
+    The returned Draft must have a valid InvocationSpec and preserve the
+    evidence_byte_range from the provenance section.
+    """
+    from bernstein.adapters.draft import (
+        draft_from_evidence,
+        load_profile_from_draft,
+        write_draft_yaml,
+    )
+
+    help_text = _load_fixture_help_text("probe_with_model_help")
+    evidence_path = _write_evidence_file(tmp_path, "probe-with-model", help_text, "probe-with-model --help")
+    original_draft = draft_from_evidence(evidence_path)
+
+    target = tmp_path / "drafts" / "probe-with-model.yaml"
+    write_draft_yaml(original_draft, target)
+
+    loaded = load_profile_from_draft(target)
+
+    assert loaded.invocation.binary == "probe-with-model"
+    assert loaded.invocation.model_flag == "--model"
+    assert loaded.invocation.prompt_flag == "--prompt"
+    assert loaded.evidence_byte_range == original_draft.evidence_byte_range
+
+
+def test_load_profile_from_draft_preserves_provenance(tmp_path: Path) -> None:
+    """Per-field provenance (evidence_byte_range) survives the round trip."""
+    from bernstein.adapters.draft import (
+        draft_from_evidence,
+        load_profile_from_draft,
+        write_draft_yaml,
+    )
+
+    help_text = _load_fixture_help_text("probe_with_model_help")
+    evidence_path = _write_evidence_file(tmp_path, "probe-with-model", help_text, "probe-with-model --help")
+    original_draft = draft_from_evidence(evidence_path)
+
+    target = tmp_path / "drafts" / "probe-with-model.yaml"
+    write_draft_yaml(original_draft, target)
+
+    loaded = load_profile_from_draft(target)
+
+    assert loaded.evidence_byte_range is not None
+    start, end = loaded.evidence_byte_range
+    assert start >= 0
+    assert end > start
+
+
+def test_load_profile_from_draft_rejects_missing_invocation_section(tmp_path: Path) -> None:
+    """Function validates required sections are present before returning."""
+    from bernstein.adapters.draft import load_profile_from_draft
+
+    bad_yaml = tmp_path / "bad.yaml"
+    bad_yaml.write_text("provenance: {}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        load_profile_from_draft(bad_yaml)
+
+    assert "invocation" in str(exc_info.value)
+
+
+def test_load_profile_from_draft_rejects_missing_provenance_section(tmp_path: Path) -> None:
+    """Function validates required sections are present before returning."""
+    from bernstein.adapters.draft import load_profile_from_draft
+
+    bad_yaml = tmp_path / "bad.yaml"
+    bad_yaml.write_text(
+        "invocation:\n  binary: test\n  subcommands: []\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_profile_from_draft(bad_yaml)
+
+    assert "provenance" in str(exc_info.value)
+
+
+def test_load_profile_from_draft_rejects_missing_binary(tmp_path: Path) -> None:
+    """Function validates required invocation fields are present."""
+    from bernstein.adapters.draft import load_profile_from_draft
+
+    bad_yaml = tmp_path / "bad.yaml"
+    bad_yaml.write_text(
+        "invocation:\n  subcommands: []\nprovenance: {}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_profile_from_draft(bad_yaml)
+
+    assert "binary" in str(exc_info.value)

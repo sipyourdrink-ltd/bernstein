@@ -219,3 +219,71 @@ def read_draft_document(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):  # pyright: ignore[reportUnnecessaryIsInstance]
         raise ValueError(f"draft document at {path} must be a YAML mapping, got {type(data).__name__}")
     return data
+
+
+def load_profile_from_draft(path: Path) -> Draft:
+    """Load a draft YAML and return a validated Draft with provenance preserved.
+
+    Reads a YAML file produced by :func:`write_draft_yaml` and reconstructs
+    a :class:`Draft` instance with the invocation spec and per-field provenance
+    (evidence byte ranges) intact.
+
+    Args:
+        path: Path to a draft YAML file.
+
+    Returns:
+        A :class:`Draft` with ``invocation`` (:class:`InvocationSpec`) and
+        ``evidence_byte_range`` populated from the persisted document.
+
+    Raises:
+        ValueError: The document is missing required sections (``invocation``,
+            ``provenance``) or the invocation section is incomplete.
+
+    Example:
+        >>> from pathlib import Path
+        >>> from bernstein.adapters.draft import load_profile_from_draft
+        >>> draft = load_profile_from_draft(Path("drafts/my-adapter.yaml"))
+        >>> print(draft.invocation.binary)
+        'my-adapter'
+        >>> print(draft.evidence_byte_range)
+        (42, 48)
+    """
+    document = read_draft_document(path)
+
+    # Validate required sections
+    missing_sections = [s for s in ("invocation", "provenance") if s not in document]
+    if missing_sections:
+        raise ValueError(
+            f"draft document at {path} missing required section(s): {', '.join(missing_sections)}"
+        )
+
+    invocation_data = document["invocation"]
+    provenance_data = document["provenance"]
+
+    # Validate required invocation fields
+    required_invocation_fields = {"binary"}
+    missing_fields = [f for f in required_invocation_fields if f not in invocation_data]
+    if missing_fields:
+        raise ValueError(
+            f"draft document at {path} missing required invocation field(s): {', '.join(missing_fields)}"
+        )
+
+    # Reconstruct InvocationSpec
+    invocation = InvocationSpec(
+        binary=invocation_data["binary"],
+        subcommands=tuple(invocation_data.get("subcommands", [])),
+        model_flag=invocation_data.get("model_flag"),
+        prompt_flag=invocation_data.get("prompt_flag"),
+        prompt_positional=invocation_data.get("prompt_positional", True),
+        extra_args=tuple(invocation_data.get("extra_args", [])),
+        env_passthrough=tuple(invocation_data.get("env_passthrough", [])),
+    )
+
+    # Extract evidence byte range from provenance
+    evidence_byte_range: tuple[int, int] | None = None
+    if "model_flag" in provenance_data:
+        mf_prov = provenance_data["model_flag"]
+        if isinstance(mf_prov, dict) and "start" in mf_prov and "end" in mf_prov:
+            evidence_byte_range = (int(mf_prov["start"]), int(mf_prov["end"]))
+
+    return Draft(invocation=invocation, evidence_byte_range=evidence_byte_range)
