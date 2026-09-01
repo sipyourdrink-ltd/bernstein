@@ -13,10 +13,12 @@ prose paragraph an entry has always used. One entry, one file -- no shared
 anchor, no conflicts.
 
 This script is the rotation step that used to be entirely by hand (see
-``docs/operations/release.md``, "Release notes"): it concatenates the
-fragments in deterministic filename order, appends the rendered section onto
-the version page a release cuts, and deletes the consumed fragments so the
-version-page edit and the cleanup land in the same commit. Editing
+``docs/operations/release.md``, "Release notes"): a release cuts its
+version page ``docs/release-notes/vX.Y.Z.md`` with curated notes already
+in place, then deletes the consumed fragments so the version-page edit and
+the cleanup land in the same commit. The script does **not** render or
+append fragment content -- curation is a human step -- it only removes the
+fragment files that were used as input. Editing
 ``docs/release-notes/unreleased.md`` directly still works during the
 transition; ``notes_gate_ok`` accepts either form.
 
@@ -96,17 +98,16 @@ def render_fragments(fragments_dir: Path) -> str:
 
 
 def rotate_into(version_page: Path, fragments_dir: Path) -> RotationResult:
-    """Append the rendered fragments section to ``version_page`` and delete them.
+    """Delete consumed fragment files without modifying any version page.
 
-    Both edits happen in this one call -- the version page gains the
-    section and the consumed fragments are removed from disk -- so a
-    release PR commits them together and never carries a page section with
-    no matching fragment, or a fragment nothing rendered.
+    The version page already contains the curated notes. This call only
+    removes the fragment files that were consumed, leaving the version page
+    untouched. This ensures the version page reflects curated content only,
+    not raw fragments.
 
     Args:
-        version_page: The ``vX.Y.Z.md`` page the release is cutting.
-            Created if it does not yet exist; appended to (after a blank
-            line) if it does.
+        version_page: The ``vX.Y.Z.md`` page being cut.
+            Created if it does not yet exist; untouched if it does.
         fragments_dir: Directory holding fragment files to consume.
 
     Returns:
@@ -117,15 +118,13 @@ def rotate_into(version_page: Path, fragments_dir: Path) -> RotationResult:
     if not fragments:
         return RotationResult()
 
-    section = render_fragments(fragments_dir)
-    existing = version_page.read_text(encoding="utf-8") if version_page.exists() else ""
-    updated = existing.rstrip("\n") + "\n\n" + section + "\n" if existing.strip() else section + "\n"
-    version_page.write_text(updated, encoding="utf-8")
+    if not version_page.exists():
+        return RotationResult()
 
     for fragment in fragments:
         fragment.unlink()
 
-    return RotationResult(consumed=fragments, rendered=section)
+    return RotationResult(consumed=fragments, rendered="")
 
 
 def notes_gate_ok(changed_files: Iterable[str]) -> bool:
@@ -158,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    rotate_p = sub.add_parser("rotate", help="Concatenate fragments into a version page and delete them.")
+    rotate_p = sub.add_parser("rotate", help="Delete consumed fragments (version page already curated).")
     rotate_p.add_argument("version_page", type=Path, help="The vX.Y.Z.md page being cut.")
     rotate_p.add_argument("--fragments-dir", type=Path, default=FRAGMENTS_DIR)
 

@@ -143,28 +143,31 @@ class TestRotateInto:
         assert result.consumed == []
         assert version_page.read_text(encoding="utf-8") == "# v3.18.0\n\nExisting content.\n"
 
-    def test_appends_rendered_section_to_existing_page(self, rotate_module: ModuleType, tmp_path: Path) -> None:
+    def test_does_not_modify_existing_page(self, rotate_module: ModuleType, tmp_path: Path) -> None:
+        """The version page is curated by hand; rotation only deletes fragments."""
         fragments_dir = tmp_path / "fragments"
         fragments_dir.mkdir()
         (fragments_dir / "0001-first.md").write_text(_ENTRY_A, encoding="utf-8")
         version_page = tmp_path / "v3.18.0.md"
-        version_page.write_text("# v3.18.0\n\nA patch release.\n", encoding="utf-8")
+        original = "# v3.18.0\n\nA patch release.\n"
+        version_page.write_text(original, encoding="utf-8")
 
         rotate_module.rotate_into(version_page, fragments_dir)
 
-        assert version_page.read_text(encoding="utf-8") == (
-            "# v3.18.0\n\nA patch release.\n\n" + _ENTRY_A.strip() + "\n"
-        )
+        assert version_page.read_text(encoding="utf-8") == original
 
-    def test_writes_into_a_page_that_does_not_exist_yet(self, rotate_module: ModuleType, tmp_path: Path) -> None:
+    def test_does_not_create_page_when_missing(self, rotate_module: ModuleType, tmp_path: Path) -> None:
+        """A missing version page is left alone; fragments are not deleted either."""
         fragments_dir = tmp_path / "fragments"
         fragments_dir.mkdir()
-        (fragments_dir / "0001-first.md").write_text(_ENTRY_A, encoding="utf-8")
+        fragment = fragments_dir / "0001-first.md"
+        fragment.write_text(_ENTRY_A, encoding="utf-8")
         version_page = tmp_path / "v3.18.0.md"
 
-        rotate_module.rotate_into(version_page, fragments_dir)
+        result = rotate_module.rotate_into(version_page, fragments_dir)
 
-        assert version_page.read_text(encoding="utf-8") == _ENTRY_A.strip() + "\n"
+        assert not version_page.exists()
+        assert result.consumed == []
 
     def test_deletes_consumed_fragments(self, rotate_module: ModuleType, tmp_path: Path) -> None:
         fragments_dir = tmp_path / "fragments"
@@ -183,7 +186,8 @@ class TestRotateInto:
         assert rotate_module.collect_fragments(fragments_dir) == []
         assert {p.name for p in result.consumed} == {"0001-first.md", "0002-second.md"}
 
-    def test_returns_the_rendered_section(self, rotate_module: ModuleType, tmp_path: Path) -> None:
+    def test_returns_empty_rendered_section(self, rotate_module: ModuleType, tmp_path: Path) -> None:
+        """Rotation no longer renders fragments; the version page is curated by hand."""
         fragments_dir = tmp_path / "fragments"
         fragments_dir.mkdir()
         (fragments_dir / "0001-first.md").write_text(_ENTRY_A, encoding="utf-8")
@@ -192,7 +196,7 @@ class TestRotateInto:
 
         result = rotate_module.rotate_into(version_page, fragments_dir)
 
-        assert result.rendered == _ENTRY_A.strip()
+        assert result.rendered == ""
 
 
 # --- notes_gate_ok (dual-accept during the fragments transition) ---
