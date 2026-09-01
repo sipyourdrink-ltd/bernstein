@@ -37,6 +37,12 @@ from bernstein.core.compliance.article12 import (
     render_csv,
     render_pdf,
 )
+from bernstein.core.compliance.coverage import (
+    CONTROL_EVENT_MAP,
+    ControlCoverageResult,
+    ControlCoverageStatus,
+    get_required_events,
+)
 from bernstein.core.compliance.pack import build_pack
 
 # Re-export legacy names so ``from bernstein.core.compliance import X``
@@ -60,6 +66,7 @@ __all__ = [
     "ARTICLE12_PARAGRAPH_MAP",
     "BOM_SCHEMA_URL",
     "BOM_SCHEMA_VERSION",
+    "CONTROL_EVENT_MAP",
     "CSV_FIELDS",
     "SUPPORTED_FORMATS",
     "AdapterEntry",
@@ -67,6 +74,8 @@ __all__ = [
     "BOMVerificationReport",
     "ComplianceConfig",
     "CompliancePreset",
+    "ControlCoverageResult",
+    "ControlCoverageStatus",
     "DataSourceEntry",
     "ModelEntry",
     "ParagraphFn",
@@ -81,6 +90,7 @@ __all__ = [
     "export_soc2_package",
     "generate_bom",
     "generate_sbom",
+    "get_required_events",
     "load_compliance_config",
     "parse_period",
     "persist_compliance_config",
