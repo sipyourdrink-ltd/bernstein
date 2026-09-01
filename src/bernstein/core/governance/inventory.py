@@ -37,7 +37,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # Dataclasses
 # --------------------------------------------------------------------------
@@ -167,9 +166,19 @@ def _discover_api_endpoints(workspace_root: Path) -> list[Surface]:
 
         try:
             raw = spec_path.read_text(encoding="utf-8")
-            spec = json.loads(raw) if spec_path.suffix == ".json" else None
+            if spec_path.suffix == ".json":
+                spec = json.loads(raw)
+            else:
+                import yaml
+
+                spec = yaml.safe_load(raw)
         except (OSError, json.JSONDecodeError):
             continue
+        except ImportError:
+            # YAML library not available, skip YAML files
+            if spec_path.suffix != ".json":
+                continue
+            raise
 
         if spec is None:
             continue
