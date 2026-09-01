@@ -300,6 +300,69 @@ def list_policies(framework: str | None, as_json: bool) -> None:
     click.echo(f"\nTotal: {len(policies)} policies")
 
 
+@compliance_group.command("coverage")
+@click.option(
+    "--workdir",
+    default=".",
+    show_default=True,
+    type=click.Path(path_type=Path),
+    help="Project root (parent of .sdd/).",
+)
+@click.option("--json-output", "as_json", is_flag=True, help="Print coverage summary as JSON instead of a table.")
+def coverage_command(workdir: Path, as_json: bool) -> None:
+    """Report compliance coverage per control, per enabled framework.
+
+    For each control in the chain, reports:
+      * evidenced-from-the-chain (present)
+      * partially-evidenced with the missing input named (type missing)
+      * not evidenceable by this install (unsupported)
+
+    Returns zero if the install has full coverage; non-zero otherwise.
+
+    The report maps each registered policy to the chain events that satisfy it.
+    A control is:
+      - ``evidenced``  — at least one chain event satisfies the required behaviour,
+      - ``partially-evidenced`` — the artefact kind is present but no entry matches
+        the required behaviour suffix, and the reason names the specific missing input,
+      - ``not_evidenceable`` — the control is not registered and the install cannot
+        evidence it.
+    """
+    from bernstein.core.compliance.coverage import (
+        assess_control_coverage,
+        format_coverage_report,
+    )
+    from bernstein.core.lineage.store import LineageStore
+
+    # Load the lineage log
+    store = LineageStore(workdir / ".sdd" / "lineage")
+    entries = list(store.read_log())
+    lineage_entries = [entry for entry, _ in entries]
+
+    # Assess control coverage against the chain
+    results = assess_control_coverage(lineage_entries)
+
+    if as_json:
+        import json
+
+        payload = [
+            {
+                "policy_id": r.policy_id,
+                "control_id": r.control_id,
+                "status": r.status.value,
+                "evidence_summary": r.evidence_summary,
+                "missing_inputs": r.missing_inputs,
+                "reason": r.reason,
+            }
+            for r in results
+        ]
+        click.echo(json.dumps(payload, indent=2))
+        return
+
+    # Format and display the report
+    report = format_coverage_report(results)
+    click.echo(report)
+
+
 @compliance_group.command("check")
 @click.option(
     "--framework",

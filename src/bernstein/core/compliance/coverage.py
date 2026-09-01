@@ -11,17 +11,23 @@ Public surface:
 * :class:`ControlCoverageStatus` - per-control coverage status.
 * :class:`ControlCoverageResult` - structured coverage assessment result.
 * :func:`get_required_events` - derive required event indicators for a policy.
+* :func:`assess_control_coverage` - evaluate coverage for all registered controls.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from bernstein.core.lineage.entry import LineageEntry
 
 __all__ = [
     "CONTROL_EVENT_MAP",
     "ControlCoverageResult",
     "ControlCoverageStatus",
+    "assess_control_coverage",
     "get_required_events",
 ]
 
@@ -122,3 +128,134 @@ def get_required_events(policy_id: str) -> set[str]:
     entry = CONTROL_EVENT_MAP.get(policy_id, {})
     behavior = entry.get("required_agent_behavior", "")
     return {behavior} if behavior else set()
+
+
+# ---------------------------------------------------------------------------
+# Coverage assessment
+# ---------------------------------------------------------------------------
+
+#: Suffix of the ``artefact_path`` that marks a lineage entry as an event of
+#: the corresponding ``required_agent_behavior``. A new artefact-kind prefix
+#: does not need new code branches here — it just needs a suffix in this map.
+_BEHAVIOUR_SUFFIXES: dict[str, list[str]] = {
+    "task-dispatch": ["task/"],
+    "access-control": ["auth/", "access/", "login"],
+    "change-management": ["task/", "config/", "change/", "merge/", "review/", "deploy/"],
+    "approval-required": ["approval/", "receipt/"],
+    "incident-report": ["incident/", "alert/"],
+}
+
+
+def _behaviour_from_entry(entry: LineageEntry) -> list[str]:
+    """Return the behaviour labels an entry artefact_path satisfies."""
+    path = entry.artefact_path.lower()
+    matched: list[str] = []
+    for behaviour, suffixes in _BEHAVIOUR_SUFFIXES.items():
+        if any(path.startswith(s) for s in suffixes):
+            matched.append(behaviour)
+    return matched
+
+
+def assess_control_coverage(
+    entries: list[LineageEntry],
+) -> list[ControlCoverageResult]:
+    """Evaluate per-control coverage against the chain.
+
+    Maps each ``policy_id`` in :data:`CONTROL_EVENT_MAP` to the chain events
+    that satisfy it, reporting one of three statuses per control:
+
+    * :attr:`ControlCoverageStatus.EVIDENCED` — at least one event in *entries*
+      satisfies the ``required_agent_behavior``.
+    * :attr:`ControlCoverageStatus.PARTIALLY_EVIDENCED` — the artefact kind
+      is present but no entry matches the required behaviour suffix.
+    * :attr:`ControlCoverageStatus.NOT_EVIDENCEABLE` — the control is not
+      registered in :data:`CONTROL_EVENT_MAP` and the install cannot
+      evidence it.
+
+    Args:
+        entries: Chain entries (lineage entries, audit events, etc.) to
+            assess against.
+
+    Returns:
+        One :class:`ControlCoverageResult` per registered control, sorted by
+        ``policy_id`` then ``control_id``.
+    """
+    observed_behaviours: set[str] = set()
+    observed_artefact_kinds: set[str] = set()
+    for entry in entries:
+        observed_artefact_kinds.add(entry.artefact_kind)
+        observed_behaviours.update(_behaviour_from_entry(entry))
+
+    results: list[ControlCoverageResult] = []
+    for policy_id, spec in sorted(CONTROL_EVENT_MAP.items()):
+        required = get_required_events(policy_id)
+        artefact_kind = spec.get("required_artefact_kind", "")
+        control_id = f"{policy_id}-control"
+
+        if not required:
+            results.append(
+                ControlCoverageResult(
+                    policy_id=policy_id,
+                    control_id=control_id,
+                    status=ControlCoverageStatus.NOT_EVIDENCEABLE,
+                    evidence_summary="No required behaviour mapped for this policy.",
+                    missing_inputs=list(required),
+                    reason=f"Policy '{policy_id}' has no required_agent_behavior in CONTROL_EVENT_MAP.",
+                )
+            )
+            continue
+
+        missing = [b for b in required if b not in observed_behaviours]
+
+        if not missing:
+            results.append(
+                ControlCoverageResult(
+                    policy_id=policy_id,
+                    control_id=control_id,
+                    status=ControlCoverageStatus.EVIDENCED,
+                    evidence_summary=f"Chain contains {len(entries)} entries; required behaviour '{list(required)[0]}' observed.",
+                    missing_inputs=[],
+                    reason="Required chain events observed in the evidence set.",
+                )
+            )
+        elif artefact_kind and artefact_kind in observed_artefact_kinds:
+            results.append(
+                ControlCoverageResult(
+                    policy_id=policy_id,
+                    control_id=control_id,
+                    status=ControlCoverageStatus.PARTIALLY_EVIDENCED,
+                    evidence_summary=f"Entries of kind '{artefact_kind}' present but no event matching required behaviour '{list(required)[0]}'.",
+                    missing_inputs=list(missing),
+                    reason=f"No run in the period emitted the required '{list(required)[0]}' event.",
+                )
+            )
+        else:
+            results.append(
+                ControlCoverageResult(
+                    policy_id=policy_id,
+                    control_id=control_id,
+                    status=ControlCoverageStatus.PARTIALLY_EVIDENCED,
+                    evidence_summary=f"No entries of kind '{artefact_kind}' observed in the chain.",
+                    missing_inputs=list(missing),
+                    reason=f"No run in the period emitted the required '{list(required)[0]}' event.",
+                )
+            )
+
+    return results
+
+
+def format_coverage_report(results: list[ControlCoverageResult]) -> str:
+    """Render coverage results as a human-readable text table."""
+    lines = [
+        "=" * 72,
+        "Compliance Coverage Report",
+        "=" * 72,
+        f"{'Policy ID':<24} {'Control':<24} {'Status':<22} Reason",
+        "-" * 72,
+    ]
+    for r in results:
+        status = r.status.value
+        reason = r.reason if r.missing_inputs else r.evidence_summary
+        lines.append(f"{r.policy_id:<24} {r.control_id:<24} {status:<22} {reason}")
+    lines.append("=" * 72)
+    return "\n".join(lines)
