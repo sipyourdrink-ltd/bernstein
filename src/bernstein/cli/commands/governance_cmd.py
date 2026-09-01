@@ -33,7 +33,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import NoReturn
+from typing import Any, NoReturn, cast
 
 import click
 from rich.console import Console
@@ -287,12 +287,15 @@ def governance_ingest_cmd(
         raw = path.read_text(encoding="utf-8")
 
     try:
-        payload = json.loads(raw)
+        payload: Any = json.loads(raw)
     except json.JSONDecodeError as exc:
         _reject(f"payload is not valid JSON: {exc}")
 
-    spans = [payload] if isinstance(payload, dict) else payload
-    if not isinstance(spans, list):
+    if isinstance(payload, dict):
+        spans: list[dict[str, Any]] = [cast("dict[str, Any]", payload)]
+    elif isinstance(payload, list):
+        spans = cast("list[dict[str, Any]]", payload)
+    else:
         _reject(f"payload must be a span object or a list of them, got {type(payload).__name__}")
 
     try:

@@ -46,7 +46,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -600,7 +600,10 @@ class IngestOTLPReceipt:
         for event in reversed(events):
             stored = event.details.get("receipt")
             if isinstance(stored, dict):
-                return replace(IngestReceipt.from_dict(stored), chain_entry_hash=event.hmac)
+                return replace(
+                    IngestReceipt.from_dict(cast("dict[str, Any]", stored)),
+                    chain_entry_hash=event.hmac,
+                )
         return None
 
     def _load_private_key(self) -> str:
