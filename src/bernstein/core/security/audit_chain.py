@@ -976,6 +976,9 @@ EVENT_TOOLCALL_ATTESTATION = "toolcall.attestation"
 EVENT_TOOLCALL_ENFORCED_DISPATCH = "toolcall.enforced_dispatch"
 EVENT_IDENTITY_SPAWN_ATTESTATION = "identity.spawn_attestation"
 
+#: Issue #5031 -- session revocation propagation
+EVENT_IDENTITY_REVOKED = "identity.revoked"
+
 #: Issue #2930 -- emitted whenever an eval run seals a clean-run attestation
 #: (:mod:`bernstein.eval.clean_run`). The event mirrors the attestation's
 #: identity into the HMAC chain: the attestation hash, the verdict, the sealed
@@ -6575,6 +6578,45 @@ def record_eval_gate_revocation(
     )
 
 
+def record_identity_revoked(
+    *,
+    chain: AuditChainStore,
+    session_id: str,
+    user_id: str,
+    revoked_at: float,
+    actor: str = "auth",
+) -> AuditEvent:
+    """Append an ``identity.revoked`` event into *chain* (#5031).
+
+    Records a session revocation in the HMAC-chained audit log. The event
+    captures the session and user identifiers, the revocation timestamp, and
+    the previous chain digest -- establishing an auditable chain position
+    for the revocation that enforcement points can reference when recording
+    their acknowledgements.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        session_id: The revoked session identifier.
+        user_id: The user whose session was revoked.
+        revoked_at: Unix timestamp when the revocation was issued.
+        actor: Recorded actor; defaults to ``"auth"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_IDENTITY_REVOKED,
+        actor=actor,
+        resource_type="session_revocation",
+        resource_id=session_id,
+        details={
+            "session_id": session_id,
+            "user_id": user_id,
+            "revoked_at": revoked_at,
+        },
+    )
+
+
 def record_trajectory_receipt(
     *,
     chain: AuditChainStore,
@@ -9160,6 +9202,7 @@ __all__ = [
     "EVENT_FORK_SNAPSHOT",
     "EVENT_GATE_ADJUDICATION",
     "EVENT_GOVERNANCE_DECISION",
+    "EVENT_IDENTITY_REVOKED",
     "EVENT_INPUT_REFUSAL",
     "EVENT_INTENT_CAPSULE",
     "EVENT_INTENT_DRIFT",
