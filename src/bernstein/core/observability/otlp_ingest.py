@@ -22,7 +22,7 @@ Design:
   what is not declared is not claimed.
 * **No GenAI conventions → untyped.** A span without the convention
   attributes is recorded as ``UntypedActivity`` carrying only the raw
-  trace/span idenfifiers. The chain receives it as untyped governance
+  trace/span identifiers. The chain receives it as untyped governance
   activity rather than a guessed-at type.
 * **Malformed payload → rejection.** ``ingest_payload`` raises
   ``OTLPIngestError`` on bad input and appends nothing to any chain.
