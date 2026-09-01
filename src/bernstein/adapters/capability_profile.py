@@ -58,6 +58,7 @@ import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.adapters._contract import (
@@ -76,9 +77,11 @@ from bernstein.adapters.base import (
 )
 from bernstein.adapters.env_isolation import build_filtered_env
 
+#: Default location for persisted draft documents, relative to repo root.
+DEFAULT_DRAFTS_DIR = Path(".sdd") / "adapters" / "drafts"
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
-    from pathlib import Path
 
     from bernstein.core.models import ModelConfig
 
@@ -1382,11 +1385,55 @@ _PROFILE_LIST: tuple[AdapterCapabilityProfile, ...] = (
 PROFILES: dict[str, AdapterCapabilityProfile] = {profile.name: profile for profile in _PROFILE_LIST}
 
 
-def get_profile(name: str) -> AdapterCapabilityProfile:
+def _discover_draft_profiles(drafts_dir: Path | None = None) -> dict[str, AdapterCapabilityProfile]:
+    """Discover and load draft profiles from the drafts directory.
+
+    Drafts are persisted YAML files produced by ``bernstein adapters draft``.
+    Each draft becomes a FACTORY profile available alongside shipped profiles.
+
+    Args:
+        drafts_dir: Directory containing draft YAML files. Defaults to
+            :data:`DEFAULT_DRAFTS_DIR` relative to the current working directory.
+
+    Returns:
+        Dictionary mapping profile names to draft-derived profiles.
+        Empty dict if the directory doesn't exist or contains no valid drafts.
+    """
+    from bernstein.adapters.draft import load_profile_from_draft
+
+    if drafts_dir is None:
+        drafts_dir = DEFAULT_DRAFTS_DIR
+
+    if not drafts_dir.is_dir():
+        return {}
+
+    drafts: dict[str, AdapterCapabilityProfile] = {}
+    for draft_file in sorted(drafts_dir.glob("*.yaml")):
+        try:
+            draft = load_profile_from_draft(draft_file)
+            # Build a minimal AdapterCapabilityProfile from the draft's InvocationSpec
+            profile = AdapterCapabilityProfile(
+                name=draft.invocation.binary,
+                display_name=draft.invocation.binary,
+                implementation=ProfileImplementation.FACTORY,
+                invocation=draft.invocation,
+                notes=f"Drafted profile from {draft_file.name}",
+            )
+            drafts[profile.name] = profile
+        except (ValueError, KeyError) as exc:
+            # Log but don't fail - malformed drafts are skipped gracefully
+            logger.debug("Skipping malformed draft %s: %s", draft_file, exc)
+            continue
+    return drafts
+
+
+def get_profile(name: str, *, include_drafts: bool = True) -> AdapterCapabilityProfile:
     """Return the capability profile registered under ``name``.
 
     Args:
         name: Registry key, for example ``"pydantic_ai"``.
+        include_drafts: Whether to include draft profiles from the drafts
+            directory. Defaults to True.
 
     Returns:
         The registered profile.
@@ -1396,16 +1443,34 @@ def get_profile(name: str) -> AdapterCapabilityProfile:
             Agents without a profile are served by the generic CLI
             fallback, which is unaffected by this layer.
     """
-    try:
+    # Check shipped profiles first
+    if name in PROFILES:
         return PROFILES[name]
-    except KeyError:
-        available = ", ".join(sorted(PROFILES)) or "<none>"
-        raise UnknownProfileError(f"no capability profile registered for {name!r}. Available: {available}") from None
+
+    # Check draft profiles if enabled
+    if include_drafts:
+        drafts = _discover_draft_profiles()
+        if name in drafts:
+            return drafts[name]
+
+    available = ", ".join(sorted(PROFILES)) or "<none>"
+    raise UnknownProfileError(f"no capability profile registered for {name!r}. Available: {available}") from None
 
 
-def iter_profiles() -> Iterator[tuple[str, AdapterCapabilityProfile]]:
-    """Yield every shipped profile as ``(name, profile)``, sorted by name."""
+def iter_profiles(*, include_drafts: bool = True) -> Iterator[tuple[str, AdapterCapabilityProfile]]:
+    """Yield every profile as ``(name, profile)``, sorted by name.
+
+    Args:
+        include_drafts: Whether to include draft profiles from the drafts
+            directory. Defaults to True.
+    """
     yield from sorted(PROFILES.items())
+    if include_drafts:
+        drafts = _discover_draft_profiles()
+        # Yield drafts that don't shadow shipped profiles
+        for name, profile in sorted(drafts.items()):
+            if name not in PROFILES:
+                yield name, profile
 
 
 #: Adapter classes built from the shipped ``FACTORY`` profiles, keyed by
@@ -1497,6 +1562,7 @@ def profile_hash_for(name: str) -> str | None:
 __all__ = [
     "BOOLEAN_CAPABILITIES",
     "CAPABILITY_TOKEN_PREFIX",
+    "DEFAULT_DRAFTS_DIR",
     "PROFILES",
     "AdapterCapabilityProfile",
     "CapabilityMismatchError",

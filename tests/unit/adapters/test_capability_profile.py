@@ -60,6 +60,7 @@ from bernstein.adapters.conformance import (
     assert_strategies_declared,
     load_golden_transcripts,
 )
+from bernstein.adapters.draft import Draft
 from bernstein.adapters.registry import get_adapter, iter_adapter_specs
 from bernstein.core.agents.multimodal import is_multimodal_capable
 
@@ -896,3 +897,151 @@ class TestCapabilityRequirementsFromTokens:
     def test_non_integer_worker_count_is_refused(self) -> None:
         with pytest.raises(ProfileValidationError):
             capability_requirements_from_tokens(["capability:max_parallel_workers=lots"])
+
+
+# ---------------------------------------------------------------------------
+# Draft profile discovery
+# ---------------------------------------------------------------------------
+
+
+class TestDraftProfileDiscovery:
+    """Draft profiles from .sdd/adapters/drafts/ integrate into the registry."""
+
+    def test_discover_draft_profiles_from_directory(self, tmp_path: Path) -> None:
+        """Draft YAML files are discovered and loaded as profiles."""
+        from bernstein.adapters.capability_profile import (
+            DEFAULT_DRAFTS_DIR,
+            AdapterCapabilityProfile,
+            ProfileImplementation,
+            _discover_draft_profiles,
+        )
+        from bernstein.adapters.draft import write_draft_yaml
+        from bernstein.adapters.capability_profile import InvocationSpec
+
+        # Create a draft file
+        drafts_dir = tmp_path / "drafts"
+        drafts_dir.mkdir(parents=True)
+
+        draft = Draft(
+            invocation=InvocationSpec(
+                binary="test-agent",
+                model_flag="--model",
+                prompt_flag="--prompt",
+            ),
+            evidence_byte_range=(10, 20),
+        )
+        write_draft_yaml(draft, drafts_dir / "test-agent.yaml")
+
+        # Discover drafts
+        profiles = _discover_draft_profiles(drafts_dir)
+
+        assert "test-agent" in profiles
+        assert profiles["test-agent"].invocation.binary == "test-agent"
+        assert profiles["test-agent"].implementation == ProfileImplementation.FACTORY
+
+    def test_discover_draft_profiles_handles_missing_directory(self, tmp_path: Path) -> None:
+        """Missing drafts directory returns empty dict, not error."""
+        from bernstein.adapters.capability_profile import _discover_draft_profiles
+
+        non_existent = tmp_path / "does-not-exist"
+        profiles = _discover_draft_profiles(non_existent)
+
+        assert profiles == {}
+
+    def test_discover_draft_profiles_skips_malformed_files(self, tmp_path: Path) -> None:
+        """Malformed draft files are skipped gracefully."""
+        from bernstein.adapters.capability_profile import _discover_draft_profiles
+
+        drafts_dir = tmp_path / "drafts"
+        drafts_dir.mkdir(parents=True)
+
+        # Write a malformed YAML file
+        bad_file = drafts_dir / "bad-draft.yaml"
+        bad_file.write_text("not: valid\nmissing: required_sections\n")
+
+        profiles = _discover_draft_profiles(drafts_dir)
+
+        assert profiles == {}
+
+    def test_iter_profiles_includes_drafts(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """iter_profiles yields both shipped and draft profiles."""
+        from bernstein.adapters import capability_profile
+        from bernstein.adapters.capability_profile import (
+            iter_profiles,
+            PROFILES,
+        )
+        from bernstein.adapters.draft import write_draft_yaml
+        from bernstein.adapters.capability_profile import InvocationSpec
+
+        # Patch DEFAULT_DRAFTS_DIR to use temp directory
+        drafts_dir = tmp_path / "drafts"
+        drafts_dir.mkdir(parents=True)
+        monkeypatch.setattr(capability_profile, "DEFAULT_DRAFTS_DIR", drafts_dir)
+
+        # Create a draft
+        draft = Draft(
+            invocation=InvocationSpec(binary="drafted-agent"),
+        )
+        write_draft_yaml(draft, drafts_dir / "drafted-agent.yaml")
+
+        # Collect all profiles
+        all_profiles = dict(iter_profiles())
+
+        # Shipped profiles are present
+        for name in PROFILES:
+            assert name in all_profiles
+
+        # Draft is also present
+        assert "drafted-agent" in all_profiles
+
+    def test_get_profile_finds_draft(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """get_profile returns a draft profile when not in shipped profiles."""
+        from bernstein.adapters import capability_profile
+        from bernstein.adapters.capability_profile import (
+            get_profile,
+            UnknownProfileError,
+        )
+        from bernstein.adapters.draft import write_draft_yaml
+        from bernstein.adapters.capability_profile import InvocationSpec
+
+        # Patch DEFAULT_DRAFTS_DIR
+        drafts_dir = tmp_path / "drafts"
+        drafts_dir.mkdir(parents=True)
+        monkeypatch.setattr(capability_profile, "DEFAULT_DRAFTS_DIR", drafts_dir)
+
+        # Create a draft
+        draft = Draft(
+            invocation=InvocationSpec(binary="unique-draft"),
+        )
+        write_draft_yaml(draft, drafts_dir / "unique-draft.yaml")
+
+        # get_profile finds it
+        profile = get_profile("unique-draft")
+        assert profile.invocation.binary == "unique-draft"
+
+        # Non-existent raises
+        with pytest.raises(UnknownProfileError):
+            get_profile("no-such-profile")
+
+    def test_draft_profiles_preserve_provenance(self, tmp_path: Path) -> None:
+        """Draft profiles preserve evidence byte range through load round-trip."""
+        from bernstein.adapters.capability_profile import _discover_draft_profiles
+        from bernstein.adapters.draft import write_draft_yaml, load_profile_from_draft
+        from bernstein.adapters.capability_profile import InvocationSpec
+
+        drafts_dir = tmp_path / "drafts"
+        drafts_dir.mkdir(parents=True)
+
+        # Create a draft with provenance
+        draft = Draft(
+            invocation=InvocationSpec(
+                binary="prov-agent",
+                model_flag="--model",
+            ),
+            evidence_byte_range=(42, 48),
+        )
+        write_draft_yaml(draft, drafts_dir / "prov-agent.yaml")
+
+        # Load via load_profile_from_draft to verify provenance
+        loaded_draft = load_profile_from_draft(drafts_dir / "prov-agent.yaml")
+        assert loaded_draft.evidence_byte_range == (42, 48)

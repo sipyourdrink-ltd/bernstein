@@ -14,7 +14,8 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from bernstein.adapters.draft import read_draft_document
+from bernstein.adapters.capability_profile import InvocationSpec
+from bernstein.adapters.draft import Draft, read_draft_document
 from bernstein.cli.commands.adapters_draft_cmd import _execute_draft
 from bernstein.cli.main import cli
 
@@ -180,3 +181,126 @@ def test_adapters_draft_cli_declined_via_stdin_writes_nothing(tmp_path: Path) ->
 
     assert result.exit_code == 1
     assert not out_dir.exists()
+
+
+# ---------------------------------------------------------------------------
+# `bernstein adapters drafts list` and `bernstein adapters drafts show`
+# ---------------------------------------------------------------------------
+
+
+def test_adapters_drafts_list_empty_directory(tmp_path: Path) -> None:
+    """The list command reports no drafts when directory is empty."""
+    drafts_dir = tmp_path / "drafts"
+    drafts_dir.mkdir(parents=True)  # Create the directory first
+
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        ["adapters", "drafts", "list", "--drafts-dir", str(drafts_dir)],
+    )
+
+    assert result.exit_code == 0
+    assert "No draft profiles found" in result.output
+
+
+def test_adapters_drafts_list_missing_directory(tmp_path: Path) -> None:
+    """The list command reports when drafts directory doesn't exist."""
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        ["adapters", "drafts", "list", "--drafts-dir", str(tmp_path / "nonexistent")],
+    )
+
+    assert result.exit_code == 0
+    assert "No drafts directory found" in result.output
+
+
+def test_adapters_drafts_list_shows_drafts(tmp_path: Path) -> None:
+    """The list command shows discovered draft profiles."""
+    from bernstein.adapters.draft import write_draft_yaml
+    from bernstein.adapters.capability_profile import InvocationSpec
+
+    drafts_dir = tmp_path / "drafts"
+    drafts_dir.mkdir(parents=True)
+
+    # Create two drafts
+    draft1 = Draft(invocation=InvocationSpec(binary="agent-one"))
+    draft2 = Draft(invocation=InvocationSpec(binary="agent-two"))
+
+    write_draft_yaml(draft1, drafts_dir / "agent-one.yaml")
+    write_draft_yaml(draft2, drafts_dir / "agent-two.yaml")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["adapters", "drafts", "list", "--drafts-dir", str(drafts_dir)],
+    )
+
+    assert result.exit_code == 0
+    assert "Persisted Drafts (2)" in result.output
+    assert "agent-one" in result.output
+    assert "agent-two" in result.output
+
+
+def test_adapters_drafts_show_displays_content(tmp_path: Path) -> None:
+    """The show command displays the full draft content."""
+    from bernstein.adapters.draft import write_draft_yaml
+    from bernstein.adapters.capability_profile import InvocationSpec
+
+    drafts_dir = tmp_path / "drafts"
+    drafts_dir.mkdir(parents=True)
+
+    draft = Draft(
+        invocation=InvocationSpec(
+            binary="show-agent",
+            model_flag="--model",
+            prompt_flag="--prompt",
+        ),
+        evidence_byte_range=(10, 16),
+    )
+    write_draft_yaml(draft, drafts_dir / "show-agent.yaml")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["adapters", "drafts", "show", "show-agent", "--drafts-dir", str(drafts_dir)],
+    )
+
+    assert result.exit_code == 0
+    assert "Draft profile: show-agent" in result.output
+    assert "[invocation]" in result.output
+    assert "binary: show-agent" in result.output
+    assert "[provenance]" in result.output
+
+
+def test_adapters_drafts_show_missing_binary_exits_nonzero(tmp_path: Path) -> None:
+    """The show command exits 1 when the binary doesn't exist."""
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        ["adapters", "drafts", "show", "no-such-binary", "--drafts-dir", str(tmp_path / "drafts")],
+    )
+
+    assert result.exit_code == 1
+    assert "No draft found" in result.output
+
+
+def test_adapters_drafts_show_malformed_draft_exits_nonzero(tmp_path: Path) -> None:
+    """The show command exits 1 when the draft file is malformed."""
+    drafts_dir = tmp_path / "drafts"
+    drafts_dir.mkdir(parents=True)
+
+    # Write invalid YAML
+    (drafts_dir / "bad.yaml").write_text("not: valid\nmissing: invocation\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["adapters", "drafts", "show", "bad", "--drafts-dir", str(drafts_dir)],
+    )
+
+    assert result.exit_code == 1
+    assert "Failed to read draft" in result.output

@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import click
+import yaml
 
 from bernstein.adapters.draft import Draft, read_draft_document, write_draft_yaml
 from bernstein.adapters.onboarding import draft_from_probe
@@ -187,13 +188,118 @@ def adapters_draft_cmd(
 
 
 def register_adapters_draft(group: click.Group) -> None:
-    """Attach ``draft`` to an existing ``adapters`` group."""
+    """Attach ``draft`` and ``drafts`` commands to an existing ``adapters`` group."""
     group.add_command(adapters_draft_cmd, "draft")
+    group.add_command(drafts_group)
+
+
+@click.group("drafts")
+def drafts_group() -> None:
+    """List and inspect persisted draft profiles."""
+
+
+@drafts_group.command("list")
+@click.option(
+    "--drafts-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help=f"Directory containing draft YAML files (default: {DEFAULT_DRAFTS_DIR}).",
+)
+def list_drafts(drafts_dir: Path | None) -> None:
+    """List all persisted draft profiles in the drafts directory.
+
+    Shows the binary name (used as the profile key) and the source file
+    for each draft discovered in the drafts directory.
+    """
+    target_dir = drafts_dir if drafts_dir is not None else DEFAULT_DRAFTS_DIR
+
+    if not target_dir.is_dir():
+        click.echo(f"No drafts directory found at {target_dir}")
+        return
+
+    draft_files = sorted(target_dir.glob("*.yaml"))
+    if not draft_files:
+        click.echo(f"No draft profiles found in {target_dir}")
+        return
+
+    from rich.table import Table
+
+    from bernstein.cli.helpers import console
+
+    table = Table(title=f"Persisted Drafts ({len(draft_files)})", show_lines=False)
+    table.add_column("binary", style="cyan", no_wrap=True)
+    table.add_column("file", style="dim")
+
+    for draft_file in draft_files:
+        try:
+            document = read_draft_document(draft_file)
+            binary = document.get("invocation", {}).get("binary", "<unknown>")
+            table.add_row(str(binary), draft_file.name)
+        except (ValueError, KeyError):
+            table.add_row("<malformed>", draft_file.name)
+
+    console.print(table)
+
+
+@drafts_group.command("show")
+@click.argument("binary")
+@click.option(
+    "--drafts-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help=f"Directory containing draft YAML files (default: {DEFAULT_DRAFTS_DIR}).",
+)
+def show_draft(binary: str, drafts_dir: Path | None) -> None:
+    """Show the full content of a persisted draft profile.
+
+    BINARY is the adapter binary name (e.g., 'my-adapter') which maps to
+    'my-adapter.yaml' in the drafts directory.
+    """
+    target_dir = drafts_dir if drafts_dir is not None else DEFAULT_DRAFTS_DIR
+    draft_file = target_dir / f"{binary}.yaml"
+
+    if not draft_file.is_file():
+        click.echo(f"No draft found for binary {binary!r} at {draft_file}", err=True)
+        raise SystemExit(1)
+
+    try:
+        document = read_draft_document(draft_file)
+    except ValueError as exc:
+        click.echo(f"Failed to read draft: {exc}", err=True)
+        raise SystemExit(1) from None
+
+    # Display the document in a readable format
+    click.echo(f"Draft profile: {binary}")
+    click.echo(f"Source: {draft_file}")
+    click.echo()
+
+    # Show invocation section
+    invocation = document.get("invocation", {})
+    if invocation:
+        click.echo("[invocation]")
+        click.echo(yaml.dump(invocation, default_flow_style=False, sort_keys=False).rstrip())
+
+    # Show contract section
+    contract = document.get("contract", {})
+    if contract:
+        click.echo()
+        click.echo("[contract]")
+        click.echo(yaml.dump(contract, default_flow_style=False, sort_keys=False).rstrip())
+
+    # Show provenance section
+    provenance = document.get("provenance", {})
+    if provenance:
+        click.echo()
+        click.echo("[provenance]")
+        click.echo(yaml.dump(provenance, default_flow_style=False, sort_keys=False).rstrip())
 
 
 __all__ = [
     "DEFAULT_DRAFTS_DIR",
     "DEFAULT_EVIDENCE_DIR",
     "adapters_draft_cmd",
+    "drafts_group",
+    "list_drafts",
     "register_adapters_draft",
+    "show_draft",
 ]
