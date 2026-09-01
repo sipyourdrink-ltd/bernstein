@@ -63,9 +63,7 @@ _HEX64: re.Pattern[str] = re.compile(r"\A[0-9a-f]{64}\Z")
 ACTIVITY_SOURCES: frozenset[str] = frozenset({"scheduler", "adapter"})
 
 #: Closed set of valid ``provider`` values for :class:`ModelRef` (issue #5037).
-MODEL_REF_PROVIDERS: frozenset[str] = frozenset(
-    {"openai", "anthropic", "google", "azure", "ollama", "local"}
-)
+MODEL_REF_PROVIDERS: frozenset[str] = frozenset({"openai", "anthropic", "google", "azure", "ollama", "local"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,9 +90,7 @@ class ModelRef:
         if self.version is not None and not self.version:
             raise ValueError("version must be a non-empty string when not None")
         if self.routing_decision_hash and not self.routing_decision_hash.startswith("sha256:"):
-            raise ValueError(
-                f"routing_decision_hash must start with 'sha256:', got {self.routing_decision_hash!r}"
-            )
+            raise ValueError(f"routing_decision_hash must start with 'sha256:', got {self.routing_decision_hash!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,9 +157,8 @@ class LineageEntry:
             for d in self.attachment_digests:
                 if len(d) != 64 or not _HEX64.match(d):
                     raise ValueError(f"attachment digest must be 64 lower-case hex chars, got {d!r}")
-        if self.model_ref is not None:
-            if not isinstance(self.model_ref, ModelRef):
-                raise ValueError(f"model_ref must be a ModelRef instance, got {type(self.model_ref).__name__}")
+        if self.model_ref is not None and not isinstance(self.model_ref, ModelRef):
+            raise ValueError(f"model_ref must be a ModelRef instance, got {type(self.model_ref).__name__}")
 
 
 def _canonical_body(entry: LineageEntry) -> dict[str, object]:
