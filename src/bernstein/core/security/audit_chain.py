@@ -2621,8 +2621,20 @@ def _compute_tool_digest(tool_names: tuple[str, ...]) -> str:
 
 @dataclass(frozen=True)
 class MCPCapabilityDriftDetails:
-    """Structured payload for the ``mcp.capability_drift`` event."""
+    """Structured payload for the ``mcp.capability_drift`` event.
 
+    Attributes:
+        run_id: The run that produced the drift event.
+        server_name: The MCP server name that changed.
+        previous_digest: The previous capability digest (``None`` for first
+            contact with a previously unseen server).
+        current_digest: The current capability digest.
+        added_tools: Tuple of tool names added since the last contact.
+        removed_tools: Tuple of tool names removed since the last contact.
+        tool_count: Total number of tools currently advertised.
+    """
+
+    run_id: str
     server_name: str
     previous_digest: str | None
     current_digest: str
@@ -2632,6 +2644,7 @@ class MCPCapabilityDriftDetails:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "run_id": self.run_id,
             "server_name": self.server_name,
             "previous_digest": self.previous_digest,
             "current_digest": self.current_digest,
@@ -2644,6 +2657,7 @@ class MCPCapabilityDriftDetails:
 def record_mcp_capability_drift(
     *,
     chain: AuditChainStore,
+    run_id: str,
     server_name: str,
     current_tools: tuple[str, ...],
     previous_tools: tuple[str, ...] | None = None,
@@ -2658,6 +2672,7 @@ def record_mcp_capability_drift(
 
     Args:
         chain: The audit chain store accepting the entry.
+        run_id: The run that produced the drift event.
         server_name: The MCP server name being observed.
         current_tools: The tool names the server declared on this call.
         previous_tools: The tool names the server declared previously;
@@ -2673,6 +2688,7 @@ def record_mcp_capability_drift(
     removed_tools = tuple(sorted(set(previous_tools or ()) - set(current_tools)))
 
     payload = MCPCapabilityDriftDetails(
+        run_id=run_id,
         server_name=server_name,
         previous_digest=previous_digest,
         current_digest=current_digest,
@@ -9032,76 +9048,6 @@ class MCPCapabilityDriftDetails:
         }
 
 
-def record_mcp_capability_drift(
-    *,
-    chain: AuditChainStore,
-    run_id: str,
-    server_name: str,
-    previous_digest: str | None,
-    current_digest: str,
-    added_tools: tuple[str, ...],
-    removed_tools: tuple[str, ...],
-    tool_count: int,
-) -> AuditEvent:
-    """Append a ``mcp.capability_drift`` event into *chain* (#4975).
-
-    The event records that the advertised capability set of an MCP server
-    has changed between two connections. The first contact event carries
-    ``previous_digest=None`` and ``added_tools=()`` so a verifier can
-    distinguish "new server" from "new tools on existing server".
-
-    Args:
-        chain: The audit chain store accepting the entry.
-        run_id: The run that produced the drift event.
-        server_name: The MCP server name that changed.
-        previous_digest: The previous capability digest (``None`` for first
-            contact).
-        current_digest: The current capability digest.
-        added_tools: Tuple of tool names added since the last contact.
-        removed_tools: Tuple of tool names removed since the last contact.
-        tool_count: Total number of tools currently advertised.
-
-    Returns:
-        The recorded :class:`AuditEvent`. The event details payload
-        carries every input plus ``prev_chain_digest`` (set to the chain
-        head at write time).
-    """
-    payload = MCPCapabilityDriftDetails(
-        run_id=run_id,
-        server_name=server_name,
-        previous_digest=previous_digest,
-        current_digest=current_digest,
-        added_tools=added_tools,
-        removed_tools=removed_tools,
-        tool_count=tool_count,
-    ).to_dict()
-    return chain.log_with_prev_digest(
-        event_type=EVENT_MCP_CAPABILITY_DRIFT,
-        actor=server_name,
-        resource_type="capability_drift",
-        resource_id=current_digest,
-        details=payload,
-    )
-
-
-@dataclass(frozen=True)
-class CapabilityDeltaDetails:
-    """Structured payload for the ``capability.delta_recorded`` event."""
-
-    run_id: str
-    role: str
-    delta_hash: str
-    is_widening: bool
-    changes_json: str
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "run_id": self.run_id,
-            "role": self.role,
-            "delta_hash": self.delta_hash,
-            "is_widening": self.is_widening,
-            "changes_json": self.changes_json,
-        }
 
 
 def record_capability_delta(
@@ -9446,7 +9392,6 @@ __all__ = [
     "ForkSnapshotDetails",
     "MCPCapabilityDriftDetails",
     "MandateConsentReceiptDetails",
-    "MCPCapabilityDriftDetails",
     "MemoryWriteDetails",
     "MultimodalAttachDetails",
     "PaymentReceiptDetails",
