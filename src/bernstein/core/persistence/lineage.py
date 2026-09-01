@@ -42,6 +42,7 @@ from pathlib import Path  # noqa: TC003 -- runtime use in dataclass and helpers
 from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.persistence.wal import WALReader, WALWriter
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -304,7 +305,7 @@ def canonical_record_bytes(record: LineageRecord) -> bytes:
         "timestamp": record.timestamp,
         "regulatory_class": record.regulatory_class,
     }
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return canonical_bytes(payload)
 
 
 def encode_signature(sig: bytes) -> str:

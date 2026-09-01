@@ -29,6 +29,8 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.security.canonical import canonical_bytes
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
@@ -75,7 +77,7 @@ KNOB_FIELDS = ("effort", "lane", "cache_strategy", "rate_multiplier")
 
 def _digest_value(value: Any) -> str:
     """Return a canonical ``sha256:`` digest of a single knob field value."""
-    payload = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    payload = canonical_bytes(value)
     return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
@@ -340,7 +342,7 @@ class DispatchDecision:
 
     def canonical_bytes(self) -> bytes:
         """Canonical JSON bytes of the full decision (sealed into lineage)."""
-        return json.dumps(self.to_dict(), ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        return canonical_bytes(self.to_dict())
 
     def verify_self_hash(self) -> bool:
         """True iff ``decision_hash`` recomputes from the current field body.
@@ -379,7 +381,7 @@ class DispatchDecision:
 
 
 def _hash_obj(obj: Any) -> str:
-    payload = json.dumps(obj, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    payload = canonical_bytes(obj)
     return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 

@@ -227,8 +227,14 @@ class EvidencePack:
 # ---------------------------------------------------------------------------
 
 
-def _canonical_json(payload: Any) -> bytes:
-    """Serialise ``payload`` as deterministic JSON (sort_keys, indent=2)."""
+def _pack_json(payload: Any) -> bytes:
+    """Serialise ``payload`` for storage inside the pack.
+
+    Indented, sorted keys, trailing newline: presentation bytes an auditor
+    reads. Every hash recorded in the manifest is computed over the stored
+    bytes, so this is a file format, not a signing canonicalization
+    (:mod:`bernstein.core.security.canonical` owns that rule).
+    """
     return (json.dumps(payload, sort_keys=True, indent=2) + "\n").encode("utf-8")
 
 
@@ -415,7 +421,7 @@ def _build_data_catalog(events: list[dict[str, Any]]) -> bytes:
         "resources": {rtype: dict(sorted(items.items())) for rtype, items in sorted(catalog.items())},
         "total_events": len(events),
     }
-    return _canonical_json(payload)
+    return _pack_json(payload)
 
 
 def _read_text_directory(directory: Path) -> dict[str, bytes]:
@@ -582,7 +588,7 @@ def build_evidence_pack(
         "controls": mapping["controls"],
         "deferred": mapping.get("deferred", []),
     }
-    controls_bytes = _canonical_json(controls_payload)
+    controls_bytes = _pack_json(controls_payload)
 
     policy_files = _read_text_directory(policy_dir)
     attestation_files = _read_text_directory(attestations_dir)
@@ -639,7 +645,7 @@ def build_evidence_pack(
     # input produce the same SHA-256. Operators who need a real "issued
     # at" timestamp should sign the zip externally with their CI's
     # provenance attestation (e.g. ``gh attestation``).
-    artefacts["manifest.json"] = _canonical_json(manifest)
+    artefacts["manifest.json"] = _pack_json(manifest)
 
     archive_bytes = _zip_artefacts(artefacts)
     archive_sha256 = hashlib.sha256(archive_bytes).hexdigest()

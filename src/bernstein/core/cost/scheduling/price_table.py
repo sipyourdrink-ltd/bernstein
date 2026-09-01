@@ -28,12 +28,12 @@ drop -- identical semantics to
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.cost.model_prices import MODEL_COSTS_PER_1M_TOKENS
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -99,7 +99,7 @@ class PriceTable:
 
     def _canonical_bytes(self) -> bytes:
         # Sorted keys make the hash independent of insertion order.
-        return json.dumps(self.to_dict(), ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        return canonical_bytes(self.to_dict())
 
     def content_hash(self) -> str:
         """``sha256:`` digest pinning exactly these rates + version metadata."""

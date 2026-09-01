@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from bernstein.core.lineage.spine import LineageSpine, SpineStatus
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -149,17 +150,14 @@ class InstallReceipt:
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise to canonical JSON bytes (the spine-hashed artifact)."""
-        return json.dumps(
+        return canonical_bytes(
             {
                 "skill_hash": self.skill_hash,
                 "manifest_hash": self.manifest_hash,
                 "install_id": self.install_id,
                 "timestamp": self.timestamp,
-            },
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
+            }
+        )
 
     @classmethod
     def from_bytes(cls, raw: bytes) -> InstallReceipt:
@@ -207,18 +205,15 @@ class UpdateReceipt:
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise to canonical JSON bytes (the spine-hashed artifact)."""
-        return json.dumps(
+        return canonical_bytes(
             {
                 "prior_skill_hash": self.prior_skill_hash,
                 "skill_hash": self.skill_hash,
                 "manifest_hash": self.manifest_hash,
                 "install_id": self.install_id,
                 "timestamp": self.timestamp,
-            },
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
+            }
+        )
 
     @classmethod
     def from_bytes(cls, raw: bytes) -> UpdateReceipt:
@@ -412,18 +407,15 @@ class ConformanceReceipt:
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise to canonical JSON bytes (the spine-hashed artifact)."""
-        return json.dumps(
+        return canonical_bytes(
             {
                 "skill_hash": self.skill_hash,
                 "host_results": [[host, ok] for host, ok in self.host_results],
                 "min_hosts": self.min_hosts,
                 "install_id": self.install_id,
                 "timestamp": self.timestamp,
-            },
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
+            }
+        )
 
     def content_id(self) -> str:
         """Return the content address (``sha256:<hex>``) of the receipt bytes."""

@@ -30,6 +30,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -105,7 +106,7 @@ def _boundary_content(
         "phase": phase.value,
         "rules": [{"rule_id": r.rule_id, "outcome": r.outcome.value} for r in results],
     }
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return canonical_bytes(payload)
 
 
 def make_spine_lineage_hook(

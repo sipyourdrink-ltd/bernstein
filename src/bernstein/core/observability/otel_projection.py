@@ -49,6 +49,8 @@ from typing import TYPE_CHECKING, Any
 
 from cryptography.exceptions import InvalidSignature
 
+from bernstein.core.security.canonical import canonical_bytes
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
@@ -391,12 +393,7 @@ def _signing_payload_dict(projection: SpanProjection) -> dict[str, Any]:
 
 def canonical_projection_bytes(projection: SpanProjection) -> bytes:
     """Return deterministic signing bytes: sorted keys, compact, UTF-8."""
-    return json.dumps(
-        _signing_payload_dict(projection),
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
+    return canonical_bytes(_signing_payload_dict(projection))
 
 
 def projection_to_dict(projection: SpanProjection) -> dict[str, Any]:

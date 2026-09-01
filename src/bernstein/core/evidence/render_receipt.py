@@ -9,10 +9,11 @@ SHA-256, enabling reproducible comparisons across renders.
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+
+from bernstein.core.security.canonical import canonical_bytes
 
 #: Sentinel epoch for default clock_value when none is supplied.
 _EPOCH_UTC = datetime(1970, 1, 1, tzinfo=timezone.utc)  # noqa: UP017
@@ -35,16 +36,6 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # Canonical hashing helpers
 # ---------------------------------------------------------------------------
-
-
-def _canonical_bytes(payload: dict[str, Any]) -> bytes:
-    """Return canonical JSON bytes (sorted keys, minimal separators, UTF-8)."""
-    return json.dumps(
-        payload,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
 
 
 def _sha256_hex(data: bytes) -> str:
@@ -362,7 +353,7 @@ class RenderReceipt:
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the binding to canonical bytes for hashing."""
-        return _canonical_bytes(self._binding())
+        return canonical_bytes(self._binding())
 
     def receipt_hash(self) -> str:
         """Return the ``sha256:`` digest of the canonical binding bytes."""

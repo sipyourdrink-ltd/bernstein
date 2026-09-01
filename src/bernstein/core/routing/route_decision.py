@@ -9,20 +9,12 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.security.canonical import canonical_bytes
+
 if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
-
-
-def _canonical_bytes(data: dict[str, object]) -> bytes:
-    """Return JCS-canonical bytes for a dict of built-in types."""
-    return json.dumps(
-        data,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
 
 
 def _compute_routing_decision_hash(
@@ -34,7 +26,7 @@ def _compute_routing_decision_hash(
     timestamp: float,
 ) -> str:
     """Compute sha256:JCS_bytes hash of routing decision inputs."""
-    canonical = _canonical_bytes(
+    canonical = canonical_bytes(
         {
             "task_id": task_id,
             "adapter": adapter,

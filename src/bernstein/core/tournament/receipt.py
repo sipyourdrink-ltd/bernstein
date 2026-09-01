@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.identity import generate_keypair
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
+from bernstein.core.security.canonical import canonical_bytes
 from bernstein.core.skills.catalog.signature import sign_payload, verify_payload
 from bernstein.core.tournament.evaluators import AttemptOutcome
 from bernstein.core.tournament.scorer import RankedAttempt, select_winner
@@ -71,10 +72,6 @@ _IDENTITY_PUBLIC_NAME = "tournament-identity-public.pem"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _canonical_bytes(payload: dict[str, Any]) -> bytes:
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
 def _safe_task_name(task_id: str) -> str:
@@ -192,7 +189,7 @@ class TournamentReceipt:
         }
 
     def to_canonical_bytes(self) -> bytes:
-        return _canonical_bytes(self._binding())
+        return canonical_bytes(self._binding())
 
     def to_dict(self) -> dict[str, Any]:
         return self._binding() | {
@@ -297,7 +294,7 @@ def emit_tournament_receipt(
         outcome = outcome_by_hash[row.attempt_hash]
         spine.record(
             artifact_path=f"tournaments/{safe}/attempts/{idx}.json",
-            content=_canonical_bytes(outcome.to_dict()),
+            content=canonical_bytes(outcome.to_dict()),
             actor=_TOURNAMENT_ACTOR,
             step_id=row.attempt_hash,
             model=_TOURNAMENT_MODEL,

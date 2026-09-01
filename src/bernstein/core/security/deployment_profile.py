@@ -57,6 +57,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+from bernstein.core.security.canonical import canonical_bytes
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -183,13 +185,8 @@ class SovereignConfigError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
-def _canonical_bytes(data: Mapping[str, Any]) -> bytes:
-    """Canonical JSON bytes (sorted keys, minimal separators, UTF-8)."""
-    return json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
 def _sha256_of(data: Mapping[str, Any]) -> str:
-    return "sha256:" + hashlib.sha256(_canonical_bytes(data)).hexdigest()
+    return "sha256:" + hashlib.sha256(canonical_bytes(data)).hexdigest()
 
 
 def is_local_or_eu_host(base_url: str) -> bool:
@@ -794,7 +791,7 @@ def build_posture_attestation(
         effective_policy=policy.to_canonical_document(),
         timestamp=timestamp,
     )
-    signature = sign_payload(_canonical_bytes(unsigned.signed_body()), private_pem)
+    signature = sign_payload(canonical_bytes(unsigned.signed_body()), private_pem)
 
     journal_entry_hash = ""
     if chain is not None:
@@ -880,7 +877,7 @@ def _read_posture_attestation_with_reason(workdir: Path) -> tuple[PostureAttesta
     except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
         return None, f"posture attestation at {path} is not a valid signed record ({exc})"
     outcome = verify_payload(
-        _canonical_bytes(attestation.signed_body()),
+        canonical_bytes(attestation.signed_body()),
         attestation.signature,
         attestation.signer_public_key_pem,
         allow_unverified=True,
@@ -1081,7 +1078,7 @@ def record_and_sign_drift(
         "effective_policy": evaluation.observed_policy.to_canonical_document(),
         "timestamp": timestamp,
     }
-    signature = sign_payload(_canonical_bytes(signed_body), private_pem)
+    signature = sign_payload(canonical_bytes(signed_body), private_pem)
     record = signed_body.copy()
     record["signer_public_key_pem"] = public_pem
     record["signature"] = signature
@@ -1199,7 +1196,7 @@ def _verify_one_record(
         errors.append(f"{kind}: record has no signed_body")
         return
     outcome = verify_payload(
-        _canonical_bytes(body),
+        canonical_bytes(body),
         signature if isinstance(signature, str) else None,
         public_key if isinstance(public_key, str) else None,
         allow_unverified=True,

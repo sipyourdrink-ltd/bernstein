@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from typing import Any
 
 from bernstein.core.govern.inventory_models import Inventory, Surface
 from bernstein.core.govern.plan_models import GovernPlan, PlanEntry, PlanEntryKind
 from bernstein.core.govern.playbook_models import Playbook, PlaybookClause
+from bernstein.core.security.canonical import canonical_bytes
 
 
 def compute_plan(
@@ -151,12 +151,7 @@ def compute_plan(
             )
         )
 
-    inputs_bytes = json.dumps(
-        {"playbook": playbook, "inventory": inventory},
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
+    inputs_bytes = canonical_bytes({"playbook": playbook, "inventory": inventory})
     inputs_hash = "sha256:" + hashlib.sha256(inputs_bytes).hexdigest()
 
     return GovernPlan(

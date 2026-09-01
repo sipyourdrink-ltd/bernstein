@@ -31,6 +31,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.security.canonical import canonical_bytes
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -74,8 +76,8 @@ __all__ = [
     "MERGE_SCHEMA_VERSION",
     "MergeAdmissionReceipt",
     "MergeVerifyResult",
-    "_canonical_bytes",
     "_sha256_hex",
+    "canonical_bytes",
     "compute_gate_results_hash",
     "compute_ruleset_hash",
     "emit_merge_receipt",
@@ -97,11 +99,6 @@ _PUBLIC_KEY_NAME = "merge-identity-public.pem"
 # ---------------------------------------------------------------------------
 # Canonical hashing helpers
 # ---------------------------------------------------------------------------
-
-
-def _canonical_bytes(payload: dict[str, Any]) -> bytes:
-    """Canonical JSON bytes: sorted keys, minimal separators, UTF-8."""
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
 def _sha256_hex(data: bytes) -> str:
@@ -132,7 +129,7 @@ def compute_gate_results_hash(
         "review_verdict": review_verdict,
         "required_contexts": sorted(required_contexts),
     }
-    return _sha256_hex(_canonical_bytes(payload))
+    return _sha256_hex(canonical_bytes(payload))
 
 
 def compute_ruleset_hash(
@@ -149,7 +146,7 @@ def compute_ruleset_hash(
         "required_contexts": sorted(required_contexts),
         "ruleset": _sha256_hex(ruleset_bytes) if ruleset_bytes else "",
     }
-    return _sha256_hex(_canonical_bytes(payload))
+    return _sha256_hex(canonical_bytes(payload))
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +258,7 @@ class MergeAdmissionReceipt:
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the binding to canonical JSON bytes."""
-        return _canonical_bytes(self._binding())
+        return canonical_bytes(self._binding())
 
     def to_dict(self) -> dict[str, Any]:
         return self._binding() | {

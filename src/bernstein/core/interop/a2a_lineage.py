@@ -43,6 +43,7 @@ from bernstein.core.lineage.tracker_audit import (
     entry_to_body,
 )
 from bernstein.core.replay.journal import EventJournal
+from bernstein.core.security.canonical import canonical_bytes
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.skills.catalog.signature import sign_payload, verify_payload
 
@@ -108,7 +109,7 @@ LINEAGE_ENVELOPE_SCHEMA_VERSION: int = 1
 
 def _canonical(payload: dict[str, Any]) -> bytes:
     """Return stable JCS-style bytes for ``payload``."""
-    return json.dumps(payload, separators=(",", ":"), sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return canonical_bytes(payload)
 
 
 def chain_digest(entries: Sequence[TrackerAuditEntry]) -> str:
@@ -384,11 +385,6 @@ def map_task_state(state: str) -> TaskStateMapping:
 # ---------------------------------------------------------------------------
 
 
-def _canonical_bytes(payload: dict[str, Any]) -> bytes:
-    """Return canonical JSON bytes (sorted keys, minimal separators, UTF-8)."""
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
 def _sha256_bytes(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
@@ -407,7 +403,7 @@ def compute_message_hash(
     raw message body so a verifier presented the same message recomputes the
     same hash. A single-byte edit to any field diverges the hash.
     """
-    preimage = _canonical_bytes(
+    preimage = canonical_bytes(
         {
             "v": A2A_MESSAGE_RECEIPT_SCHEMA_VERSION,
             "task_uuid": task_uuid,
@@ -538,7 +534,7 @@ class A2AMessageReceipt:
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the binding to canonical JSON bytes (signed + anchored)."""
-        return _canonical_bytes(self._binding())
+        return canonical_bytes(self._binding())
 
     def to_dict(self) -> dict[str, Any]:
         return self._binding() | {
@@ -1088,7 +1084,7 @@ class CardVerdictReceipt:
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the binding to canonical JSON bytes (signed + anchored)."""
-        return _canonical_bytes(self._binding())
+        return canonical_bytes(self._binding())
 
     def to_dict(self) -> dict[str, Any]:
         return self._binding() | {

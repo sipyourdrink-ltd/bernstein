@@ -39,13 +39,13 @@ pool template exposes.
 from __future__ import annotations
 
 import hashlib
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.sandbox.backend import SandboxCapability
 from bernstein.core.sandbox.manifest import WorkspaceManifest
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -106,7 +106,7 @@ class PoolOverrideRefused(Exception):
 
 def _canonical_json(payload: Any) -> str:
     """Deterministic JSON string: sorted keys, compact separators, UTF-8 safe."""
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return canonical_bytes(payload).decode("utf-8")
 
 
 def _sha256_hex(text: str) -> str:

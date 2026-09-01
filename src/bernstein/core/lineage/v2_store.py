@@ -60,6 +60,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from bernstein.core.security.canonical import canonical_bytes
+
 if sys.platform == "win32":
     fcntl = None  # type: ignore[assignment]
 else:
@@ -153,7 +155,7 @@ class ChildBody:
 
 def _canonicalise(d: dict[str, Any]) -> bytes:
     """RFC 8785-compatible canonical JSON bytes for a flat dict."""
-    return json.dumps(d, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return canonical_bytes(d)
 
 
 def _sha256_hex(b: bytes) -> str:

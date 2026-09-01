@@ -22,10 +22,11 @@ halfway through.
 from __future__ import annotations
 
 import hashlib
-import json
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -103,9 +104,7 @@ class PoolPreflightReport:
 
     def state_hash(self) -> str:
         """Deterministic ``sha256:`` digest of the full projected state."""
-        payload = json.dumps(
-            [p.to_dict() for p in self.pools], ensure_ascii=False, separators=(",", ":"), sort_keys=True
-        ).encode("utf-8")
+        payload = canonical_bytes([p.to_dict() for p in self.pools])
         return "sha256:" + hashlib.sha256(payload).hexdigest()
 
     def to_dict(self) -> dict[str, object]:

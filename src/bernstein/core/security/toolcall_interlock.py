@@ -14,13 +14,13 @@ without making either implementation a dependency of the dispatch boundary.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol, cast
 
+from bernstein.core.security.canonical import canonical_bytes
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.security.toolcall_identity import ToolCallIdentityError, verify_identity_envelope
 
@@ -71,7 +71,7 @@ class ToolCallIntent:
         arguments: Any,
     ) -> ToolCallIntent:
         """Build an intent without retaining raw connector arguments."""
-        canonical = json.dumps(arguments, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        canonical = canonical_bytes(arguments)
         return cls(
             scope_id=scope_id,
             server_name=server_name,
@@ -93,7 +93,7 @@ class ToolCallIntent:
             "span_id": self.span_id,
             "tool_name": self.tool_name,
         }
-        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        canonical = canonical_bytes(payload)
         return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
 

@@ -70,6 +70,7 @@ from bernstein.core.security.audit_chain import (
     record_convention_receipt,
     record_convention_retired,
 )
+from bernstein.core.security.canonical import canonical_bytes
 from bernstein.core.skills.catalog.signature import sign_payload, verify_payload
 
 if TYPE_CHECKING:
@@ -156,7 +157,7 @@ class ConventionReceipt:
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the binding to canonical JSON bytes (sorted keys, minimal separators)."""
-        return json.dumps(self._binding(), ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        return canonical_bytes(self._binding())
 
     def to_dict(self) -> dict[str, Any]:
         """Return full JSON-serializable dictionary including cryptographic fields."""
@@ -889,9 +890,7 @@ def compute_ruleset_hash(receipts: list[ConventionReceipt]) -> str:
         (_ruleset_projection(r) for r in receipts),
         key=lambda p: (str(p["subject_path"]), str(p["subject_symbol"]), str(p["rule_text_hash"])),
     )
-    ruleset_bytes = b"\x00".join(
-        json.dumps(p, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8") for p in projections
-    )
+    ruleset_bytes = b"\x00".join(canonical_bytes(p) for p in projections)
     return "sha256:" + hashlib.sha256(ruleset_bytes).hexdigest()
 
 

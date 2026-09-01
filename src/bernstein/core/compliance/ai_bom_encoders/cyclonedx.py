@@ -22,8 +22,9 @@ The encoder is deterministic: identical :class:`AIBOM` -> identical bytes.
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any
+
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from bernstein.core.compliance.ai_bom import (
@@ -81,7 +82,7 @@ def encode_cyclonedx(bom: AIBOM) -> bytes:
         },
         "components": components,
     }
-    return json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return canonical_bytes(doc)
 
 
 def _hash_block(sha256: str) -> list[dict[str, str]]:

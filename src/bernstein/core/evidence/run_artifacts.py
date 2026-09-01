@@ -52,6 +52,7 @@ from bernstein.core.defaults import (
 )
 from bernstein.core.evidence.bundle import DEFAULT_MAX_BLOB_BYTES, EvidenceStore
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -208,7 +209,7 @@ def _sha256_bytes(value: bytes) -> str:
 
 
 def _canonical_json_bytes(value: Mapping[str, Any]) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return canonical_bytes(value)
 
 
 def _build_finding_content(
@@ -478,9 +479,7 @@ class ArtifactPayload:
 
     def canonical_bytes(self) -> bytes:
         """Return the canonical UTF-8 JSON bytes that are content-addressed."""
-        return json.dumps(self.to_content_dict(), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
-            "utf-8"
-        )
+        return canonical_bytes(self.to_content_dict())
 
 
 @dataclass(frozen=True, slots=True)

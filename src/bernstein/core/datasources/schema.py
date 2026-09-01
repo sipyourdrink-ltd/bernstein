@@ -43,6 +43,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.datasources.errors import DataSourceError
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -184,7 +185,7 @@ class SchemaSnapshot:
             "v": SNAPSHOT_VERSION,
             "objects": [o.to_dict() for o in self.objects],
         }
-        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        return canonical_bytes(payload)
 
     @property
     def digest(self) -> str:

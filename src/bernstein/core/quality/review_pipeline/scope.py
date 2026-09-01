@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
-import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from bernstein.core.knowledge.conventions import ConventionReceipt
@@ -174,10 +175,6 @@ def resolve_scope(
     )
 
 
-def _canonical_bytes(payload: dict) -> bytes:
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
 def compute_resolution_hash(scope: ScopeResolution) -> str:
     """Deterministically hash a :class:`ScopeResolution`.
 
@@ -204,7 +201,7 @@ def compute_resolution_hash(scope: ScopeResolution) -> str:
         "in_scope": entries,
         "unscoped_paths": sorted(scope.unscoped_paths),
     }
-    digest = hashlib.sha256(_canonical_bytes(payload)).hexdigest()
+    digest = hashlib.sha256(canonical_bytes(payload)).hexdigest()
     return "sha256:" + digest
 
 

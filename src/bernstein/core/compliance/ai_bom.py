@@ -38,6 +38,8 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Any, cast
 
+from bernstein.core.security.canonical import canonical_bytes
+
 __all__ = [
     "AIBOM",
     "BOM_SCHEMA_URL",
@@ -576,12 +578,7 @@ def _encode_native_json(bom: AIBOM) -> bytes:
     """
     doc = asdict(bom)
     # asdict() turns tuples into lists, which is what JSON wants.
-    return json.dumps(
-        doc,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
+    return canonical_bytes(doc)
 
 
 def _encode_cyclonedx(bom: AIBOM) -> bytes:

@@ -41,6 +41,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+from bernstein.core.security.canonical import canonical_bytes
 from bernstein.core.tasks.models import TriggerEvent
 
 if TYPE_CHECKING:
@@ -282,13 +283,13 @@ class OdataCursor:
 
     def content_hash(self) -> str:
         """Return the content-addressed identifier for this cursor."""
-        return "sha256:" + hashlib.sha256(_canonical_bytes(self.to_dict())).hexdigest()
+        return "sha256:" + hashlib.sha256(canonical_bytes(self.to_dict())).hexdigest()
 
 
 def save_cursor(path: Path, cursor: OdataCursor) -> None:
     """Persist ``cursor`` to ``path`` as canonical bytes (byte-stable)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(_canonical_bytes(cursor.to_dict()) + b"\n")
+    path.write_bytes(canonical_bytes(cursor.to_dict()) + b"\n")
 
 
 def load_cursor(path: Path) -> OdataCursor | None:
@@ -761,12 +762,8 @@ def _key_literal(value: Any) -> str:
     return f"'{value}'"
 
 
-def _canonical_bytes(payload: dict[str, Any]) -> bytes:
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
 def _hash_entities(entities: list[dict[str, Any]]) -> str:
-    return "sha256:" + hashlib.sha256(_canonical_bytes({"value": entities})).hexdigest()
+    return "sha256:" + hashlib.sha256(canonical_bytes({"value": entities})).hexdigest()
 
 
 def _max_str(current: str, candidate: str) -> str:

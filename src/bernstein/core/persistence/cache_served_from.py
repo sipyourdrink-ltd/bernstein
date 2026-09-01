@@ -15,10 +15,10 @@ hidden or forged cache hit is falsification-evident rather than merely unlogged
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING
 
 from bernstein.core.persistence.cache_policy import validate_cache_key
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from bernstein.core.lineage.spine import LineageSpine
@@ -46,17 +46,14 @@ def served_from_content(*, cache_key: str, output_hash: str, policy_hash: str, r
     recipe hashes so the spine ``content_hash`` is a content-addressed anchor of
     exactly what was served under which policy.
     """
-    return json.dumps(
+    return canonical_bytes(
         {
             "cache_key": cache_key,
             "output_hash": output_hash,
             "policy_hash": policy_hash,
             "recipe_hash": recipe_hash,
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
+        }
+    )
 
 
 def record_served_from(

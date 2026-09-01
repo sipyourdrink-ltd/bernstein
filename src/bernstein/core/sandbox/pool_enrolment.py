@@ -34,6 +34,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 from bernstein.core.identity.http_signing import install_identity_keyid
 from bernstein.core.security.agent_card_signer import ed25519_public_jwk
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from bernstein.core.security.agent_card_keystore import AgentCardKeystore
@@ -43,7 +44,7 @@ POOL_ENROLMENT_SCHEMA_VERSION = 1
 
 
 def _canonical_json(payload: Any) -> str:
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return canonical_bytes(payload).decode("utf-8")
 
 
 def _sha256_hex(text: str) -> str:

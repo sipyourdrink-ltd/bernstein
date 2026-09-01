@@ -67,10 +67,11 @@ are unaffected.
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from dataclasses import dataclass
 from functools import lru_cache
+
+from bernstein.core.security.canonical import canonical_bytes
 
 __all__ = [
     "ARTIFACT_URI_SCHEMES",
@@ -601,7 +602,7 @@ def external_reference_bytes(uri: str, *, digest: str, extractor: str | None = N
     }
     if extractor is not None:
         document["extractor"] = extractor
-    return json.dumps(document, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return canonical_bytes(document)
 
 
 def external_reference_content_hash(uri: str, *, digest: str, extractor: str | None = None) -> str:

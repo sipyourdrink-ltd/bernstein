@@ -56,6 +56,7 @@ from bernstein.core.protocols.payments.mandates import (
     read_consent_receipt,
     verify_consent_receipt,
 )
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -98,12 +99,8 @@ _MANDATE_MODEL = "none"
 # ---------------------------------------------------------------------------
 
 
-def _canonical_bytes(payload: dict[str, Any]) -> bytes:
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
 def _sha256(payload: dict[str, Any]) -> str:
-    return "sha256:" + hashlib.sha256(_canonical_bytes(payload)).hexdigest()
+    return "sha256:" + hashlib.sha256(canonical_bytes(payload)).hexdigest()
 
 
 def settlement_ref_hash(ref: SettlementRef) -> str:
@@ -437,7 +434,7 @@ class SpendReceipt:
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the binding to canonical JSON bytes (spine-hashed)."""
-        return _canonical_bytes(self._binding())
+        return canonical_bytes(self._binding())
 
     def receipt_hash(self) -> str:
         """Return the content hash of the binding (the receipt's file id)."""
@@ -508,7 +505,7 @@ class RefusalReceipt:
         }
 
     def to_canonical_bytes(self) -> bytes:
-        return _canonical_bytes(self._binding())
+        return canonical_bytes(self._binding())
 
     def receipt_hash(self) -> str:
         return _sha256(self._binding())

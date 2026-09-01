@@ -36,9 +36,10 @@ responsibility when comparing against expected values.
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass, field
 from typing import Any, Literal
+
+from bernstein.core.security.canonical import canonical_bytes
 
 #: Schema version for the change receipt format.
 CHANGE_RECEIPT_SCHEMA_VERSION: str = "1.0.0"
@@ -57,29 +58,6 @@ class ChangeReceiptError(RuntimeError):
 def _sha256_hex(data: bytes) -> str:
     """Compute sha256 hex digest of bytes."""
     return hashlib.sha256(data).hexdigest()
-
-
-def _sort_recursive(value: Any) -> Any:
-    """Recursively reorder dict keys so canonical JSON is byte-stable."""
-    if isinstance(value, dict):
-        return {k: _sort_recursive(value[k]) for k in sorted(value.keys())}
-    if isinstance(value, list):
-        return [_sort_recursive(v) for v in value]
-    return value
-
-
-def canonical_bytes(payload: dict[str, Any]) -> bytes:
-    """Deterministic JSON: recursively sorted keys, compact separators, UTF-8.
-
-    Matches the discipline of :mod:`bernstein.core.security.result_receipt_bundle`
-    so multiple serialisations of the same receipt byte-agree.
-    """
-    return json.dumps(
-        _sort_recursive(payload),
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
 
 
 # ---------------------------------------------------------------------------

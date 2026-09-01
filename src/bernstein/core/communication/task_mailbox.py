@@ -36,6 +36,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.security.canonical import canonical_bytes
 from bernstein.core.security.redactor import redact_text
 from bernstein.core.security.sanitize import sanitize_log
 
@@ -121,7 +122,7 @@ class MailboxFull(MailboxError):
 
 def _canonical(payload: dict[str, Any]) -> bytes:
     """Return stable canonical JSON bytes for ``payload``."""
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return canonical_bytes(payload)
 
 
 @dataclass(frozen=True)

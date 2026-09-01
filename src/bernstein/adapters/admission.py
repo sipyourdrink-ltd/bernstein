@@ -51,6 +51,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.security.canonical import canonical_bytes
 from bernstein.core.security.path_containment import (
     PathContainmentError,
     PathTooLongError,
@@ -325,10 +326,6 @@ class AdapterAdmissionRefusal(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
-def _canonical_bytes(data: dict[str, Any]) -> bytes:
-    return json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
 def _sha256_hex(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
@@ -420,7 +417,7 @@ def replay_fingerprint(
             for result in sorted(results, key=lambda r: r.transcript_name)
         ],
     }
-    return "sha256:" + _sha256_hex(_canonical_bytes(payload))
+    return "sha256:" + _sha256_hex(canonical_bytes(payload))
 
 
 def conformance_run_id(
@@ -438,7 +435,7 @@ def conformance_run_id(
     this adapter" is answerable offline from the receipt alone.
     """
     return _sha256_hex(
-        _canonical_bytes(
+        canonical_bytes(
             {
                 "schema_version": ADMISSION_SCHEMA_VERSION,
                 "adapter": adapter,
@@ -454,7 +451,7 @@ def conformance_run_id(
 def _probe_hash(binary: str, binary_path: str | None, installed_version: str | None) -> str:
     """Content hash binding the probed binary identity into the receipt."""
     return "sha256:" + _sha256_hex(
-        _canonical_bytes(
+        canonical_bytes(
             {
                 "binary": binary,
                 "binary_path": binary_path or "",
@@ -906,7 +903,7 @@ def build_admission_receipt(
 
 def receipt_sha256(receipt: dict[str, Any]) -> str:
     """Content hash (identity) of a receipt's canonical bytes."""
-    return _sha256_hex(_canonical_bytes(receipt))
+    return _sha256_hex(canonical_bytes(receipt))
 
 
 def verify_admission_receipt(doc: dict[str, Any]) -> bool:
@@ -1107,7 +1104,7 @@ def anchor_admission_receipt_in_lineage(
 
     view = AdapterAdmissionReceipt(receipt)
     sha = view.sha256
-    canonical = _canonical_bytes(receipt)
+    canonical = canonical_bytes(receipt)
     return seal_write(
         store,
         operator_hmac_key,

@@ -55,7 +55,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -69,6 +68,7 @@ from bernstein.core.security.audit_dsse import (
     pae,
     verify_envelope,
 )
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -96,42 +96,6 @@ VOLUNTEER_DOCUMENT_PREDICATE_TYPE: str = "https://bernstein.run/attestations/vol
 # ---------------------------------------------------------------------------
 # Canonical serialisation
 # ---------------------------------------------------------------------------
-
-
-def _sort_keys_recursive(value: Any) -> Any:
-    """Recursively reorder dict keys so canonical JSON is byte-stable.
-
-    ``json.dumps(sort_keys=True)`` already sorts top-level keys, but inside
-    a free-form predicate we want lexicographic order at every depth so
-    repeated canonicalisations of the same input produce identical bytes.
-    """
-    if isinstance(value, dict):
-        return {k: _sort_keys_recursive(value[k]) for k in sorted(value.keys())}
-    if isinstance(value, list):
-        return [_sort_keys_recursive(v) for v in value]
-    return value
-
-
-def canonical_bytes(payload: dict[str, Any]) -> bytes:
-    """Deterministic JSON bytes: recursively sorted keys, compact separators, UTF-8.
-
-    Matches :func:`audit_dsse._canonical_json`'s discipline and
-    :func:`result_receipt_bundle.canonical_bytes` so two serialisations of
-    the same dict byte-agree.  This is the property the determinism tests
-    assert.
-
-    Args:
-        payload: The dictionary to serialise.
-
-    Returns:
-        UTF-8 encoded canonical JSON bytes.
-    """
-    return json.dumps(
-        _sort_keys_recursive(payload),
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
 
 
 def canonical_hash(payload: dict[str, Any]) -> str:

@@ -38,13 +38,14 @@ and hashes across processes and platforms.
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal, cast
+
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from bernstein.core.tasks.models import Task
@@ -76,16 +77,6 @@ ExpiryMode = Literal["drift", "ttl", "both"]
 _EXPIRY_MODES: Final[frozenset[str]] = frozenset({"drift", "ttl", "both"})
 
 _DIGEST_PREFIX = "sha256:"
-
-
-def _canonical_bytes(value: Any) -> bytes:
-    """Return canonical JSON bytes (sorted keys, minimal separators, UTF-8)."""
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
 
 
 def _sha256_hex(data: bytes) -> str:
@@ -196,7 +187,7 @@ class CachePolicy:
 
     def canonical_json(self) -> bytes:
         """Return canonical JSON bytes of the policy."""
-        return _canonical_bytes(self.canonical())
+        return canonical_bytes(self.canonical())
 
     def policy_hash(self) -> str:
         """Return the ``sha256:`` digest of the canonical policy bytes."""
@@ -290,7 +281,7 @@ def compose_recipe(policy: CachePolicy, inputs: RecipeInputs) -> dict[str, Any]:
     keys.
     """
     ordered: list[dict[str, str]] = [
-        {"name": name, "hash": _sha256_hex(_canonical_bytes(inputs.value_for(name)))}
+        {"name": name, "hash": _sha256_hex(canonical_bytes(inputs.value_for(name)))}
         for name in (*MANDATORY_INGREDIENTS, *policy.ingredients)
     ]
     return {
@@ -303,7 +294,7 @@ def compose_recipe(policy: CachePolicy, inputs: RecipeInputs) -> dict[str, Any]:
 
 def recipe_hash(recipe: Mapping[str, Any]) -> str:
     """Return the ``sha256:`` digest of the canonical recipe bytes."""
-    return _sha256_hex(_canonical_bytes(dict(recipe)))
+    return _sha256_hex(canonical_bytes(dict(recipe)))
 
 
 def compose_key(policy: CachePolicy, inputs: RecipeInputs) -> bytes:
@@ -314,7 +305,7 @@ def compose_key(policy: CachePolicy, inputs: RecipeInputs) -> bytes:
     a mandatory or declared ingredient alters the recipe and therefore the key.
     """
     recipe = compose_recipe(policy, inputs)
-    return hashlib.sha256(_canonical_bytes(recipe)).digest()
+    return hashlib.sha256(canonical_bytes(recipe)).digest()
 
 
 def compose_key_hex(policy: CachePolicy, inputs: RecipeInputs) -> str:
@@ -475,7 +466,7 @@ class CacheEntry:
 
     def content_id(self) -> str:
         """Return the ``sha256:`` digest of the entry's canonical bytes."""
-        return _sha256_hex(_canonical_bytes(self.canonical()))
+        return _sha256_hex(canonical_bytes(self.canonical()))
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serialisable representation (alias of canonical)."""
@@ -547,7 +538,7 @@ class FreshnessVerdict:
 
     def canonical_json(self) -> bytes:
         """Return canonical JSON bytes of the verdict."""
-        return _canonical_bytes(self.canonical())
+        return canonical_bytes(self.canonical())
 
 
 # Verdict reason tokens (stable machine-readable vocabulary).

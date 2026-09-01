@@ -29,6 +29,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
+from bernstein.core.security.canonical import canonical_bytes
 from bernstein.eval.significance import PROMOTING_VERDICTS, Verdict
 
 if TYPE_CHECKING:
@@ -258,7 +259,7 @@ def revocation_receipt_path(workdir: Path, receipt_hash: str) -> Path:
 
 
 def _hash_obj(obj: Any) -> str:
-    payload = json.dumps(obj, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    payload = canonical_bytes(obj)
     return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
@@ -290,7 +291,7 @@ class RevocationReceipt:
     def canonical_bytes(self) -> bytes:
         payload = self.body()
         payload["receipt_hash"] = self.receipt_hash
-        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        return canonical_bytes(payload)
 
     def to_dict(self) -> dict[str, Any]:
         payload = self.body()

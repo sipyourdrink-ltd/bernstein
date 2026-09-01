@@ -41,6 +41,7 @@ from bernstein.core.security.agent_card_signer import (
     ed25519_pem_from_jwk,
     verify_detached_jws_over_canonical,
 )
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from bernstein.core.interop.a2a_card import SignedCapabilityCard
@@ -256,7 +257,7 @@ def canonical_report_bytes(report: ConformanceReport) -> bytes:
     be hashed and anchored as the immutable evidence of *which checks ran and
     what they returned* (AC: determinism + verifiability).
     """
-    return json.dumps(report.to_dict(), ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return canonical_bytes(report.to_dict())
 
 
 def report_hash(report: ConformanceReport) -> str:

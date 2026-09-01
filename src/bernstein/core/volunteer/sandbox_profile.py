@@ -57,9 +57,10 @@ project asks and what the donor allows.
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping
@@ -192,12 +193,7 @@ class VolunteerSandboxProfile:
     @property
     def digest(self) -> str:
         """Content address of the containment decision, 64 hex characters."""
-        payload = json.dumps(
-            self.to_canonical_dict(),
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-        ).encode("utf-8")
+        payload = canonical_bytes(self.to_canonical_dict())
         return hashlib.sha256(payload).hexdigest()
 
 

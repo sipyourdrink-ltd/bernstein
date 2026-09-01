@@ -60,7 +60,6 @@ candidate and the pinned matrix:
 from __future__ import annotations
 
 import hashlib
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
@@ -74,6 +73,7 @@ from bernstein.adapters._contract import (
 )
 from bernstein.core.cost.model_prices import MODEL_COSTS_PER_1M_TOKENS
 from bernstein.core.cost.scheduling.policy import DispatchCandidate, KnobSelection
+from bernstein.core.security.canonical import canonical_bytes
 
 #: ``as_of`` date shipped with :data:`DEFAULT_KNOB_MATRIX`. Mirrors the price
 #: table's ``as_of`` -- the knob economics are derived from the same rows.
@@ -174,7 +174,7 @@ class KnobMatrix:
         }
 
     def _canonical_bytes(self) -> bytes:
-        return json.dumps(self.to_dict(), ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        return canonical_bytes(self.to_dict())
 
     def content_hash(self) -> str:
         """``sha256:`` digest pinning exactly these knob economics + metadata."""

@@ -32,6 +32,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -68,14 +69,9 @@ class PanelMode(StrEnum):
     MAKER_CHECKER = "maker_checker"
 
 
-def _canonical_json(value: Any) -> bytes:
-    """Serialise *value* to canonical JSON bytes (sorted keys, tight separators)."""
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
 def _sha256_of(value: Any) -> str:
     """Return the ``sha256:``-prefixed digest of *value*'s canonical JSON."""
-    return "sha256:" + hashlib.sha256(_canonical_json(value)).hexdigest()
+    return "sha256:" + hashlib.sha256(canonical_bytes(value)).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,7 +232,7 @@ class AdjudicationRecord:
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the anchor-free binding to canonical JSON bytes."""
-        return _canonical_json(self._binding())
+        return canonical_bytes(self._binding())
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise the full record (binding + anchor)."""
@@ -350,7 +346,7 @@ def adjudicate(
     out_dir = records_dir(lineage_root, run_id)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / artifact_name).write_text(
-        _canonical_json(anchored.to_dict()).decode("utf-8"),
+        canonical_bytes(anchored.to_dict()).decode("utf-8"),
         encoding="utf-8",
     )
     return anchored

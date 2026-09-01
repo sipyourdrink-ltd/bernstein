@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from bernstein.adapters.advisories import ADAPTER_MIN_SAFE_VERSIONS, AdapterAdvisory
+from bernstein.core.security.canonical import canonical_bytes
 from bernstein.core.security.path_containment import (
     PathContainmentError,
     PathTooLongError,
@@ -138,10 +139,6 @@ class AdapterSecurityFloorRefusal(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
-def _canonical_bytes(data: dict[str, Any]) -> bytes:
-    return json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
 def _sha256_hex(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
@@ -166,7 +163,7 @@ def hash_floor_map(mapping: dict[str, AdapterAdvisory]) -> str:
         }
         for name, adv in sorted(mapping.items())
     }
-    return "sha256:" + _sha256_hex(_canonical_bytes(payload))
+    return "sha256:" + _sha256_hex(canonical_bytes(payload))
 
 
 def floor_map_content_hash() -> str:
@@ -392,7 +389,7 @@ def build_preflight_receipt(verdict: FloorVerdict, *, generated_at: str) -> dict
 
 def receipt_sha256(receipt: dict[str, Any]) -> str:
     """Content hash (identity) of a receipt's canonical bytes."""
-    return _sha256_hex(_canonical_bytes(receipt))
+    return _sha256_hex(canonical_bytes(receipt))
 
 
 def verify_preflight_receipt(doc: dict[str, Any]) -> bool:

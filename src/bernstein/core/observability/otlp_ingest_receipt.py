@@ -38,6 +38,8 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.security.canonical import canonical_bytes
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -91,10 +93,6 @@ class IngestReceiptError(ValueError):
 # --------------------------------------------------------------------------- #
 # Canonical hashing helpers                                                     #
 # --------------------------------------------------------------------------- #
-
-
-def _canonical_bytes(payload: dict[str, Any]) -> bytes:
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -174,7 +172,7 @@ class IngestReceipt:
 
     def to_canonical_bytes(self) -> bytes:
         """Return canonical JSON bytes of the signed binding."""
-        return _canonical_bytes(self._binding())
+        return canonical_bytes(self._binding())
 
     def binding_digest(self) -> str:
         """Return the content hash of the signed binding."""

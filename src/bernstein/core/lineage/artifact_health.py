@@ -44,7 +44,6 @@ never reported as a negative signal.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -52,6 +51,7 @@ from typing import TYPE_CHECKING, Any
 from bernstein.core.lineage.artifact_attempt import attempt_outcome, attempt_task_id, is_attempt_step_id
 from bernstein.core.lineage.artifact_uri import ArtifactURIError, canonical_artifact_key
 from bernstein.core.lineage.spine import LineageSpine, SpineStatus, verify_entry
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -265,7 +265,7 @@ def _canonical_json(payload: dict[str, Any]) -> str:
     Sorted keys and minimal separators: this single function is why two
     surfaces cannot produce different bytes for the same verdict.
     """
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return canonical_bytes(payload).decode("utf-8")
 
 
 # ---------------------------------------------------------------------------

@@ -16,9 +16,10 @@ action's digest before the effect ever runs.
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -46,7 +47,7 @@ ALLOWED_ACTION_KINDS: frozenset[str] = frozenset(
 
 
 def _canonical_json(obj: Any) -> str:
-    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return canonical_bytes(obj).decode("utf-8")
 
 
 def rule_hash(rule_spec: Mapping[str, Any]) -> str:

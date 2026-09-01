@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import time
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -14,6 +13,7 @@ from bernstein.core.security.audit_chain import (
     EVENT_TOOLCALL_ENFORCED_DISPATCH,
     AuditChainStore,
 )
+from bernstein.core.security.canonical import canonical_bytes
 from bernstein.core.security.toolcall_identity import (
     TOOLCALL_IDENTITY_DOMAIN,
     FrozenToolCallIdentityVerifier,
@@ -35,12 +35,7 @@ if TYPE_CHECKING:
 
 
 def _content_ref(kind: str, payload: dict[str, str]) -> str:
-    canonical = json.dumps(
-        {"kind": kind, "payload": payload, "version": 1},
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
+    canonical = canonical_bytes({"kind": kind, "payload": payload, "version": 1})
     return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
 

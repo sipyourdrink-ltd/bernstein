@@ -43,6 +43,7 @@ from bernstein.adapters._contract import _run_capture, _sandbox_env
 from bernstein.adapters.capability_profile import AdapterCapabilityProfile, InvocationSpec
 from bernstein.adapters.conformance import GoldenTranscript, StepResult, TranscriptResult, TranscriptStep
 from bernstein.adapters.draft import Draft, draft_from_evidence
+from bernstein.core.security.canonical import canonical_bytes
 
 #: Per-command timeout for probe invocations.
 _PROBE_TIMEOUT_SECONDS = 30
@@ -77,17 +78,13 @@ class ProbeEvidence:
     sha256: str
 
 
-def _canonical_bytes(data: dict[str, Any]) -> bytes:
-    return json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
 def _sha256_hex(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
 def _write_evidence(out_dir: Path, record: dict[str, Any]) -> ProbeEvidence:
     """Write ``record`` under its content-addressed name and return its handle."""
-    payload = _canonical_bytes(record)
+    payload = canonical_bytes(record)
     sha = _sha256_hex(payload)
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{sha}.json"

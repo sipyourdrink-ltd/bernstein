@@ -55,6 +55,7 @@ from bernstein.core.lineage.spine import (
     SpineEntry,
     verify_entry,
 )
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -165,12 +166,7 @@ class ArtifactProductionEvent:
         Sorted keys and minimal separators, so two hosts projecting the same
         spine entry serialise byte-identical rows.
         """
-        return json.dumps(
-            self.to_payload(),
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
+        return canonical_bytes(self.to_payload())
 
     @classmethod
     def from_payload(cls, row: dict[str, Any]) -> ArtifactProductionEvent:

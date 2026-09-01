@@ -10,9 +10,10 @@ attempt-hash order, which is itself a pure function of the attempt identities.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -113,7 +114,7 @@ def selection_projection_bytes(outcomes: Sequence[AttemptOutcome], spec: Tournam
         "ranked": [r.to_dict() for r in selection.ranked],
         "tie_break": spec.tie_break,
     }
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return canonical_bytes(payload)
 
 
 __all__ = [

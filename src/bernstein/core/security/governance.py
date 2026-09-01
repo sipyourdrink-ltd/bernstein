@@ -63,6 +63,7 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.core.cost.spend_ledger import SpendLedger
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -98,18 +99,13 @@ _BUDGET_ACTION = "budget"
 # ---------------------------------------------------------------------------
 
 
-def _canonical_bytes(payload: dict[str, Any]) -> bytes:
-    """Return canonical JSON bytes (sorted keys, minimal separators, UTF-8)."""
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
 def _sha256(payload: dict[str, Any]) -> str:
-    return "sha256:" + hashlib.sha256(_canonical_bytes(payload)).hexdigest()
+    return "sha256:" + hashlib.sha256(canonical_bytes(payload)).hexdigest()
 
 
 def _sign(key: bytes, payload: dict[str, Any]) -> str:
     """Return the HMAC-SHA256 signature over ``payload``'s canonical bytes."""
-    return _hmac.new(key, _canonical_bytes(payload), hashlib.sha256).hexdigest()
+    return _hmac.new(key, canonical_bytes(payload), hashlib.sha256).hexdigest()
 
 
 def _safe_name(run_id: str) -> str:
@@ -265,7 +261,7 @@ class GovernanceDecision:
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the binding to canonical JSON bytes (spine-hashed)."""
-        return _canonical_bytes(self._binding())
+        return canonical_bytes(self._binding())
 
     def to_dict(self) -> dict[str, Any]:
         return self._binding() | {"journal_entry_hash": self.journal_entry_hash}

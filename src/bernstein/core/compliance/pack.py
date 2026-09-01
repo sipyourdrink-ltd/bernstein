@@ -38,6 +38,7 @@ from bernstein.core.compliance.regulator_renderers import (
 )
 from bernstein.core.lineage.entry import LineageEntry, canonicalise, entry_hash
 from bernstein.core.lineage.identity import sign_detached
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -370,11 +371,6 @@ def build_pack(
 # ===========================================================================
 
 
-def _canonical_json(payload: Any) -> bytes:
-    """RFC 8785-style canonical JSON bytes (matches the offline verifier)."""
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
 def _safe_member_name(value: str) -> str:
     """Sanitise a caller-supplied id into a flat, path-safe member stem."""
     return "".join(c if (c.isalnum() or c in "-_.") else "_" for c in value) or "unnamed"
@@ -407,9 +403,9 @@ def _seal_pack(
         "input_hashes": input_hashes,
         "operator_kid": _OPERATOR_KID,
     }
-    manifest_bytes_no_output = _canonical_json(manifest)
+    manifest_bytes_no_output = canonical_bytes(manifest)
     manifest["output_hash"] = _sha256(manifest_bytes_no_output)
-    manifest_bytes = _canonical_json(manifest)
+    manifest_bytes = canonical_bytes(manifest)
 
     operator_pem = _load_operator_signer(operator_key_path)
     sig = sign_detached(manifest_bytes, operator_pem, kid=_OPERATOR_KID)
@@ -626,7 +622,7 @@ def build_retention_pack(
         "coverage_gaps": coverage_gaps,
         "retention_params": retention_params,
     }
-    evidence_bytes = _canonical_json(evidence)
+    evidence_bytes = canonical_bytes(evidence)
 
     sig_payload, card_payload = _collect_sig_card_members(filtered, signatures_src, agent_cards_dir)
     members: dict[str, bytes] = (
@@ -704,8 +700,8 @@ def build_oversight_pack(
     for a in in_window:
         displayed = a["displayed"]
         executed = a["executed"]
-        displayed_hash = _sha256(_canonical_json(displayed))
-        executed_hash = _sha256(_canonical_json(executed))
+        displayed_hash = _sha256(canonical_bytes(displayed))
+        executed_hash = _sha256(canonical_bytes(executed))
         binding_ok = displayed_hash == executed_hash
         receipt = {
             "v": 1,
@@ -718,7 +714,7 @@ def build_oversight_pack(
             "displayed_hash": displayed_hash,
             "executed_hash": executed_hash,
         }
-        receipt_members[f"receipts/{_safe_member_name(receipt['receipt_id'])}.json"] = _canonical_json(receipt)
+        receipt_members[f"receipts/{_safe_member_name(receipt['receipt_id'])}.json"] = canonical_bytes(receipt)
         evidence_rows.append(
             {
                 "receipt_id": receipt["receipt_id"],
@@ -745,7 +741,7 @@ def build_oversight_pack(
             "utf-8"
         ),
         "verify-instructions.md": _regulator_verify_instructions(PACK_KIND_OVERSIGHT).encode("utf-8"),
-        "oversight-evidence.json": _canonical_json(evidence),
+        "oversight-evidence.json": canonical_bytes(evidence),
         "oversight-report.csv": render_oversight_csv(evidence).encode("utf-8"),
         "oversight-report.pdf": render_oversight_pdf(
             org=org, period=(since.isoformat(), until.isoformat()), evidence=evidence
@@ -800,8 +796,8 @@ def build_incident_pack(
     """
     build_started_at = datetime.now(UTC).isoformat(timespec="seconds")
 
-    timeline_bytes = _canonical_json(timeline)
-    slice_bytes = b"".join(_canonical_json(ev) + b"\n" for ev in audit_events)
+    timeline_bytes = canonical_bytes(timeline)
+    slice_bytes = b"".join(canonical_bytes(ev) + b"\n" for ev in audit_events)
     gap_list = [dict(g) for g in gaps]
     gaps_doc = {"kind": PACK_KIND_INCIDENT, "run_id": run_id, "gaps": gap_list}
 
@@ -810,7 +806,7 @@ def build_incident_pack(
         "verify-instructions.md": _regulator_verify_instructions(PACK_KIND_INCIDENT).encode("utf-8"),
         "incident-timeline.json": timeline_bytes,
         "audit-slice.jsonl": slice_bytes,
-        "gaps.json": _canonical_json(gaps_doc),
+        "gaps.json": canonical_bytes(gaps_doc),
         "incident-report.csv": render_incident_csv(dict(timeline)).encode("utf-8"),
         "incident-report.pdf": render_incident_pdf(org=org, timeline=dict(timeline), gaps=gap_list),
     }

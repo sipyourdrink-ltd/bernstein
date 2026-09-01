@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from bernstein.core.lineage.tracker_audit import GENESIS_PREV_HASH, _canonical_bytes
+from bernstein.core.lineage.tracker_audit import GENESIS_PREV_HASH
 from bernstein.core.orchestration.orchestrator import start_cluster_coordinator
 from bernstein.core.orchestration.tracker_pipeline import (
     CLAIM_JOURNAL_SCHEMA_VERSION,
@@ -40,6 +40,7 @@ from bernstein.core.protocols.cluster.mesh_coordinator import (
     build_mesh_coordinator,
 )
 from bernstein.core.security.audit_chain import AuditChainStore
+from bernstein.core.security.canonical import canonical_bytes as _canonical_bytes
 from bernstein.core.tasks.models import ClusterConfig, ClusterTopology
 
 if TYPE_CHECKING:

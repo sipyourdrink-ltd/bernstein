@@ -45,6 +45,7 @@ from bernstein.core.security.audit_chain import (
     record_steering_rejection,
     record_task_mailbox_message,
 )
+from bernstein.core.security.canonical import canonical_bytes
 from bernstein.core.server.dashboard_tokens import SCOPE_OPERATOR
 
 if TYPE_CHECKING:
@@ -128,7 +129,7 @@ class SteeringPayloadMismatch(SteeringError):
 
 def _canonical(payload: dict[str, Any]) -> bytes:
     """Return stable canonical JSON bytes (sorted keys, compact, UTF-8)."""
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return canonical_bytes(payload)
 
 
 def _sha256(data: bytes) -> str:

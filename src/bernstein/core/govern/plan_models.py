@@ -14,10 +14,11 @@ offline.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
+
+from bernstein.core.security.canonical import canonical_bytes
 
 
 class PlanEntryKind(Enum):
@@ -134,12 +135,7 @@ class GovernPlan:
         encoding. This is the form hashed into the lineage spine, so two
         replays against the same inputs produce byte-identical anchors.
         """
-        return json.dumps(
-            self.to_dict(),
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
+        return canonical_bytes(self.to_dict())
 
     def to_dict(self) -> dict[str, Any]:
         """Return the canonical serialization (the hashed payload)."""

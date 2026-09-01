@@ -64,6 +64,7 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.identity import generate_keypair
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
+from bernstein.core.security.canonical import canonical_bytes
 from bernstein.core.skills.catalog.signature import sign_payload, verify_payload
 
 if TYPE_CHECKING:
@@ -99,11 +100,6 @@ _IDENTITY_PUBLIC_NAME = "review-identity-public.pem"
 # ---------------------------------------------------------------------------
 # Canonical hashing helpers
 # ---------------------------------------------------------------------------
-
-
-def _canonical_bytes(payload: dict[str, Any]) -> bytes:
-    """Return canonical JSON bytes (sorted keys, minimal separators, UTF-8)."""
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -214,7 +210,7 @@ class Finding:
 
     def finding_hash(self) -> str:
         """Return the content hash of this finding."""
-        return _sha256_bytes(_canonical_bytes(self.to_dict()))
+        return _sha256_bytes(canonical_bytes(self.to_dict()))
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +296,7 @@ class ReviewReceipt:
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the binding to canonical JSON bytes (signed + spine-hashed)."""
-        return _canonical_bytes(self._binding())
+        return canonical_bytes(self._binding())
 
     def to_dict(self) -> dict[str, Any]:
         return self._binding() | {
@@ -809,7 +805,7 @@ class AutofixReceipt:
         return binding
 
     def to_canonical_bytes(self) -> bytes:
-        return _canonical_bytes(self._binding())
+        return canonical_bytes(self._binding())
 
     def to_dict(self) -> dict[str, Any]:
         base = self._binding()
@@ -1110,7 +1106,7 @@ class ApprovalBinding:
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the binding to canonical JSON bytes."""
-        return _canonical_bytes(self._binding())
+        return canonical_bytes(self._binding())
 
     def to_dict(self) -> dict[str, Any]:
         return self._binding() | {

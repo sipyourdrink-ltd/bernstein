@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.sanitize import sanitize_log
+from bernstein.core.security.canonical import canonical_bytes
 
 if sys.platform == "win32":
     fcntl = None  # type: ignore[assignment]
@@ -106,11 +107,6 @@ class AutomationBridgeError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
-def _canonical_bytes(payload: dict[str, Any]) -> bytes:
-    """Return canonical JSON bytes (sorted keys, minimal separators, UTF-8)."""
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
 def _sha256_bytes(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
@@ -126,7 +122,7 @@ def compute_payload_digest(body: bytes) -> str:
 
 def compute_document_digest(document: dict[str, Any]) -> str:
     """Return the content hash of a canonicalised JSON document."""
-    return _sha256_bytes(_canonical_bytes(document))
+    return _sha256_bytes(canonical_bytes(document))
 
 
 # ---------------------------------------------------------------------------
@@ -354,7 +350,7 @@ def _normalise_priority(raw: Any) -> str:
 
 def _node_id(body: dict[str, Any]) -> str:
     """Return a content-addressed node id (no clock, no random source)."""
-    return hashlib.sha256(_canonical_bytes(body)).hexdigest()[:16]
+    return hashlib.sha256(canonical_bytes(body)).hexdigest()[:16]
 
 
 def project_task_graph(*, platform: str, intent: dict[str, Any]) -> TaskGraphProjection:
@@ -405,7 +401,7 @@ def project_task_graph(*, platform: str, intent: dict[str, Any]) -> TaskGraphPro
         previous_id = node.node_id
 
     digest = _sha256_bytes(
-        _canonical_bytes(
+        canonical_bytes(
             {
                 "v": AUTOMATION_BRIDGE_SCHEMA_VERSION,
                 "platform": platform,
@@ -488,7 +484,7 @@ class TriggerReceipt:
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the binding to canonical JSON bytes (signed + chain-hashed)."""
-        return _canonical_bytes(self._binding())
+        return canonical_bytes(self._binding())
 
     def binding_digest(self) -> str:
         """Return the content hash of the signed binding."""
@@ -920,7 +916,7 @@ class StatusProof:
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the binding to canonical JSON bytes (signed + chain-hashed)."""
-        return _canonical_bytes(self._binding())
+        return canonical_bytes(self._binding())
 
     def binding_digest(self) -> str:
         """Return the content hash of the signed binding."""

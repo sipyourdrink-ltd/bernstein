@@ -38,6 +38,8 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal
 
+from bernstein.core.security.canonical import canonical_bytes
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -79,23 +81,6 @@ def content_hash(blob: bytes) -> str:
     """Return the content-addressed identifier for ``blob``."""
 
     return "sha256:" + hashlib.sha256(blob).hexdigest()
-
-
-def _canonical_bytes(payload: dict[str, Any]) -> bytes:
-    """Return RFC 8785 JCS bytes for ``payload``.
-
-    The entry schema is a flat object of strings / ints / floats / lists
-    of strings, so ``json.dumps`` with ``sort_keys`` plus minimal
-    separators is sufficient (the edge cases of RFC 8785 around ES6
-    number formatting do not apply).
-    """
-
-    return json.dumps(
-        payload,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +161,7 @@ def canonicalise_entry(entry: TrackerAuditEntry) -> bytes:
     bytes the HMAC ran over should use :func:`_signing_payload`.
     """
 
-    return _canonical_bytes(_entry_body(entry))
+    return canonical_bytes(_entry_body(entry))
 
 
 def _signing_payload(entry: TrackerAuditEntry) -> bytes:
@@ -190,7 +175,7 @@ def _signing_payload(entry: TrackerAuditEntry) -> bytes:
     body = _entry_body(entry)
     body["signature"] = ""
     body["entry_hash"] = ""
-    return _canonical_bytes(body)
+    return canonical_bytes(body)
 
 
 def compute_entry_hash(entry: TrackerAuditEntry) -> str:
@@ -333,7 +318,7 @@ class TrackerAuditLog:
         signature = compute_signature(signed, self._hmac_key)
         final = replace(signed, signature=signature)
 
-        line = _canonical_bytes(_entry_body(final)) + b"\n"
+        line = canonical_bytes(_entry_body(final)) + b"\n"
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("ab") as fp, _exclusive_lock(fp):
             fp.write(line)
@@ -467,7 +452,7 @@ class TrackerAuditLog:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with out_path.open("wb") as fp:
             for entry in entries:
-                fp.write(_canonical_bytes(_entry_body(entry)))
+                fp.write(canonical_bytes(_entry_body(entry)))
                 fp.write(b"\n")
         return len(entries)
 

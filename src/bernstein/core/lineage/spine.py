@@ -49,6 +49,8 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.security.canonical import canonical_bytes
+
 if sys.platform == "win32":
     fcntl = None  # type: ignore[assignment]
 else:
@@ -213,12 +215,7 @@ def compute_entry_hash(
         fields["tracestate"] = tracestate
     if baggage is not None:
         fields["baggage"] = baggage
-    preimage = domain_prefix.encode("utf-8") + json.dumps(
-        fields,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
+    preimage = domain_prefix.encode("utf-8") + canonical_bytes(fields)
     return "sha256:" + hashlib.sha256(preimage).hexdigest()
 
 
@@ -279,7 +276,7 @@ class SpineEntry:
 
 
 def _canonical_body_bytes(body: dict[str, Any]) -> bytes:
-    return json.dumps(body, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return canonical_bytes(body)
 
 
 def _compute_hmac(key: bytes, body: dict[str, Any]) -> str:

@@ -81,6 +81,7 @@ from typing import TYPE_CHECKING, Any
 from bernstein.core.path_scope import ScopePatternError
 from bernstein.core.path_scope import paths_outside_scope as _paths_outside_scope
 from bernstein.core.path_scope import validate_repo_relative_pattern as _validate_repo_relative_pattern
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -306,12 +307,7 @@ def canonical_manifest_bytes(manifest: VolunteerManifest) -> bytes:
     at every depth, no insignificant whitespace -- so a digest computed here
     is comparable with the rest of the receipt substrate.
     """
-    return json.dumps(
-        _sort_recursive(manifest.to_canonical_dict()),
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
+    return canonical_bytes(_sort_recursive(manifest.to_canonical_dict()))
 
 
 def manifest_digest(manifest: VolunteerManifest) -> str:

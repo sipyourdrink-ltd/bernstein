@@ -41,6 +41,8 @@ import json
 from dataclasses import dataclass
 from typing import Any, cast
 
+from bernstein.core.security.canonical import canonical_bytes
+
 #: The genesis ``prev_hmac`` value used by the audit chain (see
 #: :mod:`bernstein.core.security.audit`). Re-declared here to keep this module
 #: import-light; a mismatch would surface immediately in the projection tests.
@@ -119,7 +121,7 @@ def canonical_details_digest(details: dict[str, Any]) -> str:
     payload without copying it into the feed, and it is what a fire receipt and a
     render template commit to.
     """
-    preimage = json.dumps(details, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    preimage = canonical_bytes(details)
     return "sha256:" + hashlib.sha256(preimage).hexdigest()
 
 

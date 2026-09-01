@@ -20,13 +20,13 @@ prove offline which floor map was in force when a spawn decision was recorded.
 from __future__ import annotations
 
 import hashlib
-import json
 import operator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from bernstein.adapters.advisories import ADAPTER_MIN_SAFE_VERSIONS, AdapterAdvisory
 from bernstein.adapters.security_floor import hash_floor_map
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -53,13 +53,9 @@ FLOOR_MAP_BEGIN = "# floor-map:begin"
 FLOOR_MAP_END = "# floor-map:end"
 
 
-def _canonical_bytes(data: Any) -> bytes:
-    return json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
 def receipt_sha256(receipt: dict[str, Any]) -> str:
     """Content hash (identity) of a receipt's canonical bytes."""
-    return hashlib.sha256(_canonical_bytes(receipt)).hexdigest()
+    return hashlib.sha256(canonical_bytes(receipt)).hexdigest()
 
 
 # ---------------------------------------------------------------------------

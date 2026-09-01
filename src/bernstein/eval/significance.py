@@ -29,13 +29,14 @@ statistics and a gate degrades to a threshold compare over noise.
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 from dataclasses import dataclass
 from decimal import ROUND_HALF_EVEN, Decimal
 from enum import StrEnum
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Final
+
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -508,7 +509,7 @@ def classify(
 
 
 def _hash_obj(obj: Any) -> str:
-    payload = json.dumps(obj, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    payload = canonical_bytes(obj)
     return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 

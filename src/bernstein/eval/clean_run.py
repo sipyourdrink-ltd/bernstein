@@ -68,6 +68,7 @@ from bernstein.core.replay.journal import (
     run_journal_path,
     verify_events,
 )
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -275,7 +276,7 @@ class EquivalenceAttestation:
         """
         payload = self.body()
         payload["attestation_hash"] = self.attestation_hash
-        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        return canonical_bytes(payload)
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> EquivalenceAttestation:
@@ -341,7 +342,7 @@ def _word_runs(normalized: str, max_words: int = MAX_TOKEN_WORDS) -> list[str]:
 
 
 def _hash_obj(obj: Any) -> str:
-    payload = json.dumps(obj, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    payload = canonical_bytes(obj)
     return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
@@ -453,7 +454,7 @@ class ContrabandSet:
 
     def canonical_bytes(self) -> bytes:
         """Canonical JSON bytes (sorted keys, minimal separators, UTF-8)."""
-        return json.dumps(self.to_dict(), ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        return canonical_bytes(self.to_dict())
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> ContrabandSet:
@@ -927,7 +928,7 @@ class CleanRunAttestation:
         """
         payload = self.body()
         payload["attestation_hash"] = self.attestation_hash
-        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        return canonical_bytes(payload)
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> CleanRunAttestation:

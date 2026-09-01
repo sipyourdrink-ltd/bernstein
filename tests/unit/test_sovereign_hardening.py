@@ -421,7 +421,7 @@ def _resign_body(raw: dict[str, Any], private_pem: str) -> None:
     checks were deleted. Re-signing makes the signature valid so the *only*
     thing left that can reject the record is the contract check under test.
     """
-    from bernstein.core.security.deployment_profile import _canonical_bytes
+    from bernstein.core.security.canonical import canonical_bytes as _canonical_bytes
     from bernstein.core.skills.catalog.signature import sign_payload
 
     body = {k: v for k, v in raw.items() if k not in _SEAL_FIELDS}
@@ -502,7 +502,8 @@ def test_record_signed_by_a_foreign_key_is_rejected(tmp_path: Path) -> None:
     itself. It must still be refused, because the signer is not this install's
     sovereign identity.
     """
-    from bernstein.core.security.deployment_profile import _canonical_bytes, _sha256_of
+    from bernstein.core.security.canonical import canonical_bytes as _canonical_bytes
+    from bernstein.core.security.deployment_profile import _sha256_of
     from bernstein.core.skills.catalog.signature import generate_signer_keypair, sign_payload, verify_payload
 
     _seal(tmp_path)
@@ -606,7 +607,7 @@ def test_corrupt_signature_alone_is_rejected(tmp_path: Path) -> None:
     matches. Only the signature bytes are corrupted, which leaves the signature
     check as the single thing that can reject this record.
     """
-    from bernstein.core.security.deployment_profile import _canonical_bytes
+    from bernstein.core.security.canonical import canonical_bytes as _canonical_bytes
     from bernstein.core.skills.catalog.signature import verify_payload
 
     attestation = _seal(tmp_path)
@@ -651,7 +652,8 @@ def test_verify_rejects_a_record_with_no_effective_policy(tmp_path: Path) -> Non
     The mutated body is re-signed so its signature is valid; the only thing
     that can reject it is the required-field check under test.
     """
-    from bernstein.core.security.deployment_profile import _canonical_bytes, verify_sovereign_attestations
+    from bernstein.core.security.canonical import canonical_bytes as _canonical_bytes
+    from bernstein.core.security.deployment_profile import verify_sovereign_attestations
     from bernstein.core.skills.catalog.signature import sign_payload
 
     _seal(tmp_path)

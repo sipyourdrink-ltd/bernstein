@@ -62,6 +62,7 @@ from bernstein.core.lineage.spine import (
     compute_entry_hash,
     content_hash_of,
 )
+from bernstein.core.security.canonical import canonical_bytes
 from bernstein.core.security.key_derivation import (
     DOMAIN_LINEAGE,
     SCHEME_V2,
@@ -132,11 +133,6 @@ _STATUS_FAIL = "fail"
 # ---------------------------------------------------------------------------
 # Canonical hashing helpers
 # ---------------------------------------------------------------------------
-
-
-def _canonical_bytes(payload: dict[str, Any]) -> bytes:
-    """Return canonical JSON bytes (sorted keys, minimal separators, UTF-8)."""
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -495,7 +491,7 @@ class EvidenceBundle:
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the binding to canonical bytes (signed + spine-hashed)."""
-        return _canonical_bytes(self._binding())
+        return canonical_bytes(self._binding())
 
     def bundle_hash(self) -> str:
         """Return the ``sha256:`` hash of the canonical binding bytes."""
@@ -642,7 +638,7 @@ def _seal_media_credential(
         if not isinstance(priv, Ed25519PrivateKey):
             raise TypeError("evidence identity is not an Ed25519 key")
         signed = sign_manifest(manifest, signing_key=priv)
-        credential = store.put(_canonical_bytes(manifest_to_dict(signed)))
+        credential = store.put(canonical_bytes(manifest_to_dict(signed)))
     except (ValueError, TypeError, KeyError, OSError) as exc:  # pragma: no cover - defensive
         # Log only the exception type: this path handles a private key, so
         # even sanitized exception text stays out of the log stream.

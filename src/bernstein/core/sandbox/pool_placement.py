@@ -34,6 +34,7 @@ from bernstein.core.sandbox.selector import (
     SandboxPolicy,
     select_sandbox,
 )
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -51,7 +52,7 @@ _PLACEMENT_SUBPATH = ("sandbox", "placements")
 
 
 def _canonical_json(payload: Any) -> str:
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return canonical_bytes(payload).decode("utf-8")
 
 
 def _sha256_hex(text: str) -> str:

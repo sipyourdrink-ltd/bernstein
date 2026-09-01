@@ -60,7 +60,6 @@ itself.
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -71,6 +70,7 @@ from bernstein.core.lineage.artifact_uri import (
     is_glob_pattern,
 )
 from bernstein.core.lineage.spine import ARTIFACT_ATTEMPT_STEP_PREFIX, LineageSpine
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -187,7 +187,7 @@ def attempt_record_bytes(*, task_id: str, uri: str, outcome: str, reason: str = 
         "uri": uri,
         "v": ATTEMPT_RECORD_VERSION,
     }
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return canonical_bytes(payload)
 
 
 def record_output_attempt(

@@ -57,6 +57,8 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.security.canonical import canonical_bytes
+
 if sys.platform == "win32":
     fcntl = None  # type: ignore[assignment]
 else:
@@ -145,7 +147,7 @@ def compute_entry_hash(
     The pre-image is the canonical JSON of the ordered field tuple, so
     the digest is deterministic across processes and platforms.
     """
-    preimage = json.dumps(
+    preimage = canonical_bytes(
         {
             "prev_hash": prev_hash,
             "source_hash": source_hash,
@@ -157,16 +159,13 @@ def compute_entry_hash(
             "namespace": namespace,
             "kind": kind,
             "tombstone_of": tombstone_of,
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
+        }
+    )
     return "sha256:" + hashlib.sha256(preimage).hexdigest()
 
 
 def _canonical_body_bytes(body: dict[str, Any]) -> bytes:
-    return json.dumps(body, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return canonical_bytes(body)
 
 
 def _compute_hmac(key: bytes, body: dict[str, Any]) -> str:

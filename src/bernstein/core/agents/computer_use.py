@@ -31,9 +31,10 @@ so a form-filling agent's secrets never enter the chain in plain text.
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass
 from enum import StrEnum
+
+from bernstein.core.security.canonical import canonical_bytes
 
 # ---------------------------------------------------------------------------
 # Action vocabulary
@@ -145,12 +146,7 @@ def compute_observation_hash(*, screenshot_bytes: bytes, dom_digest: str) -> str
 
 def _canonical(body: dict[str, object]) -> bytes:
     """RFC 8785-style canonical JSON bytes (sorted keys, minimal separators)."""
-    return json.dumps(
-        body,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
+    return canonical_bytes(body)
 
 
 def action_anchor_preimage(*, prev_anchor: str, observation_hash: str, action: Action) -> bytes:

@@ -59,6 +59,7 @@ from typing import TYPE_CHECKING, Any
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
 from bernstein.core.replay.journal import EventJournal
 from bernstein.core.sanitize import sanitize_log
+from bernstein.core.security.canonical import canonical_bytes
 from bernstein.core.skills.catalog.signature import sign_payload, verify_payload
 
 if TYPE_CHECKING:
@@ -180,11 +181,6 @@ def verify_standard_webhook(
 # ---------------------------------------------------------------------------
 
 
-def _canonical_bytes(payload: dict[str, Any]) -> bytes:
-    """Return canonical JSON bytes (sorted keys, minimal separators, UTF-8)."""
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
 def _sha256_bytes(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
@@ -195,7 +191,7 @@ def compute_event_hash(*, source: str, event_id: str, body: bytes) -> str:
     Binds the source label, event id, and the raw body so a verifier presented
     the same inbound event recomputes the same hash.
     """
-    preimage = _canonical_bytes(
+    preimage = canonical_bytes(
         {
             "v": WEBHOOK_NODE_SCHEMA_VERSION,
             "source": source,
@@ -208,7 +204,7 @@ def compute_event_hash(*, source: str, event_id: str, body: bytes) -> str:
 
 def compute_result_hash(result: dict[str, Any]) -> str:
     """Return the content hash of an outbound result payload."""
-    return _sha256_bytes(_canonical_bytes(result))
+    return _sha256_bytes(canonical_bytes(result))
 
 
 # ---------------------------------------------------------------------------
@@ -306,7 +302,7 @@ class InboundReceipt:
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the binding to canonical JSON bytes (signed + spine-hashed)."""
-        return _canonical_bytes(self._binding())
+        return canonical_bytes(self._binding())
 
     def to_dict(self) -> dict[str, Any]:
         return self._binding() | {
@@ -533,7 +529,7 @@ class OutboundReceipt:
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the binding to canonical JSON bytes (signed + spine-hashed)."""
-        return _canonical_bytes(self._binding())
+        return canonical_bytes(self._binding())
 
     def to_dict(self) -> dict[str, Any]:
         return self._binding() | {
@@ -551,7 +547,7 @@ class OutboundReceipt:
         delivery is signed under the caller's ``secret`` with the receipt's
         ``event_id`` as the message id.
         """
-        body = _canonical_bytes(self.to_dict())
+        body = canonical_bytes(self.to_dict())
         sig = sign_standard_webhook(secret=secret, msg_id=self.event_id, timestamp=self.timestamp, body=body)
         headers = {
             STANDARD_WEBHOOK_ID_HEADER: self.event_id,

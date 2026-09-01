@@ -18,6 +18,7 @@ import json
 
 from bernstein.core.payments.mandate import SpendMandate
 from bernstein.core.security.agent_card_signer import canonicalize_jcs
+from bernstein.core.security.canonical import canonical_bytes
 
 __all__ = ["JwsPassthroughMandateAdapter"]
 
@@ -49,7 +50,7 @@ class JwsPassthroughMandateAdapter:
             "payload": payload,
             "signatures": [{"protected": protected, "signature": signature}],
         }
-        return json.dumps(envelope, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        return canonical_bytes(envelope)
 
     def from_external(self, blob: bytes) -> SpendMandate:
         """Parse a JWS General JSON envelope back into a mandate.

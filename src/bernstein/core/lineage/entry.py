@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import hmac as _hmac
-import json
 import re
 from dataclasses import asdict, dataclass
+
+from bernstein.core.security.canonical import canonical_bytes
 
 LINEAGE_ENTRY_VERSION = 1
 
@@ -192,12 +193,7 @@ def canonicalise(entry: LineageEntry) -> bytes:
     None, or nested objects into a LineageEntry, so the corner cases of RFC
     8785 around ES6 number formatting and recursive ordering don't apply.
     """
-    return json.dumps(
-        _canonical_body(entry),
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
+    return canonical_bytes(_canonical_body(entry))
 
 
 def entry_hash(entry: LineageEntry) -> str:
@@ -219,5 +215,5 @@ def compute_operator_hmac(entry: LineageEntry, key: bytes) -> str:
     """
     body = _canonical_body(entry)
     body["operator_hmac"] = ""
-    canonical = json.dumps(body, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    canonical = canonical_bytes(body)
     return _hmac.new(key, canonical, hashlib.sha256).hexdigest()

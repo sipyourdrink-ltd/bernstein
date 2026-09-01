@@ -35,6 +35,7 @@ from bernstein.core.endpoints.conformance import (
 )
 from bernstein.core.lineage.identity import generate_keypair
 from bernstein.core.lineage.spine import LineageSpine
+from bernstein.core.security.canonical import canonical_bytes
 from bernstein.core.skills.catalog.signature import sign_payload, verify_payload
 
 if TYPE_CHECKING:
@@ -74,13 +75,9 @@ _IDENTITY_PRIVATE_NAME = "endpoint-identity-key.pem"
 _IDENTITY_PUBLIC_NAME = "endpoint-identity-public.pem"
 
 
-def _canonical_bytes(data: Mapping[str, Any]) -> bytes:
-    return json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
 def endpoint_fingerprint(base_url: str, model: str) -> str:
     """Stable hex fingerprint of a normalized ``(base_url, model)`` pair."""
-    payload = _canonical_bytes({"base_url": normalize_base_url(base_url), "model": model})
+    payload = canonical_bytes({"base_url": normalize_base_url(base_url), "model": model})
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -162,7 +159,7 @@ class EndpointCertification:
         """Canonical JSON bytes of the binding (the signature preimage)."""
         cached = self._binding_cache.get("binding")
         if cached is None:
-            cached = _canonical_bytes(self.binding_dict())
+            cached = canonical_bytes(self.binding_dict())
             self._binding_cache["binding"] = cached
         return cached
 

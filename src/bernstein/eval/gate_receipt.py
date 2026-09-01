@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
+from bernstein.core.security.canonical import canonical_bytes
 from bernstein.eval.significance import (
     DEFAULT_ALPHA,
     DEFAULT_MIN_N,
@@ -152,7 +153,7 @@ def verdict_receipt_path(workdir: Path, receipt_hash: str) -> Path:
 
 
 def _hash_obj(obj: Any) -> str:
-    payload = json.dumps(obj, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    payload = canonical_bytes(obj)
     return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 

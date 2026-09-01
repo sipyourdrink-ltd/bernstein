@@ -40,13 +40,13 @@ from __future__ import annotations
 
 import base64
 import binascii
-import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 from cryptography.exceptions import InvalidSignature
 
 from bernstein.core.lineage.spine import content_hash_of
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -304,12 +304,7 @@ def _signing_payload_dict(manifest: C2paManifest) -> dict[str, Any]:
 
 def canonical_manifest_bytes(manifest: C2paManifest) -> bytes:
     """Return deterministic signing bytes: sorted keys, compact, UTF-8."""
-    return json.dumps(
-        _signing_payload_dict(manifest),
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
+    return canonical_bytes(_signing_payload_dict(manifest))
 
 
 def manifest_to_dict(manifest: C2paManifest) -> dict[str, Any]:

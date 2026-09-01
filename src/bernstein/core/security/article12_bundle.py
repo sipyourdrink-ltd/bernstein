@@ -316,7 +316,7 @@ def _build_data_catalog(events: list[_SourceEvent]) -> bytes:
         "resources": {rtype: dict(sorted(items.items())) for rtype, items in sorted(catalog.items())},
         "total_events": len(events),
     }
-    return _canonical_json(payload)
+    return _bundle_json(payload)
 
 
 def _build_clause_map() -> bytes:
@@ -369,11 +369,16 @@ def _build_clause_map() -> bytes:
             "Article 43 conformity-assessment paperwork",
         ],
     }
-    return _canonical_json(payload)
+    return _bundle_json(payload)
 
 
-def _canonical_json(payload: dict[str, Any]) -> bytes:
-    """Serialise a dict as deterministic JSON suitable for hashing."""
+def _bundle_json(payload: dict[str, Any]) -> bytes:
+    """Serialise a bundle file: indented, sorted keys, trailing newline.
+
+    Presentation bytes a reviewer reads; the bundle's hashes are computed over
+    the stored bytes. Not a signing canonicalization
+    (:mod:`bernstein.core.security.canonical` owns that rule).
+    """
     return (json.dumps(payload, sort_keys=True, indent=2) + "\n").encode("utf-8")
 
 
@@ -436,7 +441,7 @@ def build_article12_bundle(
         "retention": retention.to_dict(),
         "artefacts": dict(sorted(artefact_hashes.items())),
     }
-    manifest_bytes = _canonical_json(manifest)
+    manifest_bytes = _bundle_json(manifest)
 
     archive_bytes = _zip_artefacts(
         manifest_bytes=manifest_bytes,
@@ -811,7 +816,7 @@ def _build_data_catalog_with_lineage(
         "lineage_artefacts": artefact_payload,
         "lineage_artefact_count": len(artefact_payload),
     }
-    return _canonical_json(payload)
+    return _bundle_json(payload)
 
 
 # ---------------------------------------------------------------------------
@@ -850,7 +855,7 @@ def _load_clause_map_from_yaml(path: Path) -> bytes:
         raise ValueError(f"clause map at {path} is not a YAML mapping")
     if "mappings" not in parsed or not isinstance(parsed["mappings"], list):
         raise ValueError(f"clause map at {path} missing 'mappings' list")
-    return _canonical_json(parsed)
+    return _bundle_json(parsed)
 
 
 # ---------------------------------------------------------------------------
@@ -1004,7 +1009,7 @@ def assemble_from_run(
         if clause_map_file.is_relative_to(workdir)
         else str(clause_map_file),
     }
-    manifest_bytes = _canonical_json(manifest)
+    manifest_bytes = _bundle_json(manifest)
 
     archive_bytes = _zip_artefacts(
         manifest_bytes=manifest_bytes,

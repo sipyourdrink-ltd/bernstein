@@ -18,9 +18,10 @@ the same value and can be pinned in a selection receipt for offline replay.
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass
 from typing import Any
+
+from bernstein.core.security.canonical import canonical_bytes
 
 #: Version stamped into the canonical spec preimage. Bump only on a
 #: wire-format change.
@@ -121,7 +122,7 @@ class TournamentSpec:
 
     def spec_hash(self) -> str:
         """Return the ``sha256:`` content hash of the canonical spec."""
-        raw = json.dumps(self.canonical(), ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        raw = canonical_bytes(self.canonical())
         return "sha256:" + hashlib.sha256(raw).hexdigest()
 
     @classmethod

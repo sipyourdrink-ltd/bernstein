@@ -41,6 +41,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.security.canonical import canonical_bytes
 from bernstein.core.security.path_containment import (
     PathContainmentError,
     PathTooLongError,
@@ -288,10 +289,6 @@ class MatrixRunResult:
 # ---------------------------------------------------------------------------
 
 
-def _canonical_bytes(data: dict[str, Any]) -> bytes:
-    return json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
 def _sha256_hex(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
@@ -488,7 +485,7 @@ def build_canary_receipt(outcome: CanaryOutcome, *, generated_at: str) -> dict[s
 
 def receipt_sha256(receipt: dict[str, Any]) -> str:
     """Content hash (identity) of a receipt's canonical bytes."""
-    return _sha256_hex(_canonical_bytes(receipt))
+    return _sha256_hex(canonical_bytes(receipt))
 
 
 def verify_canary_receipt(doc: dict[str, Any]) -> bool:
@@ -553,7 +550,7 @@ def failure_fingerprint(outcome: CanaryOutcome) -> str:
     version failing differently (or the same way) fingerprints fresh.
     """
     return _sha256_hex(
-        _canonical_bytes(
+        canonical_bytes(
             {
                 "adapter": outcome.adapter,
                 "installed_version": outcome.installed_version,
@@ -572,7 +569,7 @@ def skip_fingerprint(outcome: CanaryOutcome) -> str:
     while a different degradation restarts the streak and reports afresh.
     """
     return _sha256_hex(
-        _canonical_bytes(
+        canonical_bytes(
             {
                 "adapter": outcome.adapter,
                 "skip_reason": outcome.skip_reason or "",
@@ -964,7 +961,7 @@ def save_last_green(path: Path, entries: dict[str, LastGreenEntry]) -> None:
         }
         for name, entry in sorted(entries.items())
     }
-    canonical = _canonical_bytes(adapters_dict)
+    canonical = canonical_bytes(adapters_dict)
     projection_sha256 = _sha256_hex(canonical)
 
     doc = {
@@ -1025,7 +1022,7 @@ def verify_last_green_head(path: Path | None = None) -> bool:
             }
         except (KeyError, ValueError):
             continue
-    return _sha256_hex(_canonical_bytes(adapters_dict)) == recorded
+    return _sha256_hex(canonical_bytes(adapters_dict)) == recorded
 
 
 class ReceiptSetError(ValueError):

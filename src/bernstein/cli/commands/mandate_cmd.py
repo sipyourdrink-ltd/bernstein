@@ -23,6 +23,7 @@ from pathlib import Path
 import click
 
 from bernstein.cli.helpers import console
+from bernstein.core.security.canonical import canonical_bytes
 
 
 def _load_hmac_key() -> bytes:
@@ -45,9 +46,7 @@ def _settlement_ref_hash(settlement: object) -> str:
     from bernstein.core.protocols.payments.mandates import SettlementRef
 
     assert isinstance(settlement, SettlementRef)
-    canonical = json.dumps(settlement.to_dict(), ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode(
-        "utf-8"
-    )
+    canonical = canonical_bytes(settlement.to_dict())
     return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
 

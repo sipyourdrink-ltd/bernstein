@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
+from bernstein.core.security.canonical import canonical_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -97,7 +98,7 @@ def canonical_hash(obj: Any) -> str:
     convention every receipt in this codebase hashes with, so two machines
     hashing the same structure agree byte-for-byte.
     """
-    payload = json.dumps(obj, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    payload = canonical_bytes(obj)
     return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
@@ -231,7 +232,7 @@ class TierRecord:
 
     def canonical_bytes(self) -> bytes:
         """Canonical bytes sealed into the ``verifier-ladder`` spine run."""
-        return json.dumps(self.body(), ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        return canonical_bytes(self.body())
 
     def to_dict(self) -> dict[str, Any]:
         payload = self.body()

@@ -43,6 +43,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, cast
 
+from bernstein.core.security.canonical import canonical_bytes
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -402,12 +404,7 @@ def canonicalise(capsule: IntentCapsule) -> bytes:
     ``sort_keys=True`` + minimal separators + UTF-8 covers the subset relevant
     to a flat object of strings, ints, and lists-of-strings.
     """
-    return json.dumps(
-        capsule.to_canonical_dict(),
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
+    return canonical_bytes(capsule.to_canonical_dict())
 
 
 def capsule_hash(capsule: IntentCapsule) -> str:
@@ -416,7 +413,7 @@ def capsule_hash(capsule: IntentCapsule) -> str:
 
 
 def _sha256_ref(payload: Any) -> str:
-    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    raw = canonical_bytes(payload)
     return "sha256:" + hashlib.sha256(raw).hexdigest()
 
 

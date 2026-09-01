@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
 from bernstein.core.security.agent_card_signer import sign_detached_jws_over_canonical
+from bernstein.core.security.canonical import canonical_bytes
 from bernstein.core.worktrees.classifier import _git_head_sha, classify_worktrees
 
 if TYPE_CHECKING:
@@ -246,7 +247,7 @@ class RunGraphReceiptSchema:
 
 def _hash_obj(obj: object) -> str:
     """Canonical SHA256 hash over canonical JSON (mirror gate_receipt._hash_obj)."""
-    payload = json.dumps(obj, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    payload = canonical_bytes(obj)
     return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 

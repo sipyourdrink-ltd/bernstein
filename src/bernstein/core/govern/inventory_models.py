@@ -8,9 +8,10 @@ surface carries its observed value and an evidence reference for auditability.
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass
 from typing import Any
+
+from bernstein.core.security.canonical import canonical_bytes
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,12 +81,7 @@ class Inventory:
         identical inventories produce identical hashes regardless of
         Python dict ordering.
         """
-        canonical = json.dumps(
-            self.to_dict(),
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
+        canonical = canonical_bytes(self.to_dict())
         return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
     def get_surface(self, surface_id: str) -> Surface | None:

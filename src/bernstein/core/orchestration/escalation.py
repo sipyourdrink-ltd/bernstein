@@ -52,6 +52,7 @@ from bernstein.core.orchestration.supervisor_receipt import (
 )
 from bernstein.core.replay.fork import SNAPSHOT_EVENT
 from bernstein.core.replay.journal import load_events, run_journal_path, verify_journal
+from bernstein.core.security.canonical import canonical_bytes
 from bernstein.core.skills.catalog.signature import sign_payload, verify_payload
 
 if TYPE_CHECKING:
@@ -91,11 +92,6 @@ class EscalationError(RuntimeError):
 # ---------------------------------------------------------------------------
 # Canonical helpers
 # ---------------------------------------------------------------------------
-
-
-def _canonical_bytes(payload: dict[str, Any]) -> bytes:
-    """Return canonical JSON bytes (sorted keys, minimal separators, UTF-8)."""
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
 def _safe_receipt_name(receipt_id: str) -> str:
@@ -308,7 +304,7 @@ class EscalationReceipt:
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the binding to canonical JSON bytes (signed + spine-hashed)."""
-        return _canonical_bytes(self._binding())
+        return canonical_bytes(self._binding())
 
     def to_dict(self) -> dict[str, Any]:
         return self._binding() | {

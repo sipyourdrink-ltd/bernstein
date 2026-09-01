@@ -69,6 +69,7 @@ from typing import Any, Final, cast
 
 from bernstein.core.dataclass_helpers import typed_replace as _typed_replace
 from bernstein.core.persistence.atomic_write import write_atomic_json
+from bernstein.core.security.canonical import canonical_bytes
 
 __all__ = [
     "DEFAULT_RELAY_DIR",
@@ -377,7 +378,7 @@ def canonicalise_relay(doc: RelayDocument) -> bytes:
     """
     body = doc.to_dict()
     body["operator_hmac"] = ""
-    return json.dumps(body, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return canonical_bytes(body)
 
 
 def compute_relay_hmac(doc: RelayDocument, key: bytes) -> str:

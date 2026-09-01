@@ -15,6 +15,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from bernstein.core.security.canonical import canonical_bytes
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -73,7 +75,7 @@ def serialize_sample(sample: RepositoryFlowSample) -> bytes:
         "churn_lines": sample.churn_lines,
         "open_issues": sample.open_issues,
     }
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return canonical_bytes(payload)
 
 
 def deserialize_sample(line: bytes) -> RepositoryFlowSample:

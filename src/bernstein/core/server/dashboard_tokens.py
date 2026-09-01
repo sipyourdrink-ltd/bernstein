@@ -50,6 +50,7 @@ import secrets
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
+from bernstein.core.security.canonical import canonical_bytes
 from bernstein.core.security.governance import RoleBindings, decide_access
 
 if TYPE_CHECKING:
@@ -92,11 +93,6 @@ TOKEN_RECORD_VERSION = 1
 #: Length of the short token id (hex chars of the digest) used for listing
 #: and revocation. 16 hex chars = 64 bits: ample for a per-install registry.
 _TOKEN_ID_LEN = 16
-
-
-def _canonical_bytes(payload: dict[str, Any]) -> bytes:
-    """Return canonical JSON bytes (sorted keys, minimal separators, UTF-8)."""
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
 def resolve_dashboard_hmac_key(sdd_dir: Path) -> bytes:
@@ -193,7 +189,7 @@ class DashboardTokenRecord:
 
     def sign(self, key: bytes) -> DashboardTokenRecord:
         """Return a copy carrying the HMAC signature over the row body."""
-        sig = _hmac.new(key, _canonical_bytes(self._body()), hashlib.sha256).hexdigest()
+        sig = _hmac.new(key, canonical_bytes(self._body()), hashlib.sha256).hexdigest()
         return DashboardTokenRecord(
             kind=self.kind,
             token_id=self.token_id,
@@ -208,7 +204,7 @@ class DashboardTokenRecord:
         """Return True when ``signature`` matches the row body under ``key``."""
         if not self.signature:
             return False
-        want = _hmac.new(key, _canonical_bytes(self._body()), hashlib.sha256).hexdigest()
+        want = _hmac.new(key, canonical_bytes(self._body()), hashlib.sha256).hexdigest()
         return _hmac.compare_digest(self.signature, want)
 
     def to_dict(self) -> dict[str, Any]:

@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac as _hmac
-import json
 import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -40,6 +39,7 @@ from bernstein.core.persistence.cache_policy import (
     resolve_cached_path,
     validate_cache_key,
 )
+from bernstein.core.security.canonical import canonical_bytes
 from bernstein.core.tasks.claim import (
     Backlog,
     BacklogEntry,
@@ -55,10 +55,6 @@ _RECEIPT_VERSION = 1
 
 #: Status a released row returns to, matching the claim primitive's vocabulary.
 _OPEN_STATUS = "open"
-
-
-def _canonical_bytes(value: Any) -> bytes:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +143,7 @@ def mint_duplicate_receipt(
         winner_output_ref=winner_output_ref,
         ts=ts,
     )
-    tag = _hmac.new(hmac_key, _canonical_bytes(unsigned.body()), hashlib.sha256).hexdigest()
+    tag = _hmac.new(hmac_key, canonical_bytes(unsigned.body()), hashlib.sha256).hexdigest()
     return DuplicateOfReceipt(
         cache_key=cache_key,
         winner=winner,
@@ -178,7 +174,7 @@ def verify_duplicate_receipt(
     field (issue #2551 AC3). Absent an authoritative copy the mismatch is
     reported as ``"hmac"``.
     """
-    expected = _hmac.new(hmac_key, _canonical_bytes(receipt.body()), hashlib.sha256).hexdigest()
+    expected = _hmac.new(hmac_key, canonical_bytes(receipt.body()), hashlib.sha256).hexdigest()
     if _hmac.compare_digest(receipt.hmac, expected):
         return True, None
     if authoritative is not None:
