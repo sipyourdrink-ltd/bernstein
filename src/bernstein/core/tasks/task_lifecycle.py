@@ -73,6 +73,7 @@ from bernstein.core.tick_pipeline import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from bernstein.core.git_ops import MergeResult
@@ -223,7 +224,7 @@ def _get_active_agent_files(orch: Any) -> set[str]:
 
 def check_file_overlap(
     batch: list[Task],
-    file_ownership: dict[str, str],
+    file_ownership: Mapping[str, str],
     agents: dict[str, AgentSession],
 ) -> bool:
     """Check if any file in the batch is owned by an active agent.

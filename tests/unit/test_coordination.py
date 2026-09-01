@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -289,6 +291,24 @@ def test_check_file_overlap_no_conflict(tmp_path: Path):
     assert orch._check_file_overlap(batch) is False
 
 
+def _claim(orch: Orchestrator, agent_id: str, *files: str) -> None:
+    """Take ownership of *files* for *agent_id* the way production does.
+
+    ``FileLockManager`` is the only writer of ownership; ``_file_ownership``
+    is a read-only projection of it. These tests used to seed ownership by
+    assigning into that projection, which mutated a throwaway dict and left
+    the orchestrator owning nothing - the assertion three lines later failed
+    with no hint about where the claim went.
+    """
+    conflicts = orch._lock_manager.acquire(
+        list(files),
+        agent_id=agent_id,
+        task_id="T-001",
+        task_title="Test task",
+    )
+    assert conflicts == [], f"fixture could not claim {files}: held by {conflicts}"
+
+
 def test_check_file_overlap_detects_active_agent(tmp_path: Path):
     """Conflict detected when an active agent owns a file in the batch."""
     orch = _make_orchestrator(tmp_path)
@@ -296,21 +316,32 @@ def test_check_file_overlap_detects_active_agent(tmp_path: Path):
     # Simulate agent owning src/utils.py
     session = _make_session(id="backend-abc", status="working")
     orch._agents["backend-abc"] = session
-    orch._file_ownership["src/utils.py"] = "backend-abc"
+    _claim(orch, "backend-abc", "src/utils.py")
 
     batch = [_make_task(owned_files=["src/utils.py"])]
     assert orch._check_file_overlap(batch) is True
 
 
-def test_check_file_overlap_no_conflict_dead_agent(tmp_path: Path):
-    """Dead agent ownership does not block a new batch."""
+def test_reaping_a_dead_agent_frees_its_files_for_the_next_batch(tmp_path: Path):
+    """A dead agent does not block a new batch, because reaping releases its locks.
+
+    The guarantee is unchanged; the mechanism that provides it moved. Ownership
+    used to be filtered against ``AgentSession.status`` on every overlap check,
+    so a lock left behind by a dead agent was ignored in place. It is now
+    released when the agent is reaped, which means the release is the thing
+    worth asserting - checking overlap against a lock nobody released would
+    pass only while the TTL happened to be short.
+    """
     orch = _make_orchestrator(tmp_path)
 
     session = _make_session(id="backend-dead", status="dead")
     orch._agents["backend-dead"] = session
-    orch._file_ownership["src/utils.py"] = "backend-dead"
+    _claim(orch, "backend-dead", "src/utils.py")
 
     batch = [_make_task(owned_files=["src/utils.py"])]
+    assert orch._check_file_overlap(batch) is True, "an unreleased lock still holds the batch"
+
+    orch._release_file_ownership("backend-dead")
     assert orch._check_file_overlap(batch) is False
 
 
@@ -320,7 +351,24 @@ def test_check_file_overlap_different_files_no_conflict(tmp_path: Path):
 
     session = _make_session(id="backend-abc", status="working")
     orch._agents["backend-abc"] = session
-    orch._file_ownership["src/auth.py"] = "backend-abc"
+    _claim(orch, "backend-abc", "src/auth.py")
 
     batch = [_make_task(owned_files=["src/users.py"])]
     assert orch._check_file_overlap(batch) is False
+
+
+def test_writing_to_the_ownership_projection_raises_instead_of_vanishing(tmp_path: Path):
+    """``_file_ownership`` is a projection, and a write to it must fail loudly.
+
+    A plain dict rebuilt on each access accepts the assignment and throws it
+    away, so the caller keeps running with a claim that was never made. That
+    is a silent no-op in the one place a missed claim lets two agents edit the
+    same file. The proxy turns it into a ``TypeError`` on the offending line.
+    """
+    orch = _make_orchestrator(tmp_path)
+
+    with pytest.raises(TypeError):
+        orch._file_ownership["src/utils.py"] = "backend-abc"  # type: ignore[index]
+
+    _claim(orch, "backend-abc", "src/utils.py")
+    assert orch._file_ownership == {"src/utils.py": "backend-abc"}

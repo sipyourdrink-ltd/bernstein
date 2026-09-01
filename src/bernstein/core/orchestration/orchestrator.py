@@ -29,6 +29,7 @@ import signal
 import threading
 import time
 from datetime import UTC, datetime
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import httpx
@@ -204,7 +205,7 @@ _compute_total_spent = compute_total_spent
 _total_spent_cache = total_spent_cache
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
     from pathlib import Path
 
     from bernstein.core.backlog_parser import ParsedBacklogTask
@@ -4632,7 +4633,7 @@ class Orchestrator:
         self._lock_manager.release(agent_id)
 
     @property
-    def _file_ownership(self) -> dict[str, str]:
+    def _file_ownership(self) -> Mapping[str, str]:
         """Read-only projection of :attr:`_lock_manager` for legacy callers.
 
         Returns a ``{file_path: agent_id}`` mapping built from the lock
@@ -4640,8 +4641,19 @@ class Orchestrator:
         parallel store; every claim/release goes through
         :class:`FileLockManager`, and this property is the single projection
         of that authoritative state.
+
+        The mapping is wrapped in a :class:`~types.MappingProxyType` so a
+        write fails loudly.  Returning a plain ``dict`` built per access made
+        ``orch._file_ownership[path] = agent`` mutate a temporary that was
+        discarded on the next line - no exception, no claim, and the caller
+        went on believing it owned the file.  That is how this landed:
+        ``test_check_file_overlap_detects_active_agent`` seeded ownership
+        that way, the claim evaporated, and the failure surfaced three
+        frames later as ``assert False is True`` on an untouched assertion.
+        A proxy raises ``TypeError`` at the write instead, naming the line
+        that has to move to :meth:`FileLockManager.acquire`.
         """
-        return {lock.file_path: lock.agent_id for lock in self._lock_manager.all_locks()}
+        return MappingProxyType({lock.file_path: lock.agent_id for lock in self._lock_manager.all_locks()})
 
     def _release_task_to_session(self, task_ids: list[str]) -> None:
         """Remove reverse-index entries for the given task IDs."""
