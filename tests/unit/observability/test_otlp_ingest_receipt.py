@@ -40,12 +40,9 @@ Acceptance criteria:
 
 from __future__ import annotations
 
-import hashlib
 import json
-import subprocess
-import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -58,12 +55,11 @@ from bernstein.core.observability.otlp_ingest import (
 from bernstein.core.observability.otlp_ingest_receipt import (
     IngestOTLPReceipt,
     IngestReceipt,
-    IngestReceiptError,
     chain_event_from_ingest_span,
-    _sha256_bytes as _otlp_sha256,
 )
-from bernstein.core.security.audit_chain import AuditChainStore
 
+if TYPE_CHECKING:
+    from bernstein.core.security.audit_chain import AuditChainStore
 
 # --------------------------------------------------------------------------- #
 # Fixtures                                                                     #
@@ -106,7 +102,9 @@ def collector_emitter_fixture() -> list[dict[str, Any]]:
 @pytest.fixture
 def agent_direct_emitter_fixture() -> list[dict[str, Any]]:
     """Load agent-direct-emitter.json fixture."""
-    fixture_path = Path(__file__).parent.parent.parent.parent / "tests" / "fixtures" / "otlp" / "agent-direct-emitter.json"
+    fixture_path = (
+        Path(__file__).parent.parent.parent.parent / "tests" / "fixtures" / "otlp" / "agent-direct-emitter.json"
+    )
     return json.loads(fixture_path.read_text())
 
 
@@ -207,7 +205,6 @@ def test_ingested_events_produce_a_receipt_that_verifies_offline(
 
 def _otlp_receipt_verify_offline(receipt: dict[str, Any], expected_head: str) -> bool:
     """Verify an OTLP ingest receipt offline (signature + chain head binding)."""
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
     # Check required fields
     assert "signer_public_key_pem" in receipt
@@ -215,10 +212,7 @@ def _otlp_receipt_verify_offline(receipt: dict[str, Any], expected_head: str) ->
     assert "chain_head" in receipt
 
     # The chain_head in the receipt should match what we compute
-    if receipt.get("chain_head") != expected_head:
-        return False
-
-    return True
+    return receipt.get("chain_head") == expected_head
 
 
 # --------------------------------------------------------------------------- #
@@ -451,7 +445,19 @@ def test_profile_driven_mapping_has_no_vendor_branch() -> None:
     from bernstein.core.observability.ingest_profiles import list_profiles
 
     all_profiles = list_profiles()
-    vendor_strings = {"aws", "gcp", "azure", "otelcol", "datadog", "newrelic", "splunk", "sumologic", "lightstep", "honeycomb", "signalfx"}
+    vendor_strings = {
+        "aws",
+        "gcp",
+        "azure",
+        "otelcol",
+        "datadog",
+        "newrelic",
+        "splunk",
+        "sumologic",
+        "lightstep",
+        "honeycomb",
+        "signalfx",
+    }
 
     for profile_name in all_profiles:
         for vendor in vendor_strings:
@@ -480,7 +486,7 @@ def test_profile_no_vendor_branch_prevents_vendor_in_name() -> None:
     # The _check_no_vendor_branch function is called for each profile at module load
 
     # Verify current profiles pass
-    from bernstein.core.observability.ingest_profiles import _check_no_vendor_branch, IngestProfile
+    from bernstein.core.observability.ingest_profiles import IngestProfile, _check_no_vendor_branch
 
     good_profile = IngestProfile(name="my_collector", source_kind="collector")
     # Should not raise
@@ -679,7 +685,7 @@ def test_chain_event_from_ingest_span_has_correct_structure(
     audit_chain: tuple[AuditChainStore, bytes],
 ) -> None:
     """chain_event_from_ingest_span produces properly structured events."""
-    store, _ = audit_chain
+    _store, _ = audit_chain
 
     span = _genai_span(trace_id="test-trace", span_id="test-span", name="chat")
     event = chain_event_from_ingest_span(
