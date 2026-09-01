@@ -15,7 +15,10 @@ Design choices:
   users who never replay.
 * **Stable keys** - callers pass an explicit ``key`` (typically a SHA-256
   of the request payload). The gateway never tries to fingerprint the
-  request itself; key stability is the caller's job.
+  request itself; key stability is the caller's job. On the store
+  boundary the caller key is rewritten to a scheme-prefixed digest
+  (``v1:<64 hex>``) so a later derivation change can classify old rows
+  instead of reporting false divergences (#4867).
 * **First-call ordering preserved** - replay lookup falls back to FIFO
   consumption per ``kind`` when the key isn't found, so even hashed
   prompts with timestamp jitter replay cleanly.
@@ -34,6 +37,12 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
+
+from bernstein.core.replay.key_scheme import (
+    CURRENT_KEY_SCHEME,
+    derive_replay_key,
+    parse_stored_key,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -80,6 +89,25 @@ class GatewayMode(StrEnum):
 
 class ReplayMissError(RuntimeError):
     """Raised in :attr:`GatewayMode.REPLAY` when no fixture matches."""
+
+
+class ReplayKeySchemeMismatchError(RuntimeError):
+    """Raised when a corpus was recorded under a different key scheme.
+
+    Distinct from :class:`ReplayMissError`: the rows are present, but their
+    stored keys were derived under another scheme, so comparing them as
+    divergences would be a false signal. Re-record under the current scheme
+    to compare. Chosen as an exception (not a return verdict) so ``dispatch``
+    keeps returning the response payload and #4866's miss path can follow the
+    same raise-on-failure shape.
+    """
+
+    def __init__(self, *, recorded_scheme: str, current_scheme: str) -> None:
+        self.recorded_scheme = recorded_scheme
+        self.current_scheme = current_scheme
+        super().__init__(
+            f"recorded under scheme {recorded_scheme}, current is {current_scheme} — re-record to compare",
+        )
 
 
 @dataclass(frozen=True)
@@ -134,6 +162,9 @@ class ReplayGateway:
             is true and ``record`` is not set, else :attr:`GatewayMode.OFF`.
         record: Convenience flag - when ``True``, forces record mode even
             if the env var is unset. Ignored if ``mode`` is provided.
+        key_scheme: Key-derivation scheme written on record and required on
+            replay (default :data:`~bernstein.core.replay.key_scheme.CURRENT_KEY_SCHEME`).
+            Tests pass ``v2`` (etc.) to exercise cross-scheme classification.
     """
 
     def __init__(
@@ -143,11 +174,13 @@ class ReplayGateway:
         *,
         mode: GatewayMode | None = None,
         record: bool = False,
+        key_scheme: str | None = None,
     ) -> None:
         self._run_id = run_id
         self._path = sdd_dir / "runs" / run_id / EVENTS_FILENAME
         self._lock = threading.Lock()
         self._seq = 0
+        self._key_scheme = CURRENT_KEY_SCHEME if key_scheme is None else key_scheme
 
         if mode is None:
             mode = GatewayMode.RECORD if record or is_recording_enabled() else GatewayMode.OFF
@@ -162,6 +195,8 @@ class ReplayGateway:
         # Per-kind cursor: index of the first not-yet-consumed fixture, so the
         # by-kind FIFO fallback is amortised O(1) instead of rescanning.
         self._kind_cursor: dict[str, int] = {}
+        # Schemes observed in the loaded corpus (``None`` = unversioned row).
+        self._corpus_schemes: set[str | None] = set()
 
         if self._mode is GatewayMode.RECORD:
             # Only create the directory when we'll actually write something.
@@ -217,6 +252,9 @@ class ReplayGateway:
         Raises:
             ReplayMissError: In replay mode when no fixture matches and
                 no FIFO fallback is available for ``kind``.
+            ReplayKeySchemeMismatchError: In replay mode when the loaded
+                corpus was recorded under a different key scheme than this
+                verifier (re-record to compare; not a divergence).
         """
         if self._mode is GatewayMode.REPLAY:
             return self._replay_lookup(kind=kind, key=key)
@@ -254,7 +292,7 @@ class ReplayGateway:
         entry: dict[str, Any] = {
             "ts": time.time(),
             "kind": kind,
-            "key": key,
+            "key": derive_replay_key(key, scheme=self._key_scheme),
             "response": _make_jsonable(response),
         }
         if metadata:
@@ -322,11 +360,28 @@ class ReplayGateway:
         # even if the log was written or stitched out of strict line order.
         rows.sort(key=operator.itemgetter(0, 1))
         for _seq, _pos, kind, key, response in rows:
+            scheme, _digest = parse_stored_key(key)
+            self._corpus_schemes.add(scheme)
             ordered = self._ordered_by_kind.setdefault(kind, [])
             fixture = _Fixture(response=response)
             position = len(ordered)
             ordered.append(fixture)
             self._positions_by_key.setdefault((kind, key), deque()).append(position)
+
+    def _reject_scheme_mismatch(self) -> None:
+        """Raise when the loaded corpus is not under this verifier's scheme.
+
+        Must run before by-key or FIFO consume so an older-scheme corpus never
+        silently falls through to misaligned fixtures (#4867).
+        """
+        if self._corpus_schemes == {self._key_scheme}:
+            return
+        labels = sorted("unversioned" if scheme is None else scheme for scheme in self._corpus_schemes)
+        recorded = ",".join(labels) if labels else "none"
+        raise ReplayKeySchemeMismatchError(
+            recorded_scheme=recorded,
+            current_scheme=self._key_scheme,
+        )
 
     def _next_unconsumed_index(self, kind: str, ordered: list[_Fixture]) -> int | None:
         """Return the index of the lowest unconsumed fixture for ``kind``.
@@ -354,7 +409,9 @@ class ReplayGateway:
         cannot drain the same fixture twice or skip rows another thread has
         already consumed under the by-kind fallback.
         """
+        storage_key = derive_replay_key(key, scheme=self._key_scheme)
         with self._lock:
+            self._reject_scheme_mismatch()
             ordered = self._ordered_by_kind.get(kind)
             if ordered is None:
                 raise ReplayMissError(
@@ -362,7 +419,7 @@ class ReplayGateway:
                     "Either the run diverged or recording was incomplete.",
                 )
 
-            positions = self._positions_by_key.get((kind, key))
+            positions = self._positions_by_key.get((kind, storage_key))
             # Skip positions already consumed via the by-kind fallback so a
             # by-key hit never returns a slot that was served as FIFO filler.
             while positions:

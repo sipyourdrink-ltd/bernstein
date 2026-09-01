@@ -1,6 +1,6 @@
 # bernstein-orchestrator
 
-Deterministic orchestrator for CLI coding agents.
+The open-source governance layer for AI agents.
 
 Orchestrate multiple CLI coding agents (Claude Code, Codex, Gemini CLI, Cursor)
 in parallel. One YAML config, no model in the coordination loop, so parallel

@@ -866,10 +866,34 @@ _ROLE_POLICY_LADDER_KEY = "ladder"
 _ROLE_POLICY_FALLBACK_MODEL_KEY = "fallback_model"
 _ROLE_POLICY_ESCALATION_BUDGET_KEY = "escalation_budget_usd"
 
+# Opt-in task-tier → model map (#4854). Nested mapping, validated separately.
+_ROLE_POLICY_TIER_MODELS_KEY = "tier_models"
+
 # Endpoint fields that the ``endpoint`` profile reference pins; setting any of
 # them inline alongside ``endpoint`` is a conflict (the profile is the single
 # source of truth for the certified endpoint).
 _ROLE_POLICY_ENDPOINT_PINNED_KEYS: tuple[str, ...] = ("base_url", "model", "api_key_env")
+
+_ALLOWED_TIERS: frozenset[str] = frozenset({"light", "standard", "heavy", "critical"})
+
+
+def _parse_tier_models(role: str, raw: object) -> dict[str, str]:
+    """Parse ``role_model_policy.<role>.tier_models`` (#4854)."""
+    if not isinstance(raw, dict):
+        raise SeedError(f"role_model_policy[{role!r}].tier_models must be a mapping")
+    parsed: dict[str, str] = {}
+    for tier, model in raw.items():
+        if not isinstance(tier, str) or tier not in _ALLOWED_TIERS:
+            allowed = ", ".join(sorted(_ALLOWED_TIERS))
+            raise SeedError(
+                f"role_model_policy[{role!r}].tier_models has unknown tier {tier!r}; "
+                f"allowed: {allowed} (reserved marker 'error' is not a configurable tier)"
+            )
+        if not isinstance(model, str) or not model.strip():
+            raise SeedError(f"role_model_policy[{role!r}].tier_models[{tier!r}] must be a non-empty string")
+        parsed[tier] = model.strip()
+    return parsed
+
 
 _COUNCIL_CANDIDATE_KEYS: tuple[str, ...] = ("model", "base_url", "api_key_env")
 
@@ -1160,6 +1184,20 @@ def _parse_single_role_policy(
                 f"role_model_policy[{role!r}][{_ROLE_POLICY_ESCALATION_BUDGET_KEY!r}] must be a non-negative number"
             )
         normalized[_ROLE_POLICY_ESCALATION_BUDGET_KEY] = float(raw_budget)
+    raw_tier_models = settings.get(_ROLE_POLICY_TIER_MODELS_KEY)
+    if raw_tier_models is not None:
+        normalized[_ROLE_POLICY_TIER_MODELS_KEY] = _parse_tier_models(role, raw_tier_models)
+    # ``tier_models`` and ``ladder`` both choose a model, so an entry that
+    # declares both leaves unstated which one a hop follows. Refuse the pair,
+    # the way ``ladder`` and ``fallback_model`` already refuse each other. This
+    # can be relaxed later into "tiers pick the entry point, the ladder
+    # escalates from there"; an unstated interaction cannot be taken back.
+    if normalized.get(_ROLE_POLICY_LADDER_KEY) is not None and normalized.get(_ROLE_POLICY_TIER_MODELS_KEY):
+        raise SeedError(
+            f"role_model_policy[{role!r}]: ladder and tier_models are mutually exclusive; "
+            "both select a model and their interaction is undefined"
+        )
+
 
     allowed_keys = (
         set(_ROLE_POLICY_KEYS)
@@ -1171,6 +1209,7 @@ def _parse_single_role_policy(
             _ROLE_POLICY_LADDER_KEY,
             _ROLE_POLICY_FALLBACK_MODEL_KEY,
             _ROLE_POLICY_ESCALATION_BUDGET_KEY,
+            _ROLE_POLICY_TIER_MODELS_KEY,
         }
     )
     unknown_keys = sorted(set(settings) - allowed_keys)

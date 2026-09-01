@@ -225,3 +225,96 @@ def test_guard_discriminates_when_a_drop_exists(check_module: ModuleType, tmp_pa
     _commit_all(repo, "one")
     report = check_module.build_report(repo, base=base, python=sys.executable)
     assert report.drops, "a real drop must surface; otherwise the guard is vacuous"
+
+
+def test_override_in_a_commit_message_is_read_when_the_pr_body_is_empty(
+    check_module: ModuleType, tmp_path: Path
+) -> None:
+    """The merge-queue shape: no PR body exists, so the commits must carry the override.
+
+    A ``merge_group`` build has no ``pull_request`` payload; ``PR_BODY`` is
+    empty. Before the commit-message channel existed, a body-only override
+    passed the PR lane and then failed the queue build, taking every entry
+    stacked behind it with it. The counterfactual at the end of this test is
+    that pre-fix behaviour.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    test_dir = repo / "tests" / "unit"
+    test_dir.mkdir(parents=True)
+    (test_dir / "test_sample.py").write_text(
+        "def test_a():\n    assert True\n\ndef test_b():\n    assert True\n",
+        encoding="utf-8",
+    )
+    base = _commit_all(repo, "two tests")
+
+    (test_dir / "test_sample.py").write_text("def test_a():\n    assert True\n", encoding="utf-8")
+    _commit_all(
+        repo,
+        "drop one case\n\ntest-count-drop: tests/unit/test_sample.py -1\n",
+    )
+
+    report = check_module.build_report(repo, base=base, pr_body="", python=sys.executable)
+    assert report.drops == []
+    assert report.excused == [("tests/unit/test_sample.py", 2, 1, 1)]
+    assert check_module.main(["--root", str(repo), "--base", base]) == 0
+
+    # Counterfactual: with the commit-message channel removed — the pre-fix
+    # script, which read the PR body alone — the same commit turns the guard red.
+    original = check_module.commit_message_text
+    check_module.commit_message_text = lambda *a, **k: ""  # type: ignore[assignment]
+    try:
+        pre_fix = check_module.build_report(repo, base=base, pr_body="", python=sys.executable)
+    finally:
+        check_module.commit_message_text = original  # type: ignore[assignment]
+    assert pre_fix.drops == [("tests/unit/test_sample.py", 2, 1, "count_drop")], (
+        "the counterfactual must fail; otherwise this test proves nothing about the new channel"
+    )
+
+
+def test_a_stale_override_in_a_commit_message_still_fails(check_module: ModuleType, tmp_path: Path) -> None:
+    """The new channel is a second door to the same room, not a free pass."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    test_dir = repo / "tests" / "unit"
+    test_dir.mkdir(parents=True)
+    (test_dir / "test_sample.py").write_text("def test_a():\n    assert True\n", encoding="utf-8")
+    base = _commit_all(repo, "one test")
+
+    (test_dir / "test_sample.py").write_text(
+        "def test_a():\n    assert True\n\ndef test_b():\n    assert True\n",
+        encoding="utf-8",
+    )
+    _commit_all(repo, "add a case\n\ntest-count-drop: tests/unit/test_sample.py -2\n")
+
+    report = check_module.build_report(repo, base=base, pr_body="", python=sys.executable)
+    assert report.stale_overrides == ["tests/unit/test_sample.py -2"]
+    assert check_module.main(["--root", str(repo), "--base", base]) == 1
+
+
+def test_commit_messages_outside_the_compared_range_are_not_read(check_module: ModuleType, tmp_path: Path) -> None:
+    """An override spent on an earlier merge must not excuse a later drop.
+
+    ``base..head`` is the range the guard compares; reading the whole history
+    would let one declaration, written once, silently cover every future drop
+    in that module.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    test_dir = repo / "tests" / "unit"
+    test_dir.mkdir(parents=True)
+    (test_dir / "test_sample.py").write_text(
+        "def test_a():\n    assert True\n\ndef test_b():\n    assert True\n",
+        encoding="utf-8",
+    )
+    _commit_all(repo, "two tests\n\ntest-count-drop: tests/unit/test_sample.py -1\n")
+    base = _git(repo, "rev-parse", "HEAD").strip()
+
+    (test_dir / "test_sample.py").write_text("def test_a():\n    assert True\n", encoding="utf-8")
+    _commit_all(repo, "drop one, declaring nothing")
+
+    report = check_module.build_report(repo, base=base, pr_body="", python=sys.executable)
+    assert report.drops == [("tests/unit/test_sample.py", 2, 1, "count_drop")]

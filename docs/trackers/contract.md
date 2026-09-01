@@ -41,7 +41,7 @@ viable adapter.
 
 Adapters should treat `idempotency_key` as authoritative whenever the
 tracker's API supports it (e.g. Linear's mutation `clientMutationId`,
-Stripe-style `Idempotency-Key` headers). Where the tracker does not,
+or an `Idempotency-Key` request header). Where the tracker does not,
 the adapter must dedupe locally via a comment marker (the agent posts a
 `<!-- bernstein-key: ... -->` marker) or a SQLite ledger keyed on
 `(ticket_id, op, key)`.

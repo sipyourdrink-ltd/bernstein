@@ -735,6 +735,7 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     # branch, so it declares ``artifact`` output (#3110): completion is the
     # signed lineage receipt and the commit check never fires for it.
     "computer_use": AdapterStrategy(event_channel=EventChannel.POLL_PTY, output_mode=OutputMode.ARTIFACT),
+    "skyvern": AdapterStrategy(event_channel=EventChannel.POLL_PTY, output_mode=OutputMode.ARTIFACT),
     "cody": AdapterStrategy(),
     "composio": AdapterStrategy(event_channel=EventChannel.HOOKS),
     "continue": AdapterStrategy(),
@@ -744,6 +745,10 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "devin_terminal": AdapterStrategy(event_channel=EventChannel.POLL_PTY),
     "droid": AdapterStrategy(),
     "forge": AdapterStrategy(),
+    # garak runs a probe suite and its unit of work is the scan report, not a
+    # commit, so it declares ``artifact``: the run completes when the report
+    # lands and the commit check never fires for it.
+    "garak": AdapterStrategy(output_mode=OutputMode.ARTIFACT),
     "generic": AdapterStrategy(),
     # Goose emits NDJSON under --output-format stream-json whose events carry
     # tokens/cost_usd and an error event (the authoritative failure signal;
@@ -787,7 +792,7 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     # warm retry sends only the corrective instruction on the assumption the
     # prior session is reattached.
     "kimchi": AdapterStrategy(
-        resume=ResumeStrategy.UNSUPPORTED,
+        resume=ResumeStrategy.FLAG,
         dangerous_mode=DangerousModeStrategy.CLI_FLAG,
         event_channel=EventChannel.ACP,
         output_mode=OutputMode.GIT_DIFF,

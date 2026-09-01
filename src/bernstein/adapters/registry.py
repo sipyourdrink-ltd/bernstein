@@ -33,6 +33,7 @@ from bernstein.adapters.cursor import CursorAdapter
 from bernstein.adapters.devin_terminal import DevinTerminalAdapter
 from bernstein.adapters.droid import DroidAdapter
 from bernstein.adapters.forge import ForgeAdapter
+from bernstein.adapters.garak import GarakAdapter
 from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.adapters.generic import GenericAdapter
 from bernstein.adapters.goose import GooseAdapter
@@ -61,6 +62,7 @@ from bernstein.adapters.q_dev import QDevAdapter
 from bernstein.adapters.qwen import QwenAdapter
 from bernstein.adapters.ralphex import RalphexAdapter
 from bernstein.adapters.rovo import RovoAdapter
+from bernstein.adapters.skyvern import SkyvernAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +111,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "devin_terminal": DevinTerminalAdapter,
     "droid": DroidAdapter,
     "forge": ForgeAdapter,
+    "garak": GarakAdapter,
     # The Google CLI ships under two binary names during the 2026-06-18
     # transition. Both registry keys resolve to the same dual-binary aware
     # adapter; the adapter discovers ``antigravity`` first on PATH and falls
@@ -142,6 +145,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "qwen": QwenAdapter,
     "ralphex": RalphexAdapter,
     "rovo": RovoAdapter,
+    "skyvern": SkyvernAdapter,
 }
 
 # Agents tracked as declarative capability profiles rather than as

@@ -520,6 +520,14 @@ class WALReader:
         for _, entry in self._iter_parsed():
             yield entry
 
+    def iter_parsed_entries(self) -> Iterator[tuple[dict[str, Any], WALEntry]]:
+        """Yield ``(raw_record, entry)`` for every well-formed WAL line.
+
+        Public form of the parse walk so exporters that need ``entry_hash``
+        beside the entry (OpenLineage #4914) do not reach into private helpers.
+        """
+        yield from self._iter_parsed()
+
     def _iter_parsed(self) -> Iterator[tuple[dict[str, Any], WALEntry]]:
         """Yield ``(raw_record, entry)`` for every well-formed WAL line.
 

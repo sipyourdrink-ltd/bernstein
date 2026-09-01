@@ -42,6 +42,11 @@ class OrchestratorNudgeManager:
     Agents or subsystems post nudges to influence orchestrator behavior
     (e.g. request scale-up, reprioritize work, trigger a review pass).
     The orchestrator drains pending nudges each tick.
+
+    Note: The nudge system is producer-side only. No consumer exists yet
+    for these nudges (per issue #4901 option 1). The producer functions
+    ``nudge_orchestrator`` and ``get_orchestrator_nudges`` are used to queue
+    and retrieve nudges, but they are not processed by any active consumer.
     """
 
     def __init__(self) -> None:

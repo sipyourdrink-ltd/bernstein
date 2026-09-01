@@ -91,6 +91,29 @@ def test_ladder_and_fallback_model_mutually_exclusive() -> None:
         )
 
 
+def test_ladder_and_tier_models_are_mutually_exclusive_in_a_seed() -> None:
+    """Both select a model, so a policy declaring each leaves a hop undefined."""
+    with pytest.raises(SeedError, match="ladder and tier_models are mutually exclusive"):
+        _parse_single_role_policy(
+            "backend",
+            {
+                "model": "gpt-4.1-mini",
+                "cli": "codex",
+                "ladder": [{"model": "gpt-4.1-mini"}, {"model": "gpt-4.1"}],
+                "tier_models": {"light": "gpt-4.1-mini"},
+            },
+        )
+
+
+def test_tier_models_alone_still_parses() -> None:
+    """The exclusion must not cost a policy that only declares tiers."""
+    parsed = _parse_single_role_policy(
+        "backend",
+        {"model": "gpt-4.1-mini", "cli": "codex", "tier_models": {"light": "gpt-4.1-mini"}},
+    )
+    assert parsed["tier_models"] == {"light": "gpt-4.1-mini"}
+
+
 def test_parse_ladder_seed_round_trip() -> None:
     parsed = _parse_single_role_policy(
         "backend",

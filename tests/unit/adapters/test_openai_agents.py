@@ -89,11 +89,16 @@ class TestPluginInfo:
         assert AdapterCapability.RATE_LIMIT_DETECTION in info.capabilities
         assert AdapterCapability.STRUCTURED_OUTPUT in info.capabilities
         assert AdapterCapability.SUPPORTS_SAMPLING_PARAMS in info.capabilities
+        assert AdapterCapability.SUPPORTS_MAX_TOKENS in info.capabilities
 
     def test_sampling_gate_passes_for_openai_agents(self) -> None:
         ensure_sampling_params_supported(
             OpenAIAgentsAdapter(),
-            {"temperature": 0.5, "base_url": "http://localhost:8000/v1"},
+            {
+                "temperature": 0.5,
+                "max_tokens": 4096,
+                "base_url": "http://localhost:8000/v1",
+            },
         )
 
     def test_display_name(self) -> None:

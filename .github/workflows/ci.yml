@@ -530,8 +530,13 @@ jobs:
       - name: Test-count drop vs merge base (#4873)
         # Catches a touched test module that still collects but lost cases
         # relative to the merge base. Parametrized consolidation stays green
-        # (collect-only counts). Override via PR body:
+        # (collect-only counts). Override, in the PR body or in a commit
+        # message in the compared range:
         #   test-count-drop: tests/unit/foo.py -N
+        # A merge_group event carries no pull_request payload, so PR_BODY is
+        # empty in this lane and a body-only override is invisible exactly
+        # where the merge is gated; the script reads the range's commit
+        # messages so one declaration holds in both lanes.
         # Without a base (non-PR / missing ref) the script skips — never fake-green.
         env:
           PR_BODY: ${{ github.event.pull_request.body || '' }}

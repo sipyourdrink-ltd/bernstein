@@ -1,14 +1,15 @@
 ---
-title: Bernstein - Deterministic Orchestrator for CLI Coding Agents
+title: Bernstein - The Open-Source Governance Layer for AI Agents
 description: >-
-  Deterministic orchestrator for CLI coding agents. No model in the coordination
+  The open-source governance layer for AI agents. No model in the coordination
   loop, so parallel runs in per-task git worktrees replay byte-identically.
   Signed lineage plus an opt-in HMAC audit chain a reviewer checks offline,
   without rerunning it. Run Claude Code, Codex, Gemini CLI, and 40+ more behind
-  one orchestration surface, with zero vendor lock-in.
+  one governance surface, for any deliverable, with zero vendor lock-in.
 tags:
   - orchestration
   - multi-agent
+  - AI governance
   - AI coding agents
 search:
   boost: 2
@@ -16,7 +17,7 @@ search:
 
 # Bernstein
 
-**Reproducible multi-agent runs. Verifiable results. Any CLI coding agent.**
+**Reproducible multi-agent runs. Verifiable results. Any agent, any deliverable.**
 
 <a href="https://deepwiki.com/sipyourdrink-ltd/bernstein"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 
@@ -27,7 +28,7 @@ search:
 
 ---
 
-Bernstein takes a goal, breaks it into tasks, assigns them to AI coding agents running in parallel, verifies the output, and merges the results. You come back to working code, passing tests, and a clean git history.
+Bernstein takes a goal, breaks it into tasks, assigns them to AI agents running in parallel, verifies the output, and merges the results. You come back to working code, passing tests, and a clean git history - or, when a task declares an artifact contract, to a signed deliverable: a research dossier, a dataset, an audit evidence pack.
 
 No framework to learn. No vendor lock-in. Agents are interchangeable workers - swap any agent, any model, any provider. The orchestrator itself is deterministic Python code. Zero LLM tokens on scheduling.
 

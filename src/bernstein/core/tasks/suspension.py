@@ -477,6 +477,44 @@ def _as_index(value: Any) -> int | None:
         return None
 
 
+def _project_recorded_str(value: Any, *, event_id: str, field_name: str) -> str:
+    """Project a value through a read shape that cannot misread null.
+
+    The shape ``str(x.get(key, \"\"))`` converts JSON ``null`` to the four-char
+    string ``\"None\"``, which is truthy and renders a downgrade the record does
+    not contain. This helper enforces the contract that:
+
+    * ``\"\"`` (empty string) and ``None`` are treated identically and project
+      to the empty string (no downgrade shown in audit view);
+    * any string value is returned unchanged (the value the writer recorded);
+    * any non-string, non-null value is a malformed record and is refused with
+      a named error rather than being silently stringified into the audit view
+      as a Python ``repr``.
+
+    Args:
+        value: The value to project, typically a read of a record field.
+        event_id: HMAC of the event carrying the value; reported on the error
+            so the malformed record can be located.
+        field_name: Name of the field being projected; reported on the error.
+
+    Returns:
+        The projected string: ``\"\"`` for absent/null/empty, the value itself
+        for any other string.
+
+    Raises:
+        ValueError: ``value`` is neither ``None``, ``\"\"``, nor a ``str``.
+    """
+    if value is None or value == "":
+        return ""
+    if isinstance(value, str):
+        return value
+    raise ValueError(
+        f"malformed audit event {event_id[:16]}...: field {field_name!r} "
+        f"is {type(value).__name__}, expected string, null, or empty "
+        f"(got {value!r})"
+    )
+
+
 def _verified_suspend_receipts(chain: AuditChainStore) -> list[AuditEvent]:
     """Return the ``task.suspend_receipt`` rows, read through the *authenticated* path.
 
@@ -1673,9 +1711,17 @@ def verify_suspension_continuity(
     downgrade_reason = ""
     if bound_resumes:
         resume_event = bound_resumes[-1]
-        effective_mode = str(resume_event.details.get("effective_mode", ""))
+        effective_mode = _project_recorded_str(
+            resume_event.details.get("effective_mode"),
+            event_id=resume_event.hmac,
+            field_name="effective_mode",
+        )
         workspace_match = bool(resume_event.details.get("workspace_match", False))
-        downgrade_reason = str(resume_event.details.get("downgrade_reason", ""))
+        downgrade_reason = _project_recorded_str(
+            resume_event.details.get("downgrade_reason"),
+            event_id=resume_event.hmac,
+            field_name="downgrade_reason",
+        )
         resume_row_hash = str(resume_event.details.get("resume_event_hash", ""))
         if not resume_row_hash or not _row_present(journal_rows, JOURNAL_EVENT_RESUME, task_id, resume_row_hash):
             errors.append(
@@ -1688,7 +1734,7 @@ def verify_suspension_continuity(
         # surfaced with its recorded reason from the receipt but is not itself a
         # failure: the AC is "warm from the parked hash, or a recorded fork/cold
         # downgrade with its reason".
-        if effective_mode == str(RetryMode.WARM) and not workspace_match:
+        if effective_mode == RetryMode.WARM and not workspace_match:
             errors.append("warm resume recorded without a workspace-hash match")
 
     # No failure found: the park is either settled and proven, or still live.

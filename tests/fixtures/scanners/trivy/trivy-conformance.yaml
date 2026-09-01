@@ -1,0 +1,29 @@
+name: trivy-recorded-sarif
+adapter_class: bernstein.adapters.trivy.TrivyAdapter
+steps:
+  - target: tests/fixtures/scanners/trivy/target
+    scope:
+      roots:
+        - tests/fixtures/scanners/trivy/target
+      config:
+        db_digest: sha256:633b3bacaa4a03f502faef8f94ce2d20d96a8499405d266ed7f67879109ec80d
+    expect_feed_digest: sha256:633b3bacaa4a03f502faef8f94ce2d20d96a8499405d266ed7f67879109ec80d
+    expected_finding_hashes:
+      - 6eb0cd0e1d53c3e01693de4cc38f3925f935d5ecebe409eee23313df31986ecf
+      - 57311d085280497d6cb74ea98954da760448c9711c1b3906f41a81a87bce8658
+      - 7caf3acd8c9f5432a787b1d12ca2385435f749232d06a06f9c5ef03d3e24b191
+      - 6751c3e0c6938584f1347a5e97bfd1a775aef5cad88d16e1487182f98ae8342c
+      - cf9290276c693a60d88d265a39592b0cab42aab2853f0ef6751def25eca84643
+  - target: tests/fixtures/scanners/trivy/target
+    scope:
+      roots:
+        - tests/fixtures/scanners/trivy/target
+      config:
+        db_digest: sha256:633b3bacaa4a03f502faef8f94ce2d20d96a8499405d266ed7f67879109ec80d
+    expect_feed_digest: sha256:633b3bacaa4a03f502faef8f94ce2d20d96a8499405d266ed7f67879109ec80d
+    expected_finding_hashes:
+      - 6eb0cd0e1d53c3e01693de4cc38f3925f935d5ecebe409eee23313df31986ecf
+      - 57311d085280497d6cb74ea98954da760448c9711c1b3906f41a81a87bce8658
+      - 7caf3acd8c9f5432a787b1d12ca2385435f749232d06a06f9c5ef03d3e24b191
+      - 6751c3e0c6938584f1347a5e97bfd1a775aef5cad88d16e1487182f98ae8342c
+      - cf9290276c693a60d88d265a39592b0cab42aab2853f0ef6751def25eca84643

@@ -1,6 +1,6 @@
 # awesome-bernstein-plugins
 
-> A curated list of plugins, adapters, role templates, and integrations for [Bernstein](https://github.com/sipyourdrink-ltd/bernstein) - the deterministic orchestrator for CLI coding agents.
+> A curated list of plugins, adapters, role templates, and integrations for [Bernstein](https://github.com/sipyourdrink-ltd/bernstein) - the open-source governance layer for AI agents.
 
 Plugins extend Bernstein without touching core code. They hook into the task and agent lifecycle via [pluggy](https://pluggy.readthedocs.io/) - the same machinery used by pytest. A plugin is a plain Python class. No subclassing. No registration boilerplate.
 

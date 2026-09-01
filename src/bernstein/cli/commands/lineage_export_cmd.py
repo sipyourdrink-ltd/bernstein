@@ -10,6 +10,9 @@ Walks the lineage chain for a run and writes one of:
 * HTML: a single, self-contained file -- no JS, no external assets,
   no fonts, no images. Suitable for embedding verbatim in a DORA /
   NIS2 evidence package.
+* OpenLineage: a deterministic JSONL RunEvent stream (issue #4914)
+  projecting the same chain for stacks that already speak OpenLineage.
+  File transport only in this slice; HTTP collector is a follow-up.
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ import click
 
 from bernstein.cli.helpers import console
 
-_FORMATS = ("csv", "jsonld", "html")
+_FORMATS = ("csv", "jsonld", "html", "openlineage")
 
 _FIELDS: tuple[str, ...] = (
     "schema_version",
@@ -81,6 +84,7 @@ def lineage_export_cmd(run_id: str, fmt: str, output_path: str, workdir: str) ->
       bernstein lineage export r-2026-05-05 --format csv --output /tmp/audit.csv
       bernstein lineage export r-2026-05-05 --format jsonld --output /tmp/audit.jsonld
       bernstein lineage export r-2026-05-05 --format html --output /tmp/audit.html
+      bernstein lineage export r-2026-05-05 --format openlineage --output /tmp/ol.jsonl
     """
     from bernstein.core.persistence.lineage import LineageReader
 
@@ -89,6 +93,19 @@ def lineage_export_cmd(run_id: str, fmt: str, output_path: str, workdir: str) ->
         console.print(f"[red]No .sdd directory at[/red] {sdd_dir}")
         raise SystemExit(1)
 
+    fmt_lower = fmt.lower()
+    if fmt_lower == "openlineage":
+        from bernstein.core.persistence.openlineage_export import export_openlineage
+
+        result = export_openlineage(sdd_dir, run_id)
+        if not result.events:
+            console.print(f"[yellow]No lineage records for run[/yellow] {run_id}")
+            raise SystemExit(2)
+        out = Path(output_path)
+        out.write_bytes(result.payload)
+        console.print(f"[green]Wrote[/green] {len(result.events)} OpenLineage event(s) to {out}")
+        return
+
     reader = LineageReader(sdd_dir)
     records = list(reader.iter_records(run_id=run_id))
     if not records:
@@ -96,7 +113,6 @@ def lineage_export_cmd(run_id: str, fmt: str, output_path: str, workdir: str) ->
         raise SystemExit(2)
 
     rows = [_record_row(rec) for rec in records]
-    fmt_lower = fmt.lower()
     if fmt_lower == "csv":
         text = render_csv(rows)
     elif fmt_lower == "jsonld":

@@ -73,6 +73,7 @@ class HookResponse:
         reason: Explanation of the verdict.
         latency_ms: Time taken for the hook evaluation in milliseconds.
         error: Error message if the hook failed.
+        policy_digest: SHA-256 digest of the policy text that produced this verdict (for Cedar).
     """
 
     hook_name: str
@@ -80,6 +81,7 @@ class HookResponse:
     reason: str
     latency_ms: float = 0.0
     error: str = ""
+    policy_digest: str = ""
 
 
 class ExternalPolicyHook(ABC):
@@ -263,6 +265,7 @@ class CedarHook(ExternalPolicyHook):
         self._policy_text = policy_text
         self._allow_patterns: list[str] = []
         self._deny_patterns: list[str] = []
+        self._policy_digest: str = ""
         self._parse_policy()
 
     def _parse_policy(self) -> None:
@@ -270,19 +273,117 @@ class CedarHook(ExternalPolicyHook):
 
         This is a simplified parser for the subset of Cedar used in
         Bernstein.  Full Cedar evaluation would require a Cedar engine.
+
+        Parses whole policy statements (to the terminating `;`), not lines,
+        so conventional multi-line formatting is read correctly. Rejects any
+        policy containing unsupported constructs at construction time.
+
+        Raises:
+            ValueError: If the policy contains unsupported constructs.
         """
-        for line in self._policy_text.splitlines():
-            stripped = line.strip()
-            if stripped.startswith("permit") and "action ==" in stripped:
-                start = stripped.find('"')
-                end = stripped.find('"', start + 1)
-                if start != -1 and end != -1:
-                    self._allow_patterns.append(stripped[start + 1 : end])
-            elif stripped.startswith("forbid") and "action ==" in stripped:
-                start = stripped.find('"')
-                end = stripped.find('"', start + 1)
-                if start != -1 and end != -1:
-                    self._deny_patterns.append(stripped[start + 1 : end])
+        # Compute digest of the original policy text for verdicts
+        self._policy_digest = self._compute_digest(self._policy_text)
+
+        # Parse the policy text into statements
+        statements = self._split_into_statements(self._policy_text)
+
+        for stmt in statements:
+            stmt = stmt.strip()
+            if not stmt:
+                continue
+
+            # Parse the statement into components
+            parsed = self._parse_statement(stmt)
+
+            # Extract action patterns from parsed statement
+            if parsed["type"] == "permit":
+                if parsed["has_when"]:
+                    raise ValueError(f"Unsupported construct 'when' in policy statement: {stmt}")
+                for action in parsed["actions"]:
+                    self._allow_patterns.append(action)
+            elif parsed["type"] == "forbid":
+                if parsed["has_when"]:
+                    raise ValueError(f"Unsupported construct 'when' in policy statement: {stmt}")
+                for action in parsed["actions"]:
+                    self._deny_patterns.append(action)
+            else:
+                raise ValueError(f"Unsupported statement type in policy: {parsed['type']}")
+
+    def _compute_digest(self, text: str) -> str:
+        """Compute a digest of the policy text for verdicts."""
+        import hashlib
+
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    def _split_into_statements(self, policy_text: str) -> list[str]:
+        """Split policy text into individual statements delimited by semicolons.
+
+        This handles multi-line statements by finding the matching semicolon
+        that terminates each complete policy statement.
+        """
+        statements = []
+        current = []
+        bracket_depth = 0
+        paren_depth = 0
+
+        for char in policy_text:
+            current.append(char)
+            if char == "(":
+                paren_depth += 1
+            elif char == ")":
+                paren_depth -= 1
+            elif char == "{":
+                bracket_depth += 1
+            elif char == "}":
+                bracket_depth -= 1
+            elif char == ";" and paren_depth == 0 and bracket_depth == 0:
+                statements.append("".join(current))
+                current = []
+
+        # Add any remaining text as a partial statement
+        if current:
+            statements.append("".join(current))
+
+        return statements
+
+    def _parse_statement(self, stmt: str) -> dict:
+        """Parse a single policy statement into components.
+
+        Returns a dict with:
+        - type: "permit" or "forbid"
+        - actions: list of action strings
+        - has_when: True if statement contains 'when' clause
+        """
+        # Normalize whitespace
+        stmt = " ".join(stmt.split())
+
+        # Extract statement type
+        if stmt.startswith("permit"):
+            stmt_type = "permit"
+        elif stmt.startswith("forbid"):
+            stmt_type = "forbid"
+        else:
+            raise ValueError(f"Unsupported statement type: {stmt}")
+
+        # Check for unsupported constructs
+        if "when" in stmt:
+            raise ValueError(f"Unsupported construct 'when' in policy statement: {stmt}")
+        if "unless" in stmt:
+            raise ValueError(f"Unsupported construct 'unless' in policy statement: {stmt}")
+        if "?principal" in stmt:
+            raise ValueError(f"Unsupported construct '?principal' in policy statement: {stmt}")
+
+        # Extract actions from "action == \"...\""
+        import re
+
+        action_pattern = r'action\s*==\s*"([^"]+)"'
+        actions = re.findall(action_pattern, stmt)
+
+        return {
+            "type": stmt_type,
+            "actions": actions,
+            "has_when": "when" in stmt,
+        }
 
     @property
     def name(self) -> str:
@@ -306,6 +407,7 @@ class CedarHook(ExternalPolicyHook):
                 verdict=HookVerdict.DENY,
                 reason=f"Denied by Cedar policy for action {request.action!r}",
                 latency_ms=latency,
+                policy_digest=self._policy_digest,
             )
 
         if request.action in self._allow_patterns:
@@ -315,6 +417,7 @@ class CedarHook(ExternalPolicyHook):
                 verdict=HookVerdict.ALLOW,
                 reason=f"Allowed by Cedar policy for action {request.action!r}",
                 latency_ms=latency,
+                policy_digest=self._policy_digest,
             )
 
         latency = (time.monotonic() - start) * 1000
@@ -323,6 +426,7 @@ class CedarHook(ExternalPolicyHook):
             verdict=HookVerdict.ABSTAIN,
             reason=f"No Cedar policy for action {request.action!r}",
             latency_ms=latency,
+            policy_digest=self._policy_digest,
         )
 
 

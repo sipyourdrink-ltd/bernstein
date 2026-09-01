@@ -464,14 +464,32 @@ class LineageReader:
 
     def iter_records(self, run_id: str | None = None) -> Iterator[LineageRecord]:
         """Yield every lineage record for *run_id* (or every run when ``None``)."""
+        for record, _entry_hash, _seq, _prev_hash in self.iter_records_with_chain(run_id=run_id):
+            yield record
+
+    def iter_records_with_chain(
+        self,
+        run_id: str | None = None,
+    ) -> Iterator[tuple[LineageRecord, str, int, str]]:
+        """Yield ``(record, entry_hash, seq, prev_hash)`` for lineage WAL rows.
+
+        OpenLineage export (#4914) needs the chain coordinates beside each
+        record so the projection can bind ``bernstein_chain.chain_head_hash``
+        without re-parsing the WAL a second time.
+        """
         run_ids = [run_id] if run_id else list(self._iter_run_ids())
         for rid in run_ids:
             try:
                 reader = WALReader(run_id=rid, sdd_dir=self._sdd_dir)
-                for entry in reader.iter_entries():
+                for _raw, entry in reader.iter_parsed_entries():
                     if entry.decision_type != LINEAGE_DECISION_TYPE:
                         continue
-                    yield _record_from_wal(entry.inputs, entry.output, entry.timestamp)
+                    yield (
+                        _record_from_wal(entry.inputs, entry.output, entry.timestamp),
+                        entry.entry_hash,
+                        entry.seq,
+                        entry.prev_hash,
+                    )
             except FileNotFoundError:
                 continue
 

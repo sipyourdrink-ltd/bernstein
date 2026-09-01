@@ -22,13 +22,22 @@ Outcome words (never collapse these)::
 A module that fails to import collects zero; the message names
 ``import_error`` so it is not read as a silent false-positive count drop.
 
-Override (PR body, reviewable)::
+Override (reviewable), in the PR body **or** in any commit message in the
+compared range::
 
     test-count-drop: tests/unit/foo/test_bar.py -3
 
 Allow that path's collected count to fall by **at most** 3. Overrides that
 name a module with no drop are stale and fail the check. There is no
 path-less global budget.
+
+Declare it in a commit message when the drop must survive the merge queue.
+A ``merge_group`` build carries no ``pull_request`` payload, so the PR body
+is empty in the one lane that gates the merge; a body-only override goes
+green on the PR lane and then fails the queue, taking every entry stacked
+behind it down with it. Commits are present in both lanes and cannot be
+edited after the merge, so the reason the cases went away stays on the
+record.
 
 A deleted test module whose matching subject under ``src/`` was also deleted
 in the same diff is carved out.
@@ -149,6 +158,21 @@ def changed_paths(repo: Path, base: str, head: str = "HEAD") -> tuple[set[str], 
         else:
             modified.add(path)
     return modified, deleted, added
+
+
+def commit_message_text(repo: Path, base: str, head: str = "HEAD") -> str:
+    """Return the concatenated commit messages of ``base..head``.
+
+    Second override channel, and the only one that survives the merge queue:
+    a ``merge_group`` build has no ``pull_request`` payload, so ``PR_BODY``
+    is empty there. Reading the commits keeps one declaration readable in
+    both lanes without a token or an API call, and keeps it immutable — a PR
+    body edited after the merge erases the reason the cases went away.
+    """
+    try:
+        return _git(repo, "log", "--format=%B", f"{base}..{head}")
+    except subprocess.CalledProcessError:
+        return ""
 
 
 def subject_stem(test_path: str) -> str | None:
@@ -278,7 +302,7 @@ def build_report(
         report.not_run = "no merge base (--base); guard did not compare"
         return report
 
-    overrides = parse_overrides(pr_body)
+    overrides = parse_overrides(f"{pr_body}\n{commit_message_text(repo, base, head)}")
     modified, deleted, added = changed_paths(repo, base, head)
     touched = {p for p in (modified | deleted | added) if is_test_module(p)}
     report.checked = len(touched)
@@ -343,8 +367,10 @@ def format_report(report: DropReport) -> str:
                 lines.append(f"  {rel}: {base_n} -> {head_n} (drop {base_n - head_n}; cause=count_drop)")
         lines.append(
             "Restore the cases, consolidate via parametrize (collected count must stay "
-            "stable), carve out a deleted subject, or add a PR-body override: "
-            "`test-count-drop: <path> -<N>`."
+            "stable), carve out a deleted subject, or declare an override: "
+            "`test-count-drop: <path> -<N>`. Put it in a commit message, not only in "
+            "the PR body: the merge-queue build has no PR body to read, so a body-only "
+            "override passes the PR lane and then fails here."
         )
     if report.stale_overrides:
         lines.append("FAIL: stale test-count-drop overrides (no drop for that path):")
