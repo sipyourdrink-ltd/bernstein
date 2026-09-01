@@ -284,6 +284,7 @@ nav:
           - Recipes: operations/recipes.md
           - Worktrees: operations/worktrees.md
           - Snapshot undo: git/snapshot-undo.md
+          - Task revert: operations/task-revert.md
           - Session handoff: operations/session-handoff.md
           - Routine scenarios: routine-scenarios.md
           - Per-step routing: workflows/per-step-routing.md
