@@ -32,7 +32,7 @@ import anyio
 import pytest
 import schemathesis
 from fastapi.testclient import TestClient
-from hypothesis import settings, HealthCheck
+from hypothesis import settings
 from schemathesis import checks as st_checks
 
 if TYPE_CHECKING:
@@ -154,7 +154,7 @@ _DERANDOMIZE_SMOKE = _PROFILE == "smoke"
 
 
 @schema.parametrize()
-@settings(max_examples=_MAX_EXAMPLES, deadline=None, derandomize=_DERANDOMIZE_SMOKE, suppress_health_check=[HealthCheck.filter_too_much])
+@settings(max_examples=_MAX_EXAMPLES, deadline=None, derandomize=_DERANDOMIZE_SMOKE)
 def test_no_unhandled_exceptions(case: schemathesis.Case) -> None:
     """Every documented endpoint must respond without 500-class crash.
 
