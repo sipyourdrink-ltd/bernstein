@@ -223,9 +223,9 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 เกตสุขอนามัยของที่เก็บโค้ด: `bernstein readme-l10n verify` จะทำให้ PR ที่ไฟล์ README ฉบับแปลคลาดเคลื่อนจากต้นฉบับภาษาอังกฤษล้มเหลว (พร้อมระบุส่วนที่ล้าสมัย) ส่วน `bernstein readme-l10n sync` จะผูกการเชื่อมโยงใหม่หลังจากการแก้ไขภาษาอังกฤษ ดูที่ [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)
 
 ### เอเจนต์ที่รองรับ
-<!-- l10n: en="supported agents" hash="sha256:3b5ab5fcf9e1" -->
+<!-- l10n: en="supported agents" hash="sha256:237685a67917" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen และอื่นๆ [ดัชนีอะแดปเตอร์](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) มีคำสั่งติดตั้งสำหรับ 30 รายการในจำนวนนี้ คำสั่ง `bernstein integrations list` แสดงรายการการเชื่อมต่อทั้งหมด 52 รายการจาก `src/bernstein/adapters/registry.py` ซึ่งเป็นแหล่งความจริงเพียงแห่งเดียว โดย 50 รายการเป็นอะแดปเตอร์เอเจนต์ที่เลือกใช้งานได้ ส่วนอีกสองแถวคือตัวทดสอบ `mock` และโปรไฟล์ปลายทาง `self-hosted-endpoints` เครื่องมืออื่นๆ ที่มีแฟล็ก `--prompt` สามารถทำงานผ่านตัวครอบทั่วไปได้
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen และอื่นๆ [ดัชนีอะแดปเตอร์](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) มีคำสั่งติดตั้งสำหรับ 30 รายการในจำนวนนี้ คำสั่ง `bernstein integrations list` แสดงรายการการเชื่อมต่อทั้งหมด 54 รายการจาก `src/bernstein/adapters/registry.py` ซึ่งเป็นแหล่งความจริงเพียงแห่งเดียว โดย 52 รายการเป็นอะแดปเตอร์เอเจนต์ที่เลือกใช้งานได้ ส่วนอีกสองแถวคือตัวทดสอบ `mock` และโปรไฟล์ปลายทาง `self-hosted-endpoints` เครื่องมืออื่นๆ ที่มีแฟล็ก `--prompt` สามารถทำงานผ่านตัวครอบทั่วไปได้
 
 ผสมผสานเอเจนต์ในการรันรอบเดียวกัน: ใช้โมเดลในเครื่องราคาประหยัดสำหรับโค้ดโครงสร้างพื้นฐาน และใช้โมเดลบนคลาวด์ที่ทรงพลังกว่าสำหรับสถาปัตยกรรม คำสั่ง `bernstein integrations list --installed` จะแสดงรายการที่มีอยู่ในเครื่องของคุณ
 
