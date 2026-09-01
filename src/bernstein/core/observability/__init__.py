@@ -20,4 +20,6 @@ explicitly and add it to ``__all__`` below.
 
 from __future__ import annotations
 
-__all__: list[str] = []
+__all__: list[str] = [
+    "otlp_ingest",
+]
