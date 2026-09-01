@@ -435,26 +435,26 @@ def _generate_segment_receipt(
         # Extract sequence numbers from event details
         first_event = events[0]
         last_event = events[-1]
-        
+
         # Sequence should be stored in the event details or as a top-level field
         # Based on audit_export.py changes, it should be a top-level field in AuditEntry
         # But in raw audit events, we need to check where it's stored
         first_sequence = int(first_event.get("sequence", 0))
         last_sequence = int(last_event.get("sequence", 0))
-    
+
     # Create the receipt payload to sign
     receipt_payload = {
         "first_sequence": first_sequence,
         "last_sequence": last_sequence,
         "chain_head_hash": chain_head_hash,
     }
-    
+
     # Canonicalize the payload for signing
     canonical_payload = json.dumps(receipt_payload, sort_keys=True, separators=(",", ":"))
-    
+
     # Sign with the operator's HMAC key
     signature = _hmac.new(key, canonical_payload.encode(), hashlib.sha256).hexdigest()
-    
+
     return {
         "first_sequence": first_sequence,
         "last_sequence": last_sequence,
