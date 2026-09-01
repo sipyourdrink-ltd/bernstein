@@ -630,3 +630,25 @@ def test_unloadable_document_is_a_mismatch_not_an_exception() -> None:
 
     assert result.status == RECEIPT_GRAPH_MISMATCH
     assert any("could not be loaded" in d for d in result.divergences)
+
+
+def test_unparseable_file_attribution_is_unproven(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A file with syntax errors yields an unproven attribution.
+
+    parse_file_symbols() returns None on SyntaxError, which propagates to
+    TaskNodeSet as UNPROVEN with REASON_PATH_NOT_INDEXED.
+    """
+    files = {
+        "src/pkg/syntax_error.py": "def broken() -> int:\n    return 1\n# missing colon below\nif True\n    pass\n",
+        "src/pkg/valid.py": "def valid_func() -> int:\n    return 1\n",
+    }
+    for rel, body in files.items():
+        _write(tmp_path / rel, body)
+    listing = sorted(files)
+    monkeypatch.setattr(semantic_graph, "_git_ls_files", lambda _w: listing)
+
+    graph = SemanticCodeGraph(build_semantic_graph(tmp_path))
+    result = attribute_task(graph, "t1", ["src/pkg/syntax_error.py"])
+
+    assert result.verdict == ATTRIBUTION_UNPROVEN
+    assert REASON_PATH_NOT_INDEXED in result.reasons
