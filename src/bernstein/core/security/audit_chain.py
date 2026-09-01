@@ -220,6 +220,17 @@ EVENT_REVIEW_RECEIPT = "review.receipt"
 #: chain entries rather than trusting a session id.
 EVENT_MCP_STATELESS_CALL = "mcp.stateless_call"
 
+#: Issue #3610 (slice 1) -- emitted when a run's semantic code graph digest
+#: is anchored in the HMAC chain. This event records the graph digest, the
+#: run id, the graph version, the source/indexed file counts, the unparsed
+#: file count, the inferred and extracted edge counts, and the previous chain
+#: digest so a verifier can prove the run admitted exactly this graph state
+#: rather than a divergent or stale view of the repository. A verifier holding
+#: the graph digest and its run id can recompute the canonical graph
+#: byte-identically (via :func:`graph_from_document`) and re-derive the event
+#: to confirm the run had the graph it claims.
+EVENT_CODE_GRAPH_ANCHORED = "code_graph.anchored"
+
 #: Issue #2308 -- emitted whenever a deterministic outer-plan node delegates
 #: mechanical execution to a native subagent (Claude Code, Codex, ...). The
 #: event binds the plan-node hash (a pure function of the outer plan, so it is
@@ -451,6 +462,13 @@ EVENT_ADAPTER_ADMISSION_RECEIPT = "adapter.admission_receipt"
 #: a declaration that changes between two runs shows up as a hash divergence
 #: named by the adapter rather than as unexplained behaviour change.
 EVENT_ADAPTER_CAPABILITY_SELECTION = "adapter.capability_selection"
+
+#: Issue #4854 -- emitted when an opt-in ``tier_models`` mapping selects a
+#: model from a pure task-tier classification. Records the tier, policy
+#: version, and feature-vector digest so replay recomputes the decision and
+#: names a changed ``tier_policy_version`` as a divergence. The reserved
+#: ``error`` marker is recorded when the classifier raises at the call site.
+EVENT_TASK_TIER_DECISION = "task.tier_decision"
 
 #: Issue #2663 -- emitted when capability-aware routing refuses a task because
 #: no candidate adapter's declared profile satisfied its requirements. The event
@@ -3529,6 +3547,62 @@ def record_trigger_receipt(
     )
 
 
+def record_code_graph_anchored(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    graph_digest: str,
+    graph_version: int,
+    source_file_count: int,
+    indexed_file_count: int,
+    unparsed_file_count: int,
+    inferred_edge_count: int,
+    extracted_edge_count: int,
+    actor: str = "orchestrator",
+) -> AuditEvent:
+    """Append a ``code_graph.anchored`` event into *chain* (#3610 slice 1).
+
+    Anchors the semantic code graph digest in the HMAC chain to ensure
+    audit-chain integrity for graph-dependent operations. This event
+    records the graph digest and key coverage metrics so a verifier can
+    prove the run admitted exactly this graph state rather than a divergent
+    or stale view of the repository.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The current orchestrator run ID.
+        graph_digest: SHA256 digest of the canonical graph document.
+        graph_version: Version of the graph document format.
+        source_file_count: Number of Python files found via git ls-files.
+        indexed_file_count: Number of Python files actually parsed.
+        unparsed_file_count: Number of files that failed to parse.
+        inferred_edge_count: Number of edges with EDGE_ORIGIN_INFERRED origin.
+        extracted_edge_count: Number of edges with EDGE_ORIGIN_EXTRACTED origin.
+        actor: Recorded actor; defaults to "orchestrator".
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    details: dict[str, Any] = {
+        "run_id": run_id,
+        "graph_digest": graph_digest,
+        "graph_version": graph_version,
+        "source_file_count": source_file_count,
+        "indexed_file_count": indexed_file_count,
+        "unparsed_file_count": unparsed_file_count,
+        "inferred_edge_count": inferred_edge_count,
+        "extracted_edge_count": extracted_edge_count,
+    }
+    return chain.log_with_prev_digest(
+        event_type=EVENT_CODE_GRAPH_ANCHORED,
+        actor=actor,
+        resource_type="code_graph",
+        resource_id=run_id,
+        details=details,
+    )
+
+
 def record_status_proof(
     *,
     chain: AuditChainStore,
@@ -4946,6 +5020,7 @@ def record_capability_selection(
     adapter: str,
     profile_hash: str,
     requirements: dict[str, Any],
+    verdict_table: dict[str, Any] | None = None,
     actor: str = "capability_router",
 ) -> AuditEvent:
     """Append an ``adapter.capability_selection`` event into *chain* (#2663).
@@ -4967,22 +5042,82 @@ def record_capability_selection(
             presented (its :attr:`profile_hash`).
         requirements: Canonical form of the task requirements the profile
             satisfied.
+        verdict_table: Optional per-candidate verdict table already in its
+            canonical JSON-safe form, one row per candidate adapter with its
+            profile hash and the unmet axes that prevented it from being
+            selected (empty for the chosen adapter). When present, the table
+            enriches the selection event with the per-candidate breakdown
+            without affecting the profile_hash.
         actor: Recorded actor; defaults to ``"capability_router"``.
 
     Returns:
         The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
         its details payload.
     """
+    details: dict[str, Any] = {
+        "run_id": run_id,
+        "adapter": adapter,
+        "profile_hash": profile_hash,
+        "requirements": dict(sorted(requirements.items())),
+    }
+    if verdict_table is not None:
+        details["verdict_table"] = verdict_table
     return chain.log_with_prev_digest(
         event_type=EVENT_ADAPTER_CAPABILITY_SELECTION,
         actor=actor,
         resource_type="adapter_capability_selection",
         resource_id=adapter,
+        details=details,
+    )
+
+
+def record_task_tier_decision(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    task_id: str,
+    tier: str,
+    tier_policy_version: int,
+    feature_digest: str,
+    features: dict[str, Any],
+    score: int,
+    actor: str = "task_tier",
+) -> AuditEvent:
+    """Append a ``task.tier_decision`` event into *chain* (#4854).
+
+    Anchors one opt-in task-tier classification at the same dispatch seam as
+    :func:`record_capability_selection`: the tier, the policy version, and a
+    digest of the ordered feature vector. Replay recomputes the classification
+    under the current policy and names a version bump as
+    ``tier_policy_version diverged`` rather than a silent model change.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run the decision was made for.
+        task_id: Task whose artefacts fed the classifier.
+        tier: Closed-set tier or the reserved ``error`` marker.
+        tier_policy_version: Classifier policy version recorded at decision time.
+        feature_digest: SHA-256 hex of the ordered feature vector + version.
+        features: Ordered feature map (names → ints).
+        score: Scalar score that selected the band.
+        actor: Recorded actor; defaults to ``"task_tier"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_TASK_TIER_DECISION,
+        actor=actor,
+        resource_type="task_tier_decision",
+        resource_id=task_id,
         details={
             "run_id": run_id,
-            "adapter": adapter,
-            "profile_hash": profile_hash,
-            "requirements": dict(sorted(requirements.items())),
+            "task_id": task_id,
+            "tier": tier,
+            "tier_policy_version": tier_policy_version,
+            "feature_digest": feature_digest,
+            "features": dict(sorted(features.items())),
+            "score": score,
         },
     )
 
@@ -4995,6 +5130,7 @@ def record_capability_refusal(
     requirements: dict[str, Any],
     candidates: list[list[str]],
     unmet: list[str],
+    verdict_table: dict[str, Any] | None = None,
     actor: str = "capability_router",
 ) -> AuditEvent:
     """Append an ``adapter.capability_refusal`` event into *chain* (#2663).
@@ -5017,24 +5153,33 @@ def record_capability_refusal(
         candidates: ``[adapter name, profile hash]`` pairs considered, in the
             order they were offered.
         unmet: Sorted union of every unmet capability axis across candidates.
+        verdict_table: Optional per-candidate verdict table already in its
+            canonical JSON-safe form, one row per candidate adapter with its
+            profile hash and the unmet axes that prevented it from being
+            selected (empty for the chosen adapter). When present, the table
+            enriches the refusal event with the per-candidate breakdown
+            without affecting the receipt_hash.
         actor: Recorded actor; defaults to ``"capability_router"``.
 
     Returns:
         The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
         its details payload.
     """
+    details: dict[str, Any] = {
+        "run_id": run_id,
+        "receipt_hash": receipt_hash,
+        "requirements": dict(sorted(requirements.items())),
+        "candidates": [list(pair) for pair in candidates],
+        "unmet": list(unmet),
+    }
+    if verdict_table is not None:
+        details["verdict_table"] = verdict_table
     return chain.log_with_prev_digest(
         event_type=EVENT_ADAPTER_CAPABILITY_REFUSAL,
         actor=actor,
         resource_type="adapter_capability_refusal",
         resource_id=receipt_hash,
-        details={
-            "run_id": run_id,
-            "receipt_hash": receipt_hash,
-            "requirements": dict(sorted(requirements.items())),
-            "candidates": [list(pair) for pair in candidates],
-            "unmet": list(unmet),
-        },
+        details=details,
     )
 
 
@@ -8762,6 +8907,7 @@ __all__ = [
     "EVENT_CHECKPOINT_RETRY",
     "EVENT_CLAIM_JOURNAL_RECEIPT",
     "EVENT_CLEAN_RUN_ATTESTATION",
+    "EVENT_CODE_GRAPH_ANCHORED",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
     "EVENT_COMPUTER_USE_ACTION",
@@ -8860,6 +9006,7 @@ __all__ = [
     "EVENT_TASK_RESOURCE_RELEASE",
     "EVENT_TASK_RESUMED",
     "EVENT_TASK_SUSPENDED",
+    "EVENT_TASK_TIER_DECISION",
     "EVENT_TEMPLATE_COMPRESSION_RECEIPT",
     "EVENT_TEMPLATE_COMPRESSION_RESTORE",
     "EVENT_THREAD_APPROVAL",
@@ -9005,6 +9152,7 @@ __all__ = [
     "record_task_resource_release",
     "record_task_resume",
     "record_task_suspension",
+    "record_task_tier_decision",
     "record_thread_approval",
     "record_tournament_selection",
     "record_trajectory_receipt",

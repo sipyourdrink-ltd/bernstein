@@ -10,6 +10,8 @@ Public surface:
   event recorder whose head identifies the surviving journal state
   (issue #2293).
 * :class:`ReplayGateway` - fixture-replay adapter around LLM + tool calls.
+* :func:`derive_replay_key` - scheme-prefixed digest written at the store boundary.
+* :exc:`ReplayKeySchemeMismatchError` - corpus recorded under another key scheme.
 * :data:`RECORD_ENV_VAR` - env-var that opts the *gateway* into recording.
 * :func:`diff_event_logs` - line-by-line first-divergence locator.
 
@@ -44,6 +46,7 @@ from bernstein.core.replay.gateway import (
     RECORD_ENV_VAR,
     GatewayMode,
     ReplayGateway,
+    ReplayKeySchemeMismatchError,
     ReplayMissError,
     is_recording_enabled,
 )
@@ -57,6 +60,11 @@ from bernstein.core.replay.journal import (
     seal_journal_into_spine,
     verify_events,
     verify_journal,
+)
+from bernstein.core.replay.key_scheme import (
+    CURRENT_KEY_SCHEME,
+    derive_replay_key,
+    parse_stored_key,
 )
 from bernstein.core.replay.provider_state import (
     CAPABILITY_DECLARED_BLIND,
@@ -121,6 +129,7 @@ def record_run(sdd_dir: Path, conversation_id: str, adapter_name: str, run_id: s
 __all__ = [
     "CAPABILITY_DECLARED_BLIND",
     "CAPABILITY_OBSERVED",
+    "CURRENT_KEY_SCHEME",
     "EVENTS_FILENAME",
     "JOURNAL_FILENAME",
     "MUTATION_CAPABILITY_EVENT",
@@ -140,17 +149,20 @@ __all__ = [
     "ReadPathDerivationError",
     "ReadPathSet",
     "ReplayGateway",
+    "ReplayKeySchemeMismatchError",
     "ReplayMissError",
     "RunReceipt",
     "RunReceiptError",
     "RunReceiptVerifyResult",
     "build_run_receipt",
     "derive_read_paths",
+    "derive_replay_key",
     "diff_event_logs",
     "fork_run",
     "is_recording_enabled",
     "load_events",
     "locate_run",
+    "parse_stored_key",
     "rebuild_state",
     "record_agent_mutations",
     "record_capture_failure",

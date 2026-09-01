@@ -10,8 +10,8 @@ description: >
 
 # Run a verified multi-agent goal
 
-Bernstein is a deterministic multi-agent orchestrator for CLI coding
-agents. This skill wraps the three-step operator loop: submit a goal,
+Bernstein is the open-source governance layer for AI agents, with a
+deterministic multi-agent scheduler. This skill wraps the three-step operator loop: submit a goal,
 monitor progress, and verify the finished run against its Merkle-chained
 lineage journal and HMAC audit chain.
 

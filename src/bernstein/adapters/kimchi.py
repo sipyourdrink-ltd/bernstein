@@ -8,9 +8,11 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from bernstein.adapters.acp_channel import iter_process_frames, run_acp_channel, spawn_acp_subprocess
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
+from bernstein.core.replay.journal import EventJournal
 
 #: Credentials and endpoint overrides forwarded into the spawned environment.
 #: ``KIMCHI_API_KEY`` authenticates hosted execution; the two host variables
@@ -123,27 +125,37 @@ class KimchiAdapter(CLIAdapter):
         env = build_filtered_env(list(_PROVIDER_ENV_VARS))
         env["KIMCHI_TELEMETRY_ENABLED"] = "0"
 
-        with log_path.open("w") as log_file:
-            try:
-                proc = subprocess.Popen(
-                    wrapped_cmd,
-                    cwd=workdir,
-                    env=env,
-                    stdin=subprocess.DEVNULL,
-                    stdout=log_file,
-                    stderr=subprocess.STDOUT,
-                    start_new_session=True,
-                )
-            except FileNotFoundError as exc:
-                raise RuntimeError(
-                    "kimchi not found in PATH. Install with `brew install getkimchi/tap/kimchi`"
-                ) from exc
-            except PermissionError as exc:
-                raise RuntimeError(f"Permission denied executing kimchi: {exc}") from exc
+        try:
+            proc = spawn_acp_subprocess(
+                wrapped_cmd,
+                cwd=workdir,
+                env=env,
+                log_path=log_path,
+                stdin=subprocess.DEVNULL,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError("kimchi not found in PATH. Install with `brew install getkimchi/tap/kimchi`") from exc
+        except PermissionError as exc:
+            raise RuntimeError(f"Permission denied executing kimchi: {exc}") from exc
+
+        # Process frames via ACP channel and collect result. The journal is
+        # required, not optional: drive_acp_lifecycle reads its head to build
+        # the lifecycle result, so passing None raised AttributeError on every
+        # spawn. It is namespaced by the run the same way the runtime log above
+        # is.
+        journal = EventJournal(run_id=session_id, sdd_dir=workdir / ".sdd")
+        acp_result = run_acp_channel(
+            iter_process_frames(proc),
+            journal=journal,
+            session_id=session_id,
+            stop_at_terminal=True,
+        )
 
         result = SpawnResult(pid=proc.pid, log_path=log_path, proc=proc)
         if timeout_seconds > 0:
             result.timeout_timer = self._start_timeout_watchdog(proc.pid, timeout_seconds, session_id)
+        # Store ACP lifecycle result for completion path
+        result.acp_result = acp_result
         return result
 
     def name(self) -> str:

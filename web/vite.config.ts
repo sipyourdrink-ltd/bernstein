@@ -26,6 +26,12 @@ export default defineConfig({
   build: {
     outDir: '../src/bernstein/gui/static',
     emptyOutDir: true,
-    sourcemap: true,
+    // The output directory IS the packaged tree, so anything emitted here ships in the
+    // wheel to every install. The map was 4.1 MB - 4.5x the bundle it described, and 82%
+    // of the whole GUI asset payload - for a debugging aid a browser fetches only when
+    // devtools is open. Turning it off here (rather than deleting the file) is what stops
+    // the next build putting it straight back; it also drops the trailing
+    // sourceMappingURL comment, so opening devtools does not 404 on a map that is gone.
+    sourcemap: false,
   },
 });

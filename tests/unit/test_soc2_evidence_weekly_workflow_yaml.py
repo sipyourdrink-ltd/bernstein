@@ -273,7 +273,21 @@ def test_export_step_access_control_and_retention_policy_commented() -> None:
 
 
 def test_export_step_with_sink_set_executes_export(tmp_path: Path) -> None:
-    """When SOC2_EVIDENCE_SINK is set, the step invokes the exporter without warnings."""
+    """When SOC2_EVIDENCE_SINK is set, the step invokes the exporter without warnings.
+
+    The workflow's ``run:`` block calls ``uv run python -c "from bernstein..."``,
+    which needs ``uv`` on PATH, a writable ``HOME`` for its cache, and a project
+    to resolve the import from.  ``UV_PROJECT`` supplies the project without
+    moving the working directory, so the step still runs against the evidence
+    tree this test builds under ``tmp_path`` and never writes into the checkout.
+
+    ``UV_NO_SYNC`` is what keeps this safe to run inside a test session: without
+    it, ``uv run`` reconciles the project environment before executing, and that
+    rewrite of ``.venv`` happens while the suite is running out of it. The
+    interpreter disappears mid-session and unrelated tests in the same shard die
+    on ``.venv/bin/python`` and half-installed shared objects, far from any file
+    this test touches.
+    """
     pack = _job("pack")
     run = _step_by_name(pack, "Export evidence pack to sink").get("run", "")
     assert isinstance(run, str)
@@ -290,6 +304,9 @@ def test_export_step_with_sink_set_executes_export(tmp_path: Path) -> None:
 
     env = {
         "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+        "UV_PROJECT": str(REPO_ROOT),
+        "UV_NO_SYNC": "1",
         "GITHUB_OUTPUT": str(output_path),
         "GITHUB_STEP_SUMMARY": str(summary_path),
         "PERIOD_LABEL": "weekly",
@@ -306,7 +323,9 @@ def test_export_step_with_sink_set_executes_export(tmp_path: Path) -> None:
         check=False,
     )
 
-    assert proc.returncode == 0
+    assert proc.returncode == 0, (
+        f"export step failed (rc={proc.returncode}).\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    )
     assert "SOC2_EVIDENCE_SINK detected" in proc.stdout
     assert "::warning::" not in proc.stdout
     assert summary_path.read_text(encoding="utf-8") == ""

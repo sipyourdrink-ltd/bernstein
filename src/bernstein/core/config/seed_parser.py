@@ -859,10 +859,34 @@ _ROLE_POLICY_COUNCIL_KEY = "council"
 # even though the schema path (``load_and_validate``) accepted the same file.
 _ROLE_POLICY_ENDPOINT_KEY = "endpoint"
 
+# Opt-in task-tier → model map (#4854). Nested mapping, validated separately.
+_ROLE_POLICY_TIER_MODELS_KEY = "tier_models"
+
 # Endpoint fields that the ``endpoint`` profile reference pins; setting any of
 # them inline alongside ``endpoint`` is a conflict (the profile is the single
 # source of truth for the certified endpoint).
 _ROLE_POLICY_ENDPOINT_PINNED_KEYS: tuple[str, ...] = ("base_url", "model", "api_key_env")
+
+_ALLOWED_TIERS: frozenset[str] = frozenset({"light", "standard", "heavy", "critical"})
+
+
+def _parse_tier_models(role: str, raw: object) -> dict[str, str]:
+    """Parse ``role_model_policy.<role>.tier_models`` (#4854)."""
+    if not isinstance(raw, dict):
+        raise SeedError(f"role_model_policy[{role!r}].tier_models must be a mapping")
+    parsed: dict[str, str] = {}
+    for tier, model in raw.items():
+        if not isinstance(tier, str) or tier not in _ALLOWED_TIERS:
+            allowed = ", ".join(sorted(_ALLOWED_TIERS))
+            raise SeedError(
+                f"role_model_policy[{role!r}].tier_models has unknown tier {tier!r}; "
+                f"allowed: {allowed} (reserved marker 'error' is not a configurable tier)"
+            )
+        if not isinstance(model, str) or not model.strip():
+            raise SeedError(f"role_model_policy[{role!r}].tier_models[{tier!r}] must be a non-empty string")
+        parsed[tier] = model.strip()
+    return parsed
+
 
 _COUNCIL_CANDIDATE_KEYS: tuple[str, ...] = ("model", "base_url", "api_key_env")
 
@@ -1077,10 +1101,19 @@ def _parse_single_role_policy(
         for key, value in profile.items():
             normalized[key] = value
 
+    raw_tier_models = settings.get(_ROLE_POLICY_TIER_MODELS_KEY)
+    if raw_tier_models is not None:
+        normalized[_ROLE_POLICY_TIER_MODELS_KEY] = _parse_tier_models(role, raw_tier_models)
+
     allowed_keys = (
         set(_ROLE_POLICY_KEYS)
         | set(_ROLE_POLICY_INT_KEYS)
-        | {_ROLE_POLICY_COUNCIL_KEY, _ROLE_POLICY_STYLE_KEY, _ROLE_POLICY_ENDPOINT_KEY}
+        | {
+            _ROLE_POLICY_COUNCIL_KEY,
+            _ROLE_POLICY_STYLE_KEY,
+            _ROLE_POLICY_ENDPOINT_KEY,
+            _ROLE_POLICY_TIER_MODELS_KEY,
+        }
     )
     unknown_keys = sorted(set(settings) - allowed_keys)
     if unknown_keys:

@@ -25,6 +25,7 @@ it cannot run in a given environment.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -289,11 +290,13 @@ def _resolve_trace_tests() -> str | None:
     if shutil.which("uv") is None:
         return None
     try:
+        env = {**os.environ, "UV_NO_SYNC": "1"}
         probe = subprocess.run(
-            ["uv", "run", "--with", "agentrust-trace-tests==0.5.1", "trace-tests", "--version"],
+            ["uv", "run", "--no-sync", "--with", "agentrust-trace-tests==0.5.1", "trace-tests", "--version"],
             capture_output=True,
             text=True,
             timeout=60,
+            env=env,
         )
     except (subprocess.TimeoutExpired, OSError):
         return None
@@ -326,10 +329,12 @@ class TestReferenceConformanceSuite:
 
     @pytest.mark.parametrize("name", _VECTOR_NAMES)
     def test_vector_passes_level_0(self, name: str) -> None:
+        env = {**os.environ, "UV_NO_SYNC": "1"}
         result = subprocess.run(
             [
                 "uv",
                 "run",
+                "--no-sync",
                 "--with",
                 "agentrust-trace-tests==0.5.1",
                 "trace-tests",
@@ -344,6 +349,7 @@ class TestReferenceConformanceSuite:
             capture_output=True,
             text=True,
             timeout=120,
+            env=env,
         )
         assert "Result: PASS" in result.stdout, result.stdout + result.stderr
         assert "TR-SIG" in result.stdout

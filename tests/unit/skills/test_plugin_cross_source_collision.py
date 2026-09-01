@@ -65,7 +65,14 @@ def plugin_dir(tmp_path: Path) -> Path:
     skills = root / "skills"
     skills.mkdir(parents=True)
     (root / "plugin.json").write_text(
-        json.dumps({"name": "my-pack", "version": "1.0.0", "skills": "./skills/"}),
+        json.dumps(
+            {
+                "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+                "name": "my-pack",
+                "version": "1.0.0",
+                "skills": "./skills/",
+            }
+        ),
         encoding="utf-8",
     )
     for name in ("alpha", "beta"):
@@ -154,7 +161,14 @@ def test_collision_with_another_plugin_pack_is_refused(plugin_dir: Path, tmp_pat
     other = tmp_path / "other-pack"
     (other / "skills").mkdir(parents=True)
     (other / "plugin.json").write_text(
-        json.dumps({"name": "other-pack", "version": "1.0.0", "skills": "./skills/"}),
+        json.dumps(
+            {
+                "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+                "name": "other-pack",
+                "version": "1.0.0",
+                "skills": "./skills/",
+            }
+        ),
         encoding="utf-8",
     )
     _write_skill(other / "skills" / "alpha" / "SKILL.md", "alpha", body="From other-pack.")
@@ -175,7 +189,14 @@ def test_collision_with_another_plugin_pack_is_allowed_with_force(plugin_dir: Pa
     other = tmp_path / "other-pack"
     (other / "skills").mkdir(parents=True)
     (other / "plugin.json").write_text(
-        json.dumps({"name": "other-pack", "version": "1.0.0", "skills": "./skills/"}),
+        json.dumps(
+            {
+                "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+                "name": "other-pack",
+                "version": "1.0.0",
+                "skills": "./skills/",
+            }
+        ),
         encoding="utf-8",
     )
     _write_skill(other / "skills" / "alpha" / "SKILL.md", "alpha", body="From other-pack.")

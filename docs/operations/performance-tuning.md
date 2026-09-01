@@ -22,7 +22,7 @@ The right `max_agents` value depends on your provider's rate limits, not just yo
 
 ### Claude (Anthropic)
 
-Rate limits vary by plan and change over time; consult your provider console (for Anthropic, the usage and limits pages) for your actual quota rather than any published table. As a rule of thumb: start at `max_agents: 1` on trial or entry-level tiers, 4-6 on a standard paid API tier, and 8+ only on enterprise or Bedrock-style deployments where the cap is hardware and cost budget.
+Rate limits vary by plan and change over time; consult your provider console (for Anthropic, the usage and limits pages) for your actual quota rather than any published table. As a rule of thumb: start at `max_agents: 1` on trial or entry-level tiers, 4-6 on a standard paid API tier, and 8+ only on enterprise or other high-quota hosted deployments where the cap is hardware and cost budget.
 
 > **Tip:** `bernstein status` shows a provider/quota table once the orchestrator has recorded provider snapshots. Bernstein reads `X-RateLimit-*` headers and backs off automatically, but it cannot predict limits - set `max_agents` below your burst ceiling.
 

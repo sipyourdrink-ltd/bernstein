@@ -41,28 +41,46 @@ def _mapping(value: object, message: str) -> dict[str, object]:
     return cast("dict[str, object]", value)
 
 
-def test_ci_concurrency_keys_main_by_sha_and_cancels_only_prs() -> None:
-    """Heavy CI runs every merged main commit to completion (per-SHA group, no
-    cancel) while still cancelling superseded PR-branch runs, so an already-merged
-    commit never carries a permanent "cancelled" red."""
+def test_ci_concurrency_collapses_main_pushes_and_exempts_release_bumps() -> None:
+    """Superseded main pushes collapse; release bumps and merge groups do not.
+
+    A merge-queue batch landing several PRs stacks one full-matrix main run
+    per merged commit against the account-wide concurrent-job ceiling; the
+    stacked runs starve the merge_group runs the queue itself waits on. The
+    newest main push therefore supersedes the queued/running ones (branch-wide
+    group, cancel-in-progress) — except a release bump commit, whose own CI
+    run is what the auto-release gate keys on, so it keeps a per-SHA group
+    that nothing cancels. The per-commit signal for superseded commits is
+    carried by the exact-SHA marker workflow, asserted separately below.
+    """
     ci_doc = _load(CI)
     concurrency = _mapping(ci_doc.get("concurrency"), "CI workflow must define concurrency")
-    # cancel-in-progress fires only for pull_request events; pushes to main
-    # (and merge_group / dispatch) are never cancelled by a later merge.
-    assert concurrency.get("cancel-in-progress") == "${{ github.event_name == 'pull_request' }}"
     group = concurrency.get("group")
+    cancel = concurrency.get("cancel-in-progress")
     assert isinstance(group, str)
-    # PR runs group by PR number; everything else groups by ref + sha so each
-    # commit is its own non-cancelling run.
+    assert isinstance(cancel, str)
+
+    # PR runs keep their per-PR group and stay cancellable.
     assert "pr-" in group
-    assert "branch-" in group
+    assert "pull_request" in cancel
+
+    # Non-release main pushes share one branch-wide group and supersede each
+    # other; both halves of the policy must name the same release exemption.
+    for expr in (group, cancel):
+        assert "github.event_name == 'push'" in expr
+        assert "chore(release)" in expr
+        assert "release:" in expr
+
+    # merge_group / dispatch / release bumps fall through to the per-SHA
+    # group, which nothing cancels.
     assert "github.sha" in group
+    assert "merge_group" not in cancel
 
     text = CI.read_text(encoding="utf-8")
-    # The comment documents the per-SHA main policy and its durable follow-up.
-    assert "per-SHA group" in text
-    assert "cancel-in-progress=false" in text
-    assert "merge queue" in text
+    # The comment must keep naming the marker workflow as the per-commit
+    # signal and the queue-starvation incident that motivated the collapse.
+    assert "main-sha-marker" in text
+    assert "concurrent-job ceiling" in text
 
 
 def test_main_sha_marker_workflow_is_exact_sha_and_non_cancellable() -> None:

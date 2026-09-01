@@ -12,7 +12,11 @@ import pytest
 from bernstein.core.llm import LLMSettings
 from bernstein.core.models import ApiTier, ModelConfig, ProviderType
 
-from bernstein.adapters.plugin_sdk import AdapterCapability
+from bernstein.adapters.plugin_sdk import (
+    AdapterCapability,
+    SamplingParamsRefusal,
+    ensure_sampling_params_supported,
+)
 from bernstein.adapters.qwen import QwenAdapter
 from bernstein.core.defaults import QWEN_INSTALL_HINT
 from bernstein.core.orchestration.preflight import _CLI_INSTALL_HINT
@@ -390,6 +394,11 @@ class TestQwenAdapterPluginInfo:
         assert AdapterCapability.SUPPORTS_TOP_P not in info.capabilities
         assert AdapterCapability.SUPPORTS_TOP_K not in info.capabilities
         assert AdapterCapability.SUPPORTS_MAX_TOKENS not in info.capabilities
+
+    def test_max_tokens_is_refused_before_spawn(self) -> None:
+        with pytest.raises(SamplingParamsRefusal) as excinfo:
+            ensure_sampling_params_supported(QwenAdapter(), {"max_tokens": 4096})
+        assert excinfo.value.requested_keys == ("max_tokens",)
 
 
 class TestQwenAdapterSamplingParams:

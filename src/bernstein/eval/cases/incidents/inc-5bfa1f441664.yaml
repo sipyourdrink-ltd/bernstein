@@ -1,0 +1,14 @@
+id: inc-5bfa1f441664
+severity: P2
+source_incident: "dlq:243e9913c9f244a8"
+owner: manager
+created_at: 1788215272.680
+expected_outcome: "Agent should complete the task; flake-tolerant retry is acceptable. (root cause: max_retries_exceeded)"
+tags:
+  - max_retries_exceeded
+prompt: |
+  Reproduce and resolve the following terminal failure (role=manager).
+  Task: Plan and decompose goal into tasks
+  Failure reason: max_retries_exceeded
+  Last error (trimmed):
+  Agent manager-efe5ca64 died; deferred death judgment re-evaluated and no liveness signal advanced past the pid-exit snapshot

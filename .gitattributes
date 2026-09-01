@@ -17,3 +17,8 @@ docs/assets/demo-run/run-receipt.pub.pem -text linguist-generated
 # evidence that tests/unit/test_*_receipt_format_vectors.py compares against.
 tests/fixtures/receipt-vectors/*.json -text
 tests/fixtures/receipt-vectors/*.pem -text
+# Trust record vectors are the same byte-exact artefacts as the receipt
+# vectors above: a signature is over the bytes, and the committed public key
+# is compared byte-for-byte, so no checkout may translate their line endings.
+tests/fixtures/trust-record-vectors/*.json -text
+tests/fixtures/trust-record-vectors/*.pem -text

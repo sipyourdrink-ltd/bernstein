@@ -7,9 +7,10 @@ Check run lifecycle:
   1. ``create`` - called when a fix/QA task is picked up; status=in_progress
   2. ``update`` - called when the task completes; status=completed + conclusion
 
-All operations degrade gracefully when the required environment variables
-(``GITHUB_APP_ID``, ``GITHUB_APP_PRIVATE_KEY``, ``GITHUB_INSTALLATION_ID``)
-are not set - the methods return ``None`` instead of raising.
+Authentication is delegated to the ``gh`` CLI (its token environment), so
+this client needs only the repository slug.  All operations degrade
+gracefully when the slug is missing - the methods return ``None`` instead
+of raising.
 
 GitHub API reference:
   https://docs.github.com/en/rest/checks/runs
@@ -60,20 +61,21 @@ class ComparisonCheckRunResult:
 class CheckRunClient:
     """Thin wrapper around the GitHub Check Runs API via ``gh`` CLI.
 
+    Authentication is delegated entirely to ``gh`` (its token environment),
+    so the client itself needs only the repository slug to operate.
+
     Args:
-        repo: ``owner/repo`` slug.  Required for all API calls.
-        installation_id: GitHub App installation ID.  Required; if ``None``
-            or empty all operations are no-ops.
+        repo: ``owner/repo`` slug.  Required; if empty all operations are
+            no-ops.
     """
 
-    def __init__(self, repo: str, installation_id: str | None = None) -> None:
+    def __init__(self, repo: str) -> None:
         self._repo = repo
-        self._installation_id = installation_id
 
     @property
     def _configured(self) -> bool:
         """True if the client has enough config to make API calls."""
-        return bool(self._repo and self._installation_id)
+        return bool(self._repo)
 
     def create(
         self,

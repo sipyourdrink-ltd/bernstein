@@ -8,13 +8,15 @@ disjoint slice of the discovered file list. The partition has to be:
   silently dropped, which would mask a regression).
 - **Disjoint**: no file runs on two shards (wasted runner minutes + double
   reporting).
-- **Deterministic + stable**: the same ``(files, i, N)`` always yields the same
-  slice across runs and across machines, so a failing shard reruns identically.
-  The repo's whole identity is determinism, so this is load-bearing.
-- **Balanced**: shard sizes differ by at most one, so no single runner becomes
-  the long pole.
+- **Deterministic + stable**: the same ``(files, i, N[, durations])`` always
+  yields the same slice across runs and across machines, so a failing shard
+  reruns identically. The repo's whole identity is determinism, so this is
+  load-bearing.
+- **Balanced**: without durations, shard *sizes* differ by at most one; with
+  durations, shard *estimated costs* are LPT-balanced so no single runner
+  becomes the long pole (issue #4840).
 
-These tests pin those four properties plus the ``i/N`` spec parser.
+These tests pin those properties plus the ``i/N`` spec parser.
 """
 
 from __future__ import annotations
@@ -50,6 +52,19 @@ def run_tests_module() -> Generator[ModuleType, None, None]:
 def _fixed_files(count: int) -> list[Path]:
     """A deterministic, sorted file list standing in for discovered tests."""
     return sorted(Path(f"tests/unit/test_file_{i:04d}.py") for i in range(count))
+
+
+def _assert_complete_disjoint(files: list[Path], shards: list[list[Path]]) -> None:
+    """Property: union of shards == input, no duplicates across shards."""
+    union: list[Path] = []
+    for shard in shards:
+        union.extend(shard)
+    assert sorted(union) == sorted(files)
+    assert len(union) == len(files)
+    assert len(set(union)) == len(files)
+    for left in range(len(shards)):
+        for right in range(left + 1, len(shards)):
+            assert set(shards[left]).isdisjoint(shards[right])
 
 
 # --- parse_shard_spec ------------------------------------------------------
@@ -96,16 +111,7 @@ def test_shard_files_covers_every_file_exactly_once(run_tests_module: ModuleType
     shard_count = 4
 
     shards = [run_tests_module.shard_files(files, i, shard_count) for i in range(1, shard_count + 1)]
-
-    union: list[Path] = []
-    for shard in shards:
-        union.extend(shard)
-
-    # Complete: every file appears.
-    assert sorted(union) == sorted(files)
-    # Disjoint: no duplicates across shards.
-    assert len(union) == len(files)
-    assert len(set(union)) == len(files)
+    _assert_complete_disjoint(files, shards)
 
 
 def test_shard_files_partitions_are_disjoint_pairwise(run_tests_module: ModuleType) -> None:
@@ -127,7 +133,7 @@ def test_shard_files_is_deterministic_across_runs(run_tests_module: ModuleType) 
 
 
 def test_shard_files_is_balanced(run_tests_module: ModuleType) -> None:
-    """Shard sizes differ by at most one (no long-pole runner)."""
+    """Without durations, shard sizes differ by at most one (modulo path)."""
     files = _fixed_files(1428)
     sizes = [len(run_tests_module.shard_files(files, i, 4)) for i in range(1, 5)]
     assert max(sizes) - min(sizes) <= 1
@@ -153,10 +159,7 @@ def test_shard_files_more_shards_than_files(run_tests_module: ModuleType) -> Non
     """When N > len(files), trailing shards are empty but coverage holds."""
     files = _fixed_files(3)
     shards = [run_tests_module.shard_files(files, i, 5) for i in range(1, 6)]
-    union: list[Path] = []
-    for shard in shards:
-        union.extend(shard)
-    assert sorted(union) == sorted(files)
+    _assert_complete_disjoint(files, shards)
     # Exactly three shards are non-empty.
     assert sum(1 for s in shards if s) == 3
 
@@ -167,6 +170,97 @@ def test_shard_files_rejects_out_of_range_index(run_tests_module: ModuleType) ->
         run_tests_module.shard_files(files, 0, 4)
     with pytest.raises(ValueError):
         run_tests_module.shard_files(files, 5, 4)
+
+
+def test_shard_files_duration_partition_covers_every_file_exactly_once(
+    run_tests_module: ModuleType,
+) -> None:
+    """Duration-weighted path: union across shards equals input, no overlaps.
+
+    The map deliberately covers only half the files so the unknown-key
+    fallback (``DEFAULT_SHARD_DURATION_S``) is on the live path. A refactor
+    that dropped unmapped files from the partition would still pass a
+    fully-populated map while silently omitting every test added since the
+    last durations refresh — the failure mode #4840 is about.
+    """
+    files = _fixed_files(128)
+    durations = {
+        run_tests_module.durations_key(path): float((index % 7) + 1)
+        for index, path in enumerate(files)
+        if index % 2 == 0
+    }
+    assert len(durations) == len(files) // 2
+    shards = [run_tests_module.shard_files(files, i, 4, durations=durations) for i in range(1, 5)]
+    _assert_complete_disjoint(files, shards)
+
+
+def test_shard_files_duration_partition_is_deterministic(run_tests_module: ModuleType) -> None:
+    files = _fixed_files(64)
+    durations = {run_tests_module.durations_key(path): float((index % 5) + 1) for index, path in enumerate(files)}
+    first = run_tests_module.shard_files(files, 3, 4, durations=durations)
+    second = run_tests_module.shard_files(list(files), 3, 4, durations=dict(durations))
+    assert first == second
+
+
+def test_shard_files_duration_partition_balances_skewed_weights(
+    run_tests_module: ModuleType,
+) -> None:
+    """LPT keeps estimated shard cost tighter than count-modulo on skewed weights."""
+    files = _fixed_files(40)
+    durations = {run_tests_module.durations_key(path): 1.0 for path in files}
+    # Four heavy files that modulo would dump into the same shard (indices 0,4,8,12).
+    for index in (0, 4, 8, 12):
+        durations[run_tests_module.durations_key(files[index])] = 100.0
+
+    def _cost(shard: list[Path]) -> float:
+        return sum(durations[run_tests_module.durations_key(path)] for path in shard)
+
+    modulo_costs = [_cost(run_tests_module.shard_files(files, i, 4)) for i in range(1, 5)]
+    lpt_costs = [_cost(run_tests_module.shard_files(files, i, 4, durations=durations)) for i in range(1, 5)]
+
+    assert max(lpt_costs) - min(lpt_costs) < max(modulo_costs) - min(modulo_costs)
+    # Four equal heavies across four shards: each shard gets exactly one.
+    heavies = {files[index] for index in (0, 4, 8, 12)}
+    lpt_shards = [run_tests_module.shard_files(files, i, 4, durations=durations) for i in range(1, 5)]
+    assert [len(heavies.intersection(shard)) for shard in lpt_shards] == [1, 1, 1, 1]
+
+
+def test_shard_files_duration_partition_preserves_relative_order(
+    run_tests_module: ModuleType,
+) -> None:
+    files = _fixed_files(50)
+    durations = {run_tests_module.durations_key(path): float((index % 3) + 1) for index, path in enumerate(files)}
+    shard = run_tests_module.shard_files(files, 2, 4, durations=durations)
+    indices = [files.index(path) for path in shard]
+    assert indices == sorted(indices)
+
+
+def test_load_and_write_shard_durations_round_trip(
+    run_tests_module: ModuleType,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "durations.json"
+    run_tests_module.write_shard_durations(
+        path,
+        {"tests/unit/a.py": 1.5, "tests/unit/b.py": 2.25},
+        merge=False,
+    )
+    loaded = run_tests_module.load_shard_durations(path)
+    assert loaded == {"tests/unit/a.py": 1.5, "tests/unit/b.py": 2.25}
+    run_tests_module.write_shard_durations(path, {"tests/unit/c.py": 3.0}, merge=True)
+    assert run_tests_module.load_shard_durations(path) == {
+        "tests/unit/a.py": 1.5,
+        "tests/unit/b.py": 2.25,
+        "tests/unit/c.py": 3.0,
+    }
+
+
+def test_committed_shard_durations_file_is_readable(run_tests_module: ModuleType) -> None:
+    """The committed durations fixture must parse and contain real unit paths."""
+    durations = run_tests_module.load_shard_durations(run_tests_module.default_shard_durations_path())
+    assert durations, "committed test-shard-durations.json missing or empty"
+    assert all(key.startswith("tests/unit/") and key.endswith(".py") for key in durations)
+    assert all(value >= 0 for value in durations.values())
 
 
 # --- affected empty-selection fail-closed behavior -------------------------
@@ -255,7 +349,7 @@ def test_sequential_timeout_message_matches_subprocess_timeout(
     result = run_tests_module.run_sequential([Path("tests/unit/test_slow.py")], [], fail_fast=True)
 
     assert result == 1
-    assert "TIMEOUT [1/1] test_slow.py (>300s)" in capsys.readouterr().out
+    assert "TIMEOUT [1/1] tests/unit/test_slow.py (>300s)" in capsys.readouterr().out
 
 
 def test_run_file_uses_timeout_env_override(

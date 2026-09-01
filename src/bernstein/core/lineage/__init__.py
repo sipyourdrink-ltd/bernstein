@@ -37,6 +37,11 @@ from bernstein.core.lineage.entry import (
     canonicalise,
     entry_hash,
 )
+from bernstein.core.lineage.foreign_attestation import (
+    ForeignAttestationResult,
+    ForeignAttestationVerdict,
+    verify_foreign_attestation,
+)
 from bernstein.core.lineage.gate import GateResult
 from bernstein.core.lineage.gate import check as gate_check
 from bernstein.core.lineage.identity import (
@@ -100,6 +105,8 @@ __all__ = [
     "AuditingTrackerAdapter",
     "ChildBody",
     "FirstWriterPolicy",
+    "ForeignAttestationResult",
+    "ForeignAttestationVerdict",
     "Fork",
     "GateResult",
     "HumanPolicy",
@@ -145,5 +152,6 @@ __all__ = [
     "seal_write",
     "sign_detached",
     "verify_detached",
+    "verify_foreign_attestation",
     "wrap_adapter",
 ]

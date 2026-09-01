@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -270,6 +270,30 @@ class RoleModelPolicyEntry(BaseModel):
     # instead of a single model; ``model``/``base_url``/``api_key_env`` above
     # are then ignored in favor of the council's own per-candidate endpoints.
     council: CouncilConfig | None = None
+    # Opt-in map of task-tier → model id (#4854). When unset, dispatch is
+    # byte-identical to a single ``model`` pin. Keys must be members of the
+    # closed tier set (``light``|``standard``|``heavy``|``critical``); the
+    # reserved classifier error marker is rejected here so a broken
+    # classifier cannot be configured as a cheap-tier verdict.
+    tier_models: dict[str, str] | None = None
+
+    @field_validator("tier_models")
+    @classmethod
+    def _validate_tier_models(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is None:
+            return None
+        allowed = frozenset({"light", "standard", "heavy", "critical"})
+        cleaned: dict[str, str] = {}
+        for tier, model in value.items():
+            if tier not in allowed:
+                raise ValueError(
+                    f"unknown tier {tier!r}; allowed: {', '.join(sorted(allowed))} "
+                    "(reserved marker 'error' is not a configurable tier)"
+                )
+            if not isinstance(model, str) or not model.strip():
+                raise ValueError(f"tier_models[{tier!r}] must be a non-empty model id")
+            cleaned[tier] = model.strip()
+        return cleaned
 
 
 class RoleConfigEntry(BaseModel):

@@ -120,9 +120,8 @@ execution hop rather than nesting them. A child hop's record carries
 (pass the parent's ``emit_trust_record`` return value back in as
 ``parent_record=``, and the delegation credential id as
 ``credential_id=``); ``delegation.parent_record_hash`` is
-``sha256:`` + the hex SHA-256 of *exactly* those parent bytes -- the
-UTF-8 encoding of the string ``emit_trust_record`` returned for the
-parent, with no re-canonicalisation and no trailing newline. A root
+``sha256:`` + the hex SHA-256 of the JCS (RFC 8785) canonical form of
+the complete signed parent record (including ``signature``). A root
 execution has no ``delegation`` member at all.
 
 Signature envelope (re-aligned to the schema, issues #4760-#4762 STEP 0):
@@ -185,7 +184,7 @@ not a hop); and its ``references`` holds one ``{"rel": "member-execution",
 "id", "resolver", "digest"}`` entry per member, in the order the members
 were given. ``id`` is the member's own ``subject`` -- what names it inside
 the resolver -- and ``digest`` is ``sha256:`` + the hex SHA-256 of the
-member's own exact returned bytes (the same convention
+member's complete signed record canonicalised with JCS (RFC 8785) (the same convention
 ``delegation.parent_record_hash`` uses for a parent record). The digest is
 what content-binds the entry: a verifier resolves a member by name and then
 recomputes that digest over the record it holds, rather than trusting an
@@ -714,7 +713,17 @@ class TrustRecordEmitter:
         delegation: dict[str, Any] | None = None
         if parent_record is not None:
             assert credential_id is not None  # enforced by the paired-args check above
-            parent_hash = hashlib.sha256(parent_record.encode("utf-8")).hexdigest()
+            try:
+                parent_doc = json.loads(parent_record)
+            except json.JSONDecodeError as exc:
+                msg = f"parent_record is not valid JSON: {exc}"
+                raise ValueError(msg) from exc
+            if not isinstance(parent_doc, dict):
+                msg = f"parent_record must be a JSON object, got {type(parent_doc).__name__}"
+                raise ValueError(msg)
+            from bernstein.core.security.agent_card_signer import canonicalize_jcs
+
+            parent_hash = hashlib.sha256(canonicalize_jcs(parent_doc)).hexdigest()
             delegation = {
                 "parent_record_hash": f"sha256:{parent_hash}",
                 "credential_id": credential_id,
@@ -873,9 +882,9 @@ class TrustRecordEmitter:
           "resolver", "digest"}`` entry per member, in the given order.
           ``id`` is the member's own ``subject``, which is what names it
           inside the resolver; ``digest`` is ``sha256:`` + the hex SHA-256 of
-          the member's own exact returned bytes (the same convention
-          ``delegation.parent_record_hash`` uses for a parent record), so a
-          verifier resolves a member by name and binds it by recomputing
+          the member's complete signed record canonicalised with JCS (RFC 8785)
+          (the same convention ``delegation.parent_record_hash`` uses for a parent record),
+          so a verifier resolves a member by name and binds it by recomputing
           that digest over the record it holds.
         """
         if not member_records:
@@ -962,9 +971,9 @@ class TrustRecordEmitter:
                 "rel": "member-execution",
                 "id": member["subject"],
                 "resolver": _MEMBER_EXECUTION_RESOLVER_URI,
-                "digest": f"sha256:{hashlib.sha256(raw.encode('utf-8')).hexdigest()}",
+                "digest": f"sha256:{hashlib.sha256(canonicalize_jcs(member)).hexdigest()}",
             }
-            for raw, member in zip(member_records, members, strict=True)
+            for member in members
         ]
 
         record = TrustRecord(

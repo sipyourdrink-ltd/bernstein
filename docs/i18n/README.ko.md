@@ -8,14 +8,14 @@
 
 <br>
 
-<img alt="Bernstein - deterministic multi-agent CLI orchestration" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/banner-readme.webp" width="820">
+<img alt="Bernstein - the open-source governance layer for AI agents" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/banner-readme.webp" width="820">
 
 <br>
 
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
-### 결정론적 멀티 에이전트 CLI 오케스트레이션
-<!-- l10n: en="deterministic multi-agent CLI orchestration" hash="sha256:2cb1281992f1" -->
+### AI 에이전트를 위한 오픈소스 거버넌스 레이어
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:739f0a7ad1af" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -38,7 +38,7 @@
 
 > **상태: 베타.** 단독 메인테이너가 활발히 개발 중이다. 버전 번호는 릴리스 횟수를 셀 뿐 성숙도를 세지 않는다. 마이너 버전에서도 인터페이스가 바뀔 수 있다. 의존한다면 버전을 고정하라. 회귀는 빠르게 고치니 [알려 달라](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein은 CLI 코딩 에이전트(Claude Code, Codex, Gemini CLI 외 40여 종)를 위한 결정론적 오케스트레이터다. 에이전트를 병렬로 실행하고, 그 결과물에 게이트를 걸며, 나중에 검증할 수 있을 만큼의 실행 기록을 남긴다. 에어갭 설치 프로파일을 포함한다. Apache-2.0.
+Bernstein은 AI 에이전트를 위한 오픈소스 거버넌스 레이어입니다. 결정론적 스케줄러 - 조정 루프에 모델이 없음 - 가 에이전트를 병렬로 돌리고, 산출물을 게이트로 검사하고, 모든 단계를 기록합니다. 그래서 실행은 사후에, 오프라인으로, 아티팩트만으로 검증할 수 있습니다. CLI 코딩 에이전트는 바로 동작하고(Claude Code, Codex, Gemini CLI 외 40+), 같은 레이어가 모든 에이전트 워크로드를 거버닝합니다: 결과물은 diff일 수도, 리서치 보고서일 수도, 데이터셋일 수도, 감사 증적 패키지일 수도 있습니다. 에어갭 설치 프로파일 포함. Apache-2.0.
 
 ### 한눈에 보기
 <!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->
@@ -51,6 +51,87 @@ Bernstein은 CLI 코딩 에이전트(Claude Code, Codex, Gemini CLI 외 40여 �
 - **넓고, 그리고 로컬이다.** 40여 개의 CLI 에이전트 어댑터에 범용 `--prompt` 래퍼, 파일 기반 상태. SaaS를 거치지 않고 서드파티 데이터 플레인도 없다.
 
 전체 목록은 [기능 페이지](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)에, 전수 색인은 [기능 매트릭스](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)에 있다.
+
+### 실행은 이렇게 생겼다
+<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+
+YAML 파일 하나가 실행 전체를 선언합니다: 페이즈, 역할, 의존성, 그리고 노드가 실행되는 조건까지. 스케줄러는 이를 순수 Python으로 실행합니다 - 파일 안에 프롬프트는 하나도 없고, 다음에 무슨 일이 일어날지 모델이 결정하지도 않습니다. 이 그래프는 감사 증적 패키지를 만듭니다. 전체 파일은 [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml)에 있습니다.
+
+```yaml
+name: audit-evidence-pack
+version: "1.0.0"
+
+phases:
+  - name: scope
+    allowed_roles: [manager, architect]
+  - name: collect
+  - name: validate
+    allowed_roles: [qa, security]
+  - name: deliver
+    allowed_roles: [security, manager]
+
+nodes:
+  define-control-inventory:
+    phase: scope
+    role: architect
+
+  collect-audit-logs:
+    phase: collect
+    role: security
+    depends_on: [define-control-inventory]
+
+  # three more evidence streams collect in parallel:
+  # collect-sboms-and-attestations, collect-runbooks-and-policies,
+  # collect-eval-results
+
+  assemble-pack:
+    phase: validate
+    role: docs
+    depends_on:
+      - collect-audit-logs
+      - collect-sboms-and-attestations
+      - collect-runbooks-and-policies
+      - collect-eval-results
+
+  mock-auditor-pass:
+    phase: validate
+    role: qa
+    depends_on: [assemble-pack]
+
+  remediate-findings:
+    phase: collect
+    role: docs
+    depends_on:
+      - source: mock-auditor-pass
+        condition: "status == 'failed'"
+    retry:
+      max_attempts: 3
+      until: "status == 'done'"
+
+  sign-and-deliver:
+    phase: deliver
+    role: security
+    depends_on:
+      - source: mock-auditor-pass
+        condition: "status == 'done'"
+```
+
+```mermaid
+flowchart LR
+    inv[define-control-inventory] --> logs[collect-audit-logs]
+    inv --> sbom[collect-sboms-and-attestations]
+    inv --> rb[collect-runbooks-and-policies]
+    inv --> ev[collect-eval-results]
+    logs --> pack[assemble-pack]
+    sbom --> pack
+    rb --> pack
+    ev --> pack
+    pack --> gate{mock-auditor-pass}
+    gate -->|failed| fix["remediate-findings (retry x3)"]
+    gate -->|done| sign[sign-and-deliver]
+```
+
+각 노드는 페이즈가 허용하는 역할의 에이전트가 가져갑니다. 역할 울타리와 승인 게이트는 에이전트가 태스크 안에서 무엇을 하든 유지됩니다. 코드 노드는 자기만의 git worktree에서 머지 게이트 뒤로 완료됩니다. 위의 노드들은 다르게 끝납니다: [아티팩트 계약](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)이 결과물(보고서, 데이터셋, 스캔, 액션 로그)을 지정하고, 노드는 커밋 대신 서명된 lineage 영수증으로 닫힙니다. 같은 스케줄러, 같은 저널, 같은 오프라인 검증 - 그래프가 코드를 나르든, 리서치든, ops 변경이든, 셋의 혼합이든. 소프트웨어, 리서치, 문서, 엔터프라이즈, 컨트리뷰터 워크플로용 기성 그래프는 [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)에 있습니다.
 
 ### 30초 설치
 <!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
@@ -142,9 +223,9 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 리포지터리 위생 게이트: `bernstein readme-l10n verify`는 번역된 README가 영어 원문에서 벗어난 PR을 오래된 섹션 이름과 함께 실패시킨다. `bernstein readme-l10n sync`는 영어를 편집한 뒤 다시 묶는다. [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)을 보라.
 
 ### 지원하는 에이전트
-<!-- l10n: en="supported agents" hash="sha256:8c94b4cde068" -->
+<!-- l10n: en="supported agents" hash="sha256:237685a67917" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen 외 다수. [어댑터 색인](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)에는 그중 30개의 설치 명령이 있다. `bernstein integrations list`는 `src/bernstein/adapters/registry.py`에서 배선된 통합 51건 전부를 나열한다. 이 파일이 무엇이 해결되는지에 대한 유일한 출처다. 그중 49건은 선택 가능한 에이전트 어댑터이고, 나머지 두 줄은 `mock` 테스트 스텁과 `self-hosted-endpoints` 엔드포인트 프로파일이다. `--prompt` 플래그를 가진 그 밖의 것들은 범용 래퍼로 동작한다.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen 외 다수. [어댑터 색인](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)에는 그중 30개의 설치 명령이 있다. `bernstein integrations list`는 `src/bernstein/adapters/registry.py`에서 배선된 통합 54건 전부를 나열한다. 이 파일이 무엇이 해결되는지에 대한 유일한 출처다. 그중 52건은 선택 가능한 에이전트 어댑터이고, 나머지 두 줄은 `mock` 테스트 스텁과 `self-hosted-endpoints` 엔드포인트 프로파일이다. `--prompt` 플래그를 가진 그 밖의 것들은 범용 래퍼로 동작한다.
 
 한 실행 안에서 에이전트를 섞을 수 있다. 정형 작업에는 값싼 로컬 모델을, 설계에는 무거운 클라우드 모델을. `bernstein integrations list --installed`는 자기 머신에서 쓸 수 있는 것을 보여준다.
 

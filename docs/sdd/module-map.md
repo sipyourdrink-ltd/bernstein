@@ -13,6 +13,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `dataclass_helpers.py`      | Helpers for preserving dataclass instance types through updates |
 | `defaults.py`               | Centralized default values for the Bernstein orchestrator |
 | `diff_paths.py`             | Which repository-relative paths a unified diff touches |
+| `finding_verify.py`         | FindingVerifyReceipt - lineage-attested receipts for finding verify results |
 | `instrumentation.py`        | Wave-3 per-agent instrumentation: LLM calls, tool calls, and conversation history |
 | `parallel_admission.py`     | Parallel-execution admission from a code graph (#3237, scope step 3) |
 | `path_scope.py`             | Which repository-relative paths fall outside a set of globs |
@@ -131,12 +132,15 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `env_isolation.py`          | Environment variable isolation for spawned agents |
 | `floor_refresh.py`          | Adapter security-floor refresh pipeline with signed update receipts (#2515) |
 | `forge.py`                  | Forge CLI adapter |
+| `garak.py`                  | Garak adversarial probe adapter |
 | `gemini.py`                 | Google Gemini / Antigravity CLI adapter |
 | `generic.py`                | Generic CLI adapter for arbitrary coding agent CLIs |
+| `gitleaks.py`               | Deterministic Gitleaks scanner adapter and SARIF normalization |
 | `goose.py`                  | Goose CLI adapter for Bernstein |
 | `goose_stream_parser.py`    | Parse Goose ``--output-format stream-json`` events |
 | `gptme.py`                  | gptme CLI adapter |
 | `hermes.py`                 | Hermes Agent (Nous Research) CLI adapter |
+| `holmesgpt.py`              | HolmesGPT adapter for Bernstein |
 | `hook_gate_render.py`       | Render in-process verification-gate hooks for capable adapters (issue #2360) |
 | `http_429_classifier.py`    | Data-driven classifier for HTTP 429 responses |
 | `iac.py`                    | Infrastructure-as-Code (Terraform/Pulumi) adapter for Bernstein |
@@ -151,7 +155,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `mock.py`                   | Mock CLI adapter for zero-API-key demos and testing |
 | `muse.py`                   | Muse Code CLI adapter for Bernstein |
 | `ollama.py`                 | Ollama / OpenAI-compatible local LLM adapter - run coding agents without cloud API keys |
-| `onboarding.py`             | Probe an installed CLI binary and capture its self-description as evidence |
+| `onboarding.py`             | Probe CLI evidence, record a supervised golden transcript, and replay held-out invocations |
 | `open_interpreter.py`       | Open Interpreter CLI adapter |
 | `openai_agents.py`          | OpenAI Agents SDK v2 adapter |
 | `openai_agents_builtins.py` | Opt-in builtin tools for the OpenAI Agents runner |
@@ -176,7 +180,9 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `security_floor.py`         | Adapter security-floor spawn preflight with signed refusal receipts (#2515) |
 | `session_id.py`             | Deterministic session-id binding for adapter replay isolation |
 | `skills_injector.py`        | Inject per-task Claude Code skills into the worktree before spawn |
+| `skyvern.py`                | Skyvern adapter: drives an existing Skyvern server over HTTP |
 | `strict_schema.py`          | Strict structured-output validation and user-owned-field protection |
+| `trivy.py`                  | Feed-pinned Trivy scanner adapter and SARIF normalization |
 | `use_cases.py`              | Per-adapter metadata for the ``bernstein integrations list`` command |
 | `ci/`                       | CI system adapters for log parsing and failure extraction |
 | `digest/`                   | Tool output digesters registry and ruleset models |
@@ -208,7 +214,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `install_check.py`      | Installation mismatch detection -- detect multiple Bernstein installs and config conflicts |
 | `keybindings.py`        | Keybinding system for the Bernstein TUI |
 | `live.py`               | Live view helpers for ``bernstein live --classic`` |
-| `main.py`               | CLI entry point for Bernstein -- deterministic orchestrator for CLI coding agents |
+| `main.py`               | CLI entry point for Bernstein -- the open-source governance layer for AI agents |
 | `notebook_traces.py`    | Notebook-aware traces - detect and track Jupyter notebook cell edits |
 | `release_notes.py`      | Release notes display - fetch and format release notes for terminal output |
 | `run.py`                | Enhanced run output for ``bernstein run`` |

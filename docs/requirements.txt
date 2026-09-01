@@ -580,15 +580,15 @@ pillow==12.3.0 \
     # via
     #   cairosvg
     #   mkdocs-material
-platformdirs==4.11.3 \
-    --hash=sha256:5ed065d443751de711da036041a7a214122efc4a4de393b3f4137ba5576540e7 \
-    --hash=sha256:66a73d38a849810252df809a3d8bcbda8e26f6c189920e7535ad608a48dbb5ab
+platformdirs==4.11.4 \
+    --hash=sha256:e34ff91a24bcddc6d939b878bdf3f5c437c9c46fe9e212b1bf455fdf1ee57586 \
+    --hash=sha256:f3373be828247211d0febabea97e238c3dfde8a60b3c90c32756fb52cb21556d
     # via mkdocs-get-deps
 pycparser==3.0 \
     --hash=sha256:600f49d217304a5902ac3c37e1281c9fe94e4d0489de643a9504c5cdfdfc6b29 \
     --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
     # via cffi
-Pygments==2.21.0 \
+pygments==2.21.0 \
     --hash=sha256:2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9 \
     --hash=sha256:610ca751c9bc2492b38eb9a38a7fbc93edbbb2d7182edaf34e66ae493dee5c8c
     # via mkdocs-material

@@ -32,11 +32,17 @@ _YAML_GLOB = "*.yaml"
 
 _TEMPLATES_NOT_FOUND_MSG = "[red]Templates directory not found.[/red]"
 
-# Templates ship alongside the bernstein package.
-_TEMPLATES_DIR = Path(__file__).parent.parent.parent.parent / "plans" / "templates"
-
-# Fallback: look relative to the installed package (editable installs).
-_ALT_TEMPLATES_DIR = Path(__file__).parent.parent.parent / "plans" / "templates"
+# Plan templates are a shipped asset, resolved the way every other template family is.
+#
+# They used to be found by walking up from ``__file__``, and both candidates were wrong: one
+# resolved to ``src/plans/templates`` and the other to ``src/bernstein/plans/templates``, while the
+# files sat at the repo root. So ``templates list`` and ``templates use`` were dead on every path,
+# checkout and wheel alike (#4877).
+#
+# The arithmetic is not the fix — a third hand-derived path would rot the same way the first two
+# did. ``_BUNDLED_TEMPLATES_DIR`` is the one resolver every family already shares, and it answers
+# for both layouts: ``_default_templates/`` inside a wheel, ``templates/`` in a checkout. Using it
+# means this surface cannot drift from the others without breaking all of them at once.
 
 _DESCRIPTIONS: dict[str, str] = {
     "rest-api": "Models → Routes → Auth → Tests (4 stages)",
@@ -48,11 +54,15 @@ _DESCRIPTIONS: dict[str, str] = {
 
 
 def _templates_dir() -> Path | None:
-    """Return the templates directory, trying multiple candidate paths."""
-    for candidate in (_TEMPLATES_DIR, _ALT_TEMPLATES_DIR):
-        if candidate.is_dir():
-            return candidate
-    return None
+    """Return the bundled plan-templates directory, or None when it is absent.
+
+    Imported inside the function so this module stays cheap to import, matching
+    :func:`bernstein.core.workflows.workflow_spec._bundled_workflows_dir`.
+    """
+    from bernstein import _BUNDLED_TEMPLATES_DIR
+
+    candidate = _BUNDLED_TEMPLATES_DIR / "plans"
+    return candidate if candidate.is_dir() else None
 
 
 @click.group("templates")
@@ -101,7 +111,10 @@ def templates_list() -> None:
     console.print()
     console.print(table)
     console.print()
-    console.print("[dim]Templates are in[/dim] [bold]plans/templates/[/bold]: edit the copy after scaffolding.")
+    console.print(
+        "[dim]Scaffold one with[/dim] [bold]bernstein templates use <name>[/bold]"
+        "[dim]: it writes to plans/<name>.yaml, and you edit that copy.[/dim]"
+    )
     console.print()
 
 

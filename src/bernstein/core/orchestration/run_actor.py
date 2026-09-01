@@ -44,6 +44,7 @@ from itertools import count
 from typing import Any, Literal
 
 from bernstein.core.dataclass_helpers import typed_replace as _typed_replace
+from bernstein.core.orchestration import run_actor_registry
 
 logger = logging.getLogger(__name__)
 
@@ -374,16 +375,32 @@ class RunActor:
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
-        """Start the writer task. Idempotent."""
+        """Start the writer task and make this actor reachable to sync writers. Idempotent."""
         if self._started:
             return
         self._started = True
         self._task = asyncio.create_task(self._run_loop(), name=f"run-actor-{self._state.session_id}")
+        # Register HERE, and not at any of the call sites that construct an actor.
+        #
+        # `run_actor_registry` exists so synchronous writers - file-driven CLI helpers, subprocess
+        # shims - can publish into a live actor by session id. Nothing ever called `register`, so
+        # the registry was empty for the life of every process and `publish_event_sync` returned
+        # False on every call: `approval_gate`'s parallel emit has never emitted (#4899).
+        #
+        # This is the call site `register` was written for. It defaults `loop` to
+        # `asyncio.get_running_loop()`, which is only correct from inside the actor's own
+        # coroutine, and "a STARTED RunActor" is what its docstring asks for. Registering at
+        # construction would hand out an actor whose writer task does not exist yet.
+        run_actor_registry.register(self)
 
     async def stop(self) -> None:
-        """Drain pending events and stop the writer task."""
+        """Drain pending events, stop the writer task, and leave the registry."""
         if not self._started or self._task is None:
             return
+        # Before the drain, so nothing can publish into an actor that is on its way down. The
+        # registry is the only route a sync writer has, so leaving it first is what makes "stopped"
+        # mean unreachable rather than merely draining.
+        run_actor_registry.unregister(self._state.session_id, self)
         self._stopped.set()
         # Submit a no-op so the loop wakes up and observes the flag.
         await self._queue.put((Event(kind="watchdog_tick", source="stop"), None))

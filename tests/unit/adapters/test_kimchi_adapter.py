@@ -68,13 +68,30 @@ def _spawn_and_capture(adapter: KimchiAdapter, tmp_path: Path, **overrides: Any)
         "timeout_seconds": 0,
     }
     kwargs.update(overrides)
-    with patch("subprocess.Popen") as mock_popen:
-        mock_proc = MagicMock()
-        mock_proc.pid = 12345
-        mock_popen.return_value = mock_proc
+    captured_cmd = []
+    captured_popen_kwargs = []
+
+    def make_spawn_acp(cmd, **kw):
+        captured_cmd.extend(cmd)
+        # Create a mock Popen that will be returned by subprocess.Popen
+        mock_popen_result = MagicMock()
+        mock_popen_result.pid = 12345
+        # Capture the kwargs that would be passed to subprocess.Popen
+        captured_popen_kwargs.append(kw)
+        return mock_popen_result
+
+    with (
+        patch("subprocess.Popen", make_spawn_acp),
+        patch("bernstein.adapters.kimchi.run_acp_channel") as mock_run_acp,
+        patch("bernstein.adapters.kimchi.iter_process_frames") as mock_iter_frames,
+    ):
+        mock_acp_result = MagicMock()
+        mock_run_acp.return_value = mock_acp_result
+        mock_iter_frames.return_value = iter([b"{}"])  # Mock frame iterator
+
         result = adapter.spawn(**kwargs)
     assert result.pid == 12345
-    return list(mock_popen.call_args[0][0]), dict(mock_popen.call_args[1])
+    return captured_cmd, (captured_popen_kwargs[0] if captured_popen_kwargs else {})
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +106,7 @@ def test_kimchi_adapter_registered_and_strategy_matrix_matches() -> None:
 
     strategy = STRATEGY_MATRIX.get("kimchi")
     assert strategy is not None
-    assert strategy.resume == ResumeStrategy.UNSUPPORTED
+    assert strategy.resume == ResumeStrategy.FLAG
     assert strategy.dangerous_mode == DangerousModeStrategy.CLI_FLAG
     assert strategy.event_channel == EventChannel.ACP
     assert strategy.output_mode == OutputMode.GIT_DIFF
@@ -196,15 +213,14 @@ def test_spawn_reports_a_missing_binary_as_an_actionable_error(tmp_path: Path) -
 
 
 def test_retry_capability_matches_what_the_spawn_can_deliver(tmp_path: Path) -> None:
-    """No spawn path passes a Kimchi session file, so no warm retry is offered.
+    """Kimchi supports native session resume, enabling warm retry.
 
-    ``decide_retry`` reads the resume axis. Declaring native resume promotes a
-    failed task's retry to warm, and ``build_retry_prompt`` then sends only the
-    corrective instruction, assuming the adapter reattached to the prior
-    session. Kimchi never emits ``--session``, so that retry would reach a
-    fresh agent carrying none of the original task.
+    ``decide_retry`` reads the resume axis. Declaring native resume (FLAG)
+    promotes a failed task's retry to warm, and ``build_retry_prompt`` then
+    sends only the corrective instruction, assuming the adapter reattached to
+    the prior session via Kimchi's ``--session <path>`` flag.
     """
-    assert checkpoint_retry_capability("kimchi") is CheckpointRetryCapability.NONE
+    assert checkpoint_retry_capability("kimchi") is CheckpointRetryCapability.RESUME
 
     checkpoint = CheckpointRef(
         task_id="T-1",
@@ -223,9 +239,11 @@ def test_retry_capability_matches_what_the_spawn_can_deliver(tmp_path: Path) -> 
         gate_name="tests",
         gate_output="1 failed",
     )
-    assert decision.effective_mode is RetryMode.COLD
-    assert decision.downgrade_reason == "adapter_capability_none"
-    assert build_retry_prompt(decision, cold_prompt="the full original task") == "the full original task"
+    assert decision.effective_mode is RetryMode.WARM
+    assert decision.downgrade_reason == ""
+    assert build_retry_prompt(decision, cold_prompt="the full original task").startswith(
+        "Your previous attempt on this task failed the tests gate."
+    )
 
 
 # ---------------------------------------------------------------------------
