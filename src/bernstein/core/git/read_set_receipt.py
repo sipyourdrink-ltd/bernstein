@@ -15,11 +15,10 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.identity import AgentCard, sign_detached, verify_detached
-
-from pathlib import Path
 
 if TYPE_CHECKING:
     from bernstein.core.security.audit import AuditEvent
