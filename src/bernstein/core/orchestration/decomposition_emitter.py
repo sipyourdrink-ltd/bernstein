@@ -88,6 +88,11 @@ class DecompositionEmitter:
         evidence_digests_set: set[str] = set()
         attempts: list[dict[str, Any]] = []
 
+        # Sort terminal_tasks by task id to ensure deterministic ordering
+        # of evidence digests and attempts, so same evidence with tasks
+        # in different order yields the same canonical bytes.
+        terminal_tasks = sorted(terminal_tasks, key=lambda t: t.id)
+
         for t in terminal_tasks:
             parts: list[str] = []
             if t.terminal_reason:
@@ -110,7 +115,7 @@ class DecompositionEmitter:
             }
             attempts.append(attempt)
 
-        evidence_digests = tuple(evidence_digests_set)
+        evidence_digests = tuple(sorted(evidence_digests_set))
 
         # Validate that evidence digests are well-formed SHA256 hashes.
         for digest in evidence_digests:
