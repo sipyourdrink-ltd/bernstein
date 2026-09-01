@@ -57,6 +57,11 @@ TRUST_CLASSES: frozenset[str] = frozenset({"operator", "workspace", "first_party
 #: Shape of a bare hex SHA-256, used to validate recorded attachment digests.
 _HEX64: re.Pattern[str] = re.compile(r"\A[0-9a-f]{64}\Z")
 
+#: Closed set of valid ``activity_source`` values (issue #4962). ``None`` means
+#: pre-existing entry not yet migrated and is dropped from canonical bytes so
+#: every historical signature and HMAC stays valid.
+ACTIVITY_SOURCES: frozenset[str] = frozenset({"scheduler", "adapter"})
+
 
 @dataclass(frozen=True, slots=True)
 class LineageEntry:
@@ -81,6 +86,10 @@ class LineageEntry:
     # bytes so every historical entry keeps its exact wire form, signature and
     # HMAC. A tool-result provenance record sets this to one of TRUST_CLASSES.
     trust_class: str | None = None
+    # Additive, optional (issue #4962). None is dropped from the canonical
+    # bytes so every historical entry keeps its exact wire form, signature and
+    # HMAC. When not None must be one of LINEAGE_ENTRY.ACTIVITY_SOURCES.
+    activity_source: str | None = None
     # Additive, optional (issue #1797), dropped when ``None`` on the same rule
     # as ``trust_class``. Hex SHA-256 digests of the operator attachments the
     # producing turn was handed, so the receipt names every input the model
@@ -106,6 +115,8 @@ class LineageEntry:
                 raise ValueError(f"parent_hash must start with 'sha256:', got {p!r}")
         if self.trust_class is not None and self.trust_class not in TRUST_CLASSES:
             raise ValueError(f"unknown trust_class: {self.trust_class!r}")
+        if self.activity_source is not None and self.activity_source not in ACTIVITY_SOURCES:
+            raise ValueError(f"unknown activity_source: {self.activity_source!r}")
         if self.attachment_digests is not None:
             if not self.attachment_digests:
                 raise ValueError("attachment_digests must be omitted rather than empty")
@@ -128,6 +139,8 @@ def _canonical_body(entry: LineageEntry) -> dict[str, object]:
     body = asdict(entry)
     if body.get("trust_class") is None:
         body.pop("trust_class", None)
+    if body.get("activity_source") is None:
+        body.pop("activity_source", None)
     if body.get("attachment_digests") is None:
         body.pop("attachment_digests", None)
     return body
