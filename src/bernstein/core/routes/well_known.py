@@ -68,6 +68,7 @@ from bernstein.core.security.agent_card_signer import (
     ed25519_public_jwk,
 )
 from bernstein.core.security.tenanting import DEFAULT_TENANT_ID
+from bernstein.system_description import SYSTEM_DESCRIPTION
 
 if TYPE_CHECKING:
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -82,14 +83,11 @@ router = APIRouter()
 HTTP_SIG_DIRECTORY_PATH = "/.well-known/http-message-signatures-directory"
 
 _AGENT_NAME = "bernstein"
-_AGENT_DESCRIPTION = (
-    "Bernstein is a deterministic orchestrator for short-lived CLI coding "
-    "agents (Claude Code, Codex, Gemini CLI, Aider, ...) over a file-based "
-    "task store.  No model sits in its coordination loop, so parallel runs "
-    "in per-task git worktrees replay byte-identically.  Clients submit "
-    "tasks, query status, and post cross-agent bulletins via the documented "
-    "endpoints below."
-)
+# One string for what this system is, shared with the EU AI Act evidence package. This
+# said "a deterministic orchestrator for short-lived CLI coding agents", which is the
+# description automated clients read, and it named the default workload as the whole
+# subject (#5004).
+_AGENT_DESCRIPTION = SYSTEM_DESCRIPTION
 _PROTOCOL_VERSION = "1.0"
 _DEFAULT_BASE_URL = "http://127.0.0.1:8052"
 _DOCS_URL = "https://github.com/sipyourdrink-ltd/bernstein"

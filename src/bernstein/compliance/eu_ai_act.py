@@ -22,6 +22,12 @@ from enum import StrEnum
 from pathlib import Path  # noqa: TC003
 from typing import Any
 
+from bernstein.system_description import (
+    DEPLOYMENT_CONTEXT,
+    INTENDED_USE,
+    SYSTEM_DESCRIPTION,
+)
+
 _NOT_APPLICABLE = "Not applicable"
 
 logger = logging.getLogger(__name__)
@@ -1107,15 +1113,20 @@ def _write_json(path: Path, data: Any) -> None:
 def bernstein_descriptor(
     version: str = "1.0.0",
     *,
-    deployment_context: str = "Self-hosted multi-agent orchestration platform",
+    deployment_context: str = DEPLOYMENT_CONTEXT,
     metadata: dict[str, Any] | None = None,
 ) -> SystemDescriptor:
-    """Return a pre-configured SystemDescriptor for the Bernstein orchestration system.
+    """Return a pre-configured SystemDescriptor for the Bernstein governance layer.
 
-    Bernstein is an orchestration platform for short-lived CLI coding agents.
-    It is not itself a decision-making AI in an Annex III high-risk domain, but
-    it may orchestrate agents that perform high-risk tasks.  The descriptor
-    captures those nuances so operators can generate a meaningful evidence package.
+    Bernstein is the governance layer for AI agent workloads: it runs agents in
+    parallel, gates what they produce, and records every step. It is not itself a
+    decision-making AI in an Annex III high-risk domain, but it may govern agents
+    that perform high-risk tasks.  The descriptor captures those nuances so
+    operators can generate a meaningful evidence package.
+
+    The strings come from :mod:`bernstein.system_description` rather than being
+    written here: this one lands verbatim in the artifact handed to an assessor,
+    and it previously described a narrower system than the one assessed (#5004).
 
     Args:
         version: Bernstein release version.
@@ -1205,16 +1216,8 @@ def bernstein_descriptor(
     return SystemDescriptor(
         name="Bernstein",
         version=version,
-        description=(
-            "Multi-agent orchestration platform for CLI coding agents (Claude Code, Codex, Gemini CLI, etc.). "
-            "Bernstein spawns short-lived agents, assigns tasks from a shared backlog, "
-            "and merges results back into a git repository.  "
-            "It is orchestration middleware, not a decision-making AI system."
-        ),
-        intended_use=(
-            "Software development automation: code generation, refactoring, testing, "
-            "documentation, and security review - under human developer supervision."
-        ),
+        description=SYSTEM_DESCRIPTION,
+        intended_use=INTENDED_USE,
         deployment_context=deployment_context,
         # Bernstein itself is not in any Annex III high-risk domain
         processes_biometrics=False,

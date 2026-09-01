@@ -1,14 +1,17 @@
 ---
-description: Bernstein orchestrator context - always active when working in a Bernstein-managed project
+description: Bernstein governance-layer context - always active when working in a Bernstein-managed project
 alwaysApply: true
 ---
 
-# Bernstein Orchestrator Context
+# Bernstein Context
 
-You are working in a project managed by **Bernstein**, a deterministic orchestrator for
-CLI coding agents. Bernstein runs at `http://127.0.0.1:8052` and coordinates parallel
-CLI coding agents, one git worktree per task. There is no model in its coordination
-loop, so the same plan replays to a byte-identical task graph.
+You are working in a project managed by **Bernstein**, the governance layer for AI
+agents. Bernstein runs at `http://127.0.0.1:8052`: a deterministic scheduler runs agents
+in parallel, gates what they produce, and records every step. CLI coding agents work out
+of the box, one git worktree per task, and the same layer governs any agent workload -
+the deliverable can be a diff, a research report, a dataset, or an audit evidence pack.
+There is no model in its coordination loop, so the same plan replays to a byte-identical
+task graph.
 
 ## Key concepts
 
