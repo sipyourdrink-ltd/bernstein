@@ -268,7 +268,7 @@ class MCPGateway:
         if self._capabilities_store is None or self._audit_chain is None:
             return
         try:
-            response = await self._send_request(
+            response, _ = await self._send_request(
                 {"jsonrpc": "2.0", "method": "tools/list", "id": 0},
                 0,
             )
