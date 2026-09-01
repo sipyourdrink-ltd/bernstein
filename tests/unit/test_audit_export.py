@@ -234,7 +234,7 @@ class TestSegmentReceipt:
         receipt = _build_segment_receipt([entry])
         assert receipt["first_sequence"] == 1
         assert receipt["last_sequence"] == 1
-        assert receipt["chain_head_hash"] == "hmac1"
+        assert receipt["chain_head_hash"] == entry.hmac
         assert receipt["signature"] != ""
 
     def test_build_segment_receipt_multiple_entries(self) -> None:
@@ -243,7 +243,7 @@ class TestSegmentReceipt:
         receipt = _build_segment_receipt(entries)
         assert receipt["first_sequence"] == 1
         assert receipt["last_sequence"] == 5
-        assert receipt["chain_head_hash"] == "hmac5"
+        assert receipt["chain_head_hash"] == entries[-1].hmac
         assert receipt["signature"] != ""
 
     def test_segment_receipt_in_splunk_format(self) -> None:
@@ -266,7 +266,7 @@ class TestSegmentReceipt:
             receipt = event["event"]["segment_receipt"]
             assert receipt["first_sequence"] == 1
             assert receipt["last_sequence"] == 3
-            assert receipt["chain_head_hash"] == "hmac3"
+            assert receipt["chain_head_hash"] == entries[-1].hmac
 
     def test_segment_receipt_in_elasticsearch_format(self) -> None:
         """Elasticsearch exporter includes segment_receipt in formatted docs."""
@@ -283,6 +283,7 @@ class TestSegmentReceipt:
             receipt = doc["segment_receipt"]
             assert receipt["first_sequence"] == 1
             assert receipt["last_sequence"] == 3
+            assert receipt["chain_head_hash"] == entries[-1].hmac
 
     def test_segment_receipt_in_cloudwatch_format(self) -> None:
         """CloudWatch exporter includes segment_receipt in formatted events."""
@@ -302,6 +303,7 @@ class TestSegmentReceipt:
             receipt = msg["segment_receipt"]
             assert receipt["first_sequence"] == 1
             assert receipt["last_sequence"] == 3
+            assert receipt["chain_head_hash"] == entries[-1].hmac
 
     def test_segment_receipt_in_syslog_format(self) -> None:
         """Syslog exporter includes segment_receipt in formatted messages."""
@@ -321,6 +323,7 @@ class TestSegmentReceipt:
             receipt_data = parsed["segment_receipt"]
             assert receipt_data["first_sequence"] == 1
             assert receipt_data["last_sequence"] == 3
+            assert receipt_data["chain_head_hash"] == entries[-1].hmac
 
     def test_segment_receipt_in_webhook_format(self) -> None:
         """Webhook exporter includes segment_receipt in formatted events."""
@@ -337,6 +340,7 @@ class TestSegmentReceipt:
             receipt = event["segment_receipt"]
             assert receipt["first_sequence"] == 1
             assert receipt["last_sequence"] == 3
+            assert receipt["chain_head_hash"] == entries[-1].hmac
 
     def test_export_result_has_segment_receipt(self) -> None:
         """ExportResult has segment_receipt field populated."""
@@ -351,5 +355,5 @@ class TestSegmentReceipt:
         assert result.success
         assert result.segment_receipt["first_sequence"] == 1
         assert result.segment_receipt["last_sequence"] == 1
-        assert result.segment_receipt["chain_head_hash"] == "hmac1"
+        assert result.segment_receipt["chain_head_hash"] == entry.hmac
         assert result.segment_receipt["signature"] != ""
