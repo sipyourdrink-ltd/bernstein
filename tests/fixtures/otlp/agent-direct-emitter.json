@@ -40,7 +40,7 @@
   },
   {
     "traceId": "deadbeefdeadbeefdeadbeefdeadbeef",
-    "spanId": "5555555566666666",
+    "spanId": "5555555566666667",
     "name": "gen_ai.chat",
     "kind": "SPAN_KIND_CLIENT",
     "attributes": [
