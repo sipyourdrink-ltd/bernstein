@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from bernstein.core.audit_export import (
     AuditEntry,
@@ -15,6 +17,13 @@ from bernstein.core.audit_export import (
     SIEMTarget,
     SplunkHECConfig,
     SplunkHECExporter,
+    FileExportConfig,
+    FileExporter,
+    SyslogConfig,
+    SyslogExporter,
+    WebhookConfig,
+    WebhookExporter,
+    _build_segment_receipt,
 )
 
 # ---------------------------------------------------------------------------
@@ -22,7 +31,7 @@ from bernstein.core.audit_export import (
 # ---------------------------------------------------------------------------
 
 
-def _make_entry(event_type: str = "task.created") -> AuditEntry:
+def _make_entry(event_type: str = "task.created", sequence: int = 1) -> AuditEntry:
     return AuditEntry(
         timestamp=time.time(),
         event_type=event_type,
@@ -33,8 +42,13 @@ def _make_entry(event_type: str = "task.created") -> AuditEntry:
         details={"role": "backend"},
         hmac="abc123",
         prev_hmac="prev456",
-        sequence=1,
+        sequence=sequence,
     )
+
+
+def _make_entries(count: int) -> list[AuditEntry]:
+    """Make a list of sequential entries."""
+    return [_make_entry(sequence=i + 1) for i in range(count)]
 
 
 # ---------------------------------------------------------------------------
@@ -203,3 +217,139 @@ class TestBufferManagement:
         exporter.flush()
         exporter.flush()
         assert exporter.total_exported == 4  # 2 + 2
+
+
+class TestSegmentReceipt:
+    def test_build_segment_receipt_empty(self) -> None:
+        """Empty batch produces genesis receipt."""
+        receipt = _build_segment_receipt([])
+        assert receipt["first_sequence"] == 0
+        assert receipt["last_sequence"] == 0
+        assert receipt["chain_head_hash"] == ""
+        assert receipt["signature"] == ""
+
+    def test_build_segment_receipt_single_entry(self) -> None:
+        """Single entry batch has matching first/last and head."""
+        entry = _make_entry(sequence=1)
+        receipt = _build_segment_receipt([entry])
+        assert receipt["first_sequence"] == 1
+        assert receipt["last_sequence"] == 1
+        assert receipt["chain_head_hash"] == "hmac1"
+        assert receipt["signature"] != ""
+
+    def test_build_segment_receipt_multiple_entries(self) -> None:
+        """Multi-entry batch has correct sequence boundaries."""
+        entries = _make_entries(5)
+        receipt = _build_segment_receipt(entries)
+        assert receipt["first_sequence"] == 1
+        assert receipt["last_sequence"] == 5
+        assert receipt["chain_head_hash"] == "hmac5"
+        assert receipt["signature"] != ""
+
+    def test_segment_receipt_in_splunk_format(self) -> None:
+        """Splunk exporter includes segment_receipt in formatted events."""
+        from bernstein.core.audit_export import SplunkHECExporter, SplunkHECConfig
+
+        exporter = SplunkHECExporter(
+            splunk_config=SplunkHECConfig(
+                index="audit",
+                source="bernstein",
+                sourcetype="bernstein:audit",
+            ),
+        )
+        entries = _make_entries(3)
+        formatted = exporter.format_entries(entries)
+        assert len(formatted) == 3
+        # Each event has segment_receipt in the event dict
+        for event in formatted:
+            assert "segment_receipt" in event["event"]
+            receipt = event["event"]["segment_receipt"]
+            assert receipt["first_sequence"] == 1
+            assert receipt["last_sequence"] == 3
+            assert receipt["chain_head_hash"] == "hmac3"
+
+    def test_segment_receipt_in_elasticsearch_format(self) -> None:
+        """Elasticsearch exporter includes segment_receipt in formatted docs."""
+        from bernstein.core.audit_export import ElasticsearchExporter, ElasticsearchConfig
+
+        exporter = ElasticsearchExporter(
+            es_config=ElasticsearchConfig(index_prefix="audit"),
+        )
+        entries = _make_entries(3)
+        formatted = exporter.format_entries(entries)
+        assert len(formatted) == 3
+        for doc in formatted:
+            assert "segment_receipt" in doc
+            receipt = doc["segment_receipt"]
+            assert receipt["first_sequence"] == 1
+            assert receipt["last_sequence"] == 3
+
+    def test_segment_receipt_in_cloudwatch_format(self) -> None:
+        """CloudWatch exporter includes segment_receipt in formatted events."""
+        from bernstein.core.audit_export import CloudWatchExporter, CloudWatchConfig
+
+        exporter = CloudWatchExporter(
+            cw_config=CloudWatchConfig(
+                log_group="/bernstein/test",
+            ),
+        )
+        entries = _make_entries(3)
+        formatted = exporter.format_entries(entries)
+        assert len(formatted) == 3
+        for event in formatted:
+            msg = json.loads(event["message"])
+            assert "segment_receipt" in msg
+            receipt = msg["segment_receipt"]
+            assert receipt["first_sequence"] == 1
+            assert receipt["last_sequence"] == 3
+
+    def test_segment_receipt_in_syslog_format(self) -> None:
+        """Syslog exporter includes segment_receipt in formatted messages."""
+        from bernstein.core.audit_export import SyslogExporter, SyslogConfig
+
+        exporter = SyslogExporter(
+            syslog_config=SyslogConfig(host="127.0.0.1", port=514),
+        )
+        entries = _make_entries(3)
+        formatted = exporter.format_entries(entries)
+        assert len(formatted) == 3
+        for msg in formatted:
+            receipt = msg["msg"]
+            # msg contains JSON with segment_receipt
+            parsed = json.loads(receipt)
+            assert "segment_receipt" in parsed
+            receipt_data = parsed["segment_receipt"]
+            assert receipt_data["first_sequence"] == 1
+            assert receipt_data["last_sequence"] == 3
+
+    def test_segment_receipt_in_webhook_format(self) -> None:
+        """Webhook exporter includes segment_receipt in formatted events."""
+        from bernstein.core.audit_export import WebhookExporter, WebhookConfig
+
+        exporter = WebhookExporter(
+            webhook_config=WebhookConfig(url="https://example.com/webhook"),
+        )
+        entries = _make_entries(3)
+        formatted = exporter.format_entries(entries)
+        assert len(formatted) == 3
+        for event in formatted:
+            assert "segment_receipt" in event
+            receipt = event["segment_receipt"]
+            assert receipt["first_sequence"] == 1
+            assert receipt["last_sequence"] == 3
+
+    def test_export_result_has_segment_receipt(self) -> None:
+        """ExportResult has segment_receipt field populated."""
+        from bernstein.core.audit_export import FileExporter
+
+        config = SIEMExportConfig(batch_size=2)
+        exporter = FileExporter(config=config)
+        entry = _make_entry(sequence=1)
+        exporter.add_entry(entry)
+
+        result = exporter.flush()
+        assert result.success
+        assert result.segment_receipt["first_sequence"] == 1
+        assert result.segment_receipt["last_sequence"] == 1
+        assert result.segment_receipt["chain_head_hash"] == "hmac1"
+        assert result.segment_receipt["signature"] != ""

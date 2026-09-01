@@ -11,6 +11,8 @@ Failed batches are retried with exponential backoff.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 import time
@@ -201,6 +203,57 @@ class AuditEntry:
 
 
 # ---------------------------------------------------------------------------
+# Segment receipt
+# ---------------------------------------------------------------------------
+
+
+def _build_segment_receipt(entries: list[AuditEntry], key: bytes | None = None) -> dict[str, Any]:
+    """Build a segment receipt for *entries*.
+
+    The receipt binds first_sequence, last_sequence, and the chain head
+    hash (last event's hmac) under an HMAC signed by the audit key.
+    It lets a receiver bound the exported segment and detect gaps,
+    reordering, or deletions without the database.
+
+    Args:
+        entries: Audit entries in the export batch.
+        key: HMAC key. When ``None``, a default test key is used.
+
+    Returns:
+        Segment receipt dict with first_sequence, last_sequence,
+        chain_head_hash, and signature. Returns a genesis receipt
+        for an empty batch.
+    """
+    if key is None:
+        key = b"test_audit_export_key"
+    if not entries:
+        return {
+            "first_sequence": 0,
+            "last_sequence": 0,
+            "chain_head_hash": "",
+            "signature": "",
+        }
+
+    first_sequence = entries[0].sequence
+    last_sequence = entries[-1].sequence
+    chain_head_hash = entries[-1].hmac
+
+    payload = {
+        "first_sequence": first_sequence,
+        "last_sequence": last_sequence,
+        "chain_head_hash": chain_head_hash,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    signature = hmac.new(key, canonical, hashlib.sha256).hexdigest()
+    return {
+        "first_sequence": first_sequence,
+        "last_sequence": last_sequence,
+        "chain_head_hash": chain_head_hash,
+        "signature": signature,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Export result
 # ---------------------------------------------------------------------------
 
@@ -226,6 +279,7 @@ class ExportResult:
     error: str = ""
     timestamp: float = field(default_factory=time.time)
     duration_s: float = 0.0
+    segment_receipt: dict[str, Any] = field(default_factory=dict[str, Any])
 
 
 # ---------------------------------------------------------------------------
@@ -316,11 +370,13 @@ class BaseSIEMExporter(ABC):
         batch = self._buffer[: self._config.batch_size]
         formatted = self.format_entries(batch)
 
+        segment_receipt = _build_segment_receipt(batch)
         result = ExportResult(
             target=self._config.target,
             entries_sent=len(batch),
             entries_accepted=len(formatted),
             success=True,
+            segment_receipt=segment_receipt,
         )
 
         self._buffer = self._buffer[self._config.batch_size :]
@@ -364,6 +420,7 @@ class SplunkHECExporter(BaseSIEMExporter):
         Returns:
             Splunk HEC event objects.
         """
+        segment_receipt = _build_segment_receipt(entries)
         events: list[dict[str, Any]] = []
         for entry in entries:
             event: dict[str, Any] = {
@@ -381,6 +438,7 @@ class SplunkHECExporter(BaseSIEMExporter):
                     "hmac": entry.hmac,
                     "prev_hmac": entry.prev_hmac,
                     "sequence": entry.sequence,
+                    "segment_receipt": segment_receipt,
                 },
             }
             events.append(event)
@@ -424,6 +482,7 @@ class ElasticsearchExporter(BaseSIEMExporter):
         Returns:
             Elasticsearch documents.
         """
+        segment_receipt = _build_segment_receipt(entries)
         docs: list[dict[str, Any]] = []
         for entry in entries:
             doc: dict[str, Any] = {
@@ -437,6 +496,7 @@ class ElasticsearchExporter(BaseSIEMExporter):
                 "hmac": entry.hmac,
                 "prev_hmac": entry.prev_hmac,
                 "sequence": entry.sequence,
+                "segment_receipt": segment_receipt,
                 "source": "bernstein-audit",
             }
             docs.append(doc)
@@ -480,6 +540,7 @@ class CloudWatchExporter(BaseSIEMExporter):
         Returns:
             CloudWatch log event objects.
         """
+        segment_receipt = _build_segment_receipt(entries)
         events: list[dict[str, Any]] = []
         for entry in entries:
             event: dict[str, Any] = {
@@ -495,6 +556,7 @@ class CloudWatchExporter(BaseSIEMExporter):
                         "hmac": entry.hmac,
                         "prev_hmac": entry.prev_hmac,
                         "sequence": entry.sequence,
+                        "segment_receipt": segment_receipt,
                     }
                 ),
             }
@@ -538,6 +600,7 @@ class SyslogExporter(BaseSIEMExporter):
             Syslog-formatted message dicts with ``priority``, ``header``,
             and ``msg`` keys.
         """
+        segment_receipt = _build_segment_receipt(entries)
         messages: list[dict[str, Any]] = []
         severity = 6  # informational
         for entry in entries:
@@ -553,6 +616,7 @@ class SyslogExporter(BaseSIEMExporter):
                     "hmac": entry.hmac,
                     "prev_hmac": entry.prev_hmac,
                     "sequence": entry.sequence,
+                    "segment_receipt": segment_receipt,
                 },
             )
             messages.append(
@@ -603,8 +667,10 @@ class WebhookExporter(BaseSIEMExporter):
         Returns:
             List of JSON-serialisable event dicts.
         """
-        events: list[dict[str, Any]] = [
-            {
+        segment_receipt = _build_segment_receipt(entries)
+        events: list[dict[str, Any]] = []
+        for entry in entries:
+            event: dict[str, Any] = {
                 "timestamp": entry.timestamp,
                 "event_type": entry.event_type,
                 "actor": entry.actor,
@@ -615,10 +681,10 @@ class WebhookExporter(BaseSIEMExporter):
                 "hmac": entry.hmac,
                 "prev_hmac": entry.prev_hmac,
                 "sequence": entry.sequence,
+                "segment_receipt": segment_receipt,
                 "source": "bernstein-audit",
             }
-            for entry in entries
-        ]
+            events.append(event)
         return events
 
 
@@ -657,6 +723,7 @@ class FileExporter(BaseSIEMExporter):
         Returns:
             JSON-serialisable event dicts.
         """
+        segment_receipt = _build_segment_receipt(entries)
         docs: list[dict[str, Any]] = [
             {
                 "timestamp": entry.timestamp,
@@ -669,6 +736,7 @@ class FileExporter(BaseSIEMExporter):
                 "hmac": entry.hmac,
                 "prev_hmac": entry.prev_hmac,
                 "sequence": entry.sequence,
+                "segment_receipt": segment_receipt,
             }
             for entry in entries
         ]
@@ -714,12 +782,14 @@ class FileExporter(BaseSIEMExporter):
             self._buffer = self._buffer[self._config.batch_size :]
             self._last_flush = time.time()
             self._total_exported += len(batch)
+            segment_receipt = _build_segment_receipt(batch)
             return ExportResult(
                 target=SIEMTarget.FILE,
                 entries_sent=len(batch),
                 entries_accepted=len(formatted),
                 success=True,
                 duration_s=duration,
+                segment_receipt=segment_receipt,
             )
         except OSError as exc:
             duration = time.time() - start
