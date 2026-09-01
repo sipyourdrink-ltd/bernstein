@@ -9102,6 +9102,98 @@ def record_tracker_pipeline_sweep(
     )
 
 
+#: Issue #4912 -- emitted once per external policy engine evaluation (OPA,
+#: Cedar), for every outcome and not only refusals. The event carries the engine
+#: name, the digest of the policy that decided, the request's identifying fields,
+#: the verdict, the measured latency, and a digest of the engine's own error
+#: output when it produced one. ``UNAVAILABLE`` is recorded as itself: an engine
+#: that could not answer and a policy with no matching rule have opposite safety
+#: properties, and a log that spells both ``abstain`` rebuilds in the evidence
+#: layer the conflation the decision layer removed. Recording abstentions too is
+#: what makes "the engine was consulted and had no rule" distinguishable from
+#: "the engine was never consulted".
+EVENT_EXTERNAL_POLICY_DECISION = "external_policy.decision"
+
+
+def record_external_policy_decision(
+    *,
+    chain: AuditChainStore,
+    engine: str,
+    verdict: str,
+    reason: str,
+    action: str,
+    resource: str,
+    request_digest: str,
+    agent_id: str = "",
+    role: str = "",
+    scope: str = "",
+    policy_digest: str = "",
+    error_digest: str = "",
+    latency_ms: float = 0.0,
+    actor: str = "external_policy",
+) -> AuditEvent:
+    """Append an ``external_policy.decision`` event into *chain* (#4912).
+
+    Anchors one external policy evaluation into the HMAC chain so an operator
+    can show, offline and from the log alone, that a named engine was asked a
+    named question and gave a named answer at a named chain position. The
+    refusal case is the point: a run stopped by an unreachable policy engine
+    otherwise leaves nothing behind that distinguishes it from a run stopped by
+    a policy that deliberately said no, or from one that was never checked.
+
+    Digests are bare lower-case SHA-256 hex, matching ``HookResponse.policy_digest``.
+    The request's identifying fields are recorded in the clear because a refusal
+    receipt that does not say what was refused cannot be acted on; the caller's
+    free-form ``metadata`` is bound only through *request_digest*, never copied.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        engine: Name of the hook that answered (``opa``, ``cedar``, ...).
+        verdict: The engine's own verdict -- ``allow``, ``deny``, ``abstain`` or
+            ``unavailable``. Never the registry's resolution of it.
+        reason: The engine's human-readable explanation.
+        action: The requested action.
+        resource: The resource acted upon.
+        request_digest: SHA-256 over the RFC 8785 canonical form of the whole
+            request, ``metadata`` included, so a holder of the request can
+            recompute it.
+        agent_id: Requesting agent identifier, when known.
+        role: Requesting agent's role, when known.
+        scope: Task scope, when known.
+        policy_digest: SHA-256 of the policy that produced the verdict, or ``""``
+            when the engine could not name one.
+        error_digest: SHA-256 of the engine's error output, or ``""``. Pins the
+            failure exactly, so two runs' failures compare by hash rather than by
+            matching the free-text *reason*.
+        latency_ms: Measured evaluation latency in milliseconds.
+        actor: Recorded actor; defaults to ``"external_policy"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_EXTERNAL_POLICY_DECISION,
+        actor=actor,
+        resource_type="external_policy_decision",
+        resource_id=request_digest,
+        details={
+            "engine": engine,
+            "verdict": verdict,
+            "reason": reason,
+            "action": action,
+            "resource": resource,
+            "agent_id": agent_id,
+            "role": role,
+            "scope": scope,
+            "request_digest": request_digest,
+            "policy_digest": policy_digest,
+            "error_digest": error_digest,
+            "latency_ms": latency_ms,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -9150,6 +9242,7 @@ __all__ = [
     "EVENT_EVAL_GATE_VERDICT",
     "EVENT_EVIDENCE_BUNDLE",
     "EVENT_EXPECTATION_EXPIRED",
+    "EVENT_EXTERNAL_POLICY_DECISION",
     "EVENT_FEED_RENDER_FAILURE",
     "EVENT_FLEET_CONN_CREATE",
     "EVENT_FLEET_CONN_REFUSE",
@@ -9302,6 +9395,7 @@ __all__ = [
     "record_eval_gate_verdict",
     "record_evidence_bundle",
     "record_expectation_expired",
+    "record_external_policy_decision",
     "record_fleet_conn_create",
     "record_fleet_conn_refuse",
     "record_fleet_conn_resolve",
