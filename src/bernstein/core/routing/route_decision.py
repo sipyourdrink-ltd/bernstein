@@ -34,14 +34,16 @@ def _compute_routing_decision_hash(
     timestamp: float,
 ) -> str:
     """Compute sha256:JCS_bytes hash of routing decision inputs."""
-    canonical = _canonical_bytes({
-        "task_id": task_id,
-        "adapter": adapter,
-        "model": model,
-        "effort": effort,
-        "reasons": reasons,
-        "timestamp": timestamp,
-    })
+    canonical = _canonical_bytes(
+        {
+            "task_id": task_id,
+            "adapter": adapter,
+            "model": model,
+            "effort": effort,
+            "reasons": reasons,
+            "timestamp": timestamp,
+        }
+    )
     return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
 
@@ -85,9 +87,7 @@ class RouteDecision:
     ) -> RouteDecision:
         """Build a RouteDecision with model response metadata and computed hash."""
         ts = timestamp if timestamp is not None else time.time()
-        routing_hash = _compute_routing_decision_hash(
-            task_id, adapter, model_requested, effort, reasons, ts
-        )
+        routing_hash = _compute_routing_decision_hash(task_id, adapter, model_requested, effort, reasons, ts)
         return cls(
             task_id=task_id,
             adapter=adapter,
