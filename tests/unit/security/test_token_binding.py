@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import datetime as _dt
 from pathlib import Path
+from typing import Any
 
 import pytest
-from bernstein.core.security.token_binding import BindingRefusalCode, x5t_s256_from_pem
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
@@ -29,6 +29,7 @@ from bernstein.core.security.auth import (
     AuthUser,
     SSOConfig,
 )
+from bernstein.core.security.token_binding import BindingRefusalCode, x5t_s256_from_pem
 
 _TRUST_DOMAIN = "example.org"
 _BOUND_AUDIENCE = "https://tasks.internal"
@@ -307,3 +308,64 @@ def test_unsigned_token_never_reaches_the_binding_check(
 ) -> None:
     assert service.validate_token("not.a.token", presented_cert_pem=None) is None
     assert _refusals(chain) == []
+
+
+# ---------------------------------------------------------------------------
+# The binding reaches the HTTP boundary
+# ---------------------------------------------------------------------------
+
+
+class _ScopeRequest:
+    """Minimal stand-in exposing only the ``scope`` the helper reads."""
+
+    def __init__(self, scope: dict[str, object]) -> None:
+        self.scope = scope
+
+
+def _scope_request(scope: dict[str, object]) -> Any:
+    return _ScopeRequest(scope)
+
+
+def test_peer_certificate_is_read_from_the_asgi_tls_extension(workload_svid: X509Svid) -> None:
+    from bernstein.core.security.auth_middleware import peer_certificate_pem
+
+    pem = workload_svid.cert_chain_pem.decode()
+
+    assert peer_certificate_pem(_scope_request({})) is None
+    assert peer_certificate_pem(_scope_request({"extensions": {}})) is None
+    assert peer_certificate_pem(_scope_request({"extensions": {"tls": {"client_cert_chain": []}}})) is None
+    assert (
+        peer_certificate_pem(_scope_request({"extensions": {"tls": {"client_cert_chain": [pem]}}}))
+        == workload_svid.cert_chain_pem
+    )
+
+
+@pytest.mark.auth_enabled
+def test_bound_token_over_a_connection_without_a_client_certificate_is_401(
+    service: AuthService,
+    chain: AuditChainStore,
+    workload_svid: X509Svid,
+) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from bernstein.core.security.auth_middleware import SSOAuthMiddleware
+
+    token = service.issue_bound_token(
+        _user(service),
+        audience=_BOUND_AUDIENCE,
+        svid_reference=svid_reference_from_x509(workload_svid),
+    )
+
+    app = FastAPI()
+    app.add_middleware(SSOAuthMiddleware, auth_service=service, legacy_token=None, auth_disabled=False)
+
+    @app.get("/status")
+    def _status() -> dict[str, bool]:
+        return {"ok": True}
+
+    with TestClient(app) as client:
+        response = client.get("/status", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 401
+    assert [r["refusal_code"] for r in _refusals(chain)] == [BindingRefusalCode.PROOF_ABSENT.value]

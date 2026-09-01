@@ -41,7 +41,7 @@ import json
 import time
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -217,11 +217,12 @@ def parse_bound_audiences(raw: str) -> frozenset[str]:
 
 def token_audiences(claims: dict[str, Any]) -> tuple[str, ...]:
     """Return the ``aud`` claim as a tuple, accepting the string or list form."""
-    aud = claims.get("aud")
+    aud: Any = claims.get("aud")
     if isinstance(aud, str):
         return (aud,) if aud else ()
     if isinstance(aud, list):
-        return tuple(str(entry) for entry in aud if str(entry))
+        entries = cast("list[Any]", aud)
+        return tuple(str(entry) for entry in entries if str(entry))
     return ()
 
 
@@ -232,12 +233,12 @@ def token_audiences(claims: dict[str, Any]) -> tuple[str, ...]:
 
 def _confirmation_thumbprint(claims: dict[str, Any]) -> tuple[str, str | None]:
     """Return ``(thumbprint, error)`` read out of the token's ``cnf`` claim."""
-    cnf = claims.get(CNF_CLAIM)
+    cnf: Any = claims.get(CNF_CLAIM)
     if cnf is None:
         return "", None
     if not isinstance(cnf, dict):
         return "", "cnf claim is not a confirmation object"
-    thumbprint = cnf.get(CNF_X5T_S256, "")
+    thumbprint: Any = cast("dict[str, Any]", cnf).get(CNF_X5T_S256, "")
     if not isinstance(thumbprint, str) or not thumbprint:
         return "", f"cnf claim carries no {CNF_X5T_S256} confirmation"
     return thumbprint, None

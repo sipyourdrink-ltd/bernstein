@@ -530,6 +530,32 @@ def expected_resource_from_env() -> tuple[str, ...]:
     return _normalise_expected_resource(os.environ.get(AUTH_EXPECTED_RESOURCE_ENV, ""))
 
 
+def peer_certificate_pem(request: Request) -> bytes | None:
+    """Return the leaf client certificate this connection presented, if any.
+
+    Reads the ASGI TLS extension (``scope["extensions"]["tls"]``), whose
+    ``client_cert_chain`` is a leaf-first list of PEM strings. A server that
+    terminates plain HTTP, or one whose TLS layer publishes no chain, yields
+    ``None`` -- which is exactly the input a proof-of-possession check needs to
+    refuse a bound token (#5030).
+    """
+    extensions: Any = request.scope.get("extensions")
+    if not isinstance(extensions, dict):
+        return None
+    tls: Any = cast("dict[str, Any]", extensions).get("tls")
+    if not isinstance(tls, dict):
+        return None
+    chain: Any = cast("dict[str, Any]", tls).get("client_cert_chain")
+    if not isinstance(chain, list) or not chain:
+        return None
+    leaf: Any = cast("list[Any]", chain)[0]
+    if isinstance(leaf, bytes):
+        return leaf or None
+    if isinstance(leaf, str) and leaf.strip():
+        return leaf.encode()
+    return None
+
+
 def _resource_indicator_check(
     claims: dict[str, Any],
     expected: tuple[str, ...],
@@ -999,7 +1025,11 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
     ) -> JSONResponse | bool | None:
         """Validate SSO JWT. Returns JSONResponse on RBAC fail, True on success, None on miss."""
         assert self._auth_service is not None
-        result = self._auth_service.validate_token(token)
+        # The client certificate is part of the credential when the token is
+        # bound to one (#5030): a bound token presented on a connection that
+        # cannot show the same SVID leaf is refused here, and the refusal is
+        # anchored in the audit chain naming which proof failed.
+        result = self._auth_service.validate_token(token, presented_cert_pem=peer_certificate_pem(request))
         if result is None:
             return None
 
