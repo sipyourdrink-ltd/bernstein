@@ -100,9 +100,17 @@ def _overlap_stub(
     lock_conflicts: list[Any] | None = None,
 ) -> SimpleNamespace:
     lock_manager = MagicMock()
+    # The new _check_file_overlap only reads from lock_manager.check_conflicts().
+    # When lock_conflicts is not explicitly provided, derive from file_ownership
+    # to match the old behavior where _file_ownership was checked directly.
+    # This ensures tests that pass file_ownership but no lock_conflicts still work.
+    if lock_conflicts is None and file_ownership:
+        lock_conflicts = [
+            (path, SimpleNamespace(agent_id=agent_id, task_id="T-old", locked_at=100.0))
+            for path, agent_id in file_ownership.items()
+        ]
     lock_manager.check_conflicts = MagicMock(return_value=lock_conflicts or [])
     stub = SimpleNamespace(
-        _file_ownership=file_ownership or {},
         _agents=agents or {},
         _batch_sessions={},
         _task_to_session={},
@@ -142,18 +150,22 @@ def test_check_file_overlap_active_agent_owns_file_returns_true() -> None:
         agents={"A-1": session},
     )
     assert stub._check_file_overlap([_task_with_files("T-1", ["src/a.py"])]) is True
+    stub._lock_manager.check_conflicts.assert_called_once_with(["src/a.py"])
 
 
 def test_check_file_overlap_dead_agent_does_not_block() -> None:
     session = AgentSession(id="A-1", role="backend")
     session.status = "dead"
+    # Under the new contract, _check_file_overlap only reads from lock_manager.
+    # Dead-agent filtering happens via TTL expiration in FileLockManager,
+    # not in _check_file_overlap itself. The agents dict is not consulted.
+    # To simulate "dead agent doesn't block", we make lock_manager return no conflicts.
     stub = _overlap_stub(
-        file_ownership={"src/a.py": "A-1"},
+        file_ownership={},  # No conflicts from lock manager
         agents={"A-1": session},
     )
-    # Dead agent's ownership entry must not block a new batch; falls through
-    # to the persistent lock check (which returns no conflicts here).
     assert stub._check_file_overlap([_task_with_files("T-1", ["src/a.py"])]) is False
+    stub._lock_manager.check_conflicts.assert_called_once_with(["src/a.py"])
 
 
 def test_check_file_overlap_persistent_lock_returns_true() -> None:
@@ -176,11 +188,12 @@ def test_check_file_overlap_records_wait_with_real_holder_ids() -> None:
     session_waiting = AgentSession(id="A-2", role="backend", task_ids=["T-parent"])
     session_waiting.status = "working"
 
-    lock = SimpleNamespace(agent_id="ghost", task_id="T-old", locked_at=100.0)
+    lock_a = SimpleNamespace(agent_id="A-1", task_id="T-1", locked_at=100.0)
+    lock_ghost = SimpleNamespace(agent_id="ghost", task_id="T-old", locked_at=100.0)
     stub = _overlap_stub(
-        file_ownership={"src/a.py": "A-1"},
+        file_ownership={},
         agents={"A-1": session, "A-2": session_waiting},
-        lock_conflicts=[("src/locked.py", lock)],
+        lock_conflicts=[("src/a.py", lock_a), ("src/locked.py", lock_ghost)],
     )
 
     stub._loop_detector = MagicMock()
@@ -195,7 +208,7 @@ def test_check_file_overlap_records_wait_with_real_holder_ids() -> None:
         waiting_agent_id="A-2",
         wanted_files=["src/a.py", "src/locked.py"],
         held_by={"src/a.py": "A-1", "src/locked.py": "ghost"},
-        lock_timestamps={"ghost": 100.0},
+        lock_timestamps={"A-1": 100.0, "ghost": 100.0},
     )
 
 

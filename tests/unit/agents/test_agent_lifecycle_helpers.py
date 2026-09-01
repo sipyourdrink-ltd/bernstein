@@ -280,19 +280,35 @@ def test_abort_siblings_delegates_to_chain() -> None:
 
 
 def test_release_file_ownership_clears_lock_and_dict() -> None:
-    """The lock manager is released and the legacy dict entries removed."""
+    """The lock manager is released and _file_ownership reflects the new state."""
+    from bernstein.core.orchestration.orchestrator import Orchestrator
+    from bernstein.core.persistence.file_locks import FileLock
+
     lock_manager = MagicMock()
-    orch = SimpleNamespace(_lock_manager=lock_manager, _file_ownership={"a.py": "A-1", "b.py": "A-2"})
+    # After release, only A-2's file remains
+    lock_manager.all_locks.return_value = [
+        FileLock(file_path="b.py", agent_id="A-2", task_id="T-2", task_title="", locked_at=0.0),
+    ]
+
+    # Create a class to hold the property (SimpleNamespace can't have properties)
+    class Stub:
+        def __init__(self) -> None:
+            self._lock_manager = lock_manager
+
+        _file_ownership = Orchestrator._file_ownership
+
+    orch = Stub()
     _release_file_ownership(orch, "A-1")
     lock_manager.release.assert_called_once_with("A-1")
+    # _file_ownership is now a property that reads from lock_manager.all_locks()
     assert orch._file_ownership == {"b.py": "A-2"}
 
 
 def test_release_file_ownership_without_lock_manager() -> None:
-    """With no lock manager only the legacy dict is cleaned."""
-    orch = SimpleNamespace(_lock_manager=None, _file_ownership={"a.py": "A-1"})
+    """With no lock manager, the call is a no-op (property would raise AttributeError)."""
+    orch = SimpleNamespace(_lock_manager=None)
     _release_file_ownership(orch, "A-1")
-    assert orch._file_ownership == {}
+    # No exception raised is the expected behavior
 
 
 def test_release_task_to_session_drops_only_named_tasks() -> None:

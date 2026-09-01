@@ -199,7 +199,25 @@ class TestAvoidShimLineOverflow:
     Bernstein reads as a dead agent instead of a spawn failure.
     """
 
-    def _windows_shim_launch_cmd(self, monkeypatch: pytest.MonkeyPatch, cmd: list[str]) -> list[str]:
+    def _windows_shim_launch_cmd(self, monkeypatch: pytest.MonkeyPatch, cmd: list[str], workdir: Path) -> list[str]:
+        # `os.name` is an attribute of the shared `os` module, so setting it to
+        # "nt" changes how `pathlib` renders every path in the process, not just
+        # the launch command being built here. `contained_path` then hands
+        # `_avoid_shim_line_overflow` a backslash-separated name, which POSIX
+        # reads as one long relative filename and writes into the current
+        # directory - the repository root, when the suite is run the usual way.
+        #
+        # It is untracked and looks like nothing, so `git add -A` picks it up:
+        # PR #4991 carried two of them, and git on Windows refuses to check out
+        # a path of that shape, so all four Windows shards and the Windows
+        # conformance job failed at checkout with `invalid path` on a branch
+        # that had touched three files under `src/`. Real Windows is unaffected
+        # - `realpath` returns a drive-rooted path there, and the write lands
+        # where it should.
+        #
+        # Pinning the working directory to the test's own tmp_path is what
+        # keeps the simulation from reaching outside itself.
+        monkeypatch.chdir(workdir)
         monkeypatch.setattr("bernstein.core.orchestration.worker.os.name", "nt")
         monkeypatch.setattr("bernstein.core.orchestration.worker.os.sep", "\\")
         monkeypatch.setattr("bernstein.core.orchestration.worker.os.altsep", "/")
@@ -214,7 +232,7 @@ class TestAvoidShimLineOverflow:
         """A >8191-char prompt is pulled off the command line entirely."""
         prompt = "x" * 16_043  # the exact size reported in issue #3311
         cmd = ["claude", "--model", "sonnet", "--effort", "high", "-p", prompt]
-        launch_cmd = self._windows_shim_launch_cmd(monkeypatch, cmd)
+        launch_cmd = self._windows_shim_launch_cmd(monkeypatch, cmd, tmp_path)
         # Unmodified, this line is far over the limit -- the reproduction.
         assert len(subprocess.list2cmdline(launch_cmd)) > _CMD_EXE_LINE_LIMIT
 
@@ -229,7 +247,7 @@ class TestAvoidShimLineOverflow:
     def test_short_prompt_left_on_command_line(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """A prompt well under the limit is untouched -- no file, no rewrite."""
         cmd = ["claude", "--model", "sonnet", "-p", "fix the failing test"]
-        launch_cmd = self._windows_shim_launch_cmd(monkeypatch, cmd)
+        launch_cmd = self._windows_shim_launch_cmd(monkeypatch, cmd, tmp_path)
 
         result, prompt_path = _avoid_shim_line_overflow(cmd, launch_cmd, workdir=tmp_path, session="qa-abc123")
 
@@ -246,7 +264,7 @@ class TestAvoidShimLineOverflow:
         """
         prompt = "x" * 16_043
         cmd = ["some-other-agent", "--go", prompt]
-        launch_cmd = self._windows_shim_launch_cmd(monkeypatch, cmd)
+        launch_cmd = self._windows_shim_launch_cmd(monkeypatch, cmd, tmp_path)
 
         result, prompt_path = _avoid_shim_line_overflow(cmd, launch_cmd, workdir=tmp_path, session="qa-abc123")
 
@@ -283,7 +301,7 @@ class TestAvoidShimLineOverflow:
         """
         prompt = "x" * 16_043
         cmd = ["claude", "--model", "sonnet", "-p", prompt]
-        launch_cmd = self._windows_shim_launch_cmd(monkeypatch, cmd)
+        launch_cmd = self._windows_shim_launch_cmd(monkeypatch, cmd, tmp_path)
 
         with pytest.raises(PathContainmentError):
             _avoid_shim_line_overflow(cmd, launch_cmd, workdir=tmp_path, session="../escape")
@@ -305,7 +323,7 @@ class TestAvoidShimLineOverflow:
         """
         prompt = "x" * 16_043
         cmd = ["claude", "--model", "sonnet", "-p", prompt]
-        launch_cmd = self._windows_shim_launch_cmd(monkeypatch, cmd)
+        launch_cmd = self._windows_shim_launch_cmd(monkeypatch, cmd, tmp_path)
 
         with pytest.raises(PathTooLongError):
             _avoid_shim_line_overflow(cmd, launch_cmd, workdir=tmp_path, session="a" * 300)

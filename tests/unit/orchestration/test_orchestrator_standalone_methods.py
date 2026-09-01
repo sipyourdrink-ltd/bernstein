@@ -223,15 +223,26 @@ def test_record_provider_health_records_cost_when_present() -> None:
 
 
 def test_release_file_ownership_clears_dict_and_lock_manager() -> None:
+    from bernstein.core.persistence.file_locks import FileLock
+
     lock_manager = MagicMock()
-    stub = SimpleNamespace(
-        _lock_manager=lock_manager,
-        _file_ownership={"a.py": "agent-1", "b.py": "agent-2", "c.py": "agent-1"},
-    )
-    _bind(stub, "_release_file_ownership")
+    # After release, only agent-2's file remains
+    lock_manager.all_locks.return_value = [
+        FileLock(file_path="b.py", agent_id="agent-2", task_id="T-2", task_title="", locked_at=0.0),
+    ]
+
+    # Create a class to hold the property (SimpleNamespace can't have properties)
+    class Stub:
+        def __init__(self) -> None:
+            self._lock_manager = lock_manager
+
+        _release_file_ownership = Orchestrator._release_file_ownership
+        _file_ownership = Orchestrator._file_ownership
+
+    stub = Stub()
     stub._release_file_ownership("agent-1")
     lock_manager.release.assert_called_once_with("agent-1")
-    # Only agent-1's files are removed; agent-2 keeps b.py.
+    # _file_ownership is now a property that reads from lock_manager.all_locks()
     assert stub._file_ownership == {"b.py": "agent-2"}
 
 

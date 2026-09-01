@@ -162,10 +162,14 @@ class TestGetActiveAgentFiles:
         )
         spawner = MagicMock()
         spawner.get_worktree_path.return_value = None
+        lock_manager = MagicMock()
+        lock_manager.locks_for_agent.return_value = [
+            SimpleNamespace(file_path="src/bernstein/core/auth.py", agent_id="A-1")
+        ]
         orch = SimpleNamespace(
             _agents={"A-1": session},
             _spawner=spawner,
-            _file_ownership={"src/bernstein/core/auth.py": "A-1"},
+            _lock_manager=lock_manager,
         )
 
         files = _get_active_agent_files(orch)
@@ -181,10 +185,12 @@ class TestGetActiveAgentFiles:
             status="dead",
         )
         spawner = MagicMock()
+        lock_manager = MagicMock()
+        lock_manager.locks_for_agent.return_value = []
         orch = SimpleNamespace(
             _agents={"A-dead": session},
             _spawner=spawner,
-            _file_ownership={"src/foo.py": "A-dead"},
+            _lock_manager=lock_manager,
         )
 
         files = _get_active_agent_files(orch)
@@ -199,10 +205,12 @@ class TestGetActiveAgentFiles:
             model_config=ModelConfig(model="sonnet", effort="high"),
             status="alive",
         )
+        lock_manager = MagicMock()
+        lock_manager.locks_for_agent.return_value = [SimpleNamespace(file_path="src/foo.py", agent_id="A-1")]
         orch = SimpleNamespace(
             _agents={"A-1": session},
             _spawner=None,
-            _file_ownership={"src/foo.py": "A-1"},
+            _lock_manager=lock_manager,
         )
 
         files = _get_active_agent_files(orch)

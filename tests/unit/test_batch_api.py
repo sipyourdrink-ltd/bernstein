@@ -443,14 +443,13 @@ def test_batch_claim_infers_paths_like_the_main_claim_path(make_task: Any) -> No
         owned_files=[],
     )
     lock_manager = MagicMock()
-    orch = SimpleNamespace(_lock_manager=lock_manager, _file_ownership={})
+    orch = SimpleNamespace(_lock_manager=lock_manager)
 
     _claim_file_ownership(orch, "agent-1", [task])
 
     lock_manager.acquire.assert_called_once()
     claimed = lock_manager.acquire.call_args[0][0]
     assert "src/bernstein/core/tasks/batch_api.py" in claimed
-    assert orch._file_ownership["src/bernstein/core/tasks/batch_api.py"] == "agent-1"
 
 
 def test_batch_claim_still_skips_tasks_with_no_paths_at_all(make_task: Any) -> None:
@@ -461,9 +460,8 @@ def test_batch_claim_still_skips_tasks_with_no_paths_at_all(make_task: Any) -> N
 
     task = make_task(title="Improve overall reliability", description="Prose only.", owned_files=[])
     lock_manager = MagicMock()
-    orch = SimpleNamespace(_lock_manager=lock_manager, _file_ownership={})
+    orch = SimpleNamespace(_lock_manager=lock_manager)
 
     _claim_file_ownership(orch, "agent-1", [task])
 
     lock_manager.acquire.assert_not_called()
-    assert orch._file_ownership == {}

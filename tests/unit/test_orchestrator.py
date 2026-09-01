@@ -1999,8 +1999,10 @@ class TestFileOwnership:
         adapter.is_alive.return_value = False  # process died
         orch = _build_orchestrator(tmp_path, transport, adapter=adapter)
 
-        # Pre-populate ownership
-        orch._file_ownership["src/main.py"] = "backend-owner"
+        # Pre-claim through the lock manager, which is the only writer of
+        # ownership: `_file_ownership` is a read-only projection of it, so an
+        # assignment here would raise rather than seed anything.
+        orch._lock_manager.acquire(["src/main.py"], agent_id="backend-owner", task_id="T-own", task_title="owns main")
         session = AgentSession(
             id="backend-owner",
             role="backend",
@@ -2068,7 +2070,13 @@ class TestFileOwnership:
         )
         orch = _build_orchestrator(tmp_path, transport, adapter=adapter, config=config)
 
-        orch._file_ownership["src/owned.py"] = "backend-stale"
+        # Use lock_manager to acquire ownership (property is now read-only)
+        orch._lock_manager.acquire(
+            ["src/owned.py"],
+            agent_id="backend-stale",
+            task_id="T-stale",
+            task_title="Stale task",
+        )
         session = AgentSession(
             id="backend-stale",
             role="backend",
@@ -3133,9 +3141,16 @@ class TestDeadAgentFileOwnershipEdgeCases:
         adapter.is_alive.return_value = False
         orch = _build_orchestrator(tmp_path, transport, adapter=adapter)
 
-        # Pre-claim two files for the dying agent
-        orch._file_ownership["src/main.py"] = "backend-dying"
-        orch._file_ownership["src/utils.py"] = "backend-dying"
+        # Pre-claim two files for the dying agent, through the lock manager --
+        # the projection is read-only. Assigning into it used to seed nothing
+        # at all, which made the post-condition below vacuously true: the
+        # entries were "released" because they had never been claimed.
+        orch._lock_manager.acquire(
+            ["src/main.py", "src/utils.py"],
+            agent_id="backend-dying",
+            task_id="T-dying",
+            task_title="owns two files",
+        )
 
         session = AgentSession(
             id="backend-dying",
