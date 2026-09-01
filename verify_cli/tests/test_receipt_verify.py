@@ -113,7 +113,7 @@ def test_recompute_head_single_event():
     assert len(head) == 64  # hex SHA-256
 
 
-def test_recompute_head_deteministic():
+def test_recompute_head_deterministic():
     events = [{"a": 1, "b": 2}]
     h1 = recompute_head_sha256(events)
     h2 = recompute_head_sha256(events)
