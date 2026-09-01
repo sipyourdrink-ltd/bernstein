@@ -1,6 +1,6 @@
-# Bernstein - Orchestrator for CLI Coding Agents in VS Code
+# Bernstein - Governance Layer for AI Agents in VS Code
 
-VS Code extension for monitoring and controlling [Bernstein](https://github.com/sipyourdrink-ltd/bernstein), a deterministic orchestrator for CLI coding agents that runs them in parallel, one git worktree per task. Gives you real-time visibility into tasks, agents, and costs without leaving your editor.
+VS Code extension for monitoring and controlling [Bernstein](https://github.com/sipyourdrink-ltd/bernstein), the open-source governance layer for AI agents that runs them in parallel, one git worktree per task. Gives you real-time visibility into tasks, agents, and costs without leaving your editor.
 
 ## Features
 

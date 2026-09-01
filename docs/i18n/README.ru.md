@@ -8,14 +8,14 @@
 
 <br>
 
-<img alt="Bernstein - deterministic multi-agent CLI orchestration" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/banner-readme.webp" width="820">
+<img alt="Bernstein - the open-source governance layer for AI agents" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/banner-readme.webp" width="820">
 
 <br>
 
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
-### детерминированная мультиагентная оркестрация CLI
-<!-- l10n: en="deterministic multi-agent CLI orchestration" hash="sha256:2cb1281992f1" -->
+### опенсорсный governance-слой для AI-агентов
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:739f0a7ad1af" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -38,7 +38,7 @@
 
 > **Статус: beta.** Сопровождается одним человеком, активно разрабатывается. Номер версии считает релизы, а не зрелость — минорные версии могут менять интерфейсы. Фиксируй версию для всего, от чего зависишь; регрессии чиним быстро, [заводи их](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein — детерминированный оркестратор CLI-агентов для написания кода (Claude Code, Codex, Gemini CLI и ещё 40+). Гоняет их параллельно, проверяет результат на гейтах и записывает прогон настолько подробно, что его можно перепроверить потом. Профиль установки для air-gap в комплекте. Apache-2.0.
+Bernstein — опенсорсный governance-слой для AI-агентов. Детерминированный планировщик — в цикле координации нет модели — гоняет агентов параллельно, проверяет результат на гейтах и записывает каждый шаг, так что прогон можно верифицировать постфактум, офлайн, по одним лишь артефактам. CLI-агенты для кода работают из коробки (Claude Code, Codex, Gemini CLI и ещё 40+), и тот же слой говернит любую агентную нагрузку: результатом может быть дифф, исследовательский отчёт, датасет или пакет аудиторских свидетельств. Профиль установки для air-gap в комплекте. Apache-2.0.
 
 ### коротко
 <!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->
@@ -51,6 +51,87 @@ Bernstein — детерминированный оркестратор CLI-аг
 - **Широко и локально.** 40+ адаптеров CLI-агентов плюс универсальная обёртка `--prompt`, состояние в файлах, без похода в SaaS, без чужого data plane.
 
 Полный список — на [странице возможностей](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [матрица возможностей](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) — исчерпывающий индекс.
+
+### как выглядит прогон
+<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+
+Один YAML-файл объявляет весь прогон: фазы, роли, зависимости и условия, при которых узел вообще запускается. Планировщик исполняет его как обычный Python — в файле нет ни одного промпта, и ни одна модель не решает, что будет дальше. Этот граф собирает пакет аудиторских свидетельств; полный файл лежит в [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
+
+```yaml
+name: audit-evidence-pack
+version: "1.0.0"
+
+phases:
+  - name: scope
+    allowed_roles: [manager, architect]
+  - name: collect
+  - name: validate
+    allowed_roles: [qa, security]
+  - name: deliver
+    allowed_roles: [security, manager]
+
+nodes:
+  define-control-inventory:
+    phase: scope
+    role: architect
+
+  collect-audit-logs:
+    phase: collect
+    role: security
+    depends_on: [define-control-inventory]
+
+  # three more evidence streams collect in parallel:
+  # collect-sboms-and-attestations, collect-runbooks-and-policies,
+  # collect-eval-results
+
+  assemble-pack:
+    phase: validate
+    role: docs
+    depends_on:
+      - collect-audit-logs
+      - collect-sboms-and-attestations
+      - collect-runbooks-and-policies
+      - collect-eval-results
+
+  mock-auditor-pass:
+    phase: validate
+    role: qa
+    depends_on: [assemble-pack]
+
+  remediate-findings:
+    phase: collect
+    role: docs
+    depends_on:
+      - source: mock-auditor-pass
+        condition: "status == 'failed'"
+    retry:
+      max_attempts: 3
+      until: "status == 'done'"
+
+  sign-and-deliver:
+    phase: deliver
+    role: security
+    depends_on:
+      - source: mock-auditor-pass
+        condition: "status == 'done'"
+```
+
+```mermaid
+flowchart LR
+    inv[define-control-inventory] --> logs[collect-audit-logs]
+    inv --> sbom[collect-sboms-and-attestations]
+    inv --> rb[collect-runbooks-and-policies]
+    inv --> ev[collect-eval-results]
+    logs --> pack[assemble-pack]
+    sbom --> pack
+    rb --> pack
+    ev --> pack
+    pack --> gate{mock-auditor-pass}
+    gate -->|failed| fix["remediate-findings (retry x3)"]
+    gate -->|done| sign[sign-and-deliver]
+```
+
+Каждый узел забирает агент, чья роль разрешена фазой; ролевые ограничения и гейты одобрения держатся независимо от того, что агент делает внутри задачи. Кодовый узел завершается за merge-гейтами в собственном git worktree. Узлы выше завершаются иначе: [контракт артефакта](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) называет результат (отчёт, датасет, скан, лог действий), и узел закрывается подписанной lineage-квитанцией вместо коммита. Тот же планировщик, тот же журнал, та же офлайн-верификация — несёт ли граф код, исследование, ops-изменение или всё сразу. Готовые графы для софта, исследований, документации, энтерпрайза и контрибьюторских процессов лежат в [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### установка за 30 секунд
 <!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->

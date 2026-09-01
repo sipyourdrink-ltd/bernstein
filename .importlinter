@@ -87,4 +87,11 @@ modules =
     bernstein.adapters.qwen
     bernstein.adapters.ralphex
     bernstein.adapters.rovo
+    bernstein.adapters.skyvern
 ignore_imports =
+    # skyvern drives a Skyvern server over HTTP but owes the computer-use
+    # contract -- artifact output, poll-pty events, per-task isolation -- so it
+    # subclasses ComputerUseAdapter rather than restating it. The module stays
+    # listed above so every other cross-adapter import is still refused; this
+    # is the single inheritance edge, declared rather than exempted wholesale.
+    bernstein.adapters.skyvern -> bernstein.adapters.computer_use

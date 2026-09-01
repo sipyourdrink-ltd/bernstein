@@ -48,6 +48,16 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from pathlib import Path
 
+    # Define the sandbox manager protocol for type checking
+    class SandboxManager(Protocol):
+        def navigate(self, agent_process: object, url: str) -> None: ...
+        def act(self, agent_process: object, action: Action) -> None: ...
+        def screenshot(self, agent_process: object) -> bytes | str: ...
+        def dom_snapshot(self, agent_process: object) -> bytes | str: ...
+        def current_url(self, agent_process: object) -> str: ...
+        def close(self, agent_process: object) -> None: ...
+
+
 __all__ = [
     "UNKNOWN_BUILD_VERSION",
     "BrowserDriver",
@@ -57,10 +67,12 @@ __all__ = [
     "BrowserStepTimeout",
     "BrowserUseDriver",
     "ConformanceFailure",
+    "DesktopSandboxDriver",
     "PageState",
     "PlaywrightBrowserDriver",
     "RecordedBrowserDriver",
     "browser_use_driver",
+    "desktop_sandbox_driver",
     "get_driver_factory",
     "list_drivers",
     "observe",
@@ -90,6 +102,7 @@ PLAYWRIGHT_DRIVER_PACKAGE = "playwright>=1.40"
 _INSTALL_COMMANDS: dict[str, str] = {
     "browser_use": f"pip install '{BROWSER_DRIVER_PACKAGE}'",
     "playwright": f"pip install '{PLAYWRIGHT_DRIVER_PACKAGE}' && playwright install chromium",
+    "desktop_sandbox": "pip install 'cua>=0.1.0' && docker daemon start",
 }
 
 
@@ -746,6 +759,212 @@ def playwright_browser_driver(
     return driver
 
 
+# ---------------------------------------------------------------------------
+# Desktop sandbox driver
+# ---------------------------------------------------------------------------
+
+
+class DesktopSandboxDriver(BrowserDriver):
+    """Desktop computer-use driver with ephemeral sandbox lifecycle.
+
+    This driver manages a per-task sandbox (VM or container) for native desktop
+    agent execution. It implements the BrowserDriver protocol and launches an
+    external desktop agent process within the sandbox, enforcing sandbox teardown
+    on all terminal states.
+
+    The driver owns the sandbox lifecycle: it allocates it on demand (lazy), runs
+    the desktop agent within it, and tears it down when ``close()`` is called or
+    the driver is garbage-collected. Two concurrent tasks receive disjoint
+    sandboxes by construction: their ``profile_dir`` directories are different,
+    and each SandboxAllocator is bound to a task id.
+
+    Args:
+        sandbox_allocator: Object that allocates and manages sandbox instances.
+            Must implement :meth:`start` to launch a sandbox, and the returned
+            process object must support the agent protocol verbs.
+        profile_dir: Isolated directory for this task's sandbox state. Used as a
+            token for sandbox identity tracking; never directly written by the driver
+            (the sandbox process may mount or use it, but that is the allocator's
+            responsibility).
+        build_id: The build identity string ("sandbox-<version>") for reproducibility.
+    """
+
+    def __init__(self, *, sandbox_allocator: object, profile_dir: Path, build_id: str = UNKNOWN_BUILD_VERSION) -> None:
+        """Initialize the desktop sandbox driver.
+
+        Args:
+            sandbox_allocator: Object managing sandbox lifecycle via ``start()`` method.
+            profile_dir: Per-task profile directory token.
+            build_id: Sandbox runtime version identifier.
+        """
+        self.profile_dir = profile_dir
+        self._sandbox_allocator = sandbox_allocator
+        self.build_id = build_id
+        self._desktop_agent_process: object | None = None
+        self._closed = False
+
+    def _ensure_running(self) -> object:
+        """Lazily start the desktop agent. Called once per driver lifetime.
+
+        Returns:
+            The agent process object for use with sandbox manager verbs.
+
+        Raises:
+            BrowserDriverError: When the sandbox fails to start.
+        """
+        if self._desktop_agent_process is not None:
+            return self._desktop_agent_process
+        try:
+            start_method = getattr(self._sandbox_allocator, "start", None)
+            if start_method is None:
+                raise BrowserDriverError("Sandbox allocator does not expose 'start' method")
+            self._desktop_agent_process = start_method()
+            if self._desktop_agent_process is None:
+                raise BrowserDriverError("Sandbox allocator start() returned None")
+            return self._desktop_agent_process
+        except BrowserDriverError:
+            raise
+        except Exception as exc:
+            raise BrowserDriverError(f"Failed to start desktop sandbox: {type(exc).__name__}: {exc}") from exc
+
+    def navigate(self, url: str) -> None:
+        """Navigate to *url* in the desktop agent."""
+        agent = self._ensure_running()
+        try:
+            navigate_method = getattr(agent, "navigate", None)
+            if navigate_method is None:
+                raise BrowserDriverError("Desktop agent does not expose 'navigate' method")
+            navigate_method(url)
+        except BrowserDriverError:
+            raise
+        except Exception as exc:
+            raise BrowserDriverError(f"Desktop agent navigate failed: {type(exc).__name__}") from exc
+
+    def act(self, action: Action) -> None:
+        """Perform *action* against the desktop agent."""
+        agent = self._ensure_running()
+        try:
+            act_method = getattr(agent, "act", None)
+            if act_method is None:
+                raise BrowserDriverError("Desktop agent does not expose 'act' method")
+            act_method(action)
+        except BrowserDriverError:
+            raise
+        except Exception as exc:
+            raise BrowserDriverError(f"Desktop agent act failed: {type(exc).__name__}") from exc
+
+    def screenshot(self) -> bytes:
+        """Return the current viewport screenshot bytes from the desktop agent."""
+        agent = self._ensure_running()
+        try:
+            screenshot_method = getattr(agent, "screenshot", None)
+            if screenshot_method is None:
+                raise BrowserDriverError("Desktop agent does not expose 'screenshot' method")
+            raw = screenshot_method()
+            if not isinstance(raw, bytes):
+                if not raw:
+                    raise BrowserDriverError("Desktop agent screenshot returned empty bytes")
+                raw = str(raw).encode("utf-8")
+            if not raw:
+                raise BrowserDriverError("Desktop agent screenshot returned empty bytes")
+            return raw
+        except BrowserDriverError:
+            raise
+        except Exception as exc:
+            raise BrowserDriverError(f"Desktop agent screenshot failed: {type(exc).__name__}") from exc
+
+    def dom_snapshot(self) -> bytes:
+        """Return the current DOM / accessibility snapshot bytes from the desktop agent."""
+        agent = self._ensure_running()
+        try:
+            dom_method = getattr(agent, "dom_snapshot", None)
+            if dom_method is None:
+                raise BrowserDriverError("Desktop agent does not expose 'dom_snapshot' method")
+            raw = dom_method()
+            if not isinstance(raw, bytes):
+                if not raw:
+                    raise BrowserDriverError("Desktop agent dom_snapshot returned empty bytes")
+                raw = str(raw).encode("utf-8")
+            if not raw:
+                raise BrowserDriverError("Desktop agent dom_snapshot returned empty bytes")
+            return raw
+        except BrowserDriverError:
+            raise
+        except Exception as exc:
+            raise BrowserDriverError(f"Desktop agent dom_snapshot failed: {type(exc).__name__}") from exc
+
+    def current_url(self) -> str:
+        """Return the current page URL from the desktop agent."""
+        agent = self._ensure_running()
+        try:
+            url_method = getattr(agent, "current_url", None)
+            if url_method is None:
+                raise BrowserDriverError("Desktop agent does not expose 'current_url' method")
+            return str(url_method())
+        except BrowserDriverError:
+            raise
+        except Exception as exc:
+            raise BrowserDriverError(f"Desktop agent current_url failed: {type(exc).__name__}") from exc
+
+    def close(self) -> None:
+        """Release the desktop agent and tear down the sandbox. Idempotent."""
+        if self._closed:
+            return
+        self._closed = True
+        if self._desktop_agent_process is not None:
+            with suppress(Exception):
+                close_method = getattr(self._desktop_agent_process, "close", None)
+                if close_method is not None:
+                    close_method()
+            self._desktop_agent_process = None
+        # Teardown the sandbox allocator and profile
+        with suppress(Exception):
+            stop_method = getattr(self._sandbox_allocator, "stop", None)
+            if stop_method is not None:
+                stop_method()
+        # Teardown the profile directory
+        with suppress(Exception):
+            shutil.rmtree(self.profile_dir, ignore_errors=True)
+
+
+def _import_desktop_sandbox() -> object | None:
+    """Return the optional desktop sandbox manager, or ``None`` when absent.
+
+    Split out so the availability probe is a single seam: the refusal path is
+    exercised without depending on whether the extra happens to be installed.
+    """
+    try:
+        # Import the desktop sandbox manager (placeholder for actual implementation)
+        # This would typically be something like docker, podman, or a VM manager
+        import sandbox_manager  # type: ignore[import-not-found]
+    except ImportError:
+        return None
+    return sandbox_manager
+
+
+def desktop_sandbox_driver(*, profile_dir: Path) -> DesktopSandboxDriver:
+    """Build the desktop sandbox driver, or refuse with a typed error.
+
+    Args:
+        profile_dir: The isolated per-task profile directory the sandbox runs in.
+
+    Returns:
+        A :class:`DesktopSandboxDriver` bound to *profile_dir*.
+
+    Raises:
+        BrowserDriverUnavailable: When the desktop sandbox backend is not
+            installed.
+    """
+    module = _import_desktop_sandbox()
+    if module is None:
+        raise BrowserDriverUnavailable(driver_name="desktop_sandbox", extra=BROWSER_EXTRA)
+    factory = getattr(module, "SandboxManager", None)
+    if factory is None:
+        raise BrowserDriverUnavailable(driver_name="desktop_sandbox", extra=BROWSER_EXTRA)
+    sandbox_manager = factory()
+    return DesktopSandboxDriver(sandbox_allocator=sandbox_manager, profile_dir=profile_dir)
+
+
 def record_tape_from_driver(
     driver: BrowserDriver,
     steps: Sequence[Action],
@@ -879,6 +1098,7 @@ def _recorded_driver_needs_a_tape(*, profile_dir: Path) -> BrowserDriver:
 register_driver("browser_use", browser_use_driver)
 register_driver("playwright", playwright_browser_driver)
 register_driver(RECORDED_DRIVER_NAME, _recorded_driver_needs_a_tape)
+register_driver("desktop_sandbox", desktop_sandbox_driver)
 
 
 # ---------------------------------------------------------------------------

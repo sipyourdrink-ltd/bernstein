@@ -55,6 +55,7 @@ import hashlib
 import json
 import logging
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -125,11 +126,14 @@ class CapabilityMismatchError(ProfileError):
     Carries the content-addressed :attr:`receipt` describing exactly
     which requirements went unmet and which candidates were considered,
     so a routing refusal is auditable rather than a silent fallback.
+    Also carries the :attr:`verdict_table` with the per-candidate
+    breakdown of which axes each candidate failed.
     """
 
-    def __init__(self, message: str, receipt: CapabilityRefusalReceipt) -> None:
+    def __init__(self, message: str, receipt: CapabilityRefusalReceipt, verdict_table: CapabilityVerdictTable) -> None:
         super().__init__(message)
         self.receipt = receipt
+        self.verdict_table = verdict_table
 
 
 # ---------------------------------------------------------------------------
@@ -560,6 +564,71 @@ class CapabilityRefusalReceipt:
         return hashlib.sha256(payload).hexdigest()
 
 
+@dataclass(frozen=True)
+class CapabilityVerdictTable:
+    """Per-candidate verdict table computed during routing.
+
+    Represents the deterministic selection decision for a task:
+    one row per candidate adapter in consideration order, with its
+    profile hash and the unmet capability axes that prevented it from
+    being selected (empty for the chosen adapter).
+
+    Args:
+        rows: Verdict rows for each candidate considered, in iteration order.
+    """
+
+    rows: tuple[tuple[str, str, tuple[str, ...]], ...]
+
+    @classmethod
+    def from_unmet_results(
+        cls,
+        candidates: Iterable[AdapterCapabilityProfile],
+        unmet_results: Iterable[tuple[str, tuple[str, ...]]],
+    ) -> CapabilityVerdictTable:
+        """Build a verdict table from candidate profiles and their unmet axes.
+
+        Args:
+            candidates: The candidate adapter profiles, in consideration order.
+            unmet_results: Parallel iterable over (adapter name, unmet axes).
+
+        Returns:
+            The verdict table.
+        """
+        rows: list[tuple[str, str, tuple[str, ...]]] = []
+        for profile, (_, unmet) in zip(candidates, unmet_results, strict=True):
+            rows.append((profile.name, profile.profile_hash, unmet))
+        return CapabilityVerdictTable(tuple(rows))
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        """Return the sorted, JSON-safe form for content addressing."""
+        return {
+            "kind": "capability-verdict-table",
+            "rows": [
+                {
+                    "adapter": adapter,
+                    "profile_hash": profile_hash,
+                    "unmet": sorted(unmet),
+                }
+                for adapter, profile_hash, unmet in self.rows
+            ],
+        }
+
+    @property
+    def verdict_hash(self) -> str:
+        """SHA-256 over the canonical form.
+
+        Deterministic for a given set of candidates and their unmet axes,
+        so two operators reconstructing the same table derive the same identifier.
+        """
+        payload = json.dumps(
+            self.to_canonical_dict(),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+
 def _assert_capability_axes_are_requestable() -> None:
     """Fail at import when an axis exists that no task could ever require.
 
@@ -623,9 +692,11 @@ def select_profile_for(
     """
     candidates = tuple(profiles) if profiles is not None else tuple(profile for _, profile in sorted(PROFILES.items()))
 
+    verdict_rows: list[tuple[str, tuple[str, ...]]] = []
     all_unmet: set[str] = set()
     for profile in candidates:
         unmet = unmet_requirements(profile, requirements)
+        verdict_rows.append((profile.name, tuple(sorted(unmet))))
         if not unmet:
             return profile
         all_unmet.update(unmet)
@@ -635,11 +706,13 @@ def select_profile_for(
         candidates=tuple((profile.name, profile.profile_hash) for profile in candidates),
         unmet=tuple(sorted(all_unmet)),
     )
+    table = CapabilityVerdictTable.from_unmet_results(candidates, verdict_rows)
     considered = ", ".join(profile.name for profile in candidates) or "<none>"
     raise CapabilityMismatchError(
         f"no adapter satisfies the declared task requirements: unmet {', '.join(receipt.unmet) or '<none>'} "
         f"(considered: {considered}; refusal receipt {receipt.receipt_hash})",
         receipt,
+        table,
     )
 
 
@@ -720,6 +793,8 @@ def route_and_record(
     profiles: Iterable[AdapterCapabilityProfile] | None = None,
     audit_chain: Any | None = None,
     run_id: str = "",
+    tier_decision: dict[str, Any] | None = None,
+    task_id: str = "",
 ) -> AdapterCapabilityProfile:
     """Select an adapter for a task and anchor the decision in the audit chain.
 
@@ -737,6 +812,9 @@ def route_and_record(
       HMAC chain *before* the :class:`CapabilityMismatchError` propagates, so
       the refusal is a signed record rather than a silent fallback to a weaker
       adapter.
+    * When ``tier_decision`` is supplied (opt-in ``tier_models`` path, #4854),
+      the tier + feature digest are recorded on the same seam immediately
+      after the capability selection event.
 
     Recording is opt-in: when ``audit_chain`` is ``None`` the function selects
     (or refuses) exactly as :func:`select_profile_for` does, without touching a
@@ -754,6 +832,11 @@ def route_and_record(
             module-level dependency on :mod:`bernstein.core.security`.
         run_id: The run the routing decision is made for, recorded on the
             anchored event.
+        tier_decision: Optional precomputed :meth:`TierDecision.to_record`
+            payload from :mod:`bernstein.core.routing.task_tier`. Passed in
+            already-computed so this module never imports the classifier
+            (import-linter forbids ``adapters`` → ``core.routing``).
+        task_id: Task id recorded with ``tier_decision`` when present.
 
     Returns:
         The first profile satisfying ``requirements``.
@@ -776,10 +859,24 @@ def route_and_record(
                 requirements=exc.receipt.requirements,
                 candidates=[list(pair) for pair in exc.receipt.candidates],
                 unmet=list(exc.receipt.unmet),
+                verdict_table=exc.verdict_table.to_canonical_dict(),
             )
         raise
     if audit_chain is not None:
-        from bernstein.core.security.audit_chain import record_capability_selection
+        from bernstein.core.security.audit_chain import (
+            record_capability_selection,
+            record_task_tier_decision,
+        )
+
+        # Rebuild the verdict table for recording
+        candidates = (
+            tuple(profiles) if profiles is not None else tuple(profile for _, profile in sorted(PROFILES.items()))
+        )
+        verdict_rows: list[tuple[str, tuple[str, ...]]] = []
+        for profile in candidates:
+            unmet = unmet_requirements(profile, requirements)
+            verdict_rows.append((profile.name, tuple(sorted(unmet))))
+        table = CapabilityVerdictTable.from_unmet_results(candidates, verdict_rows)
 
         record_capability_selection(
             chain=audit_chain,
@@ -787,7 +884,19 @@ def route_and_record(
             adapter=selected.name,
             profile_hash=selected.profile_hash,
             requirements=requirements.to_canonical_dict(),
+            verdict_table=table.to_canonical_dict(),
         )
+        if tier_decision is not None:
+            record_task_tier_decision(
+                chain=audit_chain,
+                run_id=run_id,
+                task_id=task_id or run_id,
+                tier=str(tier_decision.get("tier", "")),
+                tier_policy_version=int(tier_decision.get("tier_policy_version", 0)),
+                feature_digest=str(tier_decision.get("feature_digest", "")),
+                features=dict(tier_decision.get("features") or {}),
+                score=int(tier_decision.get("score", 0)),
+            )
     return selected
 
 
@@ -998,6 +1107,102 @@ class ProfileAdapter(CLIAdapter):
         if timeout_seconds > 0:
             result.timeout_timer = self._start_timeout_watchdog(proc.pid, timeout_seconds, session_id)
         return result
+
+
+def _profile_tokens(value: Iterable[str] | None, field_name: str) -> tuple[str, ...]:
+    """Normalise a YAML token list and reject scalar or non-string values."""
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        raise ProfileValidationError(f"RecordedProfileAdapter {field_name} must be a list of strings")
+    if isinstance(value, Mapping):
+        raise ProfileValidationError(f"RecordedProfileAdapter {field_name} must be a list of strings")
+    try:
+        tokens = tuple(value)
+    except TypeError as exc:
+        raise ProfileValidationError(f"RecordedProfileAdapter {field_name} must be a list of strings") from exc
+    if any(not isinstance(token, str) for token in tokens):
+        raise ProfileValidationError(f"RecordedProfileAdapter {field_name} must be a list of strings")
+    return tokens
+
+
+class RecordedProfileAdapter(ProfileAdapter):
+    """Replay bridge for an operator-recorded capability profile.
+
+    The constructor deliberately accepts only primitive, YAML-safe values so
+    :class:`~bernstein.adapters.conformance.GoldenTranscript` can instantiate
+    this class in a fresh process.  The invocation is rebuilt before the base
+    adapter is initialised, leaving the inherited :meth:`ProfileAdapter.spawn`
+    as the single process-launch implementation.
+    """
+
+    def __init__(
+        self,
+        registry_name: str,
+        display_name: str,
+        binary: str,
+        subcommands: Iterable[str] = (),
+        model_flag: str | None = None,
+        prompt_flag: str | None = None,
+        prompt_positional: bool = True,
+        extra_args: Iterable[str] = (),
+        env_passthrough: Iterable[str] = (),
+        *,
+        environment_allowlist: Iterable[str] | None = None,
+    ) -> None:
+        """Build a replayable adapter from explicit serialized fields.
+
+        Args:
+            registry_name: Registry key used by admission and session
+                namespacing.
+            display_name: Human-readable adapter name.
+            binary: CLI executable name or path.
+            subcommands: Ordered subcommand tokens.
+            model_flag: Model option, or ``None`` for model-less CLIs.
+            prompt_flag: Prompt option, or ``None`` for positional prompts.
+            prompt_positional: Whether a flag-less prompt is positional.
+            extra_args: Ordered tokens emitted on every invocation.
+            env_passthrough: Environment names allowed through isolation.
+            environment_allowlist: Backward-compatible spelling for
+                ``env_passthrough`` when loading hand-authored YAML.
+
+        Raises:
+            ProfileValidationError: A serialized field cannot form a valid
+                :class:`AdapterCapabilityProfile`.
+        """
+        if not isinstance(registry_name, str) or not registry_name.strip():
+            raise ProfileValidationError("RecordedProfileAdapter requires a non-empty registry_name")
+        if not isinstance(display_name, str) or not display_name.strip():
+            raise ProfileValidationError("RecordedProfileAdapter requires a non-empty display_name")
+        if not isinstance(binary, str):
+            raise ProfileValidationError("RecordedProfileAdapter binary must be a string")
+        if model_flag is not None and not isinstance(model_flag, str):
+            raise ProfileValidationError("RecordedProfileAdapter model_flag must be a string or None")
+        if prompt_flag is not None and not isinstance(prompt_flag, str):
+            raise ProfileValidationError("RecordedProfileAdapter prompt_flag must be a string or None")
+        if not isinstance(prompt_positional, bool):
+            raise ProfileValidationError("RecordedProfileAdapter prompt_positional must be a boolean")
+        if environment_allowlist is not None:
+            if tuple(env_passthrough) != ():
+                raise ProfileValidationError("provide only one of env_passthrough and environment_allowlist")
+            env_passthrough = environment_allowlist
+
+        invocation = InvocationSpec(
+            binary=binary,
+            subcommands=_profile_tokens(subcommands, "subcommands"),
+            model_flag=model_flag,
+            prompt_flag=prompt_flag,
+            prompt_positional=prompt_positional,
+            extra_args=_profile_tokens(extra_args, "extra_args"),
+            env_passthrough=_profile_tokens(env_passthrough, "env_passthrough"),
+        )
+        self.profile = AdapterCapabilityProfile(
+            name=registry_name,
+            display_name=display_name,
+            invocation=invocation,
+        )
+        super().__init__()
+        self.registry_name = registry_name
 
 
 def _class_name_for(profile: AdapterCapabilityProfile) -> str:
@@ -1301,6 +1506,7 @@ __all__ = [
     "ProfileError",
     "ProfileImplementation",
     "ProfileValidationError",
+    "RecordedProfileAdapter",
     "SandboxTier",
     "TaskCapabilityRequirements",
     "UnknownProfileError",

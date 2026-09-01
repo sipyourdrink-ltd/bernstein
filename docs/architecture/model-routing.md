@@ -15,6 +15,8 @@ implemented and wired into the orchestrator:
 This document explains both, the configuration knobs, and the
 observability surface. For the higher-level provider-policy controls
 (allow/deny lists, preferred provider) see `operations/MODEL_POLICY.md`.
+For opt-in per-task tier → model mapping see
+[`operations/task-tier-classification.md`](../operations/task-tier-classification.md).
 
 ---
 

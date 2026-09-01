@@ -31,6 +31,7 @@ from bernstein.core.workflow_dsl import (
 )
 
 from bernstein.core.knowledge.task_graph import EdgeType
+from bernstein.core.orchestration.activity import ActivityKind
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -462,6 +463,78 @@ class TestParseWorkflowYaml:
         with pytest.raises(DSLError, match="condition"):
             parse_workflow_yaml(path)
 
+    def test_activity_kind_parsed(self, tmp_path: Path) -> None:
+        path = _write_yaml(
+            tmp_path,
+            """\
+            name: test
+            phases:
+              - plan
+            nodes:
+              research-phase:
+                phase: plan
+                role: backend
+                activity: research
+                description: "Research phase"
+            """,
+        )
+        dag = parse_workflow_yaml(path)
+        node = dag.node_map["research-phase"]
+        assert node.activity_kind is not None
+        assert node.activity_kind.value == "research"
+
+    def test_activity_kind_all_variants(self, tmp_path: Path) -> None:
+        for kind in ("research", "data", "ops", "browser"):
+            path = _write_yaml(
+                tmp_path,
+                f"""\
+                name: test
+                phases:
+                  - plan
+                nodes:
+                  n:
+                    phase: plan
+                    role: backend
+                    activity: {kind}
+                """,
+            )
+            dag = parse_workflow_yaml(path)
+            assert dag.node_map["n"].activity_kind is not None
+            assert dag.node_map["n"].activity_kind.value == kind
+
+    def test_activity_kind_defaults_none(self, tmp_path: Path) -> None:
+        path = _write_yaml(
+            tmp_path,
+            """\
+            name: test
+            phases:
+              - plan
+            nodes:
+              n:
+                phase: plan
+                role: backend
+            """,
+        )
+        dag = parse_workflow_yaml(path)
+        assert dag.node_map["n"].activity_kind is None
+
+    def test_invalid_activity_kind_raises(self, tmp_path: Path) -> None:
+        path = _write_yaml(
+            tmp_path,
+            """\
+            name: test
+            phases:
+              - plan
+            nodes:
+              n:
+                phase: plan
+                role: backend
+                activity: not_a_modality
+            """,
+        )
+        with pytest.raises(DSLError, match="activity"):
+            parse_workflow_yaml(path)
+
 
 # ===========================================================================
 # DAG validation tests
@@ -471,6 +544,19 @@ class TestParseWorkflowYaml:
 class TestValidateDAG:
     def test_valid_linear_dag(self) -> None:
         dag = _simple_dag()
+        result = validate_dag(dag)
+        assert result.is_valid
+        assert result.errors == []
+
+    def test_activity_kind_valid_in_validation(self) -> None:
+        dag = WorkflowDAG(
+            definition=_simple_definition(),
+            nodes=(
+                DAGNode(id="a", phase="plan", role="manager"),
+                DAGNode(id="b", phase="implement", role="backend", activity_kind=ActivityKind.RESEARCH),
+            ),
+            edges=(DAGEdge(source="a", target="b"),),
+        )
         result = validate_dag(dag)
         assert result.is_valid
         assert result.errors == []

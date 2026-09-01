@@ -1,3 +1,0 @@
-## Orchestrator pacing is observed through its own seam
-
-The run loop now paces through `Orchestrator._pace` instead of calling `time.sleep` directly. `time.sleep` is one function object shared by the whole process, so a test that patched it recorded every sleep any code performed while `run()` was on the stack — including CPython's own subprocess reaping busy-wait (1ms, 2ms, 4ms, 8ms). On a machine where a startup subprocess outlived the first tick, those four values were the first four entries and the polling-schedule assertions read them instead of the loop's own, failing the suite on unrelated changes. The seam makes the recorded schedule exactly what the loop chose.

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import inspect
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -83,7 +84,9 @@ def _discover_registered_names() -> list[str]:
       Covered by ``test_adapter_muse.py``, which exercises spawn with the
       vendor model plus every refusal path.
     """
-    return sorted(n for n in _ADAPTERS if n not in {"mock", "generic", "iac", "clm", "q_dev", "python_runtime", "muse"})
+    return sorted(
+        n for n in _ADAPTERS if n not in {"mock", "generic", "iac", "clm", "q_dev", "python_runtime", "muse"}
+    )
 
 
 #: Adapters whose ``prompt`` argument is a structured descriptor rather than
@@ -201,6 +204,17 @@ class TestAdapterContract:
 
     def test_spawn_returns_spawn_result(self, name: str, factory: Any, tmp_path: Path) -> None:
         adapter = factory()
+        module = sys.modules[type(adapter).__module__]
+        if not hasattr(module, "subprocess"):
+            # This case, and only this case, assumes the adapter reaches its
+            # agent through ``subprocess.Popen`` in its own module. An adapter
+            # that drives a server over HTTP has nothing to patch here, and the
+            # same SpawnResult contract is proved against its real transport in
+            # its own suite (skyvern: tests/unit/adapters/test_skyvern_adapter.py).
+            # Keyed on the property rather than on a name, and narrowed to one
+            # case: excluding such an adapter from the whole class drops the
+            # twelve contract cases that do apply to it.
+            pytest.skip(f"{name} does not spawn through subprocess.Popen")
         proc_mock = _make_popen_mock(pid=42)
         popen_target = _popen_path(adapter)
 

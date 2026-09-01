@@ -355,6 +355,7 @@ class SpawnResult:
     abort_reason: AbortReason | None = None
     abort_detail: str = ""
     finish_reason: str = ""
+    acp_result: object | None = None
 
 
 class WaitableProcess(Protocol):

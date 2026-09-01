@@ -62,7 +62,7 @@ fpm -s dir -t deb \
   -n bernstein \
   -v "$VERSION" \
   --iteration 1 \
-  --description "Deterministic orchestrator for CLI coding agents" \
+  --description "The open-source governance layer for AI agents" \
   --url "https://github.com/sipyourdrink-ltd/bernstein" \
   --maintainer "Alex Chernysh <alex@alexchernysh.com>" \
   --license Apache-2.0 \
@@ -83,7 +83,7 @@ fpm -s dir -t rpm \
   -n bernstein \
   -v "$VERSION" \
   --iteration 1 \
-  --description "Deterministic orchestrator for CLI coding agents" \
+  --description "The open-source governance layer for AI agents" \
   --url "https://github.com/sipyourdrink-ltd/bernstein" \
   --maintainer "Alex Chernysh <alex@alexchernysh.com>" \
   --license Apache-2.0 \

@@ -286,7 +286,7 @@ class ACPHandlerRegistry:
             "clientRequestedVersion": requested,
             "serverInfo": {
                 "name": "bernstein",
-                "description": "Deterministic orchestrator for CLI coding agents, one git worktree per task",
+                "description": "The open-source governance layer for AI agents, one git worktree per task",
             },
             "capabilities": {
                 "prompts": True,
