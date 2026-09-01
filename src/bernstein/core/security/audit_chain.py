@@ -9014,37 +9014,32 @@ EVENT_MCP_CAPABILITY_DRIFT = "mcp.capability_drift"
 
 
 @dataclass(frozen=True)
-class MCPCapabilityDriftDetails:
-    """Structured payload for the ``mcp.capability_drift`` event.
+class CapabilityDeltaDetails:
+    """Structured payload for the ``capability.delta_recorded`` event.
 
     Attributes:
-        run_id: The run that produced the drift event.
-        server_name: The MCP server name that changed.
-        previous_digest: The previous capability digest (``None`` for first
-            contact with a previously unseen server).
-        current_digest: The current capability digest.
-        added_tools: Tuple of tool names added since the last contact.
-        removed_tools: Tuple of tool names removed since the last contact.
-        tool_count: Total number of tools currently advertised.
+        run_id: The run that produced the delta.
+        role: The agent role whose permissions changed.
+        delta_hash: The ``sha256:`` + hexdigest from
+            :attr:`GrantDelta.delta_hash`.
+        is_widening: Whether the delta widens any capability.
+        changes_json: JCS-canonical JSON of the changes tuple, for
+            independent verification.
     """
 
     run_id: str
-    server_name: str
-    previous_digest: str | None
-    current_digest: str
-    added_tools: tuple[str, ...]
-    removed_tools: tuple[str, ...]
-    tool_count: int
+    role: str
+    delta_hash: str
+    is_widening: bool
+    changes_json: str
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
-            "server_name": self.server_name,
-            "previous_digest": self.previous_digest,
-            "current_digest": self.current_digest,
-            "added_tools": list(self.added_tools),
-            "removed_tools": list(self.removed_tools),
-            "tool_count": self.tool_count,
+            "role": self.role,
+            "delta_hash": self.delta_hash,
+            "is_widening": self.is_widening,
+            "changes_json": self.changes_json,
         }
 
 
