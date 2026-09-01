@@ -42,9 +42,24 @@ def compute_plan(
     """
     entries: list[PlanEntry] = []
 
+    # Surfaces the inventory could not read. These are NOT observations: a
+    # surface that was not read cannot be judged compliant, so it is held out
+    # of the observed map entirely and reported as UNKNOWN below. An inventory
+    # states this either per-record ("unreadable": true, when the surface was
+    # known but could not be queried) or as a top-level list (when the
+    # enumeration itself failed and produced no record at all).
+    unreadable: dict[str, str] = {}
+    for s in inventory.get("surfaces", []):
+        if s.get("unreadable"):
+            unreadable[str(s["surface"])] = str(s.get("evidence_ref", ""))
+    for surface_id in inventory.get("unreadable", []):
+        unreadable.setdefault(str(surface_id), "")
+
     # Build inventory lookup
     inventory_map: dict[str, dict[str, str]] = {}
     for s in inventory.get("surfaces", []):
+        if str(s["surface"]) in unreadable:
+            continue
         inventory_map[s["surface"]] = {
             "observed_value": str(s.get("observed_value", "")),
             "evidence_ref": str(s.get("evidence_ref", "")),
@@ -98,7 +113,7 @@ def compute_plan(
         required_declared[surface] = str(s.get("declared_value", ""))
 
     for surface, clause in required_clause.items():
-        if surface not in inventory_map:
+        if surface not in inventory_map and surface not in unreadable:
             entries.append(
                 PlanEntry(
                     kind=PlanEntryKind.ABSENT,
@@ -110,6 +125,31 @@ def compute_plan(
                     timestamp=timestamp,
                 )
             )
+
+    # UNKNOWN: governed surfaces the inventory could not read. Sorted so that
+    # two operators reach the same order regardless of how their inventory
+    # serialized the two ways of declaring an unread surface.
+    clause_for: dict[str, str] = {}
+    clause_for.update(forbidden_map)
+    clause_for.update({s: c for s, (_, c) in permitted_map.items()})
+    clause_for.update(required_clause)
+    for surface in sorted(unreadable):
+        unknown_clause = clause_for.get(surface)
+        if unknown_clause is None:
+            # Not governed by any clause: nothing judges it, so there is
+            # nothing to report.
+            continue
+        entries.append(
+            PlanEntry(
+                kind=PlanEntryKind.UNKNOWN,
+                surface=surface,
+                evidence_ref=unreadable[surface],
+                playbook_clause=unknown_clause,
+                observed_value=None,
+                declared_value=required_declared.get(surface),
+                timestamp=timestamp,
+            )
+        )
 
     inputs_bytes = json.dumps(
         {"playbook": playbook, "inventory": inventory},
@@ -133,9 +173,14 @@ def _compare_values(observed: str, ceiling: str) -> int:
     Returns >0 if observed > ceiling, 0 if equal, <0 otherwise.
     """
     try:
-        return int(float(observed) - float(ceiling))
+        obs, ceil = float(observed), float(ceiling)
     except (ValueError, TypeError):
-        return (observed > ceiling) - (observed < ceiling)  # type: ignore[return-value]
+        pass
+    else:
+        # int() truncates toward zero, so any breach smaller than 1.0 read as
+        # "equal" and the surface passed as compliant.
+        return (obs > ceil) - (obs < ceil)
+    return (observed > ceiling) - (observed < ceiling)
 
 
 __all__ = [

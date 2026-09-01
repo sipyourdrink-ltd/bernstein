@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import pytest
 
+from bernstein.core.govern import compute_plan
 from bernstein.core.govern.inventory_models import Inventory, Surface
+from bernstein.core.govern.plan_models import PlanEntryKind
 from bernstein.core.govern.playbook_models import Playbook, PlaybookClause
 
 
@@ -347,3 +349,205 @@ class TestRoundTrip:
         d = original.to_dict()
         restored = Playbook.from_dict(d)
         assert restored.content_hash() == original.content_hash()
+
+
+_PLAYBOOK = {
+    "forbidden": [{"surface": "s3.public-read", "clause": "C1"}],
+    "permitted": [
+        {"surface": "iam.max-role-count", "clause": "C2", "declared_ceiling": "1.0"}
+    ],
+    "required": [
+        {"surface": "kms.key-rotation", "clause": "C3", "declared_value": "enabled"}
+    ],
+}
+
+
+class TestComputePlanUnknown:
+    """A surface the inventory could not read must never read as compliant."""
+
+    def test_unreadable_surface_is_reported_unknown_not_compliant(self) -> None:
+        inventory = {
+            "surfaces": [
+                {"surface": "s3.public-read", "unreadable": True, "evidence_ref": "E1"},
+                {
+                    "surface": "iam.max-role-count",
+                    "unreadable": True,
+                    "evidence_ref": "E2",
+                },
+            ]
+        }
+        plan = compute_plan(
+            playbook=_PLAYBOOK, inventory=inventory, run_id="r", timestamp=0
+        )
+        unknown = {
+            e.surface for e in plan.entries if e.kind is PlanEntryKind.UNKNOWN
+        }
+        assert unknown == {"s3.public-read", "iam.max-role-count"}
+        # and they must not have been silently classified as anything else
+        other = {
+            e.surface for e in plan.entries if e.kind is not PlanEntryKind.UNKNOWN
+        }
+        assert "s3.public-read" not in other
+        assert "iam.max-role-count" not in other
+
+    def test_unenumerated_surface_does_not_read_as_compliant(self) -> None:
+        """An enumeration that failed is declared, not inferred from absence."""
+        inventory = {"surfaces": [], "unreadable": ["s3.public-read"]}
+        plan = compute_plan(
+            playbook=_PLAYBOOK, inventory=inventory, run_id="r", timestamp=0
+        )
+        kinds = {e.surface: e.kind for e in plan.entries}
+        assert kinds["s3.public-read"] is PlanEntryKind.UNKNOWN
+
+    def test_unreadable_required_surface_is_unknown_not_absent(self) -> None:
+        """Absent and unreadable are different claims about the environment."""
+        inventory = {
+            "surfaces": [
+                {"surface": "kms.key-rotation", "unreadable": True, "evidence_ref": "E3"}
+            ]
+        }
+        plan = compute_plan(
+            playbook=_PLAYBOOK, inventory=inventory, run_id="r", timestamp=0
+        )
+        kinds = {e.surface: e.kind for e in plan.entries}
+        assert kinds["kms.key-rotation"] is PlanEntryKind.UNKNOWN
+
+    def test_a_genuinely_absent_required_surface_is_still_absent(self) -> None:
+        """The unknown path must not swallow the absent one."""
+        plan = compute_plan(
+            playbook=_PLAYBOOK,
+            inventory={"surfaces": []},
+            run_id="r",
+            timestamp=0,
+        )
+        kinds = {e.surface: e.kind for e in plan.entries}
+        assert kinds["kms.key-rotation"] is PlanEntryKind.ABSENT
+
+
+class TestComputePlanCeiling:
+    def test_ceiling_breach_smaller_than_one_is_still_wider(self) -> None:
+        """A fractional breach is a breach; integer truncation hid it."""
+        inventory = {
+            "surfaces": [
+                {
+                    "surface": "iam.max-role-count",
+                    "observed_value": "1.9",
+                    "evidence_ref": "E1",
+                }
+            ]
+        }
+        plan = compute_plan(
+            playbook=_PLAYBOOK, inventory=inventory, run_id="r", timestamp=0
+        )
+        wider = [e for e in plan.entries if e.kind is PlanEntryKind.WIDER_CEILING]
+        assert [e.surface for e in wider] == ["iam.max-role-count"]
+
+    def test_observed_at_the_ceiling_is_not_a_breach(self) -> None:
+        inventory = {
+            "surfaces": [
+                {
+                    "surface": "iam.max-role-count",
+                    "observed_value": "1.0",
+                    "evidence_ref": "E1",
+                }
+            ]
+        }
+        plan = compute_plan(
+            playbook=_PLAYBOOK, inventory=inventory, run_id="r", timestamp=0
+        )
+        assert not [e for e in plan.entries if e.kind is PlanEntryKind.WIDER_CEILING]
+
+    def test_observed_below_the_ceiling_is_not_a_breach(self) -> None:
+        inventory = {
+            "surfaces": [
+                {
+                    "surface": "iam.max-role-count",
+                    "observed_value": "0.4",
+                    "evidence_ref": "E1",
+                }
+            ]
+        }
+        plan = compute_plan(
+            playbook=_PLAYBOOK, inventory=inventory, run_id="r", timestamp=0
+        )
+        assert not [e for e in plan.entries if e.kind is PlanEntryKind.WIDER_CEILING]
+
+
+class TestComputePlanArtifact:
+    def test_two_runs_over_same_inputs_are_byte_identical(self) -> None:
+        inventory = {
+            "surfaces": [
+                {
+                    "surface": "s3.public-read",
+                    "observed_value": "true",
+                    "evidence_ref": "E1",
+                }
+            ]
+        }
+        a = compute_plan(
+            playbook=_PLAYBOOK, inventory=inventory, run_id="r", timestamp=7
+        )
+        b = compute_plan(
+            playbook=_PLAYBOOK, inventory=inventory, run_id="r", timestamp=7
+        )
+        assert a.to_canonical_bytes() == b.to_canonical_bytes()
+
+    def test_conformant_environment_produces_an_empty_plan_not_silence(self) -> None:
+        """An empty diff is still an artifact, anchored to its inputs."""
+        playbook = {"forbidden": [{"surface": "s3.public-read", "clause": "C1"}]}
+        plan = compute_plan(
+            playbook=playbook,
+            inventory={"surfaces": []},
+            run_id="r",
+            timestamp=0,
+        )
+        assert plan.entries == ()
+        assert plan.inputs_hash.startswith("sha256:")
+        assert plan.to_canonical_bytes()
+
+    def test_every_entry_names_its_evidence_and_governing_clause(self) -> None:
+        inventory = {
+            "surfaces": [
+                {
+                    "surface": "s3.public-read",
+                    "observed_value": "true",
+                    "evidence_ref": "E1",
+                },
+                {
+                    "surface": "iam.max-role-count",
+                    "observed_value": "9.0",
+                    "evidence_ref": "E2",
+                },
+            ]
+        }
+        plan = compute_plan(
+            playbook=_PLAYBOOK, inventory=inventory, run_id="r", timestamp=0
+        )
+        assert plan.entries
+        for entry in plan.entries:
+            assert entry.playbook_clause, f"{entry.surface} names no clause"
+            if entry.kind is not PlanEntryKind.ABSENT:
+                assert entry.evidence_ref, f"{entry.surface} names no evidence"
+
+    def test_inputs_hash_changes_when_the_inventory_changes(self) -> None:
+        base = compute_plan(
+            playbook=_PLAYBOOK,
+            inventory={"surfaces": []},
+            run_id="r",
+            timestamp=0,
+        )
+        changed = compute_plan(
+            playbook=_PLAYBOOK,
+            inventory={
+                "surfaces": [
+                    {
+                        "surface": "s3.public-read",
+                        "observed_value": "true",
+                        "evidence_ref": "E1",
+                    }
+                ]
+            },
+            run_id="r",
+            timestamp=0,
+        )
+        assert base.inputs_hash != changed.inputs_hash
