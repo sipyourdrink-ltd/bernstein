@@ -211,7 +211,6 @@ class TestCustomMetricsEvaluator:
 
 class TestSeedMetricsParsing:
     def _write_seed(self, tmp_path: Path, content: str) -> Path:
-
         p = tmp_path / "bernstein.yaml"
         p.write_text(content, encoding="utf-8")
         return p
