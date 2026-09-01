@@ -57,11 +57,12 @@ uv run mypy src                     # type-check
 
 Top-level entry points exposed by the package:
 
-| Command            | Purpose |
-|--------------------|---------|
-| `bernstein`        | bernstein.cli.main:cli |
-| `bernstein-worker` | bernstein.core.worker:main |
-| `bernstein-bench`  | bernstein.eval.bench.bench_cli:bench_group |
+| Command                | Purpose |
+|------------------------|---------|
+| `bernstein`            | bernstein.cli.main:cli |
+| `bernstein-worker`     | bernstein.core.worker:main |
+| `bernstein-bench`      | bernstein.eval.bench.bench_cli:bench_group |
+| `verify-audit-receipt` | bernstein.core.verifier.audit_receipt_verifier:main |
 
 **Back-compat aliases.** Legacy import paths (e.g. `bernstein.core.orchestrator`) are served by a `sys.meta_path` finder, not by physical shim files. The mechanism lives in `src/bernstein/core/__init__.py` as `_CoreRedirectFinder` driven by the `_REDIRECT_MAP` dict - add new aliases there rather than creating shim modules at the old path.
 
