@@ -186,16 +186,16 @@ def _compare_values(observed: str, ceiling: str) -> int:
 
 
 __all__ = [
+    "DraftProposal",
     "Finding",
     "FindingsDocument",
-    "DraftProposal",
-    "ProposalStatus",
     "GovernPlan",
     "Inventory",
     "PlanEntry",
     "PlanEntryKind",
     "Playbook",
     "PlaybookClause",
+    "ProposalStatus",
     "Surface",
     "compute_plan",
 ]
