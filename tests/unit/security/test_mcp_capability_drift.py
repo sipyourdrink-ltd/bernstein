@@ -39,6 +39,7 @@ def test_first_contact_no_previous_digest(tmp_path: Path) -> None:
 
     event = record_mcp_capability_drift(
         chain=chain,
+        run_id="test-run-123",
         server_name="test-server",
         current_tools=("tool_a", "tool_b"),
     )
@@ -64,11 +65,13 @@ def test_drift_with_previous_tools_records_added_and_removed(tmp_path: Path) -> 
 
     record_mcp_capability_drift(
         chain=chain,
+        run_id="test-run-123",
         server_name="test-server",
         current_tools=("tool_a", "tool_b"),
     )
     event = record_mcp_capability_drift(
         chain=chain,
+        run_id="test-run-123",
         server_name="test-server",
         current_tools=("tool_b", "tool_c"),
         previous_tools=("tool_a", "tool_b"),
@@ -90,6 +93,7 @@ def test_identical_tools_no_drift(tmp_path: Path) -> None:
 
     event = record_mcp_capability_drift(
         chain=chain,
+        run_id="test-run-123",
         server_name="test-server",
         current_tools=("tool_a", "tool_b"),
         previous_tools=("tool_a", "tool_b"),
@@ -108,11 +112,13 @@ def test_digest_is_deterministic(tmp_path: Path) -> None:
 
     event_a = record_mcp_capability_drift(
         chain=chain_a,
+        run_id="test-run-123",
         server_name="test-server",
         current_tools=("tool_a", "tool_b", "tool_c"),
     )
     event_b = record_mcp_capability_drift(
         chain=chain_b,
+        run_id="test-run-123",
         server_name="test-server",
         current_tools=("tool_a", "tool_b", "tool_c"),
     )
@@ -126,11 +132,13 @@ def test_digest_changes_with_tool_order(tmp_path: Path) -> None:
 
     event_a = record_mcp_capability_drift(
         chain=chain,
+        run_id="test-run-123",
         server_name="test-server",
         current_tools=("tool_a", "tool_b"),
     )
     event_b = record_mcp_capability_drift(
         chain=chain,
+        run_id="test-run-123",
         server_name="test-server",
         current_tools=("tool_c", "tool_d"),
     )
@@ -143,6 +151,7 @@ def test_event_is_queryable(tmp_path: Path) -> None:
     chain = _create_chain(tmp_path)
     record_mcp_capability_drift(
         chain=chain,
+        run_id="test-run-123",
         server_name="test-server",
         current_tools=("tool_a",),
     )
@@ -158,11 +167,13 @@ def test_prev_chain_digest_is_set(tmp_path: Path) -> None:
 
     event1 = record_mcp_capability_drift(
         chain=chain,
+        run_id="test-run-123",
         server_name="test-server",
         current_tools=("tool_a",),
     )
     event2 = record_mcp_capability_drift(
         chain=chain,
+        run_id="test-run-123",
         server_name="test-server",
         current_tools=("tool_b",),
         previous_tools=("tool_a",),
@@ -178,6 +189,7 @@ def test_tamper_evidence_byte_flip_breaks_verification(tmp_path: Path) -> None:
     chain = _create_chain(tmp_path)
     record_mcp_capability_drift(
         chain=chain,
+        run_id="test-run-123",
         server_name="test-server",
         current_tools=("tool_a",),
     )
@@ -225,11 +237,13 @@ def test_clean_chain_verifies(tmp_path: Path) -> None:
     chain = _create_chain(tmp_path)
     record_mcp_capability_drift(
         chain=chain,
+        run_id="test-run-123",
         server_name="server-1",
         current_tools=("tool_a", "tool_b"),
     )
     record_mcp_capability_drift(
         chain=chain,
+        run_id="test-run-123",
         server_name="server-1",
         current_tools=("tool_a", "tool_c"),
         previous_tools=("tool_a", "tool_b"),
