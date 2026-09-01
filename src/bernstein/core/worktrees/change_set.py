@@ -35,7 +35,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from bernstein.core.git.git_ops import GitResult, run_git
+from bernstein.core.git.git_basic import GitResult, run_git
 from bernstein.core.worktrees.classifier import (
     DEFAULT_INTEGRATION_BRANCH,
     classify_worktrees,
