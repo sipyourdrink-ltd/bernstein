@@ -115,7 +115,7 @@ are operator-provided.
 
 Setting `lineage.customer_signing.kms_adapter: hsm` in `bernstein.yaml`
 does **not** ship a working PKCS#11 / Cloud-KMS client. The base
-`HSMKMSAdapter` in `bernstein.core.security.lineage_kms` is a
+`HSMKMSAdapter` in `bernstein.core.security.key_custody` is a
 documentation stub: every `sign()` call raises `NotImplementedError`.
 To use the `hsm` selector in production, ship a subclass that
 overrides both `sign()` and `public_key_jwk()`, import it before the
