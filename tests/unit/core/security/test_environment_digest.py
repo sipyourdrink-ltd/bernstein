@@ -73,3 +73,4 @@ def test_digest_is_deterministic():
     digest1 = compute_environment_digest("/work/proj", Plan1())
     digest2 = compute_environment_digest("/work/proj", Plan2())
     assert digest1 == digest2
+
