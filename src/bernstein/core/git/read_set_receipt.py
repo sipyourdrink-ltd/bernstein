@@ -19,9 +19,9 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.identity import AgentCard, sign_detached, verify_detached
 
-if TYPE_CHECKING:
-    from pathlib import Path
+from pathlib import Path
 
+if TYPE_CHECKING:
     from bernstein.core.security.audit import AuditEvent
     from bernstein.core.security.audit_chain import AuditChainStore
 
@@ -349,6 +349,7 @@ def verify_receipt_offline(receipt_bytes: bytes, chain_path: str) -> bool:
         from bernstein.core.security.audit_chain import AuditChainStore
 
         audit_log = AuditLog(Path(chain_path).parent)
+        chain = AuditChainStore(audit_log)
         chain_ok, _ = chain.verify()
         if not chain_ok:
             return False

@@ -218,12 +218,8 @@ def deliver_webhook(
     """
     body = payload.to_dict()
     own_client = client is None
-    
-    active_client: httpx.Client
-    if client is None:
-        active_client = httpx.Client()
-    else:
-        active_client = client
+
+    active_client: httpx.Client = httpx.Client() if client is None else client
 
     try:
         return _deliver_with_retry(target, body, active_client)
