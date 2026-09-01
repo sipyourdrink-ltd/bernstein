@@ -525,7 +525,6 @@ class TestExportFailureChainEvent:
 
         assert not result.success
 
-
         log = AuditLog(audit_dir=tmp_path, key=b"test-key-32-bytes-long!!!!!")
         events = log.query(event_type=EVENT_EXPORT_FAILURE)
 

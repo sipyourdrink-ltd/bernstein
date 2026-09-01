@@ -2372,8 +2372,7 @@ def verify_export_cmd(
                 )
             if declared_last != actual_last:
                 errors.append(
-                    f"segment_receipt.last_sequence={declared_last} does not match "
-                    f"last event sequence={actual_last}",
+                    f"segment_receipt.last_sequence={declared_last} does not match last event sequence={actual_last}",
                 )
             declared_head = receipt.get("chain_head_hash")
             actual_head = last_ev.get("hmac", "")

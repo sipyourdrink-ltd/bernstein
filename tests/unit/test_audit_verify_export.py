@@ -40,9 +40,7 @@ def _build_segment_receipt_payload(
     }
 
 
-def _make_events(
-    count: int, key: bytes | None = None
-) -> tuple[list[dict[str, object]], str]:
+def _make_events(count: int, key: bytes | None = None) -> tuple[list[dict[str, object]], str]:
     """Create a chain of events with prev_hmac and hmac linking.
 
     Returns (events, genesis_prev_hmac) where genesis_prev_hmac is the
@@ -118,9 +116,7 @@ def test_valid_bundle_passes_with_explicit_key(tmp_path: Path) -> None:
     key_path = tmp_path / "key.txt"
     key_path.write_bytes(key)
 
-    result = CliRunner().invoke(
-        audit_group, ["verify-export", "--bundle", str(bundle_path), "--key", str(key_path)]
-    )
+    result = CliRunner().invoke(audit_group, ["verify-export", "--bundle", str(bundle_path), "--key", str(key_path)])
     assert result.exit_code == 0, result.output
     assert "PASSED" in result.output
 
@@ -246,9 +242,7 @@ def test_invalid_signature_fails(tmp_path: Path) -> None:
     key_path = tmp_path / "key.txt"
     key_path.write_bytes(key)
 
-    result = CliRunner().invoke(
-        audit_group, ["verify-export", "--bundle", str(bundle_path), "--key", str(key_path)]
-    )
+    result = CliRunner().invoke(audit_group, ["verify-export", "--bundle", str(bundle_path), "--key", str(key_path)])
     assert result.exit_code == 1, result.output
     assert "FAILED" in result.output
     assert "signature" in result.output.lower()
