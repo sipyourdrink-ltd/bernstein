@@ -117,10 +117,15 @@ class TestCedarHook:
 
 
 class TestOPAHook:
-    def test_opa_binary_not_found_abstains(self) -> None:
+    def test_opa_binary_not_found_is_unavailable_not_abstain(self) -> None:
+        """A missing engine did not decide anything, so it must not read as a no-match.
+
+        This asserted ABSTAIN, which is what made an unreachable policy engine
+        indistinguishable from a policy that simply had no rule for the request (#4912).
+        """
         opa = OPAHook(policy_path="/nonexistent/policy.rego", opa_binary="/nonexistent/opa")
         resp = opa.evaluate(_req())
-        assert resp.verdict == HookVerdict.ABSTAIN
+        assert resp.verdict == HookVerdict.UNAVAILABLE
         assert resp.error
 
     def test_hook_name(self) -> None:
@@ -164,10 +169,17 @@ class TestPolicyHookRegistry:
             def evaluate(self, request: HookRequest) -> HookResponse:
                 raise RuntimeError("hook error")
 
+        # `evaluate` now reports what happened - the engine did not answer - and
+        # `first_decisive` is the single place that decides what unavailability MEANS.
+        # Resolving it in both is how `fail_open` came to be consulted on a path that
+        # could never run.
         registry = PolicyHookRegistry(fail_open=True)
         registry.register(FailingHook())
         responses = registry.evaluate(_req())
-        assert responses[0].verdict == HookVerdict.ALLOW
+        assert responses[0].verdict == HookVerdict.UNAVAILABLE
+        # fail_open: the unavailable engine is treated as having no opinion, so the
+        # registry falls through to its default rather than denying.
+        assert registry.first_decisive(_req()).verdict == HookVerdict.ABSTAIN
 
     def test_fail_closed_on_error(self) -> None:
         class FailingHook(ExternalPolicyHook):
@@ -181,7 +193,12 @@ class TestPolicyHookRegistry:
         registry = PolicyHookRegistry(fail_open=False)
         registry.register(FailingHook())
         responses = registry.evaluate(_req())
-        assert responses[0].verdict == HookVerdict.DENY
+        assert responses[0].verdict == HookVerdict.UNAVAILABLE
+        # The verdict a caller acts on: fail-closed turns unavailability into a DENY that
+        # says why, rather than into the all-abstained default.
+        decisive = registry.first_decisive(_req())
+        assert decisive.verdict == HookVerdict.DENY
+        assert "unavailable" in decisive.reason.lower()
 
     def test_first_decisive_skips_abstain(self) -> None:
         registry = PolicyHookRegistry()
