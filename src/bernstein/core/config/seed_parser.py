@@ -795,7 +795,7 @@ def _parse_role_model_policy(
     raw: object,
     *,
     local_endpoints: dict[str, dict[str, str]] | None = None,
-) -> dict[str, dict[str, str | int | float | list[dict[str, str | int]] | dict[str, object]]] | None:
+) -> dict[str, dict[str, _RolePolicyValue]] | None:
     """Parse optional role-specific provider/model overrides.
 
     ``local_endpoints`` is the parsed ``local_endpoints`` section (profile
@@ -808,7 +808,7 @@ def _parse_role_model_policy(
     if not isinstance(raw, dict):
         raise SeedError("role_model_policy must be a mapping of role -> settings")
 
-    parsed: dict[str, dict[str, str | int | float | list[dict[str, str | int]] | dict[str, object]]] = {}
+    parsed: dict[str, dict[str, _RolePolicyValue]] = {}
     for role, settings in raw.items():
         if not isinstance(role, str) or not role:
             raise SeedError("role_model_policy keys must be non-empty role strings")
@@ -868,6 +868,11 @@ _ROLE_POLICY_ESCALATION_BUDGET_KEY = "escalation_budget_usd"
 
 # Opt-in task-tier → model map (#4854). Nested mapping, validated separately.
 _ROLE_POLICY_TIER_MODELS_KEY = "tier_models"
+
+# One parsed ``role_model_policy.<role>`` setting. ``tier_models`` is spelled
+# out separately from ``dict[str, object]``: dict is invariant in its value
+# type, so the narrower parse result is not assignable to the wider member.
+_RolePolicyValue = str | int | float | list[dict[str, str | int]] | dict[str, str] | dict[str, object]
 
 # Endpoint fields that the ``endpoint`` profile reference pins; setting any of
 # them inline alongside ``endpoint`` is a conflict (the profile is the single
@@ -1033,7 +1038,7 @@ def _parse_single_role_policy(
     settings: object,
     *,
     local_endpoints: dict[str, dict[str, str]] | None = None,
-) -> dict[str, str | int | float | list[dict[str, str | int]] | dict[str, object]]:
+) -> dict[str, _RolePolicyValue]:
     """Parse and validate a single role's model policy settings.
 
     ``endpoint`` names a ``local_endpoints`` profile (see
@@ -1086,7 +1091,7 @@ def _parse_single_role_policy(
     if not isinstance(settings, dict):
         raise SeedError(f"role_model_policy[{role!r}] must be a mapping")
 
-    normalized: dict[str, str | int | float | list[dict[str, str | int]] | dict[str, object]] = {}
+    normalized: dict[str, _RolePolicyValue] = {}
     for key in _ROLE_POLICY_KEYS:
         value = settings.get(key)
         if value is None:
@@ -1197,7 +1202,6 @@ def _parse_single_role_policy(
             f"role_model_policy[{role!r}]: ladder and tier_models are mutually exclusive; "
             "both select a model and their interaction is undefined"
         )
-
 
     allowed_keys = (
         set(_ROLE_POLICY_KEYS)
