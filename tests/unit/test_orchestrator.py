@@ -2068,7 +2068,13 @@ class TestFileOwnership:
         )
         orch = _build_orchestrator(tmp_path, transport, adapter=adapter, config=config)
 
-        orch._file_ownership["src/owned.py"] = "backend-stale"
+        # Use lock_manager to acquire ownership (property is now read-only)
+        orch._lock_manager.acquire(
+            ["src/owned.py"],
+            agent_id="backend-stale",
+            task_id="T-stale",
+            task_title="Stale task",
+        )
         session = AgentSession(
             id="backend-stale",
             role="backend",
