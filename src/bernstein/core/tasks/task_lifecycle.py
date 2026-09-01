@@ -189,7 +189,7 @@ def _get_active_agent_files(orch: Any) -> set[str]:
     """Return the set of files currently being edited by active agents.
 
     Inspects the git diff in each active agent's worktree to discover which
-    files have uncommitted changes.  Falls back to ``_file_ownership`` entries
+    files have uncommitted changes.  Falls back to ``FileLockManager`` entries
     for agents whose worktree cannot be inspected.
 
     Args:
@@ -200,6 +200,7 @@ def _get_active_agent_files(orch: Any) -> set[str]:
     """
     active_files: set[str] = set()
     spawner = getattr(orch, "_spawner", None)
+    lock_manager = getattr(orch, "_lock_manager", None)
 
     for agent_id, session in orch._agents.items():
         if session.status == "dead":
@@ -212,10 +213,10 @@ def _get_active_agent_files(orch: Any) -> set[str]:
         if worktree_path is not None:
             changed = _get_changed_files_in_worktree(worktree_path)
             active_files.update(changed)
-        # Also include statically declared owned_files from file_ownership
-        for fpath, owner in orch._file_ownership.items():
-            if owner == agent_id:
-                active_files.add(fpath)
+        # Also include statically declared owned_files from the lock manager
+        if lock_manager is not None:
+            for lock in lock_manager.locks_for_agent(agent_id):
+                active_files.add(lock.file_path)
 
     return active_files
 
@@ -5475,8 +5476,9 @@ def _get_git_diff_text_in_worktree(worktree_path: Path) -> str:
 def _claim_file_ownership(orch: Any, agent_id: str, tasks: list[Task]) -> None:
     """Register file ownership for files in the given tasks.
 
-    Uses :class:`~bernstein.core.file_locks.FileLockManager` when available,
-    falling back to the legacy ``_file_ownership`` dict for compatibility.
+    Uses :class:`~bernstein.core.file_locks.FileLockManager` as the single
+    source of truth.  The legacy ``_file_ownership`` attribute is a read-only
+    projection of it; there is no longer a fallback path.
 
     Also claims ownership for paths inferred from the task title/description
     (CRITICAL-007) so that subsequent ``check_file_overlap`` calls detect
@@ -5501,9 +5503,6 @@ def _claim_file_ownership(orch: Any, agent_id: str, tasks: list[Task]) -> None:
                 task_id=task.id,
                 task_title=task.title,
             )
-        # Keep legacy dict in sync so existing code that reads _file_ownership still works
-        for fpath in all_files:
-            orch._file_ownership[fpath] = agent_id
 
 
 # ---------------------------------------------------------------------------
