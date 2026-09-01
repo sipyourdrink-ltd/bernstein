@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from io import StringIO
+    pass
 
 # Wire-format constants. These MUST match the values hard-coded in the
 # production receipt module (src/bernstein/core/security/audit_receipt.py).
@@ -76,6 +76,17 @@ class VerifyResult:
     def ok(self) -> bool:
         """True iff every check that ran reported success."""
         return all(c.ok for c in self.checks)
+
+    @property
+    def errors(self) -> list[str]:
+        """Failure detail strings for every failing check."""
+        return [c.detail for c in self.checks if not c.ok]
+
+    @property
+    def stats(self) -> str:
+        """Human-readable summary: count of passed vs total checks."""
+        n_ok = sum(1 for c in self.checks if c.ok)
+        return f"{n_ok}/{len(self.checks)} checks passed"
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +152,10 @@ def _root_from_inclusion(leaf_hash: str, audit_path: list[dict[str, Any]]) -> st
     node = leaf_hash
     for step in audit_path:
         sibling = str(step.get("hash", ""))
-        node = _combine_internal(sibling, node) if step.get("left") else _combine_internal(node, sibling)
+        if step.get("left"):
+            node = _combine_internal(sibling, node)
+        else:
+            node = _combine_internal(node, sibling)
     return node
 
 
@@ -223,7 +237,9 @@ def _resolve_public_key(
         # Confirm the embedded JWK matches the pinned PEM.
         embedded_key = _public_key_from_jwk(embedded_jwk)
         raw_pin = key.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-        raw_emb = embedded_key.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+        raw_emb = embedded_key.public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        )
         if raw_pin != raw_emb:
             raise ValueError("embedded receipt key does not match the pinned --public-key")
         return key, "pinned-pem"
@@ -249,7 +265,10 @@ def verify_subject_binding(receipt: dict[str, Any]) -> tuple[CheckResult, str]:
     """
     events = receipt.get("events")
     if not isinstance(events, list):
-        return CheckResult("subject_binding", ok=False, detail="receipt.events missing or not a list"), ""
+        return (
+            CheckResult("subject_binding", ok=False, detail="receipt.events missing or not a list"),
+            "",
+        )
     recomputed = recompute_head_sha256(events)
     subject_digest = str(((receipt.get("subject") or {}).get("digest") or {}).get("sha256", ""))
     range_head = str((receipt.get("range") or {}).get("head_sha256", ""))
@@ -259,7 +278,10 @@ def verify_subject_binding(receipt: dict[str, Any]) -> tuple[CheckResult, str]:
             CheckResult(
                 "subject_binding",
                 ok=False,
-                detail=f"recomputed head {recomputed[:16]}… != subject {subject_digest[:16]}… (chain tampered)",
+                detail=(
+                    f"recomputed head {recomputed[:16]}… "
+                    f"!= subject {subject_digest[:16]}… (chain tampered)"
+                ),
             ),
             recomputed,
         )
@@ -268,7 +290,10 @@ def verify_subject_binding(receipt: dict[str, Any]) -> tuple[CheckResult, str]:
             CheckResult(
                 "subject_binding",
                 ok=False,
-                detail=f"recomputed head {recomputed[:16]}… != range.head_sha256 {range_head[:16]}…",
+                detail=(
+                    f"recomputed head {recomputed[:16]}… "
+                    f"!= range.head_sha256 {range_head[:16]}…"
+                ),
             ),
             recomputed,
         )
@@ -308,7 +333,9 @@ def verify_cose(receipt: dict[str, Any], public_key: Any, recomputed_head: str) 
         return CheckResult("cose", ok=False, detail=f"protected header decode failed: {exc}")
 
     if protected_map.get(COSE_LABEL_ALG) != COSE_ALG_EDDSA:
-        return CheckResult("cose", ok=False, detail=f"unexpected COSE alg: {protected_map.get(COSE_LABEL_ALG)!r}")
+        return CheckResult(
+            "cose", ok=False, detail=f"unexpected COSE alg: {protected_map.get(COSE_LABEL_ALG)!r}"
+        )
 
     # Build Sig_structure per RFC 9052 §4.4 and verify.
     sig_structure = ["Signature1", protected_bstr, b"", payload]
@@ -327,7 +354,10 @@ def verify_cose(receipt: dict[str, Any], public_key: Any, recomputed_head: str) 
         return CheckResult(
             "cose",
             ok=False,
-            detail=f"COSE payload {bytes(payload).hex()[:16]}… != recomputed head {recomputed_head[:16]}…",
+            detail=(
+                f"COSE payload {bytes(payload).hex()[:16]}… "
+                f"!= recomputed head {recomputed_head[:16]}…"
+            ),
         )
     return CheckResult("cose", ok=True, detail="COSE_Sign1 EdDSA verified, payload bound to head")
 
@@ -376,20 +406,29 @@ def verify_intoto(receipt: dict[str, Any], public_key: Any, recomputed_head: str
         return CheckResult("intoto", ok=False, detail=f"statement JSON decode failed: {exc}")
 
     if statement.get("_type") != IN_TOTO_STATEMENT_TYPE:
-        return CheckResult("intoto", ok=False, detail=f"unexpected statement _type {statement.get('_type')!r}")
+        return CheckResult(
+            "intoto", ok=False, detail=f"unexpected statement _type {statement.get('_type')!r}"
+        )
 
     subjects = statement.get("subject") or []
-    digests = [str((s.get("digest") or {}).get("sha256", "")) for s in subjects if isinstance(s, dict)]
+    digests = [
+        str((s.get("digest") or {}).get("sha256", "")) for s in subjects if isinstance(s, dict)
+    ]
     if recomputed_head not in digests:
         return CheckResult(
             "intoto",
             ok=False,
-            detail=f"recomputed head {recomputed_head[:16]}… not in statement subject digests",
+            detail=(
+                f"recomputed head {recomputed_head[:16]}… "
+                f"not in statement subject digests"
+            ),
         )
     return CheckResult("intoto", ok=True, detail="DSSE/in-toto verified, subject bound to head")
 
 
-def verify_transparency(receipt: dict[str, Any], public_key: Any, recomputed_head: str) -> CheckResult:
+def verify_transparency(
+    receipt: dict[str, Any], public_key: Any, recomputed_head: str
+) -> CheckResult:
     """Verify transparency STH signature, Merkle root, and inclusion proof (RFC 6962)."""
     from cryptography.exceptions import InvalidSignature
 
@@ -406,7 +445,9 @@ def verify_transparency(receipt: dict[str, Any], public_key: Any, recomputed_hea
     # 1. STH signature over canonical signed-tree-head JSON.
     sig_b64 = sth.get("signature_b64")
     if not isinstance(sig_b64, str):
-        return CheckResult("transparency", ok=False, detail="signed_tree_head.signature_b64 missing")
+        return CheckResult(
+            "transparency", ok=False, detail="signed_tree_head.signature_b64 missing"
+        )
 
     signed = {
         "tree_size": tree_size,
@@ -416,7 +457,9 @@ def verify_transparency(receipt: dict[str, Any], public_key: Any, recomputed_hea
     try:
         public_key.verify(base64.b64decode(sig_b64), _canonical_json_bytes(signed))
     except InvalidSignature:
-        return CheckResult("transparency", ok=False, detail="signed tree head signature does not verify")
+        return CheckResult(
+            "transparency", ok=False, detail="signed tree head signature does not verify"
+        )
     except Exception as exc:
         return CheckResult("transparency", ok=False, detail=f"STH verify error: {exc}")
 
@@ -425,7 +468,10 @@ def verify_transparency(receipt: dict[str, Any], public_key: Any, recomputed_hea
         return CheckResult(
             "transparency",
             ok=False,
-            detail=f"STH subject {subject_sha256[:16]}… != recomputed head {recomputed_head[:16]}…",
+            detail=(
+                f"STH subject {subject_sha256[:16]}… "
+                f"!= recomputed head {recomputed_head[:16]}…"
+            ),
         )
 
     # 3. Rebuild Merkle root from embedded events and compare.
@@ -442,7 +488,10 @@ def verify_transparency(receipt: dict[str, Any], public_key: Any, recomputed_hea
         return CheckResult(
             "transparency",
             ok=False,
-            detail=f"rebuilt Merkle root {rebuilt_root[:16]}… != STH root {root_hash[:16]}… (chain tampered)",
+            detail=(
+                f"rebuilt Merkle root {rebuilt_root[:16]}… "
+                f"!= STH root {root_hash[:16]}… (chain tampered)"
+            ),
         )
 
     # 4. Inclusion proof of the chain-head (last) leaf.
@@ -451,15 +500,24 @@ def verify_transparency(receipt: dict[str, Any], public_key: Any, recomputed_hea
         leaf_hash = str(proof.get("leaf_hash", ""))
         audit_path = proof.get("audit_path") or []
         if leaf_index != len(leaves) - 1 or leaf_hash != leaves[-1]:
-            return CheckResult("transparency", ok=False, detail="inclusion proof does not target the chain-head leaf")
+            return CheckResult(
+                "transparency",
+                ok=False,
+                detail="inclusion proof does not target the chain-head leaf",
+            )
         proven_root = _root_from_inclusion(leaf_hash, audit_path)
         if proven_root != root_hash:
             return CheckResult(
                 "transparency",
                 ok=False,
-                detail=f"inclusion proof root {proven_root[:16]}… != STH root {root_hash[:16]}…",
+                detail=(
+                    f"inclusion proof root {proven_root[:16]}… "
+                    f"!= STH root {root_hash[:16]}…"
+                ),
             )
-    return CheckResult("transparency", ok=True, detail="RFC6962 STH signed, root + inclusion proof verified")
+    return CheckResult(
+        "transparency", ok=True, detail="RFC6962 STH signed, root + inclusion proof verified"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -505,7 +563,9 @@ def run_verify(
 
     # Resolve public key.
     try:
-        public_key, note = _resolve_public_key(receipt, pinned_jwk=pinned_jwk, pinned_pem=pinned_pem)
+        public_key, note = _resolve_public_key(
+            receipt, pinned_jwk=pinned_jwk, pinned_pem=pinned_pem
+        )
     except ValueError as exc:
         check = CheckResult("public_key", ok=False, detail=str(exc))
         result.checks.append(check)
@@ -548,9 +608,11 @@ def run_verify(
 def _build_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser."""
     parser = argparse.ArgumentParser(
-        description="Verify a Bernstein audit receipt without importing the bernstein package.",
+        description="Verify a Bernstein audit receipt without importing the bernstein package."
     )
-    parser.add_argument("--receipt", required=True, type=Path, help="Path to the audit receipt JSON.")
+    parser.add_argument(
+        "--receipt", required=True, type=Path, help="Path to the audit receipt JSON."
+    )
     parser.add_argument(
         "--jwk",
         type=Path,
@@ -615,4 +677,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main)
