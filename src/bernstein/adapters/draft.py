@@ -253,9 +253,7 @@ def load_profile_from_draft(path: Path) -> Draft:
     # Validate required sections
     missing_sections = [s for s in ("invocation", "provenance") if s not in document]
     if missing_sections:
-        raise ValueError(
-            f"draft document at {path} missing required section(s): {', '.join(missing_sections)}"
-        )
+        raise ValueError(f"draft document at {path} missing required section(s): {', '.join(missing_sections)}")
 
     invocation_data = document["invocation"]
     provenance_data = document["provenance"]
@@ -264,9 +262,7 @@ def load_profile_from_draft(path: Path) -> Draft:
     required_invocation_fields = {"binary"}
     missing_fields = [f for f in required_invocation_fields if f not in invocation_data]
     if missing_fields:
-        raise ValueError(
-            f"draft document at {path} missing required invocation field(s): {', '.join(missing_fields)}"
-        )
+        raise ValueError(f"draft document at {path} missing required invocation field(s): {', '.join(missing_fields)}")
 
     # Reconstruct InvocationSpec
     invocation = InvocationSpec(
