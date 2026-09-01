@@ -224,6 +224,14 @@ Refusal codes: `underivable_step`, `head_mismatch`, `plan_missing`,
 `journal_unreadable`, `journal_not_found`. `--as-json` emits them alongside
 `step_index`, `rule`, `recorded_head` and `derived_head`.
 
+`plan.graph.full` is appended on normal ticks only (every sixth tick, and the
+first tick is always a fast tick), so a run that finished in fewer ticks than
+that recorded no planning output and re-derives to `plan_missing`. That is a
+gap in what the run recorded, not a fault in the run: there is nothing to
+re-derive the dependency gate from. For the same reason the dependency gate is
+skipped for claims that precede the first graph event, rather than reporting a
+missing input as a coordination fault.
+
 Capsule-governed finalization can seal the journal head and event count outside
 the journal. Where that seal exists, finished-journal identity and artifact
 provenance can share an independently committed root; most task journals do
