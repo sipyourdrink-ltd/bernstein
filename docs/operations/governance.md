@@ -79,3 +79,6 @@ The `--bindings` file is a signed `RoleBindings` JSON (`RoleBindings.to_dict()`)
 decision is also mirrored into the HMAC audit chain as a `governance.decision`
 event, so an operator can confirm from the chain alone that a decision bound the
 claimed inputs to a named spine entry.
+
+Inventory topology (a different group) is `bernstein govern inventory --render`.
+See [govern inventory --render](govern-inventory.md).

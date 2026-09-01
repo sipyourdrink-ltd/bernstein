@@ -435,6 +435,7 @@ nav:
           - Security operations: operations/security.md
           - Hardening: security/security-hardening.md
           - Governance: operations/governance.md
+          - Inventory topology: operations/govern-inventory.md
           - Secrets & creds: operations/secrets.md
           - Secrets broker: security/secrets-broker.md
           - Env isolation: operations/env-isolation.md
@@ -591,6 +592,7 @@ nav:
           - Task lifecycle: architecture/LIFECYCLE.md
           - Agent lifecycle diagram: diagrams/agent_lifecycle.md
           - Task lifecycle diagram: diagrams/task_lifecycle.md
+          - Inventory topology diagram: diagrams/inventory_topology.md
           - Graphs: architecture/graphs.md
           - Dependency resolver: architecture/DEPENDENCY_RESOLVER.md
           - Quality pipeline: architecture/quality-pipeline.md
