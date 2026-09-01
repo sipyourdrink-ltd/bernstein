@@ -33,7 +33,7 @@ from bernstein.core.identity.spiffe.svid import SvidReference
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from bernstein.core.security.agent_identity import AgentIdentityCard
+    from bernstein.core.identity.agent_card import AgentIdentityCard
     from bernstein.core.security.audit import AuditEvent
     from bernstein.core.security.audit_chain import AuditChainStore
 

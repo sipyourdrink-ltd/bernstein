@@ -119,7 +119,7 @@ def _list_identities(status_filter: str) -> None:
     """Display agent identities from the identity store."""
     from rich.table import Table
 
-    from bernstein.core.agent_identity import AgentIdentityStatus, AgentIdentityStore
+    from bernstein.core.identity.agent_jwt import AgentIdentityStatus, AgentIdentityStore
 
     store = AgentIdentityStore(Path(".sdd/auth"))
     filter_status = AgentIdentityStatus(status_filter) if status_filter != "all" else None

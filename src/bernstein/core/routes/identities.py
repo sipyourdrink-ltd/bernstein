@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 
 # Runtime import (not type-only): FastAPI resolves this annotation at
 # route-registration time to build the query-param validator.
-from bernstein.core.agent_identity import AgentIdentityStatus  # noqa: TC001
+from bernstein.core.identity.agent_jwt import AgentIdentityStatus  # noqa: TC001
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -20,7 +20,7 @@ router = APIRouter(tags=["identities"])
 
 def _identity_store(request: Request) -> Any:
     """Lazily create or retrieve the identity store from app state."""
-    from bernstein.core.agent_identity import AgentIdentityStore
+    from bernstein.core.identity.agent_jwt import AgentIdentityStore
 
     store = getattr(request.app.state, "identity_store", None)
     if store is None:

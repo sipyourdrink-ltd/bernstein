@@ -10,6 +10,7 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, cast
 
+from bernstein.core.identity.agent_card import AgentIdentityCard
 from bernstein.core.security.agent_card_signer import (
     AgentCardSignature,
     canonicalize_jcs,
@@ -17,7 +18,6 @@ from bernstein.core.security.agent_card_signer import (
     ed25519_public_jwk,
     verify_agent_card,
 )
-from bernstein.core.security.agent_identity import AgentIdentityCard
 from bernstein.core.security.audit_chain import (
     EVENT_IDENTITY_SPAWN_ATTESTATION,
     AuditChainStore,

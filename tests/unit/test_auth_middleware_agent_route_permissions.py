@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from fastapi.testclient import TestClient
 
-from bernstein.core.agents.agent_identity import permissions_for_role
+from bernstein.core.identity.agent_jwt import permissions_for_role
 from bernstein.core.security.auth_middleware import _get_required_permission
 
 if TYPE_CHECKING:

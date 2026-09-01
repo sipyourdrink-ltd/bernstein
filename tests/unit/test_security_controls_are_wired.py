@@ -45,7 +45,7 @@ PACKAGE = REPO_ROOT / "src" / "bernstein" / "core" / "security"
 SEARCHED = ("src", "tests", "scripts")
 SELF = Path(__file__).resolve()
 
-#: The 24 PROVED uncalled when this guard landed: each name appears nowhere outside its
+#: The PROVED uncalled when this guard landed: each name appears nowhere outside its
 #: own module, in any file, in any form. Pre-existing debt, deliberately not fixed here -
 #: each needs its own judgement about wiring versus deleting, and two of them
 #: (post_tool_enforcement) are the subject of #4992 and labelled P0.
@@ -56,7 +56,6 @@ SELF = Path(__file__).resolve()
 #: SHRINK ONLY - `test_no_stale_exemptions` fails once one gains a reference.
 KNOWN_UNCALLED: frozenset[str] = frozenset(
     {
-        "agent_identity.py:v1_0_hash_enabled",
         "audit_chain.py:record_expectation_expired",
         "audit_chain.py:record_pool_claim_receipt",
         "audit_chain.py:record_pool_retired",

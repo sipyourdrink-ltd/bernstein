@@ -89,7 +89,7 @@ Total: ~2,600 LOC across 5 agents.
 | `core/security/lineage_kms.py` (432 LOC) | KMS-backed key storage | Read |
 | `core/security/audit_head_signature.py` (255 LOC) | HMAC head signing pattern | Read |
 | `core/persistence/merkle.py` | Merkle tree primitive | Read (verify chain) |
-| `core/agents/agent_identity.py` (862 LOC) | Ed25519 keypair per agent | Read + extend Agent Card emit |
+| `core/identity/agent_jwt.py` (862 LOC) | Ed25519 keypair per agent | Read + extend Agent Card emit |
 | `core/security/audit.py` | HMAC envelope | Wrap |
 | `core/observability/lineage_alert.py` (171 LOC) | Alert routing | Wire conflict events |
 | `core/git/commit_provenance.py` (356 LOC) | Trailer format | Cross-reference |

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from bernstein.core.security.agent_identity import (
+from bernstein.core.identity.agent_card import (
     AgentIdentityCard,
     check_capability,
     issue_identity_card,

@@ -70,7 +70,7 @@ if TYPE_CHECKING:
 # ``bernstein.core.cost.budget_countdown``) to keep this adapter free of
 # scheduler-internal transitive dependencies - see ``.importlinter``
 # contract ``adapters-no-scheduler``. Source of truth for both constants
-# is :mod:`bernstein.core.cost.budget_countdown` / :mod:`bernstein.core.security.agent_identity`.
+# is :mod:`bernstein.core.cost.budget_countdown` / :mod:`bernstein.core.identity.agent_card`.
 _TASK_BUDGETS_OPT_IN_ENV: str = "BERNSTEIN_ANTHROPIC_TASK_BUDGETS"
 _TASK_BUDGETS_BETA_VALUE: str = "task-budgets-2026-03-13"
 

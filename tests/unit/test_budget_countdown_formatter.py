@@ -16,7 +16,7 @@ from bernstein.core.cost.budget_countdown import (
     task_budgets_env_overlay,
 )
 from bernstein.core.cost.cost_tracker import CostTracker
-from bernstein.core.security.agent_identity import (
+from bernstein.core.identity.agent_card import (
     TASK_BUDGETS_BETA_HEADER,
     AgentIdentityCard,
     issue_identity_card,

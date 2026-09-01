@@ -16,8 +16,9 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-import bernstein
 import pytest
+
+import bernstein
 
 #: Packages whose own modules must not collide by basename. Nested
 #: sub-packages (``security/vault``, ``identity/spiffe``) are deliberately

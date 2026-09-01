@@ -6,7 +6,8 @@ import time
 from typing import TYPE_CHECKING, get_args, get_type_hints
 
 import pytest
-from bernstein.core.agent_identity import (
+
+from bernstein.core.identity.agent_jwt import (
     _CREDENTIAL_TOKEN_TYPES,
     AgentCredential,
     AgentIdentity,
@@ -253,7 +254,7 @@ class TestAgentIdentityStore:
         store.create_identity("backend-abc", "backend")
         store.create_identity("backend-def", "backend")
 
-        with caplog.at_level("INFO", logger="bernstein.core.agents.agent_identity"):
+        with caplog.at_level("INFO", logger="bernstein.core.identity.agent_jwt"):
             assert store.revoke("backend-abc", reason="line1\nline2")
             assert store.suspend("backend-def", reason="line3\rline4")
 

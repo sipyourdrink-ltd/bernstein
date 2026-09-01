@@ -78,7 +78,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from bernstein.core.agents.agent_identity import (
+from bernstein.core.identity.agent_jwt import (
     PERM_AGENTS_READ,
     PERM_AGENTS_SPAWN,
     PERM_CONFIG_READ,

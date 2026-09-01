@@ -10,12 +10,12 @@ from typing import Any
 import pytest
 from bernstein.core.models import Task
 
+from bernstein.core.identity.agent_card import AgentIdentityCard
 from bernstein.core.lineage.identity import AgentCard
 from bernstein.core.lineage.signed_write import SignedLineageLog
 from bernstein.core.lineage.store import LineageStore
 from bernstein.core.quality.janitor import run_janitor, verify_lineage_tool_call_gate
 from bernstein.core.security.agent_card_signer import generate_ed25519_keypair, sign_agent_card
-from bernstein.core.security.agent_identity import AgentIdentityCard
 from bernstein.core.security.audit_chain import AuditChainStore
 from bernstein.core.security.identity_spawn_anchor import IdentitySpawnAnchor
 from bernstein.core.security.native_toolcall_evidence import NativeToolCallEvidenceProvider

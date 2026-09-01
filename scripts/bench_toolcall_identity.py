@@ -12,11 +12,11 @@ import time
 from pathlib import Path
 from typing import Any
 
+from bernstein.core.identity.agent_card import AgentIdentityCard
 from bernstein.core.lineage.identity import AgentCard
 from bernstein.core.persistence.wal import WALWriter
 from bernstein.core.protocols.mcp.mcp_gateway import MCPGateway
 from bernstein.core.security.agent_card_signer import generate_ed25519_keypair, sign_agent_card
-from bernstein.core.security.agent_identity import AgentIdentityCard
 from bernstein.core.security.audit_chain import AuditChainStore
 from bernstein.core.security.identity_spawn_anchor import IdentitySpawnAnchor
 from bernstein.core.security.native_toolcall_evidence import NativeToolCallEvidenceProvider

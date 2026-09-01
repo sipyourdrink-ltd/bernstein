@@ -17,6 +17,7 @@ from typing import Any
 from hypothesis import given
 from hypothesis import strategies as st
 
+from bernstein.core.identity.agent_card import AgentIdentityCard
 from bernstein.core.security.agent_card_signer import (
     AgentCardSignature,
     canonicalize_jcs,
@@ -24,7 +25,6 @@ from bernstein.core.security.agent_card_signer import (
     sign_agent_card,
     verify_agent_card,
 )
-from bernstein.core.security.agent_identity import AgentIdentityCard
 
 _ALPHABET = st.characters(min_codepoint=0x20, max_codepoint=0x7E)
 _TEXT = st.text(_ALPHABET, min_size=1, max_size=16)

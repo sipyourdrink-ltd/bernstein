@@ -35,7 +35,7 @@ _REDIRECT_MAP: dict[str, str] = {
     "agent_cache": "bernstein.core.agents.agent_cache",
     "agent_cost_ledger": "bernstein.core.agents.agent_cost_ledger",
     "agent_discovery": "bernstein.core.agents.agent_discovery",
-    "agent_identity": "bernstein.core.agents.agent_identity",
+    "agent_identity": "bernstein.core.identity.agent_jwt",
     "agent_ipc": "bernstein.core.agents.agent_ipc",
     "agent_lifecycle": "bernstein.core.agents.agent_lifecycle",
     "agent_log_aggregator": "bernstein.core.agents.agent_log_aggregator",
@@ -586,6 +586,52 @@ _REDIRECT_MAP: dict[str, str] = {
 }
 
 
+#: Module paths that no longer exist and must not resolve to anything.
+#:
+#: ``agent_identity.py`` existed twice - once under ``core/agents/`` holding the
+#: JWT-backed identity, once under ``core/security/`` holding the Ed25519 card -
+#: with unrelated types that both answered "who is this agent". Both moved into
+#: ``core/identity/`` (issue #5097). A redirect entry would have forwarded the
+#: old paths silently and left callers straddling two namespaces indefinitely,
+#: so these fail the import and name where the contents went. Kept for one
+#: release, then deleted along with the finder below.
+_TOMBSTONE_MAP: dict[str, str] = {
+    "agents.agent_identity": "bernstein.core.identity.agent_jwt",
+    "security.agent_identity": "bernstein.core.identity.agent_card",
+}
+
+
+class _CoreTombstoneFinder(MetaPathFinder):
+    """Fail the import of a retired ``bernstein.core`` module, naming its successor.
+
+    Registered after the standard path finder, so it only ever sees names that
+    no file on disk answers. Raising here rather than returning ``None`` is the
+    point: without it a retired module surfaces as a bare
+    ``ModuleNotFoundError`` that says nothing about where the code went.
+    """
+
+    _PREFIX = "bernstein.core."
+
+    def find_spec(
+        self,
+        fullname: str,
+        path: object = None,
+        target: object = None,
+    ) -> ModuleSpec | None:
+        """Raise ImportError for a tombstoned module; defer on everything else."""
+        if not fullname.startswith(self._PREFIX):
+            return None
+        successor = _TOMBSTONE_MAP.get(fullname[len(self._PREFIX) :])
+        if successor is None:
+            return None
+        msg = (
+            f"{fullname} was removed; import {successor} instead. Agent identity now has "
+            "one type, bernstein.core.identity.agent.AgentPrincipal, that both credential "
+            "formats resolve to."
+        )
+        raise ImportError(msg, name=fullname)
+
+
 class _CoreRedirectFinder(MetaPathFinder):
     """Redirect ``bernstein.core.<old_name>`` to ``bernstein.core.<subpkg>.<old_name>``.
 
@@ -640,6 +686,9 @@ class _CoreRedirectLoader:
         return None
 
 
-# Register the finder once at import time
+# Register the finders once at import time. The tombstone finder goes first of
+# the two so a retired name can never be served by a stale redirect entry.
+if not any(isinstance(f, _CoreTombstoneFinder) for f in sys.meta_path):
+    sys.meta_path.append(_CoreTombstoneFinder())
 if not any(isinstance(f, _CoreRedirectFinder) for f in sys.meta_path):
     sys.meta_path.append(_CoreRedirectFinder())

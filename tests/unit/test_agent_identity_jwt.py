@@ -8,8 +8,9 @@ import time
 from pathlib import Path
 
 import pytest
-from bernstein.core.agent_identity import AgentIdentityStore
 from bernstein.core.auth import verify_jwt
+
+from bernstein.core.identity.agent_jwt import AgentIdentityStore
 
 
 def _token_hash(token: str) -> str:
@@ -99,7 +100,7 @@ def test_expired_jwt_token_is_rejected(tmp_path: Path, monkeypatch: pytest.Monke
     future_time = float(time.time() + 10_000)
 
     monkeypatch.setattr("bernstein.core.auth.time.time", lambda: future_time)
-    monkeypatch.setattr("bernstein.core.agent_identity.time.time", lambda: future_time)
+    monkeypatch.setattr("bernstein.core.identity.agent_jwt.time.time", lambda: future_time)
 
     assert store.authenticate(token) is None
 
