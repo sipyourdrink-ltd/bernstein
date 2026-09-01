@@ -80,7 +80,7 @@ class HookRequest:
     metadata: dict[str, Any] = field(default_factory=dict[str, Any])
 
 
-def request_digest(request: HookRequest) -> str:
+def _request_digest(request: HookRequest) -> str:
     """Return the SHA-256 digest of *request* in RFC 8785 canonical form.
 
     The digest covers every field including ``metadata``, so a holder of the
@@ -567,26 +567,24 @@ class PolicyHookRegistry:
             List of responses from all hooks.
         """
         responses: list[HookResponse] = []
-        digest = request_digest(request) if self._audit_chain is not None else ""
+        digest = _request_digest(request) if self._audit_chain is not None else ""
         for hook in self._hooks:
             try:
                 response = hook.evaluate(request)
-                responses.append(response)
             except Exception as exc:
                 # An escaping exception is an engine that did not answer, like any other
                 # unavailability. Reported as UNAVAILABLE rather than resolved to
                 # ALLOW/DENY here so that ONE place decides what unavailability means -
                 # `first_decisive`, which honours `fail_open`. Deciding it twice is how
                 # the flag came to be consulted on a path that could never run.
-                responses.append(
-                    HookResponse(
-                        hook_name=hook.name,
-                        verdict=HookVerdict.UNAVAILABLE,
-                        reason=f"Hook error: {exc}",
-                        error=str(exc),
-                    ),
+                response = HookResponse(
+                    hook_name=hook.name,
+                    verdict=HookVerdict.UNAVAILABLE,
+                    reason=f"Hook error: {exc}",
+                    error=str(exc),
                 )
-            self._record(request, responses[-1], digest)
+            responses.append(response)
+            self._record(request, response, digest)
         return responses
 
     def _record(self, request: HookRequest, response: HookResponse, digest: str) -> None:
