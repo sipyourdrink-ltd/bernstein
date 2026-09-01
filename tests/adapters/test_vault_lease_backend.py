@@ -121,7 +121,7 @@ def test_put_issues_lease_and_caches_secret(backend: VaultLeaseBackend, fake_htt
 
     # Verify the Vault API was called.
     assert len(fake_http.requests) == 1
-    method, path, body = fake_http.requests[0]
+    method, path, _ = fake_http.requests[0]
     assert method == "POST"
     assert "/secret/creds/github" in path
 

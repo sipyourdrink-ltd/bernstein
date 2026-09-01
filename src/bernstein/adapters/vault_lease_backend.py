@@ -16,7 +16,9 @@ Usage::
         mount_path="secret",
         role="bernstein-agent",
     )
-    backend.put("my-provider", StoredSecret(secret="...", account="user@example.com", fingerprint="abc123", created_at="..."))
+    backend.put("my-provider", StoredSecret(
+        secret="...", account="user@example.com", fingerprint="abc123", created_at="..."
+    ))
     secret = backend.get("my-provider")
     backend.revoke("my-provider")  # explicitly revoke the lease
 """
@@ -215,7 +217,7 @@ class VaultLeaseBackend(CredentialVault):
     def _revoke_lease(self, lease_id: str) -> bool:
         """Revoke a Vault lease by its lease_id."""
         try:
-            self._request("POST", f"sys/leases/revoke", {"lease_id": lease_id})
+            self._request("POST", "sys/leases/revoke", {"lease_id": lease_id})
             return True
         except VaultLeaseError as exc:
             logger.warning("Failed to revoke lease %s: %s", lease_id, exc)

@@ -1,3 +1,9 @@
-## VaultLeaseBackend Reference Implementation
+## Vault lease-backed credential store
 
-Added `VaultLeaseBackend`, a reference implementation of the credential vault protocol that uses HashiCorp Vault dynamic secrets with automatic lease revocation. This backend provides a production-ready vault integration for the secrets broker system (#5021).
+Added :class:`~bernstein.adapters.vault_lease_backend.VaultLeaseBackend` — a
+HashiCorp Vault-backed :class:`~bernstein.core.security.vault.protocol.CredentialVault`
+implementation that issues short-lived dynamic leases for credentials. Secrets
+are never stored locally; Vault issues ephemeral credentials that auto-expire,
+reducing blast radius on compromise. Includes 6 acceptance tests covering lease
+creation, renewal, expiry, revocation, and integration with
+:py:class:`~bernstein.core.security.secrets_broker.SecretsBroker`. (#5021)
