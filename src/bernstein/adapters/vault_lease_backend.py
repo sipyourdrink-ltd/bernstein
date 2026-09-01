@@ -65,6 +65,33 @@ class VaultLeaseNotFoundError(VaultNotFoundError):
 
 
 @dataclass(frozen=True)
+class LeaseInfo:
+    """Lease metadata for a stored credential.
+
+    Returned by :meth:`VaultLeaseBackend.lease_info`.
+    """
+
+    lease_id: str
+    expires_at: datetime
+    mount_path: str
+    secret_path: str
+    created_at: str
+    is_valid: bool  # True if expiry has not passed
+
+    @classmethod
+    def from_entry(cls, entry: _LeaseEntry) -> LeaseInfo:
+        """Build a :class:`LeaseInfo` from an internal lease entry."""
+        return cls(
+            lease_id=entry.lease_id,
+            expires_at=entry.expires_at,
+            mount_path=entry.mount_path,
+            secret_path=entry.secret_path,
+            created_at=entry.created_at,
+            is_valid=datetime.now(tz=UTC) < entry.expires_at,
+        )
+
+
+@dataclass(frozen=True)
 class _LeaseEntry:
     """Metadata for an active Vault lease."""
 
@@ -327,3 +354,53 @@ class VaultLeaseBackend(CredentialVault):
             if self.revoke(provider_id):
                 count += 1
         return count
+
+    # ------------------------------------------------------------------
+    # Lease lifecycle
+    # ------------------------------------------------------------------
+
+    def has_lease(self, provider_id: str) -> bool:
+        """Return ``True`` when a lease entry exists for ``provider_id``."""
+        return self._store.get(provider_id) is not None
+
+    def lease_info(self, provider_id: str) -> LeaseInfo:
+        """Return lease metadata for ``provider_id``.
+
+        Raises :class:`VaultLeaseNotFoundError` if no lease entry exists.
+        """
+        entry = self._store.get(provider_id)
+        if entry is None:
+            raise VaultLeaseNotFoundError(f"No lease for provider {provider_id!r}")
+        return LeaseInfo.from_entry(entry)
+
+    def renew_lease(self, provider_id: str) -> bool:
+        """Renew the Vault lease for ``provider_id`` by re-issuing credentials.
+
+        Issues a fresh lease from Vault and updates the stored lease metadata.
+        Returns ``True`` on success, ``False`` if the provider has no existing
+        lease or the renewal call fails.
+        """
+        entry = self._store.get(provider_id)
+        if entry is None:
+            return False
+        try:
+            lease_id, stored, expires_at = self._issue_lease(entry.secret_path)
+            new_entry = _LeaseEntry(
+                lease_id=lease_id,
+                expires_at=expires_at,
+                mount_path=entry.mount_path,
+                secret_path=entry.secret_path,
+                created_at=stored.created_at,
+            )
+            self._store.put(provider_id, new_entry)
+            self._secret_cache[provider_id] = stored
+            return True
+        except VaultLeaseError:
+            return False
+
+    def is_lease(self, provider_id: str) -> bool:
+        """Return ``True`` when ``provider_id`` has a valid (non-expired) lease."""
+        entry = self._store.get(provider_id)
+        if entry is None:
+            return False
+        return datetime.now(tz=UTC) < entry.expires_at
