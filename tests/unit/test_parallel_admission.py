@@ -193,6 +193,49 @@ def test_semantic_code_graph_satisfies_the_protocol(tmp_path: Path, monkeypatch:
     assert graph.document()
 
 
+def test_graph_node_insertion_stability(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Adding an unrelated node does not change an existing task's attribution.
+
+    The attribute_task output should depend only on the paths and symbols the
+    task actually touches, not on what other symbols exist in the graph.
+    """
+    # Build initial graph with alpha only
+    alpha_only = {
+        "src/pkg/alpha.py": "def alpha_helper() -> int:\n    return 1\n",
+        "src/pkg/alpha_main.py": (
+            "from pkg.alpha import alpha_helper\n\ndef alpha_run() -> int:\n    return alpha_helper()\n"
+        ),
+    }
+    for rel, body in alpha_only.items():
+        _write(tmp_path / rel, body)
+    listing = sorted(alpha_only)
+    monkeypatch.setattr(semantic_graph, "_git_ls_files", lambda _w: listing)
+
+    graph1 = SemanticCodeGraph(build_semantic_graph(tmp_path))
+    result1 = attribute_task(graph1, "t1", ["src/pkg/alpha_main.py"])
+
+    # Add an unrelated node (beta) that no task touches
+    beta_only = {
+        "src/pkg/beta.py": "def beta_helper() -> int:\n    return 2\n",
+        "src/pkg/beta_main.py": (
+            "from pkg.beta import beta_helper\n\ndef beta_run() -> int:\n    return beta_helper()\n"
+        ),
+    }
+    for rel, body in beta_only.items():
+        _write(tmp_path / rel, body)
+
+    listing2 = sorted(alpha_only) + sorted(beta_only)
+    monkeypatch.setattr(semantic_graph, "_git_ls_files", lambda _w: listing2)
+
+    graph2 = SemanticCodeGraph(build_semantic_graph(tmp_path))
+    result2 = attribute_task(graph2, "t1", ["src/pkg/alpha_main.py"])
+
+    # The node set should be identical - alpha task's attribution is stable
+    assert result1.neighborhood == result2.neighborhood
+    assert result1.seed_symbols == result2.seed_symbols
+    assert result1.verdict == result2.verdict
+
+
 # ---------------------------------------------------------------------------
 # Admission
 # ---------------------------------------------------------------------------
