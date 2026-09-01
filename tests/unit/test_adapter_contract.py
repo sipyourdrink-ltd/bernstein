@@ -10,8 +10,10 @@ flag regressions that pure interface checks miss.
 from __future__ import annotations
 
 import inspect
+import re
 import subprocess
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -21,6 +23,7 @@ import yaml
 from bernstein.core.models import ModelConfig
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.adapters.clm import CLM_ENDPOINT_ENV, CLM_MODEL_ENV, CLM_TOKEN_ENV
 from bernstein.adapters.generic import GenericAdapter
 from bernstein.adapters.registry import _ADAPTERS, get_adapter
 
@@ -50,41 +53,46 @@ def _popen_path(adapter: CLIAdapter) -> str:
 # common subprocess.Popen path the contract suite mocks.  The generic
 # adapter is instantiated separately because it requires a ``cli_command``
 # constructor argument.
+#
+# Per-adapter spawn inputs for ``test_spawn_returns_spawn_result`` are keyed
+# on ``adapter.name()`` below.  Adapters whose spawn() needs credentials,
+# runtime config, or a host-local login cache are still in the parametrized
+# class; only that one case gets adapter-specific inputs or an environment
+# skip (see the spawn test).
 # ---------------------------------------------------------------------------
+
+#: Per-adapter ``ModelConfig`` overrides for ``test_spawn_returns_spawn_result``.
+_CONTRACT_MODEL_CONFIG: dict[str, ModelConfig] = {
+    "clm": ModelConfig(model="clm-7b-instruct", effort="high"),
+}
+
+#: Extra keyword arguments forwarded to ``spawn()`` in the contract suite.
+_CONTRACT_SPAWN_KWARGS: dict[str, dict[str, Any]] = {
+    "PythonRuntime": {
+        "mcp_config": {"runtime_module": "bernstein.adapters.python_runtime_runner"},
+    },
+}
+
+#: Process env patches required before ``spawn()`` reaches ``Popen``.
+_CONTRACT_SPAWN_ENV: dict[str, dict[str, str]] = {
+    "clm": {
+        CLM_ENDPOINT_ENV: "https://clm.internal.example/v1/",
+        CLM_TOKEN_ENV: "scoped-jwt-contract-test",
+        CLM_MODEL_ENV: "clm-7b-instruct",
+    },
+}
 
 
 def _discover_registered_names() -> list[str]:
     """Return sorted adapter names registered in the adapter registry.
 
     Excludes:
-    - ``mock`` - spawns a real subprocess (live conformance fixture).
-    - ``generic`` - constructed with explicit kwargs below.
-    - ``iac`` - spawn() raises RuntimeError unless terraform or pulumi is
-      on PATH; CI runners (especially macOS) don't have these and the
-      contract test mocks Popen but can't mock the binary-availability
-      check.  The adapter has its own integration test that skips when
-      no tool is installed.
-    - ``clm`` - spawn() raises ClmConfigError unless CLM_ENDPOINT/TOKEN/MODEL
-      are set; the contract test mocks Popen but can't satisfy the runtime
-      config requirement.  Covered by ``test_adapter_clm.py`` and the
-      integration suite under ``tests/integration/adapters/``.
-    - ``q_dev`` - spawn() raises SpawnError unless a ``q login`` cache
-      exists on disk; CI runners don't have one and the contract test
-      mocks Popen but can't fake an authenticated AWS Builder ID
-      session.  Covered by ``test_adapter_q_dev.py`` which monkeypatches
-      ``Path.home`` to stand up a fake cache directory.
-    - ``python_runtime`` - spawn() raises RuntimeConfigError unless
-      ``mcp_config`` names the runtime module to drive; the adapter has no
-      runtime of its own, and this suite calls spawn() with no mcp_config.
-      Covered by ``tests/unit/adapters/test_python_runtime_adapter.py``,
-      which exercises both the configured spawn and every refusal.
-    - ``muse`` - single-model vendor lineup; spawn() raises ValueError for
-      foreign logical model names (such as the ``sonnet`` this suite
-      passes) instead of silently remapping them onto the vendor default.
-      Covered by ``test_adapter_muse.py``, which exercises spawn with the
-      vendor model plus every refusal path.
+    - ``mock`` - spawns a real subprocess (live conformance fixture); the
+      whole class is omitted because every case would hit a real ``Popen``.
+    - ``generic`` - constructed with explicit kwargs below; omitted from
+      discovery and added as its own factory row.
     """
-    return sorted(n for n in _ADAPTERS if n not in {"mock", "generic", "iac", "clm", "q_dev", "python_runtime", "muse"})
+    return sorted(n for n in _ADAPTERS if n not in {"mock", "generic"})
 
 
 #: Adapters whose ``prompt`` argument is a structured descriptor rather than
@@ -213,18 +221,37 @@ class TestAdapterContract:
             # case: excluding such an adapter from the whole class drops the
             # twelve contract cases that do apply to it.
             pytest.skip(f"{name} does not spawn through subprocess.Popen")
+        spawn_mod = inspect.getmodule(type(adapter).spawn)
+        if spawn_mod is not None:
+            if hasattr(spawn_mod, "_has_q_login_cache") and not spawn_mod._has_q_login_cache():
+                pytest.skip(
+                    "AWS Q Developer login cache not present on this host "
+                    "(run `q login` once before exercising spawn)",
+                )
+            if hasattr(spawn_mod, "_detect_tool") and spawn_mod._detect_tool() is None:
+                pytest.skip("No IaC CLI (terraform or pulumi) on PATH")
         proc_mock = _make_popen_mock(pid=42)
         popen_target = _popen_path(adapter)
 
         # Claude adapter needs special handling (two Popen calls)
         side = [proc_mock, _make_popen_mock(pid=43)] if "claude" in popen_target else [proc_mock]
 
-        with patch(popen_target, side_effect=side):
+        adapter_key = adapter.name()
+        model_config = _CONTRACT_MODEL_CONFIG.get(
+            adapter_key,
+            ModelConfig(model="sonnet", effort="high"),
+        )
+        spawn_kwargs = _CONTRACT_SPAWN_KWARGS.get(adapter_key, {})
+        env_patch = _CONTRACT_SPAWN_ENV.get(adapter_key)
+        env_ctx = patch.dict("os.environ", env_patch) if env_patch else nullcontext()
+
+        with patch(popen_target, side_effect=side), env_ctx:
             result = adapter.spawn(
                 prompt=_CONTRACT_PROMPT.get(adapter.name(), "test prompt"),
                 workdir=tmp_path,
-                model_config=ModelConfig(model="sonnet", effort="high"),
+                model_config=model_config,
                 session_id="contract-test",
+                **spawn_kwargs,
             )
         assert isinstance(result, SpawnResult)
         assert isinstance(result.pid, int)
@@ -254,6 +281,30 @@ class TestAdapterContract:
             from bernstein.core.models import ApiTierInfo
 
             assert isinstance(result, ApiTierInfo)
+
+
+# ---------------------------------------------------------------------------
+# Collection guard - whole-class adapter exclusions drop 13 cases each (#4935)
+# ---------------------------------------------------------------------------
+
+# 680 after restoring five adapters plus the guard test on current upstream main.
+_EXPECTED_COLLECTED = 681
+
+
+def test_module_collected_case_count() -> None:
+    """Fail if a registry name is excluded from the whole contract class again."""
+    module = Path(__file__)
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", str(module), "--collect-only", "-q"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=180,
+    )
+    combined = proc.stdout + proc.stderr
+    match = re.search(r"(\d+) tests collected", combined)
+    assert match is not None, combined
+    assert int(match.group(1)) == _EXPECTED_COLLECTED, combined
 
 
 # ---------------------------------------------------------------------------
