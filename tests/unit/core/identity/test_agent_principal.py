@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
 from bernstein.core.identity.agent import (
     AgentPrincipal,
     PrincipalMismatchError,
@@ -55,9 +56,7 @@ def test_jwt_and_ed25519_credentials_resolve_to_one_identity(tmp_path: Path) -> 
 def test_principals_with_different_ids_refuse_to_merge(tmp_path: Path) -> None:
     """Two credentials for different agents are never folded into one principal."""
     jwt_principal, _card_principal, _agent_id = _principal_pair(tmp_path)
-    other = principal_from_identity_card(
-        issue_identity_card("agent-2", "backend", adapter="claude", model="opus")
-    )
+    other = principal_from_identity_card(issue_identity_card("agent-2", "backend", adapter="claude", model="opus"))
 
     with pytest.raises(PrincipalMismatchError):
         merge_principals(jwt_principal, other)
