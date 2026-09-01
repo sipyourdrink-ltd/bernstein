@@ -54,11 +54,17 @@ permissions:
 
 jobs:
   test-macos-nightly:
-    name: Test (macos-latest, Python ${{ matrix.python-version }})
+    name: Test (macos-latest, Python ${{ matrix.python-version }}, shard ${{ matrix.shard }})
     runs-on: macos-latest
     timeout-minutes: 90
     permissions:
       contents: read
+    env:
+      # Mirrors MACOS_SHARD_COUNT in ci.yml's `test-macos` job, which is
+      # itself pinned to TEST_SHARD_COUNT in `test`. The three move
+      # together; this lane is only comparable to `test-macos` if it
+      # splits the suite the same way.
+      MACOS_SHARD_COUNT: "4"
     strategy:
       fail-fast: false
       matrix:
@@ -67,6 +73,9 @@ jobs:
         # matrix is restored, but for now nightly tracks the supported
         # cell.
         python-version: ["3.13"]
+        # Sharded for the same reason ci.yml's `test-macos` is: the whole
+        # suite in one macOS cell does not finish inside timeout-minutes.
+        shard: [1, 2, 3, 4]
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
@@ -79,12 +88,24 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Run isolated test suite
-        run: uv run python scripts/run_tests.py --parallel 4
+        env:
+          SHARD: ${{ matrix.shard }}
+          SHARD_COUNT: ${{ env.MACOS_SHARD_COUNT }}
+        # Deterministic disjoint slice of the same file list, exactly as
+        # ci.yml's `test-macos` shards it on push. Every file still runs;
+        # it runs on one of four cells instead of all of them on one.
+        run: |
+          uv run python scripts/run_tests.py --parallel 4 \
+            --shard "${SHARD}/${SHARD_COUNT}"
       - name: Run capability-matrix spawn-refusal integration tests
+        # Shard 1 only: these two suites are not sharded, so without this
+        # gate they would run four times per night instead of once.
+        if: matrix.shard == 1
         run: |
           uv run pytest tests/integration/test_capability_matrix_spawn_refusal.py \
             -x -q --tb=short --timeout=120
       - name: Run fake-CLI adapter integration tests
+        if: matrix.shard == 1
         run: uv run pytest tests/integration/test_adapter_e2e.py -x -q --timeout=60
 
   open-failure-issue:
