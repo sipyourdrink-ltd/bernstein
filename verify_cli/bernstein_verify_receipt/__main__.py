@@ -1,10 +1,11 @@
 """bernstein-verify-receipt CLI entry point.
 
-Three subcommands, all exit 0 on PASS / 1 on FAIL:
+Usage::
 
-  bernstein-verify-receipt verify <receipt_path> [--jwk JWK_PATH] [--public-key PEM_PATH] [--format cose|intoto|transparency|all]
-      Verify an audit receipt using the standalone verifier. This is the
-s      air-gapped verification surface: no bernstein package needed.
+    bernstein-verify-receipt verify <receipt_path> \\
+        [--jwk JWK_PATH] [--public-key PEM_PATH] \\
+        [--format cose|intoto|transparency|all]
+        [--verbose]
 
 Output convention (per ADR-009 §9.3):
   - Human summary on stdout (one-line PASS/FAIL + brief reasons).
@@ -75,21 +76,23 @@ def cli() -> None:
     help="Which format(s) to verify.",
 )
 @click.option(
-    "--verbose", "-v", is_flag=True, default=False, help="Print PASS-line details.",
+    "--verbose", "-v", is_flag=True, default=False, help="Print PASS-line details."
 )
-def verify_cmd(receipt_path: Path, jwk_path: Path | None, public_key_path: Path | None, fmt: str, verbose: bool) -> None:
-    """Verify an audit receipt using the standalone verifier.
-
-    Runs the air-gapped verifier (std+cryptography+cbor2) to prove the receipt
-    is self-contained and needs no bernstein code.
-    """
+def verify_cmd(
+    receipt_path: Path,
+    jwk_path: Path | None,
+    public_key_path: Path | None,
+    fmt: str,
+    verbose: bool,
+) -> None:
+    """Verify an audit receipt using the standalone verifier."""
     pinned_jwk: dict[str, Any] | None = None
     if jwk_path is not None:
         try:
             pinned_jwk = json.loads(jwk_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             click.echo(f"[red]Cannot read --jwk:[/red] {exc}", err=True)
-            raise SystemExit(2)
+            raise SystemExit(2) from exc
         if not isinstance(pinned_jwk, dict):
             click.echo("[red]--jwk must be a JSON object[/red]", err=True)
             raise SystemExit(2)
@@ -100,7 +103,7 @@ def verify_cmd(receipt_path: Path, jwk_path: Path | None, public_key_path: Path 
             pinned_pem = public_key_path.read_bytes()
         except OSError as exc:
             click.echo(f"[red]Cannot read --public-key:[/red] {exc}", err=True)
-            raise SystemExit(2)
+            raise SystemExit(2) from exc
 
     result = run_verify(
         receipt_path=receipt_path,
