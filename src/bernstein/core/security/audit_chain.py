@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import json
 import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -219,6 +220,17 @@ EVENT_REVIEW_RECEIPT = "review.receipt"
 #: of the producing run. A verifier can recompute the ordering from verified
 #: chain entries rather than trusting a session id.
 EVENT_MCP_STATELESS_CALL = "mcp.stateless_call"
+
+#: Issue #7937 -- emitted whenever an MCP server's declared tool set changes
+#: across a run boundary or on a subsequent invocation against the same
+#: server.  The event records the server name, the previous tool-list digest
+#: (``sha256:<hex>`` of the sorted canonical tool-name list; ``None`` for
+#: first contact), the current digest, the set of added and removed tool
+#: names (each a sorted tuple), and the current tool count.  A verifier can
+#: reconstruct the exact moment each server drifted and bind the drift to a
+#: named run and journal head, so the chain alone proves which server
+#: gained or lost which tools.
+EVENT_MCP_CAPABILITY_DRIFT = "mcp.capability_drift"
 
 #: Issue #3610 (slice 1) -- emitted when a run's semantic code graph digest
 #: is anchored in the HMAC chain. This event records the graph digest, the
@@ -2593,6 +2605,88 @@ def reconstruct_mcp_call_order(*, chain: AuditChainStore, run_id: str) -> list[d
         msg = f"mcp.stateless_call ordering for run {run_id!r} is not contiguous: call_index sequence {indexes}"
         raise ValueError(msg)
     return ordered
+
+
+def _compute_tool_digest(tool_names: tuple[str, ...]) -> str:
+    """Return the ``sha256:<hex>`` digest of a sorted, canonical tool-name list.
+
+    The digest is a pure function of the tool names so two calls against the
+    same server with the same tool set produce the same digest; a tool
+    addition or removal changes the sorted order and thus the hash.
+    """
+    sorted_names = tuple(sorted(tool_names))
+    canonical = json.dumps(sorted_names, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class MCPCapabilityDriftDetails:
+    """Structured payload for the ``mcp.capability_drift`` event."""
+
+    server_name: str
+    previous_digest: str | None
+    current_digest: str
+    added_tools: tuple[str, ...]
+    removed_tools: tuple[str, ...]
+    tool_count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "server_name": self.server_name,
+            "previous_digest": self.previous_digest,
+            "current_digest": self.current_digest,
+            "added_tools": list(self.added_tools),
+            "removed_tools": list(self.removed_tools),
+            "tool_count": self.tool_count,
+        }
+
+
+def record_mcp_capability_drift(
+    *,
+    chain: AuditChainStore,
+    server_name: str,
+    current_tools: tuple[str, ...],
+    previous_tools: tuple[str, ...] | None = None,
+) -> AuditEvent:
+    """Append an ``mcp.capability_drift`` event into *chain* (#7937).
+
+    Anchors the moment an MCP server's declared tool set changed so a
+    verifier can reconstruct, from the chain alone, which server gained or
+    lost which tools and when. The ``current_digest`` and ``previous_digest``
+    are the ``sha256:`` hashes of the sorted canonical JSON of the respective
+    tool-name lists; ``previous_digest`` is ``None`` on first contact.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        server_name: The MCP server name being observed.
+        current_tools: The tool names the server declared on this call.
+        previous_tools: The tool names the server declared previously;
+            ``None`` for first contact (no prior digest to record).
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    current_digest = _compute_tool_digest(current_tools)
+    previous_digest = _compute_tool_digest(previous_tools) if previous_tools is not None else None
+    added_tools = tuple(sorted(set(current_tools) - set(previous_tools or ())))
+    removed_tools = tuple(sorted(set(previous_tools or ()) - set(current_tools)))
+
+    payload = MCPCapabilityDriftDetails(
+        server_name=server_name,
+        previous_digest=previous_digest,
+        current_digest=current_digest,
+        added_tools=added_tools,
+        removed_tools=removed_tools,
+        tool_count=len(current_tools),
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_MCP_CAPABILITY_DRIFT,
+        actor=server_name,
+        resource_type="mcp_capability_drift",
+        resource_id=current_digest,
+        details=payload,
+    )
 
 
 def record_subagent_delegation(
@@ -9165,6 +9259,7 @@ __all__ = [
     "EVENT_INTENT_DRIFT",
     "EVENT_MANDATE_CONSENT_RECEIPT",
     "EVENT_MANDATE_REVOCATION",
+    "EVENT_MCP_CAPABILITY_DRIFT",
     "EVENT_MCP_STATELESS_CALL",
     "EVENT_MCP_TASK_HANDLE",
     "EVENT_MEMORY_WRITE",
@@ -9253,6 +9348,7 @@ __all__ = [
     "CostProfileReportDetails",
     "EvalAbComparisonDetails",
     "ForkSnapshotDetails",
+    "MCPCapabilityDriftDetails",
     "MandateConsentReceiptDetails",
     "MemoryWriteDetails",
     "MultimodalAttachDetails",
@@ -9316,6 +9412,7 @@ __all__ = [
     "record_intent_drift",
     "record_mandate_consent_receipt",
     "record_mandate_revocation",
+    "record_mcp_capability_drift",
     "record_mcp_stateless_call",
     "record_mcp_task_handle",
     "record_memory_write",
