@@ -54,6 +54,15 @@ ARTEFACT_KINDS: frozenset[str] = frozenset(
 #: :mod:`bernstein.core.lineage.provenance`.
 TRUST_CLASSES: frozenset[str] = frozenset({"operator", "workspace", "first_party", "third_party", "public"})
 
+#: Data-sensitivity classes recordable on an entry (issue #5042). The mirror of
+#: :data:`TRUST_CLASSES` on the opposite axis: ``trust_class`` says how much we
+#: trust an input, ``sensitivity`` says how sensitive it is. ``None`` on an
+#: entry means "no classification recorded" and is dropped from the canonical
+#: form so pre-feature entries keep byte-identical wire bytes. The sensitivity
+#: projection treats absence as the *highest* class (fail closed high) -- see
+#: :mod:`bernstein.core.lineage.sensitivity`.
+SENSITIVITY_CLASSES: frozenset[str] = frozenset({"public", "internal", "confidential", "restricted"})
+
 #: Shape of a bare hex SHA-256, used to validate recorded attachment digests.
 _HEX64: re.Pattern[str] = re.compile(r"\A[0-9a-f]{64}\Z")
 
@@ -136,6 +145,13 @@ class LineageEntry:
     # bytes so every historical entry keeps its exact wire form, signature and
     # HMAC. When not None must be a valid ModelRef instance.
     model_ref: ModelRef | None = None
+    # Additive, optional (issue #5042), dropped when ``None`` on the same rule
+    # as ``trust_class``. The operator's data classification of this artefact.
+    # Deliberately a second field beside ``trust_class`` rather than a widening
+    # of it: trust and sensitivity are opposite axes and propagate in opposite
+    # directions (minimum over the closure vs maximum over it). When not None
+    # must be one of SENSITIVITY_CLASSES.
+    sensitivity: str | None = None
 
     def __post_init__(self) -> None:
         if self.v != LINEAGE_ENTRY_VERSION:
@@ -159,6 +175,8 @@ class LineageEntry:
                     raise ValueError(f"attachment digest must be 64 lower-case hex chars, got {d!r}")
         if self.model_ref is not None and not isinstance(self.model_ref, ModelRef):
             raise ValueError(f"model_ref must be a ModelRef instance, got {type(self.model_ref).__name__}")
+        if self.sensitivity is not None and self.sensitivity not in SENSITIVITY_CLASSES:
+            raise ValueError(f"unknown sensitivity: {self.sensitivity!r}")
 
 
 def _canonical_body(entry: LineageEntry) -> dict[str, object]:
@@ -181,6 +199,8 @@ def _canonical_body(entry: LineageEntry) -> dict[str, object]:
         body.pop("attachment_digests", None)
     if body.get("model_ref") is None:
         body.pop("model_ref", None)
+    if body.get("sensitivity") is None:
+        body.pop("sensitivity", None)
     return body
 
 

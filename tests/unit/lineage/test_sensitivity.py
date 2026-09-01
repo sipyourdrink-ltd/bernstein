@@ -51,8 +51,7 @@ def test_sensitivity_rank_total_order() -> None:
 def test_max_sensitivity_class_picks_the_more_sensitive() -> None:
     assert max_sensitivity_class(SensitivityClass.PUBLIC, SensitivityClass.RESTRICTED) is SensitivityClass.RESTRICTED
     assert (
-        max_sensitivity_class(SensitivityClass.INTERNAL, SensitivityClass.CONFIDENTIAL)
-        is SensitivityClass.CONFIDENTIAL
+        max_sensitivity_class(SensitivityClass.INTERNAL, SensitivityClass.CONFIDENTIAL) is SensitivityClass.CONFIDENTIAL
     )
     assert max_sensitivity_class(SensitivityClass.INTERNAL, SensitivityClass.INTERNAL) is SensitivityClass.INTERNAL
 
@@ -71,13 +70,13 @@ def test_highest_class_is_the_fail_closed_default() -> None:
 #: exactly these bytes, so every historical signature, HMAC and entry hash
 #: stays valid.
 _GOLDEN_PRE_CHANGE_CANONICAL = (
-    '{"agent_card_kid":"key-001","agent_id":"agent:worker","artefact_kind":"file",'
-    '"artefact_path":"docs/summary.md",'
-    '"content_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",'
-    '"operator_hmac":"0000000000000000000000000000000000000000000000000000000000000000",'
-    '"parent_hashes":["sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],'
-    '"span_id":"span-1","tool_call_id":"tc-1","ts_ns":1700000000000000001,"v":1}'
-).encode("utf-8")
+    b'{"agent_card_kid":"key-001","agent_id":"agent:worker","artefact_kind":"file",'
+    b'"artefact_path":"docs/summary.md",'
+    b'"content_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",'
+    b'"operator_hmac":"0000000000000000000000000000000000000000000000000000000000000000",'
+    b'"parent_hashes":["sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],'
+    b'"span_id":"span-1","tool_call_id":"tc-1","ts_ns":1700000000000000001,"v":1}'
+)
 
 _GOLDEN_PRE_CHANGE_ENTRY_HASH = "sha256:b05fdd36bee74e6b9cd5a502ac00145e333992830658f953bdd58049aa615eff"
 _GOLDEN_PRE_CHANGE_HMAC = "0250aa0dd6a431d99c81973caaa91cdad6793612b00d1e0539cd3eaff03c1570"

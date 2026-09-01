@@ -141,6 +141,7 @@ def seal_write(
     attachment_digests: list[str] | None = None,
     ts_ns: int | None = None,
     model_ref: ModelRef | None = None,
+    sensitivity: str | None = None,
 ) -> str:
     """Seal a single signed lineage write into ``store``. Returns the entry hash.
 
@@ -198,6 +199,12 @@ def seal_write(
             that produced the output, linking the lineage receipt to model
             governance. ``None`` is dropped from canonical bytes so entries
             without a model attribution keep their historical hashes.
+        sensitivity: Optional operator data classification (issue #5042), one
+            of ``SENSITIVITY_CLASSES``. Recorded inside the signed entry so the
+            classification is covered by the signature and the HMAC, and the
+            sensitivity projection has signed labels to project from. ``None``
+            is dropped from canonical bytes so an unclassified write keeps its
+            historical entry hash.
 
     Raises:
         ValueError: When ``artefact_path`` is absolute or contains a
@@ -245,6 +252,7 @@ def seal_write(
         trust_class=trust_class,
         attachment_digests=attachment_digests,
         model_ref=model_ref,
+        sensitivity=sensitivity,
     )
     operator_hmac = compute_operator_hmac(unsigned_entry, operator_hmac_key)
 
@@ -263,6 +271,7 @@ def seal_write(
         trust_class=trust_class,
         attachment_digests=attachment_digests,
         model_ref=model_ref,
+        sensitivity=sensitivity,
     )
 
     # Sign the JCS-canonical entry bytes. The auditor verifies the same bytes
@@ -334,6 +343,7 @@ class SignedLineageLog:
         attachment_digests: list[str] | None = None,
         ts_ns: int | None = None,
         model_ref: ModelRef | None = None,
+        sensitivity: str | None = None,
     ) -> str:
         """Seal one artefact write into the bound store. Returns the entry hash.
 
@@ -344,6 +354,8 @@ class SignedLineageLog:
             model_ref: Optional model reference (issue #5037). Records the model
                 that produced the output, linking the lineage receipt to model
                 governance.
+            sensitivity: Optional operator data classification (issue #5042)
+                recorded inside the signed entry.
         """
         return seal_write(
             self.store,
@@ -361,6 +373,7 @@ class SignedLineageLog:
             attachment_digests=attachment_digests,
             ts_ns=ts_ns,
             model_ref=model_ref,
+            sensitivity=sensitivity,
         )
 
 
