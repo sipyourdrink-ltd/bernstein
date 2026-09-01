@@ -29,4 +29,3 @@ def test_other_redirects_still_present() -> None:
     assert "worktree" in redirect_map
     assert redirect_map["workspace"] == "bernstein.core.persistence.workspace"
     assert redirect_map["worktree"] == "bernstein.core.git.worktree"
-
