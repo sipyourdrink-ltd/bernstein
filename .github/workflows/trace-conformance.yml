@@ -102,3 +102,8 @@ jobs:
           name: trace-conformance-report
           path: trace-conformance-report/
           if-no-files-found: warn
+          # The report is read while the run is still on someone's screen;
+          # without this it inherits the repository default of 90 days. Every
+          # other retained artefact in this repository sets 7, 14, 30 or 90
+          # deliberately, so state the intent here too.
+          retention-days: 14
