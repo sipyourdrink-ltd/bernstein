@@ -225,8 +225,7 @@ class TestAdapterContract:
         if spawn_mod is not None:
             if hasattr(spawn_mod, "_has_q_login_cache") and not spawn_mod._has_q_login_cache():
                 pytest.skip(
-                    "AWS Q Developer login cache not present on this host "
-                    "(run `q login` once before exercising spawn)",
+                    "AWS Q Developer login cache not present on this host (run `q login` once before exercising spawn)",
                 )
             if hasattr(spawn_mod, "_detect_tool") and spawn_mod._detect_tool() is None:
                 pytest.skip("No IaC CLI (terraform or pulumi) on PATH")
