@@ -243,8 +243,13 @@ class AuthSession:
 
     @property
     def is_valid(self) -> bool:
-        """Check if this session is valid (not revoked, not expired)."""
-        return not self.revoked and not self.is_expired
+        """Check if this session is valid (not revoked, not expired).
+        
+        A session is considered invalid if it's revoked past the staleness window.
+        This implements fail-closed semantics - past the staleness window, the
+        session is treated as if it was never valid.
+        """
+        return not self.revoked and not self.is_expired and not self.is_revoked_past_staleness()
 
     def is_revoked_past_staleness(self, staleness_window_s: float | None = None) -> bool:
         """Check if the revocation is past the staleness window.
@@ -708,12 +713,14 @@ class AuthStore:
         self.save_session(session)
         try:
             from bernstein.core.security.audit_chain import record_identity_revoked
-            record_identity_revoked(
+            record = record_identity_revoked(
                 chain=self._audit_chain,
                 session_id=session.id,
                 user_id=session.user_id,
                 revoked_at=session.revoked_at,
             )
+            # Store the chain position on the session
+            session.revocation_chain_position = record.details.get("prev_chain_digest", "")
         except Exception:
             logger.warning("Could not record revocation chain event for session %s", session_id)
         return True
@@ -725,6 +732,20 @@ class AuthStore:
                 data = json.loads(path.read_text())
                 if data.get("user_id") == user_id and not data.get("revoked", False):
                     data["revoked"] = True
+                    data["revoked_at"] = time.time()
+                    chain_position = ""
+                    try:
+                        from bernstein.core.security.audit_chain import record_identity_revoked
+                        record = record_identity_revoked(
+                            chain=self._audit_chain,
+                            session_id=data["id"],
+                            user_id=user_id,
+                            revoked_at=data["revoked_at"],
+                        )
+                        chain_position = record.details.get("prev_chain_digest", "")
+                    except Exception:
+                        logger.warning("Could not record revocation chain event for session %s", data.get("id"))
+                    data["revocation_chain_position"] = chain_position
                     path.write_text(json.dumps(data, indent=2))
                     count += 1
             except (json.JSONDecodeError, KeyError):
