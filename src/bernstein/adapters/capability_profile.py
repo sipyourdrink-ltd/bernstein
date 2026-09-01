@@ -1427,13 +1427,13 @@ def _discover_draft_profiles(drafts_dir: Path | None = None) -> dict[str, Adapte
     return drafts
 
 
-def get_profile(name: str, *, include_drafts: bool = True) -> AdapterCapabilityProfile:
+def get_profile(name: str, *, include_drafts: bool = False) -> AdapterCapabilityProfile:
     """Return the capability profile registered under ``name``.
 
     Args:
         name: Registry key, for example ``"pydantic_ai"``.
         include_drafts: Whether to include draft profiles from the drafts
-            directory. Defaults to True.
+            directory. Defaults to False.
 
     Returns:
         The registered profile.
@@ -1457,12 +1457,12 @@ def get_profile(name: str, *, include_drafts: bool = True) -> AdapterCapabilityP
     raise UnknownProfileError(f"no capability profile registered for {name!r}. Available: {available}") from None
 
 
-def iter_profiles(*, include_drafts: bool = True) -> Iterator[tuple[str, AdapterCapabilityProfile]]:
+def iter_profiles(*, include_drafts: bool = False) -> Iterator[tuple[str, AdapterCapabilityProfile]]:
     """Yield every profile as ``(name, profile)``, sorted by name.
 
     Args:
         include_drafts: Whether to include draft profiles from the drafts
-            directory. Defaults to True.
+            directory. Defaults to False.
     """
     yield from sorted(PROFILES.items())
     if include_drafts:

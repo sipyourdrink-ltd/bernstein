@@ -982,8 +982,8 @@ class TestDraftProfileDiscovery:
         )
         write_draft_yaml(draft, drafts_dir / "drafted-agent.yaml")
 
-        # Collect all profiles
-        all_profiles = dict(iter_profiles())
+        # Collect all profiles (explicitly include drafts)
+        all_profiles = dict(iter_profiles(include_drafts=True))
 
         # Shipped profiles are present
         for name in PROFILES:
@@ -1013,8 +1013,8 @@ class TestDraftProfileDiscovery:
         )
         write_draft_yaml(draft, drafts_dir / "unique-draft.yaml")
 
-        # get_profile finds it
-        profile = get_profile("unique-draft")
+        # get_profile finds it (explicitly include drafts)
+        profile = get_profile("unique-draft", include_drafts=True)
         assert profile.invocation.binary == "unique-draft"
 
         # Non-existent raises
