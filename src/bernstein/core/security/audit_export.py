@@ -184,6 +184,8 @@ class AuditEntry:
         outcome: Result of the action (success/failure).
         details: Additional structured details.
         hmac: HMAC chain value for integrity.
+        prev_hmac: HMAC of the preceding event in the chain.
+        sequence: Monotonic sequence number for ordering.
     """
 
     timestamp: float = 0.0
@@ -194,6 +196,8 @@ class AuditEntry:
     outcome: str = "success"
     details: dict[str, Any] = field(default_factory=dict[str, Any])
     hmac: str = ""
+    prev_hmac: str = ""
+    sequence: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -375,6 +379,8 @@ class SplunkHECExporter(BaseSIEMExporter):
                     "outcome": entry.outcome,
                     "details": entry.details,
                     "hmac": entry.hmac,
+                    "prev_hmac": entry.prev_hmac,
+                    "sequence": entry.sequence,
                 },
             }
             events.append(event)
@@ -429,6 +435,8 @@ class ElasticsearchExporter(BaseSIEMExporter):
                 "outcome": entry.outcome,
                 "details": entry.details,
                 "hmac": entry.hmac,
+                "prev_hmac": entry.prev_hmac,
+                "sequence": entry.sequence,
                 "source": "bernstein-audit",
             }
             docs.append(doc)
@@ -485,6 +493,8 @@ class CloudWatchExporter(BaseSIEMExporter):
                         "outcome": entry.outcome,
                         "details": entry.details,
                         "hmac": entry.hmac,
+                        "prev_hmac": entry.prev_hmac,
+                        "sequence": entry.sequence,
                     }
                 ),
             }
@@ -541,6 +551,8 @@ class SyslogExporter(BaseSIEMExporter):
                     "outcome": entry.outcome,
                     "details": entry.details,
                     "hmac": entry.hmac,
+                    "prev_hmac": entry.prev_hmac,
+                    "sequence": entry.sequence,
                 },
             )
             messages.append(
@@ -601,6 +613,8 @@ class WebhookExporter(BaseSIEMExporter):
                 "outcome": entry.outcome,
                 "details": entry.details,
                 "hmac": entry.hmac,
+                "prev_hmac": entry.prev_hmac,
+                "sequence": entry.sequence,
                 "source": "bernstein-audit",
             }
             for entry in entries
@@ -653,6 +667,8 @@ class FileExporter(BaseSIEMExporter):
                 "outcome": entry.outcome,
                 "details": entry.details,
                 "hmac": entry.hmac,
+                "prev_hmac": entry.prev_hmac,
+                "sequence": entry.sequence,
             }
             for entry in entries
         ]
