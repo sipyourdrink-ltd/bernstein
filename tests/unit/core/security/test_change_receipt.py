@@ -18,12 +18,9 @@ from bernstein.core.security.change_receipt import (
     CHANGE_RECEIPT_SCHEMA_VERSION,
     ChangeAttempt,
     ChangeReceipt,
-    FieldError,
-    ReceiptVerification,
     canonical_bytes,
     verify_receipt,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

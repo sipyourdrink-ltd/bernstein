@@ -3,7 +3,6 @@
 import hashlib
 import os
 import subprocess
-from typing import List
 
 
 class DigestMismatchError(Exception):
@@ -43,12 +42,12 @@ def _get_git_head(repo_root: str) -> str:
         head_path = os.path.join(repo_root, '.git', 'HEAD')
         if not os.path.exists(head_path):
             return "HEAD_UNKNOWN"
-        with open(head_path, 'r') as f:
+        with open(head_path) as f:
             ref = f.read().strip()
         if ref.startswith('ref: '):
             ref_path = os.path.join(repo_root, '.git', ref[5:])
             if os.path.exists(ref_path):
-                with open(ref_path, 'r') as f:
+                with open(ref_path) as f:
                     return f.read().strip()
         return "HEAD_UNKNOWN"
 
@@ -93,7 +92,7 @@ def compute_environment_digest(repo_root: str, plan) -> str:
         config_hashes.append(_hash_file(full_path))
 
     # Combine all components deterministically
-    components = [git_head] + touched_hashes + config_hashes
+    components = [git_head, *touched_hashes, *config_hashes]
     digest_input = "\n".join(components)
     return hashlib.sha256(digest_input.encode()).hexdigest()
 
