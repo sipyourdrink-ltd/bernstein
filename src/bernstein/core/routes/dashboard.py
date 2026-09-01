@@ -132,7 +132,7 @@ async def dashboard_auth_login(request: Request) -> JSONResponse:
         return JSONResponse(status_code=401, content={"detail": "Invalid dashboard credentials"})
 
     session_token = state.session_store.create_session(principal=principal, scope=scope)
-    
+
     # Check if session is revoked past staleness after creation
     cookie_token = request.cookies.get(SESSION_COOKIE, "")
     session = state.session_store.resolve_session(cookie_token) if cookie_token else None
