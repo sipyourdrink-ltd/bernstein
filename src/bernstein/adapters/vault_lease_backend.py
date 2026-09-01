@@ -171,9 +171,7 @@ class VaultLeaseBackend(CredentialVault):
         self._role = role
         self._token = token or os.environ.get(token_env_var, "")
         if not self._token:
-            raise VaultLeaseError(
-                f"Vault token is required; set {token_env_var} or pass token=..."
-            )
+            raise VaultLeaseError(f"Vault token is required; set {token_env_var} or pass token=...")
         self._ttl_seconds = min(ttl_seconds, _MAX_TTL_SECONDS)
         self._store = store or _InMemoryStore()
         self._http_client = http_client or urllib.request
@@ -204,9 +202,7 @@ class VaultLeaseBackend(CredentialVault):
                 return cast(dict[str, Any], json.loads(resp.read()))
         except urllib.error.HTTPError as exc:
             body_text = exc.read().decode("utf-8", errors="replace")
-            raise VaultLeaseError(
-                f"Vault {method} {path} failed with HTTP {exc.code}: {body_text}"
-            ) from exc
+            raise VaultLeaseError(f"Vault {method} {path} failed with HTTP {exc.code}: {body_text}") from exc
         except urllib.error.URLError as exc:
             raise VaultLeaseError(f"Vault {method} {path} failed: {exc.reason}") from exc
 
