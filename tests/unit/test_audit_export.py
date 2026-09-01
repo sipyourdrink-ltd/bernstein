@@ -32,7 +32,29 @@ def _make_entry(event_type: str = "task.created") -> AuditEntry:
         outcome="success",
         details={"role": "backend"},
         hmac="abc123",
+        prev_hmac="prev456",
+        sequence=1,
     )
+
+
+# ---------------------------------------------------------------------------
+# AuditEntry structure
+# ---------------------------------------------------------------------------
+
+
+class TestAuditEntry:
+    def test_has_prev_hmac_field(self) -> None:
+        entry = _make_entry()
+        assert entry.prev_hmac == "prev456"
+
+    def test_has_sequence_field(self) -> None:
+        entry = _make_entry()
+        assert entry.sequence == 1
+
+    def test_defaults(self) -> None:
+        entry = AuditEntry()
+        assert entry.prev_hmac == ""
+        assert entry.sequence == 0
 
 
 # ---------------------------------------------------------------------------
@@ -56,6 +78,9 @@ class TestSplunkHECExporter:
         assert formatted[0]["source"] == "bernstein"
         assert formatted[0]["event"]["event_type"] == "task.created"
         assert formatted[0]["event"]["actor"] == "admin@example.com"
+        assert formatted[0]["event"]["hmac"] == "abc123"
+        assert formatted[0]["event"]["prev_hmac"] == "prev456"
+        assert formatted[0]["event"]["sequence"] == 1
 
     def test_flush_empties_buffer(self) -> None:
         exporter = SplunkHECExporter()
@@ -92,6 +117,9 @@ class TestElasticsearchExporter:
         assert "@timestamp" in formatted[0]
         assert formatted[0]["event_type"] == "task.created"
         assert formatted[0]["source"] == "bernstein-audit"
+        assert formatted[0]["hmac"] == "abc123"
+        assert formatted[0]["prev_hmac"] == "prev456"
+        assert formatted[0]["sequence"] == 1
 
     def test_flush(self) -> None:
         exporter = ElasticsearchExporter()
@@ -123,6 +151,9 @@ class TestCloudWatchExporter:
         # Message should be valid JSON
         msg = json.loads(formatted[0]["message"])
         assert msg["event_type"] == "task.created"
+        assert msg["hmac"] == "abc123"
+        assert msg["prev_hmac"] == "prev456"
+        assert msg["sequence"] == 1
 
     def test_flush(self) -> None:
         exporter = CloudWatchExporter()
