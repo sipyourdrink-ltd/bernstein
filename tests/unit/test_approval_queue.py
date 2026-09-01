@@ -96,7 +96,16 @@ def test_concurrent_resolve_is_idempotent(tmp_path: Path) -> None:
     approval = _push(queue)
 
     with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = [pool.submit(queue.resolve, approval.id, ApprovalDecision.ALLOW, reason=f"r{i}") for i in range(4)]
+        futures = [
+            pool.submit(
+                queue.resolve,
+                approval.id,
+                ApprovalDecision.ALLOW,
+                principal=_PRINCIPAL,
+                reason=f"r{i}",
+            )
+            for i in range(4)
+        ]
         results = [f.result() for f in futures]
 
     # Every call must return the SAME resolution (first writer wins).
@@ -226,12 +235,16 @@ def test_human_allow_appends_audit_chain_event(tmp_path: Path) -> None:
     assert len(events) == 1
     event = events[0]
     assert event.event_type == "human_approval_decision"
-    assert event.actor == "cli"
+    # The actor is who decided; ``decision_source`` is the surface it came
+    # through. A surface is not a principal, so both are recorded.
+    assert event.actor == _PRINCIPAL.identifier
     assert event.resource_id == "shell"
     assert event.details["approval_id"] == approval.id
     assert event.details["decision"] == "allow"
     assert event.details["reason"] == "looks safe"
     assert event.details["decision_source"] == "cli"
+    assert event.details["principal"] == _PRINCIPAL.identifier
+    assert event.details["principal_auth_method"] == _PRINCIPAL.auth_method
 
     # Verify audit chain integrity
     assert audit.verify()
@@ -294,11 +307,14 @@ def test_always_allow_promotion_is_recorded_as_its_own_event(tmp_path: Path) -> 
     assert "always_allow_promotion" in event_types
 
     promo_event = next(e for e in events if e.event_type == "always_allow_promotion")
-    assert promo_event.actor == "tui"
+    # A promotion changes future behaviour, so it records who authorised it and
+    # separately which surface it arrived on; the surface alone names nobody.
+    assert promo_event.actor == _PRINCIPAL.identifier
     assert promo_event.resource_type == "always_allow_rule"
     assert promo_event.resource_id == "write_file"
     assert promo_event.details["approval_id"] == approval.id
-    assert promo_event.details["promoted_by"] == "tui"
+    assert promo_event.details["promoted_by"] == _PRINCIPAL.identifier
+    assert promo_event.details["promoted_via"] == "tui"
 
 
 def test_chain_write_failure_does_not_leave_queue_inconsistent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

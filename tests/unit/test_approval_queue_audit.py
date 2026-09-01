@@ -99,7 +99,10 @@ def test_human_and_classifier_decisions_are_distinguishable(tmp_path: Path) -> N
 
     assert human and not auto
     assert human[0].details["decision_source"] == "human"
-    assert human[0].actor == "human"
+    # The actor is the principal that decided, not the literal word "human":
+    # separating a person's allow from a rule's now means naming the person.
+    assert human[0].actor == _PRINCIPAL.identifier
+    assert human[0].details["principal_kind"] == "human"
 
 
 def test_always_allow_promotion_is_its_own_event(tmp_path: Path) -> None:
