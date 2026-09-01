@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 from bernstein.core.audit_export import (
     AuditEntry,
@@ -13,12 +12,12 @@ from bernstein.core.audit_export import (
     CloudWatchExporter,
     ElasticsearchConfig,
     ElasticsearchExporter,
+    FileExportConfig,
+    FileExporter,
     SIEMExportConfig,
     SIEMTarget,
     SplunkHECConfig,
     SplunkHECExporter,
-    FileExportConfig,
-    FileExporter,
     SyslogConfig,
     SyslogExporter,
     WebhookConfig,
@@ -92,8 +91,8 @@ class TestSplunkHECExporter:
         assert formatted[0]["source"] == "bernstein"
         assert formatted[0]["event"]["event_type"] == "task.created"
         assert formatted[0]["event"]["actor"] == "admin@example.com"
-        assert formatted[0]["event"]["hmac"] == "abc123"
-        assert formatted[0]["event"]["prev_hmac"] == "prev456"
+        assert formatted[0]["event"]["hmac"] == "hmac1"
+        assert formatted[0]["event"]["prev_hmac"] == "prev1"
         assert formatted[0]["event"]["sequence"] == 1
 
     def test_flush_empties_buffer(self) -> None:
@@ -131,8 +130,8 @@ class TestElasticsearchExporter:
         assert "@timestamp" in formatted[0]
         assert formatted[0]["event_type"] == "task.created"
         assert formatted[0]["source"] == "bernstein-audit"
-        assert formatted[0]["hmac"] == "abc123"
-        assert formatted[0]["prev_hmac"] == "prev456"
+        assert formatted[0]["hmac"] == "hmac1"
+        assert formatted[0]["prev_hmac"] == "prev1"
         assert formatted[0]["sequence"] == 1
 
     def test_flush(self) -> None:
@@ -165,8 +164,8 @@ class TestCloudWatchExporter:
         # Message should be valid JSON
         msg = json.loads(formatted[0]["message"])
         assert msg["event_type"] == "task.created"
-        assert msg["hmac"] == "abc123"
-        assert msg["prev_hmac"] == "prev456"
+        assert msg["hmac"] == "hmac1"
+        assert msg["prev_hmac"] == "prev1"
         assert msg["sequence"] == 1
 
     def test_flush(self) -> None:
@@ -176,6 +175,103 @@ class TestCloudWatchExporter:
         assert result.success
         assert result.entries_sent == 1
         assert result.target == SIEMTarget.CLOUDWATCH
+
+
+# ---------------------------------------------------------------------------
+# Syslog exporter
+# ---------------------------------------------------------------------------
+
+
+class TestSyslogExporter:
+    def test_format_entries(self) -> None:
+        """Syslog exporter includes prev_hmac, sequence, and segment_receipt in msg field."""
+
+        exporter = SyslogExporter(
+            syslog_config=SyslogConfig(host="127.0.0.1", port=514, protocol="udp"),
+        )
+        entry = _make_entry()
+        formatted = exporter.format_entries([entry])
+        assert len(formatted) == 1
+        assert "priority" in formatted[0]
+        assert "msg" in formatted[0]
+        # msg field contains the entry as JSON string
+        sd = json.loads(formatted[0]["msg"])
+        assert sd["event_type"] == "task.created"
+        assert sd["hmac"] == "hmac1"
+        assert sd["prev_hmac"] == "prev1"
+        assert sd["sequence"] == 1
+        assert "segment_receipt" in sd
+        assert sd["segment_receipt"]["first_sequence"] == 1
+        assert sd["segment_receipt"]["last_sequence"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Webhook exporter
+# ---------------------------------------------------------------------------
+
+
+class TestWebhookExporter:
+    def test_format_entries(self) -> None:
+        """Webhook exporter includes prev_hmac, sequence, and segment_receipt in events."""
+
+        exporter = WebhookExporter(
+            webhook_config=WebhookConfig(url="https://example.com/webhook"),
+        )
+        entry = _make_entry()
+        formatted = exporter.format_entries([entry])
+        assert len(formatted) == 1
+        assert formatted[0]["event_type"] == "task.created"
+        assert formatted[0]["hmac"] == "hmac1"
+        assert formatted[0]["prev_hmac"] == "prev1"
+        assert formatted[0]["sequence"] == 1
+        assert "segment_receipt" in formatted[0]
+        assert formatted[0]["segment_receipt"]["first_sequence"] == 1
+        assert formatted[0]["segment_receipt"]["last_sequence"] == 1
+        assert formatted[0]["segment_receipt"]["chain_head_hash"] == entry.hmac
+
+
+# ---------------------------------------------------------------------------
+# File exporter
+# ---------------------------------------------------------------------------
+
+
+class TestFileExporter:
+    def test_format_entries(self) -> None:
+        """File exporter includes prev_hmac, sequence, and segment_receipt in formatted docs."""
+
+        exporter = FileExporter(
+            file_config=FileExportConfig(path="audit.jsonl", format="jsonl"),
+        )
+        entry = _make_entry()
+        formatted = exporter.format_entries([entry])
+        assert len(formatted) == 1
+        assert formatted[0]["event_type"] == "task.created"
+        assert formatted[0]["hmac"] == "hmac1"
+        assert formatted[0]["prev_hmac"] == "prev1"
+        assert formatted[0]["sequence"] == 1
+        assert "segment_receipt" in formatted[0]
+
+    def test_flush_writes_jsonl(self, tmp_path: Path) -> None:
+        """FileExporter flush writes correct JSONL output with prev_hmac, sequence, segment_receipt."""
+        from bernstein.core.audit_export import SIEMExportConfig
+
+        # Use temp path to avoid .sdd/ traversal restriction
+        config = SIEMExportConfig(batch_size=100, target=SIEMTarget.FILE)
+        file_config = FileExportConfig(path="audit.jsonl", format="jsonl")
+        exporter = FileExporter(config=config, file_config=file_config)
+
+        entries = _make_entries(3)
+        for e in entries:
+            exporter.add_entry(e)
+
+        result = exporter.flush()
+        assert result.success
+        assert result.entries_sent == 3
+        assert result.target == SIEMTarget.FILE
+        assert result.segment_receipt["first_sequence"] == 1
+        assert result.segment_receipt["last_sequence"] == 3
+        assert result.segment_receipt["chain_head_hash"] == entries[-1].hmac
+        assert result.segment_receipt["signature"] != ""
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +344,7 @@ class TestSegmentReceipt:
 
     def test_segment_receipt_in_splunk_format(self) -> None:
         """Splunk exporter includes segment_receipt in formatted events."""
-        from bernstein.core.audit_export import SplunkHECExporter, SplunkHECConfig
+        from bernstein.core.audit_export import SplunkHECConfig, SplunkHECExporter
 
         exporter = SplunkHECExporter(
             splunk_config=SplunkHECConfig(
@@ -270,7 +366,7 @@ class TestSegmentReceipt:
 
     def test_segment_receipt_in_elasticsearch_format(self) -> None:
         """Elasticsearch exporter includes segment_receipt in formatted docs."""
-        from bernstein.core.audit_export import ElasticsearchExporter, ElasticsearchConfig
+        from bernstein.core.audit_export import ElasticsearchConfig, ElasticsearchExporter
 
         exporter = ElasticsearchExporter(
             es_config=ElasticsearchConfig(index_prefix="audit"),
@@ -287,7 +383,7 @@ class TestSegmentReceipt:
 
     def test_segment_receipt_in_cloudwatch_format(self) -> None:
         """CloudWatch exporter includes segment_receipt in formatted events."""
-        from bernstein.core.audit_export import CloudWatchExporter, CloudWatchConfig
+        from bernstein.core.audit_export import CloudWatchConfig, CloudWatchExporter
 
         exporter = CloudWatchExporter(
             cw_config=CloudWatchConfig(
@@ -307,7 +403,6 @@ class TestSegmentReceipt:
 
     def test_segment_receipt_in_syslog_format(self) -> None:
         """Syslog exporter includes segment_receipt in formatted messages."""
-        from bernstein.core.audit_export import SyslogExporter, SyslogConfig
 
         exporter = SyslogExporter(
             syslog_config=SyslogConfig(host="127.0.0.1", port=514),
@@ -327,7 +422,6 @@ class TestSegmentReceipt:
 
     def test_segment_receipt_in_webhook_format(self) -> None:
         """Webhook exporter includes segment_receipt in formatted events."""
-        from bernstein.core.audit_export import WebhookExporter, WebhookConfig
 
         exporter = WebhookExporter(
             webhook_config=WebhookConfig(url="https://example.com/webhook"),
@@ -344,7 +438,6 @@ class TestSegmentReceipt:
 
     def test_export_result_has_segment_receipt(self) -> None:
         """ExportResult has segment_receipt field populated."""
-        from bernstein.core.audit_export import FileExporter
 
         config = SIEMExportConfig(batch_size=2)
         exporter = FileExporter(config=config)
