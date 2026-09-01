@@ -64,6 +64,198 @@ class TestRouteDecision:
         assert decision.adapter == "codex"
         assert decision.effort == "max"
 
+    def test_decision_with_model_metadata(self) -> None:
+        """Test decision includes model_reported and model_version fields."""
+        decision = RouteDecision(
+            task_id="task-123",
+            adapter="anthropic",
+            model="claude-3-5-sonnet",
+            effort="high",
+            reasons=["complexity=high"],
+            timestamp=1234567890.0,
+            model_reported="claude-3-5-sonnet-20241022",
+            model_version="claude-3.5-sonnet-20241022",
+            routing_decision_hash="sha256:" + "a" * 64,
+        )
+
+        data = decision.to_dict()
+
+        assert data["model_reported"] == "claude-3-5-sonnet-20241022"
+        assert data["model_version"] == "claude-3.5-sonnet-20241022"
+        assert data["routing_decision_hash"].startswith("sha256:")
+
+    def test_decision_from_dict_with_model_metadata(self) -> None:
+        """Test deserializing decision with all model metadata fields."""
+        data = {
+            "task_id": "task-789",
+            "adapter": "openai",
+            "model": "gpt-4o",
+            "effort": "max",
+            "reasons": ["priority=critical"],
+            "timestamp": 1111111111.0,
+            "model_reported": "gpt-4o-2024-08-06",
+            "model_version": "2024-08-06",
+            "routing_decision_hash": "sha256:" + "b" * 64,
+        }
+
+        decision = RouteDecision.from_dict(data)
+
+        assert decision.task_id == "task-789"
+        assert decision.model_reported == "gpt-4o-2024-08-06"
+        assert decision.model_version == "2024-08-06"
+        assert decision.routing_decision_hash == "sha256:" + "b" * 64
+
+    def test_from_response_computes_hash(self) -> None:
+        """Test from_response computes routing_decision_hash."""
+        decision = RouteDecision.from_response(
+            task_id="task-resp",
+            adapter="anthropic",
+            model_requested="claude-3-opus",
+            model_reported="claude-3-opus-20240229",
+            model_version="opus-20240229",
+            reasons=["complexity=high"],
+            effort="max",
+            timestamp=1234567890.0,
+        )
+
+        assert decision.task_id == "task-resp"
+        assert decision.model == "claude-3-opus"
+        assert decision.model_reported == "claude-3-opus-20240229"
+        assert decision.model_version == "opus-20240229"
+        assert decision.routing_decision_hash is not None
+        assert decision.routing_decision_hash.startswith("sha256:")
+        assert len(decision.routing_decision_hash) == 71  # sha256: + 64 hex chars
+
+    def test_from_response_none_metadata(self) -> None:
+        """Test from_response handles None model_reported and model_version."""
+        decision = RouteDecision.from_response(
+            task_id="task-none",
+            adapter="local",
+            model_requested="llama-3",
+            model_reported=None,
+            model_version=None,
+            reasons=["low complexity"],
+            effort="low",
+            timestamp=1000000000.0,
+        )
+
+        assert decision.model_reported is None
+        assert decision.model_version is None
+        assert decision.routing_decision_hash is not None
+
+    def test_routing_decision_hash_deterministic(self) -> None:
+        """Test that routing_decision_hash is deterministic for same inputs."""
+        d1 = RouteDecision.from_response(
+            task_id="task-det",
+            adapter="anthropic",
+            model_requested="claude-3-sonnet",
+            model_reported="claude-3-sonnet-20240620",
+            model_version="20240620",
+            reasons=["test reason"],
+            effort="high",
+            timestamp=1000000000.0,
+        )
+        d2 = RouteDecision.from_response(
+            task_id="task-det",
+            adapter="anthropic",
+            model_requested="claude-3-sonnet",
+            model_reported="claude-3-sonnet-20240620",
+            model_version="20240620",
+            reasons=["test reason"],
+            effort="high",
+            timestamp=1000000000.0,
+        )
+
+        assert d1.routing_decision_hash == d2.routing_decision_hash
+
+    def test_routing_decision_hash_differs_for_different_inputs(self) -> None:
+        """Test that routing_decision_hash differs for different task_id."""
+        d1 = RouteDecision.from_response(
+            task_id="task-a",
+            adapter="anthropic",
+            model_requested="claude-3-sonnet",
+            model_reported="claude-3-sonnet-20240620",
+            model_version="20240620",
+            reasons=["test reason"],
+            effort="high",
+            timestamp=1000000000.0,
+        )
+        d2 = RouteDecision.from_response(
+            task_id="task-b",
+            adapter="anthropic",
+            model_requested="claude-3-sonnet",
+            model_reported="claude-3-sonnet-20240620",
+            model_version="20240620",
+            reasons=["test reason"],
+            effort="high",
+            timestamp=1000000000.0,
+        )
+
+        assert d1.routing_decision_hash != d2.routing_decision_hash
+
+    def test_to_dict_roundtrip_with_model_metadata(self) -> None:
+        """Test to_dict/from_dict roundtrip preserves all fields."""
+        original = RouteDecision(
+            task_id="task-rt",
+            adapter="google",
+            model="gemini-2.0-flash",
+            effort="high",
+            reasons=["fast response"],
+            timestamp=1234567890.0,
+            model_reported="gemini-2.0-flash-exp",
+            model_version="2.0-flash-exp-0820",
+            routing_decision_hash="sha256:" + "c" * 64,
+        )
+
+        data = original.to_dict()
+        restored = RouteDecision.from_dict(data)
+
+        assert restored.task_id == original.task_id
+        assert restored.adapter == original.adapter
+        assert restored.model == original.model
+        assert restored.effort == original.effort
+        assert restored.reasons == original.reasons
+        assert restored.timestamp == original.timestamp
+        assert restored.model_reported == original.model_reported
+        assert restored.model_version == original.model_version
+        assert restored.routing_decision_hash == original.routing_decision_hash
+
+    def test_model_reported_none_omitted_from_to_dict(self) -> None:
+        """Test model_reported None is preserved in to_dict (not stripped)."""
+        decision = RouteDecision(
+            task_id="task-none",
+            adapter="local",
+            model="llama-3",
+            effort="low",
+            reasons=[],
+            timestamp=1000000000.0,
+            model_reported=None,
+            model_version=None,
+            routing_decision_hash=None,
+        )
+
+        data = decision.to_dict()
+
+        assert data["model_reported"] is None
+        assert data["model_version"] is None
+        assert data["routing_decision_hash"] is None
+
+    def test_from_response_defaults_timestamp(self) -> None:
+        """Test from_response uses current time when timestamp is None."""
+        decision = RouteDecision.from_response(
+            task_id="task-ts",
+            adapter="anthropic",
+            model_requested="claude-3-sonnet",
+            model_reported=None,
+            model_version=None,
+            reasons=["test"],
+            effort="medium",
+            timestamp=None,
+        )
+
+        assert decision.timestamp > 0
+        assert decision.routing_decision_hash is not None
+
 
 class TestRouteDecisionTracker:
     """Test RouteDecisionTracker class."""

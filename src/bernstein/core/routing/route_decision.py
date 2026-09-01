@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -14,6 +15,36 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _canonical_bytes(data: dict[str, object]) -> bytes:
+    """Return JCS-canonical bytes for a dict of built-in types."""
+    return json.dumps(
+        data,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def _compute_routing_decision_hash(
+    task_id: str,
+    adapter: str,
+    model: str,
+    effort: str,
+    reasons: list[str],
+    timestamp: float,
+) -> str:
+    """Compute sha256:JCS_bytes hash of routing decision inputs."""
+    canonical = _canonical_bytes({
+        "task_id": task_id,
+        "adapter": adapter,
+        "model": model,
+        "effort": effort,
+        "reasons": reasons,
+        "timestamp": timestamp,
+    })
+    return "sha256:" + hashlib.sha256(canonical).hexdigest()
+
+
 @dataclass
 class RouteDecision:
     """Records why a specific agent/model was chosen for a task.
@@ -21,10 +52,13 @@ class RouteDecision:
     Attributes:
         task_id: Task identifier.
         adapter: Adapter name chosen.
-        model: Model name chosen.
+        model: Model name requested.
         effort: Effort level chosen.
         reasons: List of human-readable reason strings.
         timestamp: Unix timestamp of decision.
+        model_reported: Model name actually returned by provider (may differ from model).
+        model_version: Version/snapshot/revision from provider.
+        routing_decision_hash: sha256:JCS_bytes of decision inputs.
     """
 
     task_id: str
@@ -33,6 +67,38 @@ class RouteDecision:
     effort: str
     reasons: list[str] = field(default_factory=list)  # type: ignore[reportUnknownVariableType]
     timestamp: float = field(default_factory=time.time)
+    model_reported: str | None = None
+    model_version: str | None = None
+    routing_decision_hash: str | None = None
+
+    @classmethod
+    def from_response(
+        cls,
+        task_id: str,
+        adapter: str,
+        model_requested: str,
+        model_reported: str | None,
+        model_version: str | None,
+        reasons: list[str],
+        effort: str,
+        timestamp: float | None = None,
+    ) -> RouteDecision:
+        """Build a RouteDecision with model response metadata and computed hash."""
+        ts = timestamp if timestamp is not None else time.time()
+        routing_hash = _compute_routing_decision_hash(
+            task_id, adapter, model_requested, effort, reasons, ts
+        )
+        return cls(
+            task_id=task_id,
+            adapter=adapter,
+            model=model_requested,
+            effort=effort,
+            reasons=reasons,
+            timestamp=ts,
+            model_reported=model_reported,
+            model_version=model_version,
+            routing_decision_hash=routing_hash,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary."""
@@ -43,6 +109,9 @@ class RouteDecision:
             "effort": self.effort,
             "reasons": self.reasons,
             "timestamp": self.timestamp,
+            "model_reported": self.model_reported,
+            "model_version": self.model_version,
+            "routing_decision_hash": self.routing_decision_hash,
         }
 
     @classmethod
@@ -55,6 +124,9 @@ class RouteDecision:
             effort=data.get("effort", ""),
             reasons=data.get("reasons", []),
             timestamp=data.get("timestamp", time.time()),
+            model_reported=data.get("model_reported"),
+            model_version=data.get("model_version"),
+            routing_decision_hash=data.get("routing_decision_hash"),
         )
 
 

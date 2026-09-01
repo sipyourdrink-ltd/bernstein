@@ -62,6 +62,40 @@ _HEX64: re.Pattern[str] = re.compile(r"\A[0-9a-f]{64}\Z")
 #: every historical signature and HMAC stays valid.
 ACTIVITY_SOURCES: frozenset[str] = frozenset({"scheduler", "adapter"})
 
+#: Closed set of valid ``provider`` values for :class:`ModelRef` (issue #5037).
+MODEL_REF_PROVIDERS: frozenset[str] = frozenset(
+    {"openai", "anthropic", "google", "azure", "ollama", "local"}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ModelRef:
+    """Model reference capturing the request/response gap (issue #5037).
+
+    ``None`` fields are dropped from the canonical bytes so every historical
+    entry keeps its exact wire form, signature and HMAC.
+    """
+
+    provider: str
+    model_requested: str
+    model_reported: str | None = None
+    version: str | None = None
+    routing_decision_hash: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.provider:
+            raise ValueError("provider must be a non-empty string")
+        if not self.model_requested:
+            raise ValueError("model_requested must be a non-empty string")
+        if self.model_reported is not None and not self.model_reported:
+            raise ValueError("model_reported must be a non-empty string when not None")
+        if self.version is not None and not self.version:
+            raise ValueError("version must be a non-empty string when not None")
+        if self.routing_decision_hash and not self.routing_decision_hash.startswith("sha256:"):
+            raise ValueError(
+                f"routing_decision_hash must start with 'sha256:', got {self.routing_decision_hash!r}"
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class LineageEntry:
@@ -143,6 +177,8 @@ def _canonical_body(entry: LineageEntry) -> dict[str, object]:
         body.pop("activity_source", None)
     if body.get("attachment_digests") is None:
         body.pop("attachment_digests", None)
+    if body.get("model_ref") is None:
+        body.pop("model_ref", None)
     return body
 
 
