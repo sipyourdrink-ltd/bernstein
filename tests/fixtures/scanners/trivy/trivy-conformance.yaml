@@ -6,7 +6,7 @@ steps:
       roots:
         - tests/fixtures/scanners/trivy/target
       config:
-        db_digest: sha256:633b3bacaa4a03f502faef8f94ce2d20d96a8499405d266ed7f67879109ec80d
+        db_pin: sha256:633b3bacaa4a03f502faef8f94ce2d20d96a8499405d266ed7f67879109ec80d
     expect_feed_digest: sha256:633b3bacaa4a03f502faef8f94ce2d20d96a8499405d266ed7f67879109ec80d
     expected_finding_hashes:
       - 6eb0cd0e1d53c3e01693de4cc38f3925f935d5ecebe409eee23313df31986ecf
@@ -19,7 +19,7 @@ steps:
       roots:
         - tests/fixtures/scanners/trivy/target
       config:
-        db_digest: sha256:633b3bacaa4a03f502faef8f94ce2d20d96a8499405d266ed7f67879109ec80d
+        db_pin: sha256:633b3bacaa4a03f502faef8f94ce2d20d96a8499405d266ed7f67879109ec80d
     expect_feed_digest: sha256:633b3bacaa4a03f502faef8f94ce2d20d96a8499405d266ed7f67879109ec80d
     expected_finding_hashes:
       - 6eb0cd0e1d53c3e01693de4cc38f3925f935d5ecebe409eee23313df31986ecf

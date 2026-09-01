@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -19,23 +20,25 @@ from bernstein.adapters.trivy import (
     TrivyAdapter,
     TrivyError,
     TrivyNotInstalledError,
+    _db_identity,
     _invocation_argv_hash,
+    _resolve_cache_dir,
     parse_trivy_sarif,
 )
 
 _FIXTURE = Path("tests/fixtures/scanners/trivy/trivy-0.74.0.sarif")
 _FIXTURE_DIR = _FIXTURE.parent
 _TARGET = _FIXTURE_DIR / "target"
-_DB_DIGEST = "sha256:633b3bacaa4a03f502faef8f94ce2d20d96a8499405d266ed7f67879109ec80d"
-_OTHER_DB_DIGEST = "sha256:" + "a" * 64
+_DB_IDENTITY = "sha256:633b3bacaa4a03f502faef8f94ce2d20d96a8499405d266ed7f67879109ec80d"
+_OTHER_DB_IDENTITY = "sha256:" + "a" * 64
 
 
 def _fixture_text() -> str:
     return _FIXTURE.read_text(encoding="utf-8")
 
 
-def _scope(db_digest: str = _DB_DIGEST) -> ScanScope:
-    return ScanScope(roots=(_TARGET,), config={"db_digest": db_digest})
+def _scope(db_pin: str = _DB_IDENTITY) -> ScanScope:
+    return ScanScope(roots=(_TARGET,), config={"db_pin": db_pin})
 
 
 def _fake_trivy_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -122,18 +125,18 @@ def test_scanner_registry_resolves_trivy() -> None:
     assert isinstance(get_scanner("trivy"), TrivyAdapter)
 
 
-def test_invocation_hash_binds_version_and_db_digest() -> None:
-    baseline = _invocation_argv_hash("0.74.0", _DB_DIGEST)
+def test_invocation_hash_binds_version_and_db_identity() -> None:
+    baseline = _invocation_argv_hash("0.74.0", _DB_IDENTITY)
 
-    assert _invocation_argv_hash("0.74.0", _DB_DIGEST) == baseline
-    assert _invocation_argv_hash("0.74.1", _DB_DIGEST) != baseline
-    assert _invocation_argv_hash("0.74.0", _OTHER_DB_DIGEST) != baseline
+    assert _invocation_argv_hash("0.74.0", _DB_IDENTITY) == baseline
+    assert _invocation_argv_hash("0.74.1", _DB_IDENTITY) != baseline
+    assert _invocation_argv_hash("0.74.0", _OTHER_DB_IDENTITY) != baseline
 
 
-def test_feed_pinned_scan_requires_a_db_digest(tmp_path: Path) -> None:
+def test_feed_pinned_scan_requires_a_db_pin(tmp_path: Path) -> None:
     with (
         patch("bernstein.adapters.trivy.shutil.which") as which,
-        pytest.raises(TrivyError, match=r"require scope.config\['db_digest'\]"),
+        pytest.raises(TrivyError, match=r"require scope.config\['db_pin'\]"),
     ):
         TrivyAdapter().scan(tmp_path, ScanScope(), tmp_path / "work")
     which.assert_not_called()
@@ -144,38 +147,110 @@ def test_scan_runs_trivy_with_database_updates_disabled(tmp_path: Path) -> None:
 
     with (
         patch("bernstein.adapters.trivy.shutil.which", return_value="/usr/local/bin/trivy"),
+        patch("bernstein.adapters.trivy._db_identity", return_value=_DB_IDENTITY),
         patch("bernstein.adapters.trivy.subprocess.run", side_effect=_fake_trivy_run) as run,
     ):
         result = adapter.scan(_TARGET, _scope(), tmp_path / "work")
 
     assert result.finding_hashes() == sorted(f.finding_hash() for f in parse_trivy_sarif(_fixture_text()))
-    assert result.feed_digest == _DB_DIGEST
+    assert result.feed_digest == _DB_IDENTITY
     scan_argv = run.call_args_list[1].args[0]
     assert scan_argv[1:5] == ["filesystem", "--scanners", "vuln", "--skip-db-update"]
     assert scan_argv[-1] == str(_TARGET.resolve())
     assert "--cache-dir" in scan_argv
     assert adapter.last_invocation is not None
     assert adapter.last_invocation.tool_version == "0.74.0"
-    assert adapter.last_invocation.db_digest == _DB_DIGEST
+    assert adapter.last_invocation.db_pin == _DB_IDENTITY
+    assert adapter.last_invocation.db_identity == _DB_IDENTITY
     assert not (tmp_path / "work" / "trivy.sarif").exists()
 
 
-def test_a_changed_db_digest_is_recorded_not_absorbed(tmp_path: Path) -> None:
-    first_adapter = TrivyAdapter()
-    second_adapter = TrivyAdapter()
+def test_a_changed_db_identity_is_recorded_not_absorbed(tmp_path: Path) -> None:
+    first_adapter = TrivyAdapter(cache_dir=tmp_path / "first-cache")
+    second_adapter = TrivyAdapter(cache_dir=tmp_path / "second-cache")
     with (
         patch("bernstein.adapters.trivy.shutil.which", return_value="/usr/local/bin/trivy"),
+        patch("bernstein.adapters.trivy._db_identity", side_effect=[_DB_IDENTITY, _OTHER_DB_IDENTITY]),
         patch("bernstein.adapters.trivy.subprocess.run", side_effect=_fake_trivy_run),
     ):
         first = first_adapter.scan(_TARGET, _scope(), tmp_path / "first")
-        second = second_adapter.scan(_TARGET, _scope(_OTHER_DB_DIGEST), tmp_path / "second")
+        second = second_adapter.scan(_TARGET, _scope(_OTHER_DB_IDENTITY), tmp_path / "second")
 
     assert first.finding_hashes() == second.finding_hashes()
-    assert first.feed_digest == _DB_DIGEST
-    assert second.feed_digest == _OTHER_DB_DIGEST
+    assert first.feed_digest == _DB_IDENTITY
+    assert second.feed_digest == _OTHER_DB_IDENTITY
     assert first_adapter.last_invocation is not None
     assert second_adapter.last_invocation is not None
+    assert first_adapter.last_invocation.db_identity == _DB_IDENTITY
+    assert second_adapter.last_invocation.db_identity == _OTHER_DB_IDENTITY
     assert first_adapter.last_invocation.argv_hash != second_adapter.last_invocation.argv_hash
+
+
+def test_a_db_pin_mismatch_fails_before_trivy_runs(tmp_path: Path) -> None:
+    with (
+        patch("bernstein.adapters.trivy.shutil.which", return_value="/usr/local/bin/trivy"),
+        patch("bernstein.adapters.trivy._db_identity", return_value=_OTHER_DB_IDENTITY),
+        patch("bernstein.adapters.trivy.subprocess.run") as run,
+        pytest.raises(TrivyError, match=f"expected {_DB_IDENTITY}, observed {_OTHER_DB_IDENTITY}"),
+    ):
+        TrivyAdapter(cache_dir=tmp_path / "cache").scan(_TARGET, _scope(), tmp_path / "work")
+    run.assert_not_called()
+
+
+def test_db_identity_hashes_the_database_file_bytes(tmp_path: Path) -> None:
+    database = tmp_path / "db" / "trivy.db"
+    database.parent.mkdir()
+    database.write_bytes(b"recorded trivy database bytes")
+
+    assert _db_identity(tmp_path) == "sha256:" + hashlib.sha256(database.read_bytes()).hexdigest()
+
+
+def test_db_identity_rejects_a_missing_database(tmp_path: Path) -> None:
+    with pytest.raises(TrivyError, match="database does not exist"):
+        _db_identity(tmp_path)
+
+
+def test_a_missing_database_fails_before_trivy_runs(tmp_path: Path) -> None:
+    with (
+        patch("bernstein.adapters.trivy.shutil.which", return_value="/usr/local/bin/trivy"),
+        patch("bernstein.adapters.trivy.subprocess.run") as run,
+        pytest.raises(TrivyError, match="database does not exist"),
+    ):
+        TrivyAdapter(cache_dir=tmp_path / "cache").scan(_TARGET, _scope(), tmp_path / "work")
+    run.assert_not_called()
+
+
+def test_default_cache_directory_matches_trivy_on_macos() -> None:
+    with (
+        patch("bernstein.adapters.trivy.sys.platform", "darwin"),
+        patch.dict("bernstein.adapters.trivy.os.environ", {"HOME": "/Users/example"}, clear=True),
+    ):
+        cache_dir = _resolve_cache_dir(None)
+
+    assert cache_dir == Path("/Users/example/Library/Caches/trivy")
+
+
+def test_default_cache_directory_uses_xdg_cache_home_on_linux() -> None:
+    with (
+        patch("bernstein.adapters.trivy.sys.platform", "linux"),
+        patch("bernstein.adapters.trivy.os.name", "posix"),
+        patch.dict("bernstein.adapters.trivy.os.environ", {"XDG_CACHE_HOME": "/var/cache/example"}, clear=True),
+    ):
+        cache_dir = _resolve_cache_dir(None)
+
+    assert cache_dir == Path("/var/cache/example/trivy")
+
+
+def test_default_cache_directory_matches_trivys_temp_fallback() -> None:
+    with (
+        patch("bernstein.adapters.trivy.sys.platform", "linux"),
+        patch("bernstein.adapters.trivy.os.name", "posix"),
+        patch.dict("bernstein.adapters.trivy.os.environ", {}, clear=True),
+        patch("bernstein.adapters.trivy.tempfile.gettempdir", return_value="/tmp/example"),
+    ):
+        cache_dir = _resolve_cache_dir(None)
+
+    assert cache_dir == Path("/tmp/example/trivy")
 
 
 def test_scan_reports_missing_trivy_without_invoking_a_process(tmp_path: Path) -> None:
@@ -200,6 +275,7 @@ def test_stale_report_cannot_be_reused(tmp_path: Path) -> None:
 
     with (
         patch("bernstein.adapters.trivy.shutil.which", return_value="/usr/local/bin/trivy"),
+        patch("bernstein.adapters.trivy._db_identity", return_value=_DB_IDENTITY),
         patch("bernstein.adapters.trivy.subprocess.run", side_effect=no_report),
         pytest.raises(TrivyError, match="without writing its SARIF report"),
     ):
@@ -214,18 +290,20 @@ def test_scan_rejects_a_real_trivy_execution_error(tmp_path: Path) -> None:
 
     with (
         patch("bernstein.adapters.trivy.shutil.which", return_value="/usr/local/bin/trivy"),
+        patch("bernstein.adapters.trivy._db_identity", return_value=_DB_IDENTITY),
         patch("bernstein.adapters.trivy.subprocess.run", side_effect=fail_scan),
         pytest.raises(TrivyError, match="code 2: database unavailable"),
     ):
         TrivyAdapter().scan(_TARGET, _scope(), tmp_path / "work")
 
 
-def test_conformance_replays_two_runs_with_the_same_db_digest(tmp_path: Path) -> None:
+def test_conformance_replays_two_runs_with_the_same_db_pin(tmp_path: Path) -> None:
     transcripts = load_scanner_golden_transcripts(_FIXTURE_DIR)
     assert len(transcripts) == 1
 
     with (
         patch("bernstein.adapters.trivy.shutil.which", return_value="/usr/local/bin/trivy"),
+        patch("bernstein.adapters.trivy._db_identity", return_value=_DB_IDENTITY),
         patch("bernstein.adapters.trivy.subprocess.run", side_effect=_fake_trivy_run) as run,
     ):
         result = ScannerConformanceHarness().replay_transcript(transcripts[0], workdir=tmp_path)
@@ -233,5 +311,5 @@ def test_conformance_replays_two_runs_with_the_same_db_digest(tmp_path: Path) ->
     assert result.passed
     assert result.adapter_name == "trivy"
     assert result.determinism_tier is DeterminismTier.FEED_PINNED
-    assert [step.feed_digest for step in result.step_results] == [_DB_DIGEST, _DB_DIGEST]
+    assert [step.feed_digest for step in result.step_results] == [_DB_IDENTITY, _DB_IDENTITY]
     assert sum(call.args[0][1] == "filesystem" for call in run.call_args_list) == 2
