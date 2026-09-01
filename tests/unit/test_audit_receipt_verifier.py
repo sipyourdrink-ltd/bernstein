@@ -180,7 +180,11 @@ def test_audit_receipt_verifier_module_has_expected_structure() -> None:
     """The module exports the expected public API."""
     # Import the module correctly
     from bernstein.core.verifier import audit_receipt_verifier
+
     assert "main" in dir(audit_receipt_verifier)
     # Check module docstring exists and is descriptive
     assert audit_receipt_verifier.__doc__ is not None
-    assert "Console entry point" in audit_receipt_verifier.__doc__ or "verify-audit-receipt" in audit_receipt_verifier.__doc__
+    assert (
+        "Console entry point" in audit_receipt_verifier.__doc__
+        or "verify-audit-receipt" in audit_receipt_verifier.__doc__
+    )
