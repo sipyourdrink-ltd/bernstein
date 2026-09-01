@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from bernstein.core.governance.playbook import (
     Ceiling,
@@ -512,10 +513,10 @@ def test_cli_validate_malformed_yaml(tmp_path) -> None:
 
 def test_clause_refs_must_match_id_pattern() -> None:
     """surface_ref and ceiling_ref must match the same ID pattern."""
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         GovernanceClause(surface_ref="Invalid-Ref", ceiling_ref="c", reason="r")
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         GovernanceClause(surface_ref="s", ceiling_ref="Invalid-Ref", reason="r")
 
 
@@ -542,14 +543,14 @@ def test_playbook_with_many_surfaces_and_ceilings() -> None:
 
 def test_playbook_extra_fields_forbidden() -> None:
     """Extra fields on models are forbidden."""
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         Surface(surface_id="s", kind="k", selector="s", extra_field="oops")
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         Ceiling(ceiling_id="c", kind="k", limit="l", extra_field="oops")
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         GovernanceClause(surface_ref="s", ceiling_ref="c", reason="r", extra_field="oops")
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         GovernancePlaybook(playbook_id="p", name="n", description="d", extra_field="oops")
