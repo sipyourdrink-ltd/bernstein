@@ -22,6 +22,9 @@ import hashlib
 import json
 import stat
 from pathlib import Path
+from typing import cast
+
+import pytest
 
 from bernstein.core.security.agent_card_signer import canonicalize_jcs
 from bernstein.core.security.audit_chain import (
@@ -62,6 +65,15 @@ def _fake_opa(tmp_path: Path, name: str, body: str) -> str:
     script.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
     script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     return str(script)
+
+
+class _Allows(ExternalPolicyHook):
+    @property
+    def name(self) -> str:
+        return "permissive"
+
+    def evaluate(self, request: HookRequest) -> HookResponse:
+        return HookResponse(hook_name=self.name, verdict=HookVerdict.ALLOW, reason="ok")
 
 
 class _Abstains(ExternalPolicyHook):
@@ -224,3 +236,24 @@ def test_registry_without_a_chain_appends_nothing(tmp_path: Path) -> None:
 
     assert registry.first_decisive(_req()).verdict == HookVerdict.DENY
     assert not list(tmp_path.rglob("*.jsonl"))
+
+
+class _BrokenChain:
+    """A chain store whose append always fails."""
+
+    def log_with_prev_digest(self, **kwargs: object) -> object:
+        raise OSError("audit chain is read-only")
+
+
+def test_a_chain_that_cannot_be_written_stops_the_decision(tmp_path: Path) -> None:
+    """10. Evidence failure is decision failure, never a silent grant.
+
+    A registry configured to record and unable to record must not keep answering
+    as if it were: the caller gets an error and grants nothing, rather than an
+    allow whose justification was never written down.
+    """
+    registry = PolicyHookRegistry(audit_chain=cast(AuditChainStore, _BrokenChain()))
+    registry.register(_Allows())
+
+    with pytest.raises(OSError, match="read-only"):
+        registry.first_decisive(_req())
