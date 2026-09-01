@@ -151,6 +151,35 @@ def test_depth_zero_keeps_the_seeds_only(tmp_path: Path, monkeypatch: pytest.Mon
     assert result.neighborhood == result.seed_symbols
 
 
+def test_depth_one_vs_two_differentiation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """depth=1 reaches immediate neighbors; depth=2 reaches one more hop over extracted edges.
+
+    A chain A -> B -> C ensures depth=1 gives {A, B} while depth=2 gives {A, B, C}.
+    """
+    chain = {
+        "src/pkg/alpha.py": "def alpha_func() -> int:\n    return 1\n",
+        "src/pkg/beta.py": "from pkg.alpha import alpha_func\n\ndef beta_func() -> int:\n    return alpha_func()\n",
+        "src/pkg/main.py": "from pkg.beta import beta_func\n\ndef main() -> int:\n    return beta_func()\n",
+    }
+    for rel, body in chain.items():
+        _write(tmp_path / rel, body)
+    listing = sorted(chain)
+    monkeypatch.setattr(semantic_graph, "_git_ls_files", lambda _w: listing)
+
+    graph = SemanticCodeGraph(build_semantic_graph(tmp_path))
+
+    # depth=1: seeds + 1 hop
+    result_1 = attribute_task(graph, "t1", ["src/pkg/main.py"], depth=1)
+    # depth=2: seeds + 2 hops
+    result_2 = attribute_task(graph, "t1", ["src/pkg/main.py"], depth=2)
+
+    assert result_1.neighborhood != result_2.neighborhood
+    # depth=1 should include seeds and beta_func (1 hop)
+    assert "src/pkg/beta.py::beta_func" in result_1.neighborhood
+    # depth=2 should additionally include alpha_func (2 hops)
+    assert "src/pkg/alpha.py::alpha_func" in result_2.neighborhood
+
+
 def test_negative_depth_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     graph = _graph_for(tmp_path, _DISJOINT, monkeypatch)
     with pytest.raises(ValueError, match="depth must be >= 0"):
