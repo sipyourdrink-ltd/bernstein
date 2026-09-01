@@ -2,7 +2,7 @@
 title: Bernstein - The Open-Source Governance Layer for AI Agents
 description: >-
   The open-source governance layer for AI agents. No model in the coordination
-  loop, so parallel runs in per-task git worktrees replay byte-identically.
+  loop, so replaying a plan reproduces its task graph byte-identically.
   Signed lineage plus an opt-in HMAC audit chain a reviewer checks offline,
   without rerunning it. Run Claude Code, Codex, Gemini CLI, and 40+ more behind
   one governance surface, for any deliverable, with zero vendor lock-in.

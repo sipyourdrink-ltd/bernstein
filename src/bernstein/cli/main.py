@@ -411,7 +411,7 @@ def print_rich_help() -> None:
     c.print(
         Panel(
             "[bold]bernstein[/bold]  the open-source governance layer for AI agents.\n"
-            "  No model in the coordination loop, so runs replay byte-identically.\n"
+            "  No model in the coordination loop, so a plan replays to the same task graph.\n"
             "  40+ adapters, per-task git worktrees, opt-in HMAC-SHA256 audit chain (RFC 2104).",
             border_style="blue",
             padding=(0, 2),
@@ -763,7 +763,7 @@ def cli(
 ) -> None:
     """The open-source governance layer for AI agents.
 
-    Parallel runs in per-task git worktrees, byte-identical replay, signed
+    Parallel runs in per-task git worktrees, byte-identical run receipts, signed
     lineage that checks offline from the artefacts. Replaying the HMAC audit
     chain additionally needs the install audit key.
     """

@@ -1,5 +1,5 @@
 name: "Bernstein - agent orchestration"
-description: "The open-source governance layer for AI agents, run from GitHub Actions. No model in the coordination loop, so parallel runs in per-task git worktrees replay byte-identically. Supports ad-hoc tasks and automatic CI-fix mode."
+description: "The open-source governance layer for AI agents, run from GitHub Actions. No model in the coordination loop, so replaying a plan reproduces its task graph byte-identically. Supports ad-hoc tasks and automatic CI-fix mode."
 author: "Bernstein contributors"
 
 branding:

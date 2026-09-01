@@ -6,7 +6,7 @@ This page is the short path through Bernstein's enterprise surface. It does not 
 
 ## Executive summary
 
-Bernstein is a local-first, open-source governance layer for AI agents. No model sits in its coordination loop, so parallel runs in per-task git worktrees replay byte-identically. In the default deployment model:
+Bernstein is a local-first, open-source governance layer for AI agents. No model sits in its coordination loop, so replaying a plan reproduces its task graph byte-identically. In the default deployment model:
 
 - orchestration state lives on disk under `.sdd/`
 - agents run as separate local processes, usually in per-task git worktrees

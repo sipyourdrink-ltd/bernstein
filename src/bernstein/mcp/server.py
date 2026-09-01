@@ -133,7 +133,7 @@ _package_repo_url = package_repo_url
 # Budget and tool-name accuracy are asserted in tests/unit/test_mcp_server.py.
 _SERVER_INSTRUCTIONS = (
     "Bernstein is the open-source governance layer for AI agents, one git "
-    "worktree per task, so runs replay byte-identically. Verifying the audit "
+    "worktree per task; a plan replays to the same task graph. Verifying the audit "
     "chain offline needs the install audit key.\n"
     "Driving a run:\n"
     "1. bernstein_run starts a run and returns immediately with a task_id, "
