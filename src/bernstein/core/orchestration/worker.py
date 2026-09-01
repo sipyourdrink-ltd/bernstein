@@ -761,30 +761,6 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------
 
 
-def check_token_escalation(
-    task_id: str,
-    role: str,
-    model: str,
-    requested_tokens: int,
-    max_allowed_tokens: int,
-    escalation_reason: str,
-    metadata: dict[str, Any] | None = None,
-) -> None:
-    """Check for token escalation and signal if needed."""
-    from bernstein.core.router import signal_max_tokens_escalation
-
-    if requested_tokens > max_allowed_tokens:
-        signal_max_tokens_escalation(
-            task_id=task_id,
-            role=role,
-            model=model,
-            requested_tokens=requested_tokens,
-            max_allowed_tokens=max_allowed_tokens,
-            escalation_reason=escalation_reason,
-            metadata=metadata,
-        )
-
-
 # ---------------------------------------------------------------------------
 # Permission denied hooks for retry hints (T570)
 # ---------------------------------------------------------------------------

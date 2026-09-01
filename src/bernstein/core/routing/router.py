@@ -32,11 +32,8 @@ from bernstein.core.routing.router_core import route_task as route_task
 
 # --- router_policies exports ---
 from bernstein.core.routing.router_policies import AutoRouteDecision as AutoRouteDecision
-from bernstein.core.routing.router_policies import MaxTokensEscalation as MaxTokensEscalation
 from bernstein.core.routing.router_policies import ModelPolicy as ModelPolicy
 from bernstein.core.routing.router_policies import PolicyFilter as PolicyFilter
-from bernstein.core.routing.router_policies import TokenEscalationTracker as TokenEscalationTracker
-from bernstein.core.routing.router_policies import _escalation_tracker as _escalation_tracker
 from bernstein.core.routing.router_policies import _last_used_agent_index as _last_used_agent_index
 from bernstein.core.routing.router_policies import auto_route_task as auto_route_task
 from bernstein.core.routing.router_policies import (
@@ -46,9 +43,6 @@ from bernstein.core.routing.router_policies import get_free_tier_providers as ge
 from bernstein.core.routing.router_policies import select_round_robin_agent as select_round_robin_agent
 from bernstein.core.routing.router_policies import (
     select_with_free_tier_priority as select_with_free_tier_priority,
-)
-from bernstein.core.routing.router_policies import (
-    signal_max_tokens_escalation as signal_max_tokens_escalation,
 )
 
 # Backward-compatible aliases (previously module-private helpers)
