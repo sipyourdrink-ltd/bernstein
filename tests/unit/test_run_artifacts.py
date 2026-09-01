@@ -110,7 +110,16 @@ class TestPayloadValidation:
 
     def test_report_canonical_bytes_are_stable(self) -> None:
         p = ArtifactPayload.report("# Title\nbody")
-        assert p.canonical_bytes() == b'{"body":"# Title\\nbody","finding_references":[],"type":"report"}'
+        assert p.canonical_bytes() == b'{"body":"# Title\\nbody","type":"report"}'
+
+    def test_a_report_without_references_hashes_as_it_did_before_they_existed(self) -> None:
+        """``content_hash`` is taken over these bytes, so an unconditional key
+        would re-hash every report artifact ever recorded."""
+        assert b"finding_references" not in ArtifactPayload.report("# Title\nbody").canonical_bytes()
+
+    def test_a_report_with_references_carries_them(self) -> None:
+        refs = [{"task_id": "t", "key": "f", "version": "1"}]
+        assert b"finding_references" in ArtifactPayload.report("# Title", finding_references=refs).canonical_bytes()
 
 
 class TestFindingPayload:
@@ -634,7 +643,7 @@ class TestReportFindingReferencesTamperEvidence:
         """Report passes verification when all referenced findings have valid receipts."""
         sdd = _sdd(tmp_path)
         # Post a finding artifact first
-        from bernstein.core.evidence.run_artifacts import ArtifactPayload
+        from bernstein.core.evidence.run_artifacts import ArtifactPayload, read_artifact_rows
 
         finding_payload = ArtifactPayload.finding(
             _sarif_result(
@@ -661,7 +670,16 @@ class TestReportFindingReferencesTamperEvidence:
         # Post a report referencing the finding with correct hash
         report_payload = ArtifactPayload.report(
             "# Audit Report\n\nSee finding [FINDING:task-123:finding:1]",
-            finding_references=[{"task_id": "task-123", "key": "finding", "version": 1}],
+            finding_references=[
+                {
+                    "task_id": "task-123",
+                    "key": "finding",
+                    "version": 1,
+                    # The reference is only checkable because it records the
+                    # receipt hash it was built against.
+                    "finding_hash": read_artifact_rows(sdd, "task-123", verify=False)[0].content_hash,
+                }
+            ],
         )
         post_run_artifact(
             sdd_dir=sdd,
@@ -710,7 +728,16 @@ class TestReportFindingReferencesTamperEvidence:
         # Post a report referencing the finding
         report_payload = ArtifactPayload.report(
             "# Audit Report\n\nSee finding [FINDING:task-123:finding:1]",
-            finding_references=[{"task_id": "task-123", "key": "finding", "version": 1}],
+            finding_references=[
+                {
+                    "task_id": "task-123",
+                    "key": "finding",
+                    "version": 1,
+                    # The reference is only checkable because it records the
+                    # receipt hash it was built against.
+                    "finding_hash": read_artifact_rows(sdd, "task-123", verify=False)[0].content_hash,
+                }
+            ],
         )
         post_run_artifact(
             sdd_dir=sdd,

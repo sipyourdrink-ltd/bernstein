@@ -38,7 +38,7 @@ import time
 import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict, cast
 
 from bernstein.core.defaults import (
     ARTIFACT_TYPE_FINDING,
@@ -121,7 +121,13 @@ class ReportArtifactContent(TypedDict):
 
     type: Literal["report"]
     body: str
-    finding_references: list[dict[str, str]]
+    #: Present only when the report cites findings. Absent -- not an empty
+    #: list -- otherwise: this payload is what ``content_hash`` is taken over,
+    #: so a key that appears unconditionally would re-hash every report
+    #: artifact ever recorded, including those written before the field
+    #: existed, and a caller re-deriving the digest from what they posted
+    #: would no longer arrive at the recorded one.
+    finding_references: NotRequired[list[dict[str, str]]]
 
 
 class TableArtifactContent(TypedDict):
@@ -325,8 +331,6 @@ def _verify_finding_content(blob: bytes, where: str) -> str:
         return f"recorded finding location does not match normalized SARIF result ({where})"
     if content.get("type") != ARTIFACT_TYPE_FINDING:
         return f"recorded finding payload has wrong artifact type ({where})"
-    # For finding artifacts with referenced IDs, we need to ensure they exist in the task store
-    # This verification will be done at the report level, not here
     return ""
 
 
@@ -441,14 +445,13 @@ class ArtifactPayload:
     def to_content_dict(self) -> ArtifactContent:
         """Return the type-specific fields that define the artifact content."""
         if self.artifact_type == ARTIFACT_TYPE_REPORT:
-            return cast(
-                ReportArtifactContent,
-                {
-                    "type": ARTIFACT_TYPE_REPORT,
-                    "body": self.body,
-                    "finding_references": self.finding_references,
-                },
-            )
+            report_content: dict[str, Any] = {
+                "type": ARTIFACT_TYPE_REPORT,
+                "body": self.body,
+            }
+            if self.finding_references:
+                report_content["finding_references"] = self.finding_references
+            return cast(ReportArtifactContent, report_content)
         if self.artifact_type == ARTIFACT_TYPE_TABLE:
             return cast(
                 TableArtifactContent,
@@ -895,6 +898,7 @@ def _verify_finding_references_in_report(
     blob: bytes,
     sdd_dir: Path,
     where: str,
+    store: EvidenceStore,
 ) -> str:
     """Verify finding references in a report artifact against the task store.
 
@@ -953,14 +957,34 @@ def _verify_finding_references_in_report(
             # altering a referenced finding receipt *elsewhere* fail: the report
             # bytes and its recorded hash are unchanged, but the recomputed
             # hash no longer matches.
-            if isinstance(recorded_hash, str) and recorded_hash:
-                if not recorded_hash.startswith("sha256:"):
-                    return f"report finding_reference for {task_id!r}:{key!r} has malformed finding_hash ({where})"
-                if selected.content_hash != recorded_hash:
-                    return (
-                        f"referenced finding {task_id!r}:{key!r} receipt hash {selected.content_hash} "
-                        f"does not match report's recorded finding_hash {recorded_hash} ({where})"
-                    )
+            # Recompute from the stored blob, not from the journal row. The
+            # row's ``content_hash`` is metadata that a tamperer editing the
+            # finding's bytes never touches, so comparing against it compares
+            # the recorded hash with itself and reports a tampered finding as
+            # intact. Hashing what is actually on disk is what makes a change
+            # to a referenced finding surface in the report that cites it.
+            blob_bytes = store.get(selected.content_hash)
+            current_hash = _sha256_bytes(blob_bytes) if blob_bytes is not None else None
+
+            # Fail closed. A reference with no recorded hash is not a
+            # reference this function can check: there is nothing to compare
+            # the re-resolved receipt against, so altering the finding would
+            # pass. Skipping the comparison in that case made the check report
+            # a clean report for a tampered one.
+            if not isinstance(recorded_hash, str) or not recorded_hash:
+                return (
+                    f"report finding_reference for {task_id!r}:{key!r} records no finding_hash, "
+                    f"so a change to the referenced finding cannot be detected ({where})"
+                )
+            if not recorded_hash.startswith("sha256:"):
+                return f"report finding_reference for {task_id!r}:{key!r} has malformed finding_hash ({where})"
+            if current_hash is None:
+                return f"referenced finding {task_id!r}:{key!r} receipt is not in the evidence store ({where})"
+            if current_hash != recorded_hash:
+                return (
+                    f"referenced finding {task_id!r}:{key!r} receipt hash {current_hash} "
+                    f"does not match report's recorded finding_hash {recorded_hash} ({where})"
+                )
 
         return ""
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -995,7 +1019,7 @@ def _verify_one_artifact(
     if record.artifact_type == ARTIFACT_TYPE_FINDING:
         return _verify_finding_content(blob, where)
     if record.artifact_type == ARTIFACT_TYPE_REPORT:
-        return _verify_finding_references_in_report(blob, sdd_dir, where)
+        return _verify_finding_references_in_report(blob, sdd_dir, where, store)
     return ""
 
 

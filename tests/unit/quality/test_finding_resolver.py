@@ -9,6 +9,7 @@ import pytest
 from bernstein.core.evidence.run_artifacts import (
     ArtifactPayload,
     post_run_artifact,
+    read_artifact_rows,
 )
 from bernstein.core.quality.finding_resolver import (
     extract_finding_references,
@@ -204,7 +205,16 @@ class TestVerifyFindingReferencesInReport:
         # Post a report referencing the finding
         report_payload = ArtifactPayload.report(
             "# Audit Report\n\nSee finding [FINDING:task-123:finding:1]",
-            finding_references=[{"task_id": "task-123", "key": "finding", "version": 1}],
+            finding_references=[
+                {
+                    "task_id": "task-123",
+                    "key": "finding",
+                    "version": 1,
+                    # Without the receipt hash there is nothing to re-check the
+                    # finding against, and verification refuses the reference.
+                    "finding_hash": read_artifact_rows(tmp_path / ".sdd", "task-123", verify=False)[0].content_hash,
+                }
+            ],
         )
         post_run_artifact(
             sdd_dir=sdd,
@@ -294,7 +304,13 @@ class TestVerifyFindingReferencesInReport:
         # Post a report referencing the finding without version (latest)
         report_payload = ArtifactPayload.report(
             "# Audit Report\n\nSee finding [FINDING:task-123:finding]",
-            finding_references=[{"task_id": "task-123", "key": "finding"}],
+            finding_references=[
+                {
+                    "task_id": "task-123",
+                    "key": "finding",
+                    "finding_hash": read_artifact_rows(sdd, "task-123", verify=False)[0].content_hash,
+                }
+            ],
         )
         post_run_artifact(
             sdd_dir=sdd,
