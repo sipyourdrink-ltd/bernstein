@@ -62,7 +62,7 @@ def _find_bernstein_cli_invocations() -> list[tuple[str, list[str]]]:
 
                     if bernstein_idx is not None and bernstein_idx < len(tokens) - 1:
                         # Everything after "bernstein" is the CLI invocation
-                        argv = tokens[bernstein_idx + 1:]
+                        argv = tokens[bernstein_idx + 1 :]
                         invocations.append((str(path), argv))
                 except (ValueError, IndexError):
                     # Skip lines that can't be parsed as shell commands
@@ -131,4 +131,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
