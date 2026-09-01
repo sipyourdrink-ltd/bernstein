@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from bernstein.adapters.vault_lease_backend import (
+    LeaseInfo,
     VaultLeaseBackend,
     VaultLeaseError,
     VaultLeaseNotFoundError,
@@ -514,3 +515,110 @@ def test_renewal_failure_is_not_reported_as_authorized(backend: VaultLeaseBacken
     # get() must propagate the error, not return an unauthorized secret.
     with pytest.raises(VaultLeaseError, match="500"):
         backend.get("github")
+
+
+def test_has_lease_true_after_put(backend: VaultLeaseBackend, fake_http: _FakeHttpClient) -> None:
+    """has_lease() returns True after put()."""
+    fake_http.set_response(
+        "POST",
+        "/v1/secret/creds/github",
+        200,
+        {"lease_id": "lease-hl", "lease_duration": 300, "data": {"username": "u"}},
+    )
+    backend.put("github", _stored())
+    assert backend.has_lease("github") is True
+
+
+def test_has_lease_false_for_unknown(backend: VaultLeaseBackend) -> None:
+    """has_lease() returns False for unknown provider."""
+    assert backend.has_lease("unknown") is False
+
+
+def test_lease_info_returns_metadata(backend: VaultLeaseBackend, fake_http: _FakeHttpClient) -> None:
+    """lease_info() returns a LeaseInfo with correct fields."""
+    fake_http.set_response(
+        "POST",
+        "/v1/secret/creds/github",
+        200,
+        {"lease_id": "lease-info-test", "lease_duration": 300, "data": {"username": "u"}},
+    )
+    backend.put("github", _stored())
+    info = backend.lease_info("github")
+    assert isinstance(info, LeaseInfo)
+    assert info.lease_id == "lease-info-test"
+    assert info.secret_path == "github"
+    assert info.mount_path == "secret"
+    assert info.is_valid is True
+
+
+def test_lease_info_unknown_raises(backend: VaultLeaseBackend) -> None:
+    """lease_info() raises VaultLeaseNotFoundError for unknown provider."""
+    with pytest.raises((VaultLeaseNotFoundError, VaultNotFoundError)):
+        backend.lease_info("unknown")
+
+
+def test_is_lease_true_for_active_lease(backend: VaultLeaseBackend, fake_http: _FakeHttpClient) -> None:
+    """is_lease() returns True when the lease has not expired."""
+    fake_http.set_response(
+        "POST",
+        "/v1/secret/creds/github",
+        200,
+        {"lease_id": "lease-active", "lease_duration": 300, "data": {"username": "u"}},
+    )
+    backend.put("github", _stored())
+    assert backend.is_lease("github") is True
+
+
+def test_is_lease_false_for_unknown(backend: VaultLeaseBackend) -> None:
+    """is_lease() returns False for unknown provider."""
+    assert backend.is_lease("unknown") is False
+
+
+def test_renew_lease_success(backend: VaultLeaseBackend, fake_http: _FakeHttpClient) -> None:
+    """renew_lease() re-issues the lease and updates the store."""
+    fake_http.set_response(
+        "POST",
+        "/v1/secret/creds/github",
+        200,
+        {"lease_id": "lease-old", "lease_duration": 300, "data": {"username": "old"}},
+    )
+    backend.put("github", _stored())
+    old_info = backend.lease_info("github")
+    assert old_info.lease_id == "lease-old"
+
+    # Renewal response with new lease.
+    fake_http.set_response(
+        "POST",
+        "/v1/secret/creds/github",
+        200,
+        {"lease_id": "lease-renewed", "lease_duration": 600, "data": {"username": "new"}},
+    )
+    result = backend.renew_lease("github")
+    assert result is True
+
+    new_info = backend.lease_info("github")
+    assert new_info.lease_id == "lease-renewed"
+
+
+def test_renew_lease_unknown_is_false(backend: VaultLeaseBackend) -> None:
+    """renew_lease() returns False for unknown provider."""
+    assert backend.renew_lease("unknown") is False
+
+
+def test_renew_lease_failure_is_false(backend: VaultLeaseBackend, fake_http: _FakeHttpClient) -> None:
+    """renew_lease() returns False when Vault returns an error."""
+    fake_http.set_response(
+        "POST",
+        "/v1/secret/creds/github",
+        200,
+        {"lease_id": "lease-ok", "lease_duration": 300, "data": {"username": "u"}},
+    )
+    backend.put("github", _stored())
+
+    fake_http.set_response(
+        "POST",
+        "/v1/secret/creds/github",
+        500,
+        {"errors": ["renewal failed"]},
+    )
+    assert backend.renew_lease("github") is False
