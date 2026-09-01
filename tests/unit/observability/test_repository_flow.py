@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from bernstein.core.observability.repository_flow import (
     PRInfo,
-    RepositoryFlowClient,
-    RepositoryFlowSample,
     collect_repository_flow,
 )
 
