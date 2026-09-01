@@ -342,6 +342,7 @@ trace = ["agentrust-trace>=0.9,<0.10"]
 bernstein = "bernstein.cli.main:cli"
 bernstein-worker = "bernstein.core.worker:main"
 bernstein-bench = "bernstein.eval.bench.bench_cli:bench_group"
+verify-audit-receipt = "bernstein.core.verifier.audit_receipt_verifier:main"
 
 [project.entry-points."bernstein.plugins"]
 # Lifecycle/event plugins (hookimpl classes). Example:
