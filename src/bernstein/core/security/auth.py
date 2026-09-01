@@ -719,8 +719,8 @@ class AuthStore:
                 user_id=session.user_id,
                 revoked_at=session.revoked_at,
             )
-            session.revocation_chain_position = (
-                record.hmac or record.details.get("prev_chain_digest", "")
+            session.revocation_chain_position = record.details.get(
+                "prev_chain_digest", ""
             )
         except Exception:
             logger.warning("Could not record revocation chain event for session %s", session_id)
@@ -744,7 +744,9 @@ class AuthStore:
                             user_id=user_id,
                             revoked_at=data["revoked_at"],
                         )
-                        data["revocation_chain_position"] = record.hmac or record.details.get("prev_chain_digest", "")
+                        data["revocation_chain_position"] = record.details.get(
+                            "prev_chain_digest", ""
+                        )
                     except Exception:
                         logger.warning("Could not record revocation chain event for session %s", data.get("id"))
                     self.save_session(AuthSession.from_dict(data))
