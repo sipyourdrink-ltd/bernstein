@@ -35,8 +35,8 @@ from typing import TYPE_CHECKING, Any, cast
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from bernstein.core.security.audit_chain import AuditChainStore
 from bernstein.core.security.tenanting import DEFAULT_TENANT_ID, normalize_tenant_id
-from bernstein.core.security.audit_chain import AuditChainStore, EVENT_IDENTITY_REVOKED
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -244,7 +244,7 @@ class AuthSession:
     @property
     def is_valid(self) -> bool:
         """Check if this session is valid (not revoked, not expired).
-        
+
         A session is considered invalid if it's revoked past the staleness window.
         This implements fail-closed semantics - past the staleness window, the
         session is treated as if it was never valid.
@@ -710,9 +710,9 @@ class AuthStore:
             return False
         session.revoked = True
         session.revoked_at = time.time()
-        self.save_session(session)
         try:
             from bernstein.core.security.audit_chain import record_identity_revoked
+
             record = record_identity_revoked(
                 chain=self._audit_chain,
                 session_id=session.id,
@@ -723,6 +723,7 @@ class AuthStore:
             session.revocation_chain_position = record.details.get("prev_chain_digest", "")
         except Exception:
             logger.warning("Could not record revocation chain event for session %s", session_id)
+        self.save_session(session)
         return True
 
     def revoke_user_sessions(self, user_id: str) -> int:
@@ -736,6 +737,7 @@ class AuthStore:
                     chain_position = ""
                     try:
                         from bernstein.core.security.audit_chain import record_identity_revoked
+
                         record = record_identity_revoked(
                             chain=self._audit_chain,
                             session_id=data["id"],
