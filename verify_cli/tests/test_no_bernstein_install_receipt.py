@@ -18,12 +18,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
 from bernstein.core.security.audit import AuditLog
 from bernstein.core.security.audit_receipt import build_receipt
 from bernstein.core.security.lineage_kms import FileBasedKMSAdapter
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 pytestmark = pytest.mark.slow
 
@@ -127,9 +126,12 @@ def isolated_python(tmp_path_factory: pytest.TempPathFactory) -> Path:
     venv_dir = tmp_path_factory.mktemp("receipt-venv")
     py = _make_clean_venv(venv_dir)
     # Assert bernstein is NOT importable in this venv.
-    probe = subprocess.run([str(py), "-c", "import bernstein"], capture_output=True, text=True, check=False)
+    probe = subprocess.run(
+        [str(py), "-c", "import bernstein"], capture_output=True, text=True, check=False
+    )
     assert probe.returncode != 0, "venv must NOT have bernstein installed"
-    assert "ModuleNotFoundError" in probe.stderr or "No module named" in probe.stderr, probe.stderr
+    has_err = "ModuleNotFoundError" in probe.stderr or "No module named" in probe.stderr
+    assert has_err, probe.stderr
     return py
 
 
@@ -145,7 +147,9 @@ class TestStandaloneReceiptVerifierInstall:
         assert "[PASS] intoto" in proc.stdout
         assert "[PASS] transparency" in proc.stdout
 
-    def test_tamper_receipt_fails_in_clean_venv(self, tmp_path: Path, isolated_python: Path) -> None:
+    def test_tamper_receipt_fails_in_clean_venv(
+        self, tmp_path: Path, isolated_python: Path
+    ) -> None:
         receipt = _build_receipt(tmp_path)
         # Prove PASS first, then mutate exactly one underlying chain entry.
         assert _run_verifier(isolated_python, receipt).returncode == 0
@@ -168,10 +172,13 @@ class TestStandaloneReceiptVerifierInstall:
         proc = _run_verifier(isolated_python, receipt)
         assert "ModuleNotFoundError" not in proc.stderr
 
-    def test_cli_entry_point_works_in_clean_venv(self, tmp_path: Path, isolated_python: Path) -> None:
+    def test_cli_entry_point_works_in_clean_venv(
+        self, tmp_path: Path, isolated_python: Path
+    ) -> None:
         """The `bernstein-verify-receipt` console-script must be on PATH inside the venv."""
         py_dir = isolated_python.parent
-        cli = py_dir / ("bernstein-verify-receipt.exe" if os.name == "nt" else "bernstein-verify-receipt")
+        name = "bernstein-verify-receipt.exe" if os.name == "nt" else "bernstein-verify-receipt"
+        cli = py_dir / name
         assert cli.exists(), f"console script missing: {cli}"
         result = subprocess.run([str(cli), "--help"], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
@@ -180,11 +187,16 @@ class TestStandaloneReceiptVerifierInstall:
     def test_installed_deps_are_minimal(self, tmp_path: Path) -> None:
         """The fresh venv must only have cryptography + cbor2 + click + bernstein-verify-receipt."""
         import json as _json
+        import shutil as _shutil
 
         venv_dir = tmp_path / "rfresh"
-        uv_bin = shutil.which("uv")
+        uv_bin = _shutil.which("uv")
         if uv_bin:
-            subprocess.run([uv_bin, "venv", "--seed", "--quiet", str(venv_dir)], check=True, capture_output=True)
+            subprocess.run(
+                [uv_bin, "venv", "--seed", "--quiet", str(venv_dir)],
+                check=True,
+                capture_output=True,
+            )
         else:
             import venv as _venv
 
