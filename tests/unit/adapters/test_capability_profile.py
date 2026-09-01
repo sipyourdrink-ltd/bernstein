@@ -910,13 +910,11 @@ class TestDraftProfileDiscovery:
     def test_discover_draft_profiles_from_directory(self, tmp_path: Path) -> None:
         """Draft YAML files are discovered and loaded as profiles."""
         from bernstein.adapters.capability_profile import (
-            DEFAULT_DRAFTS_DIR,
-            AdapterCapabilityProfile,
+            InvocationSpec,
             ProfileImplementation,
             _discover_draft_profiles,
         )
         from bernstein.adapters.draft import write_draft_yaml
-        from bernstein.adapters.capability_profile import InvocationSpec
 
         # Create a draft file
         drafts_dir = tmp_path / "drafts"
@@ -967,11 +965,11 @@ class TestDraftProfileDiscovery:
         """iter_profiles yields both shipped and draft profiles."""
         from bernstein.adapters import capability_profile
         from bernstein.adapters.capability_profile import (
-            iter_profiles,
             PROFILES,
+            InvocationSpec,
+            iter_profiles,
         )
         from bernstein.adapters.draft import write_draft_yaml
-        from bernstein.adapters.capability_profile import InvocationSpec
 
         # Patch DEFAULT_DRAFTS_DIR to use temp directory
         drafts_dir = tmp_path / "drafts"
@@ -998,11 +996,11 @@ class TestDraftProfileDiscovery:
         """get_profile returns a draft profile when not in shipped profiles."""
         from bernstein.adapters import capability_profile
         from bernstein.adapters.capability_profile import (
-            get_profile,
+            InvocationSpec,
             UnknownProfileError,
+            get_profile,
         )
         from bernstein.adapters.draft import write_draft_yaml
-        from bernstein.adapters.capability_profile import InvocationSpec
 
         # Patch DEFAULT_DRAFTS_DIR
         drafts_dir = tmp_path / "drafts"
@@ -1025,9 +1023,8 @@ class TestDraftProfileDiscovery:
 
     def test_draft_profiles_preserve_provenance(self, tmp_path: Path) -> None:
         """Draft profiles preserve evidence byte range through load round-trip."""
-        from bernstein.adapters.capability_profile import _discover_draft_profiles
-        from bernstein.adapters.draft import write_draft_yaml, load_profile_from_draft
         from bernstein.adapters.capability_profile import InvocationSpec
+        from bernstein.adapters.draft import load_profile_from_draft, write_draft_yaml
 
         drafts_dir = tmp_path / "drafts"
         drafts_dir.mkdir(parents=True)

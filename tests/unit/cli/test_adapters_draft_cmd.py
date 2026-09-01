@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from bernstein.adapters.capability_profile import InvocationSpec
 from bernstein.adapters.draft import Draft, read_draft_document
 from bernstein.cli.commands.adapters_draft_cmd import _execute_draft
 from bernstein.cli.main import cli
@@ -219,8 +218,8 @@ def test_adapters_drafts_list_missing_directory(tmp_path: Path) -> None:
 
 def test_adapters_drafts_list_shows_drafts(tmp_path: Path) -> None:
     """The list command shows discovered draft profiles."""
-    from bernstein.adapters.draft import write_draft_yaml
     from bernstein.adapters.capability_profile import InvocationSpec
+    from bernstein.adapters.draft import write_draft_yaml
 
     drafts_dir = tmp_path / "drafts"
     drafts_dir.mkdir(parents=True)
@@ -246,8 +245,8 @@ def test_adapters_drafts_list_shows_drafts(tmp_path: Path) -> None:
 
 def test_adapters_drafts_show_displays_content(tmp_path: Path) -> None:
     """The show command displays the full draft content."""
-    from bernstein.adapters.draft import write_draft_yaml
     from bernstein.adapters.capability_profile import InvocationSpec
+    from bernstein.adapters.draft import write_draft_yaml
 
     drafts_dir = tmp_path / "drafts"
     drafts_dir.mkdir(parents=True)
