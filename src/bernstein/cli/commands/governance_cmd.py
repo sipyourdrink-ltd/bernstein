@@ -22,11 +22,10 @@ and is anchored in the lineage spine for offline verification.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import click
-
-import time
 from rich.console import Console
 from rich.table import Table
 
