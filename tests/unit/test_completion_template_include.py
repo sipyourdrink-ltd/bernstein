@@ -50,6 +50,11 @@ class TestIncludeFile:
         body = _INCLUDE_PATH.read_text(encoding="utf-8")
         assert "/tasks/{{TASK_ID}}/complete" in body
 
+    def test_include_documents_content_addressed_exports(self) -> None:
+        body = _INCLUDE_PATH.read_text(encoding="utf-8")
+        assert "`exports`" in body
+        assert '"content_hash"' in body
+
 
 # ---------------------------------------------------------------------------
 # Renderer {{INCLUDE}} directive

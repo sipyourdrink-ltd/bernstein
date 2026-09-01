@@ -12,6 +12,7 @@ curl -s -w '\n%{http_code}' -X POST http://127.0.0.1:8052/tasks/{{TASK_ID}}/comp
 Payload fields:
 - `summary` (required): what was done, max 2000 characters.
 - `files_changed`: repo-relative paths you modified.
+- `exports` (optional): produced artifacts as `{"path": "<repo-relative path>", "content_hash": "sha256:<64 lowercase hex>"}` objects. Existing producers may omit this field.
 - `verification`: the command you ran to verify the work and its exit code; use `null` only when nothing was runnable.
 - `receipt_ref` (optional): hash or reference to a receipt artefact.
 

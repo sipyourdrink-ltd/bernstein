@@ -6,7 +6,8 @@ to say so. This module defines the closed contract both terminal shapes
 must satisfy at the completion API boundary:
 
 * :class:`WorkerCompletion` - a successful terminal payload (summary,
-  files changed, optional verification evidence, optional receipt ref).
+  files changed, optional content-addressed exports, optional verification
+  evidence, optional receipt ref).
 * :class:`WorkerRefusal` - a typed refusal with a closed
   :class:`RefusalKind` taxonomy and per-kind machine-readable fields.
 * :class:`ContractViolation` - raised when a payload fails validation;
@@ -28,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, cast
@@ -38,6 +40,8 @@ WORKER_CONTRACT_VERSION = "worker-completion/v1"
 
 #: Hard cap for the completion summary, in characters.
 SUMMARY_MAX_CHARS = 2000
+
+_CONTENT_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class RefusalKind(StrEnum):
@@ -82,6 +86,18 @@ class VerificationEvidence:
 
 
 @dataclass(frozen=True)
+class CompletionExport:
+    """Content-addressed artifact produced by a worker completion."""
+
+    path: str
+    content_hash: str
+
+    def to_dict(self) -> dict[str, str]:
+        """Return a JSON-safe representation."""
+        return {"path": self.path, "content_hash": self.content_hash}
+
+
+@dataclass(frozen=True)
 class WorkerCompletion:
     """Validated successful terminal payload."""
 
@@ -89,6 +105,7 @@ class WorkerCompletion:
     files_changed: tuple[str, ...] = ()
     verification: VerificationEvidence | None = None
     receipt_ref: str | None = None
+    exports: tuple[CompletionExport, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-safe representation including the contract tag."""
@@ -101,6 +118,8 @@ class WorkerCompletion:
             data["verification"] = self.verification.to_dict()
         if self.receipt_ref is not None:
             data["receipt_ref"] = self.receipt_ref
+        if self.exports:
+            data["exports"] = [export.to_dict() for export in self.exports]
         return data
 
 
@@ -211,7 +230,37 @@ def _parse_verification(payload: dict[str, Any]) -> VerificationEvidence | None:
     return VerificationEvidence(command=command, exit_code=exit_code)
 
 
-_COMPLETION_KEYS = frozenset({"contract", "summary", "files_changed", "verification", "receipt_ref"})
+def _parse_exports(payload: dict[str, Any]) -> tuple[CompletionExport, ...]:
+    """Validate optional content-addressed completion exports."""
+    raw = payload.get("exports")
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ContractViolation("$.exports", "must be a list of objects")
+    items = cast("list[object]", raw)
+    exports: list[CompletionExport] = []
+    for i, item in enumerate(items):
+        item_path = f"$.exports[{i}]"
+        if not isinstance(item, dict):
+            raise ContractViolation(item_path, "must be an object")
+        obj = cast("dict[str, Any]", item)
+        for key in obj:
+            if key not in ("path", "content_hash"):
+                raise ContractViolation(f"{item_path}.{key}", "unknown field")
+        path = obj.get("path")
+        if not isinstance(path, str) or not path.strip():
+            raise ContractViolation(f"{item_path}.path", "must be a non-empty string")
+        content_hash = obj.get("content_hash")
+        if not isinstance(content_hash, str) or _CONTENT_HASH_RE.fullmatch(content_hash) is None:
+            raise ContractViolation(
+                f"{item_path}.content_hash",
+                "must be a canonical sha256:<64 lowercase hex> digest",
+            )
+        exports.append(CompletionExport(path=path, content_hash=content_hash))
+    return tuple(exports)
+
+
+_COMPLETION_KEYS = frozenset({"contract", "summary", "files_changed", "verification", "receipt_ref", "exports"})
 _REFUSAL_BASE_KEYS = frozenset({"contract", "kind", "detail"})
 _REFUSAL_KIND_KEYS: dict[RefusalKind, frozenset[str]] = {
     RefusalKind.SCOPE_EXCEEDED: frozenset({"proposed_split"}),
@@ -243,6 +292,7 @@ def parse_completion(payload: dict[str, Any]) -> WorkerCompletion:
     summary = _require_str(payload, "summary", max_chars=SUMMARY_MAX_CHARS)
     files_changed = _parse_string_list(payload, "files_changed")
     verification = _parse_verification(payload)
+    exports = _parse_exports(payload)
     receipt_ref_raw = payload.get("receipt_ref")
     receipt_ref: str | None = None
     if receipt_ref_raw is not None:
@@ -254,6 +304,7 @@ def parse_completion(payload: dict[str, Any]) -> WorkerCompletion:
         files_changed=files_changed,
         verification=verification,
         receipt_ref=receipt_ref,
+        exports=exports,
     )
 
 
