@@ -16,6 +16,7 @@ from bernstein.core.compliance.coverage import (
 @dataclass(frozen=True)
 class FakeEntry:
     """Mock LineageEntry for testing."""
+
     artefact_path: str
     artefact_kind: str
 
@@ -179,5 +180,3 @@ class TestBehaviourFromEntry:
         # All should be partially evidenced (wrong behaviour)
         for r in results:
             assert r.status == ControlCoverageStatus.PARTIALLY_EVIDENCED
-
-
