@@ -1,4 +1,4 @@
-"""CLI entry point for Bernstein -- deterministic orchestrator for CLI coding agents.
+"""CLI entry point for Bernstein -- the open-source governance layer for AI agents.
 
 This module defines the top-level click group and registers all
 subcommand modules from:
@@ -410,7 +410,7 @@ def print_rich_help() -> None:
     c.print()
     c.print(
         Panel(
-            "[bold]bernstein[/bold]  deterministic orchestrator for CLI coding agents.\n"
+            "[bold]bernstein[/bold]  the open-source governance layer for AI agents.\n"
             "  No model in the coordination loop, so runs replay byte-identically.\n"
             "  40+ adapters, per-task git worktrees, opt-in HMAC-SHA256 audit chain (RFC 2104).",
             border_style="blue",
@@ -761,7 +761,7 @@ def cli(
     refine_spec: str | None,
     unsafe_allow_unicode_tags: bool,
 ) -> None:
-    """Deterministic orchestrator for CLI coding agents.
+    """The open-source governance layer for AI agents.
 
     Parallel runs in per-task git worktrees, byte-identical replay, signed
     lineage that checks offline from the artefacts. Replaying the HMAC audit

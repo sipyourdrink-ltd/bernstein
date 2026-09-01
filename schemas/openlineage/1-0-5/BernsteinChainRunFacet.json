@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bernstein.run/schemas/openlineage/1-0-5/BernsteinChainRunFacet.json",
+  "title": "BernsteinChainRunFacet",
+  "description": "Custom OpenLineage run facet binding an exported event to the Bernstein lineage WAL chain (issue #4914).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "_producer",
+    "_schemaURL",
+    "chain_head_hash",
+    "lineage_record_id",
+    "signature"
+  ],
+  "properties": {
+    "_producer": {
+      "type": "string",
+      "minLength": 1
+    },
+    "_schemaURL": {
+      "type": "string",
+      "minLength": 1
+    },
+    "chain_head_hash": {
+      "type": "string",
+      "description": "WAL entry_hash at the lineage record position this event projects.",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "lineage_record_id": {
+      "type": "string",
+      "description": "Stable id for the lineage record (WAL entry_hash).",
+      "minLength": 1
+    },
+    "signature": {
+      "type": "string",
+      "description": "Detached sha256: digest of the event with this signature field blanked.",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "customer_signature": {
+      "type": ["string", "null"],
+      "description": "Optional customer Ed25519 signature from the lineage record."
+    },
+    "wal_seq": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

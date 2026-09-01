@@ -8,14 +8,14 @@
 
 <br>
 
-<img alt="Bernstein - deterministic multi-agent CLI orchestration" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/banner-readme.webp" width="820">
+<img alt="Bernstein - the open-source governance layer for AI agents" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/banner-readme.webp" width="820">
 
 <br>
 
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
-### 確定性多代理 CLI 編排
-<!-- l10n: en="deterministic multi-agent CLI orchestration" hash="sha256:2cb1281992f1" -->
+### 面向 AI 代理的開源治理層
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:739f0a7ad1af" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -38,7 +38,7 @@
 
 > **狀態：beta。** 由單人維護，正在積極開發中。版本號計的是發布次數，而非成熟度——次版本（minor）可能變更介面。凡有依賴請鎖定版本；回歸問題會被儘快修復，[歡迎回報](https://github.com/sipyourdrink-ltd/bernstein/issues)。
 
-Bernstein 是面向 CLI 編碼代理（Claude Code、Codex、Gemini CLI 以及 40 多個其他代理）的確定性編排器。它並行執行這些代理，對它們的產出設置門禁，並記錄足夠的執行資訊，供你事後核查。包含離線安裝（air-gap）設定。Apache-2.0 授權。
+Bernstein 是面向 AI 代理的開源治理層。確定性排程器 - 協調迴圈中沒有模型 - 平行執行代理,以閘門把關它們的產出,並記錄每一步,因此一次執行可以事後離線驗證,僅憑工件本身。CLI 編碼代理開箱即用(Claude Code、Codex、Gemini CLI 及 40+ 款),同一治理層治理任何代理工作負載:交付物可以是 diff、研究報告、資料集,或一份稽核證據包。附帶 air-gap 安裝設定。Apache-2.0。
 
 ### 一覽
 <!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->
@@ -51,6 +51,87 @@ Bernstein 是面向 CLI 編碼代理（Claude Code、Codex、Gemini CLI 以及 4
 - **廣泛且本地。** 40 多個 CLI 代理介面卡，外加通用的 `--prompt` 包裝器、基於檔案的狀態、無 SaaS 跳轉、無第三方資料平面。
 
 完整清單見[能力頁面](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)；[功能矩陣](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)是詳盡的索引。
+
+### 一次執行長什麼樣
+<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+
+一個 YAML 檔宣告整次執行:階段、角色、相依,以及節點在什麼條件下才會執行。排程器把它當作純 Python 執行 - 檔案裡沒有任何提示詞,也沒有模型決定下一步發生什麼。這張圖產出一份稽核證據包;完整檔案在 [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml)。
+
+```yaml
+name: audit-evidence-pack
+version: "1.0.0"
+
+phases:
+  - name: scope
+    allowed_roles: [manager, architect]
+  - name: collect
+  - name: validate
+    allowed_roles: [qa, security]
+  - name: deliver
+    allowed_roles: [security, manager]
+
+nodes:
+  define-control-inventory:
+    phase: scope
+    role: architect
+
+  collect-audit-logs:
+    phase: collect
+    role: security
+    depends_on: [define-control-inventory]
+
+  # three more evidence streams collect in parallel:
+  # collect-sboms-and-attestations, collect-runbooks-and-policies,
+  # collect-eval-results
+
+  assemble-pack:
+    phase: validate
+    role: docs
+    depends_on:
+      - collect-audit-logs
+      - collect-sboms-and-attestations
+      - collect-runbooks-and-policies
+      - collect-eval-results
+
+  mock-auditor-pass:
+    phase: validate
+    role: qa
+    depends_on: [assemble-pack]
+
+  remediate-findings:
+    phase: collect
+    role: docs
+    depends_on:
+      - source: mock-auditor-pass
+        condition: "status == 'failed'"
+    retry:
+      max_attempts: 3
+      until: "status == 'done'"
+
+  sign-and-deliver:
+    phase: deliver
+    role: security
+    depends_on:
+      - source: mock-auditor-pass
+        condition: "status == 'done'"
+```
+
+```mermaid
+flowchart LR
+    inv[define-control-inventory] --> logs[collect-audit-logs]
+    inv --> sbom[collect-sboms-and-attestations]
+    inv --> rb[collect-runbooks-and-policies]
+    inv --> ev[collect-eval-results]
+    logs --> pack[assemble-pack]
+    sbom --> pack
+    rb --> pack
+    ev --> pack
+    pack --> gate{mock-auditor-pass}
+    gate -->|failed| fix["remediate-findings (retry x3)"]
+    gate -->|done| sign[sign-and-deliver]
+```
+
+每個節點由角色獲該階段允許的代理認領;無論代理在任務內做什麼,角色圍欄與核准閘門始終有效。程式碼節點在自己的 git worktree 裡、合併閘門之後完成。上面這些節點的完成方式不同:[工件契約](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)指明交付物(報告、資料集、掃描、操作日誌),節點以簽章的 lineage 收據而非提交收尾。同一個排程器、同一份日誌、同樣的離線驗證 - 無論圖裡裝的是程式碼、研究、維運變更,還是三者混合。面向軟體、研究、文件、企業與貢獻者工作流的現成圖都在 [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)。
 
 ### 30 秒安裝
 <!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
@@ -142,9 +223,9 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 儲存庫衛生門禁：`bernstein readme-l10n verify` 會讓翻譯版 README 偏離英文來源的 PR 失敗（並指出過期的章節），`bernstein readme-l10n sync` 在英文修改後重新綁定它們。見 [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)。
 
 ### 支援的代理
-<!-- l10n: en="supported agents" hash="sha256:8c94b4cde068" -->
+<!-- l10n: en="supported agents" hash="sha256:237685a67917" -->
 
-Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goose、Muse Code、OpenAI Agents SDK、Amp、Cody、Continue、Devin Terminal、Junie、Kilo、Kiro、AWS Q Developer、Ollama、OpenCode、OpenHands、Open Interpreter、gptme、Plandex、AIChat、Letta Code、Qwen 等等。[介面卡索引](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)為其中 30 個提供安裝命令。`bernstein integrations list` 從 `src/bernstein/adapters/registry.py` 中的登錄檔列舉全部 51 個已接線整合，該檔案是「什麼能解析」的唯一事實來源。其中 49 個是可選擇的代理介面卡，另外兩列是 `mock` 測試樁和 `self-hosted-endpoints` 端點設定檔。任何帶 `--prompt` 旗標的其他工具都可以透過通用包裝器運作。
+Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goose、Muse Code、OpenAI Agents SDK、Amp、Cody、Continue、Devin Terminal、Junie、Kilo、Kiro、AWS Q Developer、Ollama、OpenCode、OpenHands、Open Interpreter、gptme、Plandex、AIChat、Letta Code、Qwen 等等。[介面卡索引](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)為其中 30 個提供安裝命令。`bernstein integrations list` 從 `src/bernstein/adapters/registry.py` 中的登錄檔列舉全部 54 個已接線整合，該檔案是「什麼能解析」的唯一事實來源。其中 52 個是可選擇的代理介面卡，另外兩列是 `mock` 測試樁和 `self-hosted-endpoints` 端點設定檔。任何帶 `--prompt` 旗標的其他工具都可以透過通用包裝器運作。
 
 在同一執行中混用代理：用便宜的本地模型處理樣板，用更重的雲端模型處理架構。`bernstein integrations list --installed` 顯示你的機器上可用的內容。
 

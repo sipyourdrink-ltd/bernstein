@@ -80,6 +80,7 @@ import yaml
 
 from bernstein.core.knowledge.task_graph import EdgeType
 from bernstein.core.models import Scope, Task, TaskStatus
+from bernstein.core.orchestration.activity import ActivityKind
 from bernstein.core.planning.recovery_receipt import DEFAULT_JOURNAL_TAIL
 from bernstein.core.planning.workflow import WorkflowDefinition, WorkflowPhase
 from bernstein.core.tasks.lifecycle import (
@@ -344,6 +345,8 @@ class DAGNode:
         description: Human-readable description.
         estimated_minutes: Time estimate for scheduling.
         retry: Optional retry/loop configuration.
+        activity_kind: The agent modality (research/data/ops/browser).
+            None means coding (the default scheduling path).
     """
 
     id: str
@@ -352,6 +355,7 @@ class DAGNode:
     description: str = ""
     estimated_minutes: int = 30
     retry: RetryPolicy | None = None
+    activity_kind: ActivityKind | None = None
 
 
 @dataclass(frozen=True)
@@ -399,7 +403,15 @@ class WorkflowDAG:
         phase_hash = self.definition.definition_hash()
         dag_payload = json.dumps(
             {
-                "nodes": [{"id": n.id, "phase": n.phase, "role": n.role} for n in self.nodes],
+                "nodes": [
+                    {
+                        "id": n.id,
+                        "phase": n.phase,
+                        "role": n.role,
+                        "activity_kind": n.activity_kind.value if n.activity_kind else None,
+                    }
+                    for n in self.nodes
+                ],
                 "edges": [
                     {
                         "source": e.source,
@@ -547,6 +559,16 @@ def _parse_nodes(raw: dict[str, Any]) -> tuple[DAGNode, ...]:
                 raise DSLError(msg)
             retry = _parse_retry(node_id, retry_raw)
 
+        activity_kind: ActivityKind | None = None
+        activity_raw = spec.get("activity")
+        if activity_raw is not None:
+            try:
+                activity_kind = ActivityKind(str(activity_raw))
+            except ValueError:
+                valid = ", ".join(sorted(k.value for k in ActivityKind))
+                msg = f"nodes.{node_id}.activity: unknown kind {activity_raw!r}, expected one of [{valid}]"
+                raise DSLError(msg) from None
+
         nodes.append(
             DAGNode(
                 id=node_id,
@@ -555,6 +577,7 @@ def _parse_nodes(raw: dict[str, Any]) -> tuple[DAGNode, ...]:
                 description=str(spec.get("description", "")),
                 estimated_minutes=int(spec.get("estimated_minutes", 30)),
                 retry=retry,
+                activity_kind=activity_kind,
             )
         )
 
@@ -708,6 +731,11 @@ def validate_dag(dag: WorkflowDAG) -> ValidationResult:
 
     if result.errors:
         return result
+
+    # Check activity kinds.
+    for node in dag.nodes:
+        if node.activity_kind is not None and not isinstance(node.activity_kind, ActivityKind):
+            result.errors.append(f"Node {node.id!r} has invalid activity_kind: {node.activity_kind!r}")
 
     node_map = dag.node_map
     phase_index = {name: i for i, name in enumerate(phase_names)}

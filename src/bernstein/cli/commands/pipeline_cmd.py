@@ -2,15 +2,16 @@
 
 Subcommands:
 
-* ``pipeline run`` - one sweep across configured trackers (used by
-  cron/timers; not a long-running loop).
+* ``pipeline run`` - resolve and report the configured trackers. It
+  does not dispatch: the adapter registry is not wired to this command.
 * ``pipeline status`` - print open handoffs for the configured
   trackers from the in-process ledger and (optionally) JSON.
 
 The CLI is deliberately thin: every meaningful decision lives in
 :class:`bernstein.core.orchestration.tracker_pipeline.TrackerPipeline`.
-The CLI is responsible only for resolving ``bernstein.yaml``, wiring
-adapters from the registered tracker module, and rendering output.
+The CLI is responsible only for resolving ``bernstein.yaml`` and
+rendering output. Wiring adapters from the registered tracker module is
+the part that does not exist yet.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from bernstein.core.orchestration.tracker_pipeline import (
     ClaimLedger,
     PipelineConfig,
     StageHandoff,
+    TrackerPipelineError,
 )
 
 if TYPE_CHECKING:
@@ -65,7 +67,7 @@ def pipeline_group() -> None:
     "--dry-run",
     is_flag=True,
     default=False,
-    help="Print the resolved pipeline config without dispatching.",
+    help="Kept for compatibility. Dispatch is not wired, so a plain run does not dispatch either.",
 )
 def run_cmd(
     *,
@@ -73,38 +75,44 @@ def run_cmd(
     config_path: Path,
     dry_run: bool,
 ) -> None:
-    """Run a single sweep of the tracker handoff pipeline.
+    """Resolve and report the tracker handoff pipeline. Does NOT dispatch.
 
-    The command is non-blocking: each invocation walks every
-    configured tracker once. Operators schedule recurring invocations
-    via systemd, cron, or the existing ``bernstein daemon`` runner.
+    Every surface of this command used to promise a sweep it does not
+    perform. It said "Run a single sweep", claimed each invocation
+    "walks every configured tracker once", and offered ``--dry-run`` to
+    print the config "without dispatching" - while neither path
+    dispatches anything at all. An operator following
+    the advice to schedule it via systemd or cron got a printout on
+    every tick and no work, with nothing to indicate why.
 
-    A per-tracker filter is not yet exposed here: the dispatch wiring
-    lives in ``build_pipeline_from_yaml`` and the tracker adapter
-    registry, which the CLI does not yet drive. Operators who need to
-    restrict the sweep should construct their pipeline programmatically
-    with a single-entry ``trackers`` mapping until the registry wiring
-    ships.
+    The dispatch wiring lives in ``build_pipeline_from_yaml`` and the
+    tracker adapter registry, and the CLI does not drive it - that
+    function has no caller anywhere. Until it does, this command
+    resolves the config, validates it, and shows what WOULD be swept.
+
+    Operators who need dispatch today should construct the pipeline
+    programmatically with a single-entry ``trackers`` mapping.
     """
-    raw = _load_pipeline_block(workflow_path or config_path)
-    config = PipelineConfig.from_dict(raw)
+    # Accepted so existing invocations keep working; there is no second
+    # behaviour left for it to select.
+    del dry_run
+    config = _resolve_config(workflow_path or config_path)
     if not config.pipeline_stages:
         console.print(
             "[yellow]No pipeline stages configured under orchestration.tracker_pipeline; nothing to do.[/yellow]"
         )
         return
-    if dry_run:
-        _print_config(config)
-        return
-    # The wire-up to real adapters lives in
-    # ``bernstein.core.orchestration.tracker_pipeline.build_pipeline_from_yaml``.
-    # ``bernstein pipeline run`` invokes it through the trackers
-    # registry at runtime; the CLI surface keeps the call lightweight so
-    # operators can substitute their own driver if they prefer.
+    # This comment used to say the command "invokes it through the trackers registry at
+    # runtime". It does not, and never has: ``build_pipeline_from_yaml`` has no caller
+    # anywhere in the tree. Saying so here is the difference between a reader trusting the
+    # printout and a reader going to look for the dispatch that did not happen.
+    #
+    # The banner is printed on both paths on purpose. --dry-run is the flag an operator
+    # reaches for precisely when they want to know nothing was dispatched, so it is the
+    # last place the disclaimer should be missing.
     console.print(
-        "[dim]pipeline run is a non-blocking sweep; wire your tracker adapter "
-        "registry and dispatcher via build_pipeline_from_yaml() to enable "
-        "live dispatch.[/dim]"
+        "[yellow]No dispatch: the tracker adapter registry is not wired to this command, "
+        "so nothing was swept.[/yellow] The config below resolved and validated."
     )
     _print_config(config)
 
@@ -140,8 +148,7 @@ def status_cmd(*, config_path: Path, state_root: Path, as_json: bool) -> None:
     accurate across worker restarts. The pipeline config is loaded to
     resolve role names back to their declared statuses.
     """
-    raw = _load_pipeline_block(config_path)
-    config = PipelineConfig.from_dict(raw)
+    config = _resolve_config(config_path)
     ledger_path = state_root / DEFAULT_LEDGER_RELPATH
     open_handoffs = _read_open_handoffs(ledger_path, config)
     if as_json:
@@ -172,6 +179,28 @@ def status_cmd(*, config_path: Path, state_root: Path, as_json: bool) -> None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _resolve_config(path: Path) -> PipelineConfig:
+    """Load and parse the pipeline block, reporting config errors as CLI errors.
+
+    ``PipelineStage.from_dict`` already produces the sentence an operator needs -
+    "pipeline stage missing required key: role" - and both commands discarded it by
+    letting ``TrackerPipelineError`` escape. A YAML typo surfaced as a Python traceback
+    with the useful line buried in the middle, which reads as a crash in Bernstein rather
+    than a mistake in the file the operator just edited.
+    """
+    try:
+        raw = _load_pipeline_block(path)
+    except yaml.YAMLError as exc:
+        # The commoner mistake of the two: a bad indent or an unclosed quote
+        # reached the operator as a ParserError traceback, which reads as a
+        # crash in bernstein rather than a typo in the file they just edited.
+        raise click.ClickException(f"{path}: {exc}") from exc
+    try:
+        return PipelineConfig.from_dict(raw)
+    except TrackerPipelineError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 def _load_pipeline_block(path: Path) -> Mapping[str, Any]:

@@ -43,10 +43,23 @@ def register(actor: RunActor, loop: asyncio.AbstractEventLoop | None = None) -> 
         _actors[actor.snapshot().session_id] = (actor, loop)
 
 
-def unregister(session_id: str) -> None:
-    """Drop ``session_id`` from the registry. No-op if absent."""
+def unregister(session_id: str, actor: RunActor | None = None) -> None:
+    """Drop ``session_id`` from the registry. No-op if absent.
+
+    Args:
+        session_id: The session id to drop.
+        actor: When given, the entry is dropped only if it is still this
+            actor. A reconnect registers a second actor under the same
+            session id, and the first one stopping afterwards must not
+            detach the live one.
+    """
     with _lock:
-        _actors.pop(session_id, None)
+        entry = _actors.get(session_id)
+        if entry is None:
+            return
+        if actor is not None and entry[0] is not actor:
+            return
+        del _actors[session_id]
 
 
 def get(session_id: str) -> RunActor | None:
@@ -76,13 +89,22 @@ def publish_event_sync(session_id: str, event: Event) -> bool:
     if entry is None:
         return False
     actor, loop = entry
+    # Built before the scheduling attempt so it can be closed explicitly when
+    # the loop is gone; an abandoned coroutine warns, and the warning is an
+    # error under a strict test run.
+    submission = actor.submit(event)
     try:
-        asyncio.run_coroutine_threadsafe(actor.submit(event), loop)
+        asyncio.run_coroutine_threadsafe(submission, loop)
         return True
     except RuntimeError as exc:
-        # Loop is closed.
+        submission.close()
+        # The loop is closed, so this entry can never accept another event.
+        # Retire it here: an actor whose loop died without stop() being
+        # called would otherwise pin itself, its replay buffer, and the dead
+        # loop in the registry for the life of the process.
+        unregister(session_id, actor)
         logger.debug(
-            "publish_event_sync: loop closed for session %s: %s",
+            "publish_event_sync: loop closed for session %s, entry retired: %s",
             session_id,
             exc,
         )

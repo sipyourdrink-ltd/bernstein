@@ -9,11 +9,13 @@ every content hash. A tampered journal entry or a divergent stored blob fails.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 from bernstein.cli.commands.activity_cmd import activity_group
 from bernstein.core.orchestration.activity import dispatch_activity
@@ -189,122 +191,54 @@ def test_verify_fails_naming_claim_when_source_altered(project: Path) -> None:
     assert any(not v["ok"] for v in stage["claim_verdicts"])
 
 
-# ---------------------------------------------------------------------------
-# research activity CLI tests
-# ---------------------------------------------------------------------------
+def test_research_run_completes_with_default_fetch_synthesize(project: Path) -> None:
+    """Research run with default fetch and synthesize functions completes."""
+    run_id = "run-research-1"
+    input_path = project / "research_input.json"
+    input_path.write_text(
+        json.dumps({"queries": [{"query": "test query", "ref": "https://example.com/test"}]}),
+        encoding="utf-8",
+    )
 
-
-def test_research_run_command_help(project: Path) -> None:
-    """Test that research run command shows help without errors."""
     result = CliRunner().invoke(
         activity_group,
-        ["research", "run", "--help"],
+        ["research", "run", "--input", str(input_path), "--run", run_id, "--workdir", str(project)],
     )
     assert result.exit_code == 0, result.output
-    assert "--query" in result.output
-    assert "--sources" in result.output
-    assert "--budget-max-fetches" in result.output
+    assert run_id in _ANSI_RE.sub("", result.output)
 
 
-def test_research_run_command_requires_query(project: Path) -> None:
-    """Test that research run command requires --query option."""
+def test_research_run_json_output(project: Path) -> None:
+    """Research run with --json flag produces machine-readable output."""
+    run_id = "run-research-json"
+    input_path = project / "research_input.json"
+    input_path.write_text(
+        json.dumps({"queries": [{"query": "test query", "ref": "https://example.com/test"}]}),
+        encoding="utf-8",
+    )
+
     result = CliRunner().invoke(
         activity_group,
-        ["research", "run", "--sources", "https://example.com", "--run", "test-run"],
+        ["research", "run", "--input", str(input_path), "--run", run_id, "--json", "--workdir", str(project)],
     )
-    assert result.exit_code != 0
-    assert "Missing option" in result.output or "Error" in result.output
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["run"] == run_id
+    assert payload["terminal_state"] == "completed"
+    assert "fetched" in payload
 
 
-def test_research_run_command_requires_sources(project: Path) -> None:
-    """Test that research run command requires --sources option."""
+def test_research_run_fails_on_invalid_input(project: Path) -> None:
+    """Research run with invalid input fails appropriately."""
+    run_id = "run-research-fail"
+    input_path = project / "invalid_research.json"
+    input_path.write_text(
+        json.dumps({"queries": []}),  # Empty queries list should fail
+        encoding="utf-8",
+    )
+
     result = CliRunner().invoke(
         activity_group,
-        ["research", "run", "--query", "What is AI?", "--run", "test-run"],
+        ["research", "run", "--input", str(input_path), "--run", run_id, "--workdir", str(project)],
     )
-    assert result.exit_code != 0
-    assert "Missing option" in result.output or "Error" in result.output
-
-
-def test_research_run_command_requires_run_id(project: Path) -> None:
-    """Test that research run command requires --run option."""
-    result = CliRunner().invoke(
-        activity_group,
-        ["research", "run", "--query", "What is AI?", "--sources", "https://example.com"],
-    )
-    assert result.exit_code != 0
-    assert "Missing option" in result.output or "Error" in result.output
-
-
-def test_research_run_accepts_comma_separated_sources(project: Path) -> None:
-    """Test that research run command accepts comma-separated sources."""
-    # Test that the command parses comma-separated sources
-    from bernstein.cli.commands.activity_cmd import _parse_sources
-
-    sources = _parse_sources(("https://a.com,https://b.com",))
-    assert sources == ["https://a.com", "https://b.com"]
-
-
-def test_research_run_accepts_repeated_sources(project: Path) -> None:
-    """Test that research run command accepts repeated --sources options."""
-    from bernstein.cli.commands.activity_cmd import _parse_sources
-
-    sources = _parse_sources(("https://a.com", "https://b.com"))
-    assert sources == ["https://a.com", "https://b.com"]
-
-
-def test_research_run_handles_budget_options(project: Path) -> None:
-    """Test that research run command accepts budget options."""
-    result = CliRunner().invoke(
-        activity_group,
-        [
-            "research",
-            "run",
-            "--query",
-            "What is AI?",
-            "--sources",
-            "https://example.com",
-            "--run",
-            "test-run",
-            "--budget-max-fetches",
-            "5",
-            "--budget-max-cost",
-            "10.0",
-        ],
-    )
-    # Should fail due to missing gpt-researcher, not budget parsing
-    assert "Missing" not in result.output
-
-
-def test_research_run_refuses_on_unavailable_gpt_researcher(project: Path) -> None:
-    """Test that research run command raises click exception when gpt-researcher is unavailable."""
-    with patch("bernstein.core.orchestration.gpt_researcher.GptResearcherSynthesiser") as mock_synth:
-        mock_synth.side_effect = Exception("Module not found")
-
-        result = CliRunner().invoke(
-            activity_group,
-            [
-                "research",
-                "run",
-                "--query",
-                "What is AI?",
-                "--sources",
-                "https://example.com",
-                "--run",
-                "test-run",
-                "--workdir",
-                str(project),
-            ],
-        )
-        # Should fail with module not found or unavailable error
-        assert result.exit_code != 0
-        assert "gpt-researcher" in result.output.lower() or "unavailable" in result.output.lower()
-
-
-def test_research_run_command_json_output(project: Path) -> None:
-    """Test that research run command supports --json output flag."""
-    result = CliRunner().invoke(
-        activity_group,
-        ["research", "run", "--help"],
-    )
-    assert "--json" in result.output
+    assert result.exit_code == 2  # BadParameter exit

@@ -735,6 +735,7 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     # branch, so it declares ``artifact`` output (#3110): completion is the
     # signed lineage receipt and the commit check never fires for it.
     "computer_use": AdapterStrategy(event_channel=EventChannel.POLL_PTY, output_mode=OutputMode.ARTIFACT),
+    "skyvern": AdapterStrategy(event_channel=EventChannel.POLL_PTY, output_mode=OutputMode.ARTIFACT),
     "cody": AdapterStrategy(),
     "composio": AdapterStrategy(event_channel=EventChannel.HOOKS),
     "continue": AdapterStrategy(),
@@ -744,6 +745,10 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "devin_terminal": AdapterStrategy(event_channel=EventChannel.POLL_PTY),
     "droid": AdapterStrategy(),
     "forge": AdapterStrategy(),
+    # garak runs a probe suite and its unit of work is the scan report, not a
+    # commit, so it declares ``artifact``: the run completes when the report
+    # lands and the commit check never fires for it.
+    "garak": AdapterStrategy(output_mode=OutputMode.ARTIFACT),
     "generic": AdapterStrategy(),
     # Goose emits NDJSON under --output-format stream-json whose events carry
     # tokens/cost_usd and an error event (the authoritative failure signal;
@@ -761,6 +766,17 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     # it unsupported reads as "cannot be driven unattended", which understates
     # what an operator is authorising when they select this adapter.
     "hermes": AdapterStrategy(dangerous_mode=DangerousModeStrategy.ALWAYS_ON),
+    # HolmesGPT is a read-only investigation CLI. It has no native resume,
+    # runs non-interactively with --no-interactive, and emits lifecycle
+    # signals as a JSON output file rather than a structured stream. Its
+    # unit of work is the investigation artifact (conclusion + observations),
+    # not a commit, so completion is the signed lineage receipt.
+    "holmesgpt": AdapterStrategy(
+        resume=ResumeStrategy.UNSUPPORTED,
+        dangerous_mode=DangerousModeStrategy.UNSUPPORTED,
+        event_channel=EventChannel.TEXT_SIGNALS,
+        output_mode=OutputMode.ARTIFACT,
+    ),
     "iac": AdapterStrategy(),
     "junie": AdapterStrategy(),
     # Kilo documents native ACP support; it declares the ACP event channel so
@@ -776,7 +792,7 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     # warm retry sends only the corrective instruction on the assumption the
     # prior session is reattached.
     "kimchi": AdapterStrategy(
-        resume=ResumeStrategy.UNSUPPORTED,
+        resume=ResumeStrategy.FLAG,
         dangerous_mode=DangerousModeStrategy.CLI_FLAG,
         event_channel=EventChannel.ACP,
         output_mode=OutputMode.GIT_DIFF,

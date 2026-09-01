@@ -14,8 +14,8 @@ Two surfaces:
   for back-compat.
 * ``bernstein lineage walk <file>:<line>`` -- explicit form of the
   above; preferred in scripts to avoid colliding with subcommand names.
-* ``bernstein lineage export <run_id> --format <csv|jsonld|html>`` --
-  produce a regulator-shaped artefact for an audit package.
+* ``bernstein lineage export <run_id> --format <csv|jsonld|html|openlineage>`` --
+  produce a regulator-shaped artefact or OpenLineage JSONL projection (#4914).
 * ``bernstein lineage verify <run_id>`` -- one-shot chain verification;
   exits 0 only when every record validates.
 

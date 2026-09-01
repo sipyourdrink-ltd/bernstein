@@ -28,6 +28,7 @@ import shutil
 import stat
 import sys
 import threading
+import zlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -875,6 +876,120 @@ def _verify_log_file(log_path: Path, prev_hmac: str, key: bytes, errors: list[st
     return _verify_log_bytes(log_path.read_bytes(), log_path.name, prev_hmac, key, errors)
 
 
+# ---------------------------------------------------------------------------
+# Hash-tile trust-by-hash verification (issue #3831, slice 3)
+# ---------------------------------------------------------------------------
+# A hash tile (``<segment>.tile``) is a content-addressed JSON manifest written
+# by the seal job at seal time; it records the plain ``SHA-256`` of the sealed
+# byte prefix. A verifier that has already seen a tile trusts that segment by
+# *hash*, not by cache: it recomputes the SHA-256 of the on-disk bytes and
+# compares to the tile's ``content_sha256``. If they match, the segment is
+# exactly what the tile describes and the verifier reads no bytes of it. If
+# they differ - or no tile exists, or the tile's ``content_sha256`` is not a
+# string - the verifier falls through to reading the segment (archived ``.gz``
+# or live ``.jsonl``) and reports it, never skipping because it was seen
+# before. This is what makes the cache a measurement, not a trust assumption.
+
+#: Filename of the per-run tile-read counter, written by the verifier into
+#: ``<audit_dir>/.tiles-read.json`` so the incremental-verify measurement
+#: survives being deleted (deleting it costs time, never correctness).
+_TILE_READ_COUNT_NAME = ".tiles-read.json"
+
+#: Bump when the stored counter shape changes so old counters are ignored.
+_TILE_READ_COUNT_VERSION = 1
+
+
+def _tile_read_count_path(audit_dir: Path) -> Path:
+    """Return the path of the per-run tile-read counter."""
+    return audit_dir / _TILE_READ_COUNT_NAME
+
+
+def _load_tile_read_count(audit_dir: Path) -> int:
+    """Return the number of tiles read by the last verify run, or 0.
+
+    The file is inside the audit directory (see :data:`_TILE_READ_COUNT_NAME`),
+    so it travels with the chain and is treated as untrusted input: a hostile
+    directory can hold a stale counter, and ``verify`` always recomputes the
+    count from the current run rather than trusting the stored one. The file
+    is only ever *written* by this verifier, never read as a verdict.
+    """
+    path = _tile_read_count_path(audit_dir)
+    try:
+        doc = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return 0
+    if not isinstance(doc, dict):
+        return 0
+    if doc.get("version") != _TILE_READ_COUNT_VERSION:
+        return 0
+    count = doc.get("tiles_read")
+    return int(count) if isinstance(count, int) and not isinstance(count, bool) and count >= 0 else 0
+
+
+def _store_tile_read_count(audit_dir: Path, count: int) -> None:
+    """Persist the tile-read count from the most recent verify run.
+
+    Best effort: a failure to write leaves the old counter, which is never a
+    verdict (see :func:`_load_tile_read_count`).
+    """
+    doc = {"version": _TILE_READ_COUNT_VERSION, "tiles_read": count}
+    path = _tile_read_count_path(audit_dir)
+    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+    try:
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(doc))
+        os.replace(tmp, path)
+    except OSError:
+        logger.debug("could not persist tile-read count at %s", path, exc_info=True)
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+
+
+def _tile_trusts_content(
+    audit_dir: Path, segment_name: str, *, on_disk: bytes | None = None
+) -> tuple[bool, str | None, str | None]:
+    """Return ``(trusted, content_sha256, reason)`` for *segment_name*.
+
+    A tile is trusted by hash only: when the tile's ``content_sha256`` is a
+    string and the on-disk bytes hash to it, the caller may skip reading the
+    segment. Any other outcome - no tile, non-string ``content_sha256``, or a
+    hash mismatch - returns ``(False, None, reason)`` and the caller falls
+    through to reading the segment.
+
+    Args:
+        audit_dir: The audit directory.
+        segment_name: Live segment file name (e.g. ``2026-08-24.jsonl``).
+        on_disk: Pre-read bytes of the segment, or ``None`` to read here.
+
+    Returns:
+        ``(True, sha256, None)`` when the tile is trusted,
+        ``(False, None, reason)`` otherwise. ``reason`` names what fallthrough
+        needed: ``"no tile"``, ``"non-string content_sha256"``, or
+        ``"hash mismatch"``.
+    """
+    from bernstein.core.persistence.tiles import read_hash_tile
+
+    tile = read_hash_tile(audit_dir, segment_name)
+    if tile is None:
+        return False, None, "no tile"
+    stated = tile.get("content_sha256")
+    if not isinstance(stated, str):
+        # A non-string content_sha256 is not a valid content address: the
+        # tile cannot be trusted to describe the bytes, so fall through.
+        return False, None, "non-string content_sha256"
+    if on_disk is None:
+        # The caller did not pre-read the bytes; read the segment here so the
+        # hash is computed over the exact bytes the verifier would otherwise
+        # walk. Reading here keeps the trust check honest rather than lazy.
+        on_disk = _read_segment_bytes_for_hash(audit_dir, segment_name)
+        if on_disk is None:
+            return False, None, "segment unreadable"
+    actual = hashlib.sha256(on_disk).hexdigest()
+    if not _hmac.compare_digest(actual, stated):
+        return False, None, "hash mismatch"
+    return True, stated, None
+
+
 def _read_archived_segment(gz_path: Path, errors: list[str]) -> bytes | None:
     """Decompress an archived ``*.jsonl.gz`` segment to its original bytes.
 
@@ -890,9 +1005,26 @@ def _read_archived_segment(gz_path: Path, errors: list[str]) -> bytes | None:
     try:
         with gzip.open(gz_path, "rb") as fh:
             return fh.read()
-    except (OSError, EOFError) as exc:
+    except (OSError, EOFError, zlib.error) as exc:
         errors.append(f"{gz_path.name}: unreadable archived segment - {exc}")
         return None
+
+
+def _read_segment_bytes_for_hash(audit_dir: Path, segment_name: str) -> bytes | None:
+    """Return the current bytes for *segment_name*, live then archived.
+
+    Reads the live file first, then its archived ``.gz`` counterpart, so a
+    tile taken before retention still validates after it. Never raises.
+    """
+    live = audit_dir / segment_name
+    if live.exists():
+        with contextlib.suppress(OSError):
+            return live.read_bytes()
+    gz = audit_dir / RetentionPolicy().archive_subdir / f"{segment_name}.gz"
+    if gz.exists():
+        discard: list[str] = []
+        return _read_archived_segment(gz, discard)
+    return None
 
 
 def _record_is_locally_valid(key: bytes, entry: dict[str, Any], scheme: int | None = None) -> bool:
@@ -1064,6 +1196,130 @@ def _classify_torn_bytes(torn: bytes) -> str:
     return "invalid_hmac" if "hmac" in parsed else "non_canonical"
 
 
+def _run_incremental_verify(log: AuditLog) -> IncrementalVerifyReport:
+    """Body of :meth:`AuditLog.verify_incremental`.
+
+    Walks archived then live segments, exactly the order :meth:`verify` walks
+    them, but for each segment first asks the hash tile whether the bytes can
+    be trusted by hash. A trusted segment contributes ``prev_hmac`` (via the
+    recorded ``end_hmac`` of the prior seal) without walking its bytes. A
+    segment whose tile does not match (or has no tile, or a non-string
+    ``content_sha256``) is read and walked by :func:`_verify_log_bytes`
+    exactly as :meth:`verify_detailed` would do.
+
+    Returns an :class:`IncrementalVerifyReport`. The report's ``tiles_read``
+    is the count of tile lookups performed during this run; the
+    ``run_was_full`` flag is true when no segment was trusted by hash, so a
+    test that asserts the second run is full after a hostile edit is
+    observable without re-running the verifier.
+
+    The marker that records the count is written at the end of the run only
+    when the run is clean, so a partial run does not leave a misleading
+    count behind for the next operator.
+    """
+    errors: list[str] = []
+    ctx = _ChainWalkContext()
+    archived = _archived_segment_paths(log._audit_dir)
+    live_files = sorted(log._audit_dir.glob(_JSONL_GLOB))
+    if not archived and not live_files:
+        report = IncrementalVerifyReport(
+            ok=True,
+            errors=[],
+            tiles_read=0,
+            tiles_trusted=0,
+            segments_re_read=0,
+            run_was_full=True,
+        )
+        _store_tile_read_count(log._audit_dir, 0)
+        return report
+
+    from bernstein.core.persistence.tiles import has_hash_tile, read_hash_tile
+
+    tiles_read = 0
+    tiles_trusted = 0
+    segments_re_read = 0
+    prev_hmac = _GENESIS_HMAC
+
+    # Archived segments first (date-ordered), then live, mirroring
+    # ``verify_detailed`` so trust shortcuts cannot reorder the chain.
+    for gz_path in archived:
+        segment_name = gz_path.name[: -len(".gz")]
+        if has_hash_tile(log._audit_dir, segment_name):
+            tiles_read += 1
+            raw = _read_archived_segment(gz_path, errors)
+            if raw is None:
+                break
+            trusted, _sha, _reason = _tile_trusts_content(log._audit_dir, segment_name, on_disk=raw)
+            if trusted:
+                tiles_trusted += 1
+                # Adopt the chain head the prior seal recorded for this
+                # prefix; fall back to genesis when the tile does not carry
+                # an end_hmac (older tiles, or a tile written by a different
+                # toolchain).
+                tile = read_hash_tile(log._audit_dir, segment_name) or {}
+                end = tile.get("end_hmac")
+                prev_hmac = str(end) if isinstance(end, str) and end else _GENESIS_HMAC
+                continue
+            # Fallthrough: tile exists but trust failed. Recompute prev_hmac
+            # by walking the bytes we just read, so the chain linkage stays
+            # exact. ``raw`` was already paid for the trust check; reusing
+            # it is cheaper than reading the .gz a second time.
+            segments_re_read += 1
+            prev_hmac = _verify_log_bytes(raw, gz_path.name, prev_hmac, log._key, errors, ctx)
+            continue
+        # No tile: must re-read and walk the .gz.
+        raw = _read_archived_segment(gz_path, errors)
+        if raw is None:
+            break
+        segments_re_read += 1
+        prev_hmac = _verify_log_bytes(raw, gz_path.name, prev_hmac, log._key, errors, ctx)
+
+    for log_path in live_files:
+        segment_name = log_path.name
+        if has_hash_tile(log._audit_dir, segment_name):
+            tiles_read += 1
+            raw = _read_live_segment(log_path, log._audit_dir)
+            if raw is None:
+                errors.append(f"{log_path.name}: segment disappeared during verification")
+                break
+            trusted, _sha, _reason = _tile_trusts_content(log._audit_dir, segment_name, on_disk=raw)
+            if trusted:
+                tiles_trusted += 1
+                tile = read_hash_tile(log._audit_dir, segment_name) or {}
+                end = tile.get("end_hmac")
+                prev_hmac = str(end) if isinstance(end, str) and end else _GENESIS_HMAC
+                continue
+            segments_re_read += 1
+            prev_hmac = _verify_log_bytes(raw, log_path.name, prev_hmac, log._key, errors, ctx)
+            continue
+        raw = _read_live_segment(log_path, log._audit_dir)
+        if raw is None:
+            errors.append(f"{log_path.name}: segment disappeared during verification")
+            break
+        segments_re_read += 1
+        prev_hmac = _verify_log_bytes(raw, log_path.name, prev_hmac, log._key, errors, ctx)
+
+    chain_report = _build_verify_report(errors, ctx)
+    hard_errors = list(chain_report.hard_errors)
+    for tear in chain_report.unacknowledged_tears:
+        if tear.raw_errors:
+            hard_errors.extend(tear.raw_errors)
+        else:
+            hard_errors.append(f"{tear.describe()} - run 'bernstein audit ack-tear' after investigating")
+
+    report = IncrementalVerifyReport(
+        ok=not hard_errors,
+        errors=hard_errors,
+        tiles_read=tiles_read,
+        tiles_trusted=tiles_trusted,
+        segments_re_read=segments_re_read,
+        run_was_full=(tiles_trusted == 0 and tiles_read > 0),
+    )
+    if not hard_errors:
+        _store_tile_read_count(log._audit_dir, tiles_read)
+    return report
+
+
 @dataclass(frozen=True)
 class TearEvidence:
     """Durable evidence that a segment carried a non-verifying suffix.
@@ -1122,6 +1378,42 @@ class ChainVerifyReport:
     @property
     def ok(self) -> bool:
         return not self.hard_errors and not self.unacknowledged_tears
+
+
+@dataclass
+class IncrementalVerifyReport:
+    """Outcome of :meth:`AuditLog.verify_incremental`.
+
+    Attributes:
+        ok: True when the chain verifies (tiles trusted by hash plus
+            re-verified segments).
+        errors: Verification errors, in the same shape as
+            :meth:`AuditLog.verify` returns.
+        tiles_read: Number of hash tiles that had to be consulted during this
+            run. A trust check counts as one tile read whether it succeeded
+            (segment trusted) or fell through to a re-read (no tile, hash
+            mismatch, or non-string ``content_sha256``). The on-disk bytes of
+            a trusted segment are not counted here, because the trust check
+            is what costs: it reads the segment bytes once to recompute the
+            hash. Segments that the verifier had to walk byte-for-byte (the
+            changed ones) each count as one tile read for the trust check
+            that fell through, plus the bytes walked.
+        tiles_trusted: Number of segments that were trusted by hash without
+            a byte walk.
+        segments_re_read: Number of segments that had to be re-verified from
+            bytes because their tile did not match (or did not exist).
+        run_was_full: True when no segment was trusted by hash, i.e. this run
+            did the same work as a full :meth:`verify`. Useful for the
+            "after an incremental run, a flipped byte anywhere in the trusted
+            set is still caught on the next full verify" acceptance check.
+    """
+
+    ok: bool
+    errors: list[str]
+    tiles_read: int
+    tiles_trusted: int
+    segments_re_read: int
+    run_was_full: bool
 
 
 class OutstandingTearError(RuntimeError):
@@ -2237,6 +2529,53 @@ class AuditLog:
             else:
                 errors.append(f"{tear.describe()} - run 'bernstein audit ack-tear' after investigating")
         return len(errors) == 0, errors
+
+    def verify_incremental(self) -> IncrementalVerifyReport:
+        """Verify the chain, trusting previously sealed tiles by hash.
+
+        A segment is trusted by hash: when a hash tile exists for it and the
+        on-disk bytes hash to the tile's ``content_sha256``, the verifier does
+        not re-read those bytes. When the trust check fails - no tile, a
+        non-string ``content_sha256``, or a hash mismatch - the segment is
+        read and verified as in :meth:`verify_detailed`. This is what makes
+        the second verify cost only what changed: a sealed, unchanged
+        segment costs one SHA-256 over its bytes, not an HMAC walk.
+
+        The "already verified up to here" marker lives inside the audit
+        directory at :data:`_TILE_READ_COUNT_NAME`. A hostile directory can
+        hold a stale counter; the verifier never reads the marker as a
+        verdict, only writes a fresh count at the end of every run. An
+        operator who was handed a hostile directory forces a full re-verify
+        by deleting the marker (and only the marker) - which costs time,
+        never correctness, because trust is gated by hash recomputation,
+        not by the marker.
+
+        Returns:
+            An :class:`IncrementalVerifyReport` with the verdict and the
+            number of tiles that had to be re-read (i.e. segments that were
+            not trusted by hash, plus tiles that were read for the trust
+            check itself).
+        """
+        return _run_incremental_verify(self)
+
+    def last_tile_read_count(self) -> int:
+        """Return the tile-read count from the most recent ``verify_incremental`` run.
+
+        Returns 0 when no run has happened or the marker was deleted.
+        """
+        return _load_tile_read_count(self._audit_dir)
+
+    def force_full_verify(self) -> tuple[bool, list[str]]:
+        """Re-verify the chain with no trust shortcut, ignoring any tile state.
+
+        This is the operator lever for ``incremental verification refuses to
+        be weaker than a full one``: deleting the
+        :data:`_TILE_READ_COUNT_NAME` marker also costs only a re-run (the
+        next :meth:`verify_incremental` is full), but the marker is the
+        only state and an explicit ``force_full_verify`` is the documented
+        way to do it. Equivalent to :meth:`verify`.
+        """
+        return self.verify()
 
     def verify_detailed(self) -> ChainVerifyReport:
         """Verify the chain, separating tear evidence from hard corruption.

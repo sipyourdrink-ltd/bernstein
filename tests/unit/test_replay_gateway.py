@@ -134,10 +134,12 @@ def test_record_then_replay_produces_identical_outputs(
     assert rec.path.exists()
     lines = rec.path.read_text().splitlines()
     assert len(lines) == 4
-    # Each line is valid JSON with the expected fields.
+    # Each line is valid JSON with the expected fields; keys are scheme-prefixed.
     for raw in lines:
         row = json.loads(raw)
         assert {"seq", "ts", "kind", "key", "response"} <= row.keys()
+        assert isinstance(row["key"], str) and row["key"].startswith("v1:")
+        assert len(row["key"]) == 3 + 64
 
     # --- replay phase ---------------------------------------------------
     monkeypatch.delenv(RECORD_ENV_VAR, raising=False)
