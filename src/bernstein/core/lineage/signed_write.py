@@ -74,7 +74,7 @@ from bernstein.core.lineage.artifact_uri import (
     REASON_UNKNOWN_SCHEME,
     artifact_key_rejection_reason,
 )
-from bernstein.core.lineage.entry import LineageEntry, canonicalise, compute_operator_hmac, entry_hash
+from bernstein.core.lineage.entry import LineageEntry, ModelRef, canonicalise, compute_operator_hmac, entry_hash
 from bernstein.core.lineage.identity import sign_detached
 
 if TYPE_CHECKING:
@@ -140,6 +140,7 @@ def seal_write(
     extra_parents: list[str] | None = None,
     attachment_digests: list[str] | None = None,
     ts_ns: int | None = None,
+    model_ref: ModelRef | None = None,
 ) -> str:
     """Seal a single signed lineage write into ``store``. Returns the entry hash.
 
@@ -193,6 +194,10 @@ def seal_write(
             logical timestamp so two operators with equal inputs produce a
             byte-identical signed entry - the deterministic projection of
             ``(task, inputs)`` (issue #2608).
+        model_ref: Optional model reference (issue #5037). Records the model
+            that produced the output, linking the lineage receipt to model
+            governance. ``None`` is dropped from canonical bytes so entries
+            without a model attribution keep their historical hashes.
 
     Raises:
         ValueError: When ``artefact_path`` is absolute or contains a
@@ -239,6 +244,7 @@ def seal_write(
         operator_hmac="",
         trust_class=trust_class,
         attachment_digests=attachment_digests,
+        model_ref=model_ref,
     )
     operator_hmac = compute_operator_hmac(unsigned_entry, operator_hmac_key)
 
@@ -256,6 +262,7 @@ def seal_write(
         operator_hmac=operator_hmac,
         trust_class=trust_class,
         attachment_digests=attachment_digests,
+        model_ref=model_ref,
     )
 
     # Sign the JCS-canonical entry bytes. The auditor verifies the same bytes
@@ -326,11 +333,17 @@ class SignedLineageLog:
         extra_parents: list[str] | None = None,
         attachment_digests: list[str] | None = None,
         ts_ns: int | None = None,
+        model_ref: ModelRef | None = None,
     ) -> str:
         """Seal one artefact write into the bound store. Returns the entry hash.
 
         Arguments and failure modes are exactly those of :func:`seal_write`;
         ``store`` and ``operator_hmac_key`` come from the instance.
+
+        Args:
+            model_ref: Optional model reference (issue #5037). Records the model
+                that produced the output, linking the lineage receipt to model
+                governance.
         """
         return seal_write(
             self.store,
@@ -347,6 +360,7 @@ class SignedLineageLog:
             extra_parents=extra_parents,
             attachment_digests=attachment_digests,
             ts_ns=ts_ns,
+            model_ref=model_ref,
         )
 
 
