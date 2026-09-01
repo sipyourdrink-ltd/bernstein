@@ -577,6 +577,20 @@ EVENT_MCP_TASK_HANDLE = "mcp.task_handle"
 #: SVID and that neither has been altered since.
 EVENT_SPIFFE_SVID_BINDING = "spiffe.svid_binding"
 
+#: Issue #5030 -- emitted when a token bound to an X.509-SVID is presented by
+#: something that could not prove it holds that SVID. The event pins the
+#: content-addressed refusal receipt together with the code naming *which*
+#: proof failed (no certificate presented, wrong thumbprint, expired leaf,
+#: unparseable leaf, or an audience that requires a binding the token lacks),
+#: the SPIFFE ID of the SVID that should have been used, and the expected and
+#: presented thumbprints. A gateway that rejects a replayed token says the
+#: request was denied; this says a token issued to one workload was presented
+#: by something that could not prove it was that workload, at a named chain
+#: position, and the statement verifies offline after the incident. Records
+#: identifiers, thumbprints, and the verdict only -- never the token or the
+#: certificate.
+EVENT_TOKEN_BINDING_REFUSAL = "identity.token_binding_refusal"
+
 #: Issue #2361 -- emitted when an operator approves (or rejects) the
 #: requirement set drafted from a spec, before the deterministic compiler
 #: turns it into a task graph. The event binds the content-addressed
@@ -6105,6 +6119,66 @@ def record_spiffe_svid_binding(
     )
 
 
+def record_token_binding_refusal(
+    *,
+    chain: AuditChainStore,
+    refusal_hash: str,
+    refusal_code: str,
+    audience: str,
+    spiffe_id: str,
+    expected_thumbprint: str,
+    presented_thumbprint: str,
+    session_id: str,
+    detail: str,
+    actor: str = "token_binding",
+) -> AuditEvent:
+    """Append an ``identity.token_binding_refusal`` event into *chain* (#5030).
+
+    Anchors one refused proof of possession: a token carrying an RFC 8705
+    confirmation claim was presented on a connection that could not prove it
+    holds the bound X.509-SVID. The event mirrors the content-addressed
+    :class:`~bernstein.core.security.token_binding.BindingRefusal` -- its hash,
+    the code naming which check failed, the SVID that should have been used,
+    and the expected and presented thumbprints -- into the HMAC chain. A
+    verifier holding the refusal recomputes its hash and checks it against the
+    chain, so a replayed credential leaves a record that survives the incident
+    instead of a 401 that leaves none.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        refusal_hash: Content address of the refusal receipt.
+        refusal_code: Which proof failed, from
+            :class:`~bernstein.core.security.token_binding.BindingRefusalCode`.
+        audience: The audience the refused token was minted for.
+        spiffe_id: SPIFFE ID of the SVID the token was bound to.
+        expected_thumbprint: The ``x5t#S256`` the token confirmed.
+        presented_thumbprint: The ``x5t#S256`` actually presented, if any.
+        session_id: The session the token named, for correlation.
+        detail: Human-readable reason, safe to record.
+        actor: Recorded actor; defaults to ``"token_binding"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_TOKEN_BINDING_REFUSAL,
+        actor=actor,
+        resource_type="token_binding_refusal",
+        resource_id=refusal_hash,
+        details={
+            "refusal_hash": refusal_hash,
+            "refusal_code": refusal_code,
+            "audience": audience,
+            "spiffe_id": spiffe_id,
+            "expected_thumbprint": expected_thumbprint,
+            "presented_thumbprint": presented_thumbprint,
+            "session_id": session_id,
+            "detail": detail,
+        },
+    )
+
+
 def record_mcp_task_handle(
     *,
     chain: AuditChainStore,
@@ -9234,6 +9308,7 @@ __all__ = [
     "EVENT_TEMPLATE_COMPRESSION_RECEIPT",
     "EVENT_TEMPLATE_COMPRESSION_RESTORE",
     "EVENT_THREAD_APPROVAL",
+    "EVENT_TOKEN_BINDING_REFUSAL",
     "EVENT_TOURNAMENT_SELECTION",
     "EVENT_TRACKER_PIPELINE_SWEEP",
     "EVENT_TRAJECTORY_RECEIPT",
@@ -9383,6 +9458,7 @@ __all__ = [
     "record_task_suspension",
     "record_task_tier_decision",
     "record_thread_approval",
+    "record_token_binding_refusal",
     "record_tournament_selection",
     "record_tracker_pipeline_sweep",
     "record_trajectory_receipt",
