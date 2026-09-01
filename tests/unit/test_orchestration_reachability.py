@@ -51,33 +51,12 @@ SEARCHED = ("src", "tests", "scripts")
 #: SHRINK ONLY - `test_allowlist_has_no_stale_entries` fails if an entry becomes reachable.
 KNOWN_UNREACHABLE: frozenset[str] = frozenset(
     {
-        "engagement_projection.py:_build_mandate",
-        "engagement_projection.py:_canonical_nodes",
-        "engagement_projection.py:_node_to_dict",
-        "engagement_projection.py:canonical_graph_bytes",
-        "engagement_projection.py:canonical_graph_digest",
-        "engagement_projection.py:project",
         "holds.py:has_active_holds",
-        "orchestrator_backlog.py:_claim_backlog_file",
-        "orchestrator_backlog.py:_collect_backlog_files",
-        "orchestrator_backlog.py:_ensure_ingested_titles",
-        "orchestrator_backlog.py:_ingest_backlog_one_by_one",
-        "orchestrator_backlog.py:_parse_candidates",
-        "orchestrator_backlog.py:ingest_backlog",
-        "run_actor_registry.py:register",
-        "run_actor_registry.py:unregister",
-        "tick_pipeline.py:check_nudges_during_tick",
         "tracker_pipeline.py:build_pipeline_from_yaml",
         "tracker_pipeline.py:default_ledger_path",
         "tracker_pipeline.py:stage_attempt_for",
         "worker.py:check_token_escalation",
         "worker.py:register_permission_hook",
-        "workload_prediction.py:_analyze_backlog",
-        "workload_prediction.py:_breakdown_by_role",
-        "workload_prediction.py:_calculate_recommended_agents",
-        "workload_prediction.py:_get_historical_metrics",
-        "workload_prediction.py:format_workload_report",
-        "workload_prediction.py:predict_workload",
     }
 )
 
