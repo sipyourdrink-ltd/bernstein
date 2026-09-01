@@ -712,6 +712,7 @@ class AuthStore:
         session.revoked_at = time.time()
         try:
             from bernstein.core.security.audit_chain import record_identity_revoked
+
             record = record_identity_revoked(
                 chain=self._audit_chain,
                 session_id=session.id,
@@ -736,6 +737,7 @@ class AuthStore:
                     data["revoked_at"] = time.time()
                     try:
                         from bernstein.core.security.audit_chain import record_identity_revoked
+
                         record = record_identity_revoked(
                             chain=self._audit_chain,
                             session_id=data["id"],
