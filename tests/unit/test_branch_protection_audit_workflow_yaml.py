@@ -155,3 +155,56 @@ def test_branch_protection_audit_canary_still_defines_the_required_contexts() ->
 def test_branch_protection_audit_step_is_not_advisory() -> None:
     workflow_text = _workflow_text()
     assert "continue-on-error: true" not in workflow_text
+
+
+# ---------------------------------------------------------------------------
+# Marker labels
+# ---------------------------------------------------------------------------
+# GitHub rejects a label description longer than 100 characters with HTTP 422.
+# ensure_label() only warns on failure, so an over-long description does not
+# stop the run - it leaves the label uncreated and the marker issue is opened
+# asking for a label that is not there. For `branch-protection-unreachable`
+# that went unnoticed because the label already existed, created by hand, with
+# an empty description. `branch-protection-drift` does not exist at all, so the
+# one path that reports live branch protection drifting away from the in-tree
+# invariants could never have labelled its own issue.
+_GITHUB_LABEL_DESCRIPTION_MAX = 100
+
+
+def _marker_module() -> object:
+    """Load the marker script by path; it lives in scripts/, not the package."""
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[2] / "scripts" / "toggle_branch_protection_audit_marker.py"
+    spec = importlib.util.spec_from_file_location("_bp_marker", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_marker_label_descriptions_fit_the_github_limit() -> None:
+    """Every description the script sends to `gh label create` must be writable."""
+    module = _marker_module()
+    over = {
+        name: len(value)
+        for name in ("DESC_UNREACHABLE", "DESC_DRIFT")
+        for value in [cast(str, getattr(module, name))]
+        if len(value) > _GITHUB_LABEL_DESCRIPTION_MAX
+    }
+    assert not over, (
+        f"label descriptions over GitHub's {_GITHUB_LABEL_DESCRIPTION_MAX}-character cap: {over}. "
+        "gh label create returns HTTP 422 and ensure_label only warns, so the label is "
+        "never created and the marker issue is opened unlabelled."
+    )
+
+
+def test_both_marker_paths_create_their_label_before_opening_an_issue() -> None:
+    """Neither failure mode may rely on its label already existing."""
+    module = _marker_module()
+    source = Path(cast(str, module.__file__)).read_text(encoding="utf-8")
+    for constant in ("LABEL_UNREACHABLE", "LABEL_DRIFT"):
+        assert f"ensure_label(repo, {constant}" in source, (
+            f"{constant} is used without ensure_label; on a repository where that label "
+            "does not exist yet the marker issue cannot be created at all"
+        )

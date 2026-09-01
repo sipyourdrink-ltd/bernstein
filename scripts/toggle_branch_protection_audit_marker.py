@@ -29,11 +29,13 @@ LABEL_DRIFT = "branch-protection-drift"
 TITLE_UNREACHABLE = "Branch protection audit cannot read live rulesets (auth/credential failure)"
 TITLE_DRIFT = "Branch protection audit detected ruleset drift on main"
 
-DESC_UNREACHABLE = (
-    "Open while branch protection audit cannot read live rulesets (credential or network failure); "
-    "closed automatically on recovery"
-)
-DESC_DRIFT = "Open while live branch protection disagrees with in-tree invariants; closed automatically on recovery"
+# GitHub caps a label description at 100 characters and rejects a longer one
+# with HTTP 422. `gh label create --force` then fails, and because
+# ensure_label only warns, the marker issue is opened with a label that was
+# never created. That is fatal for the drift path, whose label does not
+# already exist. Keep both of these under the cap; the test pins it.
+DESC_UNREACHABLE = "Open while the audit cannot read live rulesets; closed automatically on recovery"
+DESC_DRIFT = "Open while live branch protection disagrees with in-tree invariants; closed on recovery"
 
 
 def _gh(args: list[str]) -> str:
