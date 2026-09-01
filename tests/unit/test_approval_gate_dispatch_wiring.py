@@ -24,12 +24,16 @@ import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.commands.hook_gate_cmd import hook_gate_group
-from bernstein.core.approval.models import ApprovalDecision
+from bernstein.core.approval.models import ApprovalDecision, ApprovalPrincipal
 from bernstein.core.approval.queue import (
     ApprovalQueue,
     get_default_queue,
     reset_default_queue,
 )
+
+#: Every resolve names the operator it is attributed to; the queue has no
+#: default principal to fall back on (#5035).
+_PRINCIPAL = ApprovalPrincipal(identifier="alice@example.test", auth_method="scoped-token")
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -144,6 +148,7 @@ def test_gated_tool_call_enqueues_and_blocks_until_resolved(tmp_path: Path, monk
                     ApprovalDecision.ALLOW,
                     nonce=approval.nonce,
                     reason="operator allowed",
+                    principal=_PRINCIPAL,
                 )
                 return
             threading.Event().wait(0.05)
@@ -217,6 +222,7 @@ def test_a_rejected_approval_blocks_the_tool_call(tmp_path: Path, monkeypatch: p
                     ApprovalDecision.REJECT,
                     nonce=approval.nonce,
                     reason="operator refused",
+                    principal=_PRINCIPAL,
                 )
                 return
             threading.Event().wait(0.05)
@@ -266,6 +272,7 @@ def test_each_resolution_surface_releases_the_same_pending(
                     nonce=approval.nonce,
                     reason=f"resolved via {surface}",
                     channel=surface,
+                    principal=_PRINCIPAL,
                 )
                 return
             threading.Event().wait(0.05)

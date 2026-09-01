@@ -124,13 +124,13 @@ def test_expired_refusal_is_terminal_across_restart(tmp_path: Path) -> None:
     gate1 = ApprovalCardGate(chain1)
     issued = gate1.issue(_card(created_at=1_000.0, ttl=600.0))
     with pytest.raises(Exception, match="expired"):
-        gate1.resolve(card_hash=issued.card_hash, decision="approve", now=1_700.0)
+        gate1.resolve(card_hash=issued.card_hash, decision="approve", now=1_700.0, approver="U7")
 
     chain2 = _chain(tmp_path)
     gate2 = ApprovalCardGate(chain2)
     # Even rewinding the injected clock cannot revive a card the chain saw expire.
     with pytest.raises(ApprovalCardAlreadySettled):
-        gate2.resolve(card_hash=issued.card_hash, decision="approve", now=1_100.0)
+        gate2.resolve(card_hash=issued.card_hash, decision="approve", now=1_100.0, approver="U7")
     assert chain2.query(event_type=EVENT_APPROVAL_CARD_RESOLVED) == []
 
 
@@ -141,10 +141,12 @@ def test_rejected_attempt_does_not_burn_a_pending_card(tmp_path: Path) -> None:
     issued = gate.issue(_card(), worktree_id="wt-a")
 
     with pytest.raises(ApprovalCardBindingMismatch):
-        gate.resolve(card_hash=issued.card_hash, decision="approve", worktree_id="wt-evil", now=1_100.0)
+        gate.resolve(card_hash=issued.card_hash, decision="approve", worktree_id="wt-evil", now=1_100.0, approver="U7")
 
     # The card is still settleable from its own worktree.
-    resolved = gate.resolve(card_hash=issued.card_hash, decision="approve", worktree_id="wt-a", now=1_150.0)
+    resolved = gate.resolve(
+        card_hash=issued.card_hash, decision="approve", worktree_id="wt-a", now=1_150.0, approver="U7"
+    )
     assert resolved.card_hash == issued.card_hash
 
 
@@ -160,7 +162,7 @@ def test_invalid_decision_is_refused(tmp_path: Path, decision: str) -> None:
     issued = gate.issue(_card())
 
     with pytest.raises(ApprovalCardInvalidDecision):
-        gate.resolve(card_hash=issued.card_hash, decision=decision, now=1_100.0)
+        gate.resolve(card_hash=issued.card_hash, decision=decision, now=1_100.0, approver="U7")
 
     assert chain.query(event_type=EVENT_APPROVAL_CARD_RESOLVED) == []
     assert _reasons(chain) == [REFUSAL_REASON_INVALID_DECISION]
@@ -171,7 +173,7 @@ def test_allowed_decisions_settle(tmp_path: Path, decision: str) -> None:
     chain = _chain(tmp_path)
     gate = ApprovalCardGate(chain)
     issued = gate.issue(_card())
-    gate.resolve(card_hash=issued.card_hash, decision=decision, now=1_100.0)
+    gate.resolve(card_hash=issued.card_hash, decision=decision, now=1_100.0, approver="U7")
     events = chain.query(event_type=EVENT_APPROVAL_CARD_RESOLVED)
     assert [e.details["decision"] for e in events] == [decision]
 
@@ -187,7 +189,7 @@ def test_cross_worktree_resolve_is_refused(tmp_path: Path) -> None:
     issued = gate.issue(_card(), worktree_id="wt-a")
 
     with pytest.raises(ApprovalCardBindingMismatch):
-        gate.resolve(card_hash=issued.card_hash, decision="approve", worktree_id="wt-b", now=1_100.0)
+        gate.resolve(card_hash=issued.card_hash, decision="approve", worktree_id="wt-b", now=1_100.0, approver="U7")
 
     assert chain.query(event_type=EVENT_APPROVAL_CARD_RESOLVED) == []
     assert _reasons(chain) == [REFUSAL_REASON_CROSS_WORKTREE]
@@ -199,7 +201,7 @@ def test_cross_conversation_resolve_is_refused(tmp_path: Path) -> None:
     issued = gate.issue(_card(), thread_id="C42")
 
     with pytest.raises(ApprovalCardBindingMismatch):
-        gate.resolve(card_hash=issued.card_hash, decision="approve", thread_id="C99", now=1_100.0)
+        gate.resolve(card_hash=issued.card_hash, decision="approve", thread_id="C99", now=1_100.0, approver="U7")
 
     assert chain.query(event_type=EVENT_APPROVAL_CARD_RESOLVED) == []
     assert _reasons(chain) == [REFUSAL_REASON_CROSS_CONVERSATION]
@@ -228,7 +230,7 @@ def test_empty_origin_cannot_bypass_a_pin(
     issued = gate.issue(_card(), **pins)
 
     with pytest.raises(ApprovalCardBindingMismatch):
-        gate.resolve(card_hash=issued.card_hash, decision="approve", now=1_100.0, **resolve_kwargs)
+        gate.resolve(card_hash=issued.card_hash, decision="approve", now=1_100.0, **resolve_kwargs, approver="U7")
 
     assert chain.query(event_type=EVENT_APPROVAL_CARD_RESOLVED) == []
     assert _reasons(chain) == [reason]
@@ -251,6 +253,7 @@ def test_settlement_records_the_resolving_origin_not_the_issuing_one(tmp_path: P
         worktree_id="wt-EVIL",
         thread_id="C-EVIL",
         now=1_100.0,
+        approver="U7",
     )
 
     details = chain.query(event_type=EVENT_APPROVAL_CARD_RESOLVED)[0].details
@@ -271,6 +274,7 @@ def test_settlement_keeps_issuing_origin_alongside_the_resolver(tmp_path: Path) 
         worktree_id="wt-a",
         thread_id="C42",
         now=1_100.0,
+        approver="U7",
     )
 
     details = chain.query(event_type=EVENT_APPROVAL_CARD_RESOLVED)[0].details
@@ -290,6 +294,7 @@ def test_matching_conversation_resolves(tmp_path: Path) -> None:
         worktree_id="wt-a",
         thread_id="C42",
         now=1_100.0,
+        approver="U7",
     )
     assert resolved.thread_id == "C42"
 
@@ -301,7 +306,7 @@ def test_binding_survives_restart(tmp_path: Path) -> None:
     chain2 = _chain(tmp_path)
     gate2 = ApprovalCardGate(chain2)
     with pytest.raises(ApprovalCardBindingMismatch):
-        gate2.resolve(card_hash=issued.card_hash, decision="approve", thread_id="C99", now=1_100.0)
+        gate2.resolve(card_hash=issued.card_hash, decision="approve", thread_id="C99", now=1_100.0, approver="U7")
 
 
 # ---------------------------------------------------------------------------
@@ -354,7 +359,7 @@ def test_card_is_not_exposed_when_the_issued_event_fails_to_persist(tmp_path: Pa
     # The refusal itself is chain-recorded, so this asserts the specific
     # unknown-card refusal rather than tolerating any error.
     with pytest.raises(ApprovalCardHashMismatch):
-        gate.resolve(card_hash=card_hash(card), decision="approve", now=1_100.0)
+        gate.resolve(card_hash=card_hash(card), decision="approve", now=1_100.0, approver="U7")
 
     assert real.query(event_type=EVENT_APPROVAL_CARD_RESOLVED) == []
     assert _reasons(real) == [REFUSAL_REASON_HASH_MISMATCH]
@@ -697,7 +702,7 @@ def test_gate_never_writes_a_settlement_its_own_verifier_rejects(tmp_path: Path)
     issued = gate.issue(_card(created_at=1_000.0, ttl=600.0))
 
     with pytest.raises(ApprovalCardClockSkew):
-        gate.resolve(card_hash=issued.card_hash, decision="approve", now=900.0)
+        gate.resolve(card_hash=issued.card_hash, decision="approve", now=900.0, approver="U7")
 
     assert chain.query(event_type=EVENT_APPROVAL_CARD_RESOLVED) == []
     assert _reasons(chain) == [REFUSAL_REASON_BEFORE_ISSUE]
@@ -710,7 +715,7 @@ def test_resolve_at_exactly_created_at_is_allowed(tmp_path: Path) -> None:
     chain = _chain(tmp_path)
     gate = ApprovalCardGate(chain)
     issued = gate.issue(_card(created_at=1_000.0, ttl=600.0))
-    gate.resolve(card_hash=issued.card_hash, decision="approve", now=1_000.0)
+    gate.resolve(card_hash=issued.card_hash, decision="approve", now=1_000.0, approver="U7")
 
     assert len(chain.query(event_type=EVENT_APPROVAL_CARD_RESOLVED)) == 1
     assert verify_approval_cards(tmp_path / "audit", key=_KEY).ok
@@ -785,6 +790,7 @@ def test_hash_survives_the_real_storage_round_trip(tmp_path: Path, label: str, c
         worktree_id="wt-a",
         thread_id="C42",
         now=card.created_at + 1.0,
+        approver="U7",
     )
     assert verify_approval_cards(tmp_path / "audit", key=_KEY).ok
 
@@ -803,7 +809,7 @@ def test_verifier_accepts_a_well_formed_pair(tmp_path: Path) -> None:
     chain = _chain(tmp_path)
     gate = ApprovalCardGate(chain)
     issued = gate.issue(_card(created_at=1_000.0, ttl=600.0))
-    gate.resolve(card_hash=issued.card_hash, decision="approve", now=1_100.0)
+    gate.resolve(card_hash=issued.card_hash, decision="approve", now=1_100.0, approver="U7")
 
     result = verify_approval_cards(tmp_path / "audit", key=_KEY)
     assert result.ok, result.errors
@@ -912,6 +918,7 @@ def test_a_poisoned_sibling_event_does_not_brick_a_legitimate_card(tmp_path: Pat
         worktree_id="wt-a",
         thread_id="C42",
         now=1_100.0,
+        approver="U7",
     )
     assert settled.card_hash == issued.card_hash
     assert len(_chain(tmp_path).query(event_type=EVENT_APPROVAL_CARD_RESOLVED)) == 1
@@ -925,7 +932,9 @@ def test_an_unknown_poisoned_card_is_refused_on_the_chain(tmp_path: Path) -> Non
 
     restarted_chain = _chain(tmp_path)
     with pytest.raises(ApprovalCardHashMismatch):
-        ApprovalCardGate(restarted_chain).resolve(card_hash=issued.card_hash, decision="approve", now=1_100.0)
+        ApprovalCardGate(restarted_chain).resolve(
+            card_hash=issued.card_hash, decision="approve", now=1_100.0, approver="U7"
+        )
     # The refusal reaches the chain rather than escaping as an exception.
     assert _reasons(restarted_chain) == [REFUSAL_REASON_HASH_MISMATCH]
 
@@ -1018,6 +1027,7 @@ def test_verifier_accepts_a_legitimate_pinned_settlement(tmp_path: Path) -> None
         worktree_id="wt-a",
         thread_id="C42",
         now=1_100.0,
+        approver="U7",
     )
 
     result = verify_approval_cards(tmp_path / "audit", key=_KEY)
@@ -1044,7 +1054,7 @@ def test_gate_refuses_any_clock_the_verifier_would_reject(tmp_path: Path, now: f
     issued = gate.issue(_card(created_at=0.0, ttl=600.0))
 
     with pytest.raises(ApprovalCardClockSkew):
-        gate.resolve(card_hash=issued.card_hash, decision="approve", now=now)
+        gate.resolve(card_hash=issued.card_hash, decision="approve", now=now, approver="U7")
 
     assert chain.query(event_type=EVENT_APPROVAL_CARD_RESOLVED) == []
     assert verify_approval_cards(tmp_path / "audit", key=_KEY).ok
@@ -1295,7 +1305,7 @@ def test_an_internal_fault_cannot_yield_a_clean_bill_of_health(tmp_path: Path, m
     chain = _chain(tmp_path)
     gate = ApprovalCardGate(chain)
     issued = gate.issue(_card())
-    gate.resolve(card_hash=issued.card_hash, decision="approve", now=1_100.0)
+    gate.resolve(card_hash=issued.card_hash, decision="approve", now=1_100.0, approver="U7")
     assert verify_approval_cards(tmp_path / "audit", key=_KEY).ok
 
     def _boom(*_args: Any, **_kwargs: Any) -> None:

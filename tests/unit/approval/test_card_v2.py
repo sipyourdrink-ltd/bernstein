@@ -211,7 +211,7 @@ def test_resolve_after_not_after_is_refused(tmp_path: Path) -> None:
     issued = gate.issue(card)
 
     with pytest.raises(ApprovalCardExpired):
-        gate.resolve(card_hash=issued.card_hash, decision="approve", now=1_600.0)
+        gate.resolve(card_hash=issued.card_hash, decision="approve", now=1_600.0, approver="U7")
 
     assert chain.query(event_type=EVENT_APPROVAL_CARD_RESOLVED) == []
     refused = chain.query(event_type=EVENT_APPROVAL_CARD_REFUSED)
@@ -232,7 +232,7 @@ def test_expiry_enforced_after_chat_process_restart(tmp_path: Path) -> None:
     chain2 = _chain(tmp_path)
     gate2 = ApprovalCardGate(chain2)
     with pytest.raises(ApprovalCardExpired):
-        gate2.resolve(card_hash=issued.card_hash, decision="approve", now=1_700.0)
+        gate2.resolve(card_hash=issued.card_hash, decision="approve", now=1_700.0, approver="U7")
 
     refused = chain2.query(event_type=EVENT_APPROVAL_CARD_REFUSED)
     assert len(refused) == 1
@@ -247,6 +247,6 @@ def test_resolve_still_works_after_restart_before_expiry(tmp_path: Path) -> None
     chain2 = _chain(tmp_path)
     gate2 = ApprovalCardGate(chain2)
     # Before not_after, a reconstructed card resolves cleanly.
-    resolved = gate2.resolve(card_hash=issued.card_hash, decision="approve", now=1_200.0)
+    resolved = gate2.resolve(card_hash=issued.card_hash, decision="approve", now=1_200.0, approver="U7")
     assert resolved.card_hash == issued.card_hash
     assert chain2.query(event_type=EVENT_APPROVAL_CARD_RESOLVED)

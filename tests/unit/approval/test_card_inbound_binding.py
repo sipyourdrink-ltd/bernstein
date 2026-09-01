@@ -71,7 +71,7 @@ def test_mismatched_request_id_and_card_hash_is_refused(tmp_path: Path) -> None:
 
     # Approving card e2 while naming request e1 must not settle either.
     with pytest.raises(ApprovalCardRequestMismatch):
-        router.resolve(request_id="e1", card_hash=second.card_hash, decision="approve", now=1_100.0)
+        router.resolve(request_id="e1", card_hash=second.card_hash, decision="approve", now=1_100.0, approver="U7")
 
     assert chain.query(event_type=EVENT_APPROVAL_CARD_RESOLVED) == []
     assert {r.id for r in handler.get_pending()} == {"e1", "e2"}
@@ -83,7 +83,9 @@ def test_unknown_request_id_is_refused_before_the_gate_commits(tmp_path: Path) -
     assert issued is not None
 
     with pytest.raises(ApprovalCardRequestMismatch):
-        router.resolve(request_id="never-issued", card_hash=issued.card_hash, decision="approve", now=1_100.0)
+        router.resolve(
+            request_id="never-issued", card_hash=issued.card_hash, decision="approve", now=1_100.0, approver="U7"
+        )
 
     # The gate leg must not have committed for a pair it could not bind.
     assert chain.query(event_type=EVENT_APPROVAL_CARD_RESOLVED) == []
@@ -99,7 +101,7 @@ def test_handler_leg_is_prechecked_so_both_legs_commit_together(tmp_path: Path) 
     assert handler.resolve("e1", "approve") is not None
 
     with pytest.raises(ApprovalCardRequestMismatch):
-        router.resolve(request_id="e1", card_hash=issued.card_hash, decision="approve", now=1_100.0)
+        router.resolve(request_id="e1", card_hash=issued.card_hash, decision="approve", now=1_100.0, approver="U7")
 
     assert chain.query(event_type=EVENT_APPROVAL_CARD_RESOLVED) == []
 
@@ -109,7 +111,9 @@ def test_matching_pair_settles_both_legs(tmp_path: Path) -> None:
     issued = asyncio.run(router.route(_request("e1"), now=1_000.0))
     assert issued is not None
 
-    settled, resolved = router.resolve(request_id="e1", card_hash=issued.card_hash, decision="approve", now=1_100.0)
+    settled, resolved = router.resolve(
+        request_id="e1", card_hash=issued.card_hash, decision="approve", now=1_100.0, approver="U7"
+    )
     assert settled.card_hash == issued.card_hash
     assert resolved is not None
     assert resolved.status is ElicitationStatus.USER_RESOLVED
@@ -121,10 +125,10 @@ def test_binding_is_consumed_so_a_replayed_pair_is_refused(tmp_path: Path) -> No
     issued = asyncio.run(router.route(_request("e1"), now=1_000.0))
     assert issued is not None
 
-    router.resolve(request_id="e1", card_hash=issued.card_hash, decision="approve", now=1_100.0)
+    router.resolve(request_id="e1", card_hash=issued.card_hash, decision="approve", now=1_100.0, approver="U7")
 
     with pytest.raises(ApprovalCardRequestMismatch):
-        router.resolve(request_id="e1", card_hash=issued.card_hash, decision="approve", now=1_200.0)
+        router.resolve(request_id="e1", card_hash=issued.card_hash, decision="approve", now=1_200.0, approver="U7")
 
     assert len(chain.query(event_type=EVENT_APPROVAL_CARD_RESOLVED)) == 1
 
@@ -195,7 +199,7 @@ def test_a2a_card_is_pinned_and_refuses_a_foreign_worktree(tmp_path: Path) -> No
     issued = asyncio.run(issuer.route(task_uuid="task-1", message="Need a region", now=1_000.0))
 
     with pytest.raises(ApprovalCardBindingMismatch):
-        attacker.resolve(card_hash=issued.card_hash, decision="approve", now=1_100.0)
+        attacker.resolve(card_hash=issued.card_hash, decision="approve", now=1_100.0, approver="U7")
 
     assert chain.query(event_type=EVENT_APPROVAL_CARD_RESOLVED) == []
 
@@ -209,6 +213,6 @@ def test_a2a_card_is_pinned_and_refuses_a_foreign_conversation(tmp_path: Path) -
     issued = asyncio.run(issuer.route(task_uuid="task-1", message="Need a region", now=1_000.0))
 
     with pytest.raises(ApprovalCardBindingMismatch):
-        attacker.resolve(card_hash=issued.card_hash, decision="approve", now=1_100.0)
+        attacker.resolve(card_hash=issued.card_hash, decision="approve", now=1_100.0, approver="U7")
 
     assert chain.query(event_type=EVENT_APPROVAL_CARD_RESOLVED) == []

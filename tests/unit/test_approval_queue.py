@@ -17,6 +17,7 @@ import yaml
 
 from bernstein.core.approval.models import (
     ApprovalDecision,
+    ApprovalPrincipal,
     ApprovalTimeoutError,
     PendingApproval,
 )
@@ -25,6 +26,10 @@ from bernstein.core.approval.queue import (
     ApprovalQueue,
     promote_to_always_allow,
 )
+
+#: Every resolve names the operator it is attributed to; the queue has no
+#: default principal to fall back on (#5035).
+_PRINCIPAL = ApprovalPrincipal(identifier="alice@example.test", auth_method="scoped-token")
 
 
 def _push(queue: ApprovalQueue, *, tool: str = "shell", session: str = "S-1") -> PendingApproval:
@@ -76,7 +81,7 @@ def test_resolve_records_decision_and_removes_pending_file(tmp_path: Path) -> No
     queue = ApprovalQueue(base_dir=tmp_path)
     approval = _push(queue)
 
-    resolution = queue.resolve(approval.id, ApprovalDecision.ALLOW, reason="ok")
+    resolution = queue.resolve(approval.id, ApprovalDecision.ALLOW, reason="ok", principal=_PRINCIPAL)
 
     assert resolution.decision is ApprovalDecision.ALLOW
     assert resolution.reason == "ok"
@@ -106,7 +111,7 @@ def test_wait_for_returns_resolution_when_resolved(tmp_path: Path) -> None:
     async def scenario() -> None:
         async def resolver() -> None:
             await asyncio.sleep(0.01)
-            queue.resolve(approval.id, ApprovalDecision.ALLOW)
+            queue.resolve(approval.id, ApprovalDecision.ALLOW, principal=_PRINCIPAL)
 
         resolver_task = asyncio.create_task(resolver())
         resolution = await queue.wait_for(approval.id, timeout_seconds=2.0)
@@ -201,7 +206,7 @@ def test_promote_to_always_allow_writes_rule(tmp_path: Path) -> None:
 def test_resolve_unknown_id_raises(tmp_path: Path) -> None:
     queue = ApprovalQueue(base_dir=tmp_path)
     with pytest.raises(KeyError):
-        queue.resolve("ap-doesnotexist", ApprovalDecision.ALLOW)
+        queue.resolve("ap-doesnotexist", ApprovalDecision.ALLOW, principal=_PRINCIPAL)
 
 
 def test_human_allow_appends_audit_chain_event(tmp_path: Path) -> None:
@@ -211,7 +216,9 @@ def test_human_allow_appends_audit_chain_event(tmp_path: Path) -> None:
     queue = ApprovalQueue(base_dir=sdd / "runtime" / "approvals")
     approval = _push(queue, tool="shell", session="S-100")
 
-    resolution = queue.resolve(approval.id, ApprovalDecision.ALLOW, reason="looks safe", source="cli")
+    resolution = queue.resolve(
+        approval.id, ApprovalDecision.ALLOW, reason="looks safe", source="cli", principal=_PRINCIPAL
+    )
     assert resolution.decision is ApprovalDecision.ALLOW
 
     audit = AuditLog(audit_dir=sdd / "audit")
@@ -252,7 +259,7 @@ def test_human_and_classifier_decisions_are_distinguishable_in_chain(tmp_path: P
 
     # Record human decision
     approval = _push(queue, tool="shell", session="S-1")
-    queue.resolve(approval.id, ApprovalDecision.ALLOW, reason="manual override", source="human")
+    queue.resolve(approval.id, ApprovalDecision.ALLOW, reason="manual override", source="human", principal=_PRINCIPAL)
 
     audit = AuditLog(audit_dir=sdd / "audit")
     all_events = audit.query()
@@ -277,7 +284,7 @@ def test_always_allow_promotion_is_recorded_as_its_own_event(tmp_path: Path) -> 
     queue = ApprovalQueue(base_dir=sdd / "runtime" / "approvals")
     approval = _push(queue, tool="write_file", session="S-2")
 
-    queue.resolve(approval.id, ApprovalDecision.ALWAYS, reason="trust this tool", source="tui")
+    queue.resolve(approval.id, ApprovalDecision.ALWAYS, reason="trust this tool", source="tui", principal=_PRINCIPAL)
 
     audit = AuditLog(audit_dir=sdd / "audit")
     events = audit.query()
@@ -307,7 +314,9 @@ def test_chain_write_failure_does_not_leave_queue_inconsistent(tmp_path: Path, m
     monkeypatch.setattr(AuditLog, "log", _failing_log)
 
     # Resolution must not raise even if audit chain write fails
-    resolution = queue.resolve(approval.id, ApprovalDecision.REJECT, reason="denied", source="cli")
+    resolution = queue.resolve(
+        approval.id, ApprovalDecision.REJECT, reason="denied", source="cli", principal=_PRINCIPAL
+    )
     assert resolution.decision is ApprovalDecision.REJECT
 
     # Queue in-memory state and disk state must be fully consistent

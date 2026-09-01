@@ -16,9 +16,13 @@ from bernstein.core.approval.gate import (
     await_tool_call,
     load_approval_config,
 )
-from bernstein.core.approval.models import ApprovalDecision, ApprovalTimeoutError
+from bernstein.core.approval.models import ApprovalDecision, ApprovalPrincipal, ApprovalTimeoutError
 from bernstein.core.approval.queue import ApprovalQueue
 from bernstein.core.security.always_allow import AlwaysAllowEngine, AlwaysAllowRule
+
+#: Every resolve names the operator it is attributed to; the queue has no
+#: default principal to fall back on (#5035).
+_PRINCIPAL = ApprovalPrincipal(identifier="alice@example.test", auth_method="scoped-token")
 
 
 def test_load_approval_config_defaults_when_missing(tmp_path: Path) -> None:
@@ -112,7 +116,7 @@ def test_gate_pushes_when_allow_list_misses(tmp_path: Path) -> None:
         for _ in range(50):
             pending = queue.list_pending()
             if pending:
-                queue.resolve(pending[0].id, ApprovalDecision.ALLOW)
+                queue.resolve(pending[0].id, ApprovalDecision.ALLOW, principal=_PRINCIPAL)
                 break
             await asyncio.sleep(0.01)
         else:
