@@ -118,7 +118,7 @@ def test_activity_source_defaults_to_none() -> None:
 
 
 def test_activity_source_accepts_closed_set() -> None:
-    assert ACTIVITY_SOURCES == frozenset({"scheduler", "adapter"})
+    assert frozenset({"scheduler", "adapter"}) == ACTIVITY_SOURCES
     for value in ACTIVITY_SOURCES:
         entry = LineageEntry(**_kwargs(activity_source=value))
         assert entry.activity_source == value
