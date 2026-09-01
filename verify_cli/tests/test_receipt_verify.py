@@ -10,16 +10,14 @@ from __future__ import annotations
 
 import io
 import json
-import tempfile
 from pathlib import Path
 
 import pytest
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
 from bernstein.core.security.audit import AuditLog
 from bernstein.core.security.audit_receipt import build_receipt
 from bernstein.core.security.lineage_kms import FileBasedKMSAdapter
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from bernstein_verify_receipt.verify import (
     CheckResult,
@@ -204,7 +202,6 @@ def test_verify_transparency_missing_format():
 
 def test_run_verify_pass_path(tmp_path: Path) -> None:
     receipt_path, _ = _build_receipt(tmp_path)
-    import io
 
     stream = io.StringIO()
     result = run_verify(
@@ -231,8 +228,6 @@ def test_run_verify_tampered_fails(tmp_path: Path) -> None:
     tampered = tmp_path / "tampered.json"
     tampered.write_text(json.dumps(data))
 
-    import io
-
     stream = io.StringIO()
     result = run_verify(
         receipt_path=tampered,
@@ -252,8 +247,6 @@ def test_run_verify_tampered_fails(tmp_path: Path) -> None:
 
 
 def test_run_verify_missing_receipt_file(tmp_path: Path) -> None:
-    import io
-
     stream = io.StringIO()
     result = run_verify(
         receipt_path=tmp_path / "nonexistent.json",
@@ -269,7 +262,6 @@ def test_run_verify_missing_receipt_file(tmp_path: Path) -> None:
 
 def test_run_verify_format_filter(tmp_path: Path) -> None:
     receipt_path, _ = _build_receipt(tmp_path)
-    import io
 
     stream = io.StringIO()
     result = run_verify(
