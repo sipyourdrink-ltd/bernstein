@@ -22,6 +22,12 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from bernstein.core.security.audit import (
+    EVENT_EXPORT_FAILURE,
+    EVENT_EXPORT_GAP_DETECTED,
+    EVENT_FORWARDING_OUTAGE,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -303,6 +309,16 @@ class BaseSIEMExporter(ABC):
         self._last_flush: float = time.time()
         self._total_exported: int = 0
         self._total_failed: int = 0
+        # Optional audit key so a failed flush can write an
+        # EVENT_EXPORT_FAILURE / EVENT_FORWARDING_OUTAGE chain event.
+        # ``None`` means no audit key is configured and failures are
+        # logged only (the audit chain cannot be written to).
+        self._audit_key: bytes | None = None
+        # Optional audit log directory for writing chain events on
+        # export failure. When ``None``, the audit key is also ``None``.
+        self._audit_dir: Path | None = None
+        # Monotonic counter for gap detection across flushes.
+        self._last_sequence: int = 0
 
     @property
     def config(self) -> SIEMExportConfig:
@@ -323,6 +339,20 @@ class BaseSIEMExporter(ABC):
     def buffer_size(self) -> int:
         """Number of entries in the buffer."""
         return len(self._buffer)
+
+    def set_audit_context(
+        self,
+        audit_key: bytes | None,
+        audit_dir: Path | None,
+    ) -> None:
+        """Configure the audit chain context for failure-event recording.
+
+        Args:
+            audit_key: HMAC key bytes, or ``None`` to disable audit events.
+            audit_dir: Directory for the daily audit JSONL files, or ``None``.
+        """
+        self._audit_key = audit_key
+        self._audit_dir = audit_dir
 
     def add_entry(self, entry: AuditEntry) -> None:
         """Add an audit entry to the export buffer.
@@ -353,6 +383,145 @@ class BaseSIEMExporter(ABC):
             Formatted entries ready for the target system.
         """
 
+    def _send_batch(
+        self,
+        batch: list[AuditEntry],
+        formatted: list[dict[str, Any]],
+    ) -> None:
+        """Send one formatted batch to the SIEM target.
+
+        Subclasses override this to perform the actual network or file
+        write. The base implementation is a no-op so exporters that
+        only format (no real transport) keep working.
+
+        Args:
+            batch: Raw audit entries in this batch.
+            formatted: Entries formatted for the target system.
+
+        Raises:
+            Exception: Any transport error. ``flush()`` catches it and
+                records it as an audit chain event.
+        """
+
+    def _record_export_failure(
+        self,
+        batch: list[AuditEntry],
+        error: str,
+        segment_receipt: dict[str, Any],
+    ) -> None:
+        """Write an EVENT_EXPORT_FAILURE audit chain event.
+
+        Called by ``flush()`` when ``_send_batch`` raises. The event
+        carries ``target``, ``entries_sent``, ``error``,
+        ``segment_receipt``, and ``sequence`` so a silent forwarding
+        outage is indistinguishable from quiet in the audit chain.
+
+        Args:
+            batch: Entries that failed to export.
+            error: Error message from the transport layer.
+            segment_receipt: Segment receipt for this batch.
+        """
+        if self._audit_key is None or self._audit_dir is None:
+            return
+        from bernstein.core.security.audit import AuditLog
+
+        log = AuditLog(audit_dir=self._audit_dir, key=self._audit_key)
+        details: dict[str, Any] = {
+            "target": self._config.target.value,
+            "entries_sent": len(batch),
+            "error": error,
+            "segment_receipt": segment_receipt,
+            "sequence": batch[-1].sequence if batch else 0,
+        }
+        log.log(
+            event_type=EVENT_EXPORT_FAILURE,
+            actor="audit-exporter",
+            resource_type="export",
+            resource_id=self._config.target.value,
+            details=details,
+        )
+
+    def _record_forwarding_outage(
+        self,
+        batch: list[AuditEntry],
+        expected_sequence: int,
+        actual_sequence: int,
+        segment_receipt: dict[str, Any],
+    ) -> None:
+        """Write an EVENT_FORWARDING_OUTAGE audit chain event.
+
+        Called when a delivery gap is detected (e.g., batch not
+        acknowledged by the SIEM target). The event carries ``target``,
+        ``expected_sequence``, ``actual_sequence``, ``segment_receipt``,
+        and ``sequence`` so the gap is auditable in the chain.
+
+        Args:
+            batch: Entries involved in the gap.
+            expected_sequence: The sequence number the exporter expected
+                next.
+            actual_sequence: The sequence number actually observed.
+            segment_receipt: Segment receipt for this batch.
+        """
+        if self._audit_key is None or self._audit_dir is None:
+            return
+        from bernstein.core.security.audit import AuditLog
+
+        log = AuditLog(audit_dir=self._audit_dir, key=self._audit_key)
+        details: dict[str, Any] = {
+            "target": self._config.target.value,
+            "expected_sequence": expected_sequence,
+            "actual_sequence": actual_sequence,
+            "segment_receipt": segment_receipt,
+            "sequence": batch[-1].sequence if batch else 0,
+        }
+        log.log(
+            event_type=EVENT_FORWARDING_OUTAGE,
+            actor="audit-exporter",
+            resource_type="export",
+            resource_id=self._config.target.value,
+            details=details,
+        )
+
+    def _record_export_gap(
+        self,
+        batch: list[AuditEntry],
+        expected_range: list[int],
+        actual_range: list[int],
+        segment_receipt: dict[str, Any],
+    ) -> None:
+        """Write an EVENT_EXPORT_GAP_DETECTED audit chain event.
+
+        Called when an export gap is detected during reconciliation
+        (e.g., sequence number discontinuity). The event carries
+        ``target``, ``expected_range``, ``actual_range``, and
+        ``sequence``.
+
+        Args:
+            batch: Entries involved in the gap.
+            expected_range: Sequence range the exporter expected.
+            actual_range: Sequence range actually observed.
+            segment_receipt: Segment receipt for this batch.
+        """
+        if self._audit_key is None or self._audit_dir is None:
+            return
+        from bernstein.core.security.audit import AuditLog
+
+        log = AuditLog(audit_dir=self._audit_dir, key=self._audit_key)
+        details: dict[str, Any] = {
+            "target": self._config.target.value,
+            "expected_range": expected_range,
+            "actual_range": actual_range,
+            "segment_receipt": segment_receipt,
+            "sequence": batch[-1].sequence if batch else 0,
+        }
+        log.log(
+            event_type=EVENT_EXPORT_GAP_DETECTED,
+            actor="audit-exporter",
+            resource_type="export",
+            resource_id=self._config.target.value,
+            details=details,
+        )
+
     def flush(self) -> ExportResult:
         """Flush the buffer, formatting and exporting entries.
 
@@ -371,18 +540,31 @@ class BaseSIEMExporter(ABC):
         formatted = self.format_entries(batch)
 
         segment_receipt = _build_segment_receipt(batch)
-        result = ExportResult(
+        try:
+            self._send_batch(batch, formatted)
+        except Exception as exc:
+            self._total_failed += len(batch)
+            logger.error("Export failed for %s: %s", self._config.target, exc)
+            self._record_export_failure(batch, str(exc), segment_receipt)
+            return ExportResult(
+                target=self._config.target,
+                entries_sent=len(batch),
+                entries_accepted=0,
+                success=False,
+                error=str(exc),
+                segment_receipt=segment_receipt,
+            )
+
+        self._buffer = self._buffer[self._config.batch_size :]
+        self._last_flush = time.time()
+        self._total_exported += len(batch)
+        return ExportResult(
             target=self._config.target,
             entries_sent=len(batch),
             entries_accepted=len(formatted),
             success=True,
             segment_receipt=segment_receipt,
         )
-
-        self._buffer = self._buffer[self._config.batch_size :]
-        self._last_flush = time.time()
-        self._total_exported += len(batch)
-        return result
 
 
 # ---------------------------------------------------------------------------
@@ -742,64 +924,40 @@ class FileExporter(BaseSIEMExporter):
         ]
         return docs
 
-    def flush(self) -> ExportResult:
-        """Flush buffered entries to the configured file path.
+    def _send_batch(
+        self,
+        batch: list[AuditEntry],
+        formatted: list[dict[str, Any]],
+    ) -> None:
+        """Write one formatted batch to the configured file path.
 
-        Returns:
-            ExportResult with the outcome.
+        Args:
+            batch: Raw audit entries in this batch.
+            formatted: Entries formatted for the target system.
+
+        Raises:
+            Exception: Any transport error. ``flush()`` catches it and
+                records it as an audit chain event.
         """
-        if not self._buffer:
-            return ExportResult(
-                target=SIEMTarget.FILE,
-                entries_sent=0,
-                entries_accepted=0,
-                success=True,
-            )
-
-        batch = self._buffer[: self._config.batch_size]
-        formatted = self.format_entries(batch)
-
         start = time.time()
-        try:
-            # Validate export path stays within .sdd/ to prevent traversal
-            sdd_root = Path.cwd().resolve() / ".sdd"
-            safe_name = Path(self._file.path).name  # strip any directory components
-            out_path = (sdd_root / "exports" / safe_name).resolve()
-            out_path.relative_to(sdd_root)  # raises ValueError if outside .sdd/
-            out_path.parent.mkdir(parents=True, exist_ok=True)
+        # Validate export path stays within .sdd/ to prevent traversal
+        sdd_root = Path.cwd().resolve() / ".sdd"
+        safe_name = Path(self._file.path).name  # strip any directory components
+        out_path = (sdd_root / "exports" / safe_name).resolve()
+        out_path.relative_to(sdd_root)  # raises ValueError if outside .sdd/
+        out_path.parent.mkdir(parents=True, exist_ok=True)
 
-            if self._file.format == "jsonl":
-                with out_path.open("a") as fh:
-                    fh.writelines(json.dumps(doc) + "\n" for doc in formatted)
-            else:
-                existing: list[dict[str, Any]] = []
-                if out_path.exists():
-                    existing = json.loads(out_path.read_text())
-                existing.extend(formatted)
-                out_path.write_text(json.dumps(existing, indent=2))
+        if self._file.format == "jsonl":
+            with out_path.open("a") as fh:
+                fh.writelines(json.dumps(doc) + "\n" for doc in formatted)
+        else:
+            existing: list[dict[str, Any]] = []
+            if out_path.exists():
+                existing = json.loads(out_path.read_text())
+            existing.extend(formatted)
+            out_path.write_text(json.dumps(existing, indent=2))
 
-            duration = time.time() - start
-            self._buffer = self._buffer[self._config.batch_size :]
-            self._last_flush = time.time()
-            self._total_exported += len(batch)
-            segment_receipt = _build_segment_receipt(batch)
-            return ExportResult(
-                target=SIEMTarget.FILE,
-                entries_sent=len(batch),
-                entries_accepted=len(formatted),
-                success=True,
-                duration_s=duration,
-                segment_receipt=segment_receipt,
-            )
-        except OSError as exc:
-            duration = time.time() - start
-            self._total_failed += len(batch)
-            logger.error("File export failed: %s", exc)
-            return ExportResult(
-                target=SIEMTarget.FILE,
-                entries_sent=len(batch),
-                entries_accepted=0,
-                success=False,
-                error=str(exc),
-                duration_s=duration,
-            )
+        duration = time.time() - start
+        self._total_exported += len(batch)
+        self._buffer = self._buffer[self._config.batch_size :]
+        self._last_flush = time.time()
