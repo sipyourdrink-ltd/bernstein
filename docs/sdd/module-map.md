@@ -39,6 +39,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `evidence/`                 | Verification evidence bundles (issue #2362) |
 | `fleet/`                    | Fleet dashboard - supervise multiple Bernstein projects in one view |
 | `git/`                      | git sub-package |
+| `govern/`                   | Govern plan models for posture diff artifacts |
 | `grpc_gen/`                 | Generated gRPC stubs - run ``scripts/generate_proto.sh`` to populate |
 | `handoff/`                  | Session handoff between terminal and chat/dashboard surfaces (op-005) |
 | `identity/`                 | Install-rev identity module - passive, operator-decodable install fingerprint |
