@@ -11,19 +11,15 @@ The acceptance criteria from the issue:
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 
 from bernstein.core.observability.otlp_ingest import (
-    GenAIActivity,
     OTLPIngestAdapter,
     OTLPIngestError,
-    UntypedActivity,
     ingest_payload,
 )
-
 
 # --------------------------------------------------------------------------- #
 # Fixtures                                                                      #
@@ -267,6 +263,8 @@ def test_round_trip_through_exported_spans(adapter: OTLPIngestAdapter) -> None:
     Uses the same helpers as test_telemetry_verify_span_cmd.py:
     projection_to_otlp_json_spans produces the exact shape the ingest expects.
     """
+    import tempfile
+
     from bernstein.core.observability.otel_bridge import (
         projection_to_otlp_json_spans,
     )
@@ -278,8 +276,6 @@ def test_round_trip_through_exported_spans(adapter: OTLPIngestAdapter) -> None:
         load_or_create_install_key,
         signing_key_path,
     )
-
-    import tempfile
 
     tmp = Path(tempfile.mkdtemp())
     key = load_or_create_install_key(signing_key_path(tmp))
