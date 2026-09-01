@@ -3,13 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
-
-import pytest
 
 from bernstein.core.compliance.coverage import (
     CONTROL_EVENT_MAP,
-    ControlCoverageResult,
     ControlCoverageStatus,
     assess_control_coverage,
     get_required_events,
@@ -167,14 +163,14 @@ class TestBehaviourFromEntry:
         entry = _make_lineage_entry("auth/something")
         results = assess_control_coverage([entry])
         # Find SOC2 CC6.1 result
-        soc2_result = [r for r in results if r.policy_id == "soc2-cc6-1"][0]
+        soc2_result = next(r for r in results if r.policy_id == "soc2-cc6-1")
         assert soc2_result.status == ControlCoverageStatus.EVIDENCED
 
     def test_change_management_matching(self) -> None:
         entry = _make_lineage_entry("config/something")
         results = assess_control_coverage([entry])
         # Find SOC2 CC8.1 result
-        soc2_result = [r for r in results if r.policy_id == "soc2-cc8-1"][0]
+        soc2_result = next(r for r in results if r.policy_id == "soc2-cc8-1")
         assert soc2_result.status == ControlCoverageStatus.EVIDENCED
 
     def test_non_matching_paths(self) -> None:
@@ -183,3 +179,5 @@ class TestBehaviourFromEntry:
         # All should be partially evidenced (wrong behaviour)
         for r in results:
             assert r.status == ControlCoverageStatus.PARTIALLY_EVIDENCED
+
+
