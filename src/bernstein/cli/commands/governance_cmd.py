@@ -10,6 +10,13 @@ bindings and re-project the role's permissions onto the action. Budget decisions
 recompute per-subject spend from the cost ledger (never a stored counter) and
 re-derive the verdict. A tampered verdict, a widened permission binding, or a
 diverged ledger fails the check.
+
+    bernstein govern plan --playbook <file> --inventory <file> [--workdir <path>]
+
+Generate a signed, lineage-bearing govern plan representing the diff between
+declared posture (playbook) and enumerated environment (inventory). The plan
+contains one entry per mismatch (FORBIDDEN, ABSENT, WIDER_CEILING, UNKNOWN)
+and is anchored in the lineage spine for offline verification.
 """
 
 from __future__ import annotations
@@ -32,12 +39,13 @@ def _lineage_root(workdir: Path) -> Path:
     return workdir / ".sdd" / "lineage"
 
 
-@click.group("governance")
+@click.group("governance", aliases=["govern"])
 def governance_group() -> None:
     """Verify RBAC and budget decisions as projections over the audit chain.
 
     \b
       bernstein governance verify <run> --bindings b.json --ledger ledger.jsonl
+      bernstein govern plan --playbook p.json --inventory i.json [--workdir w]
     """
 
 
