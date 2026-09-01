@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from bernstein.core.lineage.entry import (
+    ACTIVITY_SOURCES,
     ARTEFACT_KINDS,
     LINEAGE_ENTRY_VERSION,
     LineageEntry,
@@ -109,3 +110,42 @@ def test_widening_keeps_the_set_closed():
 
 def test_version_constant():
     assert LINEAGE_ENTRY_VERSION == 1
+
+
+def test_activity_source_defaults_to_none() -> None:
+    entry = LineageEntry(**_kwargs())
+    assert entry.activity_source is None
+
+
+def test_activity_source_accepts_closed_set() -> None:
+    assert ACTIVITY_SOURCES == frozenset({"scheduler", "adapter"})
+    for value in ACTIVITY_SOURCES:
+        entry = LineageEntry(**_kwargs(activity_source=value))
+        assert entry.activity_source == value
+
+
+def test_activity_source_rejects_unknown_value() -> None:
+    with pytest.raises(ValueError, match="unknown activity_source"):
+        LineageEntry(**_kwargs(activity_source="external"))
+
+
+def test_canonicalise_drops_activity_source_when_none() -> None:
+    # Issue #4962: pre-existing entries (activity_source unset) must keep
+    # byte-identical wire bytes, so the canonicaliser drops the field.
+    e_none = LineageEntry(**_kwargs())
+    e_explicit_none = LineageEntry(**_kwargs(activity_source=None))
+    assert canonicalise(e_none) == canonicalise(e_explicit_none)
+    assert b"activity_source" not in canonicalise(e_none)
+
+
+def test_canonicalise_keeps_activity_source_when_set() -> None:
+    e = LineageEntry(**_kwargs(activity_source="scheduler"))
+    body = canonicalise(e)
+    assert b"activity_source" in body
+    assert b"scheduler" in body
+
+
+def test_entry_hash_changes_when_activity_source_changes() -> None:
+    e1 = LineageEntry(**_kwargs())
+    e2 = LineageEntry(**_kwargs(activity_source="scheduler"))
+    assert entry_hash(e1) != entry_hash(e2)

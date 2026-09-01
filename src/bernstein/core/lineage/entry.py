@@ -86,7 +86,7 @@ class LineageEntry:
     # bytes so every historical entry keeps its exact wire form, signature and
     # HMAC. A tool-result provenance record sets this to one of TRUST_CLASSES.
     trust_class: str | None = None
-    # Additive, optional (issue #4962). None is dropped from the canonical
+    # Additive, optional (issue #4962). ``None`` is dropped from the canonical
     # bytes so every historical entry keeps its exact wire form, signature and
     # HMAC. When not None must be one of LINEAGE_ENTRY.ACTIVITY_SOURCES.
     activity_source: str | None = None
