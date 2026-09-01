@@ -303,4 +303,4 @@ def test_adapters_drafts_show_malformed_draft_exits_nonzero(tmp_path: Path) -> N
     )
 
     assert result.exit_code == 1
-    assert "Failed to read draft" in result.output
+    assert "Malformed draft" in result.output or "Failed to read draft" in result.output

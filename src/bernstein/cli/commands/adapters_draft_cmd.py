@@ -268,6 +268,21 @@ def show_draft(binary: str, drafts_dir: Path | None) -> None:
         click.echo(f"Failed to read draft: {exc}", err=True)
         raise SystemExit(1) from None
 
+    # Validate required sections exist
+    missing_sections = [s for s in ("invocation", "provenance") if s not in document]
+    if missing_sections:
+        click.echo(
+            f"Malformed draft: missing required section(s): {', '.join(missing_sections)}",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    # Validate invocation has required fields
+    invocation = document.get("invocation", {})
+    if not isinstance(invocation, dict) or "binary" not in invocation:
+        click.echo("Malformed draft: invocation section missing 'binary' field", err=True)
+        raise SystemExit(1)
+
     # Display the document in a readable format
     click.echo(f"Draft profile: {binary}")
     click.echo(f"Source: {draft_file}")
