@@ -218,12 +218,11 @@ def deliver_webhook(
     """
     body = payload.to_dict()
     own_client = client is None
-
+    
     active_client: httpx.Client
-    if own_client:
+    if client is None:
         active_client = httpx.Client()
     else:
-        assert client is not None  # Narrow type for mypy
         active_client = client
 
     try:

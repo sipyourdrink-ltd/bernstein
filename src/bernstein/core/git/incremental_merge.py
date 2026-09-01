@@ -403,7 +403,7 @@ def incremental_merge_files(
                         from bernstein.core.security.audit_chain import AuditChainStore
 
                         sdd_dir = runtime_dir.parent
-                        audit_log = AuditLog.load_from_file(str(sdd_dir / "runtime" / "audit.log"))  # type: ignore[attr-defined]  # runtime method
+                        audit_log = AuditLog(sdd_dir / "runtime")
                         chain = AuditChainStore(audit_log)
                         # Sign and persist the refusal receipt
                         receipt = refuse_read_set(
@@ -412,7 +412,7 @@ def incremental_merge_files(
                             task_id=task_id,
                             base_commit=base_commit,
                             target_branch=branch,
-                            changed_paths=changed_paths,  # type: ignore[arg-type]  # structural match
+                            changed_paths=changed_paths,  # type: ignore[arg-type]  # structural match between read_set_admission/read_set_receipt
                             private_key_pem="",
                             public_key_pem="",
                         )
