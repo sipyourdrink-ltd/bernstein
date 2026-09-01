@@ -103,7 +103,15 @@ def _summary(**overrides: object) -> SessionSummary:
         "branch": "agent/abcdef12",
         "base_branch": "main",
         "primary_role": "engineer",
-        "diff_stat": " src/bernstein/core/storage/keys.py | 124 +++++\n 1 file changed",
+        # Consistent with FEATURE_COMMIT on purpose: 120 + 4 and 90 + 0. A branch
+        # whose only commit touches two files cannot have a base..branch diff-stat
+        # naming one, and the headline reads the diff-stat, so a fixture that
+        # disagrees with itself tests a state git cannot produce.
+        "diff_stat": (
+            " src/bernstein/core/storage/keys.py | 124 +++++++++--\n"
+            " tests/unit/test_store_keys.py      |  90 ++++++++\n"
+            " 2 files changed, 210 insertions(+), 4 deletions(-)"
+        ),
         "gates": (
             GateResult(name="lint", passed=True, detail="ruff: 0 findings"),
             GateResult(name="tests", passed=True, detail="pytest: 812 passed"),
@@ -705,3 +713,55 @@ def test_ranking_is_untouched_by_the_rendering_change() -> None:
     assert not is_housekeeping_commit(WIP_FOLD_IN_COMMIT)
     ranked = rank_commits((WIP_BUT_DESCRIPTIVE_COMMIT, WIP_FOLD_IN_COMMIT))
     assert ranked[0] is WIP_FOLD_IN_COMMIT
+
+
+# ---------------------------------------------------------------------------
+# Every number in the body describes the same bytes
+# ---------------------------------------------------------------------------
+
+
+def test_the_headline_states_the_net_diff_not_the_churn_across_commits() -> None:
+    """The incident: a body opened "7 files - +534 / -41" over a diff the Files
+    tab rendered as 6 files, +498 / -3.
+
+    Summing the commits counts a path once per commit that touched it, so a file
+    added and then removed on the same branch is still counted and its lines are
+    counted twice. Both statements are true about the branch; only one answers
+    the question a reviewer is asking six inches below GitHub's own count.
+    """
+    added_then_removed = _commit("111111111111", "feat: add a helper", [("src/tmp.py", 30, 0)])
+    reverted = _commit("222222222222", "revert: drop the helper again", [("src/tmp.py", 0, 30)])
+    body = build_pr_body(
+        _summary(
+            commits=(added_then_removed, reverted),
+            diff_stat=" 0 files changed",
+        )
+    )
+    headline = body.splitlines()[0]
+
+    assert "**0 files**" in headline
+    assert "1 file" not in headline
+    assert "+30" not in headline
+
+
+def test_a_diff_stat_git_could_answer_beats_the_commit_sum() -> None:
+    """When the two disagree, the net diff is the one published."""
+    churn = _commit("333333333333", "feat: three files", [("a.py", 10, 0), ("b.py", 20, 0), ("c.py", 5, 5)])
+    body = build_pr_body(
+        _summary(
+            commits=(churn,),
+            diff_stat=" a.py | 10 +\n 1 file changed, 10 insertions(+), 0 deletions(-)",
+        )
+    )
+    headline = body.splitlines()[0]
+
+    assert "**1 file** · +10 / -0" in headline
+
+
+def test_the_commit_sum_is_still_the_fallback_when_git_could_not_answer() -> None:
+    """An unreadable diff-stat must not silence the headline entirely -- the
+    commits are a worse answer than the net diff and a much better one than none."""
+    body = build_pr_body(_summary(commits=(FEATURE_COMMIT,), diff_stat=""))
+    headline = body.splitlines()[0]
+
+    assert "**2 files** · +210 / -4" in headline

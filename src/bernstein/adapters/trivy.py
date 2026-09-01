@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
+import sys
+import tempfile
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,7 +53,8 @@ class TrivyInvocation:
     """Stable provenance for one feed-pinned Trivy invocation."""
 
     tool_version: str
-    db_digest: str
+    db_pin: str
+    db_identity: str
     argv_hash: str
 
 
@@ -74,9 +78,9 @@ class TrivyAdapter(ScannerAdapter):
         return self.registry_name
 
     def scan(self, target: Path, scope: ScanScope, workdir: Path) -> ScanResult:
-        """Run Trivy without updating its database and record the caller's DB digest."""
+        """Run Trivy after verifying the caller's pin against the database on disk."""
         self.enforce_network_policy()
-        db_digest = _validate_scope(target, scope)
+        db_pin = _validate_scope(target, scope)
         resolved_target = target.resolve()
         if not resolved_target.exists():
             raise TrivyError(f"Trivy target does not exist: {target}")
@@ -87,15 +91,21 @@ class TrivyAdapter(ScannerAdapter):
                 f"Trivy executable {self._binary!r} was not found on PATH; install trivy or configure its binary"
             )
 
+        cache_dir = _resolve_cache_dir(self._cache_dir)
+        db_identity = _db_identity(cache_dir)
+        if db_identity != db_pin:
+            raise TrivyError(f"Trivy database pin mismatch: expected {db_pin}, observed {db_identity}")
+
         tool_version = _read_version(binary)
         workdir.mkdir(parents=True, exist_ok=True)
         report_path = (workdir / "trivy.sarif").resolve()
         report_path.unlink(missing_ok=True)
-        command = _build_command(binary, resolved_target, report_path, self._cache_dir)
+        command = _build_command(binary, resolved_target, report_path, cache_dir)
         self.last_invocation = TrivyInvocation(
             tool_version=tool_version,
-            db_digest=db_digest,
-            argv_hash=_invocation_argv_hash(tool_version, db_digest),
+            db_pin=db_pin,
+            db_identity=db_identity,
+            argv_hash=_invocation_argv_hash(tool_version, db_identity),
         )
 
         try:
@@ -120,13 +130,13 @@ class TrivyAdapter(ScannerAdapter):
             findings = parse_trivy_sarif(report_path.read_bytes(), target_root=resolved_target)
         finally:
             report_path.unlink(missing_ok=True)
-        return ScanResult(findings=findings, feed_digest=db_digest)
+        return ScanResult(findings=findings, feed_digest=db_identity)
 
 
 def _validate_scope(target: Path, scope: ScanScope) -> str:
     if scope.include or scope.exclude or scope.max_depth is not None:
         raise ValueError("TrivyAdapter does not yet support include, exclude, or max_depth scan scope fields")
-    unsupported = set(scope.config) - {"db_digest"}
+    unsupported = set(scope.config) - {"db_pin"}
     if unsupported:
         raise ValueError(f"Unsupported Trivy scan configuration: {', '.join(sorted(unsupported))}")
     if scope.roots:
@@ -137,10 +147,47 @@ def _validate_scope(target: Path, scope: ScanScope) -> str:
         if not target_is_allowed:
             raise ValueError("Trivy target is outside the allowed ScanScope roots")
 
-    digest = scope.config.get("db_digest")
-    if not isinstance(digest, str) or not _SHA256_DIGEST.fullmatch(digest):
-        raise TrivyError("Feed-pinned Trivy scans require scope.config['db_digest'] as a sha256:<64 hex> digest")
-    return digest.lower()
+    pin = scope.config.get("db_pin")
+    if not isinstance(pin, str) or not _SHA256_DIGEST.fullmatch(pin):
+        raise TrivyError("Feed-pinned Trivy scans require scope.config['db_pin'] as a sha256:<64 hex> digest")
+    return pin.lower()
+
+
+def _resolve_cache_dir(configured: Path | None) -> Path:
+    """Resolve Trivy's platform default and make it explicit on the command line."""
+    if configured is not None:
+        return configured.resolve()
+    if sys.platform == "darwin":
+        home = os.environ.get("HOME")
+        base = Path(home) / "Library" / "Caches" if home else Path(tempfile.gettempdir())
+    elif os.name == "nt":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        base = Path(local_app_data) if local_app_data else Path(tempfile.gettempdir())
+    else:
+        xdg_cache = os.environ.get("XDG_CACHE_HOME")
+        home = os.environ.get("HOME")
+        if xdg_cache and Path(xdg_cache).is_absolute():
+            base = Path(xdg_cache)
+        elif not xdg_cache and home:
+            base = Path(home) / ".cache"
+        else:
+            base = Path(tempfile.gettempdir())
+    return base / "trivy"
+
+
+def _db_identity(cache_dir: Path) -> str:
+    """Return a content digest of the exact vulnerability database Trivy will load."""
+    database = cache_dir / "db" / "trivy.db"
+    if not database.is_file():
+        raise TrivyError(f"Trivy database does not exist at {database}; download it before running a pinned scan")
+    digest = hashlib.sha256()
+    try:
+        with database.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError as exc:
+        raise TrivyError(f"Could not hash Trivy database at {database}: {exc}") from exc
+    return "sha256:" + digest.hexdigest()
 
 
 def _read_version(binary: str) -> str:
@@ -168,7 +215,7 @@ def _read_version(binary: str) -> str:
     return first_line
 
 
-def _build_command(binary: str, target: Path, report_path: Path, cache_dir: Path | None) -> list[str]:
+def _build_command(binary: str, target: Path, report_path: Path, cache_dir: Path) -> list[str]:
     command = [
         binary,
         "filesystem",
@@ -180,16 +227,15 @@ def _build_command(binary: str, target: Path, report_path: Path, cache_dir: Path
         "--output",
         str(report_path),
     ]
-    if cache_dir is not None:
-        command.extend(["--cache-dir", str(cache_dir.resolve())])
+    command.extend(["--cache-dir", str(cache_dir)])
     command.append(str(target))
     return command
 
 
-def _invocation_argv_hash(tool_version: str, db_digest: str) -> str:
+def _invocation_argv_hash(tool_version: str, db_identity: str) -> str:
     semantic_invocation = {
         "command": "filesystem",
-        "db_digest": db_digest,
+        "db_identity": db_identity,
         "report_format": "sarif",
         "scanners": ["vuln"],
         "skip_db_update": True,

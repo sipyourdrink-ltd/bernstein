@@ -667,6 +667,7 @@ nav:
       - Git hooks: contributing/git-hooks.md
       - Adapter contracts: contributing/adapter-contracts.md
       - Writing adapters: adapters/ADAPTER_GUIDE.md
+      - The issue shelf: contributing/issue-shelf.md
       - Flake handling: contributing/flake-handling.md
       - Demo recording: contributing/demo-recording.md
       - Render freshness: contributing/render-freshness.md

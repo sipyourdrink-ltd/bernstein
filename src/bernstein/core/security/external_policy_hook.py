@@ -40,6 +40,12 @@ class HookVerdict(StrEnum):
     ALLOW = "allow"
     DENY = "deny"
     ABSTAIN = "abstain"  # Hook has no opinion
+    #: The engine did not produce an answer: binary missing, non-zero exit, timeout,
+    #: unparseable output, or an exception. Distinct from ABSTAIN on purpose - "no rule
+    #: matched" is a decision the policy made, and this is the absence of one. Collapsing
+    #: them makes an unreachable policy engine indistinguishable from a permissive one,
+    #: which is the wrong default for a decision boundary (#4912).
+    UNAVAILABLE = "unavailable"
 
 
 @dataclass(frozen=True)
@@ -186,7 +192,7 @@ class OPAHook(ExternalPolicyHook):
             if result.returncode != 0:
                 return HookResponse(
                     hook_name=self.name,
-                    verdict=HookVerdict.ABSTAIN,
+                    verdict=HookVerdict.UNAVAILABLE,
                     reason=f"OPA evaluation failed: {result.stderr.strip()}",
                     latency_ms=latency,
                     error=result.stderr.strip(),
@@ -211,6 +217,9 @@ class OPAHook(ExternalPolicyHook):
                     latency_ms=latency,
                 )
 
+            # Deliberately ABSTAIN, not UNAVAILABLE: OPA ran, exited zero and answered
+            # with nothing, which is a genuine no-match rather than an engine that could
+            # not be reached. The distinction this verdict draws is about availability.
             return HookResponse(
                 hook_name=self.name,
                 verdict=HookVerdict.ABSTAIN,
@@ -222,7 +231,7 @@ class OPAHook(ExternalPolicyHook):
             latency = (time.monotonic() - start) * 1000
             return HookResponse(
                 hook_name=self.name,
-                verdict=HookVerdict.ABSTAIN,
+                verdict=HookVerdict.UNAVAILABLE,
                 reason="OPA binary not found",
                 latency_ms=latency,
                 error="opa not found on PATH",
@@ -231,16 +240,18 @@ class OPAHook(ExternalPolicyHook):
             latency = (time.monotonic() - start) * 1000
             return HookResponse(
                 hook_name=self.name,
-                verdict=HookVerdict.ABSTAIN,
+                verdict=HookVerdict.UNAVAILABLE,
                 reason="OPA evaluation timed out",
                 latency_ms=latency,
                 error="timeout",
             )
         except Exception as exc:
+            # json.JSONDecodeError lands here too: output we cannot parse is output the
+            # engine did not give us, whatever its exit code said.
             latency = (time.monotonic() - start) * 1000
             return HookResponse(
                 hook_name=self.name,
-                verdict=HookVerdict.ABSTAIN,
+                verdict=HookVerdict.UNAVAILABLE,
                 reason=f"OPA hook error: {exc}",
                 latency_ms=latency,
                 error=str(exc),
@@ -436,9 +447,18 @@ class PolicyHookRegistry:
     Hooks are evaluated in registration order.  The first non-ABSTAIN
     verdict wins.  If all hooks abstain, the default verdict applies.
 
+    An engine that could not answer is decisive and DENIES. UNAVAILABLE is never
+    collapsed into the all-abstained default: "the policy engine is unreachable" and
+    "no rule matched" have opposite safety properties, and reporting the first as the
+    second makes a broken decision boundary look like a permissive one (#4912).
+
     Args:
         default_verdict: Verdict when all hooks abstain.
-        fail_open: If True, hook errors result in ALLOW; if False, DENY.
+        fail_open: If True, an engine that cannot answer is treated as having no
+            opinion and evaluation continues; if False (the default), it denies.
+            This used to be consulted only for exceptions escaping ``hook.evaluate``,
+            which cannot happen because that method catches everything - so the flag
+            was unreachable. It is now the per-deployment switch it was written to be.
     """
 
     def __init__(
@@ -479,11 +499,15 @@ class PolicyHookRegistry:
                 response = hook.evaluate(request)
                 responses.append(response)
             except Exception as exc:
-                verdict = HookVerdict.ALLOW if self._fail_open else HookVerdict.DENY
+                # An escaping exception is an engine that did not answer, like any other
+                # unavailability. Reported as UNAVAILABLE rather than resolved to
+                # ALLOW/DENY here so that ONE place decides what unavailability means -
+                # `first_decisive`, which honours `fail_open`. Deciding it twice is how
+                # the flag came to be consulted on a path that could never run.
                 responses.append(
                     HookResponse(
                         hook_name=hook.name,
-                        verdict=verdict,
+                        verdict=HookVerdict.UNAVAILABLE,
                         reason=f"Hook error: {exc}",
                         error=str(exc),
                     ),
@@ -491,7 +515,12 @@ class PolicyHookRegistry:
         return responses
 
     def first_decisive(self, request: HookRequest) -> HookResponse:
-        """Evaluate hooks and return the first non-ABSTAIN response.
+        """Evaluate hooks and return the first decisive response.
+
+        An UNAVAILABLE engine is decisive and denies, unless ``fail_open`` is set, in
+        which case it is treated as having no opinion and evaluation continues. Either
+        way the verdict says which happened: the caller is never handed "all hooks
+        abstained" about an engine that was never reached.
 
         Args:
             request: The permission request.
@@ -501,6 +530,17 @@ class PolicyHookRegistry:
         """
         responses = self.evaluate(request)
         for resp in responses:
+            if resp.verdict == HookVerdict.UNAVAILABLE:
+                if self._fail_open:
+                    continue
+                return HookResponse(
+                    hook_name=resp.hook_name,
+                    verdict=HookVerdict.DENY,
+                    reason=f"Policy engine unavailable, denying: {resp.reason}",
+                    latency_ms=resp.latency_ms,
+                    error=resp.error,
+                    policy_digest=resp.policy_digest,
+                )
             if resp.verdict != HookVerdict.ABSTAIN:
                 return resp
         return HookResponse(

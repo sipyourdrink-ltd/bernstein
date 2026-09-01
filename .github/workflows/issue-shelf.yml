@@ -1,0 +1,54 @@
+name: Issue shelf
+
+# The contributor shelf is maintained by hand today and fails in both directions:
+# free work sits unadvertised, and work somebody already holds keeps its labels until
+# the next person collides with it. This decides both mechanically, and refuses to
+# decide the case that is not decidable from data (see scripts/issue_shelf.py).
+#
+# Ships in report-only mode: it prints what it would change and writes nothing. Flip
+# APPLY to "true" once a day of reports has produced no wrong call.
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  issues:
+    types: [assigned, unassigned, labeled, unlabeled, reopened, milestoned, demilestoned]
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Write labels instead of only reporting'
+        type: boolean
+        default: false
+
+permissions:
+  issues: write
+  pull-requests: read
+  contents: read
+
+concurrency:
+  group: issue-shelf
+  cancel-in-progress: false
+
+jobs:
+  shelf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Decide the shelf
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          APPLY: ${{ inputs.apply && '--apply' || '' }}
+        run: |
+          python scripts/issue_shelf.py $APPLY | tee shelf.md
+          {
+            echo "### Issue shelf"
+            echo
+            cat shelf.md
+          } >> "$GITHUB_STEP_SUMMARY"

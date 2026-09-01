@@ -1123,11 +1123,26 @@ def _format_evidence(evidence: EvidenceSummary) -> str:
 def _churn(session: SessionSummary) -> tuple[int, int, int] | None:
     """Return ``(files, added, removed)`` for the branch, or ``None``.
 
-    The commits are the first source because they carry per-file numbers.
-    The diff-stat's summary line is the fallback for a session whose commits
-    were not parsed.  ``None`` means neither could say, which is the case a
-    headline must not invent a number for.
+    The diff-stat summary line is the first source because it is the net
+    change: what the Files tab shows a reviewer six inches above this line.
+    Summing the commits instead counts a path once per commit that touched it,
+    so a file added and then removed on the same branch is still counted and
+    its lines are counted twice. That is a true statement about the branch and
+    the wrong answer to "how big is this pull request" -- it published "7 files
+    - +534 / -41" over a diff GitHub rendered as 6 files, +498 / -3.
+
+    The commits remain the fallback for a session whose diff-stat git could not
+    answer. ``None`` means neither could say, which is the case a headline must
+    not invent a number for.
     """
+    match = _DIFF_STAT_SUMMARY_RE.search(session.diff_stat)
+    if match:
+        return (
+            int(match.group("files")),
+            int(match.group("added") or 0),
+            int(match.group("removed") or 0),
+        )
+
     paths: dict[str, tuple[int, int]] = {}
     for commit in session.commits:
         if commit.is_merge:
@@ -1138,13 +1153,6 @@ def _churn(session: SessionSummary) -> tuple[int, int, int] | None:
     if paths:
         return len(paths), sum(a for a, _ in paths.values()), sum(r for _, r in paths.values())
 
-    match = _DIFF_STAT_SUMMARY_RE.search(session.diff_stat)
-    if match:
-        return (
-            int(match.group("files")),
-            int(match.group("added") or 0),
-            int(match.group("removed") or 0),
-        )
     return None
 
 
