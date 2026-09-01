@@ -1,11 +1,10 @@
 """Tests for environment digest computation."""
 
-import pytest
 
 from src.bernstein.core.security.environment_digest import (
-    compute_environment_digest,
-    compare_digests,
     DigestMismatchError,
+    compare_digests,
+    compute_environment_digest,
 )
 
 
