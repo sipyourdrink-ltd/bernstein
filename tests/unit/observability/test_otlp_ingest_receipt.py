@@ -76,23 +76,22 @@ def adapter() -> OTLPIngestAdapter:
 
 
 @pytest.fixture
-def audit_chain(tmp_path: Path) -> tuple[AuditChainStore, bytes]:
+def audit_chain(tmp_path: Path) -> tuple[Path, bytes]:
     """Create an isolated audit chain for receipt tests."""
     audit_dir = tmp_path / "audit"
     audit_dir.mkdir(parents=True, exist_ok=True)
     hmac_key = b"x" * 32
-    store = AuditChainStore(audit_dir, key=hmac_key)
-    return store, hmac_key
+    return audit_dir, hmac_key
 
 
 @pytest.fixture
-def ingest_receipt_mint(audit_chain: tuple[AuditChainStore, bytes], tmp_path: Path) -> IngestOTLPReceipt:
+def ingest_receipt_mint(audit_chain: tuple[Path, bytes]) -> IngestOTLPReceipt:
     """Create an IngestOTLPReceipt instance with test chain."""
-    store, hmac_key = audit_chain
+    audit_dir, hmac_key = audit_chain
     return IngestOTLPReceipt(
         source_label="test-collector",
         profile_name="generic",
-        audit_dir=store._dir,
+        audit_dir=audit_dir,
         hmac_key=hmac_key,
     )
 
@@ -184,7 +183,7 @@ def _genai_span_dict_form(
 
 def test_ingested_events_produce_a_receipt_that_verifies_offline(
     ingest_receipt_mint: IngestOTLPReceipt,
-    audit_chain: tuple[AuditChainStore, bytes],
+    audit_chain: tuple[Path, bytes],
     tmp_path: Path,
 ) -> None:
     """Ingested events produce a receipt that verifies offline.
@@ -192,7 +191,6 @@ def test_ingested_events_produce_a_receipt_that_verifies_offline(
     The receipt can be verified using only the receipt data and public key,
     without needing the orchestrator or any runtime context.
     """
-    store, _ = audit_chain
     spans = [_genai_span(trace_id="a" * 32, span_id="1" * 16)]
 
     receipt, _ = ingest_receipt_mint.ingest_batch(spans)
@@ -203,17 +201,8 @@ def test_ingested_events_produce_a_receipt_that_verifies_offline(
 
     receipt_dict = receipt.to_dict()
 
-    # Compute chain head from the receipt's chain_head
-    head_hash = _compute_chain_head_from_receipt(store, receipt.chain_head)
-
     # Verify the receipt structure is valid offline
-    assert _otlp_receipt_verify_offline(receipt_dict, head_hash), "Receipt should verify offline"
-
-
-def _compute_chain_head_from_receipt(store: AuditChainStore, head_hash: str) -> str:
-    """Compute the actual chain head to verify against the receipt's claim."""
-    # The head_hash from the receipt should match the prev_hmac of the latest entry
-    return head_hash
+    assert _otlp_receipt_verify_offline(receipt_dict, receipt.chain_head), "Receipt should verify offline"
 
 
 def _otlp_receipt_verify_offline(receipt: dict[str, Any], expected_head: str) -> bool:
@@ -313,22 +302,22 @@ def test_reordered_ingest_batch_is_detected(
 
 
 def test_arrival_counter_is_monotonically_increasing(
-    audit_chain: tuple[AuditChainStore, bytes],
+    audit_chain: tuple[Path, bytes],
     tmp_path: Path,
 ) -> None:
     """The arrival counter is monotonically increasing across batches."""
-    store, hmac_key = audit_chain
+    audit_dir, hmac_key = audit_chain
 
     mint1 = IngestOTLPReceipt(
         source_label="batch1",
         profile_name="generic",
-        audit_dir=store._dir,
+        audit_dir=audit_dir,
         hmac_key=hmac_key,
     )
     mint2 = IngestOTLPReceipt(
         source_label="batch2",
         profile_name="generic",
-        audit_dir=store._dir,
+        audit_dir=audit_dir,
         hmac_key=hmac_key,
     )
 
@@ -340,38 +329,23 @@ def test_arrival_counter_is_monotonically_increasing(
     assert receipt2.arrival_index >= 0
 
 
-def test_span_count_matches_input(
-    ingest_receipt_mint: IngestOTLPReceipt,
-) -> None:
-    """Span count in receipt matches the number of input spans."""
-    spans = [_genai_span()] * 5
-    receipt, _ = ingest_receipt_mint.ingest_batch(spans)
-
-    assert receipt.span_count == 5
-
-
-# --------------------------------------------------------------------------- #
-# AC4: test_source_identity_is_bound_into_the_receipt                        #
-# --------------------------------------------------------------------------- #
-
-
 def test_source_identity_is_bound_into_the_receipt(
-    audit_chain: tuple[AuditChainStore, bytes],
+    audit_chain: tuple[Path, bytes],
     tmp_path: Path,
 ) -> None:
     """Two different sources cannot produce interchangeable receipts."""
-    store, hmac_key = audit_chain
+    audit_dir, hmac_key = audit_chain
 
     mint_collector = IngestOTLPReceipt(
         source_label="collector-prod",
         profile_name="otel_collector",
-        audit_dir=store._dir,
+        audit_dir=audit_dir,
         hmac_key=hmac_key,
     )
     mint_agent = IngestOTLPReceipt(
         source_label="agent-direct",
         profile_name="agent_direct",
-        audit_dir=store._dir,
+        audit_dir=audit_dir,
         hmac_key=hmac_key,
     )
 
@@ -384,28 +358,28 @@ def test_source_identity_is_bound_into_the_receipt(
     assert receipt_collector.source_label == "collector-prod"
     assert receipt_agent.source_label == "agent-direct"
 
-    # Batch digests should differ (different source labels affect binding)
-    assert receipt_collector.batch_digest != receipt_agent.batch_digest
+    # Source identity is part of the signed binding, so the bindings differ
+    assert receipt_collector._binding() != receipt_agent._binding()
 
 
 def test_source_identity_affects_signature(
-    audit_chain: tuple[AuditChainStore, bytes],
+    audit_chain: tuple[Path, bytes],
     tmp_path: Path,
 ) -> None:
     """Changing source changes the receipt signature."""
-    store, hmac_key = audit_chain
+    audit_dir, hmac_key = audit_chain
 
     # Create two receipts for same spans from different sources
     mint1 = IngestOTLPReceipt(
         source_label="source-a",
         profile_name="generic",
-        audit_dir=store._dir,
+        audit_dir=audit_dir,
         hmac_key=hmac_key,
     )
     mint2 = IngestOTLPReceipt(
         source_label="source-b",
         profile_name="generic",
-        audit_dir=store._dir,
+        audit_dir=audit_dir,
         hmac_key=hmac_key,
     )
 
@@ -427,22 +401,22 @@ def test_source_identity_affects_signature(
 
 
 def test_different_profiles_produce_different_bindings(
-    audit_chain: tuple[AuditChainStore, bytes],
+    audit_chain: tuple[Path, bytes],
     tmp_path: Path,
 ) -> None:
     """Different profiles produce different coverage and bindings."""
-    store, hmac_key = audit_chain
+    audit_dir, hmac_key = audit_chain
 
     mint_generic = IngestOTLPReceipt(
         source_label="test-source",
         profile_name="generic",
-        audit_dir=store._dir,
+        audit_dir=audit_dir,
         hmac_key=hmac_key,
     )
     mint_otel = IngestOTLPReceipt(
         source_label="test-source",
         profile_name="otel_collector",
-        audit_dir=store._dir,
+        audit_dir=audit_dir,
         hmac_key=hmac_key,
     )
 

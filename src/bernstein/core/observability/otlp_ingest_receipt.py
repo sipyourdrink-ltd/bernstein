@@ -267,6 +267,7 @@ def chain_event_from_ingest_span(
         raw_attrs = {}
     elif isinstance(raw_attrs, list):
         from bernstein.core.observability.otlp_ingest import _span_attributes
+
         raw_attrs = _span_attributes(raw_attrs)
     elif not isinstance(raw_attrs, dict):
         raw_attrs = {}
@@ -321,6 +322,7 @@ def _next_arrival_index() -> int:
     global _ARRIVAL_COUNTER
     try:
         import threading
+
         global _ARRIVAL_COUNTER_LOCK
         if _ARRIVAL_COUNTER_LOCK is None:
             _ARRIVAL_COUNTER_LOCK = threading.Lock()
@@ -545,7 +547,7 @@ class IngestOTLPReceipt:
     def _load_private_key(self) -> str:
         from bernstein.core.lineage.identity import load_or_create_signing_identity
 
-        _, private_pem = load_or_create_signing_identity(
+        private_pem, _ = load_or_create_signing_identity(
             self._audit_dir / ".signing",
             private_name="ingest-receipt-private.pem",
             public_name="ingest-receipt-public.pem",
@@ -555,7 +557,7 @@ class IngestOTLPReceipt:
     def _load_public_key(self) -> str:
         from bernstein.core.lineage.identity import load_or_create_signing_identity
 
-        public_pem, _ = load_or_create_signing_identity(
+        _, public_pem = load_or_create_signing_identity(
             self._audit_dir / ".signing",
             private_name="ingest-receipt-private.pem",
             public_name="ingest-receipt-public.pem",

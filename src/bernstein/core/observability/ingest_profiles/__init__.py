@@ -192,10 +192,21 @@ def list_profiles() -> list[str]:
 # gets its own named profile rather than a runtime vendor branch.  The check
 # fires at import time so a violation fails the process at startup.
 
-_VENDOR_STRINGS = frozenset({
-    "aws", "gcp", "azure", "otelcol", "datadog", "newrelic",
-    "splunk", "sumologic", "lightstep", "honeycomb", "signalfx",
-})
+_VENDOR_STRINGS = frozenset(
+    {
+        "aws",
+        "gcp",
+        "azure",
+        "otelcol",
+        "datadog",
+        "newrelic",
+        "splunk",
+        "sumologic",
+        "lightstep",
+        "honeycomb",
+        "signalfx",
+    }
+)
 
 
 def _check_no_vendor_branch(profile: IngestProfile) -> None:
@@ -203,8 +214,7 @@ def _check_no_vendor_branch(profile: IngestProfile) -> None:
     for vendor in _VENDOR_STRINGS:
         if vendor in profile_lower:
             raise AssertionError(
-                f"profile {profile.name!r} name contains vendor string {vendor!r}; "
-                "move to a named profile instead"
+                f"profile {profile.name!r} name contains vendor string {vendor!r}; move to a named profile instead"
             )
     for key in profile.extra_field_map:
         key_lower = key.lower()
@@ -220,40 +230,46 @@ def _check_no_vendor_branch(profile: IngestProfile) -> None:
 # Built-in profiles                                                            #
 # --------------------------------------------------------------------------- #
 
-_register(IngestProfile(
-    name=DEFAULT_PROFILE_NAME,
-    source_kind=SOURCE_KIND_COLLECTOR,
-))
+_register(
+    IngestProfile(
+        name=DEFAULT_PROFILE_NAME,
+        source_kind=SOURCE_KIND_COLLECTOR,
+    )
+)
 
-_register(IngestProfile(
-    name="otel_collector",
-    source_kind=SOURCE_KIND_COLLECTOR,
-    coverage=COVERAGE_NOT_SCHEDULED_BY_BERNSTEIN,
-    coverage_detail=(
-        "Spans received via an OTLP collector/forwarder. "
-        "Bernstein received these spans as a downstream OTLP receiver "
-        "and recorded them as governance activity. Bernstein did not schedule "
-        "or orchestrate the underlying agent workloads."
-    ),
-))
+_register(
+    IngestProfile(
+        name="otel_collector",
+        source_kind=SOURCE_KIND_COLLECTOR,
+        coverage=COVERAGE_NOT_SCHEDULED_BY_BERNSTEIN,
+        coverage_detail=(
+            "Spans received via an OTLP collector/forwarder. "
+            "Bernstein received these spans as a downstream OTLP receiver "
+            "and recorded them as governance activity. Bernstein did not schedule "
+            "or orchestrate the underlying agent workloads."
+        ),
+    )
+)
 
-_register(IngestProfile(
-    name="agent_direct",
-    source_kind=SOURCE_KIND_AGENT,
-    coverage=COVERAGE_NOT_SCHEDULED_BY_BERNSTEIN,
-    coverage_detail=(
-        "Spans emitted directly by an agent runtime (no collector in between). "
-        "Bernstein received these spans as an OTLP receiver and recorded them "
-        "as governance activity. Bernstein did not schedule or orchestrate "
-        "the agent that produced these spans."
-    ),
-    event_type_from_attrs=(
-        "gen_ai.operation.name",
-        "db.operation",
-        "rpc.method",
-        "http.route",
-    ),
-))
+_register(
+    IngestProfile(
+        name="agent_direct",
+        source_kind=SOURCE_KIND_AGENT,
+        coverage=COVERAGE_NOT_SCHEDULED_BY_BERNSTEIN,
+        coverage_detail=(
+            "Spans emitted directly by an agent runtime (no collector in between). "
+            "Bernstein received these spans as an OTLP receiver and recorded them "
+            "as governance activity. Bernstein did not schedule or orchestrate "
+            "the agent that produced these spans."
+        ),
+        event_type_from_attrs=(
+            "gen_ai.operation.name",
+            "db.operation",
+            "rpc.method",
+            "http.route",
+        ),
+    )
+)
 
 # Run static assertions for all registered profiles
 for _p in _PROFILE_REGISTRY.values():
