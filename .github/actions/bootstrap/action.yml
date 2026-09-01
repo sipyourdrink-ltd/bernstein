@@ -45,7 +45,7 @@ runs:
       continue-on-error: true
       uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       with:
-        version: "0.12.5"
+        version: "0.12.6"
         enable-cache: ${{ inputs.enable-uv-cache }}
         python-version: ${{ inputs.python-version }}
         cache-suffix: ${{ inputs.cache-key-suffix }}
@@ -65,7 +65,7 @@ runs:
       if: ${{ inputs.setup-uv == 'true' && inputs.python-version != '' && steps.setup-uv-pinned.outcome == 'failure' }}
       uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       with:
-        version: "0.12.5"
+        version: "0.12.6"
         enable-cache: ${{ inputs.enable-uv-cache }}
         python-version: ${{ inputs.python-version }}
         cache-suffix: ${{ inputs.cache-key-suffix }}
@@ -79,7 +79,7 @@ runs:
       continue-on-error: true
       uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       with:
-        version: "0.12.5"
+        version: "0.12.6"
         enable-cache: ${{ inputs.enable-uv-cache }}
         cache-suffix: ${{ inputs.cache-key-suffix }}
         # See note above: keep the post cache-save step from failing a
@@ -95,7 +95,7 @@ runs:
       if: ${{ inputs.setup-uv == 'true' && inputs.python-version == '' && steps.setup-uv-no-python-pin.outcome == 'failure' }}
       uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       with:
-        version: "0.12.5"
+        version: "0.12.6"
         enable-cache: ${{ inputs.enable-uv-cache }}
         cache-suffix: ${{ inputs.cache-key-suffix }}
         # See note above: keep the post cache-save step from failing a
