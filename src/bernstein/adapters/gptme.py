@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
+from bernstein.adapters.plugin_sdk import AdapterCapability, AdapterPluginInfo
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -97,6 +98,15 @@ class GptmeAdapter(CLIAdapter):
         )
 
         env = build_filtered_env(["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"])
+        # ``GPTME_MAX_TOKENS`` is gptme's per-process completion-length
+        # override. The value originates in ``mcp_config``, not the operator's
+        # shell, so it is set here after ``build_filtered_env`` rather than
+        # passed through ``extra_keys``: adding it there would let an ambient
+        # shell variable reach the agent, which is the opposite of what the
+        # environment filter is for.
+        max_tokens = (mcp_config or {}).get("max_tokens")
+        if max_tokens is not None:
+            env["GPTME_MAX_TOKENS"] = str(max_tokens)
         with log_path.open("w") as log_file:
             try:
                 proc = subprocess.Popen(
@@ -117,6 +127,24 @@ class GptmeAdapter(CLIAdapter):
         if timeout_seconds > 0:
             result.timeout_timer = self._start_timeout_watchdog(proc.pid, timeout_seconds, session_id)
         return result
+
+    def plugin_info(self) -> AdapterPluginInfo:
+        """Declare the sampling surface GptmeAdapter genuinely wires.
+
+        gptme honours a completion-length limit per process via the
+        ``GPTME_MAX_TOKENS`` environment variable (see :meth:`spawn`), so
+        :func:`bernstein.adapters.plugin_sdk.ensure_sampling_params_supported`
+        admits a spawn carrying ``max_tokens``. No ``--temperature`` /
+        ``--top-p`` / ``--top-k`` flags are wired - upstream exposes none -
+        so only :attr:`AdapterCapability.SUPPORTS_MAX_TOKENS` is declared.
+        """
+        return AdapterPluginInfo(
+            name="gptme",
+            version="0.1.0",
+            author="bernstein",
+            description="gptme CLI adapter",
+            capabilities=(AdapterCapability.SUPPORTS_MAX_TOKENS,),
+        )
 
     def name(self) -> str:
         """Return the human-readable adapter name."""
