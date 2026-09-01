@@ -16,12 +16,6 @@ from typing import Any
 
 from bernstein.core.tasks.models import Task
 
-# Import Task only for type checking to avoid circular imports at runtime
-try:
-    from bernstein.core.tasks.models import Task as _Task
-except ImportError:
-    _Task = Task  # type: ignore[assignment, misc]
-
 
 @dataclass(frozen=True)
 class DecompositionProposal:

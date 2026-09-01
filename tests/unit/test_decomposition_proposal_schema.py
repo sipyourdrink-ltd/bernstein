@@ -207,7 +207,7 @@ class TestFromTask:
             max_retries=3,
             metadata={},  # No issue_number
         )
-        with pytest.raises(ValueError, match="issue_number"):
+        with pytest.raises(ValueError, match="Task metadata must contain 'issue_number' for decomposition proposals"):
             DecompositionProposal.from_task(task, "some evidence")
 
     def test_from_task_requires_repo(self) -> None:

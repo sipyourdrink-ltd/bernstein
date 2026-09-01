@@ -131,6 +131,54 @@ class TestDecompositionEmitter:
 
         assert emitter.check_exhaustion(task) is None
 
+    def test_emit_fires_at_threshold_with_more_than_two_tasks(self) -> None:
+        """Emission should fire when more than two terminal tasks exist."""
+        emitter = DecompositionEmitter(propose_count=2)
+
+        task1 = Task(
+            id="task-1",
+            title="Test task 1",
+            role="backend",
+            description="Test task 1 description",
+            status=TaskStatus.FAILED,
+            retry_count=3,
+            max_retries=3,
+            result_summary="test timeout",
+            terminal_reason="retry_exhausted",
+            metadata={"issue_number": 42, "repo": "owner/repo"},
+        )
+
+        task2 = Task(
+            id="task-2",
+            title="Test task 2",
+            role="backend",
+            description="Test task 2 description",
+            status=TaskStatus.FAILED,
+            retry_count=3,
+            max_retries=3,
+            result_summary="compilation error",
+            terminal_reason="retry_exhausted",
+            metadata={"issue_number": 42, "repo": "owner/repo"},
+        )
+
+        task3 = Task(
+            id="task-3",
+            title="Test task 3",
+            role="backend",
+            description="Test task 3 description",
+            status=TaskStatus.FAILED,
+            retry_count=3,
+            max_retries=3,
+            result_summary="lint error",
+            terminal_reason="retry_exhausted",
+            metadata={"issue_number": 42, "repo": "owner/repo"},
+        )
+
+        # All three tasks should trigger emission (any 2+ should fire)
+        assert emitter.check_exhaustion(task1) is None  # First task - below threshold
+        assert emitter.check_exhaustion(task2) is not None  # Second task - reaches threshold
+        assert emitter.check_exhaustion(task3) is not None  # Third task - also triggers
+
     def test_emit_proposal_posts_comment(self) -> None:
         """emit_proposal should call GitHub client._post_comment."""
         from unittest.mock import Mock

@@ -112,6 +112,11 @@ class DecompositionEmitter:
 
         evidence_digests = tuple(evidence_digests_set)
 
+        # Validate that evidence digests are well-formed SHA256 hashes.
+        for digest in evidence_digests:
+            if not (len(digest) == 64 and all(c in "0123456789abcdefABCDEF" for c in digest)):
+                return None  # Invalid digest format - fail closed.
+
         # Create the proposal with all attempts and evidence digests.
         proposal = DecompositionProposal(
             issue_number=issue_number,
