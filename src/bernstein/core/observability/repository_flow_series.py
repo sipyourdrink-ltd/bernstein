@@ -73,9 +73,7 @@ def serialize_sample(sample: RepositoryFlowSample) -> bytes:
         "churn_lines": sample.churn_lines,
         "open_issues": sample.open_issues,
     }
-    return json.dumps(
-        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
 def deserialize_sample(line: bytes) -> RepositoryFlowSample:
@@ -94,9 +92,7 @@ def deserialize_sample(line: bytes) -> RepositoryFlowSample:
     try:
         text = line.decode("utf-8").strip()
     except UnicodeDecodeError as e:
-        raise RepositoryFlowSeriesError(
-            f"Non-UTF-8 bytes: {e}"
-        ) from e
+        raise RepositoryFlowSeriesError(f"Non-UTF-8 bytes: {e}") from e
 
     if not text:
         raise RepositoryFlowSeriesError("Blank line")
@@ -104,14 +100,10 @@ def deserialize_sample(line: bytes) -> RepositoryFlowSample:
     try:
         obj = json.loads(text)
     except json.JSONDecodeError as e:
-        raise RepositoryFlowSeriesError(
-            f"Invalid JSON: {e}"
-        ) from e
+        raise RepositoryFlowSeriesError(f"Invalid JSON: {e}") from e
 
     if not isinstance(obj, dict):
-        raise RepositoryFlowSeriesError(
-            f"Expected JSON object, got {type(obj).__name__}"
-        )
+        raise RepositoryFlowSeriesError(f"Expected JSON object, got {type(obj).__name__}")
 
     try:
         return RepositoryFlowSample(
@@ -122,13 +114,9 @@ def deserialize_sample(line: bytes) -> RepositoryFlowSample:
             open_issues=obj["open_issues"],
         )
     except KeyError as e:
-        raise RepositoryFlowSeriesError(
-            f"Missing required field: {e}"
-        ) from e
+        raise RepositoryFlowSeriesError(f"Missing required field: {e}") from e
     except TypeError as e:
-        raise RepositoryFlowSeriesError(
-            f"Wrong type on field: {e}"
-        ) from e
+        raise RepositoryFlowSeriesError(f"Wrong type on field: {e}") from e
 
 
 def append_sample(path: Path, sample: RepositoryFlowSample) -> None:
@@ -172,8 +160,6 @@ def read_samples(path: Path) -> list[RepositoryFlowSample]:
             try:
                 sample = deserialize_sample(line)
             except RepositoryFlowSeriesError as e:
-                raise RepositoryFlowSeriesError(
-                    f"line {line_num}: {e}"
-                ) from e
+                raise RepositoryFlowSeriesError(f"line {line_num}: {e}") from e
             samples.append(sample)
     return samples
