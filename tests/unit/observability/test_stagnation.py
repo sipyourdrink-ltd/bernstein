@@ -137,3 +137,17 @@ def test_untouched_samples_are_preserved() -> None:
     finding = detect_stagnation(rows, window_s=25.0)
     assert finding is not None
     assert finding.evidence_rows == tuple(rows)
+
+
+def test_deterministic_same_series_twice_produces_equal_findings() -> None:
+    samples = [_sample(100.0), _sample(115.0), _sample(130.0)]
+    first = detect_stagnation(samples, window_s=30.0)
+    second = detect_stagnation(samples, window_s=30.0)
+    assert first is not None
+    assert second is not None
+    assert first == second
+
+
+def test_merge_flips_true_to_false_between_consecutive_samples() -> None:
+    samples = [_sample(100.0), _sample(110.0), _sample(120.0, mergeable=False)]
+    assert detect_stagnation(samples, window_s=30.0) is None
