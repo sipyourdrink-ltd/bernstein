@@ -84,9 +84,7 @@ def _discover_registered_names() -> list[str]:
       Covered by ``test_adapter_muse.py``, which exercises spawn with the
       vendor model plus every refusal path.
     """
-    return sorted(
-        n for n in _ADAPTERS if n not in {"mock", "generic", "iac", "clm", "q_dev", "python_runtime", "muse"}
-    )
+    return sorted(n for n in _ADAPTERS if n not in {"mock", "generic", "iac", "clm", "q_dev", "python_runtime", "muse"})
 
 
 #: Adapters whose ``prompt`` argument is a structured descriptor rather than
