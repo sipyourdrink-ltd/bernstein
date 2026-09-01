@@ -32,6 +32,16 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from bernstein.core.protocols.mcp_catalog import MCPServerCapabilities, ServerCapabilitiesStore
+    from bernstein.core.protocols.payments.x402 import X402SettlementCoordinator
+    from bernstein.core.replay.journal import EventJournal
+    from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.core.security.toolcall_interlock import ToolCallAttestationInterlock
+    from bernstein.core.wal import WALEntry, WALWriter
+
 from bernstein.core.orchestration.worker_loop_detector import WorkerLoopDetector
 from bernstein.core.persistence.action_cache import open_cache
 from bernstein.core.protocols.mcp.stateless_core import (
@@ -39,20 +49,10 @@ from bernstein.core.protocols.mcp.stateless_core import (
     anchor_stateless_call,
     request_span_id,
 )
-from bernstein.core.protocols.mcp_catalog import ServerCapabilitiesStore
 from bernstein.core.security.audit_chain import record_mcp_capability_drift
 from bernstein.core.security.claude_tool_result_injection import ToolResultInjector
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from bernstein.core.protocols.payments.x402 import X402SettlementCoordinator
-    from bernstein.core.replay.journal import EventJournal
-    from bernstein.core.security.audit_chain import AuditChainStore
-    from bernstein.core.security.toolcall_interlock import ToolCallAttestationInterlock
-    from bernstein.core.wal import WALEntry, WALWriter
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +225,7 @@ class MCPGateway:
     def _process_capability_drift(
         self,
         tool_names: tuple[str, ...],
-        old_caps: Optional["MCPServerCapabilities"],
+        old_caps: MCPServerCapabilities | None,
     ) -> None:
         """Process capability drift for given tool names.
 
@@ -238,12 +238,15 @@ class MCPGateway:
         prior = self._capabilities_store.get_capabilities(self._server_name)
         if prior is not None and prior.capability_digest == digest:
             return
+        # Get run_id from the wal_writer for the audit chain event
+        run_id = self._wal_writer._run_id
         self._capabilities_store.set_capabilities(
             self._server_name, frozenset(tool_names), digest
         )
         try:
             record_mcp_capability_drift(
                 chain=self._audit_chain,
+                run_id=run_id,
                 server_name=self._server_name,
                 current_tools=tool_names,
                 previous_tools=tuple(sorted(prior.tool_names)) if prior is not None else None,
@@ -265,7 +268,7 @@ class MCPGateway:
         if self._capabilities_store is None or self._audit_chain is None:
             return
         try:
-            response = await self._send_request(
+            response, _ = await self._send_request(
                 {"jsonrpc": "2.0", "method": "tools/list", "id": 0},
                 0,
             )
