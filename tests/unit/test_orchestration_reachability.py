@@ -57,7 +57,6 @@ KNOWN_UNREACHABLE: frozenset[str] = frozenset(
         # `cli/commands/pipeline_cmd.py`, so the guard rejected them as stale
         # exemptions. `stage_attempt_for` still has no caller and stays.
         "tracker_pipeline.py:stage_attempt_for",
-        "worker.py:check_token_escalation",
         "worker.py:register_permission_hook",
     }
 )

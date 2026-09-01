@@ -294,9 +294,6 @@ def select_round_robin_agent(
     return selected
 
 
-# Global escalation tracker
-
-
 # ---------------------------------------------------------------------------
 # Per-model cache read/write pricing tiers (T569)
 # ---------------------------------------------------------------------------
