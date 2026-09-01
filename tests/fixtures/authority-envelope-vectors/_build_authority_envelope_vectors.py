@@ -69,9 +69,7 @@ def _jwk(private_key: Ed25519PrivateKey) -> dict[str, str]:
     """RFC 8037 OKP JWK for the public half of *private_key*."""
     from cryptography.hazmat.primitives import serialization
 
-    raw = private_key.public_key().public_bytes(
-        serialization.Encoding.Raw, serialization.PublicFormat.Raw
-    )
+    raw = private_key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
     return {"kty": "OKP", "crv": "Ed25519", "x": _b64url(raw)}
 
 
@@ -156,9 +154,7 @@ def build_envelope() -> dict[str, Any]:
         "id": REVIEWER,
         "key_id": "principal-reviewer-7",
         "key": principal_jwk,
-        "id_binding": _sha256_jcs(
-            {"v": SCHEMA_VERSION, "id": REVIEWER, "key": principal_jwk}
-        ),
+        "id_binding": _sha256_jcs({"v": SCHEMA_VERSION, "id": REVIEWER, "key": principal_jwk}),
     }
 
     root = _grant(
@@ -242,8 +238,7 @@ def build_envelope() -> dict[str, Any]:
         "coverage": coverage,
     }
     body["section_digests"] = {
-        name: _sha256_jcs(body[name])
-        for name in ("principal", "grants", "decisions", "evidence", "coverage")
+        name: _sha256_jcs(body[name]) for name in ("principal", "grants", "decisions", "evidence", "coverage")
     }
 
     kid = "authority-envelope-vector-key"

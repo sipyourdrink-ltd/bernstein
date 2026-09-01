@@ -58,12 +58,15 @@ sys.meta_path.insert(0, _BernsteinBlocker())
 '''
 
 # Runs the verifier's ``__main__`` under that blocker.
-_ISOLATED_RUNNER = _BLOCKER_PRELUDE + """
+_ISOLATED_RUNNER = (
+    _BLOCKER_PRELUDE
+    + """
 import runpy
 
 sys.argv = ["bernstein-verify-envelope", *sys.argv[1:]]
 runpy.run_module("bernstein_verify_envelope", run_name="__main__")
 """
+)
 
 
 @pytest.fixture(scope="module")
@@ -157,9 +160,7 @@ def test_verifier_package_imports_neither_bernstein_nor_the_network() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_one_byte_mutation_in_decisions_names_the_decisions_section(
-    isolated_runner: Path, tmp_path: Path
-) -> None:
+def test_one_byte_mutation_in_decisions_names_the_decisions_section(isolated_runner: Path, tmp_path: Path) -> None:
     """Flipping one character of a decision verdict is reported against ``decisions``."""
     path = _mutate(
         tmp_path,
@@ -173,9 +174,7 @@ def test_one_byte_mutation_in_decisions_names_the_decisions_section(
     assert "[FAIL] signature" in proc.stdout
 
 
-def test_one_byte_mutation_in_grants_names_the_grants_section(
-    isolated_runner: Path, tmp_path: Path
-) -> None:
+def test_one_byte_mutation_in_grants_names_the_grants_section(isolated_runner: Path, tmp_path: Path) -> None:
     """The section named is the one that changed, not a hard-coded first section."""
     path = _mutate(
         tmp_path,
@@ -200,9 +199,7 @@ def test_committed_tampered_vector_is_rejected(isolated_runner: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_envelope_without_a_coverage_section_is_refused(
-    isolated_runner: Path, tmp_path: Path
-) -> None:
+def test_envelope_without_a_coverage_section_is_refused(isolated_runner: Path, tmp_path: Path) -> None:
     """Silence about scope is refused outright, not treated as full coverage."""
     path = _mutate(tmp_path, lambda doc: doc.pop("coverage"), "no-coverage.json")
     proc = _run_verifier(isolated_runner, path)
@@ -211,9 +208,7 @@ def test_envelope_without_a_coverage_section_is_refused(
     assert "missing" in proc.stdout
 
 
-def test_coverage_that_hides_an_uncovered_decision_is_refused(
-    isolated_runner: Path, tmp_path: Path
-) -> None:
+def test_coverage_that_hides_an_uncovered_decision_is_refused(isolated_runner: Path, tmp_path: Path) -> None:
     """A decision carrying no evidence must be named in ``coverage.uncovered``."""
 
     def _hide(doc: dict[str, Any]) -> None:
@@ -237,9 +232,7 @@ def test_coverage_names_the_gap_on_the_passing_vector(isolated_runner: Path) -> 
 # ---------------------------------------------------------------------------
 
 
-def test_grant_chain_that_widens_scope_is_rejected(
-    isolated_runner: Path, tmp_path: Path
-) -> None:
+def test_grant_chain_that_widens_scope_is_rejected(isolated_runner: Path, tmp_path: Path) -> None:
     """A child grant may only narrow its parent's scope."""
 
     def _widen(doc: dict[str, Any]) -> None:
@@ -253,9 +246,7 @@ def test_grant_chain_that_widens_scope_is_rejected(
     assert "repo.admin" in proc.stdout
 
 
-def test_allow_verdict_outside_the_referenced_grant_scope_is_rejected(
-    isolated_runner: Path, tmp_path: Path
-) -> None:
+def test_allow_verdict_outside_the_referenced_grant_scope_is_rejected(isolated_runner: Path, tmp_path: Path) -> None:
     """An ``allow`` must follow from the grant it names, not merely be signed."""
 
     def _overreach(doc: dict[str, Any]) -> None:
@@ -265,11 +256,11 @@ def test_allow_verdict_outside_the_referenced_grant_scope_is_rejected(
     proc = _run_verifier(isolated_runner, path)
     assert proc.returncode == 1
     assert "[FAIL] decisions" in proc.stdout
+    assert "outside the scope" in proc.stdout
+    assert "repo.delete" in proc.stdout
 
 
-def test_decision_inputs_hash_is_recomputed_not_trusted(
-    isolated_runner: Path, tmp_path: Path
-) -> None:
+def test_decision_inputs_hash_is_recomputed_not_trusted(isolated_runner: Path, tmp_path: Path) -> None:
     """Editing a decision's recorded inputs breaks its recomputed input hash."""
 
     def _edit_inputs(doc: dict[str, Any]) -> None:
@@ -282,9 +273,7 @@ def test_decision_inputs_hash_is_recomputed_not_trusted(
     assert "inputs_hash" in proc.stdout
 
 
-def test_decision_taken_after_its_grant_expired_is_rejected(
-    isolated_runner: Path, tmp_path: Path
-) -> None:
+def test_decision_taken_after_its_grant_expired_is_rejected(isolated_runner: Path, tmp_path: Path) -> None:
     """Every decision must fall inside the validity window of the grant it cites."""
 
     def _late(doc: dict[str, Any]) -> None:
@@ -296,9 +285,7 @@ def test_decision_taken_after_its_grant_expired_is_rejected(
     assert "[FAIL] decisions" in proc.stdout
 
 
-def test_evidence_referencing_an_unknown_decision_is_rejected(
-    isolated_runner: Path, tmp_path: Path
-) -> None:
+def test_evidence_referencing_an_unknown_decision_is_rejected(isolated_runner: Path, tmp_path: Path) -> None:
     """Evidence must attach to a decision the envelope actually carries."""
 
     def _dangle(doc: dict[str, Any]) -> None:
@@ -310,9 +297,7 @@ def test_evidence_referencing_an_unknown_decision_is_rejected(
     assert "[FAIL] evidence" in proc.stdout
 
 
-def test_principal_id_rebound_to_another_key_is_rejected(
-    isolated_runner: Path, tmp_path: Path
-) -> None:
+def test_principal_id_rebound_to_another_key_is_rejected(isolated_runner: Path, tmp_path: Path) -> None:
     """The principal's identifier is bound to its key material by a recomputed hash."""
 
     def _swap_key(doc: dict[str, Any]) -> None:
