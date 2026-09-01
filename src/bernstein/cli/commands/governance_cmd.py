@@ -197,7 +197,7 @@ def govern_inventory_cmd(
 
     Exit codes: 0 = success, 1 = error.
     """
-    from bernstein.core.governance.inventory import SurfaceInventory, discover_surfaces
+    from bernstein.core.governance.inventory import discover_surfaces
 
     root = Path(workspace).resolve()
 
@@ -244,3 +244,38 @@ def govern_inventory_cmd(
         console.print(f"  [cyan]{kind}[/cyan] ({len(surfaces)})")
         for s in surfaces:
             console.print(f"    {s.identifier}")
+
+
+@govern_group.command("validate")
+@click.argument("playbook_file", type=click.Path(exists=True, dir_okay=False))
+def govern_validate_cmd(playbook_file: str) -> None:
+    """Validate a governance playbook YAML file.
+
+    Checks playbook structure, referential integrity (surface_refs and
+    ceiling_refs resolve), and absence of duplicate ids.
+
+    Exit codes: 0 = valid, 1 = validation failed.
+
+    \\b
+    Example:
+      bernstein govern validate playbook.yaml
+    """
+    from bernstein.core.governance.playbook import (
+        PlaybookSchema,
+        PlaybookValidationError,
+        load_playbook,
+    )
+
+    path = Path(playbook_file).resolve()
+
+    try:
+        playbook = load_playbook(path)
+        schema = PlaybookSchema()
+        schema.validate(playbook)
+    except PlaybookValidationError as exc:
+        console.print(f"[red]VALIDATION FAILED[/red] -- {path}")
+        console.print_json(data=exc.to_json())
+        sys.exit(1)
+
+    console.print(f"[green]OK[/green] -- {path} is a valid governance playbook")
+    sys.exit(0)
