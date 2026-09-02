@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<!-- Nmap 7.991 scan initiated Tue Sep  1 12:28:35 2026 as: nmap -sT -sV -Pn -&#45;no-stylesheet -p 8765 -oX /tmp/bernstein-nmap-a.xml 127.0.0.1 -->
+<nmaprun scanner="nmap" args="nmap -sT -sV -Pn -&#45;no-stylesheet -p 8765 -oX /tmp/bernstein-nmap-a.xml 127.0.0.1" start="1788290915" startstr="Tue Sep  1 12:28:35 2026" version="7.991" xmloutputversion="1.05">
+<scaninfo type="connect" protocol="tcp" numservices="1" services="8765"/>
+<verbose level="0"/>
+<debugging level="0"/>
+<host starttime="1788290915" endtime="1788290921"><status state="up" reason="user-set" reason_ttl="0"/>
+<address addr="127.0.0.1" addrtype="ipv4"/>
+<hostnames>
+<hostname name="localhost" type="PTR"/>
+</hostnames>
+<ports><port protocol="tcp" portid="8765"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="http" product="SimpleHTTPServer" version="0.6" extrainfo="Python 3.9.6" method="probed" conf="10"><cpe>cpe:/a:python:simplehttpserver:0.6</cpe></service></port>
+</ports>
+<times srtt="96" rttvar="5000" to="100000"/>
+</host>
+<runstats><finished time="1788290921" timestr="Tue Sep  1 12:28:41 2026" summary="Nmap done at Tue Sep  1 12:28:41 2026; 1 IP address (1 host up) scanned in 6.36 seconds" elapsed="6.36" exit="success"/><hosts up="1" down="0" total="1"/>
+</runstats>
+</nmaprun>

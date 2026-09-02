@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any, cast
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from bernstein.core.security.audit_chain import AuditChainStore
 from bernstein.core.security.tenanting import DEFAULT_TENANT_ID, normalize_tenant_id
 
 if TYPE_CHECKING:
@@ -229,8 +230,12 @@ class AuthSession:
     created_at: float = field(default_factory=time.time)
     expires_at: float = 0.0  # Unix timestamp
     revoked: bool = False
+    revoked_at: float = 0.0  # Unix timestamp when revocation was issued
+    revocation_chain_position: str = ""  # chain position of the revocation event
+    revocation_acknowledgements: dict[str, float] = field(default_factory=dict)
     ip_address: str = ""
     user_agent: str = ""
+    _staleness_window_s: float = 300.0  # 5 minutes bounded staleness
 
     @property
     def is_expired(self) -> bool:
@@ -238,7 +243,36 @@ class AuthSession:
 
     @property
     def is_valid(self) -> bool:
-        return not self.revoked and not self.is_expired
+        """Check if this session is valid (not revoked, not expired).
+
+        A session is considered invalid if it's revoked past the staleness window.
+        This implements fail-closed semantics - past the staleness window, the
+        session is treated as if it was never valid.
+        """
+        return not self.revoked and not self.is_expired and not self.is_revoked_past_staleness()
+
+    def is_revoked_past_staleness(self, staleness_window_s: float | None = None) -> bool:
+        """Check if the revocation is past the staleness window.
+
+        Past the staleness window, an enforcement point that has not
+        re-read the revocation list must fail closed.
+        """
+        if not self.revoked:
+            return False
+        if not self.revoked_at:
+            return False
+        window = staleness_window_s if staleness_window_s is not None else self._staleness_window_s
+        return (time.time() - self.revoked_at) > window
+
+    def acknowledge_revocation(self, chain_position: str) -> None:
+        """Record that this enforcement point has acknowledged a revocation at a given chain position."""
+        self.revocation_acknowledgements[chain_position] = time.time()
+
+    def max_acknowledgement_lag(self) -> float | None:
+        """Return the maximum observed acknowledgement lag in seconds, or None if no acknowledgements."""
+        if not self.revocation_acknowledgements:
+            return None
+        return max(time.time() - ts for ts in self.revocation_acknowledgements.values())
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -247,6 +281,9 @@ class AuthSession:
             "created_at": self.created_at,
             "expires_at": self.expires_at,
             "revoked": self.revoked,
+            "revoked_at": self.revoked_at,
+            "revocation_chain_position": self.revocation_chain_position,
+            "revocation_acknowledgements": self.revocation_acknowledgements,
             "ip_address": self.ip_address,
             "user_agent": self.user_agent,
         }
@@ -259,6 +296,9 @@ class AuthSession:
             created_at=float(d.get("created_at", 0)),
             expires_at=float(d.get("expires_at", 0)),
             revoked=bool(d.get("revoked", False)),
+            revoked_at=float(d.get("revoked_at", 0)),
+            revocation_chain_position=str(d.get("revocation_chain_position", "")),
+            revocation_acknowledgements={str(k): float(v) for k, v in d.get("revocation_acknowledgements", {}).items()},
             ip_address=str(d.get("ip_address", "")),
             user_agent=str(d.get("user_agent", "")),
         )
@@ -597,6 +637,7 @@ class AuthStore:
         self._users_dir = self._base / "users"
         self._sessions_dir = self._base / "sessions"
         self._devices_dir = self._base / "devices"
+        self._audit_chain = AuditChainStore(sdd_dir / "audit")
         self._ensure_dirs()
 
     def _ensure_dirs(self) -> None:
@@ -668,6 +709,19 @@ class AuthStore:
         if session is None:
             return False
         session.revoked = True
+        session.revoked_at = time.time()
+        try:
+            from bernstein.core.security.audit_chain import record_identity_revoked
+
+            record = record_identity_revoked(
+                chain=self._audit_chain,
+                session_id=session.id,
+                user_id=session.user_id,
+                revoked_at=session.revoked_at,
+            )
+            session.revocation_chain_position = record.details.get("prev_chain_digest", "")
+        except Exception:
+            logger.warning("Could not record revocation chain event for session %s", session_id)
         self.save_session(session)
         return True
 
@@ -678,7 +732,20 @@ class AuthStore:
                 data = json.loads(path.read_text())
                 if data.get("user_id") == user_id and not data.get("revoked", False):
                     data["revoked"] = True
-                    path.write_text(json.dumps(data, indent=2))
+                    data["revoked_at"] = time.time()
+                    try:
+                        from bernstein.core.security.audit_chain import record_identity_revoked
+
+                        record = record_identity_revoked(
+                            chain=self._audit_chain,
+                            session_id=data["id"],
+                            user_id=user_id,
+                            revoked_at=data["revoked_at"],
+                        )
+                        data["revocation_chain_position"] = record.details.get("prev_chain_digest", "")
+                    except Exception:
+                        logger.warning("Could not record revocation chain event for session %s", data.get("id"))
+                    self.save_session(AuthSession.from_dict(data))
                     count += 1
             except (json.JSONDecodeError, KeyError):
                 continue

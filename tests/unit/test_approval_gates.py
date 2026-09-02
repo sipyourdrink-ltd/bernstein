@@ -208,16 +208,20 @@ class TestApprovalGateReviewFilePoll:
         decision = _default_poll_decision("T-rejpoll", approvals_dir, poll_interval_s=0.01, max_wait_s=1.0)
         assert decision == "rejected"
 
-    def test_default_poller_returns_approved_on_timeout(self, tmp_path: Path) -> None:
-        """When no decision file appears, defaults to approved (non-blocking)."""
+    def test_default_poller_reports_timed_out_on_expiry(self, tmp_path: Path) -> None:
+        """When no decision file appears, the poller reports the expiry as such.
+
+        It never returns "approved" for a review nobody performed; the caller
+        decides what an expiry means (fail closed by default).
+        """
         from bernstein.core.approval import _default_poll_decision
 
         approvals_dir = tmp_path / ".sdd" / "runtime" / "approvals"
         approvals_dir.mkdir(parents=True)
 
-        # No file written - should time out and default to approved
+        # No file written - should time out and report "timed_out"
         decision = _default_poll_decision("T-timeout", approvals_dir, poll_interval_s=0.01, max_wait_s=0.05)
-        assert decision == "approved"
+        assert decision == "timed_out"
 
 
 # ---------------------------------------------------------------------------
@@ -364,6 +368,18 @@ class TestApprovalResult:
         assert r.approved is True
         assert r.rejected is False
         assert r.pr_url == ""
+        assert r.resolution == "decided"
+
+    def test_timed_out_resolution_is_distinct_from_a_decision(self) -> None:
+        from bernstein.core.approval import ApprovalResult
+
+        decided = ApprovalResult(approved=False, rejected=True)
+        expired = ApprovalResult(approved=False, rejected=True, resolution="timed_out")
+
+        # approved/rejected look identical; resolution is what tells them apart.
+        assert (decided.approved, decided.rejected) == (expired.approved, expired.rejected)
+        assert decided.resolution == "decided"
+        assert expired.resolution == "timed_out"
 
     def test_rejected_result(self) -> None:
         from bernstein.core.approval import ApprovalResult

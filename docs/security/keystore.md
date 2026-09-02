@@ -170,7 +170,7 @@ Source: the public surface `load_or_generate`, `rotate`,
 | Refusal to load with `PermissionError` | `chmod 600 .bernstein/keys/agent-card.ed25519` and restart. |
 
 The keystore is intentionally minimal. KMS / HSM signing lives in
-`src/bernstein/core/security/lineage_kms.py` for the lineage surface;
+`src/bernstein/core/security/key_custody.py`;
 the agent-card path stays plaintext-on-disk on purpose so a deployment
 without a KMS still gets a signed card.
 

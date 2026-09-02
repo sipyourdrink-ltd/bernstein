@@ -370,6 +370,8 @@ def _entry_from_dict(payload: dict[str, object]) -> LineageEntry:
         trust_class=(None if payload.get("trust_class") is None else str(payload["trust_class"])),
         # Additive (issue #1797), same absent -> None round-trip rule.
         attachment_digests=_optional_str_list(payload.get("attachment_digests")),
+        # Additive (issue #5042), same absent -> None round-trip rule.
+        sensitivity=(None if payload.get("sensitivity") is None else str(payload["sensitivity"])),
     )
 
 

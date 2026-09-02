@@ -605,6 +605,66 @@ def _walk_chain(
     verifier.verify(signing_cert, intermediates)
 
 
+@dataclass(frozen=True, slots=True)
+class RFC3161Imprint:
+    """What a token *claims*, recovered without any trust decision.
+
+    Parsing is not verifying: this says which digest the token covers and
+    when the TSA says it did so, but nothing about who signed it. Callers
+    that need an identity must still run :func:`verify_rfc3161_token` with
+    operator-supplied trust anchors. The split exists because binding a
+    token to the bytes it covers is useful on its own - an offline install
+    with no trust bundle can still refuse a token issued over something
+    else.
+
+    Attributes:
+        hash_algorithm: ``sha256`` / ``sha384`` / ``sha512``.
+        hashed_message: Raw ``messageImprint.hashedMessage`` bytes.
+        gen_time: ``TSTInfo.genTime``, or ``None`` when absent.
+    """
+
+    hash_algorithm: str
+    hashed_message: bytes
+    gen_time: datetime | None
+
+
+def read_token_imprint(token_bytes: bytes) -> RFC3161Imprint:
+    """Return the messageImprint and genTime *token_bytes* carries.
+
+    Args:
+        token_bytes: A bare ``TimeStampToken`` or a full ``TimeStampResp``.
+
+    Returns:
+        The parsed :class:`RFC3161Imprint`.
+
+    Raises:
+        ValueError: When the token does not parse, the messageImprint is
+            malformed, or its hash algorithm is not one we accept as
+            strong enough to anchor an audit history.
+    """
+    _signed_data, tst_info, _certs, _signer_info = _parse_token(token_bytes)
+    try:
+        imprint = tst_info["message_imprint"]
+        hash_oid = imprint["hash_algorithm"]["algorithm"].dotted
+        hashed_message = bytes(imprint["hashed_message"].native)
+    except (KeyError, AttributeError, ValueError, TypeError) as exc:
+        raise ValueError(f"messageImprint: {exc}") from exc
+    hash_name = str(_HASH_OID_TO_NAME.get(hash_oid, hash_oid))
+    if hash_oid not in _ACCEPTED_HASH_OIDS:
+        raise ValueError(
+            f"messageImprint uses unsupported or weak hash algorithm: {hash_name}",
+        )
+    try:
+        gen_time = cast("datetime | None", tst_info["gen_time"].native)
+    except (KeyError, AttributeError):
+        gen_time = None
+    return RFC3161Imprint(
+        hash_algorithm=hash_name,
+        hashed_message=hashed_message,
+        gen_time=gen_time,
+    )
+
+
 def hash_payload_for_tsa(payload: bytes, *, algorithm: str = "sha256") -> bytes:
     """Hash *payload* with the requested algorithm for messageImprint compare.
 
@@ -630,8 +690,10 @@ def hash_payload_for_tsa(payload: bytes, *, algorithm: str = "sha256") -> bytes:
 
 
 __all__ = [
+    "RFC3161Imprint",
     "RFC3161Verification",
     "hash_payload_for_tsa",
     "load_trusted_tsa_certs",
+    "read_token_imprint",
     "verify_rfc3161_token",
 ]

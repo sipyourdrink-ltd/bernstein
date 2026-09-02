@@ -96,6 +96,43 @@ bernstein context verify --run-id <run_id>
 If the current context policy differs from what was used during the run, the
 verify command reports the diverging fields.
 
+## Declared context manifest
+
+`bernstein context manifest <task-id>` derives the **context manifest** for a
+task: the ordered set of files the task declares as its own (`owned_files`),
+each content-addressed by the SHA-256 of its bytes.
+
+```bash
+# Human-readable listing
+bernstein context manifest <task_id>
+
+# Machine-readable, for diffing two runs
+bernstein context manifest <task_id> --json
+```
+
+The manifest digest is a function of the declared path set and the bytes behind
+it, not of the order the tree was walked in or of how a path was spelled:
+`./src/a.py` and `src/a.py` are one entry, and deriving twice over an unchanged
+tree yields the same digest.
+
+A declared path the deriver cannot resolve to bytes is **not** dropped. It keeps
+its position in the list and records `unmanifested` with a reason code, so
+absence is explicit:
+
+| Reason | Meaning |
+|--------|---------|
+| `missing` | The path names nothing on disk. |
+| `not_a_file` | The path resolves to a directory or another non-regular file. |
+| `unreadable` | The file exists but its bytes could not be read. |
+| `outside_root` | The path resolves outside the repository root; its bytes are never read. |
+| `invalid_path` | The path is not a usable repository-relative path (empty, a NUL byte, the root itself, or too long). |
+
+Exit codes: `0` = derived, `1` = no such task. Unmanifested entries are
+reported, not treated as a failure.
+
+The digest is not yet anchored in the run record or on the run receipt, so this
+command reads the working tree rather than the chain.
+
 ## Related topics
 
 - [Context receipt schema](../reference/context-receipt.md) — The exact structure

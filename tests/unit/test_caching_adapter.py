@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from bernstein.core.models import ModelConfig
+from bernstein.core.platform_compat import ProcessReapReceipt
 from bernstein.core.semantic_cache import ResponseCacheManager
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
@@ -167,14 +168,38 @@ def test_unverified_cache_entry_is_ignored(adapter: CachingAdapter, mock_inner: 
     assert mock_inner.spawn.call_count == 1
 
 
-def test_kill_delegates_to_inner_unless_pid_0(adapter: CachingAdapter, mock_inner: MagicMock) -> None:
-    """Verify kill delegation logic."""
-    adapter.kill(1234)
-    mock_inner.kill.assert_called_with(1234)
+def test_kill_delegates_receipt_for_real_pid(adapter: CachingAdapter, mock_inner: MagicMock) -> None:
+    """Real processes retain the wrapped adapter's reap receipt."""
+    expected = ProcessReapReceipt(
+        pgid=1234,
+        os_name="linux",
+        method="posix_process_group",
+        delivered=True,
+        escalated=False,
+        grace_seconds=3.0,
+        confirmed_dead=True,
+    )
+    mock_inner.kill.return_value = expected
+    base_typed: CLIAdapter = adapter
 
-    mock_inner.kill.reset_mock()
-    adapter.kill(0)
-    assert mock_inner.kill.call_count == 0
+    receipt = base_typed.kill(1234)
+
+    assert receipt is expected
+    assert receipt.pgid == 1234
+    mock_inner.kill.assert_called_once_with(1234)
+
+
+def test_kill_returns_noop_receipt_for_cached_pid(adapter: CachingAdapter, mock_inner: MagicMock) -> None:
+    """A virtual cache-hit PID records the skipped reap without signalling the inner adapter."""
+    base_typed: CLIAdapter = adapter
+
+    receipt = base_typed.kill(0)
+
+    assert receipt.pgid == 0
+    assert receipt.delivered is False
+    assert receipt.escalated is False
+    assert receipt.confirmed_dead is False
+    mock_inner.kill.assert_not_called()
 
 
 def test_is_alive_always_false_for_pid_0(adapter: CachingAdapter, mock_inner: MagicMock) -> None:
