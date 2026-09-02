@@ -16,6 +16,9 @@ receipt bundle that a maintainer can verify offline.
   boundary derived from the manifest and the donor's limits.
 - [Volunteer donor budgets](reference/volunteer-budget.md) — persistent task,
   wall-clock, token, size, and local-model limits.
+- [Volunteer protocol documents](protocol.md) — the five signed, transport-neutral
+  documents (project card, worker card, claim, submission, verification
+  verdict) that carry the cycle across GitHub and a self-hosted hub alike.
 
 ## For donors
 
