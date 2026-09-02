@@ -9,8 +9,14 @@ from typing import Any
 from bernstein.core.govern.findings import Finding, FindingsDocument
 from bernstein.core.govern.inventory_models import Inventory, Surface
 from bernstein.core.govern.plan_models import GovernPlan, PlanEntry, PlanEntryKind
-from bernstein.core.govern.playbook_models import Playbook, PlaybookClause
+from bernstein.core.govern.playbook_models import Playbook, PlaybookClause, RemediationAction
 from bernstein.core.govern.proposal import DraftProposal, ProposalStatus
+from bernstein.core.govern.remediation import (
+    RemediationProposal,
+    RemediationStep,
+    UnremediatedFinding,
+    collect_remediation,
+)
 
 
 def compute_plan(
@@ -196,6 +202,11 @@ __all__ = [
     "Playbook",
     "PlaybookClause",
     "ProposalStatus",
+    "RemediationAction",
+    "RemediationProposal",
+    "RemediationStep",
     "Surface",
+    "UnremediatedFinding",
+    "collect_remediation",
     "compute_plan",
 ]
