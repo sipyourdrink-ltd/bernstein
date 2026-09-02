@@ -1904,7 +1904,39 @@ class AgentSpawner:
             self._identity_store_instance = AgentIdentityStore(auth_dir)
         return self._identity_store_instance
 
-    def _issue_agent_token(self, session_id: str, role: str, task_ids: list[str]) -> Path:
+    def _audit_spawn_refused_unreceipted(self, session_id: str, issuer: str, reason: str) -> None:
+        """Record that a spawn was refused because its delegation was unreceipted.
+
+        Best-effort by design: the refusal itself is already carried by the
+        exception that is about to propagate, so a failure to write the audit row
+        must not mask it or replace it with a second, less informative error.
+        """
+        try:
+            from bernstein.core.security.audit_chain import EVENT_SPAWN_REFUSED_UNRECEIPTED, AuditChainStore
+            from bernstein.core.security.sanitize import sanitize_log
+
+            AuditChainStore(self._workdir / ".sdd" / "audit").log(
+                event_type=EVENT_SPAWN_REFUSED_UNRECEIPTED,
+                actor="spawner",
+                resource_type="agent_session",
+                resource_id=session_id,
+                details={
+                    "run_id": getattr(self, "_run_id", ""),
+                    "issuer": issuer,
+                    "reason": sanitize_log(reason),
+                },
+            )
+        except Exception as exc:  # intentional-broad-except: audit mirroring must never mask the refusal
+            logger.warning("Spawn-refusal audit row not written for %s: %s", session_id, type(exc).__name__)
+
+    def _issue_agent_token(
+        self,
+        session_id: str,
+        role: str,
+        task_ids: list[str],
+        *,
+        parent_identity_id: str | None = None,
+    ) -> Path:
         """Issue a short-lived task-scoped JWT and write it to a 0600 token file.
 
         The token file path is recorded in ``_agent_token_files`` for cleanup
@@ -1923,17 +1955,27 @@ class AgentSpawner:
             session_id: The agent session ID (used as identity ID).
             role: The agent's role.
             task_ids: Task IDs the agent is authorised to act on.
+            parent_identity_id: The delegating identity: the spawning agent's
+                identity for a nested spawn, otherwise the run root.  Minting
+                with it records one delegation hop (#5047); ``None`` records
+                none, which is the pre-#5047 behaviour.
 
         Returns:
             Absolute path to the written token file.
+
+        Raises:
+            DelegationWriteError: the delegation hop could not be recorded.
+                Deliberately not caught here: the caller fails the spawn closed
+                on this type alone.
         """
         import os
 
         _, raw_token = self._identity_store.create_identity(
             session_id,
             role,
+            parent_identity_id=parent_identity_id,
             task_ids=task_ids,
-            metadata={"source": "spawner"},
+            metadata={"source": "spawner", "run_id": getattr(self, "_run_id", "")},
         )
 
         # ``resolve(strict=False)`` returns an absolute path even when the
@@ -2153,6 +2195,18 @@ class AgentSpawner:
         rows by run, so without this the rows have no spine to join.
         """
         self._run_id = run_id
+
+    def set_run_root_identity_id(self, identity_id: str) -> None:
+        """Wire in the run-root identity every top-level agent is minted under.
+
+        The orchestrator mints one parentless identity per run and passes its id
+        here (#5047).  It becomes the issuer of each top-level agent's delegation
+        hop, which is what makes the first hop gradable: without it a top-level
+        agent has no parent, no hop is recorded, and a single-level run verifies
+        as "no receipts".  Empty when the run minted no root, in which case the
+        pre-#5047 behaviour stands and nothing is recorded.
+        """
+        self._run_root_identity_id = identity_id
 
     def _merge_and_cleanup_worktree(
         self,
@@ -4711,11 +4765,32 @@ class AgentSpawner:
         # Zero-trust: issue a short-lived, task-scoped JWT for this agent.
         # The token is written to a 0600 file and its path is injected into
         # the prompt so the agent can include it in task server requests.
-        # We wrap in try/except so auth failures never block spawning.
+        # Auth failures still never block spawning -- with ONE exception, below.
+        #
+        # The delegating identity is the spawning agent's for a nested spawn and
+        # the run root otherwise; minting under it records the delegation hop
+        # (#5047). Empty means no root was minted, and nothing is recorded.
+        from bernstein.core.identity.agent_jwt import DelegationWriteError
+
+        _delegating_identity: str | None = session.parent_id or getattr(self, "_run_root_identity_id", "") or None
         try:
             task_ids_for_scope = [t.id for t in tasks]
-            _token_path = self._issue_agent_token(session_id, role, task_ids_for_scope)
+            _token_path = self._issue_agent_token(
+                session_id,
+                role,
+                task_ids_for_scope,
+                parent_identity_id=_delegating_identity,
+            )
             prompt = prompt + _render_auth_section(_token_path, self._workdir)
+        except DelegationWriteError as _deleg_exc:
+            # FAIL CLOSED, and only for this type. A delegation that cannot be
+            # receipted must not spawn: the chain would be short by exactly the
+            # hop a verifier needs, and a hop that was never written is
+            # indistinguishable from one that never happened. Every other
+            # identity failure keeps the log-and-continue behaviour above it.
+            self._audit_spawn_refused_unreceipted(session_id, _delegating_identity or "", str(_deleg_exc))
+            logger.error("Spawn refused for %s: delegation hop not recorded: %s", session_id, _deleg_exc)
+            raise
         except Exception as _token_exc:
             # Only the session_id and exception are logged.
             # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure

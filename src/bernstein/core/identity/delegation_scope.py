@@ -914,6 +914,7 @@ def grade_chain(
     scope_resolver: Callable[[str], DelegationScope | None] | None = None,
     genesis: str = "0" * 64,
     chain_ok: bool = True,
+    root_issuers: frozenset[str] = frozenset(),
 ) -> ChainVerdict:
     """Grade every hop pass / fail / unproven and compose one chain verdict.
 
@@ -954,6 +955,7 @@ def grade_chain(
             by_hmac,
             scope_resolver=scope_resolver,
             genesis=genesis,
+            root_issuers=root_issuers,
         )
         for index in range(len(receipts))
     )
@@ -972,6 +974,7 @@ def _grade_hop(
     *,
     scope_resolver: Callable[[str], DelegationScope | None] | None,
     genesis: str,
+    root_issuers: frozenset[str] = frozenset(),
 ) -> HopVerdict:
     """Grade one hop without consulting any other hop's verdict."""
     receipt = receipts[index]
@@ -994,8 +997,15 @@ def _grade_hop(
     # that claims otherwise mid-chain may be a second tree's root or may be
     # evading its ceiling, and the receipts cannot tell those apart, so it is
     # unproven.
-    is_root = resolved is None and index == 0
-    if resolved is None and index > 0:
+    # A declared root issuer is the one case where a hop may be a root without
+    # being first. The name comes from OUTSIDE the receipts -- the run manifest
+    # records which identity the run minted as its root (#5047) -- so a hop
+    # cannot promote itself by writing its own issuer field, which is exactly
+    # the evasion the positional rule exists to stop. Every run whose root is
+    # unknown keeps the positional rule unchanged.
+    declared_root = bool(root_issuers) and receipt.issuer in root_issuers
+    is_root = resolved is None and (index == 0 or declared_root)
+    if resolved is None and index > 0 and not declared_root:
         reasons.append(REASON_ROOT_CLAIMED_MID_CHAIN)
     parent_hop_index = None if parent is None else receipts[parent].hop_index
 

@@ -42,6 +42,19 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+class DelegationWriteError(RuntimeError):
+    """The delegation hop for a parented mint could not be recorded.
+
+    A distinct type so a caller can fail closed on an unreceipted delegation
+    while keeping its existing handling for every other identity failure.  The
+    spawner's identity-creation handler logs and continues for anything else,
+    which is deliberate (a token that cannot be issued must not stop a run), but
+    a delegation that is claimed as receipted must not proceed unrecorded: the
+    chain would silently lose exactly the hop a verifier needs.  The originating
+    error is always chained as ``__cause__``.
+    """
+
+
 class AgentIdentityStatus(StrEnum):
     """Lifecycle status of an agent identity."""
 
@@ -690,6 +703,86 @@ class AgentIdentityStore:
 
     # -- CRUD operations ----------------------------------------------------
 
+    def _record_mint_delegation(
+        self,
+        *,
+        child: AgentIdentity,
+        parent_identity_id: str,
+        run_id: str,
+    ) -> None:
+        """Record the one delegation hop that minting a scoped child credential is.
+
+        Issuer is the parent identity, subject is the child, and the scope on
+        the receipt is the child's ``task_ids`` and ``allowed_files``.  The
+        scope travels **on the receipt** so ``grade_chain`` can recompute
+        child-subset-of-parent from the chain alone, with no read back into
+        this store; a receipt that only named the parent would add nothing over
+        the ``parent_identity_id`` field already persisted beside it.
+
+        FAIL-CLOSED, and this method is the one place that decides it.  The
+        ledger write is caught only to be re-raised as
+        :class:`DelegationWriteError` with the original chained as ``__cause__``,
+        so it still propagates out of :meth:`create_identity` and no identity is
+        returned to the caller, while giving the spawner a type it can single
+        out from every other identity failure (#5047, maintainer decision).  A
+        delegation claimed as receipted must not proceed when the receipt
+        cannot be written, because the chain then silently shortens and a hop
+        that was never recorded is indistinguishable from one that never
+        happened - which is the exact confusion the removed-receipt check
+        exists to catch.  The reap receipt in ``spawner_core`` is best-effort
+        for the opposite reason (audit mirroring must never mask the kill
+        itself); the attachment attestation there aborts, and delegation is
+        that second kind.  To make this best-effort instead, wrap the single
+        call in :meth:`create_identity` in ``try/except`` - no other line
+        changes.
+
+        ``None`` is the widest value on every :class:`DelegationScope` axis,
+        and an empty ``task_ids`` / ``allowed_files`` list means "no
+        restriction" on this identity, so the two map onto each other: an empty
+        list becomes ``None`` rather than an empty frozenset, which would
+        otherwise record the narrowest possible grant for an unrestricted
+        agent and read as a widening at the next hop.
+
+        Args:
+            child: The freshly minted identity, already persisted.
+            parent_identity_id: The delegating identity.
+            run_id: Run the hop belongs to.
+        """
+        # Imported here, not at module scope: delegation -> delegation_scope ->
+        # security.capability_tokens -> this module is a cycle, and the same
+        # deferred-import shape is what ``delegation._audit_key`` and the
+        # secrets broker's grant-ledger calls already use.
+        from bernstein.core.identity.delegation import GENESIS_HMAC, record_delegation_hop, verify_run
+        from bernstein.core.identity.delegation_scope import DelegationScope
+
+        root = self._base_dir.parent / "audit"
+        # A tree, not a line: sibling mints share a parent, so the hop is
+        # anchored to the hop that minted the parent when there is one, and is
+        # a chain root otherwise.  Left to default, ``record_hop`` would chain
+        # each hop to its immediate predecessor and compare two siblings as
+        # parent and child, reporting a widening that never happened.
+        parent_ref = GENESIS_HMAC
+        for receipt in verify_run(run_id, root=root).receipts:
+            if receipt.subject == parent_identity_id and receipt.hmac:
+                parent_ref = receipt.hmac
+        try:
+            record_delegation_hop(
+                run_id=run_id,
+                issuer=parent_identity_id,
+                subject=child.id,
+                audience=f"sub-agent:{child.role}",
+                act="task.spawn",
+                root=root,
+                scope=DelegationScope(
+                    task_ids=frozenset(child.task_ids) if child.task_ids else None,
+                    path_prefixes=frozenset(child.allowed_files) if child.allowed_files else None,
+                ),
+                parent_ref=parent_ref,
+            )
+        except Exception as exc:
+            msg = f"delegation hop for {child.id} under {parent_identity_id} in run {run_id} could not be recorded"
+            raise DelegationWriteError(msg) from exc
+
     def create_identity(
         self,
         session_id: str,
@@ -719,6 +812,9 @@ class AgentIdentityStore:
             parent_identity_id: ID of the spawning agent's identity.
             extra_permissions: Additional permissions beyond the role defaults.
             metadata: Arbitrary metadata (cell_id, provider, model, tenant_id).
+                ``run_id`` is read from here when a parented mint records its
+                delegation hop: a receipt belongs to a run, and a mint that
+                names none has no chain to append to.
             token_expiry_s: Seconds until the token expires.  Defaults to 4 h for
                 task-scoped tokens or 24 h for unrestricted manager tokens.
             task_ids: Task IDs this identity is authorised to act on.  An empty
@@ -738,6 +834,17 @@ class AgentIdentityStore:
                 strings, or an ``allowed_files`` pattern is not
                 repository-relative.  Refused before the token is signed, so a
                 bad scope cannot become a credential that fails to load.
+            DelegationWriteError: the hop for a parented mint could not be
+                recorded; the ledger's own error is chained as ``__cause__``.  This is deliberate and
+                fail-closed - a delegation claimed as receipted must not
+                proceed when the receipt cannot be written, or the chain
+                silently shortens.  There is no rollback: the identity file is
+                already written when this fires, and stays readable through
+                :meth:`get` and :meth:`authorize`, which key on the identity id.
+                What the caller does not get is the raw token, so the credential
+                cannot be *presented*; and no ``created`` audit event is
+                appended.  The reasoning and the single line to change for
+                best-effort are in :meth:`_record_mint_delegation`.
         """
         identity_id = session_id  # 1:1 mapping with agent session
         permissions = permissions_for_role(role)
@@ -860,6 +967,21 @@ class AgentIdentityStore:
 
         self._save(identity)
         self._token_index[token_hash] = identity_id
+
+        # Minting a scoped credential for a child IS the delegation act, so the
+        # receipt is written here rather than at a later boundary.  Fail-closed:
+        # see :meth:`_record_mint_delegation`, which is the one place to change
+        # to make it best-effort.  A mint that names no run has no chain to
+        # append to and records nothing; that is a gap on the caller side, not a
+        # failed write, so it is not an error here.
+        if parent_identity_id is not None:
+            run_id = str((metadata or {}).get("run_id", "") or "")
+            if run_id:
+                self._record_mint_delegation(
+                    child=identity,
+                    parent_identity_id=parent_identity_id,
+                    run_id=run_id,
+                )
 
         self._append_audit(
             IdentityAuditEvent(

@@ -885,6 +885,46 @@ class Orchestrator:
         if hasattr(self._spawner, "set_max_agent_runtime_s"):
             self._spawner.set_max_agent_runtime_s(config.max_agent_runtime_s)
 
+        # Run-root identity (#5047): one parentless identity per run, the issuer
+        # every top-level agent's delegation hop names. Parentless, so it records
+        # no hop of its own -- an empty chain is not a broken chain -- but it
+        # gives the first real hop a parent to be graded against. Without it,
+        # top-level agents have no issuer, no hop is recorded, and a single-level
+        # run still verifies as "no receipts".
+        #
+        # Scope is left unconstrained on both axes rather than snapshotted. A
+        # run's task set is not bounded at start: tasks are fetched per tick and
+        # created during the run, so a snapshot taken here would make every task
+        # created later a widening on its own agent's hop and fail verification
+        # for a run that did nothing wrong. ``None`` is the widest value on every
+        # DelegationScope axis, so an unconstrained root is exactly "the whole
+        # run" and is a valid ceiling for any child. This codebase has no
+        # run-level file allowlist, so that axis is unconstrained for the same
+        # reason.
+        self._run_root_identity_id = ""
+        try:
+            from bernstein.core.identity.agent_jwt import AgentIdentityStore
+
+            _root_store = AgentIdentityStore(workdir / ".sdd" / "auth")
+            _root_identity, _ = _root_store.create_identity(
+                f"run-root-{run_id}",
+                "manager",
+                metadata={"source": "orchestrator", "run_id": run_id, "run_root": "true"},
+            )
+            self._run_root_identity_id = _root_identity.id
+        except Exception as _root_exc:
+            # Degrades to the pre-#5047 behaviour: no root means no issuer, so
+            # no hop is recorded and `delegation verify` reports "no receipts".
+            # Loud, because a run that silently stops being verifiable is the
+            # thing this change exists to prevent.
+            logger.warning(
+                "Run-root identity not minted for %s: %s. Delegation receipts will not be recorded for this run.",
+                run_id,
+                sanitize_log(str(_root_exc)),
+            )
+        if hasattr(self._spawner, "set_run_root_identity_id"):
+            self._spawner.set_run_root_identity_id(self._run_root_identity_id)
+
         # Convergence guard: blocks spawn waves when merge queue, active
         # agent count, error rate, or spawn rate exceed safe thresholds.
         from bernstein.core.orchestration.convergence_guard import ConvergenceGuard
@@ -965,6 +1005,7 @@ class Orchestrator:
                 model=None,
                 workflow_name=_wf_name,
                 workflow_definition_hash=_wf_hash,
+                run_root_identity_id=self._run_root_identity_id,
             )
             save_manifest(self._manifest, workdir / ".sdd")
         except Exception:
