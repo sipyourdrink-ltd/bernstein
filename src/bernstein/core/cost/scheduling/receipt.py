@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.core.cost.scheduling.policy import DispatchDecision
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
+from bernstein.core.verify_result import VerifyResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -206,13 +207,8 @@ def read_dispatch_receipt(workdir: Path, decision_hash: str) -> DispatchReceipt 
         return None
 
 
-@dataclass(frozen=True, slots=True)
-class DispatchVerifyResult:
-    """Outcome of an offline dispatch-receipt verification."""
-
-    ok: bool
-    reason: str
-    receipt: DispatchReceipt | None
+#: Outcome of an offline dispatch-receipt verification.
+DispatchVerifyResult = VerifyResult[DispatchReceipt]
 
 
 def _verify_knob_selection(decision: DispatchDecision) -> str | None:

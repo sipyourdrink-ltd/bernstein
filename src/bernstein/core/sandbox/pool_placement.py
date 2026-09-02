@@ -34,6 +34,7 @@ from bernstein.core.sandbox.selector import (
     SandboxPolicy,
     select_sandbox,
 )
+from bernstein.core.verify_result import VerifyResult
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -277,13 +278,8 @@ def read_placement_receipt(workdir: Path, placement_hash: str) -> PlacementRecei
         return None
 
 
-@dataclass(frozen=True, slots=True)
-class PlacementVerifyResult:
-    """Outcome of an offline placement-receipt verification."""
-
-    ok: bool
-    reason: str
-    receipt: PlacementReceipt | None
+#: Outcome of an offline placement-receipt verification.
+PlacementVerifyResult = VerifyResult[PlacementReceipt]
 
 
 def verify_placement_receipt(workdir: Path, placement_hash: str) -> PlacementVerifyResult:

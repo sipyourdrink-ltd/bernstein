@@ -19,6 +19,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `path_scope.py`             | Which repository-relative paths fall outside a set of globs |
 | `run_auth_token.py`         | Persist and read the auto-generated run Bearer token (issue #2794) |
 | `streaming_merge.py`        | Streaming task results for long-running agents (incremental merge) |
+| `verify_result.py`          | The one shape an offline verification answers in |
 | `admission/`                | Named resource pools with lease-backed admission (#2544) |
 | `agents/`                   | agents sub-package |
 | `approval/`                 | Interactive tool-call approval (op-002) |

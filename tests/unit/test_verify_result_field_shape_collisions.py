@@ -31,9 +31,11 @@ from __future__ import annotations
 
 import ast
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import FrozenInstanceError, dataclass
 from pathlib import Path
-from typing import Final
+from typing import Final, get_origin
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOT = REPO_ROOT / "src" / "bernstein"
@@ -168,9 +170,7 @@ _PENDING_SHAPES: Final[tuple[_AllowedShape, ...]] = (
     ),
     _AllowedShape(
         fields=frozenset({"errors", "ok"}),
-        classes=frozenset(
-            {"ReceiptVerification", "ManifestVerification", "ProjectionVerification"}
-        ),
+        classes=frozenset({"ReceiptVerification", "ManifestVerification", "ProjectionVerification"}),
         reason=(
             "core/orchestration/sla_receipt.py, core/orchestration/"
             "supervisor_receipt.py and core/sandbox/selection_receipt.py each "
@@ -195,26 +195,6 @@ _PENDING_SHAPES: Final[tuple[_AllowedShape, ...]] = (
         reason=(
             "core/interop/a2a_consume.py and core/lineage/gate.py report a "
             "list of failures behind a boolean. Pending consolidation."
-        ),
-    ),
-    _AllowedShape(
-        fields=frozenset({"ok", "reason", "receipt"}),
-        classes=frozenset(
-            {
-                "DispatchVerifyResult",
-                "EscalationVerifyResult",
-                "SpendVerifyResult",
-                "AutofixVerifyResult",
-                "PlacementVerifyResult",
-                "InstallVerifyResult",
-                "VerdictVerifyResult",
-                "RevocationVerifyResult",
-            }
-        ),
-        reason=(
-            "Eight modules declare the outcome of an offline receipt "
-            "verification under eight names with identical fields. The largest "
-            "single collision in the tree and the first one to migrate."
         ),
     ),
     _AllowedShape(
@@ -276,9 +256,7 @@ def _is_dataclass(node: ast.ClassDef) -> bool:
 def _annotated_fields(node: ast.ClassDef) -> frozenset[str]:
     """Return the names of *node*'s own annotated fields."""
     return frozenset(
-        stmt.target.id
-        for stmt in node.body
-        if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
+        stmt.target.id for stmt in node.body if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
     )
 
 
@@ -288,9 +266,7 @@ def _shapes_by_fields() -> dict[frozenset[str], list[_Declaration]]:
     for path in sorted(SOURCE_ROOT.rglob("*.py")):
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (
-            SyntaxError
-        ):  # pragma: no cover - a parse failure is another test's problem
+        except SyntaxError:  # pragma: no cover - a parse failure is another test's problem
             continue
         module = path.relative_to(SOURCE_ROOT).as_posix()
         for node in ast.walk(tree):
@@ -301,9 +277,7 @@ def _shapes_by_fields() -> dict[frozenset[str], list[_Declaration]]:
             fields = _annotated_fields(node)
             if not fields:
                 continue
-            shapes[fields].append(
-                _Declaration(module=module, lineno=node.lineno, name=node.name)
-            )
+            shapes[fields].append(_Declaration(module=module, lineno=node.lineno, name=node.name))
     return shapes
 
 
@@ -334,9 +308,7 @@ def test_no_new_unallowlisted_field_shape_collisions() -> None:
     collisions = _collisions()
     problems: list[str] = []
 
-    for fields, declarations in sorted(
-        collisions.items(), key=lambda kv: sorted(kv[0])
-    ):
+    for fields, declarations in sorted(collisions.items(), key=lambda kv: sorted(kv[0])):
         entry = allowed.get(fields)
         if entry is None:
             problems.append("not allowlisted:\n" + _render(fields, declarations))
@@ -344,10 +316,7 @@ def test_no_new_unallowlisted_field_shape_collisions() -> None:
         declared = {declaration.name for declaration in declarations}
         if declared != entry.classes:
             joined = ", ".join(sorted(declared - entry.classes)) or "(none)"
-            problems.append(
-                f"allowlisted shape gained a class ({joined}):\n"
-                + _render(fields, declarations)
-            )
+            problems.append(f"allowlisted shape gained a class ({joined}):\n" + _render(fields, declarations))
 
     for entry in _ALLOWED_SHAPES:
         if entry.fields not in collisions:
@@ -367,11 +336,7 @@ def test_no_new_unallowlisted_field_shape_collisions() -> None:
 
 def test_every_allowlist_entry_states_a_reason() -> None:
     """An entry without a reason is a silenced failure, not a decision."""
-    unexplained = [
-        ", ".join(sorted(entry.fields))
-        for entry in _ALLOWED_SHAPES
-        if len(entry.reason.strip()) < 40
-    ]
+    unexplained = [", ".join(sorted(entry.fields)) for entry in _ALLOWED_SHAPES if len(entry.reason.strip()) < 40]
     assert not unexplained, (
         "allowlist entries with no stated reason:\n  "
         + "\n  ".join(unexplained)
@@ -393,12 +358,8 @@ def test_sbom_finding_and_response_dto_stay_deliberately_split() -> None:
         for entry in _DELIBERATE_SHAPES
         if entry.classes == frozenset({"SBOMVulnFinding", "SBOMVulnFindingResponse"})
     ]
-    assert len(entries) == 1, (
-        "the SBOM finding/DTO split must be recorded exactly once in _DELIBERATE_SHAPES"
-    )
-    assert "wire contract" in entries[0].reason, (
-        "the entry must say why the split is deliberate, not merely that it is"
-    )
+    assert len(entries) == 1, "the SBOM finding/DTO split must be recorded exactly once in _DELIBERATE_SHAPES"
+    assert "wire contract" in entries[0].reason, "the entry must say why the split is deliberate, not merely that it is"
 
     declared = {
         declaration.name: declaration.module
@@ -410,3 +371,57 @@ def test_sbom_finding_and_response_dto_stay_deliberately_split() -> None:
         "SBOMVulnFinding": "core/security/sbom.py",
         "SBOMVulnFindingResponse": "core/routes/sbom.py",
     }, f"the deliberately split pair moved or was collapsed: {declared}"
+
+
+def test_verify_result_subclasses_expose_ok_reason_receipt() -> None:
+    """Every migrated receipt verifier answers "did it pass, and why" the same way.
+
+    The eight names survive as specialisations of the one base type - the
+    issue's "subclass" in the sense that matters here, since a specialisation
+    of a generic dataclass is the base class with its receipt slot pinned. The
+    property under test is that a caller holding any of them can read ``ok``,
+    ``reason`` and ``receipt`` without knowing which verifier produced it.
+    """
+    from bernstein.core.cost.scheduling.receipt import DispatchVerifyResult
+    from bernstein.core.orchestration.escalation import EscalationVerifyResult
+    from bernstein.core.protocols.payments.x402 import SpendVerifyResult
+    from bernstein.core.review.receipt import AutofixVerifyResult
+    from bernstein.core.sandbox.pool_placement import PlacementVerifyResult
+    from bernstein.core.skills.provenance import InstallVerifyResult
+    from bernstein.core.verify_result import VerifyResult
+    from bernstein.eval.gate_receipt import VerdictVerifyResult
+    from bernstein.eval.promotion import RevocationVerifyResult
+
+    specialisations = {
+        "DispatchVerifyResult": DispatchVerifyResult,
+        "EscalationVerifyResult": EscalationVerifyResult,
+        "SpendVerifyResult": SpendVerifyResult,
+        "AutofixVerifyResult": AutofixVerifyResult,
+        "PlacementVerifyResult": PlacementVerifyResult,
+        "InstallVerifyResult": InstallVerifyResult,
+        "VerdictVerifyResult": VerdictVerifyResult,
+        "RevocationVerifyResult": RevocationVerifyResult,
+    }
+
+    wrong_base = {
+        name: get_origin(alias) for name, alias in specialisations.items() if get_origin(alias) is not VerifyResult
+    }
+    assert not wrong_base, f"names that no longer specialise VerifyResult: {wrong_base}"
+
+    for name, alias in specialisations.items():
+        outcome = alias(ok=False, reason="tampered", receipt=None)
+        assert isinstance(outcome, VerifyResult), f"{name} constructed something other than a VerifyResult"
+        assert (outcome.ok, outcome.reason, outcome.receipt) == (
+            False,
+            "tampered",
+            None,
+        ), name
+
+
+def test_verify_result_is_frozen_so_a_failed_verification_cannot_be_flipped() -> None:
+    """A verdict a caller can rewrite in place is not a verdict."""
+    from bernstein.core.verify_result import VerifyResult
+
+    outcome: VerifyResult[str] = VerifyResult(ok=False, reason="signature does not verify")
+    with pytest.raises(FrozenInstanceError):
+        outcome.ok = True  # type: ignore[misc]

@@ -65,6 +65,7 @@ from typing import TYPE_CHECKING, Any
 from bernstein.core.lineage.identity import generate_keypair
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
 from bernstein.core.skills.catalog.signature import sign_payload, verify_payload
+from bernstein.core.verify_result import VerifyResult
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1024,13 +1025,8 @@ def _sign_and_anchor_autofix(
     return anchored
 
 
-@dataclass(frozen=True)
-class AutofixVerifyResult:
-    """Outcome of :func:`verify_autofix_receipt`."""
-
-    ok: bool
-    reason: str
-    receipt: AutofixReceipt | None = None
+#: Outcome of :func:`verify_autofix_receipt`.
+AutofixVerifyResult = VerifyResult[AutofixReceipt]
 
 
 def verify_autofix_receipt(
