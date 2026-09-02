@@ -55,11 +55,16 @@ class ApprovalResult:
         approved: True if the work should be merged directly.
         rejected: True if the work was rejected (no merge, no PR).
         pr_url: Non-empty when a PR was created; implies approved=False, rejected=False.
+        resolution: How the decision was reached -- ``"decided"`` when a person
+            (or a decision file) resolved the gate, ``"timed_out"`` when the wait
+            expired without one. A reader of the trail can tell an expiry from a
+            real decision even when ``approved``/``rejected`` look identical.
     """
 
     approved: bool
     rejected: bool = False
     pr_url: str = ""
+    resolution: str = "decided"
 
 
 # ---------------------------------------------------------------------------
@@ -73,24 +78,27 @@ def _default_poll_decision(
     *,
     poll_interval_s: float = _DEFAULT_POLL_INTERVAL_S,
     max_wait_s: float = _DEFAULT_MAX_WAIT_S,
-    reject_on_timeout: bool = False,
 ) -> str:
-    """Poll for a decision file and return ``"approved"`` or ``"rejected"``.
+    """Poll for a decision file and return the raw outcome.
 
     Reads ``<approvals_dir>/<task_id>.approved`` or
-    ``<approvals_dir>/<task_id>.rejected`` until one appears or the timeout
-    expires.  On timeout, defaults to ``"approved"`` (or "rejected" if configured)
-    so a missed review does not permanently stall the orchestrator.
+    ``<approvals_dir>/<task_id>.rejected`` until one appears or the wait
+    expires.
+
+    This helper reports what happened, not what to do about it: a wait that
+    expires with no decision file returns ``"timed_out"``, and the caller
+    (:meth:`ApprovalGate._review`) decides whether an expiry fails closed
+    (the default) or is treated as an opt-in approval. It never returns
+    ``"approved"`` on its own for a review nobody performed.
 
     Args:
         task_id: Task ID to poll for.
         approvals_dir: Directory where decision files are written.
         poll_interval_s: Seconds between file-existence checks.
-        max_wait_s: Maximum seconds to wait before defaulting to approved.
-        reject_on_timeout: If True, returns "rejected" on timeout instead of "approved".
+        max_wait_s: Maximum seconds to wait for a decision file.
 
     Returns:
-        ``"approved"`` or ``"rejected"``.
+        ``"approved"``, ``"rejected"``, or ``"timed_out"``.
     """
     from bernstein.core.orchestration.approval_gate import approval_path_in
 
@@ -110,12 +118,11 @@ def _default_poll_decision(
         time.sleep(poll_interval_s)
 
     logger.warning(
-        "Approval gate: task %s timed out after %.0fs - defaulting to %s",
+        "Approval gate: task %s timed out after %.0fs with no decision - failing closed",
         task_id,
         max_wait_s,
-        "rejected" if reject_on_timeout else "approved",
     )
-    return "rejected" if reject_on_timeout else "approved"
+    return "timed_out"
 
 
 # ---------------------------------------------------------------------------
@@ -209,11 +216,8 @@ class ApprovalGate:
             task_id: str,
             approvals_dir: Path,
             max_wait_s: float = _DEFAULT_MAX_WAIT_S,
-            reject_on_timeout: bool = False,
         ) -> str:
-            return _default_poll_decision(
-                task_id, approvals_dir, max_wait_s=max_wait_s, reject_on_timeout=reject_on_timeout
-            )
+            return _default_poll_decision(task_id, approvals_dir, max_wait_s=max_wait_s)
 
         self._poll_decision: _PollDecisionFn = _poll_decision or _default_poll
         self._push_branch_fn = _push_branch_fn
@@ -232,6 +236,7 @@ class ApprovalGate:
         test_summary: str = "",
         override_mode: ApprovalMode | None = None,
         timeout_s: float | None = None,
+        approve_on_timeout: bool = False,
         bypass_enabled: bool = False,
     ) -> ApprovalResult:
         """Evaluate the approval gate for a verified task.
@@ -256,6 +261,11 @@ class ApprovalGate:
             test_summary: Optional one-line test-results summary.
             override_mode: Optional mode to override the global configuration.
             timeout_s: Optional overriding timeout for review mode.
+            approve_on_timeout: Named opt-out of the fail-closed default. When
+                True, a review that expires with no decision resolves to
+                approved instead of rejected; the returned result still records
+                ``resolution="timed_out"`` so the trail shows the approval was
+                never actually granted by a person.
             bypass_enabled: When True, bypass approval and return approved=True.
 
         Returns:
@@ -289,13 +299,19 @@ class ApprovalGate:
 
             # REVIEW mode
             result = self._review(
-                task, session_id=session_id, diff=diff, test_summary=test_summary, timeout_s=timeout_s
+                task,
+                session_id=session_id,
+                diff=diff,
+                test_summary=test_summary,
+                timeout_s=timeout_s,
+                approve_on_timeout=approve_on_timeout,
             )
             logger.info(
-                "Approval gate decision: task=%s session=%s decision=%s reason=review_mode_poll",
+                "Approval gate decision: task=%s session=%s decision=%s reason=review_mode_%s",
                 task.id,
                 session_id,
                 "rejected" if result.rejected else "approved",
+                "timeout" if result.resolution == "timed_out" else "poll",
             )
             return result
         except Exception:
@@ -472,8 +488,17 @@ class ApprovalGate:
         diff: str,
         test_summary: str,
         timeout_s: float | None = None,
+        approve_on_timeout: bool = False,
     ) -> ApprovalResult:
-        """Write pending file, block on poll, return decision."""
+        """Write pending file, block on poll, return decision.
+
+        A poll that expires with no decision fails closed: the task is
+        rejected and the result records ``resolution="timed_out"`` so an
+        expiry is never mistaken for a review someone performed. Passing
+        ``approve_on_timeout=True`` is the one way to make an expiry resolve
+        to approved, and it still leaves ``resolution="timed_out"`` on the
+        record.
+        """
         pending_dir = self._workdir / ".sdd" / "runtime" / "pending_approvals"
         approvals_dir = self._workdir / ".sdd" / "runtime" / "approvals"
         pending_dir.mkdir(parents=True, exist_ok=True)
@@ -498,10 +523,22 @@ class ApprovalGate:
         kwargs: dict[str, Any] = {}
         if timeout_s is not None:
             kwargs["max_wait_s"] = timeout_s
-            kwargs["reject_on_timeout"] = True
 
         decision = self._poll_decision(task.id, approvals_dir, **kwargs)
 
+        if decision == "timed_out":
+            if approve_on_timeout:
+                logger.warning(
+                    "Approval gate: task %s expired with no decision - resolving to approved "
+                    "(approve_on_timeout opt-in); recorded as timed_out, not a granted approval",
+                    task.id,
+                )
+                return ApprovalResult(approved=True, resolution="timed_out")
+            logger.warning(
+                "Approval gate: task %s expired with no decision - failing closed to rejected",
+                task.id,
+            )
+            return ApprovalResult(approved=False, rejected=True, resolution="timed_out")
         if decision == "rejected":
             return ApprovalResult(approved=False, rejected=True)
         return ApprovalResult(approved=True)

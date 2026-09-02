@@ -124,6 +124,33 @@ class DashboardSession:
     last_accessed: float
     principal: str = PASSWORD_PRINCIPAL
     scope: str = SCOPE_OPERATOR
+    revoked: bool = False
+    revoked_at: float = 0.0
+    revocation_chain_position: str = ""
+    revocation_acknowledgements: dict[str, float] = field(default_factory=dict[str, float])
+    _staleness_window_s: float = 300.0  # 5 minutes bounded staleness
+
+    @property
+    def is_valid(self) -> bool:
+        """Check if this session is valid (not revoked, not expired)."""
+        return not self.revoked
+
+    def is_revoked_past_staleness(self, staleness_window_s: float | None = None) -> bool:
+        """Check if the revocation is past the staleness window.
+
+        Past the staleness window, an enforcement point that has not
+        re-read the revocation list must fail closed.
+        """
+        if not self.revoked:
+            return False
+        if not self.revoked_at:
+            return False
+        window = staleness_window_s if staleness_window_s is not None else self._staleness_window_s
+        return (time.time() - self.revoked_at) > window
+
+    def acknowledge_revocation(self, chain_position: str) -> None:
+        """Record that this enforcement point has acknowledged a revocation at a given chain position."""
+        self.revocation_acknowledgements[chain_position] = time.time()
 
 
 class DashboardSessionStore:

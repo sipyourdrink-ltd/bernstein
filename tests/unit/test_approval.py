@@ -109,18 +109,15 @@ def test_approval_gate_with_override_mode(tmp_path: Path, make_task: Any) -> Non
     assert result.pr_url == ""
 
 
-def test_approval_gate_reject_on_timeout(tmp_path: Path, make_task: Any) -> None:
+def test_approval_gate_forwards_timeout_s_and_fails_closed_on_expiry(tmp_path: Path, make_task: Any) -> None:
     task = make_task(id="T-timeout-reject")
 
-    # Evaluate with a tiny timeout and reject_on_timeout=True
-    # The default _poll_decision doesn't have an easy mock to bypass sleep, but we can mock it
-    # However, since we mock _poll_decision in other tests, let's just assert that reject_on_timeout is passed correctly.
-    # We can inject a mock _poll_decision that verifies reject_on_timeout is True
-
-    def _mock_poll(task_id: str, approvals_dir: Path, max_wait_s: float = 0, reject_on_timeout: bool = False) -> str:
+    # An overriding timeout is forwarded to the poller as max_wait_s; an expiry
+    # (the poller reporting "timed_out") fails closed to rejected without the
+    # caller having to ask for it.
+    def _mock_poll(task_id: str, approvals_dir: Path, max_wait_s: float = 0) -> str:
         assert max_wait_s == pytest.approx(0.01)
-        assert reject_on_timeout is True
-        return "rejected"
+        return "timed_out"
 
     gate_mocked = ApprovalGate(ApprovalMode.REVIEW, tmp_path, _poll_decision=_mock_poll)
     result = gate_mocked.evaluate(
@@ -129,3 +126,39 @@ def test_approval_gate_reject_on_timeout(tmp_path: Path, make_task: Any) -> None
         timeout_s=0.01,
     )
     assert result.rejected is True
+    assert result.approved is False
+    assert result.resolution == "timed_out"
+
+
+def test_approval_gate_fails_closed_on_timeout_with_no_timeout_configured(tmp_path: Path, make_task: Any) -> None:
+    task = make_task(id="T-timeout-default")
+
+    # No timeout_s configured -- the historically fail-open path. The gate must
+    # still refuse to approve a review nobody performed.
+    gate = ApprovalGate(
+        ApprovalMode.REVIEW,
+        tmp_path,
+        _poll_decision=lambda task_id, approvals_dir: "timed_out",
+    )
+    result = gate.evaluate(task, session_id="S-timeout-default")
+
+    assert result.approved is False
+    assert result.rejected is True
+    assert result.resolution == "timed_out"
+
+
+def test_approval_gate_approve_on_timeout_opt_in_records_the_expiry(tmp_path: Path, make_task: Any) -> None:
+    task = make_task(id="T-timeout-optout")
+
+    gate = ApprovalGate(
+        ApprovalMode.REVIEW,
+        tmp_path,
+        _poll_decision=lambda task_id, approvals_dir: "timed_out",
+    )
+    result = gate.evaluate(task, session_id="S-timeout-optout", approve_on_timeout=True)
+
+    # The opt-in makes the expiry resolve to approved, but the record still
+    # says the approval expired rather than that a person granted it.
+    assert result.approved is True
+    assert result.rejected is False
+    assert result.resolution == "timed_out"
