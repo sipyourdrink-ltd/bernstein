@@ -95,7 +95,7 @@ outbound stylesheet, so the dashboard renders with no network request.
 
 ## Spacing and radii
 
-An 8px grid with one half-step below it, from `styles/globals.css` in the
+An 8px grid with 4px and 12px half-steps, from `styles/globals.css` in the
 website repository.
 
 | `--space-*` | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
