@@ -110,8 +110,11 @@ class NmapAdapter(ScannerAdapter):
 
     def scan(self, target: Path, scope: ScanScope, workdir: Path) -> ScanResult:
         """Run an Nmap scan and normalize its volatile XML into a transcript."""
-        self.enforce_network_policy()
         target_name, ports = _validate_scope(target, scope)
+        # Checked with port=None (host-level): Nmap dials a caller-chosen port
+        # range, not one fixed port, so the policy is consulted against the
+        # concrete target host it is actually about to scan.
+        self.enforce_network_policy((target_name, None))
         binary = shutil.which(self._binary)
         if binary is None:
             raise NmapNotInstalledError(
@@ -152,7 +155,11 @@ class NmapAdapter(ScannerAdapter):
             normalized = normalize_nmap_xml(report_path.read_bytes())
         finally:
             report_path.unlink(missing_ok=True)
-        return ScanResult(findings=list(normalized.findings), transcript=normalized.transcript)
+        return ScanResult(
+            findings=list(normalized.findings),
+            transcript=normalized.transcript,
+            invocation_digest=self.last_invocation.argv_hash,
+        )
 
 
 def _validate_scope(target: Path, scope: ScanScope) -> tuple[str, str]:
