@@ -2060,8 +2060,14 @@ class AgentSpawner:
 
         The merge path records a lineage row per landed path and keys those
         rows by run, so without this the rows have no spine to join.
+        Also propagates to the identity store for delegation hop recording.
         """
         self._run_id = run_id
+        # Propagate to identity store so delegation hops are recorded against
+        # the correct run's receipt ledger.
+        identity_store = self._identity_store
+        if hasattr(identity_store, "set_run_id"):
+            identity_store.set_run_id(run_id)
 
     def _merge_and_cleanup_worktree(
         self,
