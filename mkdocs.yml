@@ -664,6 +664,7 @@ nav:
           - Audit-chain default cost: decisions/010-audit-chain-default-cost.md
   - Contribute:
       - contributing/index.md
+      - Project pulse: project-pulse.md
       - Code review process: CODE_REVIEW.md
       - Testing & CI hardening: contributing/testing.md
       - Lifecycle hooks contract: contributing/hooks.md
