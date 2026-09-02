@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "semgrep",
+          "semanticVersion": "1.45.0",
+          "informationUri": "https://semgrep.dev",
+          "rules": [
+            {
+              "id": "bernstein-test-eval-use",
+              "shortDescription": {
+                "text": "Bernstein synthetic dangerous eval() use"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "bernstein-test-eval-use",
+          "level": "error",
+          "message": {
+            "text": "Bernstein synthetic dangerous eval() use"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "vulnerable.py"
+                },
+                "region": {
+                  "startLine": 2,
+                  "startColumn": 1,
+                  "endLine": 2,
+                  "endColumn": 18,
+                  "snippet": {
+                    "text": "eval(user_input)"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

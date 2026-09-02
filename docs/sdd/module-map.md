@@ -181,6 +181,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `scanner_finding.py`        | Scanner Finding dataclass |
 | `scanner_registry.py`       | Scanner registry - look up scanner adapters by name |
 | `security_floor.py`         | Adapter security-floor spawn preflight with signed refusal receipts (#2515) |
+| `semgrep.py`                | Deterministic Semgrep scanner adapter and SARIF normalization |
 | `session_id.py`             | Deterministic session-id binding for adapter replay isolation |
 | `skills_injector.py`        | Inject per-task Claude Code skills into the worktree before spawn |
 | `skyvern.py`                | Skyvern adapter: drives an existing Skyvern server over HTTP |

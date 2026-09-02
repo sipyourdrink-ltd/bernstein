@@ -1,0 +1,17 @@
+name: semgrep-recorded-sarif
+adapter_class: bernstein.adapters.semgrep.SemgrepAdapter
+ctor_kwargs:
+  config_path: tests/fixtures/scanners/semgrep/semgrep-rules.yml
+steps:
+  - target: tests/fixtures/scanners/semgrep/target
+    scope:
+      roots:
+        - tests/fixtures/scanners/semgrep/target
+    expected_finding_hashes:
+      - 3d0748e73ec1bb23ddbf051d12242af996c225ecc210560ad43f77a4f78cf48f
+  - target: tests/fixtures/scanners/semgrep/target
+    scope:
+      roots:
+        - tests/fixtures/scanners/semgrep/target
+    expected_finding_hashes:
+      - 3d0748e73ec1bb23ddbf051d12242af996c225ecc210560ad43f77a4f78cf48f

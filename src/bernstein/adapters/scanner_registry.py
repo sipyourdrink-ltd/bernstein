@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from bernstein.adapters.gitleaks import GitleaksAdapter
 from bernstein.adapters.nmap import NmapAdapter
 from bernstein.adapters.scanner import ScannerAdapter
+from bernstein.adapters.semgrep import SemgrepAdapter
 from bernstein.adapters.trivy import TrivyAdapter
 
 if TYPE_CHECKING:
@@ -155,4 +156,5 @@ def scanner_name_for_provider(provider_name: str | None, model: str) -> str | No
 
 register_scanner(GitleaksAdapter.registry_name, GitleaksAdapter)
 register_scanner(NmapAdapter.registry_name, NmapAdapter)
+register_scanner(SemgrepAdapter.registry_name, SemgrepAdapter)
 register_scanner(TrivyAdapter.registry_name, TrivyAdapter)
