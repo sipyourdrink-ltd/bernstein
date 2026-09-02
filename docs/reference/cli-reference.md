@@ -1392,6 +1392,7 @@ A branch with no `--run-id` is reported as unresolved, not as failing: it was no
 | `verify --scope SCOPE --namespace NS` | Prove every fact in a scope/namespace chain was written by its actor and never edited; recomputes the hash chain, every HMAC tag, and each `source_hash` anchor against the lineage spine. Exit 0 = OK, 1 = no entries, 2 = tamper. |
 | `why FACT --scope SCOPE --namespace NS` | Return the originating run id and step for a stored fact (only when its `source_hash` resolves to a real lineage-spine entry). |
 | `forget ENTRY_HASH --scope SCOPE --namespace NS` | Append a signed tombstone for a memory-chain entry without deleting it; the original entry and chain stay verifiable. |
+| `show --scope SCOPE --namespace NS` | Print what a scope/namespace currently says: every live claim in append order with the run, step, actor and `entry_hash` it came from. `--json` emits the canonical fold bytes, which are byte-identical across readers. Exit 0 = live claims, 1 = nothing live. |
 
 #### `bernstein cache`
 
