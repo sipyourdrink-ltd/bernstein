@@ -56,8 +56,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import cbor2
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from bernstein.core.security.audit_receipt import (
     ALL_FORMATS,
@@ -266,16 +264,16 @@ _WRONG_HEX_B: str = "2" * 64
 
 
 def _kms_adapter(tmp_dir: Path) -> KMSAdapter:
-    """A throwaway, corpus-local Ed25519 signer (key never leaves this call)."""
-    key = Ed25519PrivateKey.from_private_bytes(_SIGN_SEED)
-    key_path = tmp_dir / "conformance-sign.pem"
-    key_path.write_bytes(
-        key.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
-        ),
-    )
+    """A throwaway, corpus-local Ed25519 signer (key never leaves this call).
+
+    The seed is handed to the custody boundary as a raw 32-byte key file --
+    one of the two shapes :class:`FileBasedKMSAdapter` already accepts -- so
+    the corpus obtains its signer the same way every other signing surface
+    does and holds no private key material of its own. An operator who moves
+    the signing key to another backend moves one adapter, not each caller.
+    """
+    key_path = tmp_dir / "conformance-sign.key"
+    key_path.write_bytes(_SIGN_SEED)
     # FileBasedKMSAdapter reads the key eagerly at construction, so the key
     # material is safe to use after tmp_dir is cleaned up.
     return FileBasedKMSAdapter(key_path, kid="audit-receipt-conformance-key")
