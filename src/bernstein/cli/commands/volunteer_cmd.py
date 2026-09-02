@@ -505,8 +505,12 @@ def hub_cmd(host: str, port: int, lease_store_path: str | None) -> None:
     """Serve the volunteer hub HTTP interface.
 
     The hub exposes endpoints for workers to enroll, claim, heartbeat,
-    submit, and release tasks.  See :func:`bernstein.core.volunteer.hub_app.build_hub_app`
-    for the API surface.
+    submit, and release tasks, plus its own task board for work that
+    originates here rather than mirroring a git-forge issue.  See
+    :func:`bernstein.core.volunteer.hub_app.build_hub_app` for the API surface.
+
+    The board's log is a sibling of the lease log, since the two are one hub's
+    state and are torn down together.
 
     .. note:: The lease store is single-process only. Do not run with
        ``uvicorn --workers N>1`` or multiple replicas.
@@ -532,6 +536,7 @@ def hub_cmd(host: str, port: int, lease_store_path: str | None) -> None:
     from bernstein.core.volunteer.budget import BudgetConfigError, load_budget_config
     from bernstein.core.volunteer.hub_app import build_hub_app
     from bernstein.core.volunteer.lease_store import LeaseStore
+    from bernstein.core.volunteer.task_board import TaskBoard
 
     if lease_store_path is None:
         lease_store_path = ".sdd/runtime/volunteer/leases.jsonl"
@@ -541,7 +546,9 @@ def hub_cmd(host: str, port: int, lease_store_path: str | None) -> None:
     except (BudgetConfigError, OSError) as error:
         raise click.ClickException(str(error)) from error
 
-    store = LeaseStore(Path(lease_store_path), budget=donor_budget)
-    app = build_hub_app(store)
+    lease_log = Path(lease_store_path)
+    store = LeaseStore(lease_log, budget=donor_budget)
+    board = TaskBoard(lease_log.parent / "tasks.jsonl")
+    app = build_hub_app(store, task_board=board)
     click.echo(f"Bernstein volunteer hub listening on http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="warning")
