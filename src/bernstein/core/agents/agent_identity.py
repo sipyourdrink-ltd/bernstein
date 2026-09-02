@@ -19,7 +19,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final, Literal, cast, get_args
 
 from bernstein.core.auth import create_jwt, verify_jwt
-from bernstein.core.path_scope import ScopePatternError, validate_repo_relative_pattern
+from bernstein.core.path_scope import ScopePatternError, paths_outside_scope, validate_repo_relative_pattern
 from bernstein.core.sanitize import sanitize_log
 from bernstein.core.tenanting import (
     DEFAULT_TENANT_ID,
@@ -169,40 +169,32 @@ TokenType = Literal["opaque", "jwt"]
 _CREDENTIAL_TOKEN_TYPES: Final[tuple[TokenType, ...]] = get_args(TokenType)
 
 
-def _path_covered_by(child: str, parent: str) -> bool:
-    """Return True iff *parent* is an ancestor-or-equal of *child* (POSIX).
+def _pattern_covered_by(child: str, parent_patterns: tuple[str, ...]) -> bool:
+    """Return True when the parent's declared scope already admits ``child``.
 
-    Coverage is component-wise, not string-prefix: ``/a/b`` covers ``/a/b`` and
-    ``/a/b/c`` but not ``/a/bc``. Both operands are normalized first, so
-    ``/a/./b`` and ``/a/b/`` compare equal to ``/a/b``.
+    Decided by :func:`~bernstein.core.path_scope.paths_outside_scope`, the same
+    matcher the merge gate reads ``allowed_files`` with, so the scope that mints
+    a credential and the scope that admits its diff cannot disagree.  A
+    string-prefix test would: ``src`` covers the path ``src`` and nothing under
+    it, so treating it as a prefix would let a parent scoped to ``src`` mint a
+    child scoped to ``src/secret.py`` -- a file the parent's own scope never
+    admitted.  ``src/**`` is how a tree is admitted.
 
-    When *parent* ends with ``/**``, it matches any file under that directory
-    (glob-style ``**`` semantics).
+    A child that is itself a glob is covered only when the parent declared that
+    same glob.  Whether one glob is contained in another is not a question this
+    check guesses at, and refusing is the direction that cannot widen a scope.
     """
-    import posixpath
-    from fnmatch import fnmatch
-
-    c = posixpath.normpath(child)
-    p = posixpath.normpath(parent)
-    if p == c:
+    if child in parent_patterns:
         return True
-    # Handle ** glob patterns: src/** matches any file under src/
-    if p.endswith("/**"):
-        base_dir = p[: -len("/**")]
-        boundary = base_dir if base_dir.endswith("/") else base_dir + "/"
-        return fnmatch(c, base_dir + "/**") or c.startswith(boundary)
-    boundary = p if p.endswith("/") else p + "/"
-    return c.startswith(boundary)
+    if any(wildcard in child for wildcard in "*?"):
+        return False
+    return not paths_outside_scope((child,), parent_patterns)
 
 
 def _all_patterns_covered_by(child_patterns: set[str], parent_patterns: set[str]) -> bool:
-    """Return True if every child pattern is covered by some parent pattern.
-
-    A child pattern is covered by a parent pattern if the parent is an ancestor-or-equal
-    of the child (path_covered_by semantics). This implements the prefix subset check for
-    allowed_files.
-    """
-    return all(any(_path_covered_by(child, parent) for parent in parent_patterns) for child in child_patterns)
+    """Return True when every child pattern falls inside the parent's scope."""
+    parents = tuple(sorted(parent_patterns))
+    return all(_pattern_covered_by(child, parents) for child in child_patterns)
 
 
 def _string_list(raw: Any, field: str) -> list[str]:
@@ -774,21 +766,16 @@ class AgentIdentityStore:
                         f"child task_ids {sorted(child_ids)} are not a subset of parent task_ids {sorted(parent_ids)}"
                     )
 
-            # allowed_files: prefix subset check. Empty parent allowed_files
-            # means unrestricted parent → child can be anything. Non-empty
-            # parent means child patterns must be a subset (every child pattern
-            # must be covered by some parent pattern). An empty child set when
-            # the parent has restrictions is a widening and is refused.
+            # allowed_files: every child pattern must fall inside the parent's
+            # scope, read by the same matcher the merge gate uses.  An empty
+            # parent scope means unrestricted, so the child may name anything.
+            # An empty child scope under a restricted parent is the widening
+            # direction -- empty means unrestricted -- so it is refused rather
+            # than passing vacuously.
             if parent_identity.allowed_files:
                 child_patterns = set(scoped_files)
                 parent_patterns = set(parent_identity.allowed_files)
-                if not child_patterns and parent_patterns:
-                    # Child has no file scope but parent does = widening
-                    raise ValueError(
-                        f"child allowed_files {sorted(child_patterns)} are not a subset of "
-                        f"parent allowed_files {sorted(parent_patterns)}"
-                    )
-                if not _all_patterns_covered_by(child_patterns, parent_patterns):
+                if not child_patterns or not _all_patterns_covered_by(child_patterns, parent_patterns):
                     raise ValueError(
                         f"child allowed_files {sorted(child_patterns)} are not a subset of "
                         f"parent allowed_files {sorted(parent_patterns)}"
