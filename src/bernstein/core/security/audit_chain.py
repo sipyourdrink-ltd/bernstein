@@ -9010,7 +9010,6 @@ EVENT_CAPABILITY_AUTHORIZATION = "capability.authorization"
 #: total tool count. This enables operators to ask "what could this server do
 #: on the day of that run" and get an answer from the record rather than from
 #: the server's current state.
-EVENT_MCP_CAPABILITY_DRIFT = "mcp.capability_drift"
 
 
 @dataclass(frozen=True)
