@@ -36,7 +36,10 @@ file rather than a block in this module because it has 300-odd entries and
 shrinks one package at a time: a data file keeps this test readable and makes
 each removal a one-line diff. Two kinds of entry exist today - a module reached
 by a mechanism the static trace cannot see (the reason names the mechanism), and
-a module still waiting on its #4526 package audit (the reason says so). The list
+a module whose wire-or-delete decision is still open, either a #4526 candidate
+awaiting its package audit or one that landed under ``core/`` while #4526 was
+open (the reason says which). The baseline is the tree this guard ships against,
+not the one the file was first written against. The list
 may only ever SHRINK: ``test_the_allowlist_has_no_stale_entries`` fails when an
 entry becomes reachable or leaves the tree, so wiring or deleting a module forces
 its line out rather than letting the list rot into a permanent exemption.

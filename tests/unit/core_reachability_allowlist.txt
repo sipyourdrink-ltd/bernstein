@@ -7,13 +7,21 @@
 #   * the module IS reached, by a mechanism the trace cannot see - a dotted
 #     string resolved at call time, an entry point, the lazy-alias finder. The
 #     reason names that mechanism.
-#   * the module is a #4526 candidate whose package audit has not run yet. The
-#     reason says so, and the audit replaces the line with a wiring commit or a
-#     deletion.
+#   * the module is unreachable and its wire-or-delete decision is still open -
+#     a #4526 candidate whose package audit has not run, or a module that landed
+#     under core/ while #4526 was open. The reason says which, and the decision
+#     replaces the line with a wiring commit or a deletion.
 #
-# The list may only SHRINK. Adding a module here to make a red build green is
-# not an allowlist entry, it is a suppression: a new module that nothing imports
-# is a defect at the pull request that adds it.
+# The baseline is the tree at the commit this guard turns on, not the commit the
+# file was first written. Modules kept landing under core/ while this change sat
+# in review, and each one gets a line because the line is a true statement about
+# the tree the guard ships against - recording them as #4526 candidates instead
+# would put a false provenance in a file whose only value is that its lines are
+# true.
+#
+# From that commit the list may only SHRINK. Adding a module here to make a red
+# build green is not an allowlist entry, it is a suppression: a new module that
+# nothing imports is a defect at the pull request that adds it.
 #
 # Sorted; keep it that way so a diff reads as one line added or removed.
 
@@ -47,6 +55,7 @@ bernstein.core.autoheal.kill_switch: #4526 package audit pending - wire or delet
 bernstein.core.autoheal.shadow_mode: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.autoheal.wire: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.communication.direct: #4526 package audit pending - wire or delete decided per module, not here
+bernstein.core.communication.rendezvous: unreachable at the commit this guard turns on; landed while #4526 was open - wire or delete, same terms as the audit backlog
 bernstein.core.communication.whiteboard: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.compat_redirect_ledger: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.config.prompt_versions: #4526 package audit pending - wire or delete decided per module, not here
@@ -60,6 +69,7 @@ bernstein.core.cost.cost_per_line: #4526 package audit pending - wire or delete 
 bernstein.core.cost.cost_root_cause: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.cost.education_tier: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.cost.free_tier: #4526 package audit pending - wire or delete decided per module, not here
+bernstein.core.cost.model_call_ledger: unreachable at the commit this guard turns on; landed while #4526 was open - wire or delete, same terms as the audit backlog
 bernstein.core.cost.outcome_pricing: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.cost.planned.cheaper_retry: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.cost.planned.retry_budget: #4526 package audit pending - wire or delete decided per module, not here
@@ -82,12 +92,15 @@ bernstein.core.git.idempotent_merge: #4526 package audit pending - wire or delet
 bernstein.core.git.jira_sync: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.git.merge_tree_probe: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.git.pr_size_governor: #4526 package audit pending - wire or delete decided per module, not here
+bernstein.core.govern.audit_watch: unreachable at the commit this guard turns on; landed while #4526 was open - wire or delete, same terms as the audit backlog
+bernstein.core.govern.identity_join: unreachable at the commit this guard turns on; landed while #4526 was open - wire or delete, same terms as the audit backlog
 bernstein.core.identity.spiffe.grant_identity: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.identity.spiffe.mtls: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.knowledge.graphify_code_graph: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.lifecycle.pluggy_bridge: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.lineage.foreign_attestation: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.lineage.recorder: #4526 package audit pending - wire or delete decided per module, not here
+bernstein.core.lineage.sensitivity: unreachable at the commit this guard turns on; landed while #4526 was open - wire or delete, same terms as the audit backlog
 bernstein.core.memory.compaction.auto: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.memory.compaction.micro: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.memory.compaction.policy: #4526 package audit pending - wire or delete decided per module, not here
@@ -109,8 +122,6 @@ bernstein.core.observability.cascading_failure_circuit_breaker: #4526 package au
 bernstein.core.observability.circuit_breaker: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.observability.datadog_export: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.observability.eval_store: #4526 package audit pending - wire or delete decided per module, not here
-bernstein.core.observability.otlp_ingest: #4526 package audit pending - wire or delete decided per module, not here
-bernstein.core.observability.otlp_ingest_receipt: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.observability.progress_watch: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.observability.repository_flow: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.observability.repository_flow_series: #4526 package audit pending - wire or delete decided per module, not here
@@ -223,12 +234,14 @@ bernstein.core.routing.cascade_router: #4526 package audit pending - wire or del
 bernstein.core.routing.fast_mode: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.routing.hijacker: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.routing.model_recommender: #4526 package audit pending - wire or delete decided per module, not here
+bernstein.core.routing.model_registry: unreachable at the commit this guard turns on; landed while #4526 was open - wire or delete, same terms as the audit backlog
 bernstein.core.routing.model_routing: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.routing.route_decision: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.sandbox.backends.e2b: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.sandbox.backends.modal: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.sandbox.conformance: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.sandbox.pool_warm: #4526 package audit pending - wire or delete decided per module, not here
+bernstein.core.sandbox.resource_lease: unreachable at the commit this guard turns on; landed while #4526 was open - wire or delete, same terms as the audit backlog
 bernstein.core.security.audit_export: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.security.capability_delta: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.security.change_receipt: #4526 package audit pending - wire or delete decided per module, not here
@@ -267,6 +280,7 @@ bernstein.core.security.sandbox_escape_detector: #4526 package audit pending - w
 bernstein.core.security.sandbox_profiles: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.security.seccomp_profiles: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.security.seccomp_sandbox: #4526 package audit pending - wire or delete decided per module, not here
+bernstein.core.security.secret_rotation: unreachable at the commit this guard turns on; landed while #4526 was open - wire or delete, same terms as the audit backlog
 bernstein.core.security.security_correlation: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.security.security_incident_response: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.security.security_posture: #4526 package audit pending - wire or delete decided per module, not here
@@ -299,7 +313,6 @@ bernstein.core.storage.sinks.s3: #4526 package audit pending - wire or delete de
 bernstein.core.storage.soc2_export: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.streaming_merge: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.tasks.completion_record: #4526 package audit pending - wire or delete decided per module, not here
-bernstein.core.tasks.context_extractors: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.tasks.decomposition_guard: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.tasks.lifecycle_diagrams: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.tasks.task_pack: #4526 package audit pending - wire or delete decided per module, not here
