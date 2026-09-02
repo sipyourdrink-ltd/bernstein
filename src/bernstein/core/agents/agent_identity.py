@@ -184,11 +184,12 @@ def _pattern_covered_by(child: str, parent_patterns: tuple[str, ...]) -> bool:
     same glob.  Whether one glob is contained in another is not a question this
     check guesses at, and refusing is the direction that cannot widen a scope.
 
-    Deliberately not :func:`~bernstein.core.security.capability_tokens.path_covered_by`:
-    that one answers the same question for capability-token path *prefixes*, where
-    ``src`` does cover ``src/secret.py``.  ``allowed_files`` is a glob field, and
-    the surface that enforces it is the merge gate, so it has to be read the way
-    the merge gate reads it.
+    Deliberately not the prefix-coverage helper in
+    :mod:`bernstein.core.security.capability_tokens`: that one answers this
+    question for capability-token path *prefixes*, where ``src`` does cover
+    ``src/secret.py``.  ``allowed_files`` is a glob field and the surface that
+    enforces it is the merge gate, so it has to be read the way the merge gate
+    reads it.
     """
     if child in parent_patterns:
         return True
