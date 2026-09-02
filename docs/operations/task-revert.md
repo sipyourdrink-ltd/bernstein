@@ -76,11 +76,11 @@ index, or `HEAD`: `git status --porcelain` is byte-identical before and
 after.
 
 ```
-╭─ Change set for task-abc123 (agent/backend-abc123) ─╮
-│ added      docs/new.md      -        3e757656       │
-│ deleted    old/legacy.py    286c5f57 -              │
-│ modified   src/thing.py     3367afdb b66ba06d       │
-╰─────────────────────────────────────────────────────╯
+╭────────── Change set for task-abc123 (agent/backend-abc123) ──────────╮
+│ added      docs/new.md  - -> 3e757656                                 │
+│ deleted    old/legacy.py  da9ee9d1 -> -                               │
+│ modified   src/thing.py  3367afdb -> b66ba06d                         │
+╰───────────────────────────────────────────────────────────────────────╯
 Dry run: nothing was reverted.
 ```
 
