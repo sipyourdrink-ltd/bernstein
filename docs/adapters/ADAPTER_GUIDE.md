@@ -125,6 +125,37 @@ npm install -g @openai/codex
 > start in a capability-dropped container on a kernel without unprivileged user namespaces.
 > Every shell call is then refused while the run still exits 0. The adapter now detects
 > that and marks the run `permission_denied` rather than reporting success.
+>
+> **Declared host isolation.** An operator running the CLI inside a container or VM they
+> control can state that the process is already isolated, and the adapter then spawns
+> without codex's own sandbox instead of failing inside it. Two config keys carry the
+> declaration, resolved through the usual precedence chain
+> ([global config](../operations/global-config.md)):
+>
+> | Key | Env var | Values |
+> |---|---|---|
+> | `host_isolation_tier` | `BERNSTEIN_HOST_ISOLATION_TIER` | `none` (default), `process`, `container`, `vm` |
+> | `host_isolation_evidence` | `BERNSTEIN_HOST_ISOLATION_EVIDENCE` | Free text describing the isolation |
+>
+> ```bash
+> bernstein config set host_isolation_tier container
+> bernstein config set host_isolation_evidence "read-only rootfs, cap-drop ALL, no-new-privileges"
+> ```
+>
+> `container` and `vm` drop codex's sandbox: both are a boundary that replaces what
+> bubblewrap would have supplied. `process` and `none` keep it — seccomp or a restricted
+> user confines the agent's own commands without giving codex the user namespace it needs.
+> A value outside that set is rejected and the sandbox stays on.
+>
+> The declaration is written to the HMAC audit chain as a
+> `sandbox.host_isolation_declared` event before the first spawn, recording the tier, the
+> evidence, the config layer it came from, and whether the sandbox was consequently
+> dropped — so a run can be reconstructed afterwards without guessing which posture was in
+> force. The adapter also logs one warning per run naming the tier and the evidence.
+>
+> This is narrower than the escalated dangerous-mode strategy, which drops the sandbox and
+> the approval surface together and records no reason. Prefer the declaration.
+> See [#5341](https://github.com/sipyourdrink-ltd/bernstein/issues/5341).
 
 **Best for:** Tasks that benefit from OpenAI's reasoning models. Good complement to Claude for provider diversity.
 

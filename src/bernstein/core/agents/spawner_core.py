@@ -2722,12 +2722,70 @@ class AgentSpawner:
             return cached
 
         adapter = get_adapter(adapter_name)
+        if getattr(adapter, "consumes_host_isolation", False):
+            self._apply_host_isolation(adapter_name, adapter)
         if self._enable_caching:
             from bernstein.adapters.caching_adapter import CachingAdapter
 
             adapter = CachingAdapter(adapter, self._workdir)
         self._adapter_cache[adapter_name] = adapter
         return adapter
+
+    def _apply_host_isolation(self, adapter_name: str, adapter: CLIAdapter) -> None:
+        """Hand the operator's host-isolation declaration to *adapter* (#5341).
+
+        Only adapters that own a vendor sandbox advertise
+        ``consumes_host_isolation``; everything else is left untouched, so an
+        adapter with nothing to drop neither gains an attribute nor produces a
+        record.
+
+        Runs before the :class:`CachingAdapter` wrap so the attributes land on
+        the adapter that actually builds the argv, and behind the adapter cache
+        so one run records the declaration once per adapter rather than once
+        per spawn.
+
+        A misdeclared tier is reported and then dropped: the resolver raises
+        rather than guess, and the safe interpretation of "we could not read
+        the declaration" is that no isolation was declared, which leaves the
+        vendor sandbox on. Wedging every spawn over a typo in a config key
+        would be the worse failure.
+        """
+        from bernstein.core.config.host_isolation import resolve_host_isolation
+
+        try:
+            declaration = resolve_host_isolation(self._workdir)
+        except ValueError as exc:
+            logger.warning(
+                "host isolation declaration ignored for %s: %s; the vendor sandbox stays on",
+                adapter_name,
+                exc,
+            )
+            return
+
+        adapter.host_isolation = declaration.tier  # type: ignore[attr-defined]
+        adapter.host_isolation_evidence = declaration.evidence  # type: ignore[attr-defined]
+
+        try:
+            from bernstein.core.security.audit_chain import (
+                AuditChainStore,
+                record_host_isolation_declaration,
+            )
+
+            record_host_isolation_declaration(
+                chain=AuditChainStore(self._workdir / ".sdd" / "audit"),
+                run_id=getattr(self, "_run_id", ""),
+                adapter=adapter_name,
+                tier=str(declaration.tier),
+                evidence=declaration.evidence,
+                source=str(declaration.source),
+                vendor_sandbox_dropped=bool(adapter.host_isolation_drops_vendor_sandbox()),  # type: ignore[attr-defined]
+            )
+        except Exception as exc:
+            logger.warning(
+                "host isolation recording failed for %s: %s",
+                adapter_name,
+                type(exc).__name__,
+            )
 
     def _run_bridge_call(self, awaitable: Any) -> Any:
         """Run a bridge coroutine from the sync orchestration path."""

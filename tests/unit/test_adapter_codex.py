@@ -10,11 +10,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 from bernstein.core.models import ApiTier, ModelConfig, ProviderType
 
-from bernstein.adapters._contract import AdapterStrategy, DangerousModeStrategy
+from bernstein.adapters._contract import STRATEGY_MATRIX, AdapterStrategy, DangerousModeStrategy
+from bernstein.adapters.capability_profile import SandboxTier
 from bernstein.adapters.codex import (
     _BYPASS_SANDBOX_FLAG,
     _DEFAULT_CODEX_MODEL,
     _SANDBOXED_ARGS,
+    _TIERS_REPLACING_VENDOR_SANDBOX,
+    _UNDECLARED_HOST_ISOLATION,
     CodexAdapter,
 )
 
@@ -37,6 +40,19 @@ def _inner_cmd(full_cmd: list[str]) -> list[str]:
     """Extract the actual CLI command after the '--' worker separator."""
     sep = full_cmd.index("--")
     return full_cmd[sep + 1 :]
+
+
+def _spawn_inner_cmd(adapter: CodexAdapter, tmp_path: Path, pid: int) -> list[str]:
+    """Spawn with Popen mocked and return the codex argv the adapter built."""
+    proc_mock = _make_popen_mock(pid=pid)
+    with patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock) as popen:
+        adapter.spawn(
+            prompt="hello",
+            workdir=tmp_path,
+            model_config=ModelConfig(model="gpt-5.5", effort="high"),
+            session_id=f"codex-sbx{pid}",
+        )
+    return _inner_cmd(popen.call_args.args[0])
 
 
 # ---------------------------------------------------------------------------
@@ -525,15 +541,7 @@ class TestSandboxPosture:
     """
 
     def _spawn_inner(self, adapter: CodexAdapter, tmp_path: Path, pid: int) -> list[str]:
-        proc_mock = _make_popen_mock(pid=pid)
-        with patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock) as popen:
-            adapter.spawn(
-                prompt="hello",
-                workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-5.5", effort="high"),
-                session_id=f"codex-sbx{pid}",
-            )
-        return _inner_cmd(popen.call_args.args[0])
+        return _spawn_inner_cmd(adapter, tmp_path, pid)
 
     def test_escalated_strategy_bypasses_the_vendor_sandbox(self, tmp_path: Path) -> None:
         adapter = CodexAdapter()
@@ -585,6 +593,96 @@ class TestSandboxPosture:
             self._spawn_inner(adapter, tmp_path, pid=143)
 
         assert any(_BYPASS_SANDBOX_FLAG in record.getMessage() for record in caplog.records)
+
+
+class TestHostIsolationDeclaration:
+    """#5341 - an operator whose host already isolates the process says so.
+
+    Before this, the only way to drop the vendor sandbox was the escalated
+    dangerous-mode strategy, a blunt "bypass everything" switch that says
+    nothing about *why* it is safe. The declaration is narrower and auditable:
+    it names the isolation tier the host provides and the evidence for it, and
+    only a tier at or above ``container`` -- a boundary that actually replaces
+    what bubblewrap would have given -- drops the vendor sandbox.
+    """
+
+    def _adapter(self, tier: SandboxTier, evidence: str = "") -> CodexAdapter:
+        adapter = CodexAdapter()
+        adapter.host_isolation = tier
+        adapter.host_isolation_evidence = evidence
+        return adapter
+
+    def test_the_tiers_that_drop_the_sandbox_are_real_tiers(self) -> None:
+        """The adapter keys on tier names it cannot import; a rename must not pass."""
+        assert set(_TIERS_REPLACING_VENDOR_SANDBOX) <= {tier.value for tier in SandboxTier}
+        assert SandboxTier.NONE.value == _UNDECLARED_HOST_ISOLATION
+
+    def test_undeclared_host_keeps_the_vendor_sandbox(self, tmp_path: Path) -> None:
+        """The constructor default is the weakest tier, so nothing changes by accident."""
+        adapter = CodexAdapter()
+
+        assert adapter.host_isolation == SandboxTier.NONE
+        inner = _spawn_inner_cmd(adapter, tmp_path, pid=160)
+
+        assert _BYPASS_SANDBOX_FLAG not in inner
+        assert tuple(inner[inner.index("--sandbox") : inner.index("--sandbox") + 2]) == _SANDBOXED_ARGS
+
+    def test_process_tier_keeps_the_vendor_sandbox(self, tmp_path: Path) -> None:
+        """Process-level confinement does not supply the namespace bubblewrap needs."""
+        inner = _spawn_inner_cmd(self._adapter(SandboxTier.PROCESS, "seccomp profile"), tmp_path, pid=161)
+
+        assert _BYPASS_SANDBOX_FLAG not in inner
+        assert inner[inner.index("--sandbox") + 1] == "workspace-write"
+
+    @pytest.mark.parametrize("tier", [SandboxTier.CONTAINER, SandboxTier.VM])
+    def test_container_and_vm_tiers_drop_the_vendor_sandbox(self, tmp_path: Path, tier: SandboxTier) -> None:
+        inner = _spawn_inner_cmd(self._adapter(tier, "read-only rootfs"), tmp_path, pid=162)
+
+        assert _BYPASS_SANDBOX_FLAG in inner
+        assert "--sandbox" not in inner
+
+    def test_drop_names_the_tier_and_the_evidence(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        adapter = self._adapter(SandboxTier.CONTAINER, "read-only rootfs, cap-drop ALL")
+
+        with caplog.at_level("WARNING", logger="bernstein.adapters.codex"):
+            _spawn_inner_cmd(adapter, tmp_path, pid=163)
+
+        messages = [record.getMessage() for record in caplog.records]
+        declared = [m for m in messages if "host isolation declared" in m]
+        assert len(declared) == 1
+        assert "tier=container" in declared[0]
+        assert "read-only rootfs, cap-drop ALL" in declared[0]
+
+    def test_drop_without_evidence_says_so(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level("WARNING", logger="bernstein.adapters.codex"):
+            _spawn_inner_cmd(self._adapter(SandboxTier.VM), tmp_path, pid=164)
+
+        declared = [m for m in (r.getMessage() for r in caplog.records) if "host isolation declared" in m]
+        assert len(declared) == 1
+        assert "evidence=none given" in declared[0]
+
+    def test_the_warning_is_emitted_once_per_adapter_not_per_spawn(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A per-spawn warning would bury the one line an operator has to read."""
+        adapter = self._adapter(SandboxTier.CONTAINER, "read-only rootfs")
+
+        with caplog.at_level("WARNING", logger="bernstein.adapters.codex"):
+            first = _spawn_inner_cmd(adapter, tmp_path, pid=165)
+            second = _spawn_inner_cmd(adapter, tmp_path, pid=166)
+
+        assert _BYPASS_SANDBOX_FLAG in first
+        assert _BYPASS_SANDBOX_FLAG in second
+        declared = [m for m in (r.getMessage() for r in caplog.records) if "host isolation declared" in m]
+        assert len(declared) == 1
+
+    def test_the_adapter_advertises_that_it_consumes_the_declaration(self) -> None:
+        """The spawner injects only into adapters carrying this marker."""
+        assert CodexAdapter.consumes_host_isolation is True
+
+    def test_the_declared_strategy_is_unchanged(self) -> None:
+        """The declaration is a second, narrower route -- it does not escalate the matrix."""
+        assert STRATEGY_MATRIX["codex"].dangerous_mode is DangerousModeStrategy.CLI_FLAG
 
 
 class TestSandboxFailureDetection:

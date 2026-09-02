@@ -41,6 +41,20 @@ instead. Upstream's own help text scopes that flag the same way: "Intended
 solely for running in environments that are externally sandboxed." The
 un-escalated default stays ``--sandbox workspace-write``, so a spawn on a
 plain host keeps the vendor sandbox.
+
+The escalated strategy is a blunt instrument, though: it means "no permission
+surface exists to skip" and says nothing about *why* skipping is safe. The
+narrower route is the host-isolation declaration (issue #5341). An operator
+running inside a container or VM they control states the isolation tier the
+host applies and the evidence for it -- ``host_isolation_tier`` and
+``host_isolation_evidence``, resolved through the normal config precedence
+chain -- and the spawner injects it into this adapter, which advertises that
+it consumes one via :attr:`CodexAdapter.consumes_host_isolation`. A declared
+``container`` or ``vm`` tier is a boundary that replaces what bubblewrap would
+have supplied, so the vendor sandbox is dropped; ``process`` and ``none`` are
+not, so it stays. The declaration is written to the HMAC audit chain at the
+dispatch seam, which is what makes it an operator statement on the record
+rather than an unexplained flag flip.
 """
 
 from __future__ import annotations
@@ -97,6 +111,27 @@ _SANDBOXED_ARGS: tuple[str, ...] = ("--sandbox", "workspace-write")
 #: scopes the flag to exactly that case: "Intended solely for running in
 #: environments that are externally sandboxed."
 _BYPASS_SANDBOX_FLAG = "--dangerously-bypass-approvals-and-sandbox"
+
+#: Declared host-isolation tiers that make the vendor sandbox redundant (#5341).
+#:
+#: These are ``SandboxTier`` values, held as plain strings because
+#: ``SandboxTier`` lives in :mod:`bernstein.adapters.capability_profile` and the
+#: ``adapters-independent`` import-linter contract forbids one adapter module
+#: from reaching another. ``SandboxTier`` is a ``StrEnum``, so a member
+#: assigned to :attr:`CodexAdapter.host_isolation` compares equal to its value
+#: here; ``tests/unit/test_adapter_codex.py`` pins these names against the enum
+#: so a rename cannot leave this set silently stale.
+#:
+#: Which tiers belong is an adapter judgement, not a vocabulary one: the vendor
+#: sandbox is dropped only for a boundary that replaces what bubblewrap would
+#: have supplied. ``container`` and ``vm`` do. ``process`` does not -- seccomp
+#: or a restricted user confines the agent's own commands without giving codex
+#: the user namespace it needs -- and neither does ``none``.
+_TIERS_REPLACING_VENDOR_SANDBOX = frozenset({"container", "vm"})
+
+#: The tier assumed when no operator declaration reaches the adapter: no
+#: isolation, so every vendor sandbox stays on.
+_UNDECLARED_HOST_ISOLATION = "none"
 
 
 def _has_codex_auth() -> bool:
@@ -212,6 +247,25 @@ class CodexAdapter(CLIAdapter):
     # ``insufficient_quota`` error codes; the meter records both under
     # the same provider label.
     rate_limit_provider = "openai"
+    #: Marker the spawner looks for before injecting the operator's
+    #: host-isolation declaration (#5341). Only an adapter that owns a vendor
+    #: sandbox has anything to do with one; every other adapter leaves this at
+    #: the inherited default and is never touched by the injection.
+    consumes_host_isolation: bool = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        #: Isolation the host is declared to apply to this process. Carries a
+        #: ``SandboxTier`` value (see ``_TIERS_REPLACING_VENDOR_SANDBOX`` for
+        #: why it is typed as the string rather than the enum). Set by the
+        #: spawner from resolved config; left at "no declaration" otherwise, so
+        #: an adapter constructed directly keeps the vendor sandbox.
+        self.host_isolation: str = _UNDECLARED_HOST_ISOLATION
+        #: The operator's description of that isolation, recorded verbatim.
+        self.host_isolation_evidence: str = ""
+        # The drop is one posture decision, not a per-spawn one: warning on
+        # every spawn would bury the single line an operator has to read.
+        self._host_isolation_warned = False
 
     def _dangerous_mode(self) -> DangerousModeStrategy:
         """Return the declared dangerous-mode strategy for this adapter."""
@@ -229,20 +283,50 @@ class CodexAdapter(CLIAdapter):
         and the posture it pins is the sandboxed one -- so a default spawn
         keeps ``--sandbox workspace-write``. An operator whose runner is
         already isolated declares ``ALWAYS_ON`` instead.
+
+        The second route is the operator's host-isolation declaration
+        (#5341): a host declared at ``container`` or ``vm`` supplies the
+        boundary the vendor sandbox would have supplied, so the vendor
+        sandbox is redundant rather than merely inconvenient. ``process``
+        and ``none`` are not that boundary and keep it.
         """
-        return self._dangerous_mode() is DangerousModeStrategy.ALWAYS_ON
+        return self._dangerous_mode() is DangerousModeStrategy.ALWAYS_ON or self.host_isolation_drops_vendor_sandbox()
+
+    def host_isolation_drops_vendor_sandbox(self) -> bool:
+        """Whether the declared host isolation supersedes Codex's own sandbox.
+
+        Part of the ``consumes_host_isolation`` contract rather than an
+        internal detail: the spawner records whether the declaration it
+        injected actually dropped a sandbox, and only the adapter knows which
+        tiers replace the one it ships.
+        """
+        return str(self.host_isolation) in _TIERS_REPLACING_VENDOR_SANDBOX
+
+    def _warn_host_isolation_drop_once(self) -> None:
+        """Name the declaration the drop rests on, once per adapter instance."""
+        if self._host_isolation_warned:
+            return
+        self._host_isolation_warned = True
+        logger.warning(
+            "codex: vendor sandbox dropped; host isolation declared tier=%s evidence=%s",
+            str(self.host_isolation),
+            self.host_isolation_evidence or "none given",
+        )
 
     def _sandbox_args(self) -> tuple[str, ...]:
         """Return the sandbox argv for one spawn, derived from the declaration."""
         if not self._sandbox_bypassed():
             return _SANDBOXED_ARGS
-        logger.warning(
-            "CodexAdapter: dangerous_mode=%s, so this spawn passes %s -- model-issued "
-            "shell commands run with no Codex sandbox. Declare this only when the "
-            "runner itself provides the isolation.",
-            DangerousModeStrategy.ALWAYS_ON,
-            _BYPASS_SANDBOX_FLAG,
-        )
+        if self.host_isolation_drops_vendor_sandbox():
+            self._warn_host_isolation_drop_once()
+        if self._dangerous_mode() is DangerousModeStrategy.ALWAYS_ON:
+            logger.warning(
+                "CodexAdapter: dangerous_mode=%s, so this spawn passes %s -- model-issued "
+                "shell commands run with no Codex sandbox. Declare this only when the "
+                "runner itself provides the isolation.",
+                DangerousModeStrategy.ALWAYS_ON,
+                _BYPASS_SANDBOX_FLAG,
+            )
         return (_BYPASS_SANDBOX_FLAG,)
 
     def spawn(
