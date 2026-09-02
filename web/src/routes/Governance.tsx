@@ -1,9 +1,10 @@
 // Governance coverage panel (#5068, slice 1 of #5067).
 //
 // The question an operator arrives with is "what can this installation prove
-// about what its agents did?". Every other governance console answers it with
-// a single number that is green by construction. This one answers it with
-// coverage, and it holds three rules that keep the answer honest:
+// about what its agents did?". A single summary number cannot answer it: it
+// hides which population it was taken over and it reads the same whether a
+// control was measured and failed or never measured at all. So the screen
+// answers with coverage, under three rules:
 //
 //   * every number is a fraction over a denominator that is named on screen,
 //     so "34%" can never mean "34% of something we did not say";
@@ -11,8 +12,8 @@
 //     plus the reason - never as a measured 0%. The two failures are
 //     different and the screen must not blur them;
 //   * no bar is coloured by its own value. There is no score, no grade and no
-//     traffic light, because a colour that turns green is a claim the audit
-//     chain has not made.
+//     traffic light: a colour that turns green would assert a threshold this
+//     screen has no evidence for.
 //
 // This slice renders a checked-in fixture. Computing the fractions from the
 // chain is #5067 slice 2; the "not covered" list and receipt verification are
