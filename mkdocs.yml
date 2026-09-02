@@ -473,6 +473,7 @@ nav:
           - A2A JSON-RPC server surface: operations/a2a-server.md
           - Datasources & query receipts: operations/datasources.md
           - Verifiable audit receipts: security/audit-receipt.md
+          - Evidence envelope: security/evidence-envelope.md
           - Gate adjudication records: operations/gate-adjudication.md
           - Agent run manifest: operations/run-manifest.md
           - Verification evidence bundles: operations/evidence-bundles.md
