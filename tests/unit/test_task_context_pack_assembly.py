@@ -83,9 +83,7 @@ def test_an_assembled_pack_rebuilds_byte_identically(tmp_path: Path) -> None:
         env["PYTHONHASHSEED"] = seed
         env["PYTHONPATH"] = SRC_DIR
         outputs.append(
-            subprocess.run(
-                [sys.executable, str(script), str(repo)], capture_output=True, env=env, check=True
-            ).stdout
+            subprocess.run([sys.executable, str(script), str(repo)], capture_output=True, env=env, check=True).stdout
         )
 
     assert outputs[0] == outputs[1]
@@ -120,9 +118,12 @@ def test_a_tampered_entry_no_longer_matches_the_recorded_hash(tmp_path: Path) ->
     assert tampered.content_address() != pack.content_address()
     assert recomputed.entries[0].content_sha256 != recorded_sha
     # Re-deriving the untampered pack offline still reproduces the record.
-    assert build_context_receipt(
-        [(PACK_SECTION_LABEL, assemble_context_pack(repo, ["src/model.py"]).render())]
-    ).entries[0].content_sha256 == recorded_sha
+    assert (
+        build_context_receipt([(PACK_SECTION_LABEL, assemble_context_pack(repo, ["src/model.py"]).render())])
+        .entries[0]
+        .content_sha256
+        == recorded_sha
+    )
 
 
 # 4 -------------------------------------------------------------------------
@@ -136,7 +137,7 @@ def test_a_truncated_list_says_so_inside_the_pack(tmp_path: Path) -> None:
 
     pack = assemble_context_pack(repo, ["src/hub.py"], item_limit=3)
     payload = json.loads(pack.canonical_bytes())
-    co_change = [s for s in payload["sections"] if s["kind"] == "co_change"][0]
+    co_change = next(s for s in payload["sections"] if s["kind"] == "co_change")
 
     assert len(co_change["items"]) == 3
     assert co_change["truncated"] == {"kept": 3, "available": 12}
