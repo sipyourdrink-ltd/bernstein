@@ -93,6 +93,7 @@ if TYPE_CHECKING:
     from bernstein.core.quality_gates import QualityGatesConfig
     from bernstein.core.sandbox import DockerSandbox
     from bernstein.core.secrets import SecretsConfig
+    from bernstein.core.security.executor_admission import AdmissionPolicy
     from bernstein.core.tenanting import TenantConfig
     from bernstein.core.workspace import Workspace
     from bernstein.core.worktree import WorktreeSetupConfig
@@ -430,6 +431,12 @@ class SeedConfig:
     model_policy: dict[str, Any] | None = None
     role_model_policy: dict[str, dict[str, Any]] | None = None
     compliance: ComplianceConfig | None = None
+    # Issue #4907: parsed ``admission:`` block - the declarative
+    # allow/deny policy over adapters, models, endpoints and sandbox
+    # tiers. Validated here so a typo fails the run at config load
+    # rather than as a refused spawn mid-run; enforcement itself reads
+    # the same file at spawn time.
+    admission: AdmissionPolicy | None = None
     visual: VisualConfig | None = None
     sandbox: DockerSandbox | None = None
     bridges: BridgeConfigSet | None = None

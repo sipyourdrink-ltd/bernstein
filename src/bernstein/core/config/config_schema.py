@@ -211,6 +211,47 @@ class LocalEndpointProfileSchema(BaseModel):
     timeout: float = Field(default=120.0, gt=0)
 
 
+class AdmissionRuleSchema(BaseModel):
+    """One ordered rule of the ``admission`` block (issue #4907).
+
+    Every axis is a list of shell globs; an axis left unset does not
+    constrain the rule. Deny rules are evaluated before allow rules, and
+    a spawn matching no allow rule is refused, so the block is fail
+    closed by construction.
+
+    The authoritative parser is
+    :meth:`bernstein.core.security.executor_admission.AdmissionPolicy.from_mapping`;
+    this schema mirrors it so ``bernstein.yaml`` validates the same way
+    through ``load_and_validate`` as it parses through ``parse_seed``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, description="Rule identifier, unique within the block.")
+    effect: Literal["allow", "deny"]
+    roles: list[str] | None = None
+    adapters: list[str] | None = None
+    models: list[str] | None = None
+    endpoints: list[str] | None = None
+    sandboxes: list[str] | None = None
+    task_types: list[str] | None = None
+
+
+class AdmissionSchema(BaseModel):
+    """The ``admission`` block: which executors this repository may use.
+
+    ``mode`` mirrors the capability matrix's enforcement vocabulary:
+    ``enforce`` refuses a spawn the policy does not admit, ``warn``
+    admits it but records the refusing rule, ``off`` records the
+    evaluation only.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["enforce", "warn", "off"] = "enforce"
+    rules: list[AdmissionRuleSchema] = Field(default_factory=list)
+
+
 class EscalationLadderStep(BaseModel):
     """One step of ``role_model_policy.<role>.ladder`` (issue #4855).
 
@@ -935,6 +976,13 @@ class BernsteinConfig(BaseModel):
         description=(
             "Named OpenAI-compatible endpoint profiles for local runtimes. "
             "Referenced from role_model_policy.<role>.endpoint."
+        ),
+    )
+    admission: AdmissionSchema | None = Field(
+        default=None,
+        description=(
+            "Declarative allow/deny policy over the adapters, models, endpoints "
+            "and sandbox tiers this repository may spawn on."
         ),
     )
     role_model_policy: dict[str, RoleModelPolicyEntry] | None = None
