@@ -14,6 +14,7 @@ replaying the same ledger arrive at byte-identical projections.
 
 from __future__ import annotations
 
+import socket
 import time
 import uuid
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ from bernstein.core.persistence.work_ledger import (
     KIND_TASK_SCHEDULED,
     LedgerReader,
     LedgerState,
+    RunJournalState,
     WorkLedger,
     replay_state,
     run_ledger_dir,
@@ -113,14 +115,30 @@ class RunService:
 
     # -- lifecycle ----------------------------------------------------------
 
-    def submit(self, goal: str, task_ids: Sequence[str], *, run_id: str | None = None) -> RunHandle:
+    def submit(
+        self,
+        goal: str,
+        task_ids: Sequence[str],
+        *,
+        run_id: str | None = None,
+        parent_run_id: str = "",
+    ) -> RunHandle:
         """Open a run: seed the ledger, persist the descriptor, sign a receipt.
 
         The goal is decomposed into *task_ids* by the caller (the planner); the
         ledger records ``run.open`` plus one ``task.scheduled`` per task. The
         goal text itself never enters the portable ledger -- only its digest.
+
+        Args:
+            goal: The run's goal text; only its digest reaches the ledger.
+            task_ids: The task ids the goal decomposed into.
+            run_id: Explicit run id; generated when omitted.
+            parent_run_id: The run that spawned this one, when there is one.
+                Recorded on ``run.open`` so ``bernstein runs report`` can
+                attribute a child run to its parent without a side table.
         """
         run_id = validate_run_id(run_id or f"run-{uuid.uuid4().hex[:12]}")
+        parent_run_id = validate_run_id(parent_run_id) if parent_run_id else ""
         descriptor = RunDescriptor(
             run_id=run_id,
             goal=goal,
@@ -131,14 +149,16 @@ class RunService:
         run_dir(self._sdd, run_id).mkdir(parents=True, exist_ok=True)
         ledger = WorkLedger.open(self._ledger_dir(run_id))
         try:
-            ledger.append(
-                kind=KIND_RUN_OPEN,
-                payload={
-                    "run_id": run_id,
-                    "goal_sha256": descriptor.goal_sha256,
-                    "task_count": len(descriptor.task_ids),
-                },
-            )
+            open_payload: dict[str, object] = {
+                "run_id": run_id,
+                "goal_sha256": descriptor.goal_sha256,
+                "task_count": len(descriptor.task_ids),
+                "state": RunJournalState.OPEN.value,
+                "host": socket.gethostname(),
+            }
+            if parent_run_id:
+                open_payload["parent_run_id"] = parent_run_id
+            ledger.append(kind=KIND_RUN_OPEN, payload=open_payload)
             for task_id in descriptor.task_ids:
                 ledger.append(kind=KIND_TASK_SCHEDULED, task_id=task_id)
             head = ledger.head_hash
@@ -238,7 +258,10 @@ class RunService:
         if not state.run_closed:
             ledger = WorkLedger.open(self._ledger_dir(run_id))
             try:
-                ledger.append(kind=KIND_RUN_CLOSED, payload={"run_id": run_id})
+                ledger.append(
+                    kind=KIND_RUN_CLOSED,
+                    payload={"run_id": run_id, "state": RunJournalState.CLOSED.value},
+                )
             finally:
                 ledger.close()
         head, count = self._head_and_count(run_id)
@@ -285,7 +308,11 @@ class RunService:
             try:
                 ledger.append(
                     kind=KIND_RUN_CLOSED,
-                    payload={"run_id": run_id, "outcome": resolved.value},
+                    payload={
+                        "run_id": run_id,
+                        "outcome": resolved.value,
+                        "state": RunJournalState.CLOSED.value,
+                    },
                 )
             finally:
                 ledger.close()

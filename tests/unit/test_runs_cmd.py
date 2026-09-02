@@ -63,7 +63,22 @@ class TestRunsReportJson:
         payload = json.loads(result.output)
         assert list(payload.keys()) == ["runs"]
         row = payload["runs"][0]
-        assert set(row.keys()) == {"run_id", "branch", "outcome", "evidence", "started_at"}
+        # The original five names are the stable contract and must stay; the
+        # run-journal fields (#5127) extend the row without renaming any of them.
+        assert set(row.keys()) == {
+            "run_id",
+            "branch",
+            "outcome",
+            "evidence",
+            "started_at",
+            "state",
+            "attempt_count",
+            "ended_at",
+            "elapsed_seconds",
+            "host",
+            "parent_run_id",
+            "steps",
+        }
         assert row["run_id"] == "run-pr"
         assert row["branch"] == "fix/thing"
         assert row["outcome"] == "pr-opened"

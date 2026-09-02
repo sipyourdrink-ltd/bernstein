@@ -73,6 +73,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.persistence.journal import GENESIS_HASH
@@ -135,6 +136,64 @@ _KIND_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
 #: Task ids share the git-ref-safe alphabet used across the persistence
 #: layer (worktree ids, snapshot ids).
 _TASK_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{0,64}$")
+
+#: The ``run.`` and ``task.`` kind families are reserved: they are the durable
+#: run journal ``bernstein runs report`` classifies, so :meth:`WorkLedger.append`
+#: admits only the members declared above. Every other family (``admission.``,
+#: ``mission.``, anything a newer writer invents) keeps the open regex contract
+#: -- those ledgers own their own vocabularies.
+RUN_KINDS = frozenset({KIND_RUN_OPEN, KIND_RUN_RESUMED, KIND_RUN_CLOSED})
+TASK_KINDS = frozenset(
+    {
+        KIND_TASK_SCHEDULED,
+        KIND_TASK_STARTED,
+        KIND_TASK_COMPLETED,
+        KIND_TASK_FAILED,
+        KIND_TASK_ABANDONED,
+        KIND_TASK_SUSPENDED,
+        KIND_TASK_RESUMED,
+    }
+)
+_RESERVED_KIND_PREFIXES = ("run.", "task.")
+_RESERVED_KINDS = RUN_KINDS | TASK_KINDS
+
+
+class RunJournalState(StrEnum):
+    """Lifecycle state a ``run.*`` entry records for the run as a whole.
+
+    Written on the entry that causes the transition and read back by
+    :func:`bernstein.core.persistence.runs_report.classify_ledger_dir`, so
+    the state is a recorded fact rather than something a reader re-derives
+    from which kinds happen to be present.
+    """
+
+    OPEN = "open"
+    RESUMED = "resumed"
+    CLOSED = "closed"
+
+
+class RunErrorKind(StrEnum):
+    """Infrastructure deaths a run wrap-up may attribute its ending to.
+
+    The finished-run classifier maps exactly these values to
+    ``infra-error``. Keeping the set closed *at append* is the point: a
+    typo (``"adaptor"``) used to persist happily and then read back as an
+    ordinary wrap-up, silently reclassifying an adapter death as
+    ``no-changes``.
+    """
+
+    ADAPTER = "adapter"
+    TRANSPORT = "transport"
+
+
+#: Enumerated payload fields on a run-journal entry, and the closed set each
+#: one must draw from. ``error_kind`` also admits ``""`` -- the recorded
+#: absence of an infrastructure death.
+_RUN_JOURNAL_ENUMS: dict[str, type[StrEnum]] = {
+    "state": RunJournalState,
+    "error_kind": RunErrorKind,
+}
+_RUN_JOURNAL_OPTIONAL: frozenset[str] = frozenset({"error_kind"})
 
 
 # ---------------------------------------------------------------------------
@@ -493,6 +552,25 @@ def verify_entry_rows(rows: Iterable[dict[str, Any]]) -> LedgerVerification:
     return LedgerVerification(ok=not errors, head_hash=prev_hash, entries=entries, errors=errors)
 
 
+def _validate_run_journal_payload(kind: str, payload: dict[str, Any]) -> None:
+    """Reject an out-of-vocabulary enumerated field on a run-journal entry.
+
+    Raises:
+        LedgerError: When ``state`` or ``error_kind`` carries a value outside
+            its closed enumeration.
+    """
+    for name, enum_cls in _RUN_JOURNAL_ENUMS.items():
+        if name not in payload:
+            continue
+        raw = payload[name]
+        if raw == "" and name in _RUN_JOURNAL_OPTIONAL:
+            continue
+        allowed = sorted(member.value for member in enum_cls)
+        if not isinstance(raw, str) or raw not in allowed:
+            msg = f"invalid {name} {raw!r} on a {kind} entry: must be one of {allowed}"
+            raise LedgerError(msg)
+
+
 # ---------------------------------------------------------------------------
 # WorkLedger (writer)
 # ---------------------------------------------------------------------------
@@ -574,9 +652,15 @@ class WorkLedger:
         entry hash is computed, so the persisted chain verifies everywhere
         without ever carrying a secret.
 
+        Kinds in the reserved ``run.``/``task.`` families must be declared
+        members, and a run-journal entry's ``state``/``error_kind`` payload
+        fields must draw from :class:`RunJournalState` /
+        :class:`RunErrorKind`: the durable run record's enumerations are
+        enforced here, at the write, not left for a reader to interpret.
+
         Raises:
-            LedgerError: On a malformed kind/task id, a closed ledger, or a
-                failed file write.
+            LedgerError: On a malformed kind/task id, an out-of-vocabulary
+                run-journal field, a closed ledger, or a failed file write.
         """
         if self._closed:
             msg = f"ledger at {self._dir} is closed"
@@ -584,11 +668,17 @@ class WorkLedger:
         if not _KIND_RE.match(kind):
             msg = f"invalid ledger kind {kind!r}: must match {_KIND_RE.pattern}"
             raise LedgerError(msg)
+        if kind.startswith(_RESERVED_KIND_PREFIXES) and kind not in _RESERVED_KINDS:
+            msg = f"invalid ledger kind {kind!r}: the reserved run journal admits only {sorted(_RESERVED_KINDS)}"
+            raise LedgerError(msg)
         if not _TASK_ID_RE.match(task_id):
             msg = f"invalid task_id {task_id!r}: must match {_TASK_ID_RE.pattern}"
             raise LedgerError(msg)
 
-        clean_payload, redactions = _redact_payload(dict(payload or {}))
+        raw_payload = dict(payload or {})
+        if kind in RUN_KINDS:
+            _validate_run_journal_payload(kind, raw_payload)
+        clean_payload, redactions = _redact_payload(raw_payload)
 
         with self._lock:
             prev_hash = self._tip_hash
@@ -1026,12 +1116,16 @@ __all__ = [
     "KIND_TASK_STARTED",
     "KIND_TASK_SUSPENDED",
     "LEDGER_SCHEMA_VERSION",
+    "RUN_KINDS",
+    "TASK_KINDS",
     "ChainRelation",
     "LedgerEntry",
     "LedgerError",
     "LedgerReader",
     "LedgerState",
     "LedgerVerification",
+    "RunErrorKind",
+    "RunJournalState",
     "TaskState",
     "WorkLedger",
     "canonical_entry_payload",

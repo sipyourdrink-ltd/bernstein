@@ -41,6 +41,7 @@ from bernstein.core.persistence.work_ledger import (
     LedgerError,
     LedgerReader,
     LedgerState,
+    RunJournalState,
     WorkLedger,
     replay_state,
     run_ledger_dir,
@@ -379,7 +380,11 @@ def ledger_resume_cmd(run_id: str, workdir: Path | None, output_json: bool, dry_
         ledger = WorkLedger.open(ledger_dir)
         ledger.append(
             kind=KIND_RUN_RESUMED,
-            payload={"from_head": state.head_hash, "resume_nonce": uuid.uuid4().hex},
+            payload={
+                "from_head": state.head_hash,
+                "resume_nonce": uuid.uuid4().hex,
+                "state": RunJournalState.RESUMED.value,
+            },
         )
     except LedgerError as exc:
         console.print(f"[red]Failed to record the resume entry:[/red] {exc}")
