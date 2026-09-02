@@ -100,7 +100,7 @@ class DirectoryPrincipal:
     display_name: str = ""
     email: str = ""
     kind: str = "agent"
-    attributes: Mapping[str, str] = field(default_factory=dict)
+    attributes: Mapping[str, str] = field(default_factory=dict[str, str])
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,10 +209,10 @@ class DirectoryBridge:
 
     adapter: DirectoryAdapter
     chain: AuditChainStore
-    role_mapping: Mapping[str, str] = field(default_factory=dict)
+    role_mapping: Mapping[str, str] = field(default_factory=dict[str, str])
     cache_ttl_s: float = _DEFAULT_CACHE_TTL_S
     clock: Callable[[], float] = time.time
-    _cache: dict[str, _CacheEntry] = field(default_factory=dict, init=False, repr=False)
+    _cache: dict[str, _CacheEntry] = field(default_factory=dict[str, _CacheEntry], init=False, repr=False)
 
     def resolve(self, principal_ref: str) -> DirectoryResolution:
         """Resolve ``principal_ref`` and append the answer to the audit chain.
@@ -270,7 +270,10 @@ class DirectoryBridge:
         try:
             return self.adapter.revocation(principal.principal_id)
         except Exception as exc:
-            msg = f"directory adapter {self.adapter.name!r} could not report revocation for {principal.principal_id!r}: {exc}"
+            msg = (
+                f"directory adapter {self.adapter.name!r} could not report revocation "
+                f"for {principal.principal_id!r}: {exc}"
+            )
             raise DirectoryBridgeError(msg) from exc
 
     def _build(

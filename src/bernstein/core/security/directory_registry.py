@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -54,6 +54,7 @@ class DirectoryAdapterFactory(Protocol):
 
     def __call__(self, **kwargs: Any) -> DirectoryAdapter:
         """Construct a directory adapter with the supplied configuration."""
+        ...
 
 
 class DuplicateDirectoryAdapterError(ValueError):
@@ -277,7 +278,7 @@ def _register_plugin_result(
     """Register one plugin's return value; see the hookspec for the shapes."""
     if result is None:
         return 0
-    items = result if isinstance(result, list) else [result]
+    items: list[Any] = cast("list[Any]", result) if isinstance(result, list) else [result]
     count = 0
     for raw in items:
         registration = _coerce_registration(raw, plugin_name)
@@ -307,18 +308,18 @@ def _coerce_registration(raw: Any, plugin_name: str) -> DirectoryAdapterRegistra
     """Normalise a plugin-supplied registration into a registration object."""
     if isinstance(raw, DirectoryAdapterRegistration):
         return raw
-    if isinstance(raw, tuple) and len(raw) == 2:
-        name, factory = raw
+    if isinstance(raw, tuple) and len(cast("tuple[Any, ...]", raw)) == 2:
+        name, factory = cast("tuple[Any, Any]", raw)
         if isinstance(name, str) and callable(factory):
             return DirectoryAdapterRegistration(
                 name=name,
-                factory=factory,
+                factory=cast("DirectoryAdapterFactory", factory),
                 source="plugin",
                 provenance=plugin_name,
             )
     log.warning(
         "Plugin %r provide_directory_adapter returned unrecognised value %r; ignoring.",
         plugin_name,
-        raw,
+        cast("object", raw),
     )
     return None
