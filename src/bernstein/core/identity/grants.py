@@ -300,7 +300,7 @@ class GrantSigner:
 
         return (
             serialization.load_pem_private_key(self._private_pem, password=None)
-            .sign(_canonical(body).encode())  # type: ignore[union-attr]
+            .sign(_canonical(body).encode())  # type: ignore[union-attr, call-arg]
             .hex()
         )
 
@@ -317,7 +317,7 @@ def verify_grant_signature(public_key_pem: bytes | str, body: dict[str, Any], si
     pem = public_key_pem.encode() if isinstance(public_key_pem, str) else public_key_pem
     try:
         key = serialization.load_pem_public_key(pem)
-        key.verify(bytes.fromhex(signature_hex), _canonical(body).encode())  # type: ignore[union-attr]
+        key.verify(bytes.fromhex(signature_hex), _canonical(body).encode())  # type: ignore[union-attr, call-arg]
     except (InvalidSignature, ValueError, TypeError):
         return False
     return True

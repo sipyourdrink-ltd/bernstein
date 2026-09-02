@@ -284,6 +284,7 @@ nav:
           - Recipes: operations/recipes.md
           - Worktrees: operations/worktrees.md
           - Snapshot undo: git/snapshot-undo.md
+          - Task revert: operations/task-revert.md
           - Session handoff: operations/session-handoff.md
           - Routine scenarios: routine-scenarios.md
           - Per-step routing: workflows/per-step-routing.md
@@ -435,6 +436,7 @@ nav:
           - Security operations: operations/security.md
           - Hardening: security/security-hardening.md
           - Governance: operations/governance.md
+          - Govern ingest: operations/govern-ingest.md
           - Secrets & creds: operations/secrets.md
           - Secrets broker: security/secrets-broker.md
           - Env isolation: operations/env-isolation.md
@@ -508,6 +510,7 @@ nav:
           - ACP server and client roles: interop/acp.md
           - A2A signed agent cards: architecture/a2a.md
           - A2A capability cards & lineage interop: interop/a2a.md
+          - Authority envelope: interop/authority-envelope.md
           - Eventing v2 (unified feed): events/grammar.md
           - .well-known manifest: protocols/well-known-manifest.md
           - SPIFFE workload identity: reference/spiffe-workload-identity.md
