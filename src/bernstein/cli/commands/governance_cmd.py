@@ -17,6 +17,12 @@ Generate a signed, lineage-bearing govern plan representing the diff between
 declared posture (playbook) and enumerated environment (inventory). The plan
 contains one entry per mismatch (FORBIDDEN, ABSENT, WIDER_CEILING, UNKNOWN)
 and is anchored in the lineage spine for offline verification.
+
+    bernstein governance posture [--workdir <path>] [--json-output]
+
+Score the install's posture from chain-evidenced facts only. The number is a
+projection of the lineage log; no configuration file is read, so switching a
+control on cannot move it.
 """
 
 from __future__ import annotations
@@ -53,6 +59,7 @@ def governance_group() -> None:
     \b
       bernstein governance verify <run> --bindings b.json --ledger ledger.jsonl
       bernstein govern plan --playbook p.json --inventory i.json [--workdir w]
+      bernstein governance posture [--workdir w] [--json-output]
     """
 
 
@@ -210,6 +217,49 @@ def governance_plan_cmd(playbook_file: str, inventory_file: str, workdir: str) -
         )
 
     console_obj.print(table)
+    raise SystemExit(0)
+
+
+@governance_group.command("posture")
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option(
+    "--json-output",
+    "as_json",
+    is_flag=True,
+    help="Print the signed canonical document instead of a table.",
+)
+def governance_posture_cmd(workdir: str, as_json: bool) -> None:
+    """Score this install's posture from chain-evidenced facts only.
+
+    The score consumes the per-control coverage report over the lineage log and
+    reads no configuration, so enabling a control cannot raise it; producing
+    evidence for that control can. The document names every contributing chain
+    event, the weights version, and its own denominator -- the weight that was
+    measurable, not the weight that exists.
+
+    Exit 0 always. A score is a measurement, not a gate.
+    """
+    from bernstein.core.security.security_posture import (
+        collect_evidenced_posture,
+        evidenced_posture_json,
+        format_evidenced_posture,
+    )
+
+    root = Path(workdir).resolve()
+
+    if as_json:
+        click.echo(evidenced_posture_json(root, hmac_key=_load_hmac_key()))
+        raise SystemExit(0)
+
+    console.print()
+    console.print(format_evidenced_posture(collect_evidenced_posture(root)))
     raise SystemExit(0)
 
 

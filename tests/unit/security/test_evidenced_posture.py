@@ -178,9 +178,7 @@ def test_denominator_counts_only_measurable_controls() -> None:
 
 # 7 -- zero over zero is absent evidence, not a perfect score.
 def test_absent_score_when_nothing_was_measurable() -> None:
-    posture = compute_evidenced_posture(
-        [_result("unmeasurable-one", ControlCoverageStatus.NOT_EVIDENCEABLE)]
-    )
+    posture = compute_evidenced_posture([_result("unmeasurable-one", ControlCoverageStatus.NOT_EVIDENCEABLE)])
 
     assert posture.score is None
     assert posture.measurable_controls == 0

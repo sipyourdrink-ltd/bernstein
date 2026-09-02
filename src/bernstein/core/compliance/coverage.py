@@ -51,6 +51,12 @@ class ControlCoverageResult:
         evidence_summary: Human-readable summary of evidence found.
         missing_inputs: List of required inputs not satisfied by the chain.
         reason: Brief explanation of the status determination.
+        evidence_refs: Content hashes of the chain entries that satisfied the
+            required behaviour, sorted and de-duplicated. Empty when the
+            control is not evidenced. A consumer that scores this result has to
+            name the events it scored, and re-deriving the control-to-event
+            match downstream would be a second, divergent judgement of the
+            same chain.
     """
 
     policy_id: str
@@ -59,6 +65,7 @@ class ControlCoverageResult:
     evidence_summary: str
     missing_inputs: list[str]
     reason: str
+    evidence_refs: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------
@@ -180,11 +187,16 @@ def assess_control_coverage(
         One :class:`ControlCoverageResult` per registered control, sorted by
         ``policy_id`` then ``control_id``.
     """
-    observed_behaviours: set[str] = set()
     observed_artefact_kinds: set[str] = set()
+    #: behaviour -> content hashes of the entries that satisfy it. Built once so
+    #: the numerator of any downstream score and the events it names come from
+    #: the same match.
+    entries_by_behaviour: dict[str, set[str]] = {}
     for entry in entries:
         observed_artefact_kinds.add(entry.artefact_kind)
-        observed_behaviours.update(_behaviour_from_entry(entry))
+        for behaviour in _behaviour_from_entry(entry):
+            entries_by_behaviour.setdefault(behaviour, set()).add(entry.content_hash)
+    observed_behaviours = set(entries_by_behaviour)
 
     results: list[ControlCoverageResult] = []
     for policy_id, spec in sorted(CONTROL_EVENT_MAP.items()):
@@ -208,6 +220,7 @@ def assess_control_coverage(
         missing = [b for b in required if b not in observed_behaviours]
 
         if not missing:
+            evidence_refs = sorted({h for b in required for h in entries_by_behaviour.get(b, set())})
             results.append(
                 ControlCoverageResult(
                     policy_id=policy_id,
@@ -218,6 +231,7 @@ def assess_control_coverage(
                     ),
                     missing_inputs=[],
                     reason="Required chain events observed in the evidence set.",
+                    evidence_refs=tuple(evidence_refs),
                 )
             )
         elif artefact_kind and artefact_kind in observed_artefact_kinds:
