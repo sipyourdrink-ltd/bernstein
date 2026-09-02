@@ -25,6 +25,7 @@ import asyncio
 import hashlib
 import json
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import click
@@ -173,12 +174,16 @@ def governance_plan_cmd(playbook_file: str, inventory_file: str, workdir: str) -
         timestamp=timestamp,
     )
 
-    # Also persist the plan JSON to a file in the governance decisions dir
+    # Persist the plan JSON carrying the anchor it was just recorded under, so
+    # the artifact on disk names its own decision record. ``govern apply``
+    # refuses a diff whose decision record it cannot find in the journal, and
+    # a plan file that dropped the anchor could never be applied.
+    anchored_plan = replace(plan, journal_entry_hash=anchor_hash)
     decisions_dir = lineage_root / "govern-plan"
     decisions_dir.mkdir(parents=True, exist_ok=True)
     plan_path = decisions_dir / "plan.json"
     plan_path.write_text(
-        json.dumps(plan.to_dict(), ensure_ascii=False, indent=2),
+        json.dumps(anchored_plan.to_dict(), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
