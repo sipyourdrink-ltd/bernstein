@@ -3,19 +3,11 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
-from bernstein.core.agent_identity import (
-    _CREDENTIAL_TOKEN_TYPES,
-    AgentCredential,
-    AgentIdentity,
-    AgentIdentityStatus,
-    AgentIdentityStore,
-    IdentityAuditEvent,
-    TokenType,
-    _hash_token,
-    permissions_for_role,
-)
+
+from bernstein.core.agents.agent_identity import AgentIdentityStore
 
 
 @pytest.fixture
@@ -73,24 +65,32 @@ class TestScopeValidationWithParent:
         """A child with allowed_files subset of parent is accepted."""
         parent, _ = store.create_identity("parent-1", "manager", allowed_files=["src/a.py", "src/b.py", "src/c.py"])
         child_files = ["src/a.py", "src/b.py"]
-        identity, _ = store.create_identity("child-1", "backend", parent_identity_id=parent.id, allowed_files=child_files)
+        identity, _ = store.create_identity(
+            "child-1", "backend", parent_identity_id=parent.id, allowed_files=child_files
+        )
         assert identity.allowed_files == ["src/a.py", "src/b.py"]
 
-    def test_parent_scope_validation_refuses_unrestricted_from_restricted_parent(self, store: AgentIdentityStore) -> None:
+    def test_parent_scope_validation_refuses_unrestricted_from_restricted_parent(
+        self, store: AgentIdentityStore
+    ) -> None:
         """A child with allowed_files=[] from a parent with restrictions is refused."""
         parent, _ = store.create_identity("parent-1", "manager", allowed_files=["src/a.py"])
         child_files = []  # unrestricted
         with pytest.raises(ValueError, match="child allowed_files .* are not a subset of"):
             store.create_identity("child-1", "backend", parent_identity_id=parent.id, allowed_files=child_files)
 
-    def test_parent_scope_validation_refuses_wider_task_ids_when_parent_has_empty_task_ids(self, store: AgentIdentityStore) -> None:
+    def test_parent_scope_validation_refuses_wider_task_ids_when_parent_has_empty_task_ids(
+        self, store: AgentIdentityStore
+    ) -> None:
         """Parent with empty task_ids means unrestricted → child can be anything."""
         parent, _ = store.create_identity("parent-1", "manager", task_ids=[])
         child_task_ids = ["t-1", "t-2"]
         identity, _ = store.create_identity("child-1", "backend", parent_identity_id=parent.id, task_ids=child_task_ids)
         assert identity.task_ids == ["t-1", "t-2"]
 
-    def test_parent_scope_validation_accepts_narrowing_task_ids_when_parent_has_task_ids(self, store: AgentIdentityStore) -> None:
+    def test_parent_scope_validation_accepts_narrowing_task_ids_when_parent_has_task_ids(
+        self, store: AgentIdentityStore
+    ) -> None:
         """Child with fewer task_ids than parent is accepted."""
         parent, _ = store.create_identity("parent-1", "manager", task_ids=["t-1", "t-2", "t-3"])
         child_task_ids = ["t-1", "t-2"]
@@ -101,19 +101,27 @@ class TestScopeValidationWithParent:
         """Child with allowed_files exactly matching parent is accepted."""
         parent, _ = store.create_identity("parent-1", "manager", allowed_files=["src/a.py", "src/b.py"])
         child_files = ["src/a.py", "src/b.py"]
-        identity, _ = store.create_identity("child-1", "backend", parent_identity_id=parent.id, allowed_files=child_files)
+        identity, _ = store.create_identity(
+            "child-1", "backend", parent_identity_id=parent.id, allowed_files=child_files
+        )
         assert identity.allowed_files == ["src/a.py", "src/b.py"]
 
-    def test_parent_scope_validation_accepts_unrestricted_child_from_unrestricted_parent(self, store: AgentIdentityStore) -> None:
+    def test_parent_scope_validation_accepts_unrestricted_child_from_unrestricted_parent(
+        self, store: AgentIdentityStore
+    ) -> None:
         """A child with allowed_files=[] from a parent with no restriction is accepted."""
         parent, _ = store.create_identity("parent-1", "manager", allowed_files=[])
         identity, _ = store.create_identity("child-1", "backend", parent_identity_id=parent.id, allowed_files=[])
         assert identity.allowed_files == []
 
-    def test_parent_scope_validation_accepts_narrowing_allowed_files_with_glob_patterns(self, store: AgentIdentityStore) -> None:
+    def test_parent_scope_validation_accepts_narrowing_allowed_files_with_glob_patterns(
+        self, store: AgentIdentityStore
+    ) -> None:
         """A child with glob patterns that fall inside the parent's patterns is accepted."""
         parent, _ = store.create_identity("parent-1", "manager", allowed_files=["src/**"])
-        identity, _ = store.create_identity("child-1", "backend", parent_identity_id=parent.id, allowed_files=["src/a.py", "src/b/c.py"])
+        identity, _ = store.create_identity(
+            "child-1", "backend", parent_identity_id=parent.id, allowed_files=["src/a.py", "src/b/c.py"]
+        )
         assert identity.allowed_files == ["src/a.py", "src/b/c.py"]
 
     def test_parent_scope_validation_refuses_glob_pattern_outside_parent_scope(self, store: AgentIdentityStore) -> None:
@@ -122,22 +130,38 @@ class TestScopeValidationWithParent:
         with pytest.raises(ValueError, match="child allowed_files .* are not a subset of"):
             store.create_identity("child-1", "backend", parent_identity_id=parent.id, allowed_files=["tests/a.py"])
 
-    def test_parent_scope_validation_refuses_wider_task_ids_naming_the_offending_value(self, store: AgentIdentityStore) -> None:
+    def test_parent_scope_validation_refuses_wider_task_ids_naming_the_offending_value(
+        self, store: AgentIdentityStore
+    ) -> None:
         """The refusal names which axis widened and the offending value."""
         parent, _ = store.create_identity("parent-1", "manager", task_ids=["t-1", "t-2"])
-        with pytest.raises(ValueError, match=r"child task_ids \['t-1', 't-2', 't-9'\] are not a subset of parent task_ids \['t-1', 't-2'\]"):
+        with pytest.raises(
+            ValueError,
+            match=r"child task_ids \['t-1', 't-2', 't-9'\] are not a subset of parent task_ids \['t-1', 't-2'\]",
+        ):
             store.create_identity("child-1", "backend", parent_identity_id=parent.id, task_ids=["t-1", "t-2", "t-9"])
 
-    def test_parent_scope_validation_refuses_wider_allowed_files_naming_the_offending_value(self, store: AgentIdentityStore) -> None:
+    def test_parent_scope_validation_refuses_wider_allowed_files_naming_the_offending_value(
+        self, store: AgentIdentityStore
+    ) -> None:
         """The refusal names which axis widened and the offending value."""
         parent, _ = store.create_identity("parent-1", "manager", allowed_files=["src/a.py", "src/b.py"])
-        with pytest.raises(ValueError, match=r"child allowed_files \['src/a.py', 'src/b.py', 'src/c.py'\] are not a subset of parent allowed_files \['src/a.py', 'src/b.py'\]"):
-            store.create_identity("child-1", "backend", parent_identity_id=parent.id, allowed_files=["src/a.py", "src/b.py", "src/c.py"])
+        with pytest.raises(
+            ValueError,
+            match=r"child allowed_files \['src/a.py', 'src/b.py', 'src/c.py'\] are not a subset of parent allowed_files \['src/a.py', 'src/b.py'\]",
+        ):
+            store.create_identity(
+                "child-1", "backend", parent_identity_id=parent.id, allowed_files=["src/a.py", "src/b.py", "src/c.py"]
+            )
 
-    def test_parent_scope_validation_refuses_unrestricted_naming_the_offending_value(self, store: AgentIdentityStore) -> None:
+    def test_parent_scope_validation_refuses_unrestricted_naming_the_offending_value(
+        self, store: AgentIdentityStore
+    ) -> None:
         """The refusal names the axis and the offending empty list."""
         parent, _ = store.create_identity("parent-1", "manager", allowed_files=["src/a.py"])
-        with pytest.raises(ValueError, match=r"child allowed_files \[\] are not a subset of parent allowed_files \['src/a.py'\]"):
+        with pytest.raises(
+            ValueError, match=r"child allowed_files \[\] are not a subset of parent allowed_files \['src/a.py'\]"
+        ):
             store.create_identity("child-1", "backend", parent_identity_id=parent.id, allowed_files=[])
 
     def test_parent_scope_validation_unaffected_when_no_parent_named(self, store: AgentIdentityStore) -> None:

@@ -175,13 +175,22 @@ def _path_covered_by(child: str, parent: str) -> bool:
     Coverage is component-wise, not string-prefix: ``/a/b`` covers ``/a/b`` and
     ``/a/b/c`` but not ``/a/bc``. Both operands are normalized first, so
     ``/a/./b`` and ``/a/b/`` compare equal to ``/a/b``.
+
+    When *parent* ends with ``/**``, it matches any file under that directory
+    (glob-style ``**`` semantics).
     """
     import posixpath
+    from fnmatch import fnmatch
 
     c = posixpath.normpath(child)
     p = posixpath.normpath(parent)
     if p == c:
         return True
+    # Handle ** glob patterns: src/** matches any file under src/
+    if p.endswith("/**"):
+        base_dir = p[: -len("/**")]
+        boundary = base_dir if base_dir.endswith("/") else base_dir + "/"
+        return fnmatch(c, base_dir + "/**") or c.startswith(boundary)
     boundary = p if p.endswith("/") else p + "/"
     return c.startswith(boundary)
 
