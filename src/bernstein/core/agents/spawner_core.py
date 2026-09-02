@@ -1819,7 +1819,7 @@ class AgentSpawner:
             self._identity_store_instance = AgentIdentityStore(auth_dir)
         return self._identity_store_instance
 
-    def _issue_agent_token(self, session_id: str, role: str, task_ids: list[str]) -> Path:
+    def _issue_agent_token(self, session_id: str, role: str, task_ids: list[str], parent_identity_id: str | None = None) -> Path:
         """Issue a short-lived task-scoped JWT and write it to a 0600 token file.
 
         The token file path is recorded in ``_agent_token_files`` for cleanup
@@ -1838,6 +1838,7 @@ class AgentSpawner:
             session_id: The agent session ID (used as identity ID).
             role: The agent's role.
             task_ids: Task IDs the agent is authorised to act on.
+            parent_identity_id: ID of the parent identity for delegation recording.
 
         Returns:
             Absolute path to the written token file.
@@ -1849,6 +1850,7 @@ class AgentSpawner:
             role,
             task_ids=task_ids,
             metadata={"source": "spawner"},
+            parent_identity_id=parent_identity_id,
         )
 
         # ``resolve(strict=False)`` returns an absolute path even when the
@@ -4373,7 +4375,13 @@ class AgentSpawner:
         # We wrap in try/except so auth failures never block spawning.
         try:
             task_ids_for_scope = [t.id for t in tasks]
-            _token_path = self._issue_agent_token(session_id, role, task_ids_for_scope)
+            parent_identity_id = f"session:{session_id}" if self._run_id else None
+            _token_path = self._issue_agent_token(
+                session_id,
+                role,
+                task_ids_for_scope,
+                parent_identity_id=parent_identity_id,
+            )
             prompt = prompt + _render_auth_section(_token_path)
         except Exception as _token_exc:
             # Only the session_id and exception are logged.
