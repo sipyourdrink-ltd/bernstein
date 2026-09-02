@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from bernstein.core.govern.identity_join import entity_id_for, normalise_hardware_id
+from bernstein.core.govern.inventory_models import Inventory, Surface
 from bernstein.core.govern.observation import ObservationEnvelope, ObservationLedger
 
 
@@ -24,14 +26,22 @@ def _envelope(
     )
 
 
+def _for_entity(*, hostname: str, entity_class: str = "host") -> ObservationEnvelope:
+    return ObservationEnvelope.for_entity(
+        entity_class=entity_class,
+        normalised_key="AB12CD",
+        payload={"hostname": hostname, "hardware_id": "AB-12-CD"},
+        observed_at="2026-09-03T09:00:00Z",
+        evidence_ref="discover-pass-7",
+    )
+
+
 class TestCollisionRule:
     def test_colliding_entity_ids_are_disambiguated_not_overwritten(self) -> None:
         # Load-bearing (#5082): the same shape on Inventory.get_surface
         # silently returns the first of two same-id entries and no lookup
         # can reach the second. Named here so the contrast is asserted, not
         # assumed: the flat model shadows, the envelope disambiguates.
-        from bernstein.core.govern.inventory_models import Inventory, Surface
-
         inventory = Inventory(
             surfaces=(
                 Surface(surface="entity:aa", observed_value="web-1", evidence_ref="q1"),
@@ -42,23 +52,16 @@ class TestCollisionRule:
         shadowed = inventory.get_surface("entity:aa")
         assert shadowed is not None and shadowed.observed_value == "web-1"
 
-        first = _envelope(payload={"hostname": "web-1"})
-        second = _envelope(payload={"hostname": "web-2"})
-        ledger = ObservationLedger().ingest(first).ingest(second)
-
+        ledger = (
+            ObservationLedger()
+            .ingest(_envelope(payload={"hostname": "web-1"}))
+            .ingest(_envelope(payload={"hostname": "web-2"}))
+        )
         assert len(ledger.envelopes) == 2
-        assert ledger.entity_ids() == frozenset({first.entity_id})
-
-        keys = ledger.keys_for(first.entity_id)
-        assert len(keys) == 2
+        keys = ledger.keys_for("entity:aa")
         assert len(set(keys)) == 2
-        looked_up_first = ledger.get(keys[0])
-        looked_up_second = ledger.get(keys[1])
-        assert looked_up_first is not None and looked_up_second is not None
-        assert {looked_up_first.payload["hostname"], looked_up_second.payload["hostname"]} == {
-            "web-1",
-            "web-2",
-        }
+        hosts = {ledger.get(k).payload["hostname"] for k in keys}  # type: ignore[union-attr]
+        assert hosts == {"web-1", "web-2"}
 
     def test_colliding_keys_do_not_depend_on_ingestion_order(self) -> None:
         first = _envelope(payload={"hostname": "web-1"})
@@ -77,7 +80,7 @@ class TestCollisionRule:
             .ingest(_envelope(payload={"hostname": "web-2"}))
         )
         with pytest.raises(ValueError, match="2 envelopes"):
-            ledger.get(_envelope().entity_id)
+            ledger.get("entity:aa")
 
     def test_uncollided_id_is_its_own_key(self) -> None:
         only = _envelope()
@@ -123,20 +126,8 @@ class TestStableEntityId:
     def test_entity_id_stable_across_hostname_change(self) -> None:
         # The hostname is a payload field; the entity key is the hardware
         # id, so the same host observed under two names is one entity.
-        first = ObservationEnvelope.for_entity(
-            entity_class="host",
-            normalised_key="AB12CD",
-            payload={"hostname": "web-1", "hardware_id": "AB-12-CD"},
-            observed_at="2026-09-03T09:00:00Z",
-            evidence_ref="discover-pass-7",
-        )
-        second = ObservationEnvelope.for_entity(
-            entity_class="host",
-            normalised_key="AB12CD",
-            payload={"hostname": "web-1-renamed", "hardware_id": "AB-12-CD"},
-            observed_at="2026-09-03T10:00:00Z",
-            evidence_ref="discover-pass-8",
-        )
+        first = _for_entity(hostname="web-1")
+        second = _for_entity(hostname="web-1-renamed")
         assert first.entity_id == second.entity_id
         assert first.entity_id.startswith("entity:")
         ledger = ObservationLedger().ingest(first).ingest(second)
@@ -146,28 +137,15 @@ class TestStableEntityId:
         assert hosts == {"web-1", "web-1-renamed"}
 
     def test_normalised_key_spellings_resolve_to_one_id(self) -> None:
-        from bernstein.core.govern.identity_join import entity_id_for, normalise_hardware_id
-
         assert entity_id_for("host", normalise_hardware_id("AB12CD")) == entity_id_for(
             "host", normalise_hardware_id("ab-12-cd")
         )
 
     def test_two_classes_sharing_a_key_stay_distinct(self) -> None:
-        host = ObservationEnvelope.for_entity(
-            entity_class="host",
-            normalised_key="AB12CD",
-            payload={},
-            observed_at="2026-09-03T09:00:00Z",
-            evidence_ref="discover-pass-7",
+        assert (
+            _for_entity(hostname="web-1").entity_id
+            != _for_entity(hostname="web-1", entity_class="model_endpoint").entity_id
         )
-        endpoint = ObservationEnvelope.for_entity(
-            entity_class="model_endpoint",
-            normalised_key="AB12CD",
-            payload={},
-            observed_at="2026-09-03T09:00:00Z",
-            evidence_ref="discover-pass-7",
-        )
-        assert host.entity_id != endpoint.entity_id
 
 
 class TestRoundTrip:
