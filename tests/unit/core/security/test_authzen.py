@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 
 import pytest
+
 from bernstein.core.security.authzen import (
     AuthZenAction,
     AuthZenError,
