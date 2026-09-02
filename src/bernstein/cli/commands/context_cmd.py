@@ -6,24 +6,35 @@ envelope remaining, dependency state, and the audit chain head at spawn (plus
 the intent capsule hash when one exists). Its hash is recorded in the spawn
 record, the run journal, and the audit chain::
 
-    bernstein context show   <task-id>
-    bernstein context verify <task-id>
+    bernstein context show     <task-id>
+    bernstein context verify   <task-id>
+    bernstein context manifest <task-id>
 
 ``show`` prints the operator projection of the capsule. ``verify`` recomputes
 the capsule offline from the on-disk bytes and checks its hash against the
 ``context.capsule`` audit-chain entry and the ``context.capsule_recorded``
 journal event at the recorded chain position; a tampered capsule, a reordered
 journal, or a mock-layer fixture fails.
+
+``manifest`` derives the content-addressed context manifest for a task's
+declared path set (#3366): every declared file addressed by the hash of its
+bytes, and every path that does not resolve recorded ``unmanifested`` with its
+reason code. Nothing anchors the digest in a run record yet, so the command is
+a read of the working tree, not of the chain.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
 from bernstein.cli.helpers import console
+
+if TYPE_CHECKING:
+    from bernstein.core.tasks.models import Task
 
 
 def _load_hmac_key() -> bytes:
@@ -34,6 +45,19 @@ def _load_hmac_key() -> bytes:
 
 def _sdd_dir(workdir: Path) -> Path:
     return workdir / ".sdd"
+
+
+def _load_task(workdir: Path, task_id: str) -> Task | None:
+    """Return the persisted task for *task_id*, or None when there is no such task."""
+    from bernstein.core.tasks.task_store import TaskStore
+
+    sdd_dir = _sdd_dir(workdir)
+    store = TaskStore(
+        jsonl_path=sdd_dir / "runtime" / "tasks.jsonl",
+        archive_path=sdd_dir / "archive" / "tasks.jsonl",
+    )
+    store.replay_jsonl()
+    return store.get_task(task_id)
 
 
 def _chain(workdir: Path):
@@ -47,8 +71,9 @@ def context_group() -> None:
     """Show and verify chain-anchored worker context capsules.
 
     \b
-      bernstein context show   <task-id>
-      bernstein context verify <task-id>
+      bernstein context show     <task-id>
+      bernstein context verify   <task-id>
+      bernstein context manifest <task-id>
     """
 
 
@@ -151,6 +176,63 @@ def context_verify_cmd(task_id: str, workdir: str, as_json: bool) -> None:
     else:
         console.print(f"[red]MISMATCH[/red] -- {result.reason}")
     raise SystemExit(2)
+
+
+@context_group.command("manifest")
+@click.argument("task_id")
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/; declared paths resolve under it.",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit machine-readable JSON.")
+def context_manifest_cmd(task_id: str, workdir: str, as_json: bool) -> None:
+    """Derive the content-addressed context manifest for a task.
+
+    Each declared path on the task (``owned_files``) is content-addressed by the
+    hash of its bytes; a path that does not resolve keeps its position and
+    records ``unmanifested`` with a reason code, so absence is explicit.
+
+    Exit codes: 0 = derived, 1 = no such task.
+    """
+    from bernstein.core.agents.context_manifest import derive_context_manifest
+
+    root = Path(workdir).resolve()
+    task = _load_task(root, task_id)
+    if task is None:
+        console.print(f"[yellow]NO TASK[/yellow] -- no task {task_id} under {root / '.sdd'}")
+        raise SystemExit(1)
+
+    manifest = derive_context_manifest(repo_root=root, declared_paths=task.owned_files)
+    if as_json:
+        payload = {
+            "task_id": task_id,
+            "manifest_digest": manifest.manifest_digest(),
+            "entry_count": len(manifest.entries),
+            "unmanifested_count": len(manifest.unmanifested),
+            **manifest.to_dict(),
+        }
+        console.print_json(json.dumps(payload))
+        return
+
+    console.print()
+    console.print("[bold]Context manifest[/bold]")
+    console.print(f"  task_id          {task_id}")
+    console.print(f"  manifest_digest  {manifest.manifest_digest()}")
+    console.print(f"  entries          {len(manifest.entries)}")
+    console.print(f"  unmanifested     {len(manifest.unmanifested)}")
+    if not manifest.entries:
+        console.print("  [yellow](the task declares no paths -- nothing was manifested)[/yellow]")
+        return
+    console.print()
+    for index, entry in enumerate(manifest.entries):
+        if entry.unmanifested:
+            console.print(f"  {index:>3}  [yellow]unmanifested[/yellow] ({entry.reason})  {entry.path}")
+        else:
+            console.print(f"  {index:>3}  {entry.digest}  {entry.path}")
 
 
 __all__ = ["context_group"]

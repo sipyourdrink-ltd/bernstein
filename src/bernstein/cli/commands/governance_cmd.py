@@ -21,6 +21,8 @@ and is anchored in the lineage spine for offline verification.
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -31,6 +33,7 @@ from rich.table import Table
 
 from bernstein.cli.helpers import console
 from bernstein.core.govern import compute_plan as _compute_plan
+from bernstein.core.lineage.spine import LineageSpine
 
 
 def _load_hmac_key() -> bytes:
@@ -207,4 +210,388 @@ def governance_plan_cmd(playbook_file: str, inventory_file: str, workdir: str) -
         )
 
     console_obj.print(table)
+    raise SystemExit(0)
+
+
+def _connector_configured() -> bool:
+    """Return True when a connector (LLM provider) is configured.
+
+    Checks the bernstein.yaml seed for a non-\"none\" internal_llm_provider.
+    Gracefully returns False when no seed file exists.
+    """
+    from bernstein.cli.helpers import find_seed_file
+
+    seed_path = find_seed_file()
+    if seed_path is None:
+        return False
+    try:
+        from bernstein.core.config.seed import parse_seed
+
+        seed = parse_seed(seed_path)
+        return seed.internal_llm_provider not in ("none", "")
+    except Exception:
+        return False
+
+
+def _run_inventory_discovery(workdir: Path) -> dict[str, object]:
+    """Run the inventory discovery pass.
+
+    Performs environment enumeration and returns the inventory dict.
+    Raises on failure.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    surfaces: list[dict[str, str]] = []
+
+    try:
+        surfaces.extend(_discover_git_remotes(workdir))
+    except Exception as exc:
+        logger.debug("Git remote discovery skipped: %s", exc)
+
+    try:
+        surfaces.extend(_discover_environment_variables())
+    except Exception as exc:
+        logger.debug("Env-var discovery skipped: %s", exc)
+
+    try:
+        surfaces.extend(_discover_file_permissions(workdir))
+    except Exception as exc:
+        logger.debug("File-permission discovery skipped: %s", exc)
+
+    return {"surfaces": surfaces}
+
+
+def _discover_git_remotes(workdir: Path) -> list[dict[str, str]]:
+    """Enumerate git remote URLs as governed surfaces."""
+    import subprocess
+
+    surfaces: list[dict[str, str]] = []
+    try:
+        result = subprocess.run(
+            ["git", "remote", "-v"],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        for line in result.stdout.strip().split("\n"):
+            if not line:
+                continue
+            parts = line.split()
+            if len(parts) >= 2:
+                remote_name = parts[0]
+                url = parts[1]
+                surfaces.append(
+                    {
+                        "surface": f"git:remote:{remote_name}",
+                        "observed_value": url,
+                        "evidence_ref": f"git-remote:{remote_name}",
+                    }
+                )
+    except Exception:
+        pass
+    return surfaces
+
+
+def _discover_environment_variables() -> list[dict[str, str]]:
+    """Enumerate relevant environment variables as governed surfaces."""
+    import os
+
+    governed_prefixes = ("BERNSTEIN_", "OPENAI_", "OPENROUTER_", "GITHUB_", "AWS_", "AZURE_", "GCP_")
+    surfaces: list[dict[str, str]] = []
+    for key, value in os.environ.items():
+        for prefix in governed_prefixes:
+            if key.startswith(prefix):
+                surfaces.append(
+                    {
+                        "surface": f"env:{key}",
+                        "observed_value": "set" if value else "",
+                        "evidence_ref": f"env-var:{key}",
+                    }
+                )
+                break
+    return surfaces
+
+
+def _discover_file_permissions(workdir: Path) -> list[dict[str, str]]:
+    """Enumerate sensitive file permissions as governed surfaces."""
+    import stat
+
+    governed_paths = [".env", ".env.local", ".sdd/audit.key", "bernstein.yaml"]
+    surfaces: list[dict[str, str]] = []
+    for rel_path in governed_paths:
+        full_path = workdir / rel_path
+        if full_path.exists():
+            try:
+                st = full_path.stat()
+                mode = stat.filemode(st.st_mode)
+                surfaces.append(
+                    {
+                        "surface": f"file:{rel_path}",
+                        "observed_value": mode,
+                        "evidence_ref": f"file-perms:{rel_path}",
+                    }
+                )
+            except Exception:
+                pass
+    return surfaces
+
+
+def _build_findings_from_inventory(
+    inventory: dict[str, object],
+    inventory_hash: str,
+    timestamp: int,
+) -> dict[str, object]:
+    """Build a FindingsDocument from an inventory dict."""
+    from bernstein.core.govern import Finding, FindingsDocument
+
+    findings: list[Finding] = []
+    for raw_surface in inventory.get("surfaces", []):
+        surface_id = str(raw_surface.get("surface", ""))
+        observed_value = str(raw_surface.get("observed_value", ""))
+        evidence_ref = str(raw_surface.get("evidence_ref", ""))
+        finding = Finding(
+            surface=surface_id,
+            observed_value=observed_value,
+            evidence_ref=evidence_ref,
+            readable=bool(observed_value),
+        )
+        findings.append(finding)
+
+    doc = FindingsDocument(
+        findings=tuple(findings),
+        inventory_hash=inventory_hash,
+        timestamp=timestamp,
+    )
+    return doc.to_dict()
+
+
+def _build_playbook_prompt(findings_dict: dict[str, object], seed: str | None) -> str:
+    """Build the prompt sent to the model from the findings document."""
+    findings_lines: list[str] = []
+    for f in findings_dict.get("findings", []):
+        readable_str = "readable" if f.get("readable") else "UNREADABLE"
+        findings_lines.append(
+            f"  - surface: {f['surface']}\n"
+            f"    observed: {f.get('observed_value', '')}\n"
+            f"    status: {readable_str}\n"
+            f"    evidence: {f.get('evidence_ref', '')}"
+        )
+
+    findings_text = "\n".join(findings_lines) if findings_lines else "  (no surfaces enumerated)"
+
+    prompt = (
+        "You are a security governance assistant. Based on the following enumerated environment findings, "
+        "draft a governance playbook in JSON format.\n\n"
+        "Findings:\n"
+        f"{findings_text}\n\n"
+        "Respond ONLY with a valid JSON object with this exact schema:\n"
+        "{\n"
+        '  "forbidden": [{"surface": "...", "clause": "..."}],\n'
+        '  "required": [{"surface": "...", "clause": "...", "declared_value": "..."}],\n'
+        '  "permitted": [{"surface": "...", "clause": "...", "declared_ceiling": "..."}]\n'
+        "}\n\n"
+        "Rules:\n"
+        "- Surfaces marked UNREADABLE cannot be declared compliant; put them in the appropriate list with a clause.\n"
+        "- Surfaces marked readable should be evaluated for risk and included as appropriate.\n"
+        "- Keep clauses concise and actionable.\n"
+    )
+
+    if seed:
+        prompt += f"\n\nSeed for reproducibility: {seed}"
+
+    return prompt
+
+
+def _parse_playbook_json(raw_output: str) -> dict[str, object]:
+    """Parse model output as playbook JSON, stripping markdown code fences if present."""
+    text = raw_output.strip()
+
+    if text.startswith("```"):
+        lines = text.split("\n")
+        text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+
+    try:
+        result = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Model output is not valid JSON: {exc}") from exc
+
+    if not isinstance(result, dict):
+        raise ValueError(f"Model output must be a JSON object, got {type(result).__name__}")
+
+    return result
+
+
+@governance_group.command("discover")
+@click.option(
+    "--inventory",
+    "inventory_file",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="Path to inventory JSON file. If omitted, runs the discovery pass.",
+)
+@click.option(
+    "--output-dir",
+    "-o",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=Path(".sdd/govern"),
+    help="Directory to write findings.json and proposal.json.",
+)
+@click.option(
+    "--seed",
+    "seed_value",
+    type=str,
+    default=None,
+    help="Optional seed string for reproducibility.",
+)
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+def govern_discover_cmd(
+    inventory_file: str | None,
+    output_dir: Path,
+    seed_value: str | None,
+    workdir: str,
+) -> None:
+    """Run governance discovery and optionally draft a playbook.
+
+    Runs the environment inventory pass (or reads an existing inventory file),
+    produces a FindingsDocument, and — when a connector is configured — calls
+    the operator's model to draft a playbook proposal.
+
+    Exit 0 always. A malformed model response exits 1.
+
+    Examples::
+
+        bernstein govern discover
+        bernstein govern discover --inventory inventory.json
+        bernstein govern discover --output-dir .sdd/govern --seed my-seed
+    """
+    from bernstein.core.govern import DraftProposal, FindingsDocument, ProposalStatus
+
+    root = Path(workdir).resolve()
+    output_dir_abs = output_dir.resolve() if not output_dir.is_absolute() else output_dir
+
+    timestamp = int(time.time())
+
+    if inventory_file:
+        inventory_raw = json.loads(Path(inventory_file).read_text(encoding="utf-8"))
+    else:
+        inventory_raw = _run_inventory_discovery(root)
+
+    inventory_bytes = json.dumps(
+        inventory_raw,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    inventory_hash = "sha256:" + hashlib.sha256(inventory_bytes).hexdigest()
+
+    findings_dict = _build_findings_from_inventory(inventory_raw, inventory_hash, timestamp)
+
+    findings_doc = FindingsDocument.from_dict(findings_dict)
+    findings_hash = findings_doc.content_hash()
+
+    output_dir_abs.mkdir(parents=True, exist_ok=True)
+
+    findings_path = output_dir_abs / f"findings-{findings_hash[:16]}.json"
+    findings_path.write_text(
+        json.dumps(findings_dict, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    console.print()
+    console.print("[bold]Governance discover[/bold]")
+    console.print(f"  Findings: {len(findings_dict.get('findings', []))} surfaces")
+    console.print(f"  Inventory hash: {inventory_hash}")
+    console.print(f"  Findings hash: {findings_hash}")
+    rel_path = findings_path.relative_to(root) if findings_path.is_relative_to(root) else findings_path
+    console.print(f"  Findings: {rel_path}")
+
+    if not _connector_configured():
+        console.print("[dim]No connector configured — emitting findings only.[/dim]")
+        raise SystemExit(0)
+
+    seed = seed_value or ""
+
+    prompt = _build_playbook_prompt(findings_dict, seed)
+
+    try:
+        from bernstein.cli.helpers import find_seed_file
+        from bernstein.core.config.seed import parse_seed
+
+        seed_path = find_seed_file()
+        seed_config = parse_seed(seed_path) if seed_path else None
+        model = seed_config.internal_llm_model if seed_config else "nvidia/nemotron-3-super-120b-a12b"
+        provider = seed_config.internal_llm_provider if seed_config else "openrouter_free"
+    except Exception:
+        model = "nvidia/nemotron-3-super-120b-a12b"
+        provider = "openrouter_free"
+
+    from bernstein.core.llm import call_llm
+
+    console.print(f"  Model: {model} ({provider})")
+
+    try:
+        raw_output = asyncio.run(
+            call_llm(
+                prompt=prompt,
+                model=model,
+                provider=provider,
+                max_tokens=4000,
+                temperature=0.7,
+            )
+        )
+    except RuntimeError as exc:
+        console.print(f"[red]LLM call failed:[/red] {exc}")
+        raise SystemExit(1) from exc
+
+    try:
+        playbook = _parse_playbook_json(raw_output)
+    except ValueError as exc:
+        console.print(f"[red]Model output parse failed:[/red] {exc}")
+        raise SystemExit(1) from exc
+
+    proposal = DraftProposal(
+        findings_hash=findings_hash,
+        prompt=prompt,
+        playbook=playbook,
+        model=model,
+        timestamp=timestamp,
+        status=ProposalStatus.DRAFT,
+        human_signature=None,
+    )
+
+    lineage_root = _lineage_root(root)
+    lineage_root.mkdir(parents=True, exist_ok=True)
+
+    hmac_key = _load_hmac_key()
+    spine = LineageSpine(lineage_root, run_id="govern-discover", hmac_key=hmac_key)
+
+    artifact_path = f"govern-discover/proposal-{proposal.content_hash()[:16]}.json"
+    spine.record(
+        artifact_path=artifact_path,
+        content=proposal.to_canonical_bytes(),
+        actor="bernstein.govern.discover",
+        step_id=findings_hash,
+        model=model,
+        timestamp=timestamp,
+    )
+
+    proposal_path = output_dir_abs / "proposal.json"
+    proposal_path.write_text(
+        json.dumps(proposal.to_dict(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    rel_proposal_path = proposal_path.relative_to(root) if proposal_path.is_relative_to(root) else proposal_path
+    console.print(f"  Proposal: {rel_proposal_path}")
+
     raise SystemExit(0)

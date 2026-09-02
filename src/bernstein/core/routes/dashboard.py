@@ -69,6 +69,18 @@ async def dashboard_auth_status(request: Request) -> JSONResponse:
     state = _auth_state(request)
     required = state.auth_required()
     credential = state.resolve_credential(request) if required else None
+    # If credential resolved, check for revocation past staleness and acknowledge
+    if credential is not None:
+        cookie_token = request.cookies.get(SESSION_COOKIE, "")
+        session = state.session_store.resolve_session(cookie_token) if cookie_token else None
+        if session is not None:
+            if session.is_revoked_past_staleness():
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Session revoked past staleness window"},
+                )
+            if session.revoked and session.revocation_chain_position:
+                session.acknowledge_revocation(session.revocation_chain_position)
     return JSONResponse(
         {
             "auth_required": required,
@@ -120,6 +132,19 @@ async def dashboard_auth_login(request: Request) -> JSONResponse:
         return JSONResponse(status_code=401, content={"detail": "Invalid dashboard credentials"})
 
     session_token = state.session_store.create_session(principal=principal, scope=scope)
+
+    # Check if session is revoked past staleness after creation
+    cookie_token = request.cookies.get(SESSION_COOKIE, "")
+    session = state.session_store.resolve_session(cookie_token) if cookie_token else None
+    if session is not None and session.is_revoked_past_staleness():
+        # Revoke the session we just created
+        state.session_store.revoke_session(cookie_token)
+        response = JSONResponse(
+            {"authenticated": False, "detail": "Session revoked past staleness window"},
+        )
+        response.delete_cookie(SESSION_COOKIE, httponly=True, samesite="lax", secure=_cookie_secure(request))
+        return response
+
     response = JSONResponse(
         {
             "authenticated": True,

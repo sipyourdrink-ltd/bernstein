@@ -156,6 +156,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `mistral.py`                | Mistral Vibe CLI adapter |
 | `mock.py`                   | Mock CLI adapter for zero-API-key demos and testing |
 | `muse.py`                   | Muse Code CLI adapter for Bernstein |
+| `nmap.py`                   | Transcript-anchored Nmap scanner adapter and XML normalization |
 | `ollama.py`                 | Ollama / OpenAI-compatible local LLM adapter - run coding agents without cloud API keys |
 | `onboarding.py`             | Probe CLI evidence, record a supervised golden transcript, and replay held-out invocations |
 | `open_interpreter.py`       | Open Interpreter CLI adapter |

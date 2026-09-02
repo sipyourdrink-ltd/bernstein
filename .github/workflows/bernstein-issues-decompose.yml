@@ -137,6 +137,10 @@ jobs:
           name: issue-decompose-plan-${{ github.event.issue.number }}
           path: issue-decompose-plan.md
           if-no-files-found: error
+          # The plan is consumed by the scope gate in the same run and read by
+          # a maintainer shortly after; without this it inherits the
+          # repository default of 90 days.
+          retention-days: 14
 
   scope_gate:
     name: Require approved file scope
