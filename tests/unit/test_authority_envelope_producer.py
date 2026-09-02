@@ -337,6 +337,45 @@ def test_decision_taken_after_the_grant_expiry_is_refused_by_the_producer(
     assert "2020-01-01T00:00:00Z" in str(excinfo.value)
 
 
+def test_role_resolution_mismatch_is_refused_by_the_producer(tmp_path: Path) -> None:
+    """A caller passing groups that resolve to a different role than the record pins is refused."""
+    lineage_root = tmp_path / "lineage"
+    # Bindings where the same group maps to "viewer", but we'll record as "operator".
+    bindings = RoleBindings(
+        group_to_role={"eng-operators": "viewer"},
+        role_permissions={
+            "operator": ("deploy", "read", "restart"),
+            "viewer": ("read",),
+        },
+    ).sign(HMAC_KEY)
+    # Record decisions as the operator role using a different group.
+    _record_access(
+        lineage_root,
+        subject=PRINCIPAL,
+        action="deploy",
+        now=BASE_TS,
+        bindings=bindings,
+        groups=("eng-operators-admin",),
+    )
+    # Build the envelope with the viewer group — role differs from what the
+    # record pins, so the inputs_hash check must fail.
+    with pytest.raises(AuthorityEnvelopeError) as excinfo:
+        _build(
+            lineage_root,
+            bindings,
+            idp_groups=("eng-operators",),  # resolves to viewer, not operator
+        )
+    assert "inputs_hash" in str(excinfo.value) or "role" in str(excinfo.value)
+
+
+def test_role_resolution_match_allows_the_envelope(tmp_path: Path) -> None:
+    """When caller groups resolve to the same role the records pin, the envelope builds."""
+    lineage_root, bindings = _seeded_run(tmp_path)
+    # Same bindings and groups as the seeded run — must succeed.
+    envelope = _build(lineage_root, bindings)
+    assert len(envelope["decisions"]) == 3
+
+
 # ---------------------------------------------------------------------------
 # 9-10. Determinism and the committed schema
 # ---------------------------------------------------------------------------

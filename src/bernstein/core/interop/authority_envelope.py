@@ -58,6 +58,7 @@ from bernstein.core.security.agent_card_signer import (
 )
 from bernstein.core.security.governance import (
     RoleBindings,
+    _access_inputs_hash,
     read_decisions,
     resolve_role,
 )
@@ -366,6 +367,13 @@ def build_run_authority_envelope(
     decisions: list[dict[str, Any]] = []
     evidence: list[dict[str, Any]] = []
     for index, record in enumerate(mine):
+        if _access_inputs_hash(role=role, action=record.action, bindings=bindings) != record.inputs_hash:
+            raise AuthorityEnvelopeError(
+                f"record for {record.subject!r}/{record.action!r} pins inputs_hash computed from a role "
+                f"{record.inputs_hash!r}; the caller-supplied IDP groups resolve to {role!r}, which does not "
+                "match the role the record was authored under. The envelope cannot attest authority that the "
+                "record does not pin"
+            )
         entry = _decision_entry(
             index=index,
             decision=record,
