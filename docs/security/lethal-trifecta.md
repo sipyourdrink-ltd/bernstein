@@ -55,9 +55,12 @@ Three properties matter for a reviewer:
   spawner before any agent process starts. There is no agent prompt
   that could be talked out of it.
 - **Default-deny on unknown tools.** A tool not present in the registry
-  is treated as carrying all three capabilities. Missing metadata
-  fails closed - a custom plugin without a YAML declaration is denied,
-  not silently allowed.
+  is treated as carrying all three capabilities, so any chain that
+  includes it fails closed. At spawn time an undeclared tool is held
+  out of the decision rather than denying the spawn on its own (see
+  [what the spawn decision covers](#what-the-spawn-decision-covers));
+  `bernstein audit capabilities` replays the full recorded chain and
+  surfaces it.
 - **Bypass-immune in the policy graph.** The decision lands as
   `DecisionType.IMMUNE` with `bypass_immune=True` in
   [`policy_engine.py`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/core/security/policy_engine.py).
@@ -67,12 +70,40 @@ On refusal, two artefacts are persisted:
 
 | Artefact | Path | Contents |
 |---|---|---|
-| Spawn manifest | `.sdd/runtime/spawn_capabilities/<session_id>.json` | Tool chain, triggered capabilities, offending tool list, mode, decision |
+| Spawn manifest | `.sdd/runtime/spawn_capabilities/<session_id>.json` | Recorded chain (`tools`), the chain the decision saw (`evaluated`), the tokens held out and why (`held_out`), triggered capabilities, offending tool list, mode, decision |
 | Audit event | `.sdd/audit/` (HMAC-chained) | `event_type=capability_matrix_refusal` with role, reason, full chain |
 
 The audit event lands on the same HMAC chain as task-state transitions,
 so a SOC 2 / ISO 27001 reviewer can verify that no trifecta-prone agent
 ever spawned without a matching deny event.
+
+## What the spawn decision covers
+
+The chain recorded in the manifest is wider than the chain the spawn
+decision evaluates, so the manifest states both. `evaluated` is exactly
+the sequence handed to `CapabilityRegistry.evaluate_chain`; `held_out`
+lists every other recorded token with the reason it was held out.
+
+| `held_out` reason | Token | Why it is held out |
+|---|---|---|
+| `outer-envelope` | `adapter.<name>` | Every adapter row in `templates/capabilities/adapters.yaml` is tagged with all three capabilities by design - it describes the envelope a running CLI agent sits in, not a single call. Evaluating it would deny every spawn under `enforce`. |
+| `undeclared-tool` | any catalog tool with no registry row | Undeclared tools default to all three capabilities, so a single missing YAML row would block the spawn. They are recorded instead, and `bernstein audit capabilities` re-evaluates the full chain. |
+
+**The adapter envelope is out of scope for spawn-time enforcement.**
+Spawn-time enforcement answers one question: does the operator-declared
+inner tool set union the trifecta? The envelope is covered by three
+controls that act on the running agent rather than on the spawn:
+
+| Control | Where |
+|---|---|
+| Worker tool allowlist (T578) - narrows what the agent may call at all | `core/agents/spawner_warm_pool.py` (`build_tool_allowlist_env`) |
+| Per-agent credential scoping - narrows which secrets reach the process | [Credential scoping](credential-scoping.md) |
+| `bernstein audit capabilities` - replays `tools` from every manifest, envelope included, and exits non-zero on a violating chain | CLI |
+
+Widening the spawn gate to the envelope needs the first two controls to
+be readable at spawn time so a scoped adapter can be distinguished from
+an unscoped one. That is not in place today, which is why the boundary
+is recorded rather than enforced.
 
 ## Default capability matrix
 

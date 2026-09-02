@@ -17,6 +17,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `instrumentation.py`        | Wave-3 per-agent instrumentation: LLM calls, tool calls, and conversation history |
 | `parallel_admission.py`     | Parallel-execution admission from a code graph (#3237, scope step 3) |
 | `path_scope.py`             | Which repository-relative paths fall outside a set of globs |
+| `registry_guard.py`         | Shared duplicate-registration guard for the registry classes under ``bernstein`` |
 | `run_auth_token.py`         | Persist and read the auto-generated run Bearer token (issue #2794) |
 | `streaming_merge.py`        | Streaming task results for long-running agents (incremental merge) |
 | `admission/`                | Named resource pools with lease-backed admission (#2544) |
@@ -285,6 +286,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `incident_synthesizer.py`          | Convert dead-letter and post-mortem incidents into regression eval cases |
 | `judge.py`                         | LLM judge - evaluate code quality of agent-produced changes |
 | `metrics.py`                       | Custom eval metrics - each metric is a dataclass with a compute method |
+| `model_drift.py`                   | Model drift probe: signed, chain-anchored observations (issue #5041) |
 | `pentest_consensus.py`             | Consensus aggregation for the multi-adapter pentest fan-out |
 | `pentest_runner.py`                | Driver that runs the ``security-pentest`` scenario end-to-end |
 | `pentest_scorer.py`                | Precision and recall scorer for security pentest eval scenario |
