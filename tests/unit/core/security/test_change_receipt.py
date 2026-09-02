@@ -4,23 +4,35 @@ Coverage:
 
 * ChangeAttempt serialization and required fields.
 * ChangeReceipt serialization, canonical bytes, and digest.
-* verify_receipt: valid receipt passes, missing fields fail, wrong types fail.
+* the shared verifier over a signed change receipt: valid passes, missing
+  fields fail, wrong types fail.
 * Digest consistency: re-serializing produces matching hash.
 """
 
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 
+from bernstein.core.receipts.protocol import ReceiptVerification, sign_receipt, verify_receipt
 from bernstein.core.security.change_receipt import (
     CHANGE_RECEIPT_SCHEMA_VERSION,
+    RECEIPT_KIND,
     ChangeAttempt,
     ChangeReceipt,
     canonical_bytes,
-    verify_receipt,
 )
+from bernstein.core.skills.catalog.signature import generate_signer_keypair
+
+
+def _verify(payload: Any) -> ReceiptVerification:
+    """Sign a change receipt payload and verify it through the one verifier."""
+    private_pem, public_pem = generate_signer_keypair()
+    envelope = sign_receipt(RECEIPT_KIND, payload, private_key_pem=private_pem, public_key_pem=public_pem)
+    return verify_receipt(envelope)
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -194,88 +206,88 @@ class TestChangeReceipt:
 
 
 # ---------------------------------------------------------------------------
-# verify_receipt
+# Verification through the shared protocol
 # ---------------------------------------------------------------------------
 
 
 class TestVerifyReceipt:
-    """verify_receipt function behavior."""
+    """The shared verifier's behaviour on the ``security.change`` kind."""
 
     def test_valid_receipt_passes(self, sample_receipt: ChangeReceipt) -> None:
         """Valid receipt verifies without errors."""
-        result = verify_receipt(sample_receipt.to_dict())
+        result = _verify(sample_receipt.to_dict())
         assert result.ok
-        assert result.digest == sample_receipt.digest
+        assert result.kind == RECEIPT_KIND
+        assert result.payload_digest == sample_receipt.digest
         assert not result.errors
 
     def test_missing_plan_id_fails(self, sample_receipt: ChangeReceipt) -> None:
         """Missing plan_id fails verification."""
         d = sample_receipt.to_dict()
         del d["plan_id"]
-        result = verify_receipt(d)
+        result = _verify(d)
         assert not result.ok
-        assert any(e.field == "plan_id" for e in result.errors)
+        assert any(e.startswith("plan_id:") for e in result.errors)
 
     def test_wrong_schema_version_fails(self, sample_receipt: ChangeReceipt) -> None:
         """Wrong schema_version fails verification."""
         d = sample_receipt.to_dict()
         d["schema_version"] = "0.0.0"
-        result = verify_receipt(d)
+        result = _verify(d)
         assert not result.ok
-        assert any(e.field == "schema_version" for e in result.errors)
+        assert any(e.startswith("schema_version:") for e in result.errors)
 
     def test_wrong_type_plan_id_fails(self, sample_receipt: ChangeReceipt) -> None:
         """Non-string plan_id fails verification."""
         d = sample_receipt.to_dict()
         d["plan_id"] = 123
-        result = verify_receipt(d)
+        result = _verify(d)
         assert not result.ok
-        assert any(e.field == "plan_id" for e in result.errors)
+        assert any(e.startswith("plan_id:") for e in result.errors)
 
     def test_invalid_final_status_fails(self, sample_receipt: ChangeReceipt) -> None:
         """Invalid final_status value fails verification."""
         d = sample_receipt.to_dict()
         d["final_status"] = "unknown"
-        result = verify_receipt(d)
+        result = _verify(d)
         assert not result.ok
-        assert any(e.field == "final_status" for e in result.errors)
+        assert any(e.startswith("final_status:") for e in result.errors)
 
     def test_changes_not_list_fails(self, sample_receipt: ChangeReceipt) -> None:
         """Non-list changes fails verification."""
         d = sample_receipt.to_dict()
         d["changes"] = "not-a-list"
-        result = verify_receipt(d)
+        result = _verify(d)
         assert not result.ok
-        assert any(e.field == "changes" for e in result.errors)
+        assert any(e.startswith("changes:") for e in result.errors)
 
     def test_change_missing_change_id_fails(self, sample_receipt: ChangeReceipt) -> None:
-        """Change missing change_id fails verification."""
+        """Change with a wrongly-typed change_id fails verification."""
         d = sample_receipt.to_dict()
         d["changes"][0]["change_id"] = 123  # wrong type
-        result = verify_receipt(d)
+        result = _verify(d)
         assert not result.ok
-        assert any("change_id" in e.field for e in result.errors)
+        assert any("change_id" in e for e in result.errors)
 
     def test_change_invalid_outcome_fails(self, sample_receipt: ChangeReceipt) -> None:
         """Change with invalid outcome fails verification."""
         d = sample_receipt.to_dict()
         d["changes"][0]["outcome"] = "unknown"
-        result = verify_receipt(d)
+        result = _verify(d)
         assert not result.ok
-        assert any("outcome" in e.field for e in result.errors)
+        assert any("outcome" in e for e in result.errors)
 
     def test_non_dict_root_fails(self) -> None:
-        """Non-dict root fails verification."""
-        result = verify_receipt(["not", "a", "dict"])
+        """A receipt that is not an object fails verification rather than raising."""
+        result = verify_receipt(["not", "a", "dict"])  # type: ignore[arg-type]
         assert not result.ok
-        assert any(e.field == "root" for e in result.errors)
+        assert any("must be an object" in e for e in result.errors)
 
     def test_digest_matches_recomputed(self, sample_receipt: ChangeReceipt) -> None:
-        """verify_receipt computes digest matching receipt.digest."""
-        d = sample_receipt.to_dict()
-        result = verify_receipt(d)
+        """The verifier reports the digest the receipt computes for itself."""
+        result = _verify(sample_receipt.to_dict())
         assert result.ok
-        assert result.digest == sample_receipt.digest
+        assert result.payload_digest == sample_receipt.digest
 
 
 # ---------------------------------------------------------------------------
