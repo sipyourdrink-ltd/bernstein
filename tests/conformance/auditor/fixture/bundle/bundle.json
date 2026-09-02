@@ -1,0 +1,19 @@
+{
+  "artefacts": {
+    "article12-evidence.zip": "937a4e62664de214fb2d2efbfc1e363cf17ab60e5eec6722e5797113a5020744",
+    "audit-receipt.json": "6345ad3680f6512ce7dcd2622946e89ef8f57ad38132c91687b80c6bb22d7350",
+    "run-receipt.json": "7f5228200ad24db85028acbeebcfbad73899bfed726117087a43e407900e9329"
+  },
+  "run_id": "run-auditor-conformance",
+  "scenario": [
+    "run.started run-auditor-conformance",
+    "agent.delegated agent-b",
+    "tool.called repo.read_file",
+    "data.read config/customer_records.yaml",
+    "model.request https://models.example.invalid/v1",
+    "model.response https://models.example.invalid/v1",
+    "repo.changed src/app/config.py",
+    "run.completed run-auditor-conformance"
+  ],
+  "schema_version": 1
+}
