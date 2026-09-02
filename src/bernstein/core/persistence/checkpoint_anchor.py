@@ -51,8 +51,9 @@ as they already do for ``bernstein audit export --rfc3161-token``. An
 air-gapped install runs with no anchors at all - and ``bernstein doctor`` says
 so, rather than implying the seal is stronger than it is.
 
-Not covered here: witness co-signature between two installs, and operator-
-supplied external sinks for checkpoint retention. Both are follow-ups.
+Not covered here: witness co-signature between two installs, which lives in
+:mod:`bernstein.core.persistence.checkpoint_witness`, and operator-supplied
+external sinks for checkpoint retention.
 """
 
 from __future__ import annotations
