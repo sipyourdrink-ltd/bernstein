@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from typing import Any
 
+from bernstein.core.govern.apply import (
+    ApplyStatus,
+    ChangeApplier,
+    ChangeOutcome,
+    ChangeResult,
+    ChangeStatus,
+    GovernApplyRecord,
+    GovernApplyRefused,
+    apply_plan,
+    verify_govern_apply_projection,
+)
 from bernstein.core.govern.findings import Finding, FindingsDocument
 from bernstein.core.govern.inventory_models import Inventory, Surface
-from bernstein.core.govern.plan_models import GovernPlan, PlanEntry, PlanEntryKind
+from bernstein.core.govern.plan_models import GovernPlan, PlanEntry, PlanEntryKind, compute_inputs_hash
 from bernstein.core.govern.playbook_models import Playbook, PlaybookClause
 from bernstein.core.govern.proposal import DraftProposal, ProposalStatus
 
@@ -153,13 +162,7 @@ def compute_plan(
             )
         )
 
-    inputs_bytes = json.dumps(
-        {"playbook": playbook, "inventory": inventory},
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    inputs_hash = "sha256:" + hashlib.sha256(inputs_bytes).hexdigest()
+    inputs_hash = compute_inputs_hash(playbook=playbook, inventory=inventory)
 
     return GovernPlan(
         run_id=run_id,
@@ -186,9 +189,16 @@ def _compare_values(observed: str, ceiling: str) -> int:
 
 
 __all__ = [
+    "ApplyStatus",
+    "ChangeApplier",
+    "ChangeOutcome",
+    "ChangeResult",
+    "ChangeStatus",
     "DraftProposal",
     "Finding",
     "FindingsDocument",
+    "GovernApplyRecord",
+    "GovernApplyRefused",
     "GovernPlan",
     "Inventory",
     "PlanEntry",
@@ -197,5 +207,8 @@ __all__ = [
     "PlaybookClause",
     "ProposalStatus",
     "Surface",
+    "apply_plan",
+    "compute_inputs_hash",
     "compute_plan",
+    "verify_govern_apply_projection",
 ]
