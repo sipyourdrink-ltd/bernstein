@@ -70,6 +70,7 @@ from bernstein.core.security.key_derivation import (
     SCHEME_V2,
     domain_tag,
 )
+from bernstein.core.security.loaded_extension_set import extension_set_digest_from_events
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -151,6 +152,9 @@ class RunReceipt:
             recorded no spine entries).
         audit_head_sha256: Audit-range head when the opt-in block was
             included, else ``None``.
+        extension_set_digest: Content address of the skill and plugin set
+            the run loaded, recomputed from the journal rows, or ``None``
+            when the run recorded none.
         receipt: The serialisable receipt dict.
         receipt_bytes: Canonical JSON bytes (byte-deterministic).
         receipt_path: On-disk path when written, else ``None``.
@@ -163,6 +167,7 @@ class RunReceipt:
     receipt: dict[str, Any]
     receipt_bytes: bytes
     receipt_path: Path | None = field(default=None)
+    extension_set_digest: str | None = field(default=None)
 
     @property
     def sha256(self) -> str:
@@ -222,6 +227,7 @@ def _binding_block(
     spine_count: int,
     audit_head_sha256: str | None,
     endpoint_identities: list[dict[str, str]] | None = None,
+    extension_set_digest: str | None = None,
 ) -> dict[str, Any]:
     """The subject binding: one canonical block over every recomputed head.
 
@@ -238,6 +244,13 @@ def _binding_block(
     compatibility with existing receipts that have no endpoint identity
     events (the field is simply absent, and the binding block is built
     without it).
+
+    ``extension_set_digest`` follows the same rule for the skill and plugin
+    set the run actually loaded. It is *recomputed* from the embedded
+    ``loaded_extension_set`` rows on both sides, so the receipt names the
+    resolved set rather than asserting a digest nothing re-derives; a run
+    that recorded no such event binds no field and older receipts keep
+    verifying unchanged.
     """
     block: dict[str, Any] = {
         "journal_event_count": journal_count,
@@ -248,6 +261,8 @@ def _binding_block(
     }
     if endpoint_identities is not None and len(endpoint_identities) > 0:
         block["endpoints"] = endpoint_identities
+    if extension_set_digest is not None:
+        block["extension_set_digest"] = extension_set_digest
     if audit_head_sha256 is not None:
         block["audit_range_head_sha256"] = audit_head_sha256
     return block
@@ -585,6 +600,7 @@ def build_run_receipt(
             "events": rebuilt,
         }
 
+    extension_set_digest = extension_set_digest_from_events(journal_rows)
     binding = _binding_block(
         run_id=run_id,
         journal_head=journal_head,
@@ -593,6 +609,7 @@ def build_run_receipt(
         spine_count=len(spine_rows),
         audit_head_sha256=audit_head,
         endpoint_identities=_extract_endpoint_identities(journal_rows),
+        extension_set_digest=extension_set_digest,
     )
     binding_bytes = _canonical_json_bytes(binding)
     subject_sha256 = hashlib.sha256(binding_bytes).hexdigest()
@@ -651,6 +668,7 @@ def build_run_receipt(
         receipt=receipt,
         receipt_bytes=receipt_bytes,
         receipt_path=receipt_path,
+        extension_set_digest=extension_set_digest,
     )
 
 
@@ -810,6 +828,7 @@ def verify_run_receipt(
         spine_count=len(entries),
         audit_head_sha256=audit_head,
         endpoint_identities=endpoint_identities if endpoint_identities else None,
+        extension_set_digest=extension_set_digest_from_events(events),
     )
     binding_bytes = _canonical_json_bytes(binding)
     recomputed_subject = hashlib.sha256(binding_bytes).hexdigest()
