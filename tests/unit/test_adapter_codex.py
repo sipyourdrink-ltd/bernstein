@@ -555,14 +555,16 @@ class TestSandboxFailureDetection:
     def _event(self, exit_code, output=""):
         import json
 
-        return json.dumps({
-            "item": {
-                "item_type": "command_execution",
-                "command": "pytest",
-                "exit_code": exit_code,
-                "aggregated_output": output,
+        return json.dumps(
+            {
+                "item": {
+                    "item_type": "command_execution",
+                    "command": "pytest",
+                    "exit_code": exit_code,
+                    "aggregated_output": output,
+                }
             }
-        })
+        )
 
     def test_all_commands_refused_is_detected(self):
         from bernstein.adapters.codex import detect_sandbox_failure
@@ -620,11 +622,13 @@ class TestSandboxFailureDetection:
         from bernstein.adapters.codex import detect_sandbox_failure
 
         log = "\n".join(
-            json.dumps({
-                "type": "command_execution",
-                "exit_code": 1,
-                "output": self.BWRAP,
-            })
+            json.dumps(
+                {
+                    "type": "command_execution",
+                    "exit_code": 1,
+                    "output": self.BWRAP,
+                }
+            )
             for _ in range(3)
         )
         detected = detect_sandbox_failure(log)
