@@ -715,7 +715,13 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
         event_channel=EventChannel.STREAM_JSON,
         session_state=SessionState.PERSISTENT_AGENT,
     ),
-    # Codex drives unattended via its sandbox/full-auto flag.
+    # Codex drives unattended via its sandbox flag: ``--sandbox
+    # workspace-write`` pins the posture, hence CLI_FLAG. The adapter reads
+    # this row to pick the sandbox argv, and ALWAYS_ON is the only value that
+    # selects ``--dangerously-bypass-approvals-and-sandbox`` instead -- for a
+    # runner that already isolates the process, where the bubblewrap-backed
+    # vendor sandbox cannot start at all. Leave this row as CLI_FLAG: an
+    # operator opts into the bypass per adapter instance, not repo-wide.
     "codex": AdapterStrategy(dangerous_mode=DangerousModeStrategy.CLI_FLAG),
     # Everyone else - no native resume, text-signal channel. Dangerous-mode
     # default is ``UNSUPPORTED`` until an adapter declares otherwise.
