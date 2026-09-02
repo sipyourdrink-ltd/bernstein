@@ -1404,17 +1404,23 @@ def evaluate_policy(policy: CompliancePolicy, inp: PolicyInput) -> PolicyResult:
         evidence_status=status,
         asserted_inputs=asserted,
         evidence_refs=evidence_refs,
-        control_statement=render_control_statement(policy.description, status),
+        control_statement=_render_control_statement(policy.description, status),
     )
 
 
-def render_control_statement(description: str, status: PolicyEvidenceStatus) -> str:
+def _render_control_statement(description: str, status: PolicyEvidenceStatus) -> str:
     """Render a control description for an artefact, attributed to its source.
 
     An operator-asserted outcome is never rendered as a statement about what
     the system enforces; it is rendered as what the operator declared, so a
     reader of the artefact can tell the two apart without consulting a
     separate field.
+
+    Private: the only caller is :func:`evaluate_policy`, which stores the
+    result on :attr:`PolicyResult.control_statement`. That field, not this
+    function, is the public surface - it is what ``--json-output`` serialises
+    and what callers assert on. Nothing outside this module needs to call
+    this directly.
 
     Args:
         description: The policy's control description.
