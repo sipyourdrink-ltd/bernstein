@@ -285,6 +285,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `incident_synthesizer.py`          | Convert dead-letter and post-mortem incidents into regression eval cases |
 | `judge.py`                         | LLM judge - evaluate code quality of agent-produced changes |
 | `metrics.py`                       | Custom eval metrics - each metric is a dataclass with a compute method |
+| `model_drift.py`                   | Model drift probe: signed, chain-anchored observations (issue #5041) |
 | `pentest_consensus.py`             | Consensus aggregation for the multi-adapter pentest fan-out |
 | `pentest_runner.py`                | Driver that runs the ``security-pentest`` scenario end-to-end |
 | `pentest_scorer.py`                | Precision and recall scorer for security pentest eval scenario |
