@@ -169,6 +169,36 @@ TokenType = Literal["opaque", "jwt"]
 _CREDENTIAL_TOKEN_TYPES: Final[tuple[TokenType, ...]] = get_args(TokenType)
 
 
+def _path_covered_by(child: str, parent: str) -> bool:
+    """Return True iff *parent* is an ancestor-or-equal of *child* (POSIX).
+
+    Coverage is component-wise, not string-prefix: ``/a/b`` covers ``/a/b`` and
+    ``/a/b/c`` but not ``/a/bc``. Both operands are normalized first, so
+    ``/a/./b`` and ``/a/b/`` compare equal to ``/a/b``.
+    """
+    import posixpath
+
+    c = posixpath.normpath(child)
+    p = posixpath.normpath(parent)
+    if p == c:
+        return True
+    boundary = p if p.endswith("/") else p + "/"
+    return c.startswith(boundary)
+
+
+def _all_patterns_covered_by(child_patterns: set[str], parent_patterns: set[str]) -> bool:
+    """Return True if every child pattern is covered by some parent pattern.
+
+    A child pattern is covered by a parent pattern if the parent is an ancestor-or-equal
+    of the child (path_covered_by semantics). This implements the prefix subset check for
+    allowed_files.
+    """
+    for child in child_patterns:
+        if not any(_path_covered_by(child, parent) for parent in parent_patterns):
+            return False
+    return True
+
+
 def _string_list(raw: Any, field: str) -> list[str]:
     """Return a persisted list-of-strings field, refusing any other shape.
 
@@ -715,6 +745,42 @@ class AgentIdentityStore:
         # signed a token with no task scope at all.
         scoped_task_ids = _string_list(() if task_ids is None else task_ids, "task_ids")
         scoped_files = _string_list(() if allowed_files is None else allowed_files, "allowed_files")
+
+        # When a parent identity is named, the child's task_ids and allowed_files
+        # must be a subset of the parent's.  An unrestricted parent (empty
+        # task_ids) may mint anything; a restricted parent may only mint children
+        # that narrow its scope.  This prevents a child from holding a scope its
+        # parent never held, which was the original issue #5046.
+        if parent_identity_id is not None:
+            parent_identity = self._load(parent_identity_id)
+            if parent_identity is None:
+                msg = f"parent identity {parent_identity_id} not found"
+                raise ValueError(msg)
+
+            # task_ids: allowlist subset check. Empty parent task_ids means
+            # unrestricted parent → child can be anything. Non-empty parent
+            # means child must be a subset (or empty, which narrows to nothing).
+            if parent_identity.task_ids:
+                child_ids = set(scoped_task_ids)
+                parent_ids = set(parent_identity.task_ids)
+                if not child_ids <= parent_ids:
+                    raise ValueError(
+                        f"child task_ids {sorted(child_ids)} are not a subset of "
+                        f"parent task_ids {sorted(parent_ids)}"
+                    )
+
+            # allowed_files: prefix subset check. Empty parent allowed_files
+            # means unrestricted parent → child can be anything. Non-empty
+            # parent means child patterns must be a subset (every child pattern
+            # must be covered by some parent pattern).
+            if parent_identity.allowed_files:
+                child_patterns = set(scoped_files)
+                parent_patterns = set(parent_identity.allowed_files)
+                if not _all_patterns_covered_by(child_patterns, parent_patterns):
+                    raise ValueError(
+                        f"child allowed_files {sorted(child_patterns)} are not a subset of "
+                        f"parent allowed_files {sorted(parent_patterns)}"
+                    )
         # Shape is not enough for the file scope: the merge gate reads these as
         # repository-relative globs, so a pattern that names a drive or walks
         # out of the root is refused before it can be signed.  Validated only
