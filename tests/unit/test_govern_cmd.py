@@ -32,8 +32,8 @@ def test_govern_inventory_mermaid_outputs_flowchart() -> None:
     )
     assert result.exit_code == 0, result.output
     assert "flowchart TD" in result.output
-    assert 'agent_claude["Claude Code"]' in result.output
-    assert "host_dev --> agent_claude" in result.output
+    assert 'n0["agent_claude: Claude Code"]' in result.output
+    assert "n2 --> n0" in result.output
     assert "classDef" not in result.output
 
 
@@ -67,3 +67,14 @@ def test_malformed_store_exits_one(tmp_path: Path) -> None:
     )
     assert result.exit_code == 1
     assert "JSON object" in result.output
+
+
+def test_non_list_nodes_exits_one(tmp_path: Path) -> None:
+    bad = tmp_path / "store.json"
+    bad.write_text('{"nodes": {}, "edges": []}', encoding="utf-8")
+    result = CliRunner().invoke(
+        govern_group,
+        ["inventory", "--render", "mermaid", "--store", str(bad)],
+    )
+    assert result.exit_code == 1
+    assert "nodes must be a list" in result.output

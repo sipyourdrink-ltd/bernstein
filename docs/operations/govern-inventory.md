@@ -10,7 +10,9 @@ bernstein govern inventory --render dot --store path/to/store.json
 
 `--render` takes `mermaid` or `dot`. Nodes sort by id and edges by
 `(from, to)`, so the same store produces the same bytes. There is no extra
-layout or styling: Mermaid is a `flowchart TD`, DOT is a `digraph inventory`.
+layout or styling: Mermaid is a `flowchart TD` with positional node ids
+(`n0`, `n1`, …) so punctuation in store ids cannot collide; DOT is a
+`digraph inventory` that quotes the raw ids.
 
 `--store` is a JSON file with `nodes` and `edges` (a hand-written fixture until
 the entity-per-file store in #5129 lands):

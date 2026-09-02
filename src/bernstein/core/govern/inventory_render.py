@@ -45,7 +45,7 @@ def render_inventory(store: Mapping[str, Any], fmt: str) -> str:
 def _nodes(store: Mapping[str, Any]) -> _CAST_LIST_DICT_STR_ANY:
     nodes = store.get("nodes", [])
     if not isinstance(nodes, list):
-        return []
+        raise ValueError("inventory store nodes must be a list")
     typed = [node for node in nodes if isinstance(node, dict)]
     return sorted(typed, key=lambda node: str(node.get("id", "")))
 
@@ -53,7 +53,7 @@ def _nodes(store: Mapping[str, Any]) -> _CAST_LIST_DICT_STR_ANY:
 def _edges(store: Mapping[str, Any]) -> _CAST_LIST_DICT_STR_ANY:
     edges = store.get("edges", [])
     if not isinstance(edges, list):
-        return []
+        raise ValueError("inventory store edges must be a list")
     typed = [edge for edge in edges if isinstance(edge, dict)]
     return sorted(
         typed,
@@ -65,20 +65,40 @@ def _edge_end(edge: dict[str, Any], primary: str, alias: str) -> str:
     return str(edge.get(primary) or edge.get(alias) or "")
 
 
+def _mermaid_node_map(nodes: _CAST_LIST_DICT_STR_ANY) -> dict[str, str]:
+    """Map store ids → positional mermaid ids (``n0``, ``n1``, …).
+
+    Sanitising punctuation to ``_`` would collide (``host-dev`` vs ``host.dev``).
+    Positional ids stay deterministic after the sorted ``_nodes`` walk and cannot
+    collide; the store id stays in the node label.
+    """
+    return {str(node.get("id", "")): f"n{index}" for index, node in enumerate(nodes)}
+
+
+def _mermaid_label(node: dict[str, Any]) -> str:
+    raw_id = str(node.get("id", ""))
+    friendly = str(node.get("label") or raw_id or "?")
+    text = friendly if friendly == raw_id else f"{raw_id}: {friendly}"
+    return text.replace('"', "'")
+
+
 def _render_mermaid_graph(store: Mapping[str, Any]) -> str:
     """Render the inventory graph as Mermaid flowchart markup.
 
     Shape copied from ``graph_cmd._render_mermaid_graph`` (flowchart TD,
     ``id["label"]``, ``from --> to``). No classDef / styling — defaults only.
+    Mermaid node ids are positional (``n0``…) so punctuation in store ids
+    cannot collapse distinct nodes.
     """
+    nodes = _nodes(store)
+    ids = _mermaid_node_map(nodes)
     lines = ["flowchart TD"]
-    for node in _nodes(store):
-        node_id = _mermaid_id(str(node.get("id", "")))
-        label = str(node.get("label") or node.get("id") or "?").replace('"', "'")
-        lines.append(f'    {node_id}["{label}"]')
+    for node in nodes:
+        raw_id = str(node.get("id", ""))
+        lines.append(f'    {ids[raw_id]}["{_mermaid_label(node)}"]')
     for edge in _edges(store):
-        src = _mermaid_id(_edge_end(edge, "from", "source"))
-        dst = _mermaid_id(_edge_end(edge, "to", "target"))
+        src = ids.get(_edge_end(edge, "from", "source"), "n_missing")
+        dst = ids.get(_edge_end(edge, "to", "target"), "n_missing")
         lines.append(f"    {src} --> {dst}")
     return "\n".join(lines)
 
@@ -96,13 +116,6 @@ def _render_dot_graph(store: Mapping[str, Any]) -> str:
         lines.append(f"    {_dot_string(src)} -> {_dot_string(dst)};")
     lines.append("}")
     return "\n".join(lines)
-
-
-def _mermaid_id(raw: str) -> str:
-    cleaned = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in raw)
-    if not cleaned or not cleaned[0].isalpha():
-        cleaned = f"n_{cleaned}"
-    return cleaned
 
 
 def _dot_string(raw: str) -> str:

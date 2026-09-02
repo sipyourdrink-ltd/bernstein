@@ -9,13 +9,13 @@ demand. CI fails when this fence drifts from
 
 ```mermaid
 flowchart TD
-    agent_claude["Claude Code"]
-    agent_codex["Codex"]
-    host_dev["developer machine"]
-    mcp_github["GitHub MCP"]
-    skill_review["Review skill"]
-    agent_claude --> mcp_github
-    agent_claude --> skill_review
-    host_dev --> agent_claude
-    host_dev --> agent_codex
+    n0["agent_claude: Claude Code"]
+    n1["agent_codex: Codex"]
+    n2["host_dev: developer machine"]
+    n3["mcp_github: GitHub MCP"]
+    n4["skill_review: Review skill"]
+    n0 --> n3
+    n0 --> n4
+    n2 --> n0
+    n2 --> n1
 ```

@@ -43,7 +43,7 @@ def govern_group() -> None:
 def govern_inventory_cmd(output_format: str, store_path: Path) -> None:
     """Print the inventory topology graph from the store.
 
-    Exit codes: 0 = emitted, 1 = store missing or unreadable.
+    Exit codes: 0 = emitted, 1 = store unreadable or not a JSON object, 2 = usage.
 
     Output is the graph only (no Rich chrome), so two runs over the same
     store compare equal as bytes.

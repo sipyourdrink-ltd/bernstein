@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from bernstein.core.govern.inventory_render import render_inventory
 
 FIXTURE_STORE = Path(__file__).resolve().parents[1] / "fixtures" / "govern" / "inventory-store.json"
@@ -40,10 +41,39 @@ def test_mermaid_is_flowchart_td_defaults_only() -> None:
     output = render_inventory(_store(), "mermaid")
     assert output.startswith("flowchart TD")
     assert "classDef" not in output
-    assert 'agent_claude["Claude Code"]' in output
-    assert "host_dev --> agent_claude" in output
-    # Sorted: agent_claude before host_dev, regardless of fixture list order.
-    assert output.index("agent_claude") < output.index("host_dev")
+    assert 'n0["agent_claude: Claude Code"]' in output
+    assert "n2 --> n0" in output
+    # Sorted: agent_claude (n0) before host_dev (n2).
+    assert output.index("n0[") < output.index("n2[")
+
+
+def test_mermaid_keeps_ids_that_differ_only_in_punctuation() -> None:
+    """Punctuation must not collapse distinct store ids onto one mermaid id."""
+    store = {
+        "nodes": [
+            {"id": "host.dev", "label": "CI runner"},
+            {"id": "host-dev", "label": "developer machine"},
+        ],
+        "edges": [{"from": "host-dev", "to": "host.dev"}],
+    }
+    mermaid = render_inventory(store, "mermaid")
+    assert 'n0["host-dev: developer machine"]' in mermaid
+    assert 'n1["host.dev: CI runner"]' in mermaid
+    assert "n0 --> n1" in mermaid
+    assert mermaid.count("n0[") == 1
+    assert mermaid.count("n1[") == 1
+    # DOT quotes raw ids, so both survive there too.
+    dot = render_inventory(store, "dot")
+    assert '"host-dev" [label="developer machine"];' in dot
+    assert '"host.dev" [label="CI runner"];' in dot
+    assert '"host-dev" -> "host.dev";' in dot
+
+
+def test_non_list_nodes_or_edges_raise() -> None:
+    with pytest.raises(ValueError, match="nodes must be a list"):
+        render_inventory({"nodes": {}, "edges": []}, "mermaid")
+    with pytest.raises(ValueError, match="edges must be a list"):
+        render_inventory({"nodes": [], "edges": {}}, "dot")
 
 
 def test_committed_mermaid_matches_fixture_store() -> None:
