@@ -53,6 +53,7 @@ from bernstein.core.orchestration.supervisor_receipt import (
 from bernstein.core.replay.fork import SNAPSHOT_EVENT
 from bernstein.core.replay.journal import load_events, run_journal_path, verify_journal
 from bernstein.core.skills.catalog.signature import sign_payload, verify_payload
+from bernstein.core.verify_result import VerifyResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -551,13 +552,8 @@ def assemble_escalation_receipt(
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class EscalationVerifyResult:
-    """Outcome of :func:`verify_escalation_receipt`."""
-
-    ok: bool
-    reason: str
-    receipt: EscalationReceipt | None = None
+#: Outcome of :func:`verify_escalation_receipt`.
+EscalationVerifyResult = VerifyResult[EscalationReceipt]
 
 
 def _degraded_reason(state: str) -> str:

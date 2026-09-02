@@ -284,6 +284,7 @@ nav:
           - Recipes: operations/recipes.md
           - Worktrees: operations/worktrees.md
           - Snapshot undo: git/snapshot-undo.md
+          - Task revert: operations/task-revert.md
           - Session handoff: operations/session-handoff.md
           - Routine scenarios: routine-scenarios.md
           - Per-step routing: workflows/per-step-routing.md
@@ -435,6 +436,7 @@ nav:
           - Security operations: operations/security.md
           - Hardening: security/security-hardening.md
           - Governance: operations/governance.md
+          - Govern ingest: operations/govern-ingest.md
           - Secrets & creds: operations/secrets.md
           - Secrets broker: security/secrets-broker.md
           - Env isolation: operations/env-isolation.md
@@ -495,6 +497,7 @@ nav:
           - Worker contracts: operations/worker-contracts.md
           - Model policy: operations/MODEL_POLICY.md
           - Ticket schema: sdd/ticket_schema.md
+          - Design tokens: design/tokens.md
           - Adapter capability contract: adapters/capability_contract.md
           - Global config CLI: operations/global-config.md
           - Workflow manifests: operations/workflow-manifests.md

@@ -182,6 +182,55 @@ instead of the ambiguous former `ok` flag.
   divergence.
 - `bernstein replay <run-id> --from-step N` rebuilds a deterministic state
   projection over events `[0, N)`; two invocations are byte-identical.
+- `bernstein replay <run-id> --re-derive` re-derives the coordination sequence
+  from the recorded inputs and compares the re-derived head to the recorded
+  one (see below).
+
+### Coordination re-derivation (`--re-derive`)
+
+`--verify` recomputes the chain over the rows already on disk. That proves the
+journal was not edited afterwards; it does not prove the coordination sequence
+those rows record is the sequence the scheduler's rules produce. Without a
+second check the determinism property is enforced by code structure alone.
+
+`--re-derive` supplies that check. It reads the two things coordination does
+not choose - the recorded planning output (`plan.graph.full`) and the recorded
+per-task outcomes (`task_completed`, `task_verification_failed`,
+`task_retried`) - walks the run back through the coordination state machine,
+appends every accepted step to a **fresh journal in a throwaway sandbox**, and
+exits 0 only when the re-derived timing-excluded head equals the recorded head.
+
+What is an input and what is a decision:
+
+| Recorded fact | Treated as | Why |
+|---|---|---|
+| plan graph, leaf outcome, agent id, model, cost | input, carried verbatim | coordination did not choose it; re-derivation holds it fixed |
+| whether a task was claimable when it was claimed | decision, re-derived | this is the rule the scheduler applies |
+| whether an outcome belonged to a running task | decision, re-derived | an outcome with no outstanding claim is not a reachable step |
+| the chain over the resulting sequence | decision, re-derived | the head is computed from inputs, never copied |
+
+A step the rules cannot produce is reported by index **and** by the rule that
+refused it (`dependency_not_completed`, `task_already_claimed`,
+`task_not_in_plan`, `outcome_for_unclaimed_task`), so an injected outcome
+surfaces as a named first divergence rather than a bare hash difference. When
+every step is derivable but a payload differs, the pairwise divergence locator
+(`core/replay/diff.py`) names the first differing step instead.
+
+Re-derivation re-executes nothing: no adapter binary, no task server, no
+network, and no write outside the sandbox. Re-running the agents is a live
+re-run, which is a different operation.
+
+Refusal codes: `underivable_step`, `head_mismatch`, `plan_missing`,
+`journal_unreadable`, `journal_not_found`. `--as-json` emits them alongside
+`step_index`, `rule`, `recorded_head` and `derived_head`.
+
+`plan.graph.full` is appended on normal ticks only (every sixth tick, and the
+first tick is always a fast tick), so a run that finished in fewer ticks than
+that recorded no planning output and re-derives to `plan_missing`. That is a
+gap in what the run recorded, not a fault in the run: there is nothing to
+re-derive the dependency gate from. For the same reason the dependency gate is
+skipped for claims that precede the first graph event, rather than reporting a
+missing input as a coordination fault.
 
 Capsule-governed finalization can seal the journal head and event count outside
 the journal. Where that seal exists, finished-journal identity and artifact
@@ -247,6 +296,7 @@ Exit codes for `bernstein verify receipt`:
 | `1` | Empty or malformed input (unreadable file, missing ranges/fields). |
 | `2` | Tamper detected (first divergent journal step index named), or a `--public-key` pin that does not match the embedded key. |
 | `3` | `--require-provenance` was given and only the integrity-only tier was reached. |
+| `4` | The signature is authentic but the key that produced it is not trusted by the supplied `--key-chain`. |
 
 **Trust model - what a pass proves depends on where the key came from.** By
 default the verifier checks the signature against the Ed25519 key embedded in
@@ -280,6 +330,53 @@ without parsing the verdict prose:
 Both flags default off, so a `verify receipt $f && deploy` script written
 against today's behaviour keeps exiting `0` on either tier unless it opts
 in.
+
+### Key lifecycle: rotation, revocation, superseded keys
+
+A single pinned key answers "who signed this" only while the operator never
+rotates and the key is never stolen. `signing.key_id` (the JWK `kid`) names
+*which* key signed a receipt; the **key-succession chain**
+(`core/security/receipt_key_chain.py`, issue #4211) is what makes that name
+resolvable across generations:
+
+- a **root** key - the one value the auditor pins out of band;
+- **succession** entries, each signed by the key that was current when it was
+  written, introducing the next key, so a rotation is attested rather than
+  announced;
+- **revocation** entries, marking a key untrusted from a named instant.
+
+Every entry carries `prev_entry_hash`, the SHA-256 of the canonical bytes of
+the entry before it (the root block for the first entry). Dropping,
+reordering, or back-dating an entry breaks the link, and a stranger who
+obtains the file cannot append a successor to it because the head key's
+signature is required.
+
+```bash
+# --public-key is now the pinned ROOT key; the receipt's own key is resolved
+# through the chain.
+bernstein verify receipt run-receipt.json \
+  --public-key root.pub.pem --key-chain key-chain.json [--signed-at <iso-8601>]
+```
+
+Resolving a receipt's key against a verified chain yields exactly one verdict,
+reported as `key_verdict` in `--json`:
+
+| Verdict | Exit | Meaning |
+|---|---|---|
+| `active` | `0` | The key is the chain head and was never revoked. |
+| `superseded` | `0` | The key was rotated out but never revoked. Rotation is hygiene, not distrust: receipts a predecessor signed stay verifiable against the same pinned root. |
+| `signed-before-revocation` | `0` | The key was revoked, and an attested signing time places the signature strictly before the revocation instant. |
+| `signed-after-revocation` | `4` | The key was revoked and the attested signing time is at or after the revocation instant - the compromise case. |
+| `revoked-signing-time-unknown` | `4` | The key was revoked and no attested signing time was supplied. Fails closed. |
+| `unknown-key` | `4` | The receipt's `kid` is not introduced anywhere in the chain. |
+| `key-mismatch` | `4` | The `kid` is in the chain but the receipt's embedded key is a different key. |
+
+**Where the signing time comes from.** Receipt bytes carry no wall clock - by
+construction, because they must be byte-deterministic - so the revocation
+boundary needs an instant from outside the receipt, passed as `--signed-at`
+(timezone-aware ISO-8601; a naive timestamp is refused rather than assumed to
+be UTC). Without it a revoked key fails closed: a compromise verdict must
+never be softened by a timestamp the attacker could have chosen.
 
 **Automatic receipts at finalization.** When a signing key is configured via
 `BERNSTEIN_RUN_RECEIPT_SIGNING_KEY_PATH` (key file) or

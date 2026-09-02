@@ -65,6 +65,12 @@ class ScannerTranscriptStep:
         expect_exception: Exception class name to expect, or None.
         expect_feed_digest: Expected feed digest when determinism is
             ``feed_pinned``, or None.
+        expected_invocation_digest: Expected invocation digest. A transcript can be
+            byte-identical across genuinely different invocations - nmap builds
+            its transcript from what it FOUND, so two scans of different targets
+            that both find nothing produce the same one - so pinning the
+            transcript alone cannot tell a faithful replay from a different scan
+            (#5151).
         expected_transcript: Expected transcript text when determinism is
             ``transcript_anchored``, or None.
     """
@@ -76,6 +82,7 @@ class ScannerTranscriptStep:
     expected_finding_hashes: list[str] | None = None
     expect_exception: str | None = None
     expect_feed_digest: str | None = None
+    expected_invocation_digest: str | None = None
     expected_transcript: str | None = None
 
     @classmethod
@@ -89,6 +96,7 @@ class ScannerTranscriptStep:
             expected_finding_hashes=raw.get("expected_finding_hashes"),
             expect_exception=raw.get("expect_exception"),
             expect_feed_digest=raw.get("expect_feed_digest"),
+            expected_invocation_digest=raw.get("expected_invocation_digest"),
             expected_transcript=raw.get("expected_transcript"),
         )
 
@@ -435,6 +443,20 @@ class ScannerConformanceHarness:
         if step.expected_transcript is not None and transcript != step.expected_transcript:
             passed = False
             message_parts.append("transcript_anchored tier: recorded transcript differs from the expected one")
+
+        # ... and the invocation that produced it must be the same invocation. Checked
+        # SEPARATELY from the transcript because the transcript cannot carry this: nmap
+        # records the hosts and ports it found, not the ones asked for, so a replay of a
+        # different target that also finds nothing matches byte for byte (#5151).
+        if (
+            step.expected_invocation_digest is not None
+            and scan_result.invocation_digest != step.expected_invocation_digest
+        ):
+            passed = False
+            message_parts.append(
+                "transcript_anchored tier: transcript matched but the invocation digest differs "
+                f"(expected {step.expected_invocation_digest!r}, got {scan_result.invocation_digest!r})"
+            )
 
         actual_hashes_str = ", ".join(actual_finding_hashes[:3]) if actual_finding_hashes else "(none)"
         expected_str = ", ".join(expected_hashes[:3]) if expected_hashes else "(none)"

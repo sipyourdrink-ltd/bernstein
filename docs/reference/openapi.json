@@ -7851,6 +7851,46 @@
         }
       }
     },
+    "/governance/coverage": {
+      "get": {
+        "tags": [
+          "governance"
+        ],
+        "summary": "Governance Coverage",
+        "description": "Return the canonical coverage document for ``?run_id=``.",
+        "operationId": "governance_coverage_governance_coverage_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/governance/verify-receipt": {
+      "post": {
+        "tags": [
+          "governance"
+        ],
+        "summary": "Verify Receipt",
+        "description": "Verify the posted receipt file and return the verdict document.\n\nThe request body is the receipt verbatim -- whatever the operator dropped,\nof whatever content type. Nothing under ``.sdd`` and no key material is\nread: the verifier works from the file's own bytes, so this endpoint\nanswers about the upload and not about the installation serving it.\n\nThe status is always 200 for a request that carried a body. A tampered\nreceipt, a file that is not a receipt, and an empty drop are all verdicts\nabout the evidence rather than failed requests, and each is the answer an\noperator dropped the file to get.\n\nNo key can be pinned through this endpoint, so the pass it reports is\nalways the integrity-only tier and always carries the caveat saying so.\nA key arriving in the same request as the receipt is not an out-of-band\nanchor -- it is the same channel, and treating it as one would report\nprovenance on the strength of the upload rather than of any evidence.",
+        "operationId": "verify_receipt_governance_verify_receipt_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/handoff/{token}": {
       "get": {
         "summary": "Claim Handoff Token",
@@ -16606,6 +16646,46 @@
           },
           "422": {
             "description": "Invalid graduation stage"
+          }
+        }
+      }
+    },
+    "/api/v1/governance/coverage": {
+      "get": {
+        "tags": [
+          "governance"
+        ],
+        "summary": "Governance Coverage",
+        "description": "Return the canonical coverage document for ``?run_id=``.",
+        "operationId": "governance_coverage_api_v1_governance_coverage_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/governance/verify-receipt": {
+      "post": {
+        "tags": [
+          "governance"
+        ],
+        "summary": "Verify Receipt",
+        "description": "Verify the posted receipt file and return the verdict document.\n\nThe request body is the receipt verbatim -- whatever the operator dropped,\nof whatever content type. Nothing under ``.sdd`` and no key material is\nread: the verifier works from the file's own bytes, so this endpoint\nanswers about the upload and not about the installation serving it.\n\nThe status is always 200 for a request that carried a body. A tampered\nreceipt, a file that is not a receipt, and an empty drop are all verdicts\nabout the evidence rather than failed requests, and each is the answer an\noperator dropped the file to get.\n\nNo key can be pinned through this endpoint, so the pass it reports is\nalways the integrity-only tier and always carries the caveat saying so.\nA key arriving in the same request as the receipt is not an out-of-band\nanchor -- it is the same channel, and treating it as one would report\nprovenance on the strength of the upload rather than of any evidence.",
+        "operationId": "verify_receipt_api_v1_governance_verify_receipt_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
           }
         }
       }
