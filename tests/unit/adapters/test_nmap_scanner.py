@@ -21,6 +21,7 @@ from bernstein.adapters.nmap import (
 from bernstein.adapters.scanner import DeterminismTier, OutputFormat, ScannerCategory, ScanScope
 from bernstein.adapters.scanner_conformance import ScannerConformanceHarness, load_scanner_golden_transcripts
 from bernstein.adapters.scanner_registry import get_scanner
+from bernstein.core.security.network_policy import NetworkPolicyDenied
 
 _FIXTURE_DIR = Path("tests/fixtures/scanners/nmap")
 _FIXTURE_A = _FIXTURE_DIR / "nmap-localhost-a.xml"
@@ -209,6 +210,57 @@ def test_invalid_port_scopes_fail_before_nmap_lookup(tmp_path: Path, ports: str)
     which.assert_not_called()
 
 
+def test_enforce_network_policy_checks_the_concrete_scan_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The hook must accept a per-call destination, not just the class-level declaration.
+
+    Fails today because ``enforce_network_policy()`` takes no arguments: there is
+    nothing to assert a target against, since ``NmapAdapter`` never sets
+    ``external_endpoints`` (its destination is per-scan, not fixed at import time).
+    """
+    monkeypatch.setenv("BERNSTEIN_NETWORK_POLICY", "10.0.0.0/8")
+    adapter = NmapAdapter()
+
+    with pytest.raises(NetworkPolicyDenied) as exc_info:
+        adapter.enforce_network_policy(("192.0.2.5", None))
+    assert exc_info.value.destination == "192.0.2.5"
+
+    # A target inside the granted range passes through without raising.
+    adapter.enforce_network_policy(("10.1.2.3", None))
+
+
+def test_nmap_scan_refused_when_target_outside_allow_network_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BERNSTEIN_NETWORK_POLICY", "10.0.0.0/8")
+    adapter = NmapAdapter()
+
+    with (
+        patch("bernstein.adapters.nmap.shutil.which", return_value="/usr/local/bin/nmap") as which,
+        patch("bernstein.adapters.nmap.subprocess.run") as run,
+        pytest.raises(NetworkPolicyDenied, match="192.0.2.5"),
+    ):
+        adapter.scan(Path("192.0.2.5"), _scope(), tmp_path / "work")
+
+    which.assert_not_called()
+    run.assert_not_called()
+
+
+def test_nmap_scan_allowed_when_target_inside_allow_network_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BERNSTEIN_NETWORK_POLICY", "10.0.0.0/8")
+    adapter = NmapAdapter()
+
+    with (
+        patch("bernstein.adapters.nmap.shutil.which", return_value="/usr/local/bin/nmap"),
+        patch("bernstein.adapters.nmap.subprocess.run", side_effect=_fake_nmap_run()) as run,
+    ):
+        result = adapter.scan(Path("10.1.2.3"), _scope(), tmp_path / "work")
+
+    assert result.transcript == _TRANSCRIPT
+    run.assert_called()
+
+
 def test_conformance_replays_both_recordings_and_checks_the_transcript(tmp_path: Path) -> None:
     transcripts = load_scanner_golden_transcripts(_FIXTURE_DIR)
     assert len(transcripts) == 1
@@ -245,3 +297,82 @@ def test_conformance_fails_when_the_expected_transcript_changes(tmp_path: Path) 
 
     assert not result.passed
     assert "recorded transcript differs" in result.step_results[0].message
+
+
+# ---------------------------------------------------------------------------
+# The stored result must say which invocation produced it (#5151)
+# ---------------------------------------------------------------------------
+
+_EMPTY_NMAP_XML = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<nmaprun scanner="nmap" args="nmap" start="1735689600" version="7.991">'
+    '<runstats><finished time="1735689601" elapsed="1.00"/>'
+    '<hosts up="0" down="1" total="1"/></runstats></nmaprun>'
+)
+
+
+def _fake_nmap_run_empty():
+    """An nmap that finds nothing: host down, or nothing listening in range."""
+
+    def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if argv[1:] == ["--version"]:
+            return subprocess.CompletedProcess(argv, 0, stdout="Nmap version 7.991 ( https://nmap.org )\n", stderr="")
+        Path(argv[argv.index("-oX") + 1]).write_text(_EMPTY_NMAP_XML, encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    return run
+
+
+def _empty_scan(target: str, ports: str, workdir: Path):
+    adapter = NmapAdapter()
+    with (
+        patch("bernstein.adapters.nmap.shutil.which", return_value="/usr/local/bin/nmap"),
+        patch("bernstein.adapters.nmap.subprocess.run", side_effect=_fake_nmap_run_empty()),
+    ):
+        return adapter, adapter.scan(Path(target), ScanScope(config={"ports": ports}), workdir)
+
+
+def test_empty_result_for_different_invocations_does_not_verify_as_the_same_result(
+    tmp_path: Path,
+) -> None:
+    """Two scans that find nothing must still be distinguishable.
+
+    `normalize_nmap_xml` builds its transcript from the hosts and ports nmap
+    REPORTED, never from the ones requested, so an empty scan's transcript is
+    byte-identical whatever was asked for. With the invocation hash living only
+    on the adapter instance, the two stored results were identical objects: a
+    scan of one target could verify as a scan of another.
+    """
+    _a, result_a = _empty_scan("127.0.0.1", "8765", tmp_path / "a")
+    _b, result_b = _empty_scan("10.0.0.1", "1-1024", tmp_path / "b")
+
+    # The premise: nothing else on the result tells them apart.
+    assert result_a.transcript == result_b.transcript
+    assert result_a.finding_hashes() == result_b.finding_hashes() == []
+
+    assert result_a.invocation_digest != result_b.invocation_digest
+
+
+def test_scan_result_carries_the_invocation_digest(tmp_path: Path) -> None:
+    """The digest on the returned object is the one the adapter recorded.
+
+    Asserted against `last_invocation` rather than against a literal: the point
+    is that the two agree, not what the hash happens to be.
+    """
+    adapter, result = _empty_scan("127.0.0.1", "8765", tmp_path / "work")
+    assert adapter.last_invocation is not None
+    assert result.invocation_digest == adapter.last_invocation.argv_hash
+    assert result.invocation_digest != ""
+
+
+def test_the_digest_follows_the_ports_asked_for_not_the_ports_found(tmp_path: Path) -> None:
+    """Same target, different port range, both empty - still two results.
+
+    The narrower half of the load-bearing case, and the one an operator hits:
+    re-running the same host over a wider range is the ordinary next step after
+    an empty scan.
+    """
+    _a, result_a = _empty_scan("127.0.0.1", "8765", tmp_path / "a")
+    _b, result_b = _empty_scan("127.0.0.1", "1-1024", tmp_path / "b")
+    assert result_a.transcript == result_b.transcript
+    assert result_a.invocation_digest != result_b.invocation_digest

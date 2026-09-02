@@ -332,3 +332,184 @@ def test_schema_requires_the_coverage_section() -> None:
     doc.pop("coverage")
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(instance=doc, schema=schema)
+
+
+# ---------------------------------------------------------------------------
+# 13-18. Key provenance: an embedded key is a hint, a pinned key is a source
+# ---------------------------------------------------------------------------
+
+JWS_TYP = "application/vnd.bernstein.authority-envelope+jws"
+
+
+def _jwk_of(private_key: Any) -> dict[str, str]:
+    """RFC 8037 OKP JWK for the public half of *private_key*."""
+    from cryptography.hazmat.primitives import serialization
+
+    from bernstein.core.security.agent_card_signer import _b64url
+
+    raw = private_key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    return {"kty": "OKP", "crv": "Ed25519", "x": _b64url(raw)}
+
+
+def _pem_of(private_key: Any) -> bytes:
+    """SubjectPublicKeyInfo PEM for the public half of *private_key*."""
+    from cryptography.hazmat.primitives import serialization
+
+    return private_key.public_key().public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+
+
+def _pem_from_jwk(jwk: dict[str, str]) -> bytes:
+    """SubjectPublicKeyInfo PEM for the public key an OKP JWK carries."""
+    import base64
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    x = jwk["x"]
+    raw = base64.urlsafe_b64decode(x + ("=" * (-len(x) % 4)))
+    return Ed25519PublicKey.from_public_bytes(raw).public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+
+
+def _resign(doc: dict[str, Any], private_key: Any) -> dict[str, Any]:
+    """Re-sign *doc* with *private_key*, replacing the embedded key hint.
+
+    Signing goes through the production canonicaliser, not the verifier's own
+    re-implementation, so a re-signed envelope is a real envelope rather than
+    one minted by the code under test.
+    """
+    from bernstein.core.security.agent_card_signer import _b64url, canonicalize_jcs
+
+    body = {name: value for name, value in doc.items() if name != "signature"}
+    kid = doc["signature"]["kid"]
+    header_b64 = _b64url(canonicalize_jcs({"alg": "EdDSA", "typ": JWS_TYP, "kid": kid}))
+    body_b64 = _b64url(canonicalize_jcs(body))
+    signature = private_key.sign(f"{header_b64}.{body_b64}".encode("ascii"))
+
+    resigned = dict(body)
+    resigned["signature"] = {
+        "alg": "EdDSA",
+        "kid": kid,
+        "public_key_jwk": _jwk_of(private_key),
+        "jws": f"{header_b64}..{_b64url(signature)}",
+    }
+    return resigned
+
+
+def _fresh_key() -> Any:
+    """A keypair generated in this test process, unrelated to the vector's."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    return Ed25519PrivateKey.generate()
+
+
+def _machine_result(proc: subprocess.CompletedProcess[str]) -> dict[str, Any]:
+    """The CLI's structured result, emitted as the last JSON line on stderr."""
+    for line in reversed(proc.stderr.splitlines()):
+        if line.startswith("{"):
+            return json.loads(line)
+    raise AssertionError(f"no JSON result on stderr: {proc.stderr!r}")
+
+
+def _write_jwk(tmp_path: Path, jwk: dict[str, str], name: str) -> Path:
+    out = tmp_path / name
+    out.write_text(json.dumps(jwk), encoding="utf-8")
+    return out
+
+
+def test_unpinned_verification_is_named_trust_on_first_use_not_verified(
+    isolated_runner: Path,
+) -> None:
+    """With no pin the envelope is checked against the key it carries, and says so.
+
+    A pass here means "nothing was edited after signing", not "the signer is
+    who the envelope names". The output has to make that difference visible to
+    a reader who does not read this test.
+    """
+    proc = _run_verifier(isolated_runner, VALID_VECTOR)
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "trust-on-first-use" in proc.stdout
+    assert _machine_result(proc)["trust"] == "trust-on-first-use"
+
+
+def test_envelope_resigned_with_a_foreign_key_is_rejected_when_a_jwk_is_pinned(
+    isolated_runner: Path, tmp_path: Path
+) -> None:
+    """A pinned JWK rejects an envelope re-signed by anyone else.
+
+    This is the property the pinning flags exist for: the attacker can rewrite
+    the whole file, including the key it carries, and still fails.
+    """
+    attacker = _fresh_key()
+    resigned = _resign(_load_valid(), attacker)
+    envelope = _write(tmp_path, resigned, "resigned.json")
+    pin = _write_jwk(tmp_path, _load_valid()["signature"]["public_key_jwk"], "operator.jwk")
+
+    proc = _run_verifier(isolated_runner, envelope, "--jwk", str(pin))
+    assert proc.returncode == 1, f"stdout={proc.stdout!r}"
+    assert "[FAIL] signature" in proc.stdout
+    assert "--jwk" in proc.stdout
+    assert _machine_result(proc)["trust"] == "unverified"
+
+
+def test_a_resigned_envelope_still_verifies_under_a_pin_on_its_own_new_key(
+    isolated_runner: Path, tmp_path: Path
+) -> None:
+    """Re-signing is not itself the defect, so the rejection above is about the pin.
+
+    Without this the previous test could pass merely because ``_resign``
+    produced a broken envelope.
+    """
+    attacker = _fresh_key()
+    resigned = _resign(_load_valid(), attacker)
+    envelope = _write(tmp_path, resigned, "resigned.json")
+    pin = _write_jwk(tmp_path, _jwk_of(attacker), "attacker.jwk")
+
+    proc = _run_verifier(isolated_runner, envelope, "--jwk", str(pin))
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert _machine_result(proc)["trust"] == "pinned-jwk"
+
+
+def test_envelope_resigned_with_a_foreign_key_is_rejected_when_a_pem_is_pinned(
+    isolated_runner: Path, tmp_path: Path
+) -> None:
+    """``--public-key`` pins the same trust source in PEM form."""
+    attacker = _fresh_key()
+    envelope = _write(tmp_path, _resign(_load_valid(), attacker), "resigned.json")
+
+    pem_path = tmp_path / "operator.pem"
+    pem_path.write_bytes(_pem_from_jwk(_load_valid()["signature"]["public_key_jwk"]))
+
+    proc = _run_verifier(isolated_runner, envelope, "--public-key", str(pem_path))
+    assert proc.returncode == 1, f"stdout={proc.stdout!r}"
+    assert "[FAIL] signature" in proc.stdout
+    assert "--public-key" in proc.stdout
+
+
+def test_pinning_the_signing_key_replaces_trust_on_first_use_with_a_pinned_source(
+    isolated_runner: Path, tmp_path: Path
+) -> None:
+    """Pinning the key the vector was signed with reports a pinned trust source."""
+    pin = _write_jwk(tmp_path, _load_valid()["signature"]["public_key_jwk"], "operator.jwk")
+    proc = _run_verifier(isolated_runner, VALID_VECTOR, "--jwk", str(pin))
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert _machine_result(proc)["trust"] == "pinned-jwk"
+    assert "trust-on-first-use" not in proc.stdout
+
+
+def test_two_conflicting_pins_are_refused_rather_than_one_being_ignored(isolated_runner: Path, tmp_path: Path) -> None:
+    """Passing both pins is an argument error, not a silent preference for one.
+
+    Silently honouring one of two pins would let an operator believe they
+    pinned a key that was never consulted.
+    """
+    jwk_path = _write_jwk(tmp_path, _load_valid()["signature"]["public_key_jwk"], "operator.jwk")
+    pem_path = tmp_path / "other.pem"
+    pem_path.write_bytes(_pem_of(_fresh_key()))
+
+    proc = _run_verifier(isolated_runner, VALID_VECTOR, "--jwk", str(jwk_path), "--public-key", str(pem_path))
+    assert proc.returncode == 2, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "--jwk" in proc.stderr and "--public-key" in proc.stderr

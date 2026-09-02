@@ -160,7 +160,7 @@ class _CLIRedirectFinder(MetaPathFinder):
             return None
         if short not in _CLI_REDIRECT_MAP:
             return None
-        return ModuleSpec(fullname, _CLIRedirectLoader())
+        return ModuleSpec(fullname, _CLIRedirectLoader())  # type: ignore[arg-type]  # meta-path redirect
 
 
 class _CLIRedirectLoader:

@@ -1,0 +1,55 @@
+{
+  "run_id": "run-2026-09-01T18:22:04Z-a1f3c9",
+  "captured_at": "2026-09-01T18:22:04Z",
+  "source_note": "Checked-in sample. These numbers describe a recorded example run, not this installation.",
+  "metrics": [
+    {
+      "id": "attributable_actions",
+      "label": "Actions attributable to a principal",
+      "denominator_label": "agent actions recorded in this run",
+      "covered": 71,
+      "total": 208,
+      "unmeasured_reason": null
+    },
+    {
+      "id": "consequential_with_decision",
+      "label": "Consequential actions with a recorded decision",
+      "denominator_label": "consequential actions recorded in this run",
+      "covered": 4,
+      "total": 33,
+      "unmeasured_reason": null
+    },
+    {
+      "id": "recomputable_decisions",
+      "label": "Decisions recomputable from their recorded inputs",
+      "denominator_label": "decisions recorded in this run",
+      "covered": 33,
+      "total": 33,
+      "unmeasured_reason": null
+    },
+    {
+      "id": "approved_before_execution",
+      "label": "Gated actions approved before execution",
+      "denominator_label": "gated actions recorded in this run",
+      "covered": 0,
+      "total": 12,
+      "unmeasured_reason": null
+    },
+    {
+      "id": "delegated_hops_with_grant",
+      "label": "Delegation hops carrying a grant chain",
+      "denominator_label": "delegation hops recorded in this run",
+      "covered": null,
+      "total": null,
+      "unmeasured_reason": "No delegation hop was written during this run, so there is nothing to take a fraction over."
+    },
+    {
+      "id": "tool_calls_with_identity",
+      "label": "Tool calls carrying a per-call identity record",
+      "denominator_label": "tool calls recorded in this run",
+      "covered": null,
+      "total": null,
+      "unmeasured_reason": "Per-call identity records are not written, so the numerator cannot be counted."
+    }
+  ]
+}

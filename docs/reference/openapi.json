@@ -6951,6 +6951,275 @@
         }
       }
     },
+    "/scim/v2/ServiceProviderConfig": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "SCIM 2.0 service provider configuration",
+        "description": "Return the RFC 7643 §5 discovery document for this service provider.\n\nEverything reported here is what the mounted surface actually does. The\nwrite operations are absent rather than advertised-and-unimplemented, and\nthe deletion semantics a client will eventually meet are stated now.",
+        "operationId": "service_provider_config_scim_v2_ServiceProviderConfig_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scim/v2/Schemas": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "SCIM 2.0 schema resources",
+        "description": "List the schema resources this server serves (RFC 7643 §7).",
+        "operationId": "list_schemas_scim_v2_Schemas_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scim/v2/Schemas/{schema_id}": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "Fetch a single SCIM schema resource",
+        "description": "Fetch one schema resource by its URN.",
+        "operationId": "get_schema_scim_v2_Schemas__schema_id__get",
+        "parameters": [
+          {
+            "name": "schema_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Schema Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown schema URN"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scim/v2/ResourceTypes": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "SCIM 2.0 resource types",
+        "description": "List the resource types this server serves (RFC 7643 §6).",
+        "operationId": "list_resource_types_scim_v2_ResourceTypes_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scim/v2/ResourceTypes/{resource_type_id}": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "Fetch a single SCIM resource type",
+        "description": "Fetch one resource type by id.",
+        "operationId": "get_resource_type_scim_v2_ResourceTypes__resource_type_id__get",
+        "parameters": [
+          {
+            "name": "resource_type_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Resource Type Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown resource type"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scim/v2/Users": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "List agent principals as SCIM users",
+        "description": "Return the agent principals this orchestrator knows about.\n\n``ServiceProviderConfig`` reports ``filter.supported = false``, so a\n``filter`` query is refused rather than ignored: silently returning the\nunfiltered list would hand a client more principals than it asked for and\nlook like a successful narrow query.",
+        "operationId": "list_users_scim_v2_Users_get",
+        "parameters": [
+          {
+            "name": "startIndex",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Startindex"
+            }
+          },
+          {
+            "name": "count",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Count"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Filter"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "501": {
+            "description": "Filtering is not supported by this provider"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scim/v2/Users/{user_id}": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "Fetch one agent principal as a SCIM user",
+        "description": "Fetch a single agent principal by its SCIM ``id``.",
+        "operationId": "get_user_scim_v2_Users__user_id__get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown principal"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/hooks/{session_id}": {
       "post": {
         "summary": "Receive Hook",
@@ -7859,6 +8128,26 @@
         "summary": "Governance Coverage",
         "description": "Return the canonical coverage document for ``?run_id=``.",
         "operationId": "governance_coverage_governance_coverage_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/governance/verify-receipt": {
+      "post": {
+        "tags": [
+          "governance"
+        ],
+        "summary": "Verify Receipt",
+        "description": "Verify the posted receipt file and return the verdict document.\n\nThe request body is the receipt verbatim -- whatever the operator dropped,\nof whatever content type. Nothing under ``.sdd`` and no key material is\nread: the verifier works from the file's own bytes, so this endpoint\nanswers about the upload and not about the installation serving it.\n\nThe status is always 200 for a request that carried a body. A tampered\nreceipt, a file that is not a receipt, and an empty drop are all verdicts\nabout the evidence rather than failed requests, and each is the answer an\noperator dropped the file to get.\n\nNo key can be pinned through this endpoint, so the pass it reports is\nalways the integrity-only tier and always carries the caveat saying so.\nA key arriving in the same request as the receipt is not an out-of-band\nanchor -- it is the same channel, and treating it as one would report\nprovenance on the strength of the upload rather than of any evidence.",
+        "operationId": "verify_receipt_governance_verify_receipt_post",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -15730,6 +16019,275 @@
         }
       }
     },
+    "/api/v1/scim/v2/ServiceProviderConfig": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "SCIM 2.0 service provider configuration",
+        "description": "Return the RFC 7643 §5 discovery document for this service provider.\n\nEverything reported here is what the mounted surface actually does. The\nwrite operations are absent rather than advertised-and-unimplemented, and\nthe deletion semantics a client will eventually meet are stated now.",
+        "operationId": "service_provider_config_api_v1_scim_v2_ServiceProviderConfig_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scim/v2/Schemas": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "SCIM 2.0 schema resources",
+        "description": "List the schema resources this server serves (RFC 7643 §7).",
+        "operationId": "list_schemas_api_v1_scim_v2_Schemas_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scim/v2/Schemas/{schema_id}": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "Fetch a single SCIM schema resource",
+        "description": "Fetch one schema resource by its URN.",
+        "operationId": "get_schema_api_v1_scim_v2_Schemas__schema_id__get",
+        "parameters": [
+          {
+            "name": "schema_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Schema Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown schema URN"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scim/v2/ResourceTypes": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "SCIM 2.0 resource types",
+        "description": "List the resource types this server serves (RFC 7643 §6).",
+        "operationId": "list_resource_types_api_v1_scim_v2_ResourceTypes_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scim/v2/ResourceTypes/{resource_type_id}": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "Fetch a single SCIM resource type",
+        "description": "Fetch one resource type by id.",
+        "operationId": "get_resource_type_api_v1_scim_v2_ResourceTypes__resource_type_id__get",
+        "parameters": [
+          {
+            "name": "resource_type_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Resource Type Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown resource type"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scim/v2/Users": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "List agent principals as SCIM users",
+        "description": "Return the agent principals this orchestrator knows about.\n\n``ServiceProviderConfig`` reports ``filter.supported = false``, so a\n``filter`` query is refused rather than ignored: silently returning the\nunfiltered list would hand a client more principals than it asked for and\nlook like a successful narrow query.",
+        "operationId": "list_users_api_v1_scim_v2_Users_get",
+        "parameters": [
+          {
+            "name": "startIndex",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Startindex"
+            }
+          },
+          {
+            "name": "count",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Count"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Filter"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "501": {
+            "description": "Filtering is not supported by this provider"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scim/v2/Users/{user_id}": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "Fetch one agent principal as a SCIM user",
+        "description": "Fetch a single agent principal by its SCIM ``id``.",
+        "operationId": "get_user_api_v1_scim_v2_Users__user_id__get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown principal"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/hooks/{session_id}": {
       "post": {
         "summary": "Receive Hook",
@@ -16638,6 +17196,26 @@
         "summary": "Governance Coverage",
         "description": "Return the canonical coverage document for ``?run_id=``.",
         "operationId": "governance_coverage_api_v1_governance_coverage_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/governance/verify-receipt": {
+      "post": {
+        "tags": [
+          "governance"
+        ],
+        "summary": "Verify Receipt",
+        "description": "Verify the posted receipt file and return the verdict document.\n\nThe request body is the receipt verbatim -- whatever the operator dropped,\nof whatever content type. Nothing under ``.sdd`` and no key material is\nread: the verifier works from the file's own bytes, so this endpoint\nanswers about the upload and not about the installation serving it.\n\nThe status is always 200 for a request that carried a body. A tampered\nreceipt, a file that is not a receipt, and an empty drop are all verdicts\nabout the evidence rather than failed requests, and each is the answer an\noperator dropped the file to get.\n\nNo key can be pinned through this endpoint, so the pass it reports is\nalways the integrity-only tier and always carries the caveat saying so.\nA key arriving in the same request as the receipt is not an out-of-band\nanchor -- it is the same channel, and treating it as one would report\nprovenance on the strength of the upload rather than of any evidence.",
+        "operationId": "verify_receipt_api_v1_governance_verify_receipt_post",
         "responses": {
           "200": {
             "description": "Successful Response",

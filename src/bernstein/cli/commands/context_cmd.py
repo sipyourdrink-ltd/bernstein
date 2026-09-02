@@ -21,6 +21,12 @@ declared path set (#3366): every declared file addressed by the hash of its
 bytes, and every path that does not resolve recorded ``unmanifested`` with its
 reason code. Nothing anchors the digest in a run record yet, so the command is
 a read of the working tree, not of the chain.
+
+``bernstein context segment-prompt`` (#3455) is a separate, offline debug
+utility: it digests the role/task/mailbox/resume blocks the orchestrator
+authors into named segments plus one ordered segment-list digest. It reads
+only the files passed on the command line and writes nothing -- anchoring a
+segment digest in a real run is later scope for #3455.
 """
 
 from __future__ import annotations
@@ -233,6 +239,70 @@ def context_manifest_cmd(task_id: str, workdir: str, as_json: bool) -> None:
             console.print(f"  {index:>3}  [yellow]unmanifested[/yellow] ({entry.reason})  {entry.path}")
         else:
             console.print(f"  {index:>3}  {entry.digest}  {entry.path}")
+
+
+def _read_block(path: str | None) -> str:
+    if path is None:
+        return ""
+    return Path(path).read_text(encoding="utf-8")
+
+
+@context_group.command("segment-prompt")
+@click.option(
+    "--role-file", type=click.Path(exists=True, dir_okay=False), default=None, help="File with the role block."
+)
+@click.option(
+    "--task-file", type=click.Path(exists=True, dir_okay=False), default=None, help="File with the task block."
+)
+@click.option(
+    "--mailbox-file",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="File with the coordination-mailbox block.",
+)
+@click.option(
+    "--resume-file", type=click.Path(exists=True, dir_okay=False), default=None, help="File with the resume block."
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit machine-readable JSON.")
+def context_segment_prompt_cmd(
+    role_file: str | None,
+    task_file: str | None,
+    mailbox_file: str | None,
+    resume_file: str | None,
+    as_json: bool,
+) -> None:
+    """Digest prompt blocks into named segments (#3455 step 1, offline debug utility).
+
+    Reads each of the role/task/mailbox/resume blocks from a file (an omitted
+    block is treated as empty, not skipped) and prints each segment's name and
+    ``sha256:`` digest, plus the ordered segment-list digest. Pure and
+    offline: this command reads only the files given on the command line and
+    writes nothing to ``.sdd/`` or any other run state -- anchoring a segment
+    digest in a real run is later scope for #3455.
+    """
+    from bernstein.core.agents.prompt_segments import segment_prompt, segments_digest
+
+    segments = segment_prompt(
+        role_block=_read_block(role_file),
+        task_block=_read_block(task_file),
+        mailbox_block=_read_block(mailbox_file),
+        resume_block=_read_block(resume_file),
+    )
+    list_digest = segments_digest(segments)
+
+    if as_json:
+        payload = {
+            "segments": [{"name": s.name, "digest": s.digest} for s in segments],
+            "segments_digest": list_digest,
+        }
+        console.print_json(json.dumps(payload))
+        return
+
+    console.print()
+    console.print("[bold]Prompt segments[/bold]")
+    for segment in segments:
+        console.print(f"  {segment.name:<8} {segment.digest}")
+    console.print(f"  {'digest':<8} {list_digest}")
 
 
 __all__ = ["context_group"]
