@@ -461,6 +461,7 @@ nav:
           - EU residency setup: compliance/eu-residency-customer-setup.md
           - Regulator-mapped compliance packs: compliance/regulator-mapped-packs.md
           - FINOS AIGF mapping: compliance/finos-aigf-mapping.md
+          - ISO/IEC 42001 mapping: compliance/iso42001-mapping.md
           - Regulator-class lineage: compliance/regulatory-lineage.md
           - Lineage export: compliance/lineage-export.md
           - Lineage v1 (user reference): lineage.md
