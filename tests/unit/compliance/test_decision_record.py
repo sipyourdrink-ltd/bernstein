@@ -146,9 +146,7 @@ def test_every_rendered_field_is_reachable_from_a_referenced_event(tmp_path: Pat
 
     events = AuditChainStore(audit_dir, key=_KEY).query()
     referenced = [
-        event
-        for event in events
-        if event.hmac in {record.source_events["issued"], record.source_events["resolved"]}
+        event for event in events if event.hmac in {record.source_events["issued"], record.source_events["resolved"]}
     ]
     assert len(referenced) == 2
     haystack = json.dumps([{"details": event.details, "hmac": event.hmac} for event in referenced], sort_keys=True)
