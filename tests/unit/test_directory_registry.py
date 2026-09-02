@@ -100,7 +100,9 @@ def test_plugin_registered_adapter_is_discovered_without_touching_core() -> None
 
 def test_plugin_may_register_with_a_name_factory_tuple() -> None:
     """The tuple shape the tracker hook accepts is accepted here too."""
-    added = discover_plugin_directory_adapters(_FakePluginManager({"acme-plugin": _FakePlugin(("acme", _StubDirectory))}))
+    added = discover_plugin_directory_adapters(
+        _FakePluginManager({"acme-plugin": _FakePlugin(("acme", _StubDirectory))})
+    )
 
     assert added == 1
     assert "acme" in get_registry()
