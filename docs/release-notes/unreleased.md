@@ -10,18 +10,7 @@ holds the page to that — an entry naming an issue or PR a tagged release page
 already documents fails the build. An entry that cites released work as context
 rather than as its own attribution is exempted by hand there, with the reason.
 
-## Verification that executes the diff
 
-Every gate that looked at a worker's change read it: the review rubric, intent
-verification and the cross-model check are model reads of the diff text, and
-the generated-integration-test lane writes one happy-path test. A changed
-function that mishandles the empty list or the empty string reached the
-reviewer through the channel that had already missed it. The `behavior_probe`
-gate derives boundary inputs from the changed callables' own signatures and
-runs them in the worktree, one probe per subprocess. Derivation uses no model
-and no randomness, so a red verdict is replayable: the receipt on the gate
-result carries the probe-set hash, every probe outcome, the minimal failing
-call, and a reason code for each callable the deriver could not probe. The
-claim is crash-level, not semantic — undocumented exception, return value
-contradicting the return annotation, or no return inside the budget. Off by
-default (#3377).
+## Lineage
+
+- Lineage entries carry an additive optional `sensitivity` classification, and the effective sensitivity of an artefact is the maximum class over its lineage closure — so a summary of a confidential document is confidential. Absence fails closed to the highest class, and the verdict names the closure member that raised the level and the path through the graph that reaches it. An entry without the field canonicalises byte-identically to the pre-change schema, so every historical signature and HMAC is untouched (#5042).

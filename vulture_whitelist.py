@@ -134,6 +134,11 @@ depends_on  # noqa
 # Protocol method parameter - bound by call site, not used in body
 capture_output  # noqa
 
+# Protocol method parameters on context manager - standard Python protocol
+# signatures (exc_type, exc, tb) are intentionally unused; body calls release().
+exc_type  # noqa
+tb  # noqa
+
 # TYPE_CHECKING-only import used inside cast("...") string literal,
 # which vulture's AST walker cannot resolve.
 JsonSchemaValidationError  # noqa
