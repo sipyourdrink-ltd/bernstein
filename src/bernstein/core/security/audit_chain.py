@@ -9102,6 +9102,124 @@ def record_tracker_pipeline_sweep(
     )
 
 
+#: Issue #5041 -- emitted once per model drift probe. The event carries the
+#: signed observation's hash, the model reference the probe ran against, the
+#: fixed suite it ran, the content hash of the baseline it was compared
+#: against, the comparison status and aggregate delta, and the declared
+#: coverage (how many of the suite's cases ran, and why a subset ran when one
+#: did). The observation itself is the artefact; this event is what makes the
+#: series ordered and an after-the-fact edit visible.
+EVENT_MODEL_DRIFT_OBSERVATION = "model.drift_observation"
+
+
+@dataclass(frozen=True)
+class ModelDriftObservationDetails:
+    """Structured payload for the ``model.drift_observation`` event."""
+
+    observation_hash: str
+    model_provider: str
+    model_requested: str
+    model_reported: str
+    suite_hash: str
+    suite_version: str
+    baseline_hash: str
+    comparison_status: str
+    aggregate_delta: float | None
+    coverage: str
+    cases_declared_count: int
+    cases_ran_count: int
+    sampling_reason: str
+    signer_fingerprint: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "observation_hash": self.observation_hash,
+            "model_provider": self.model_provider,
+            "model_requested": self.model_requested,
+            "model_reported": self.model_reported,
+            "suite_hash": self.suite_hash,
+            "suite_version": self.suite_version,
+            "baseline_hash": self.baseline_hash,
+            "comparison_status": self.comparison_status,
+            "aggregate_delta": self.aggregate_delta,
+            "coverage": self.coverage,
+            "cases_declared_count": self.cases_declared_count,
+            "cases_ran_count": self.cases_ran_count,
+            "sampling_reason": self.sampling_reason,
+            "signer_fingerprint": self.signer_fingerprint,
+        }
+
+
+def record_model_drift_observation(
+    chain: AuditChainStore,
+    *,
+    observation_hash: str,
+    model_provider: str,
+    model_requested: str,
+    model_reported: str,
+    suite_hash: str,
+    suite_version: str,
+    baseline_hash: str,
+    comparison_status: str,
+    aggregate_delta: float | None,
+    coverage: str,
+    cases_declared_count: int,
+    cases_ran_count: int,
+    sampling_reason: str,
+    signer_fingerprint: str,
+    actor: str = "eval",
+) -> AuditEvent:
+    """Append a ``model.drift_observation`` event into *chain*.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        observation_hash: Content hash of the signed drift observation.
+        model_provider: Provider of the probed model.
+        model_requested: Model alias the probe asked for.
+        model_reported: Model the provider said it served (empty when it said
+            nothing -- the gap the observation exists to record).
+        suite_hash: Content hash of the fixed suite that was run.
+        suite_version: Version label of that suite.
+        baseline_hash: Content hash of the baseline the run was compared to.
+        comparison_status: ``comparable`` or ``incomparable``.
+        aggregate_delta: Mean movement against the baseline over the cases
+            that ran, or ``None`` when the comparison was incomparable.
+        coverage: ``full`` or ``partial``.
+        cases_declared_count: How many cases the suite declares.
+        cases_ran_count: How many of them the probe ran.
+        sampling_reason: Why a subset ran; empty for a full run.
+        signer_fingerprint: Identity that signed the observation.
+        actor: Recorded actor; defaults to ``"eval"`` (the probe surface).
+
+    Returns:
+        The recorded :class:`AuditEvent`. The details payload carries every
+        input plus ``prev_chain_digest`` (the chain head at write time).
+    """
+    payload = ModelDriftObservationDetails(
+        observation_hash=observation_hash,
+        model_provider=model_provider,
+        model_requested=model_requested,
+        model_reported=model_reported,
+        suite_hash=suite_hash,
+        suite_version=suite_version,
+        baseline_hash=baseline_hash,
+        comparison_status=comparison_status,
+        aggregate_delta=aggregate_delta,
+        coverage=coverage,
+        cases_declared_count=cases_declared_count,
+        cases_ran_count=cases_ran_count,
+        sampling_reason=sampling_reason,
+        signer_fingerprint=signer_fingerprint,
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_MODEL_DRIFT_OBSERVATION,
+        actor=actor,
+        resource_type="model_drift_observation",
+        resource_id=observation_hash,
+        details=payload,
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -9170,6 +9288,7 @@ __all__ = [
     "EVENT_MEMORY_WRITE",
     "EVENT_MISSION_DIGEST_RECEIPT",
     "EVENT_MISSION_PHASE_RECEIPT",
+    "EVENT_MODEL_DRIFT_OBSERVATION",
     "EVENT_MULTIMODAL_ATTACH",
     "EVENT_ODATA_WRITEBACK",
     "EVENT_OTEL_PROJECTION",
@@ -9255,6 +9374,7 @@ __all__ = [
     "ForkSnapshotDetails",
     "MandateConsentReceiptDetails",
     "MemoryWriteDetails",
+    "ModelDriftObservationDetails",
     "MultimodalAttachDetails",
     "PaymentReceiptDetails",
     "SkillInstallReceiptDetails",
@@ -9321,6 +9441,7 @@ __all__ = [
     "record_memory_write",
     "record_mission_digest_receipt",
     "record_mission_phase_receipt",
+    "record_model_drift_observation",
     "record_multimodal_attach",
     "record_odata_writeback",
     "record_otel_projection",

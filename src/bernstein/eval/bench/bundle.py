@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -176,7 +177,16 @@ class SubmissionBundle:
 
     @classmethod
     def load(cls, path: Path) -> SubmissionBundle:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        return cls.from_dict(json.loads(path.read_text(encoding="utf-8")))
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> SubmissionBundle:
+        """Rebuild a bundle from its serialised form, checking the stored hash.
+
+        Split out of :meth:`load` so a bundle embedded inside another artefact
+        (a drift observation, say) is rebuilt through exactly the same
+        integrity guard as one read from its own file.
+        """
         task_results = [
             TaskResult(
                 task_id=r["task_id"],
