@@ -21,6 +21,7 @@ from bernstein.adapters.nmap import (
 from bernstein.adapters.scanner import DeterminismTier, OutputFormat, ScannerCategory, ScanScope
 from bernstein.adapters.scanner_conformance import ScannerConformanceHarness, load_scanner_golden_transcripts
 from bernstein.adapters.scanner_registry import get_scanner
+from bernstein.core.security.network_policy import NetworkPolicyDenied
 
 _FIXTURE_DIR = Path("tests/fixtures/scanners/nmap")
 _FIXTURE_A = _FIXTURE_DIR / "nmap-localhost-a.xml"
@@ -207,6 +208,57 @@ def test_invalid_port_scopes_fail_before_nmap_lookup(tmp_path: Path, ports: str)
     ):
         NmapAdapter().scan(Path("127.0.0.1"), ScanScope(config={"ports": ports}), tmp_path / "work")
     which.assert_not_called()
+
+
+def test_enforce_network_policy_checks_the_concrete_scan_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The hook must accept a per-call destination, not just the class-level declaration.
+
+    Fails today because ``enforce_network_policy()`` takes no arguments: there is
+    nothing to assert a target against, since ``NmapAdapter`` never sets
+    ``external_endpoints`` (its destination is per-scan, not fixed at import time).
+    """
+    monkeypatch.setenv("BERNSTEIN_NETWORK_POLICY", "10.0.0.0/8")
+    adapter = NmapAdapter()
+
+    with pytest.raises(NetworkPolicyDenied) as exc_info:
+        adapter.enforce_network_policy(("192.0.2.5", None))
+    assert exc_info.value.destination == "192.0.2.5"
+
+    # A target inside the granted range passes through without raising.
+    adapter.enforce_network_policy(("10.1.2.3", None))
+
+
+def test_nmap_scan_refused_when_target_outside_allow_network_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BERNSTEIN_NETWORK_POLICY", "10.0.0.0/8")
+    adapter = NmapAdapter()
+
+    with (
+        patch("bernstein.adapters.nmap.shutil.which", return_value="/usr/local/bin/nmap") as which,
+        patch("bernstein.adapters.nmap.subprocess.run") as run,
+        pytest.raises(NetworkPolicyDenied, match="192.0.2.5"),
+    ):
+        adapter.scan(Path("192.0.2.5"), _scope(), tmp_path / "work")
+
+    which.assert_not_called()
+    run.assert_not_called()
+
+
+def test_nmap_scan_allowed_when_target_inside_allow_network_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BERNSTEIN_NETWORK_POLICY", "10.0.0.0/8")
+    adapter = NmapAdapter()
+
+    with (
+        patch("bernstein.adapters.nmap.shutil.which", return_value="/usr/local/bin/nmap"),
+        patch("bernstein.adapters.nmap.subprocess.run", side_effect=_fake_nmap_run()) as run,
+    ):
+        result = adapter.scan(Path("10.1.2.3"), _scope(), tmp_path / "work")
+
+    assert result.transcript == _TRANSCRIPT
+    run.assert_called()
 
 
 def test_conformance_replays_both_recordings_and_checks_the_transcript(tmp_path: Path) -> None:
