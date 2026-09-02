@@ -344,11 +344,9 @@ def verify_receipt_offline(receipt_bytes: bytes, chain_path: str) -> bool:
 
     # Step 3: Load and verify the audit chain
     try:
-        from bernstein.core.security.audit import AuditLog
         from bernstein.core.security.audit_chain import AuditChainStore
 
-        audit_log = AuditLog(Path(chain_path).parent)
-        chain = AuditChainStore(audit_log)
+        chain = AuditChainStore(Path(chain_path).parent)
         chain_ok, _ = chain.verify()
         if not chain_ok:
             return False

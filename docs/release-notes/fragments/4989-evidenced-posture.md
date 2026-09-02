@@ -1,6 +1,6 @@
-## ``bernstein governance posture`` scores from chain evidence only
+## ``bernstein govern posture`` scores from chain evidence only
 
-Added ``bernstein governance posture`` — one number for the install's governance
+Added ``bernstein govern posture`` — one number for the install's governance
 posture, computed only from facts the audit chain evidences. A control that is
 switched on but produced no chain event contributes nothing; the score moves
 when evidence appears. The document names every contributing chain event, the

@@ -76,7 +76,6 @@ KNOWN_UNCALLED: frozenset[str] = frozenset(
         "promptware_ingest.py:get_default_detector",
         "rbac.py:require_permission",
         "rbac.py:require_role",
-        "secrets_broker.py:register_secret_for_redaction",
         "secrets_broker.py:unregister_secret_for_redaction",
         "socket_guard.py:collect_unmonitored_destinations",
         "tenanting.py:build_tenant_registry",

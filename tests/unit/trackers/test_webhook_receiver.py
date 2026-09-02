@@ -11,9 +11,12 @@ from typing import Any
 import pytest
 
 from bernstein.core.trackers import Ticket
+from bernstein.core.trackers.contract import RateLimited, TrackerUnavailable
 from bernstein.core.trackers.webhook_receiver import (
+    PollWatermarks,
     ReceiveResult,
     ReplayLedger,
+    TicketUpsertSink,
     TrackerEvent,
     WebhookConfig,
     WebhookHandler,
@@ -23,6 +26,7 @@ from bernstein.core.trackers.webhook_receiver import (
     register_builtin_handlers,
     register_handler,
     replay_recent_via_poll,
+    replay_recent_via_poll_all,
 )
 
 # ---------------------------------------------------------------------------
@@ -488,6 +492,256 @@ def test_replay_recent_via_poll_adapter_without_pull_returns_zero() -> None:
 
     n = replay_recent_via_poll(_NoPull(), last_processed_ts=0.0, sink=lambda t: None)
     assert n == 0
+
+
+# ---------------------------------------------------------------------------
+# Persisted watermark, early exit, isolation, deadline, backoff, upsert
+# ---------------------------------------------------------------------------
+
+
+def _ticket(ident: str, ts: float | None = None, *, title: str = "t") -> Ticket:
+    raw: dict[str, Any] = {} if ts is None else {"updated_at": ts}
+    return Ticket(
+        id=ident,
+        external_url="",
+        title=title,
+        body="",
+        status="open",
+        raw=raw,
+    )
+
+
+class _RecordingAdapter:
+    """Adapter fixture that records which tickets each poll actually yielded."""
+
+    def __init__(self, tickets: list[Ticket], *, newest_first: bool = False) -> None:
+        self._tickets = list(tickets)
+        if newest_first:
+            self._tickets.sort(
+                key=lambda t: float(t.raw.get("updated_at", 0.0)),
+                reverse=True,
+            )
+        self.yielded: list[str] = []
+
+    def pull_open_tickets(self) -> Any:
+        for ticket in self._tickets:
+            self.yielded.append(ticket.id)
+            yield ticket
+
+
+class _Clock:
+    """Manually advanced clock so deadline tests stay deterministic."""
+
+    def __init__(self, start: float = 0.0) -> None:
+        self.t = start
+
+    def __call__(self) -> float:
+        return self.t
+
+    def advance(self, delta: float) -> None:
+        self.t += delta
+
+
+def test_two_consecutive_polls_over_unchanged_fixture_fetch_zero_new_records_second_time(
+    tmp_path: Path,
+) -> None:
+    marks = PollWatermarks(tmp_path / "watermarks.jsonl")
+    fixture = [_ticket("A", 100.0), _ticket("B", 200.0)]
+    sink = TicketUpsertSink()
+
+    first = replay_recent_via_poll(_RecordingAdapter(fixture), sink=sink, source="jira", watermarks=marks)
+    assert first == 2
+
+    second = replay_recent_via_poll(_RecordingAdapter(fixture), sink=sink, source="jira", watermarks=marks)
+    assert second == 0
+    assert len(sink) == 2
+
+
+def test_watermark_persists_across_process_restart(tmp_path: Path) -> None:
+    path = tmp_path / "watermarks.jsonl"
+    replay_recent_via_poll(
+        _RecordingAdapter([_ticket("A", 100.0)]),
+        sink=lambda t: None,
+        source="jira",
+        watermarks=PollWatermarks(path),
+    )
+
+    reloaded = PollWatermarks(path)
+    assert reloaded.get("jira") == 100.0
+
+    delivered: list[Ticket] = []
+    n = replay_recent_via_poll(
+        _RecordingAdapter([_ticket("A", 100.0)]),
+        sink=delivered.append,
+        source="jira",
+        watermarks=reloaded,
+    )
+    assert n == 0
+    assert delivered == []
+
+
+def test_newest_first_stops_at_first_record_older_than_watermark(tmp_path: Path) -> None:
+    marks = PollWatermarks(tmp_path / "watermarks.jsonl")
+    marks.advance("jira", 150.0)
+    adapter = _RecordingAdapter(
+        [
+            _ticket("A", 100.0),
+            _ticket("B", 120.0),
+            _ticket("C", 200.0),
+            _ticket("D", 300.0),
+        ],
+        newest_first=True,
+    )
+
+    delivered: list[Ticket] = []
+    n = replay_recent_via_poll(
+        adapter,
+        sink=delivered.append,
+        source="jira",
+        watermarks=marks,
+        newest_first=True,
+    )
+
+    assert n == 2
+    assert [t.id for t in delivered] == ["D", "C"]
+    # The scan stops at the first record at or below the watermark; "A" is
+    # never pulled from the adapter at all.
+    assert adapter.yielded == ["D", "C", "B"]
+    assert marks.get("jira") == 300.0
+
+
+def test_one_resource_type_error_does_not_abort_the_others(tmp_path: Path) -> None:
+    class _Broken:
+        def pull_open_tickets(self) -> Any:
+            raise TrackerUnavailable("issues endpoint returned 503")
+
+    delivered: list[Ticket] = []
+    result = replay_recent_via_poll_all(
+        {"issues": _Broken(), "epics": _RecordingAdapter([_ticket("E-1", 10.0)])},
+        sink=delivered.append,
+        watermarks=PollWatermarks(tmp_path / "watermarks.jsonl"),
+    )
+
+    assert result.delivered["epics"] == 1
+    assert result.delivered["issues"] == 0
+    assert "issues" in result.errors
+    assert "TrackerUnavailable" in result.errors["issues"]
+    assert "epics" not in result.errors
+    assert [t.id for t in delivered] == ["E-1"]
+
+
+def test_poll_respects_wall_clock_bound(tmp_path: Path) -> None:
+    clock = _Clock()
+
+    class _SlowAdapter:
+        def __init__(self, tickets: list[Ticket], step: float) -> None:
+            self._tickets = tickets
+            self._step = step
+
+        def pull_open_tickets(self) -> Any:
+            for ticket in self._tickets:
+                clock.advance(self._step)
+                yield ticket
+
+    marks = PollWatermarks(tmp_path / "watermarks.jsonl")
+    slow = _SlowAdapter([_ticket("S-1", 10.0), _ticket("S-2", 20.0), _ticket("S-3", 30.0)], 6.0)
+    delivered: list[Ticket] = []
+
+    result = replay_recent_via_poll_all(
+        {"slow": slow, "second": _RecordingAdapter([_ticket("X-1", 1.0)])},
+        sink=delivered.append,
+        watermarks=marks,
+        deadline_s=10.0,
+        now=clock,
+    )
+
+    assert result.delivered["slow"] == 1
+    assert result.delivered["second"] == 0
+    assert result.timed_out == ("slow", "second")
+    assert result.errors == {}
+    # A poll the deadline cut short must not advance the watermark, or the
+    # records it never reached would be skipped forever.
+    assert marks.get("slow") == 0.0
+
+
+def test_rate_limited_response_backs_off_with_jitter_and_cap() -> None:
+    class _LimitedAdapter:
+        def __init__(self, failures: int) -> None:
+            self.calls = 0
+            self._failures = failures
+
+        def pull_open_tickets(self) -> Any:
+            self.calls += 1
+            if self.calls <= self._failures:
+                raise RateLimited("secondary rate limit", retry_after=600.0)
+            return iter([_ticket("A", 10.0)])
+
+    high_jitter: list[float] = []
+    adapter = _LimitedAdapter(3)
+    delivered: list[Ticket] = []
+    n = replay_recent_via_poll(
+        adapter,
+        sink=delivered.append,
+        max_attempts=4,
+        backoff_cap_s=5.0,
+        sleep=high_jitter.append,
+        jitter=lambda: 1.0,
+    )
+    assert n == 1
+    assert adapter.calls == 4
+    assert [t.id for t in delivered] == ["A"]
+
+    low_jitter: list[float] = []
+    replay_recent_via_poll(
+        _LimitedAdapter(3),
+        sink=lambda t: None,
+        max_attempts=4,
+        backoff_cap_s=5.0,
+        sleep=low_jitter.append,
+        jitter=lambda: 0.0,
+    )
+
+    # ``retry_after`` of 600s is clamped to the 5s cap, and the jitter term
+    # moves the wait within the cap rather than beyond it.
+    assert high_jitter == [5.0, 5.0, 5.0]
+    assert low_jitter == [2.5, 2.5, 2.5]
+    assert all(0.0 < wait <= 5.0 for wait in high_jitter + low_jitter)
+
+
+def test_rate_limit_gives_up_after_max_attempts() -> None:
+    class _AlwaysLimited:
+        def pull_open_tickets(self) -> Any:
+            raise RateLimited("still limited", retry_after=1.0)
+
+    with pytest.raises(RateLimited):
+        replay_recent_via_poll(
+            _AlwaysLimited(),
+            sink=lambda t: None,
+            max_attempts=2,
+            sleep=lambda _s: None,
+            jitter=lambda: 0.0,
+        )
+
+
+def test_sink_upserts_on_stable_id_not_duplicate_inserts(tmp_path: Path) -> None:
+    sink = TicketUpsertSink()
+    sink(_ticket("A", 100.0, title="first"))
+    sink(_ticket("A", 200.0, title="second"))
+    sink(_ticket("B", 100.0, title="other"))
+
+    assert len(sink) == 2
+    assert {t.id for t in sink.tickets} == {"A", "B"}
+    assert next(t for t in sink.tickets if t.id == "A").title == "second"
+
+    # A retried poll re-delivers the same ids; the far side keeps one record
+    # per stable id instead of appending duplicates.
+    marks = PollWatermarks(tmp_path / "watermarks.jsonl")
+    fixture = [_ticket("A", 300.0, title="third"), _ticket("C", 300.0)]
+    replay_recent_via_poll(_RecordingAdapter(fixture), sink=sink, source="s", watermarks=marks)
+    replay_recent_via_poll(_RecordingAdapter(fixture), sink=sink, source="s", watermarks=None)
+
+    assert len(sink) == 3
+    assert next(t for t in sink.tickets if t.id == "A").title == "third"
 
 
 # ---------------------------------------------------------------------------
