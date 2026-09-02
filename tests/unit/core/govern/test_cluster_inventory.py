@@ -26,7 +26,6 @@ from typing import Any
 import pytest
 
 from bernstein.core.govern import compute_plan
-from bernstein.core.govern.plan_models import PlanEntryKind
 from bernstein.core.govern.cluster_inventory import (
     GOVERN_LABEL,
     ClusterGovernanceError,
@@ -38,6 +37,7 @@ from bernstein.core.govern.cluster_inventory import (
     route_workload_telemetry,
     telemetry_source_label,
 )
+from bernstein.core.govern.plan_models import PlanEntryKind
 
 FIXTURE = Path(__file__).resolve().parents[4] / "tests" / "fixtures" / "cluster" / "agent-workloads.json"
 
