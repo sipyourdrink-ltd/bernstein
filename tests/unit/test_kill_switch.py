@@ -225,9 +225,7 @@ class TestCheckScopeViolationsGuardRecording:
         assert after_outcomes.get("clean", 0) - before_outcomes.get("clean", 0) == 10
         assert after_outcomes.get("violation", 0) == before_outcomes.get("violation", 0)
 
-    def test_evaluated_and_never_fired_is_distinguishable_from_never_evaluated(
-        self, tmp_path: Path
-    ) -> None:
+    def test_evaluated_and_never_fired_is_distinguishable_from_never_evaluated(self, tmp_path: Path) -> None:
         """The whole feature, against the real production guard: driving ten
         clean checks through it must not look the same as never calling it."""
         from bernstein.core.observability.circuit_breaker import SCOPE_VIOLATION_GUARD_ID
