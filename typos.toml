@@ -121,6 +121,14 @@ extend-exclude = [
     # contradiction (the scanner sees its own denylist as a typo).
     "scripts/auto_heal_typos.py",
     "tests/unit/test_auto_heal_typos.py",
+    # Auditor conformance fixtures are deterministic base64-encoded
+    # Ed25519 public keys, signatures, and receipts. The base64
+    # content contains dictionary near-misses like "Ahd" inside
+    # the key "dufXbAhdZ7XxqcjErH9nfLA7A2fC8oVHaCmEn1gHBm0=".
+    # Editing these would invalidate the cryptographic content the
+    # offline verification tests check. Path-exclude the entire
+    # fixture tree; human-authored builder scripts beside them stay in scope.
+    "tests/conformance/auditor/fixture/**",
 ]
 
 [type.md]
