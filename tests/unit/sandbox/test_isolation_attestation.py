@@ -32,7 +32,6 @@ from bernstein.core.sandbox.attestation import (
     ProbeResult,
     attestation_from_dict,
     build_isolation_attestation,
-    canonical_attestation_bytes,
     verify_isolation_attestation,
 )
 from bernstein.core.sandbox.backend import SandboxCapability
@@ -180,7 +179,7 @@ class TestDeterminism:
         first = _mint(keystore)
         second = _mint(keystore)
         assert first.to_canonical_json().encode("utf-8") == second.to_canonical_json().encode("utf-8")
-        assert canonical_attestation_bytes(first) == canonical_attestation_bytes(second)
+        assert first.signing_bytes() == second.signing_bytes()
         assert first.signature == second.signature
 
     def test_backend_order_does_not_change_the_signed_bytes(
@@ -198,7 +197,7 @@ class TestDeterminism:
             host_facts=HOST_FACTS,
             backends=(_microvm_entry(), _docker_entry()),
         )
-        assert canonical_attestation_bytes(forward) == canonical_attestation_bytes(reversed_)
+        assert forward.signing_bytes() == reversed_.signing_bytes()
 
 
 class TestBodyShape:
@@ -212,7 +211,7 @@ class TestBodyShape:
         fields is what stops a later field from reintroducing a wall-clock, a
         run id, or a chain position without this test noticing.
         """
-        body = json.loads(canonical_attestation_bytes(_mint(keystore)).decode("utf-8"))
+        body = json.loads(_mint(keystore).signing_bytes().decode("utf-8"))
         assert set(body) == set(ATTESTATION_BODY_KEYS)
         assert set(body["host_facts"]) <= set(HOST_FACT_KEYS)
         for entry in body["backends"]:
@@ -224,7 +223,7 @@ class TestBodyShape:
         self,
         keystore: AgentCardKeystore,
     ) -> None:
-        body = json.loads(canonical_attestation_bytes(_mint(keystore)).decode("utf-8"))
+        body = json.loads(_mint(keystore).signing_bytes().decode("utf-8"))
         offenders = [key for key in _walk_keys(body) if _names_a_varying_quantity(key)]
         assert offenders == []
 
@@ -365,7 +364,7 @@ class TestVerification:
         restored = attestation_from_dict(json.loads(minted.to_canonical_json()))
         verify_isolation_attestation(restored)
         assert restored.attestation_digest() == minted.attestation_digest()
-        assert canonical_attestation_bytes(restored) == canonical_attestation_bytes(minted)
+        assert restored.signing_bytes() == minted.signing_bytes()
 
 
 class TestAttestCli:

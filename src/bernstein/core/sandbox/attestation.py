@@ -144,10 +144,6 @@ class ProbeOutcome(StrEnum):
     UNVERIFIABLE = "unverifiable"
 
 
-#: Every outcome a probe may record.
-PROBE_OUTCOMES: frozenset[ProbeOutcome] = frozenset(ProbeOutcome)
-
-
 def _canonical_json(payload: Any) -> str:
     # allow_nan=False so a non-finite value throws at mint time rather than
     # producing an unparseable "canonical" body.
@@ -209,7 +205,7 @@ def _probe_outcome(value: str | ProbeOutcome) -> ProbeOutcome:
         return ProbeOutcome(value)
     except ValueError as exc:
         raise IsolationAttestationError(
-            f"unknown probe outcome {value!r}; expected one of {sorted(PROBE_OUTCOMES)}",
+            f"unknown probe outcome {value!r}; expected one of {sorted(ProbeOutcome)}",
         ) from exc
 
 
@@ -231,7 +227,7 @@ class ProbeResult:
 
     Attributes:
         capability: The capability the probe exercised.
-        outcome: One of :data:`PROBE_OUTCOMES`.
+        outcome: One of :class:`ProbeOutcome`.
         reason_code: Stable machine-readable reason. Required for a ``fail``
             or ``unverifiable`` outcome (an unexplained negative is not
             actionable) and forbidden for a ``pass``.
@@ -445,11 +441,6 @@ def host_facts_digest(host_facts: Mapping[str, Any]) -> str:
     return _sha256_hex(_canonical_json(dict(host_facts)))
 
 
-def canonical_attestation_bytes(attestation: IsolationAttestation) -> bytes:
-    """Return the canonical signing bytes for *attestation*."""
-    return attestation.signing_bytes()
-
-
 def build_isolation_attestation(
     *,
     keystore: AgentCardKeystore,
@@ -607,7 +598,6 @@ __all__ = [
     "HOST_FACT_KEYS",
     "ISOLATION_ATTESTATION_SCHEMA_VERSION",
     "PROBE_ENTRY_KEYS",
-    "PROBE_OUTCOMES",
     "AttestationVerificationError",
     "BackendAttestation",
     "IsolationAttestation",
@@ -616,7 +606,6 @@ __all__ = [
     "ProbeResult",
     "attestation_from_dict",
     "build_isolation_attestation",
-    "canonical_attestation_bytes",
     "host_facts_digest",
     "verify_isolation_attestation",
 ]
