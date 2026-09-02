@@ -84,6 +84,12 @@ ADVISORY_BY_DECISION = {
         "pre-merge autosync). Its own header already records that none of these is a "
         "required check."
     ),
+    "webui-render-recapture.yml": (
+        "Recaptures the web UI renders on a runner and uploads them as a review artifact when a "
+        "web/** change moves the SPA bundle. It is evidence for the reviewer, not a gate: the check "
+        "that has to fail when the bundle is stale is the required bundle-freshness lane, and this "
+        "lane deliberately never blocks a pull request (#5157)."
+    ),
     "trufflehog.yml": ("Secret scanning. Advisory as configured today; nothing about #4028 changed it."),
     "pr-observability-summary.yml": (
         "Posts a summary on the pull request behind a `deep-review` label. It reports, it "

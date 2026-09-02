@@ -1,0 +1,17 @@
+name: nmap-recorded-xml
+adapter_class: bernstein.adapters.nmap.NmapAdapter
+steps:
+  - target: 127.0.0.1
+    scope:
+      config:
+        ports: "8765"
+    expected_finding_hashes:
+      - 81a37523395db5b88e9ac02117fd9ce5fb4175509d8363ad0db0b5f475ac6de9
+    expected_transcript: '{"ports":[{"host":"127.0.0.1","port":8765,"protocol":"tcp","service":{"cpes":["cpe:/a:python:simplehttpserver:0.6"],"extra_info":"Python 3.9.6","name":"http","product":"SimpleHTTPServer","version":"0.6"},"state":"open"}],"tool":{"name":"nmap","version":"7.991"}}'
+  - target: 127.0.0.1
+    scope:
+      config:
+        ports: "8765"
+    expected_finding_hashes:
+      - 81a37523395db5b88e9ac02117fd9ce5fb4175509d8363ad0db0b5f475ac6de9
+    expected_transcript: '{"ports":[{"host":"127.0.0.1","port":8765,"protocol":"tcp","service":{"cpes":["cpe:/a:python:simplehttpserver:0.6"],"extra_info":"Python 3.9.6","name":"http","product":"SimpleHTTPServer","version":"0.6"},"state":"open"}],"tool":{"name":"nmap","version":"7.991"}}'
