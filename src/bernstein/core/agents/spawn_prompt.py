@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from bernstein.core.agents import project_context as _project_context
 from bernstein.core.agents.heartbeat import HeartbeatMonitor
 from bernstein.core.agents.project_context import resolve_project_context
+from bernstein.core.agents.prompt_segments import segment_prompt, segments_digest
 from bernstein.core.context_recommendations import RecommendationEngine
 from bernstein.core.defaults import SPAWN
 from bernstein.core.lessons import gather_lessons_for_context
@@ -1224,6 +1225,25 @@ def _render_prompt(
             session_id,
             max_turns,
         )
+
+    # Prompt segmentation (#3455 step 1): digest the four blocks the
+    # orchestrator authors so a future divergence can name which one
+    # changed. Computed for the return value only -- this does not persist
+    # the segments or the list digest anywhere (no journal, no chain, no
+    # ContextCapsule field). This render path has no resume-state text of
+    # its own (crash recovery prepends resume_header outside this function,
+    # see spawner_core.spawn_for_resume), so resume_block is empty here.
+    _prompt_segments = segment_prompt(
+        role_block=role_prompt,
+        task_block=task_block,
+        mailbox_block=mailbox_section,
+        resume_block="",
+    )
+    logger.debug(
+        "Prompt segments digested (not yet anchored): %d segments, list digest=%s",
+        len(_prompt_segments),
+        segments_digest(_prompt_segments),
+    )
 
     # Strip empty/whitespace-only sections before compression
     named_sections = [(name, content) for name, content in named_sections if content and content.strip()]
