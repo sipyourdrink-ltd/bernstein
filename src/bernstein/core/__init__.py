@@ -602,12 +602,17 @@ _TOMBSTONE_MAP: dict[str, str] = {
 
 
 class _CoreTombstoneFinder(MetaPathFinder):
-    """Fail the import of a retired ``bernstein.core`` module, naming its successor.
+    """Serve a retired ``bernstein.core`` module a spec that refuses to load.
 
     Registered after the standard path finder, so it only ever sees names that
-    no file on disk answers. Raising here rather than returning ``None`` is the
-    point: without it a retired module surfaces as a bare
+    no file on disk answers. Without it a retired module surfaces as a bare
     ``ModuleNotFoundError`` that says nothing about where the code went.
+
+    The refusal is raised by the loader rather than by ``find_spec``, because
+    ``find_spec`` is also how unrelated tooling *asks* whether a name resolves:
+    raising there makes every import-system walk over these names blow up
+    instead of getting an answer. Importing the name still fails, with the
+    successor named.
     """
 
     _PREFIX = "bernstein.core."
@@ -618,18 +623,35 @@ class _CoreTombstoneFinder(MetaPathFinder):
         path: object = None,
         target: object = None,
     ) -> ModuleSpec | None:
-        """Raise ImportError for a tombstoned module; defer on everything else."""
+        """Return a spec whose loader refuses; defer on every other name."""
         if not fullname.startswith(self._PREFIX):
             return None
-        successor = _TOMBSTONE_MAP.get(fullname[len(self._PREFIX) :])
-        if successor is None:
+        if fullname[len(self._PREFIX) :] not in _TOMBSTONE_MAP:
             return None
+        return ModuleSpec(fullname, _CoreTombstoneLoader())
+
+
+class _CoreTombstoneLoader:
+    """Refuse to execute a retired module, naming where its contents went."""
+
+    def create_module(self, _spec: ModuleSpec) -> ModuleType | None:
+        """Use default module creation; the refusal happens at exec time."""
+        return None
+
+    def exec_module(self, module: ModuleType) -> None:
+        """Raise ImportError naming the module that now owns this one's contents."""
+        fullname = module.__name__
+        successor = _TOMBSTONE_MAP[fullname[len(_CoreTombstoneFinder._PREFIX) :]]
         msg = (
             f"{fullname} was removed; import {successor} instead. Agent identity now has "
             "one type, bernstein.core.identity.agent.AgentPrincipal, that both credential "
             "formats resolve to."
         )
         raise ImportError(msg, name=fullname)
+
+    def get_code(self, _fullname: str) -> None:
+        """Return None - a tombstone has no code object."""
+        return None
 
 
 class _CoreRedirectFinder(MetaPathFinder):
