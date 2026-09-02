@@ -26,6 +26,7 @@ from bernstein.core.govern.remediation import (
     RemediationStep,
     collect_remediation,
 )
+from bernstein.core.lineage.spine import content_hash_of
 
 _PLAYBOOK: dict[str, object] = {
     "forbidden": [
@@ -290,8 +291,45 @@ class TestCli:
         assert [u["surface"] for u in written["unremediated"]] == ["principal/agent-a"]
         assert "1 finding" in result.output or "1 findings" in result.output
 
+    def test_cli_anchors_the_written_proposal_in_the_lineage_spine(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test 13: the file on disk is the artifact the chain anchored."""
+        monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+        (tmp_path / ".sdd").mkdir(parents=True, exist_ok=True)
+        playbook_file = tmp_path / "playbook.json"
+        playbook_file.write_text(json.dumps(_PLAYBOOK), encoding="utf-8")
+        inventory_file = tmp_path / "inventory.json"
+        inventory_file.write_text(json.dumps(_INVENTORY), encoding="utf-8")
+        out = tmp_path / "remediation.json"
+
+        result = CliRunner().invoke(
+            governance_group,
+            [
+                "plan",
+                "--playbook",
+                str(playbook_file),
+                "--inventory",
+                str(inventory_file),
+                "--workdir",
+                str(tmp_path),
+                "--remediation-plan",
+                str(out),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        written = RemediationProposal.from_dict(json.loads(out.read_text(encoding="utf-8")))
+        spine_path = tmp_path / ".sdd" / "lineage" / "govern-plan" / "spine.jsonl"
+        rows = [json.loads(line) for line in spine_path.read_text(encoding="utf-8").splitlines() if line]
+        anchored = [r for r in rows if r["artifact_path"].startswith("govern-plan/remediation-")]
+
+        assert len(anchored) == 1
+        assert anchored[0]["content_hash"] == content_hash_of(written.to_canonical_bytes())
+        assert anchored[0]["step_id"] == written.plan_hash
+
     def test_cli_without_the_flag_writes_no_proposal(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test 13: collection is opt-in; the existing plan output is unchanged in kind."""
+        """Test 14: collection is opt-in; the existing plan output is unchanged in kind."""
         monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
         (tmp_path / ".sdd").mkdir(parents=True, exist_ok=True)
         playbook_file = tmp_path / "playbook.json"
@@ -317,7 +355,7 @@ class TestCli:
 
 
 def test_step_is_immutable() -> None:
-    """Test 14: a collected step cannot be edited after the proposal is addressed."""
+    """Test 15: a collected step cannot be edited after the proposal is addressed."""
     step = RemediationStep(
         surface="s",
         playbook_clause="c",
