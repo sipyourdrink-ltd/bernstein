@@ -42,7 +42,7 @@ claim about HEAD.
 To get a copy you can open:
 
 ```
-uv run python -m tests.conformance.auditor.scenario --out /tmp/auditor-bundle --force
+uv run python -m tests.integration.conformance.auditor.scenario --out /tmp/auditor-bundle --force
 ```
 
 `/tmp/auditor-bundle/workspace` is the machine the run happened on;

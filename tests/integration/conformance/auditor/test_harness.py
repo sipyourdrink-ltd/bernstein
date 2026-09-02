@@ -15,14 +15,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.conformance.auditor import scenario
-from tests.conformance.auditor.bundle_reader import BundleBoundaryError, BundleReader
-from tests.conformance.auditor.questions import QUESTION_COUNT, QUESTIONS
+from tests.integration.conformance.auditor import scenario
+from tests.integration.conformance.auditor.bundle_reader import BundleBoundaryError, BundleReader
+from tests.integration.conformance.auditor.questions import QUESTION_COUNT, QUESTIONS
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from tests.conformance.auditor.scenario import ScenarioFixture
+    from tests.integration.conformance.auditor.scenario import ScenarioFixture
 
 
 class TestTheFixtureCameFromARun:

@@ -14,8 +14,8 @@ from types import ModuleType
 
 import pytest
 
-from tests.conformance.auditor.isolation import REPO_ROOT
-from tests.conformance.auditor.questions import QUESTION_COUNT
+from tests.integration.conformance.auditor.isolation import REPO_ROOT
+from tests.integration.conformance.auditor.questions import QUESTION_COUNT
 
 SCOREBOARD_SCRIPT = REPO_ROOT / "scripts" / "auditor_scoreboard.py"
 
@@ -70,11 +70,11 @@ class TestTheSuiteReportsWhatTheScoreboardReads:
         scoreboard: ModuleType,
     ) -> None:
         """Two spellings of the env var would silently render an empty score."""
-        from tests.conformance.auditor.conftest import SCOREBOARD_ENV_VAR
+        from tests.integration.conformance.auditor.conftest import SCOREBOARD_ENV_VAR
 
         assert scoreboard.SCOREBOARD_ENV_VAR == SCOREBOARD_ENV_VAR
 
     def test_the_script_runs_the_suite_it_scores(self, scoreboard: ModuleType) -> None:
         """The scored path is this suite, not whatever pytest defaults to."""
-        assert scoreboard.SUITE_PATH == "tests/conformance/auditor"
+        assert scoreboard.SUITE_PATH == "tests/integration/conformance/auditor"
         assert (Path(scoreboard.REPO_ROOT) / scoreboard.SUITE_PATH).is_dir()

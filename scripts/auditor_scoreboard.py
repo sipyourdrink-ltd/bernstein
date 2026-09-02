@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Print how many of the 21 auditor questions the evidence answers.
 
-The suite under ``tests/conformance/auditor/`` asks one recorded run the
-questions somebody actually asks after an incident. Most of them do not
-have an answer yet, and each unanswered one is a strict ``xfail`` naming
-the work that would change that. The score is the point, so it has to be
-quotable without reading the file::
+The suite under ``tests/integration/conformance/auditor/`` asks one
+recorded run the questions somebody actually asks after an incident.
+Most of them do not have an answer yet, and each unanswered one is a
+strict ``xfail`` naming the work that would change that. The score is
+the point, so it has to be quotable without reading the file::
 
     uv run python scripts/auditor_scoreboard.py
 
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SUITE_PATH = "tests/conformance/auditor"
+SUITE_PATH = "tests/integration/conformance/auditor"
 SCOREBOARD_ENV_VAR = "BERNSTEIN_AUDITOR_SCOREBOARD"
 
 

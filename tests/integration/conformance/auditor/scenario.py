@@ -21,7 +21,7 @@ that was at HEAD when somebody last regenerated a checked-in bundle.
 
 Regenerate an inspectable copy with::
 
-    uv run python -m tests.conformance.auditor.scenario --out /tmp/auditor-bundle
+    uv run python -m tests.integration.conformance.auditor.scenario --out /tmp/auditor-bundle
 
 The test suite calls :func:`build_fixture` directly into a temporary
 directory, so the two paths cannot drift.

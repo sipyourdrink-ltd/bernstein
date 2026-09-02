@@ -15,13 +15,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.conformance.auditor import scenario
-from tests.conformance.auditor.isolation import RECEIPT_VERIFIER, run_isolated
+from tests.integration.conformance.auditor import scenario
+from tests.integration.conformance.auditor.isolation import RECEIPT_VERIFIER, run_isolated
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from tests.conformance.auditor.bundle_reader import BundleReader
+    from tests.integration.conformance.auditor.bundle_reader import BundleReader
 
 # The isolated interpreter is built once per session; creating it is the
 # expensive part of this module, not the verification.

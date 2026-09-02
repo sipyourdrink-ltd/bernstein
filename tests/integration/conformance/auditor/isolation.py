@@ -18,7 +18,7 @@ import venv
 from pathlib import Path
 
 #: Repository root, derived from this file's own location.
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[4]
 
 #: The standalone receipt verifier, run as a plain script.
 RECEIPT_VERIFIER = REPO_ROOT / "verify_cli" / "bernstein_verify_receipt" / "verify.py"

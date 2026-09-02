@@ -3,7 +3,7 @@
 Three things live here:
 
 * the fixture - one scenario run and one exported bundle per session,
-  built by :mod:`tests.conformance.auditor.scenario`;
+  built by :mod:`tests.integration.conformance.auditor.scenario`;
 * the isolated interpreter every verification vector shells out to,
   which has ``cryptography`` and ``cbor2`` and no ``bernstein``;
 * the question bookkeeping that lets ``scripts/auditor_scoreboard.py``
@@ -18,10 +18,10 @@ from pathlib import Path
 
 import pytest
 
-from tests.conformance.auditor.bundle_reader import BundleReader
-from tests.conformance.auditor.isolation import create_isolated_interpreter
-from tests.conformance.auditor.questions import QUESTION_COUNT, QUESTIONS
-from tests.conformance.auditor.scenario import ScenarioFixture, build_fixture
+from tests.integration.conformance.auditor.bundle_reader import BundleReader
+from tests.integration.conformance.auditor.isolation import create_isolated_interpreter
+from tests.integration.conformance.auditor.questions import QUESTION_COUNT, QUESTIONS
+from tests.integration.conformance.auditor.scenario import ScenarioFixture, build_fixture
 
 #: Env var naming where to write the machine-readable scoreboard.
 SCOREBOARD_ENV_VAR = "BERNSTEIN_AUDITOR_SCOREBOARD"
@@ -80,7 +80,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
         if number not in QUESTIONS:
             raise pytest.UsageError(
                 f"{item.nodeid}: question {number} is not one of the {QUESTION_COUNT} registered "
-                f"questions; add it to tests/conformance/auditor/questions.py first",
+                f"questions; add it to tests/integration/conformance/auditor/questions.py first",
             )
         if number in claimed:
             raise pytest.UsageError(
