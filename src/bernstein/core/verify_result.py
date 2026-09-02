@@ -19,10 +19,12 @@ why" is now answerable the same way regardless of which verifier produced the
 result.
 
 The type is frozen because a verdict a caller can rewrite in place is not a
-verdict, and ``reason`` is empty exactly when ``ok`` is true: a passing
-verification has nothing to explain. A failure always names its cause, because
-the whole value of an offline check is that it says which field stopped
-matching.
+verdict. ``reason`` is empty on an ordinary pass, since there is nothing to
+explain, but a verifier may still fill it in on a passing result to flag
+something the caller should know - a degraded receipt that verified with no
+window left to recompute, for instance. A failure always names its cause,
+because the whole value of an offline check is that it says which field
+stopped matching.
 """
 
 from __future__ import annotations
