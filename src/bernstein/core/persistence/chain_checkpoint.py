@@ -47,8 +47,11 @@ produce byte-identical checkpoint files.
 Residual (documented, not hidden): an actor with write access to both the
 chain segments and the checkpoints file can truncate both to a mutually
 consistent earlier state. Detecting that requires retention outside the
-local filesystem (a witness co-signature over checkpoints), which is a
-follow-up, not part of this module.
+local filesystem, which lives in
+:mod:`bernstein.core.persistence.checkpoint_anchor`: an optional RFC 3161
+token over a checkpoint's canonical bytes, so a history shorter than the
+newest anchored entry count contradicts a signature made off this machine.
+A witness co-signature between two installs is still a follow-up.
 """
 
 from __future__ import annotations

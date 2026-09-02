@@ -1418,7 +1418,7 @@ def trace_export_cmd(
     """
     # Gate on trace extra
     try:
-        import agentrust_trace as _trace_lib  # type: ignore[import-untyped,unused-ignore]
+        import agentrust_trace as _trace_lib  # type: ignore[import-untyped, unused-ignore, import-not-found]
 
         del _trace_lib
     except ImportError:
@@ -2146,6 +2146,81 @@ def _print_verify_divergence(
     raise SystemExit(1)
 
 
+def _replay_rederive(*, run_id: str, sdd_dir: str, as_json: bool) -> None:
+    """Re-derive the run's coordination sequence and compare heads (issue #4213).
+
+    ``--verify`` recomputes the chain over the rows already on disk, which
+    proves the journal was not edited afterwards but says nothing about
+    whether the sequence it records is the one the scheduler's rules produce.
+    This verb closes that gap: it feeds the recorded planning output and the
+    recorded per-task outcomes back through the coordination state machine,
+    writes the accepted steps into a fresh journal in a throwaway sandbox, and
+    exits 0 only when the re-derived timing-excluded head equals the recorded
+    one. A step the rules cannot produce is reported by index and by the rule
+    that refused it, rather than as a bare hash difference.
+
+    The sandbox is a temporary directory: re-derivation is a read-only
+    question about a finished run, so it must not leave anything in the run
+    directory it is auditing.
+    """
+    import tempfile
+
+    from bernstein.core.replay.rederive import (
+        REASON_CODE_JOURNAL_NOT_FOUND,
+        REASON_CODE_UNDERIVABLE_STEP,
+        rederive_run,
+    )
+
+    runs_dir = Path(sdd_dir) / "runs"
+    journal_path = _resolve_journal_path(run_id, runs_dir)
+    if not journal_path.exists():
+        if as_json:
+            console.print_json(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "run_id": run_id,
+                        "reason_code": REASON_CODE_JOURNAL_NOT_FOUND,
+                        "reason": f"journal not found: {journal_path}",
+                    }
+                )
+            )
+        else:
+            console.print(f"[red]Journal not found:[/red] {journal_path}")
+        raise SystemExit(1)
+
+    with tempfile.TemporaryDirectory(prefix="bernstein-rederive-") as sandbox:
+        result = rederive_run(journal_path, sandbox=Path(sandbox))
+
+    payload = {
+        "ok": result.ok,
+        "run_id": result.run_id,
+        "recorded_head": result.recorded_head,
+        "derived_head": result.derived_head,
+        "step_count": result.step_count,
+        "step_index": result.divergent_index,
+        "reason": result.reason,
+        "reason_code": result.reason_code,
+        "rule": result.rule,
+    }
+    if as_json:
+        console.print_json(json.dumps(payload))
+    elif result.ok:
+        console.print(
+            f"[green]RE-DERIVED[/green] run [bold]{result.run_id}[/bold]: "
+            f"{result.step_count} coordination step(s) reproduce the recorded head"
+        )
+        console.print(f"[dim]head:[/dim] {result.derived_head}")
+    else:
+        label = "UNDERIVABLE STEP" if result.reason_code == REASON_CODE_UNDERIVABLE_STEP else "RE-DERIVE MISMATCH"
+        console.print(f"[red]{label}[/red] run [bold]{result.run_id}[/bold]: {result.reason}")
+        console.print(f"[dim]recorded head:[/dim] {result.recorded_head}")
+        console.print(f"[dim]derived head: [/dim] {result.derived_head}")
+
+    if not result.ok:
+        raise SystemExit(1)
+
+
 def _replay_from_step(*, run_id: str, sdd_dir: str, from_step: int, as_json: bool) -> None:
     """Rebuild deterministic run state by walking the journal to ``from_step``.
 
@@ -2213,6 +2288,14 @@ def _replay_from_step(*, run_id: str, sdd_dir: str, from_step: int, as_json: boo
     help="Rebuild deterministic run state by walking the journal to step N.",
 )
 @click.option(
+    "--re-derive",
+    "re_derive",
+    is_flag=True,
+    default=False,
+    help="Re-derive the coordination sequence from the recorded plan and outcomes "
+    "and compare the re-derived head to the recorded one.",
+)
+@click.option(
     "--yes-i-want-to-publish",
     "yes_i_want_to_publish",
     is_flag=True,
@@ -2257,6 +2340,7 @@ def replay_cmd(
     extra_context: str | None,
     verify: bool,
     from_step: int | None,
+    re_derive: bool,
     yes_i_want_to_publish: bool,
     fork_from: int | None,
     jump_to_failure: bool,
@@ -2279,6 +2363,7 @@ def replay_cmd(
       bernstein replay latest                     # replay most recent run
       bernstein replay 20240315-143022            # replay a specific run
       bernstein replay <RUN_ID> --verify          # recompute head, find divergence
+      bernstein replay <RUN_ID> --re-derive       # re-derive coordination, compare heads
       bernstein replay <RUN_ID> --from-step N     # rebuild state to step N
       bernstein replay diff RUN_A RUN_B           # first-divergence finder
       bernstein replay <AGENT_ID>                 # per-step journal view (#1799)
@@ -2359,6 +2444,9 @@ def replay_cmd(
     # rebuild a deterministic state projection for a prefix of the run.
     if verify:
         _replay_verify_journal(run_id=args[0], sdd_dir=sdd_dir, as_json=as_json)
+        return
+    if re_derive:
+        _replay_rederive(run_id=args[0], sdd_dir=sdd_dir, as_json=as_json)
         return
     if from_step is not None:
         _replay_from_step(run_id=args[0], sdd_dir=sdd_dir, from_step=from_step, as_json=as_json)

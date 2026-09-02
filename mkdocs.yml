@@ -284,6 +284,7 @@ nav:
           - Recipes: operations/recipes.md
           - Worktrees: operations/worktrees.md
           - Snapshot undo: git/snapshot-undo.md
+          - Task revert: operations/task-revert.md
           - Session handoff: operations/session-handoff.md
           - Routine scenarios: routine-scenarios.md
           - Per-step routing: workflows/per-step-routing.md
@@ -435,6 +436,7 @@ nav:
           - Security operations: operations/security.md
           - Hardening: security/security-hardening.md
           - Governance: operations/governance.md
+          - Govern ingest: operations/govern-ingest.md
           - Secrets & creds: operations/secrets.md
           - Secrets broker: security/secrets-broker.md
           - Env isolation: operations/env-isolation.md
@@ -449,6 +451,7 @@ nav:
           - Lethal trifecta: security/lethal-trifecta.md
           - Coordinated disclosure: security/bug-bounty.md
           - Log redaction: security/log-redaction.md
+          - Tool-output redaction: security/tool-output-redaction.md
           - PII scan gate: security/pii-scan-gate.md
       - Compliance & audit:
           - Compliance overview: operations/compliance.md
@@ -495,6 +498,7 @@ nav:
           - Worker contracts: operations/worker-contracts.md
           - Model policy: operations/MODEL_POLICY.md
           - Ticket schema: sdd/ticket_schema.md
+          - Design tokens: design/tokens.md
           - Adapter capability contract: adapters/capability_contract.md
           - Global config CLI: operations/global-config.md
           - Workflow manifests: operations/workflow-manifests.md
@@ -508,6 +512,7 @@ nav:
           - ACP server and client roles: interop/acp.md
           - A2A signed agent cards: architecture/a2a.md
           - A2A capability cards & lineage interop: interop/a2a.md
+          - Authority envelope: interop/authority-envelope.md
           - Eventing v2 (unified feed): events/grammar.md
           - .well-known manifest: protocols/well-known-manifest.md
           - SPIFFE workload identity: reference/spiffe-workload-identity.md
@@ -661,6 +666,7 @@ nav:
           - Audit-chain default cost: decisions/010-audit-chain-default-cost.md
   - Contribute:
       - contributing/index.md
+      - Project pulse: project-pulse.md
       - Code review process: CODE_REVIEW.md
       - Testing & CI hardening: contributing/testing.md
       - Lifecycle hooks contract: contributing/hooks.md
