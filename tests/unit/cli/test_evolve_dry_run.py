@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.commands.evolve_cmd import (
@@ -21,6 +22,7 @@ from bernstein.cli.commands.evolve_cmd import (
     _sync_failure_drafts_to_github,
     evolve_run,
 )
+from bernstein.cli.helpers import console as cli_console
 from bernstein.core.persistence.runs_report import (
     FailurePatternDraft,
     RunWrapUp,
@@ -39,6 +41,19 @@ from bernstein.evolution.aggregator import FileMetricsCollector, TaskMetrics
 # ---------------------------------------------------------------------------
 # Fixtures: real ledger directories on disk (same shape as tests/unit/test_runs_report.py)
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _pinned_render_width(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the console width so table assertions do not depend on the runner.
+
+    Drafts render through a Rich table, which wraps every cell to the console's
+    width. That width is resolved once, when the shared console is built at
+    import time, so setting ``COLUMNS`` here would be too late -- the width has
+    to be set on the console itself. Without the pin, an assertion on a
+    rendered title passes on a wide runner and fails on a narrow one.
+    """
+    monkeypatch.setattr(cli_console, "_width", 200)
 
 
 def _seed_closed_run(root: Path, run_id: str, *, wrapup: RunWrapUp) -> None:
@@ -138,6 +153,13 @@ class TestDraftsComeFromRunLedgers:
         assert draft.occurrence_count == 3
         assert "3" in draft.body
         assert draft.most_recent_run_id in draft.body
+
+    def test_initialised_workspace_with_no_finished_runs_produces_no_drafts(self, tmp_path: Path) -> None:
+        """An initialised workspace nothing has run in yields an empty list, not an error."""
+        state_dir = tmp_path / ".sdd"
+        state_dir.mkdir(parents=True, exist_ok=True)
+
+        assert _generate_failure_drafts(state_dir) == []
 
 
 # ---------------------------------------------------------------------------
@@ -254,11 +276,32 @@ def test_dry_run_without_github_makes_no_subprocess_calls(tmp_path: Path) -> Non
 class TestShowFailureDrafts:
     """Drafts render, and only reach GitHub when the operator asked."""
 
-    def test_no_drafts_prints_message(self, tmp_path: Path) -> None:
+    def test_no_drafts_prints_message(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """An empty draft list says so instead of printing an empty table."""
         state_dir = tmp_path / ".sdd"
         state_dir.mkdir(parents=True, exist_ok=True)
         with patch("bernstein.cli.commands.evolve_cmd._generate_failure_drafts", return_value=[]):
             _show_failure_drafts(tmp_path, state_dir, github_sync=False, github_repo=None)
+
+        out = capsys.readouterr().out
+        assert "No failure-pattern drafts found." in out
+        assert "Failure-Pattern Drafts" not in out
+
+    def test_draft_rows_reach_the_operator(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Every rendered row carries the identity, the count and the last run."""
+        state_dir = tmp_path / ".sdd"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        fingerprint = "abcdef12" + "0" * 56
+        drafts = [_draft(fingerprint=fingerprint, title="GATE_FAILED: lint", occurrence_count=4, run_id="run-7")]
+
+        with patch("bernstein.cli.commands.evolve_cmd._generate_failure_drafts", return_value=drafts):
+            _show_failure_drafts(tmp_path, state_dir, github_sync=False, github_repo=None)
+
+        out = capsys.readouterr().out
+        assert "abcdef12" in out
+        assert "GATE_FAILED: lint" in out
+        assert "4" in out
+        assert "run-7" in out
 
     def test_github_sync_called_when_enabled(self, tmp_path: Path) -> None:
         state_dir = tmp_path / ".sdd"
