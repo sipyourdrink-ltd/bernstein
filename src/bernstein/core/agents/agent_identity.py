@@ -585,6 +585,8 @@ class AgentIdentityStore:
         # In-memory index keyed by token_hash → identity_id for fast auth.
         self._token_index: dict[str, str] = {}
         self._rebuild_token_index()
+        # Store the current run_id for delegation hop recording
+        self._run_id: str | None = None
 
     # -- persistence --------------------------------------------------------
 
@@ -649,6 +651,15 @@ class AgentIdentityStore:
             cred = identity.credential
             if cred is not None and not cred.revoked:
                 self._token_index[cred.token_hash] = identity.id
+
+    def set_run_id(self, run_id: str) -> None:
+        """Wire in the orchestrator's run id for delegation hop recording.
+
+        The spawner calls this before minting identities so that
+        ``record_delegation_hop`` can anchor each hop to the correct run's
+        receipt ledger.
+        """
+        self._run_id = run_id
 
     def _append_audit(self, event: IdentityAuditEvent) -> None:
         with self._audit_path.open("a", encoding="utf-8") as f:
@@ -819,10 +830,9 @@ class AgentIdentityStore:
         # for sandbox audit mirroring which is also best-effort to avoid masking
         # the spawn itself.
         try:
-            if parent_identity_id is not None:
-                run_id = getattr(self, "_run_id", None)
+            if parent_identity_id is not None and self._run_id:
                 _ = record_delegation_hop(
-                    run_id=run_id or "",
+                    run_id=self._run_id,
                     issuer=parent_identity_id,
                     subject=session_id,  # parent delegates directly to child
                     audience=session_id,
