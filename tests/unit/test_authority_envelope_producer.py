@@ -148,12 +148,8 @@ def _seeded_run(tmp_path: Path) -> tuple[Path, RoleBindings]:
     lineage_root = tmp_path / "lineage"
     bindings = _bindings()
     _record_access(lineage_root, subject=PRINCIPAL, action="deploy", now=BASE_TS, bindings=bindings)
-    _record_access(
-        lineage_root, subject=PRINCIPAL, action="read", now=BASE_TS + 1, bindings=bindings
-    )
-    _record_access(
-        lineage_root, subject=PRINCIPAL, action="rotate-keys", now=BASE_TS + 2, bindings=bindings
-    )
+    _record_access(lineage_root, subject=PRINCIPAL, action="read", now=BASE_TS + 1, bindings=bindings)
+    _record_access(lineage_root, subject=PRINCIPAL, action="rotate-keys", now=BASE_TS + 2, bindings=bindings)
     return lineage_root, bindings
 
 
@@ -230,9 +226,7 @@ def test_decisions_for_other_subjects_are_named_in_the_coverage_statement(
 ) -> None:
     """A record about another subject is excluded, and the count is stated."""
     lineage_root, bindings = _seeded_run(tmp_path)
-    _record_access(
-        lineage_root, subject=OTHER_SUBJECT, action="deploy", now=BASE_TS + 3, bindings=bindings
-    )
+    _record_access(lineage_root, subject=OTHER_SUBJECT, action="deploy", now=BASE_TS + 3, bindings=bindings)
 
     envelope = _build(lineage_root, bindings)
 
@@ -245,9 +239,7 @@ def test_decisions_for_other_subjects_are_named_in_the_coverage_statement(
 def test_budget_records_are_named_in_the_coverage_statement(tmp_path: Path) -> None:
     """A budget row draws authority from the spend policy, not the role grant."""
     lineage_root, bindings = _seeded_run(tmp_path)
-    _record_access(
-        lineage_root, subject=PRINCIPAL, action=BUDGET_ACTION, now=BASE_TS + 4, bindings=bindings
-    )
+    _record_access(lineage_root, subject=PRINCIPAL, action=BUDGET_ACTION, now=BASE_TS + 4, bindings=bindings)
 
     envelope = _build(lineage_root, bindings)
 
@@ -303,11 +295,12 @@ def test_decision_inputs_allow_recomputing_the_recorded_governance_hash(
             "action": decision["action"],
             "bindings_hash": inputs["bindings_hash"],
         }
-        recomputed = "sha256:" + hashlib.sha256(
-            json.dumps(preimage, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode(
-                "utf-8"
-            )
-        ).hexdigest()
+        recomputed = (
+            "sha256:"
+            + hashlib.sha256(
+                json.dumps(preimage, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+            ).hexdigest()
+        )
         assert recomputed == inputs["governance_inputs_hash"]
 
 
@@ -355,12 +348,8 @@ def test_two_builds_of_the_same_run_are_byte_identical(tmp_path: Path) -> None:
     signing_pem, _ = generate_ed25519_keypair()
     _, principal_pem = generate_ed25519_keypair()
 
-    first = _build(
-        lineage_root, bindings, signing_key_pem=signing_pem, principal_public_key_pem=principal_pem
-    )
-    second = _build(
-        lineage_root, bindings, signing_key_pem=signing_pem, principal_public_key_pem=principal_pem
-    )
+    first = _build(lineage_root, bindings, signing_key_pem=signing_pem, principal_public_key_pem=principal_pem)
+    second = _build(lineage_root, bindings, signing_key_pem=signing_pem, principal_public_key_pem=principal_pem)
 
     assert json.dumps(first, sort_keys=True) == json.dumps(second, sort_keys=True)
 

@@ -16,9 +16,62 @@ Two artefacts define it today:
 | Schema (v1) | `schemas/authority-envelope-v1.json` |
 | Standalone verifier | `verify_cli/bernstein_verify_envelope/` |
 | Golden vectors | `tests/fixtures/authority-envelope-vectors/` |
+| Run-scoped producer | `src/bernstein/core/interop/authority_envelope.py` |
 
-There is no producer yet. This page describes the format and the verifier; an
-envelope is written by hand or by the vector builder until a producer lands.
+## Producing one from a run
+
+`build_run_authority_envelope` reads the `GovernanceDecision` records persisted
+under `lineage_root/<run_id>/` and renders the subset concerning one principal:
+
+```python
+from bernstein.core.interop.authority_envelope import build_run_authority_envelope
+
+envelope = build_run_authority_envelope(
+    lineage_root=Path(".sdd/lineage"),
+    run_id="run-2026-09-02-a",
+    principal_id="urn:bernstein:principal:agent:reviewer-7",
+    principal_public_key_pem=principal_public_pem,
+    idp_groups=("eng-operators",),
+    bindings=signed_role_bindings,
+    grant_id="grant-role-operator",
+    grant_issuer="urn:bernstein:principal:operator:alex",
+    grant_not_after="2031-01-01T00:00:00Z",
+    signing_key_pem=signing_pem,
+    signing_kid="envelope-signer-1",
+)
+```
+
+The authority the envelope records is the one the run resolved: the principal's
+IDP groups map to a role through the signed `RoleBindings`, and that role's
+permission set is the scope of the single grant link. The schema admits a
+multi-link chain; nothing writes delegation hops yet, so the producer emits one
+link.
+
+Every field is a pure function of the records on disk and the arguments above —
+no clock, no ordering by build time — so two builds over the same run are
+byte-identical and an envelope can be re-derived and diffed rather than trusted.
+
+### What the producer refuses to emit
+
+- A record claiming `allow` for an action outside the resolved role's permission
+  set. Signing it would assert authority the bindings never granted, so the
+  build raises `AuthorityEnvelopeError`.
+- A record timestamped after the grant expires.
+
+### What it leaves out, and says so
+
+`coverage` is computed from the records, never asserted:
+
+- Records about **other subjects** are not carried; `coverage.statement` gives
+  the count.
+- **Budget records** (`check_budget_decision`) draw authority from the spend
+  policy rather than from the role grant, so they are not carried under a role
+  grant either; the statement gives that count too.
+- A carried decision whose record has **no lineage-spine anchor** has no
+  evidence, and is listed in `coverage.uncovered` with the reason.
+
+Evidence entries are the decision records' lineage anchors, so a reader with the
+run's spine can match each decision to the entry that recorded it.
 
 ## Verifying one
 

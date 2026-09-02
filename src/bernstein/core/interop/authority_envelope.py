@@ -199,7 +199,7 @@ def _decision_entry(
     run_id: str,
 ) -> dict[str, Any]:
     """Render one governance record as an envelope decision."""
-    inputs = {
+    inputs: dict[str, Any] = {
         "kind": "access",
         "role": role,
         "idp_role_source": "role_bindings",
@@ -212,7 +212,7 @@ def _decision_entry(
         inputs["context"] = dict(sorted(decision.context.items()))
     policy = {"id": ACCESS_POLICY_ID, "version": bindings_hash}
     fragment = decision.inputs_hash.removeprefix("sha256:")[:16]
-    entry = {
+    entry: dict[str, Any] = {
         "decision_id": f"{index:06d}-{fragment}",
         "grant": grant["grant_id"],
         "subject": decision.subject,
@@ -237,9 +237,7 @@ def _decision_entry(
     return entry
 
 
-def _check_follows_from_the_grant(
-    entry: dict[str, Any], grant: dict[str, Any], grant_expiry: datetime
-) -> None:
+def _check_follows_from_the_grant(entry: dict[str, Any], grant: dict[str, Any], grant_expiry: datetime) -> None:
     """Refuse a decision the recorded authority does not support."""
     if entry["verdict"] not in ("allow", "deny"):
         raise AuthorityEnvelopeError(
@@ -276,8 +274,7 @@ def _coverage(
             "decision_id": decision["decision_id"],
             "action": decision["action"],
             "reason": (
-                "the decision record carries no lineage-spine anchor, so nothing ties this "
-                "decision to an artefact"
+                "the decision record carries no lineage-spine anchor, so nothing ties this decision to an artefact"
             ),
         }
         for decision in decisions
@@ -357,9 +354,7 @@ def build_run_authority_envelope(
     records = read_decisions(lineage_root, run_id)
     mine = [r for r in records if r.subject == principal_id and r.action != BUDGET_ACTION]
     budget_records = sum(1 for r in records if r.action == BUDGET_ACTION)
-    other_subject_records = sum(
-        1 for r in records if r.subject != principal_id and r.action != BUDGET_ACTION
-    )
+    other_subject_records = sum(1 for r in records if r.subject != principal_id and r.action != BUDGET_ACTION)
     if not mine:
         raise AuthorityEnvelopeError(
             f"run {run_id!r} holds no access decision for {principal_id!r}; an envelope with no "
@@ -417,8 +412,7 @@ def build_run_authority_envelope(
         "coverage": coverage,
     }
     body["section_digests"] = {
-        name: _sha256_jcs(body[name])
-        for name in ("principal", "grants", "decisions", "evidence", "coverage")
+        name: _sha256_jcs(body[name]) for name in ("principal", "grants", "decisions", "evidence", "coverage")
     }
 
     jws = sign_detached_jws_over_canonical(
