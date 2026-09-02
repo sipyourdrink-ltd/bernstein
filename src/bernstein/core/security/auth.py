@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any, cast
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.security.tenanting import DEFAULT_TENANT_ID, normalize_tenant_id
 
 if TYPE_CHECKING:
@@ -1464,11 +1465,13 @@ class AuthService:
         if refusal is None:
             return None
 
+        # Only the verdict and the identifiers it names are logged; the token
+        # and the certificate never reach a log line.
         logger.warning(
             "Token binding refused: %s (audience=%s, spiffe_id=%s)",
             refusal.code.value,
-            refusal.audience,
-            refusal.spiffe_id,
+            sanitize_log(refusal.audience),
+            sanitize_log(refusal.spiffe_id),
         )
         if self._audit_chain is not None:
             from bernstein.core.security.audit_chain import record_token_binding_refusal
