@@ -353,6 +353,13 @@ def verify_cmd(
     if not _verify_run_artifacts():
         failed_pillars.append("Run Artifacts")
 
+    # Govern audit reports are a further integrity pillar: a report identifies
+    # a posture by the hash of its canonical bytes, so an edited stored report
+    # must fail verify rather than read as a different posture (#5077).
+    # Orthogonal to both the HMAC chain and the Merkle seal.
+    if not _verify_audit_reports():
+        failed_pillars.append("Govern Audit Reports")
+
     # Tournament selection receipts are a further integrity pillar: a tampered
     # score or a hand-picked winner must fail verify exactly like a tampered
     # chain entry (#2353). Orthogonal to both HMAC chain and Merkle seal.
@@ -1512,6 +1519,55 @@ def _verify_run_artifacts() -> bool:
     console.print(Panel("[bold red]Run Artifact Verification FAILED[/bold red]", border_style="red", expand=False))
     for result in failures:
         console.print(f"  [red]![/red] task {result.task_id} key={result.key} v{result.version}: {result.reason}")
+    return False
+
+
+def _verify_audit_reports() -> bool:
+    """Verify every stored govern-audit report and print results. Returns True if valid.
+
+    A report identifies a posture by the sha256 of its canonical bytes, so a
+    flipped byte in a stored report matches no spine entry and makes
+    ``bernstein audit verify`` fail with the report named -- exactly like a
+    tampered chain entry (#5077). When no reports exist the check is a silent
+    no-op.
+    """
+    from bernstein.core.govern.audit_report import verify_all_audit_reports
+
+    # AUDIT_DIR is ``.sdd/audit``; the project root is two levels up. Reports
+    # live under ``<root>/.sdd/lineage/govern-audit/reports``.
+    workdir = AUDIT_DIR.parent.parent
+
+    key = _verify_key("Govern audit report")
+    if key is None:
+        return True
+
+    results = verify_all_audit_reports(workdir, hmac_key=key)
+    if not results:
+        return True  # no audit reports recorded; nothing to verify
+
+    failures = [r for r in results if not r.ok]
+    console.print()
+    if not failures:
+        console.print(
+            Panel(
+                "[bold green]Govern Audit Report Verification Passed[/bold green]",
+                border_style="green",
+                expand=False,
+            )
+        )
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Key", style="dim", no_wrap=True, min_width=14)
+        table.add_column("Value")
+        table.add_row("Reports", str(len(results)))
+        console.print(table)
+        return True
+
+    console.print(
+        Panel("[bold red]Govern Audit Report Verification FAILED[/bold red]", border_style="red", expand=False)
+    )
+    for result in failures:
+        anchor = result.report.journal_entry_hash if result.report is not None else "?"
+        console.print(f"  [red]![/red] report anchor={anchor or '(unanchored)'}: {result.reason}")
     return False
 
 
