@@ -41,8 +41,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from bernstein.core.security.evidence_envelope import (
     EVIDENCE_ENVELOPE_SCHEMA_VERSION,
     EVIDENCE_ENVELOPE_TYPE,
+    canonical_binding_bytes,
     canonical_envelope_bytes,
     envelope_binding,
+    envelope_digest,
     envelope_signing_input,
 )
 
@@ -89,6 +91,7 @@ def test_committed_vector_matches_its_published_digest() -> None:
     """The sidecar digest is over the committed bytes, not over a re-encoding."""
     published = _VECTOR_SHA256.read_text(encoding="utf-8").split()[0]
     assert hashlib.sha256(_VECTOR.read_bytes()).hexdigest() == published
+    assert envelope_digest(_vector()) == f"sha256:{published}"
 
 
 def test_canonical_bytes_ignore_input_key_order() -> None:
@@ -151,6 +154,20 @@ def test_committed_signature_verifies_over_the_canonical_binding() -> None:
     assert isinstance(public_key, Ed25519PublicKey)
     signature = _b64url_decode(sig_b64)
     public_key.verify(signature, envelope_signing_input(header_b64=header_b64, envelope=envelope))
+
+
+def test_signing_input_payload_is_the_canonical_binding_bytes() -> None:
+    """The JWS payload segment is exactly the canonical binding bytes, base64url-encoded.
+
+    ``envelope_signing_input`` and ``canonical_binding_bytes`` are two entry points
+    onto the same preimage; a reader who only has the compact JWS must be able to
+    recompute one from the other.
+    """
+    envelope = _vector()
+    header_b64, _, _ = envelope["signature"]["jws"].partition("..")
+    signing_input = envelope_signing_input(header_b64=header_b64, envelope=envelope)
+    _, _, payload_b64 = signing_input.decode("ascii").partition(".")
+    assert _b64url_decode(payload_b64) == canonical_binding_bytes(envelope)
 
 
 def test_mutating_a_covered_section_breaks_the_committed_signature() -> None:

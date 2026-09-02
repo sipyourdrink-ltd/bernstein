@@ -60,6 +60,7 @@ from bernstein.core.security.evidence_envelope import (
     EVIDENCE_ENVELOPE_TYP,
     EVIDENCE_ENVELOPE_TYPE,
     canonical_envelope_bytes,
+    envelope_jws_header,
     envelope_signing_input,
 )
 
@@ -225,7 +226,7 @@ def build(dest: Path) -> Path:
     dest.mkdir(parents=True, exist_ok=True)
     envelope = _binding()
 
-    header = {"alg": "EdDSA", "kid": _KID, "typ": EVIDENCE_ENVELOPE_TYP}
+    header = envelope_jws_header(_KID)
     header_b64 = _b64url(canonicalize_jcs(header))
     signature = _private_key().sign(envelope_signing_input(header_b64=header_b64, envelope=envelope))
     envelope["signature"] = {
