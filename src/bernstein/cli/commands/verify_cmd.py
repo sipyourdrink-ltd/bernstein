@@ -1261,6 +1261,27 @@ def verify_run_cmd(
     ),
 )
 @click.option(
+    "--key-chain",
+    "key_chain_path",
+    default=None,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help=(
+        "Signed key-succession chain (rotation/revocation). Requires "
+        "--public-key, which is then read as the pinned ROOT key: the "
+        "receipt's own key is resolved through the chain instead."
+    ),
+)
+@click.option(
+    "--signed-at",
+    "signed_at",
+    default=None,
+    help=(
+        "Timezone-aware ISO-8601 instant at which the receipt is attested to "
+        "have been signed. Only consulted when the signing key was revoked, "
+        "to decide which side of the revocation the signature falls on."
+    ),
+)
+@click.option(
     "--require-provenance",
     "require_provenance",
     is_flag=True,
@@ -1277,6 +1298,8 @@ def verify_run_cmd(
 def verify_receipt_cmd(
     receipt_path: Path,
     public_key_path: Path | None,
+    key_chain_path: Path | None,
+    signed_at: str | None,
     require_provenance: bool,
     as_json: bool,
 ) -> None:
@@ -1295,6 +1318,17 @@ def verify_receipt_cmd(
     their own key. With ``--public-key`` the embedded key must match the
     pinned out-of-band key, which additionally proves provenance.
 
+    ``--key-chain`` widens the pin from one key to a key generation. The
+    operator rotates receipt-signing keys and revokes compromised ones in a
+    signed succession chain; ``--public-key`` then pins the chain's ROOT key
+    and the receipt's own key is resolved through the chain. A key that was
+    merely rotated out still verifies (``superseded``) -- rotation must not
+    invalidate receipts an auditor already holds -- while a revoked key does
+    not, and the verdict names which side of the revocation instant the
+    signature falls on. Receipt bytes carry no wall clock by construction, so
+    that instant needs ``--signed-at`` from an outside source; without it a
+    revoked key fails closed.
+
     By default both tiers exit 0 -- a caller gating on provenance alone must
     pass ``--require-provenance``, which turns an integrity-only pass into a
     labelled failure instead of an indistinguishable ``0``. ``--json`` adds a
@@ -1310,6 +1344,9 @@ def verify_receipt_cmd(
          or a --public-key pin that does not match the embedded key
       3  --require-provenance was given and only the integrity-only tier
          was reached
+      4  the signature is authentic but the key that produced it is not
+         trusted by the supplied --key-chain (revoked, unknown, or a kid
+         reused with a different key)
     """
     from bernstein.core.replay.run_receipt import verify_run_receipt
 
@@ -1324,8 +1361,10 @@ def verify_receipt_cmd(
                     "journal_events": result.journal_events,
                     "spine_entries": result.spine_entries,
                     "divergent_step": result.divergent_step,
+                    "key_verdict": result.key_verdict,
                     "errors": result.errors,
                     "pinned_key": public_key_pem is not None,
+                    "key_chain": key_chain_path is not None,
                     "require_provenance": require_provenance,
                     "exit_code": exit_code,
                 },
@@ -1353,7 +1392,23 @@ def verify_receipt_cmd(
                 console.print(f"[red]Cannot read --public-key:[/red] {exc}")
             raise SystemExit(1) from None
 
-    result = verify_run_receipt(receipt_bytes, public_key_pem=public_key_pem)
+    key_chain_bytes: bytes | None = None
+    if key_chain_path is not None:
+        try:
+            key_chain_bytes = key_chain_path.read_bytes()
+        except OSError as exc:
+            if as_json:
+                console.print(_json.dumps({"ok": False, "status": "malformed", "tier": None, "errors": [str(exc)]}))
+            else:
+                console.print(f"[red]Cannot read --key-chain:[/red] {exc}")
+            raise SystemExit(1) from None
+
+    result = verify_run_receipt(
+        receipt_bytes,
+        public_key_pem=public_key_pem,
+        key_chain_bytes=key_chain_bytes,
+        attested_signed_at=signed_at,
+    )
 
     if not as_json:
         console.print()
@@ -1380,6 +1435,12 @@ def verify_receipt_cmd(
 
         if as_json:
             _emit_json(tier=tier, exit_code=0)
+        elif result.key_verdict is not None:
+            console.print(
+                "[green]OK (provenance: pinned root key)[/green] -- every head recomputes from the "
+                "embedded ranges and the signing key resolves through the succession chain from the "
+                f"pinned root with verdict [bold]{result.key_verdict}[/bold]."
+            )
         elif tier == "provenance":
             console.print(
                 "[green]OK (provenance: pinned key)[/green] -- every head recomputes from the "
@@ -1397,6 +1458,19 @@ def verify_receipt_cmd(
                 "with the operator's key for provenance.[/dim]"
             )
         raise SystemExit(0)
+
+    if result.status == "untrusted_key":
+        if as_json:
+            _emit_json(tier=None, exit_code=4)
+        else:
+            console.print(
+                f"[red]SIGNING KEY NOT TRUSTED[/red] ({result.key_verdict or 'chain unusable'}) -- "
+                "the signature is authentic, but the key that produced it is not trusted by the "
+                "supplied succession chain:"
+            )
+            for err in result.errors:
+                console.print(f"  - {err}")
+        raise SystemExit(4)
 
     if result.status == "malformed":
         if as_json:

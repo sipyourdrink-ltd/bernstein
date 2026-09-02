@@ -181,7 +181,13 @@ AuditSink = Callable[[AuditEvent], None]
 
 @dataclass(frozen=True)
 class MintedToken:
-    """Result of a successful :meth:`SecretsBroker.mint` call."""
+    """Result of a successful :meth:`SecretsBroker.mint` call.
+
+    ``version_id`` is empty for an ordinary mint. A rotation run sets it so the
+    token, the stored secret version, and the receipt left on the target all
+    name the same version (see
+    :mod:`bernstein.core.security.secret_rotation`).
+    """
 
     token_id: str
     value: str
@@ -190,6 +196,7 @@ class MintedToken:
     expires_at: float
     ttl_seconds: int
     audience: str = ""
+    version_id: str = ""
 
     def is_expired(self, *, now: float | None = None) -> bool:
         """Return ``True`` when wall-clock time has passed ``expires_at``."""
@@ -629,6 +636,7 @@ class SecretsBroker:
         ttl_seconds: int | None = None,
         grant: Any = None,
         run_id: str | None = None,
+        version_id: str = "",
     ) -> MintedToken:
         """Mint a short-lived token for ``secret_name`` scoped to ``task_id``.
 
@@ -644,6 +652,8 @@ class SecretsBroker:
                 mode; the minted token inherits the grant's audience and expiry.
             run_id: Run scope for chain-anchored refusal records when no grant
                 is presented. Defaults to the grant's run id, else ``task_id``.
+            version_id: Secret-version identifier a rotation run assigns to the
+                material being minted. Empty for an ordinary mint.
 
         Returns:
             A :class:`MintedToken`. The ``value`` field is what the agent
@@ -692,6 +702,7 @@ class SecretsBroker:
             expires_at=expires_at,
             ttl_seconds=effective_ttl,
             audience=audience,
+            version_id=version_id,
         )
         registration = _Registration(
             token=token,
@@ -737,6 +748,7 @@ class SecretsBroker:
         ttl_seconds: int | None = None,
         grant: Any = None,
         run_id: str | None = None,
+        version_id: str = "",
     ) -> Generator[MintedToken, None, None]:
         """Mint a token; auto-revoke on context-manager exit."""
         token = self.mint(
@@ -745,6 +757,7 @@ class SecretsBroker:
             ttl_seconds=ttl_seconds,
             grant=grant,
             run_id=run_id,
+            version_id=version_id,
         )
         try:
             yield token

@@ -1289,6 +1289,18 @@ def _render_prompt_with_receipt(
         named_sections.append(("rich_context", f"\n{rich_context}\n"))
     if file_scope_context:
         named_sections.append(("file_scope", deduplicate_section(f"\n## File-scope context\n{file_scope_context}\n")))
+    # Task context pack (#4522): what this repository's own history already
+    # records about the files this task owns - co-change neighbours, the tests
+    # that landed with them, the nearest AGENTS.md, and the tests the gate has
+    # quarantined. Off unless the operator sets the flag, and an empty pack
+    # renders to nothing, so the prompt is byte-identical without it. The
+    # section's content hash in the receipt below is the run record for the
+    # pack this spawn consumed.
+    from bernstein.core.tasks.context_pack import PACK_SECTION_LABEL, render_pack_section
+
+    context_pack_section = render_pack_section(workdir, [path for task in tasks for path in task.owned_files])
+    if context_pack_section:
+        named_sections.append((PACK_SECTION_LABEL, context_pack_section))
     # Parent context inheritance: inject parent's context summary
     # when a task was created from decomposing a larger parent task.
     parent_ctx_parts = [t.parent_context for t in tasks if t.parent_context]
