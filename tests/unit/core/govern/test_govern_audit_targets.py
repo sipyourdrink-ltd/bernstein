@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from bernstein.core.govern.audit_sweep import (
+    NOT_REPORTED,
     UNREACHABLE,
     CheckOutcome,
     CheckVerdict,
@@ -132,6 +133,8 @@ def test_a_check_the_executor_did_not_report_is_not_measurable_not_absent() -> N
     assert set(missing) == {"OBS-004", "SEC-002"}
     for outcome in missing.values():
         assert outcome.verdict is CheckVerdict.NOT_MEASURABLE
+        assert outcome.summary == NOT_REPORTED
+        assert outcome.passed is None
         assert outcome.what_would_make_it_measurable
 
 

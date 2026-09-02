@@ -97,11 +97,6 @@ class CheckOutcome:
     evidence: tuple[tuple[str, str], ...] = ()
     what_would_make_it_measurable: str = ""
 
-    @property
-    def failed(self) -> bool:
-        """True only for a measured verdict that did not pass."""
-        return self.verdict is CheckVerdict.MEASURED and self.passed is False
-
     def to_dict(self) -> dict[str, Any]:
         """Return the canonical serialization."""
         return {
@@ -193,14 +188,6 @@ class TargetAudit:
     def content_hash(self) -> str:
         """Return the ``sha256:``-prefixed content address of this report."""
         return "sha256:" + hashlib.sha256(self.to_canonical_bytes()).hexdigest()
-
-    def failed_check_ids(self) -> tuple[str, ...]:
-        """Return the ids of the checks that ran and did not pass."""
-        return tuple(o.check_id for o in self.outcomes if o.failed)
-
-    def passed_check_ids(self) -> tuple[str, ...]:
-        """Return the ids of the checks that ran and passed."""
-        return tuple(o.check_id for o in self.outcomes if o.verdict is CheckVerdict.MEASURED and o.passed is True)
 
 
 @dataclass(frozen=True, slots=True)
