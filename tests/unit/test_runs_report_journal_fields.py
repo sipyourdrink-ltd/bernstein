@@ -177,7 +177,7 @@ class TestWriteTimeValidation:
     def test_typo_of_a_reserved_kind_is_rejected_at_write(self, tmp_path: Path) -> None:
         ledger = WorkLedger.open(run_ledger_dir(tmp_path / ".sdd", "run-typo"))
         with pytest.raises(LedgerError, match="reserved"):
-            ledger.append(kind="task.compelted", task_id="t1")
+            ledger.append(kind="task.competed", task_id="t1")
         ledger.close()
 
     def test_other_kind_families_keep_the_regex_contract(self, tmp_path: Path) -> None:
