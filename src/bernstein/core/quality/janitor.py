@@ -119,6 +119,12 @@ _NONTRIVIAL_SIGNAL_TYPES = frozenset(
         # A grounded report proves the figures trace to signed sources - strong
         # evidence of real work, on par with a passing test (issue #2888).
         "figures_grounded",
+        # A verified absence proves a search actually covered a named corpus
+        # (issue #3650). It is the one signal that legitimately accompanies an
+        # empty diff - "nothing to change, and here is what was searched" - so
+        # a passing one must count as evidence rather than leave the task
+        # looking like a rubber stamp.
+        "absence_verified",
     }
 )
 
@@ -338,6 +344,20 @@ def evaluate_signal(
         case "llm_judge":
             # llm_judge requires async evaluation - use judge_task() instead.
             return False, "llm_judge requires async evaluation via judge_task()"
+        case "absence_verified":
+            # The absence-shaped signal (issue #3650): the value names the tool
+            # call that reported "nothing found", and the claim is only
+            # readable as verified when that call's own anchored coverage says
+            # what it covered. Fails closed on every missing or mismatched
+            # piece, so an unrecorded absence reads as unverified, never as a
+            # plain success.
+            from bernstein.core.quality.absence_coverage import verify_anchored_absence_claim
+
+            return verify_anchored_absence_claim(
+                tool_call_id=signal.value.strip(),
+                workdir=workdir,
+                lineage_store=lineage_store,
+            )
         case _ if signal.type in _ARTIFACT_SIGNAL_TYPES:
             # Artifact-mode criteria operate on the produced artifact's canonical
             # bytes (and, for figures_grounded, on lineage reads), not the

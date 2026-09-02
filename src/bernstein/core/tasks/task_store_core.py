@@ -323,6 +323,7 @@ type CompletionSignalType = Literal[
     "criteria_match",
     "hash_stable",
     "figures_grounded",
+    "absence_verified",
 ]
 
 _COMPLETION_SIGNAL_TYPES: tuple[CompletionSignalType, ...] = (
@@ -336,6 +337,7 @@ _COMPLETION_SIGNAL_TYPES: tuple[CompletionSignalType, ...] = (
     "criteria_match",
     "hash_stable",
     "figures_grounded",
+    "absence_verified",
 )
 
 
