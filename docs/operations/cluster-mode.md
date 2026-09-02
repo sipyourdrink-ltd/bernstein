@@ -357,6 +357,50 @@ standard audit log (`core/security/audit.py`); see
 [Security and identity](security-and-identity.md) for the integrity
 guarantees and how to export them.
 
+## Governing workloads that are not ours
+
+`bernstein cluster` and the Helm chart govern the orchestrator's own workload.
+Agent workloads that run next to it on the same cluster are governed by
+declaration instead: a workload carries the label `bernstein.io/govern` and is
+inventoried, routed, and diffed without its manifest being edited by Bernstein.
+
+```bash
+kubectl get deploy,sts -A -o json > workloads.json
+bernstein cluster govern-inventory --manifests workloads.json --json > inventory.json
+```
+
+The inventory holds one record per workload, not one per *governed* workload:
+
+| Label                          | State        | Meaning                                              |
+| ------------------------------ | ------------ | ---------------------------------------------------- |
+| `bernstein.io/govern: enabled` | `governed`   | Telemetry is routed to the ingest boundary.          |
+| `bernstein.io/govern: disabled`| `opted_out`  | Declined governance, still listed.                   |
+| (no label)                     | `ungoverned` | Nobody enrolled it. Listed, so it can be found.      |
+
+A label value that is neither spelling is refused rather than resolved to a
+posture nobody declared, so a typo fails loudly instead of reading as "not
+governed".
+
+Pass a previous inventory to see what changed:
+
+```bash
+bernstein cluster govern-inventory --manifests workloads.json --previous inventory.json
+```
+
+A workload that drops the label reports `opted_out`; a workload that is gone from
+the cluster reports `withdrawn`. The two are distinct, and neither is a row that
+quietly stops appearing.
+
+The inventory document is in the shape `bernstein governance plan` consumes, so
+the same file feeds the posture diff without a second format. `inventory_hash`
+is a pure function of the listing's contents, not its order: two operators
+running against the same cluster get the same hash.
+
+Governed workloads' OTLP spans reach the ingest boundary under the source label
+`k8s:<namespace>/<kind>/<name>`, so the signed receipt names the workload the
+spans came from. Nothing here sits in a workload's data path, and there is no
+admission webhook: a workload is never blocked from starting.
+
 ## Code pointers
 
 | Concern                          | File                                                                            |
@@ -370,4 +414,5 @@ guarantees and how to export them.
 | Heartbeat client (library)       | `src/bernstein/core/protocols/cluster/cluster.py:396-...`                       |
 | Cluster autoscaler (optional)    | `src/bernstein/core/protocols/cluster/cluster_autoscaler.py`                    |
 | Fleet aggregator                 | `src/bernstein/core/fleet/aggregator.py`                                        |
+| Workload governance inventory    | `src/bernstein/core/govern/cluster_inventory.py`                                |
 | Models / data classes            | `src/bernstein/core/models.py` - `NodeInfo`, `NodeCapacity`, `NodeStatus`, `ClusterConfig` |
