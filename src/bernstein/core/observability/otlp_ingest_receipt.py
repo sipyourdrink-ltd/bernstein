@@ -456,6 +456,12 @@ class IngestOTLPReceipt:
         monotonically increasing sequence number — a verifier can compare the
         two to detect reordering by the transport.
 
+        Submitting a batch this source has already reported appends nothing and
+        returns the receipt that batch was anchored with, so a transport that
+        retries cannot turn one reported batch into several chain records. A
+        batch that overlaps an earlier one anchors only the spans the chain has
+        not already accepted from this source.
+
         Args:
             spans: List of OTLP/JSON span dicts from one source submission.
 
