@@ -1005,6 +1005,15 @@ EVENT_IDENTITY_SPAWN_ATTESTATION = "identity.spawn_attestation"
 #: Issue #5031 -- session revocation propagation
 EVENT_IDENTITY_REVOKED = "identity.revoked"
 
+#: Issue #4970 -- emitted whenever the external-directory bridge
+#: (:mod:`bernstein.core.security.directory_bridge`) answers "who is this
+#: principal and what is it a member of". The event names the adapter and its
+#: version, the reference asked for, the principal the directory returned, the
+#: groups, the mapped role, the revocation state, and whether the answer came
+#: from the directory or from the bridge cache (with its age). A live lookup
+#: nobody can reproduce later thereby becomes a verifiable historical fact.
+EVENT_DIRECTORY_RESOLUTION = "identity.directory_resolution"
+
 #: Issue #2930 -- emitted whenever an eval run seals a clean-run attestation
 #: (:mod:`bernstein.eval.clean_run`). The event mirrors the attestation's
 #: identity into the HMAC chain: the attestation hash, the verdict, the sealed
