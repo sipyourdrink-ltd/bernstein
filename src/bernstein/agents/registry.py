@@ -12,6 +12,7 @@ from typing import Any, ClassVar, cast
 import yaml
 
 from bernstein.core.models import ModelConfig
+from bernstein.core.registry_guard import DuplicateGuard, caller_module_name
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,7 @@ class AgentRegistry:
         self._file_hashes: dict[str, str] = {}
         self._last_reload: float = 0.0
         self._instances: dict[str, AgentInstance] = {}
+        self._duplicate_guard = DuplicateGuard("agent definition")
 
     @property
     def definitions_dir(self) -> Path:
@@ -125,10 +127,12 @@ class AgentRegistry:
             definition: AgentDefinition instance to register.
 
         Raises:
-            ValueError: If definition name already exists.
+            DuplicateRegistrationError: If definition name already exists
+                (a ``ValueError`` subclass), naming the module that
+                registered it first and the module attempting the second
+                registration.
         """
-        if definition.name in self._definitions:
-            logger.warning("Overwriting existing agent definition: %s", definition.name)
+        self._duplicate_guard.register(definition.name, caller_module_name())
         self._definitions[definition.name] = definition
         logger.info("Registered agent definition: %s (v%s)", definition.name, definition.version)
 
@@ -143,6 +147,7 @@ class AgentRegistry:
         """
         if name in self._definitions:
             del self._definitions[name]
+            self._duplicate_guard.forget(name)
             logger.info("Unregistered agent definition: %s", name)
             return True
         return False
