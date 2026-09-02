@@ -44,6 +44,7 @@ from bernstein.core.orchestration.research_worker import (
     ResearchWorker,
     SpanRef,
 )
+from bernstein.core.orchestration.source_fetcher import RecordedSourceFetcher, SourceNotRecorded
 from bernstein.core.replay.journal import EventJournal
 from bernstein.core.security.audit_chain import EVENT_ACTIVITY_RESULT, AuditChainStore
 
@@ -320,6 +321,40 @@ def test_recorded_half_produces_identical_canonical_bytes_and_artifact_hash(tmp_
     # The artifact hashes are content-addressed keys in their respective stores.
     assert store.get(artifact1)
     assert store2.get(artifact2)
+
+
+def test_same_corpus_twice_yields_identical_report_and_hashes(tmp_path: Path) -> None:
+    """A run driven by RecordedSourceFetcher over a fixed corpus is a pure function
+    of the query and the corpus: run it twice into two separate `.sdd` roots and
+    the canonical report bytes, the artifact_hash, and the evidence_set_hash all
+    match (AC2)."""
+    corpus = {
+        "https://a": _PAGES["https://a"],
+        "https://b": _PAGES["https://b"],
+    }
+
+    def run_once(root: Path) -> tuple[bytes, str, str]:
+        store = ContentStore(root / ".sdd" / "cas")
+        worker = ResearchWorker(store=store, budget=ResearchBudget(max_fetches=5))
+        fetcher = RecordedSourceFetcher(corpus)
+        run = worker.run(query="q", sources=list(corpus), fetch_fn=fetcher.fetch, synthesise=_synth_two)
+        from bernstein.core.orchestration.research_report import report_to_canonical_bytes
+
+        return report_to_canonical_bytes(run.report), run.result.artifact_hash, run.result.evidence_set_hash
+
+    canonical1, artifact1, evidence1 = run_once(tmp_path / "run1")
+    canonical2, artifact2, evidence2 = run_once(tmp_path / "run2")
+
+    assert canonical1 == canonical2
+    assert artifact1 == artifact2
+    assert evidence1 == evidence2
+
+
+def test_recorded_source_fetcher_refuses_ref_outside_corpus() -> None:
+    fetcher = RecordedSourceFetcher({"https://a": b"known bytes"})
+    with pytest.raises(SourceNotRecorded) as excinfo:
+        fetcher.fetch("https://unknown")
+    assert excinfo.value.source_ref == "https://unknown"
 
 
 def test_research_runs_dispatch_next_to_coding_tasks_with_cost_caps(tmp_path: Path) -> None:
