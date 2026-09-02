@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal, cast, get_args
 from bernstein.core.auth import create_jwt, verify_jwt
 from bernstein.core.path_scope import ScopePatternError, validate_repo_relative_pattern
 from bernstein.core.sanitize import sanitize_log
+from bernstein.core.security.capability_tokens import prefixes_narrow
 from bernstein.core.tenanting import (
     DEFAULT_TENANT_ID,
     InvalidTenantIdError,
@@ -772,10 +773,17 @@ class AgentIdentityStore:
             # allowed_files: prefix subset check. Empty parent allowed_files
             # means unrestricted parent → child can be anything. Non-empty
             # parent means child patterns must be a subset (every child pattern
-            # must be covered by some parent pattern).
+            # must be covered by some parent pattern). An empty child set when
+            # the parent has restrictions is a widening and is refused.
             if parent_identity.allowed_files:
                 child_patterns = set(scoped_files)
                 parent_patterns = set(parent_identity.allowed_files)
+                if not child_patterns and parent_patterns:
+                    # Child has no file scope but parent does = widening
+                    raise ValueError(
+                        f"child allowed_files {sorted(child_patterns)} are not a subset of "
+                        f"parent allowed_files {sorted(parent_patterns)}"
+                    )
                 if not _all_patterns_covered_by(child_patterns, parent_patterns):
                     raise ValueError(
                         f"child allowed_files {sorted(child_patterns)} are not a subset of "
