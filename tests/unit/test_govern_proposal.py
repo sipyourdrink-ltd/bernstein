@@ -174,7 +174,6 @@ def test_draft_proposal_sign() -> None:
     assert dp_draft.status == ProposalStatus.DRAFT
     assert dp_draft.human_signature is None
 
-
 def test_draft_proposal_status_enum() -> None:
     """ProposalStatus enum should have expected values."""
     assert ProposalStatus.DRAFT.value == "draft"
@@ -198,7 +197,6 @@ def test_draft_proposal_findings_hash_reference() -> None:
     raw = dp.to_dict()
     assert raw["findings_hash"] == "sha256:abcd1234567890"
 
-
 def test_draft_proposal_malformed_draft() -> None:
     """Malformed draft (e.g., missing playbook) should still serialize correctly."""
     dp = DraftProposal(
@@ -215,3 +213,4 @@ def test_draft_proposal_malformed_draft() -> None:
     assert raw["prompt"] == "Generate a draft playbook"
     assert raw["playbook"] is None
     assert raw["status"] == "draft"
+
