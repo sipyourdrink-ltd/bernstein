@@ -589,6 +589,20 @@ EVENT_MCP_TASK_HANDLE = "mcp.task_handle"
 #: SVID and that neither has been altered since.
 EVENT_SPIFFE_SVID_BINDING = "spiffe.svid_binding"
 
+#: Issue #5030 -- emitted when a token bound to an X.509-SVID is presented by
+#: something that could not prove it holds that SVID. The event pins the
+#: content-addressed refusal receipt together with the code naming *which*
+#: proof failed (no certificate presented, wrong thumbprint, expired leaf,
+#: unparseable leaf, or an audience that requires a binding the token lacks),
+#: the SPIFFE ID of the SVID that should have been used, and the expected and
+#: presented thumbprints. A gateway that rejects a replayed token says the
+#: request was denied; this says a token issued to one workload was presented
+#: by something that could not prove it was that workload, at a named chain
+#: position, and the statement verifies offline after the incident. Records
+#: identifiers, thumbprints, and the verdict only -- never the token or the
+#: certificate.
+EVENT_TOKEN_BINDING_REFUSAL = "identity.token_binding_refusal"
+
 #: Issue #2361 -- emitted when an operator approves (or rejects) the
 #: requirement set drafted from a spec, before the deterministic compiler
 #: turns it into a task graph. The event binds the content-addressed
@@ -6218,6 +6232,66 @@ def record_spiffe_svid_binding(
     )
 
 
+def record_token_binding_refusal(
+    *,
+    chain: AuditChainStore,
+    refusal_hash: str,
+    refusal_code: str,
+    audience: str,
+    spiffe_id: str,
+    expected_thumbprint: str,
+    presented_thumbprint: str,
+    session_id: str,
+    detail: str,
+    actor: str = "token_binding",
+) -> AuditEvent:
+    """Append an ``identity.token_binding_refusal`` event into *chain* (#5030).
+
+    Anchors one refused proof of possession: a token carrying an RFC 8705
+    confirmation claim was presented on a connection that could not prove it
+    holds the bound X.509-SVID. The event mirrors the content-addressed
+    :class:`~bernstein.core.security.token_binding.BindingRefusal` -- its hash,
+    the code naming which check failed, the SVID that should have been used,
+    and the expected and presented thumbprints -- into the HMAC chain. A
+    verifier holding the refusal recomputes its hash and checks it against the
+    chain, so a replayed credential leaves a record that survives the incident
+    instead of a 401 that leaves none.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        refusal_hash: Content address of the refusal receipt.
+        refusal_code: Which proof failed, from
+            :class:`~bernstein.core.security.token_binding.BindingRefusalCode`.
+        audience: The audience the refused token was minted for.
+        spiffe_id: SPIFFE ID of the SVID the token was bound to.
+        expected_thumbprint: The ``x5t#S256`` the token confirmed.
+        presented_thumbprint: The ``x5t#S256`` actually presented, if any.
+        session_id: The session the token named, for correlation.
+        detail: Human-readable reason, safe to record.
+        actor: Recorded actor; defaults to ``"token_binding"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_TOKEN_BINDING_REFUSAL,
+        actor=actor,
+        resource_type="token_binding_refusal",
+        resource_id=refusal_hash,
+        details={
+            "refusal_hash": refusal_hash,
+            "refusal_code": refusal_code,
+            "audience": audience,
+            "spiffe_id": spiffe_id,
+            "expected_thumbprint": expected_thumbprint,
+            "presented_thumbprint": presented_thumbprint,
+            "session_id": session_id,
+            "detail": detail,
+        },
+    )
+
+
 def record_mcp_task_handle(
     *,
     chain: AuditChainStore,
@@ -9045,6 +9119,22 @@ EVENT_CAPABILITY_DELTA = "capability.delta_recorded"
 #: flipping any byte of the entry changes the chain HMAC.
 EVENT_CAPABILITY_AUTHORIZATION = "capability.authorization"
 
+#: Issue #5038 -- emitted whenever an operator admits a model for use by this
+#: installation. The event carries the canonical model key, the provider,
+#: model name and pinned version, the task classes the admission covers, the
+#: admitting identity, the expiry the admission lapses at, and an optional
+#: reference to the evidence the operator relied on. The model registry is a
+#: replay of these events and their withdrawals -- see
+#: :mod:`bernstein.core.routing.model_registry`.
+EVENT_MODEL_ADMITTED = "model.admitted"
+
+#: Issue #5038 -- emitted whenever an operator withdraws a previously admitted
+#: model. The event carries the same canonical model key plus the withdrawing
+#: identity and the stated reason. Withdrawal appends; it never edits or
+#: removes the admission it supersedes, so the state that held before it
+#: stays reconstructible.
+EVENT_MODEL_WITHDRAWN = "model.withdrawn"
+
 #: Issue #4975 -- emitted whenever an MCP server's advertised capability set
 #: changes between connections. The event carries the run id, the server name,
 #: previous capability digest (None for first contact), the current capability
@@ -9364,6 +9454,124 @@ def record_external_policy_decision(
     )
 
 
+#: Issue #5041 -- emitted once per model drift probe. The event carries the
+#: signed observation's hash, the model reference the probe ran against, the
+#: fixed suite it ran, the content hash of the baseline it was compared
+#: against, the comparison status and aggregate delta, and the declared
+#: coverage (how many of the suite's cases ran, and why a subset ran when one
+#: did). The observation itself is the artefact; this event is what makes the
+#: series ordered and an after-the-fact edit visible.
+EVENT_MODEL_DRIFT_OBSERVATION = "model.drift_observation"
+
+
+@dataclass(frozen=True)
+class ModelDriftObservationDetails:
+    """Structured payload for the ``model.drift_observation`` event."""
+
+    observation_hash: str
+    model_provider: str
+    model_requested: str
+    model_reported: str
+    suite_hash: str
+    suite_version: str
+    baseline_hash: str
+    comparison_status: str
+    aggregate_delta: float | None
+    coverage: str
+    cases_declared_count: int
+    cases_ran_count: int
+    sampling_reason: str
+    signer_fingerprint: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "observation_hash": self.observation_hash,
+            "model_provider": self.model_provider,
+            "model_requested": self.model_requested,
+            "model_reported": self.model_reported,
+            "suite_hash": self.suite_hash,
+            "suite_version": self.suite_version,
+            "baseline_hash": self.baseline_hash,
+            "comparison_status": self.comparison_status,
+            "aggregate_delta": self.aggregate_delta,
+            "coverage": self.coverage,
+            "cases_declared_count": self.cases_declared_count,
+            "cases_ran_count": self.cases_ran_count,
+            "sampling_reason": self.sampling_reason,
+            "signer_fingerprint": self.signer_fingerprint,
+        }
+
+
+def record_model_drift_observation(
+    chain: AuditChainStore,
+    *,
+    observation_hash: str,
+    model_provider: str,
+    model_requested: str,
+    model_reported: str,
+    suite_hash: str,
+    suite_version: str,
+    baseline_hash: str,
+    comparison_status: str,
+    aggregate_delta: float | None,
+    coverage: str,
+    cases_declared_count: int,
+    cases_ran_count: int,
+    sampling_reason: str,
+    signer_fingerprint: str,
+    actor: str = "eval",
+) -> AuditEvent:
+    """Append a ``model.drift_observation`` event into *chain*.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        observation_hash: Content hash of the signed drift observation.
+        model_provider: Provider of the probed model.
+        model_requested: Model alias the probe asked for.
+        model_reported: Model the provider said it served (empty when it said
+            nothing -- the gap the observation exists to record).
+        suite_hash: Content hash of the fixed suite that was run.
+        suite_version: Version label of that suite.
+        baseline_hash: Content hash of the baseline the run was compared to.
+        comparison_status: ``comparable`` or ``incomparable``.
+        aggregate_delta: Mean movement against the baseline over the cases
+            that ran, or ``None`` when the comparison was incomparable.
+        coverage: ``full`` or ``partial``.
+        cases_declared_count: How many cases the suite declares.
+        cases_ran_count: How many of them the probe ran.
+        sampling_reason: Why a subset ran; empty for a full run.
+        signer_fingerprint: Identity that signed the observation.
+        actor: Recorded actor; defaults to ``"eval"`` (the probe surface).
+
+    Returns:
+        The recorded :class:`AuditEvent`. The details payload carries every
+        input plus ``prev_chain_digest`` (the chain head at write time).
+    """
+    payload = ModelDriftObservationDetails(
+        observation_hash=observation_hash,
+        model_provider=model_provider,
+        model_requested=model_requested,
+        model_reported=model_reported,
+        suite_hash=suite_hash,
+        suite_version=suite_version,
+        baseline_hash=baseline_hash,
+        comparison_status=comparison_status,
+        aggregate_delta=aggregate_delta,
+        coverage=coverage,
+        cases_declared_count=cases_declared_count,
+        cases_ran_count=cases_ran_count,
+        sampling_reason=sampling_reason,
+        signer_fingerprint=signer_fingerprint,
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_MODEL_DRIFT_OBSERVATION,
+        actor=actor,
+        resource_type="model_drift_observation",
+        resource_id=observation_hash,
+        details=payload,
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -9435,6 +9643,7 @@ __all__ = [
     "EVENT_MEMORY_WRITE",
     "EVENT_MISSION_DIGEST_RECEIPT",
     "EVENT_MISSION_PHASE_RECEIPT",
+    "EVENT_MODEL_DRIFT_OBSERVATION",
     "EVENT_MULTIMODAL_ATTACH",
     "EVENT_ODATA_WRITEBACK",
     "EVENT_OTEL_PROJECTION",
@@ -9499,6 +9708,7 @@ __all__ = [
     "EVENT_TEMPLATE_COMPRESSION_RECEIPT",
     "EVENT_TEMPLATE_COMPRESSION_RESTORE",
     "EVENT_THREAD_APPROVAL",
+    "EVENT_TOKEN_BINDING_REFUSAL",
     "EVENT_TOURNAMENT_SELECTION",
     "EVENT_TRACKER_PIPELINE_SWEEP",
     "EVENT_TRAJECTORY_RECEIPT",
@@ -9521,6 +9731,7 @@ __all__ = [
     "MCPCapabilityDriftDetails",
     "MandateConsentReceiptDetails",
     "MemoryWriteDetails",
+    "ModelDriftObservationDetails",
     "MultimodalAttachDetails",
     "PaymentReceiptDetails",
     "SkillInstallReceiptDetails",
@@ -9589,6 +9800,7 @@ __all__ = [
     "record_memory_write",
     "record_mission_digest_receipt",
     "record_mission_phase_receipt",
+    "record_model_drift_observation",
     "record_multimodal_attach",
     "record_odata_writeback",
     "record_otel_projection",
@@ -9651,6 +9863,7 @@ __all__ = [
     "record_task_suspension",
     "record_task_tier_decision",
     "record_thread_approval",
+    "record_token_binding_refusal",
     "record_tournament_selection",
     "record_tracker_pipeline_sweep",
     "record_trajectory_receipt",

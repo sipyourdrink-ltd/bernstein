@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.fleet.aggregator import ProjectSnapshot
 from bernstein.core.fleet.audit import check_audit_tail
@@ -68,7 +68,8 @@ def build_rows(
         snap = snapshots.get(project.name) or ProjectSnapshot(name=project.name)
         cost_block = rollup.per_project.get(project.name, {})
         chain = check_audit_tail(project.name, project.sdd_dir)
-        cost_total = float(cost_block.get("total_usd") or snap.cost_usd or 0.0)
+        total_usd = cast("float | None", cost_block.get("total_usd"))
+        cost_total = float(total_usd or snap.cost_usd or 0.0)
         spark = str(cost_block.get("sparkline") or "")
         rows.append(
             FleetRow(
@@ -123,7 +124,7 @@ def build_textual_app(
     from typing import ClassVar
 
     from textual.app import App, ComposeResult
-    from textual.binding import Binding
+    from textual.binding import Binding, BindingType
     from textual.containers import Vertical
     from textual.widgets import DataTable, Footer, Header, Static
 
@@ -136,7 +137,7 @@ def build_textual_app(
         DataTable { height: 1fr; }
         #footer { color: $accent; padding: 0 1; }
         """
-        BINDINGS: ClassVar[list[Binding]] = [
+        BINDINGS: ClassVar[list[BindingType]] = [
             Binding("q", "quit", "Quit"),
             Binding("r", "refresh", "Refresh"),
             Binding("s", "bulk_stop", "Bulk stop"),
