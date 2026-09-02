@@ -84,6 +84,12 @@ EVIDENCE_ENVELOPE_SCHEMA_VERSION: str = "1.0.0"
 #: URL identifying the envelope type, in the shape the audit-receipt and
 #: trust-record families already publish theirs.
 EVIDENCE_ENVELOPE_TYPE: str = "https://bernstein.run/attestations/evidence-envelope/v1"
+#: URL identifying the envelope type, dispatched by readers from the envelope
+#: itself. This is independent of the schema's ``$id``
+#: (``https://bernstein.alexchernysh.com/schemas/evidence-envelope-v1.json``),
+#: which locates the JSON Schema file; the two live on different hosts and
+#: serve different purposes -- one names the artefact type, the other pins the
+#: schema document.
 
 #: JWS ``typ`` header for an envelope signature. Distinct from the identity
 #: card's ``agent-card+jws`` and the capability card's ``a2a-capability+jws``
@@ -170,5 +176,5 @@ def envelope_signing_input(*, header_b64: str, envelope: Mapping[str, Any]) -> b
     Returns:
         The ASCII signing input.
     """
-    body_b64 = _b64url(canonical_binding_bytes(envelope))
-    return f"{header_b64}.{body_b64}".encode("ascii")
+    _binding_b64 = _b64url(canonical_binding_bytes(envelope))
+    return f"{header_b64}.{_binding_b64}".encode("ascii")
