@@ -270,9 +270,7 @@ class TestEntityStore:
         with pytest.raises(EntityStoreError):
             store.load_entity(entity_id)
 
-    def test_entity_file_rejects_a_url_where_an_edge_id_belongs(
-        self, tmp_path: Path
-    ) -> None:
+    def test_entity_file_rejects_a_url_where_an_edge_id_belongs(self, tmp_path: Path) -> None:
         store = EntityStore(tmp_path)
         graph = _join().graph
         store.write_graph(graph)
@@ -286,9 +284,7 @@ class TestEntityStore:
         with pytest.raises(EntityStoreError):
             store.load_entity(entity_id)
 
-    def test_store_writes_one_file_per_entity_and_lookup_files(
-        self, tmp_path: Path
-    ) -> None:
+    def test_store_writes_one_file_per_entity_and_lookup_files(self, tmp_path: Path) -> None:
         store = EntityStore(tmp_path)
         graph = _join().graph
         store.write_graph(graph)
@@ -296,11 +292,7 @@ class TestEntityStore:
         entity_files = sorted((tmp_path / "entities").glob("*.json"))
         assert len(entity_files) == len(graph.nodes)
 
-        sources = json.loads(
-            (tmp_path / "lookups" / "sources.json").read_text(encoding="utf-8")
-        )
+        sources = json.loads((tmp_path / "lookups" / "sources.json").read_text(encoding="utf-8"))
         assert sources == ["agent", "mdm"]
-        edge_kinds = json.loads(
-            (tmp_path / "lookups" / "edge_kinds.json").read_text(encoding="utf-8")
-        )
+        edge_kinds = json.loads((tmp_path / "lookups" / "edge_kinds.json").read_text(encoding="utf-8"))
         assert edge_kinds == ["assigned_to"]
