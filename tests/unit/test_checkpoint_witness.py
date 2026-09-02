@@ -442,3 +442,89 @@ def test_verify_says_so_when_no_witness_cosignature_is_on_record(cli_workspace: 
     result = CliRunner().invoke(audit_group, ["verify"])
     assert result.exit_code == 0, result.output
     assert "not witness" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# 5. The operator surface
+# ---------------------------------------------------------------------------
+
+
+def test_the_three_witness_commands_round_trip(cli_workspace: Path) -> None:
+    """export on the log host, cosign on the witness, record back on the log host."""
+    audit_dir = cli_workspace / ".sdd" / "audit"
+    signer = _witness_key(cli_workspace / "witness.key")
+    public_key = _public_key_file(signer, cli_workspace / "witness.pub")
+    state_dir = cli_workspace / "witness-state"
+    runner = CliRunner()
+    _cli_seal()
+
+    exported = cli_workspace / "cp.json"
+    assert runner.invoke(audit_group, ["witness", "export", "--out", str(exported)]).exit_code == 0
+
+    cosig = cli_workspace / "cosig.json"
+    result = runner.invoke(
+        audit_group,
+        [
+            "witness",
+            "cosign",
+            "--checkpoint",
+            str(exported),
+            "--key",
+            str(cli_workspace / "witness.key"),
+            "--state-dir",
+            str(state_dir),
+            "--out",
+            str(cosig),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    # A bootstrap must not read as an endorsement of history before it.
+    assert "no state for this chain" in result.output
+
+    recorded = runner.invoke(
+        audit_group,
+        ["witness", "record", "--cosignature", str(cosig), "--witness-key", str(public_key)],
+    )
+    assert recorded.exit_code == 0, recorded.output
+    assert load_cosignatures(audit_dir)
+
+    verified = runner.invoke(audit_group, ["verify", "--witness-key", str(public_key)])
+    assert verified.exit_code == 0, verified.output
+    assert "Witness Verification Passed" in verified.output
+
+
+def test_the_cosign_command_exits_non_zero_naming_the_refusal_cause(cli_workspace: Path) -> None:
+    """A refusal is a failed command, not a warning buried in output."""
+    audit_dir = cli_workspace / ".sdd" / "audit"
+    signer = _witness_key(cli_workspace / "witness.key")
+    state_dir = cli_workspace / "witness-state"
+    runner = CliRunner()
+    _cli_seal()
+
+    from bernstein.core.persistence.chain_checkpoint import load_checkpoints
+
+    checkpoint = load_checkpoints(audit_dir, _KEY).last
+    assert checkpoint is not None
+    cosign_checkpoint(state_dir, checkpoint, signer)
+
+    _truncate_history(audit_dir, keep=2)
+    checkpoints_path(audit_dir).unlink()
+    _cli_seal()
+    rewound = cli_workspace / "rewound.json"
+    assert runner.invoke(audit_group, ["witness", "export", "--out", str(rewound)]).exit_code == 0
+
+    result = runner.invoke(
+        audit_group,
+        [
+            "witness",
+            "cosign",
+            "--checkpoint",
+            str(rewound),
+            "--key",
+            str(cli_workspace / "witness.key"),
+            "--state-dir",
+            str(state_dir),
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    assert REFUSAL_SIZE_REGRESSION in result.output
