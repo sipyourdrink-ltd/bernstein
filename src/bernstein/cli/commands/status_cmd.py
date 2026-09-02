@@ -746,6 +746,22 @@ def _doctor_check_eval_gate_power(checks: list[dict[str, Any]], workdir: Path) -
     _add_check(checks, advisory["name"], True, detail, fix)
 
 
+def _doctor_check_audit_anchoring(checks: list[dict[str, Any]], workdir: Path) -> None:
+    """Surface whether the audit history is anchored outside this machine (#5036).
+
+    A never-anchored install is a WARN row that still passes the run - anchoring
+    is optional and an air-gapped install cannot do it at all. A contradicted or
+    unreadable anchor fails: something signed outside this machine disagrees
+    with the local history, which no local decision can settle.
+    """
+    from bernstein.cli.commands.doctor_cmd import check_audit_anchoring
+
+    row = check_audit_anchoring(workdir)
+    status = row["status"]
+    detail = f"WARNING: {row['detail']}" if status == "WARN" else row["detail"]
+    _add_check(checks, row["name"], status != "FAIL", detail, row["fix"])
+
+
 def _doctor_check_otel_export(checks: list[dict[str, Any]]) -> None:
     """Surface the live OTLP export advisory (#2526, Phase 4).
 
@@ -1222,6 +1238,7 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
     _doctor_check_schedule_supervisor(checks, workdir)
     _doctor_check_eval_gate_power(checks, workdir)
     _doctor_check_otel_export(checks)
+    _doctor_check_audit_anchoring(checks, workdir)
 
     if auto_fix:
         _doctor_auto_fix(checks, stale_pid_paths, workdir, fixed, manual_needed)

@@ -79,13 +79,13 @@ if _IS_WINDOWS:
     _ICON_WARN = "!"
     _ICON_DASH = "-"
 else:
-    _RISK_ICON: dict[str, str] = {
+    _RISK_ICON: dict[str, str] = {  # type: ignore[no-redef]
         "low": "\u2713",
         "medium": "\u26a0",
         "high": "\u26a1",
         "critical": "\u2b24",
     }
-    _STATUS_LABEL: dict[str, str] = {
+    _STATUS_LABEL: dict[str, str] = {  # type: ignore[no-redef]
         PlanStatus.PENDING.value: "pending \u2014 awaiting approval",
         PlanStatus.APPROVED.value: "approved",
         PlanStatus.REJECTED.value: "rejected",
@@ -184,7 +184,7 @@ def _read_key() -> str:
 
     if _IS_WINDOWS:
         # Use msvcrt for Windows keypress detection
-        ch = msvcrt.getch()
+        ch = msvcrt.getch()  # type: ignore[name-defined]
         if ch in (b"\r", b"\n"):
             return "enter"
         if ch == b"\x1b":
@@ -218,8 +218,8 @@ def _drain_input() -> None:
     with suppress(OSError, ValueError):
         if _IS_WINDOWS:
             # Drain buffered input on Windows using msvcrt
-            while msvcrt.kbhit():
-                msvcrt.getch()
+            while msvcrt.kbhit():  # type: ignore[name-defined]
+                msvcrt.getch()  # type: ignore[name-defined]
         else:
             while select.select([sys.stdin], [], [], 0.0)[0]:
                 sys.stdin.read(1)

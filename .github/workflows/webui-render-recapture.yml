@@ -1,0 +1,192 @@
+name: Web UI render recapture
+
+# A dependency bump that rebuilds the shipped SPA turns three checks red for
+# one cause, and the fix needs a browser the author may not have.
+#
+# The chain, from this repository's own history:
+#
+#   1. `spa-bundle-freshness.yml` requires the committed bundle under
+#      `src/bernstein/gui/static/` to match a rebuild from
+#      `web/package-lock.json`. A frontend dependency bump therefore has to
+#      carry the rebuilt bundle.
+#   2. The rebuilt bundle has new content-hashed asset filenames, so the
+#      digest in `docs/assets/webui-renders.json` no longer matches.
+#   3. That fails `bind_webui_renders.py`, which fails the "Operator-surface
+#      render freshness" step of `Repo hygiene`, and independently fails
+#      `tests/unit/test_webui_render_binding.py` in whichever `test` shard
+#      that file lands in, and therefore the aggregate `CI gate`.
+#
+# Four pull-request runs in the 30 days to 2026-09-01 ended this way, on
+# `renovate/tanstack-query-monorepo` and `renovate/vite-8.x-lockfile`. The
+# failing shard was 2, 3 and 4 on different occasions, so the same defect
+# does not cluster in per-job failure statistics and reads as three unrelated
+# shard failures.
+#
+# Clearing it means re-running `scripts/capture_webui_renders.py`, which
+# boots `bernstein gui serve` and drives headless Chromium over ten screens.
+# An automation-authored pull request cannot do that, and a human has to
+# install Playwright locally to do it for them. Two commits on `main` in that
+# same window (#4552, #4027) exist only to carry that catch-up work.
+#
+# This lane does the capture on a runner and publishes the result as an
+# artifact. It deliberately does NOT commit anything and does NOT rebind
+# without recapturing:
+#
+#   * the guarantee `bind_webui_renders.py` holds is that nobody shipped a UI
+#     change while leaving the published screenshots behind. Rebinding
+#     without capturing would assert that the committed screenshots show the
+#     new bundle when nobody looked, which is the one thing the gate exists
+#     to prevent;
+#   * so `Repo hygiene` and the binding test still fail, exactly as today.
+#     What changes is the cost of clearing them: download an artifact and
+#     commit it, instead of reproducing a browser capture locally.
+#
+# The job never fails. It holds no write permission, and it is not a required
+# context, so nothing it does can gate a merge.
+
+on:
+  pull_request:
+    paths:
+      - 'web/**'
+      - 'src/bernstein/gui/static/**'
+      - 'docs/assets/webui-renders.json'
+      - 'scripts/capture_webui_renders.py'
+      - 'scripts/bind_webui_renders.py'
+      # Listed so a change to this lane exercises itself on its own pull
+      # request rather than first proving itself on somebody else's.
+      - '.github/workflows/webui-render-recapture.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: webui-render-recapture-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# Read-only, deliberately. This lane publishes an artifact; it does not push
+# to the pull request branch.
+permissions:
+  contents: read
+
+jobs:
+  recapture:
+    name: Recapture the web UI renders
+    runs-on: ubuntu-latest
+    # The whole job, not just the capture step: `npm ci`, a Chromium download
+    # and a booted server all have their own ways to fail, and none of them is
+    # a statement about the pull request. A breakage here is reported in the
+    # job summary rather than as a red check.
+    continue-on-error: true
+    # Chromium download plus ten captures against a booted server. Observed
+    # cost of the parts that already run in CI (npm ci + npm run build) is
+    # under a minute; the browser is the rest.
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7 # zizmor: ignore[cache-poisoning]
+        with:
+          node-version: '24'
+
+      - name: Set up uv
+        uses: ./.github/actions/bootstrap
+        with:
+          python-version: '3.13'
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Rebuild the shipped bundle
+        # Same two commands the required `shipped bundle matches the lockfile`
+        # lane runs. On a pull request that already carries the rebuilt bundle
+        # this is a no-op; on one that does not, it produces the bundle the
+        # renders have to be captured against either way.
+        working-directory: web
+        run: npm run build
+
+      - name: Install the project
+        run: uv sync
+
+      - name: Install Chromium for Playwright
+        run: uv run --with playwright python -m playwright install --with-deps chromium
+
+      - name: Recapture the renders
+        id: capture
+        # Never redden the pull request. A browser capture has more ways to
+        # fail than the thing it is helping with, and this lane is a
+        # convenience, not a gate: if it breaks, the author is exactly where
+        # they are today.
+        continue-on-error: true
+        env:
+          # The script builds a throwaway git repository for the seeded
+          # screens; give it an identity so `git commit` there cannot prompt.
+          GIT_AUTHOR_NAME: bernstein-ci
+          GIT_AUTHOR_EMAIL: ci@bernstein.invalid
+          GIT_COMMITTER_NAME: bernstein-ci
+          GIT_COMMITTER_EMAIL: ci@bernstein.invalid
+        run: |
+          set -euo pipefail
+          uv run --with playwright python scripts/capture_webui_renders.py
+          uv run python scripts/bind_webui_renders.py --update
+
+      - name: Report what changed
+        id: diff
+        if: always()
+        run: |
+          set -euo pipefail
+          CHANGED="$(git status --porcelain --untracked-files=all -- docs/assets)"
+          if [ -z "$CHANGED" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Web UI renders"
+              echo
+              if [ "${CAPTURE_OUTCOME}" = "success" ]; then
+                echo "Recapture produced no change: the committed renders and"
+                echo "binding already match the bundle this branch builds."
+              else
+                echo "The recapture step did not complete, so there is nothing"
+                echo "to publish. See the step log above."
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Web UI renders are out of date"
+            echo
+            echo "This branch changes the shipped SPA bundle, so the committed"
+            echo "screenshots under \`docs/assets/\` no longer bind to it."
+            echo
+            echo "Recaptured them on this runner. Download the"
+            echo "\`webui-renders-recaptured\` artifact from this run, unpack it"
+            echo "over \`docs/assets/\`, and commit. That clears the render"
+            echo "freshness step of \`Repo hygiene\`, the binding test, and the"
+            echo "\`CI gate\` roll-up together."
+            echo
+            echo "Files:"
+            echo
+            echo '```'
+            echo "${CHANGED}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          CAPTURE_OUTCOME: ${{ steps.capture.outcome }}
+
+      - name: Upload the recaptured renders
+        if: always() && steps.diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: webui-renders-recaptured
+          path: |
+            docs/assets/webui-*.png
+            docs/assets/webui-renders.json
+          if-no-files-found: warn
+          retention-days: 14

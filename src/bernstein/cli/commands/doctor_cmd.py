@@ -906,6 +906,53 @@ def check_eval_gate_min_n_advisory(workdir: Path | None = None) -> dict[str, Any
     }
 
 
+def check_audit_anchoring(workdir: Path | None = None) -> dict[str, Any]:
+    """Report whether the audit history is anchored outside this machine (#5036).
+
+    The Merkle seal and the signed checkpoint are both computed from material
+    on this disk with this install's key, so an actor who controls the audit
+    directory can roll all of it back together and every local verification
+    still passes. An RFC 3161 token over a checkpoint is the part they cannot
+    reproduce. The failure this check exists for is not the missing anchor -
+    it is an operator believing the seal is stronger than it is, so an
+    unanchored install says so plainly instead of staying silent.
+    """
+    from bernstein.core.persistence.checkpoint_anchor import anchoring_state
+
+    root = workdir if workdir is not None else Path.cwd()
+    audit_dir = root / ".sdd" / "audit"
+    name = "Audit anchoring"
+    fix = (
+        "Anchor the newest checkpoint: bernstein audit anchor --print-request, "
+        "then bernstein audit anchor --rfc3161-token <tsa response>"
+    )
+    if not audit_dir.is_dir():
+        return {"name": name, "status": _CHECK_PASS, "detail": "no audit log yet", "fix": ""}
+
+    state = anchoring_state(audit_dir)
+    if state.errors:
+        return {
+            "name": name,
+            "status": _CHECK_FAIL,
+            "detail": f"anchor record unusable: {state.errors[0]}",
+            "fix": "Investigate .sdd/audit/checkpoints/anchors.jsonl before trusting the seal",
+        }
+    if not state.anchored:
+        return {
+            "name": name,
+            "status": _CHECK_WARN,
+            "detail": "audit history has never been externally anchored",
+            "fix": fix,
+        }
+    when = state.newest_gen_time.isoformat() if state.newest_gen_time else "unknown time"
+    return {
+        "name": name,
+        "status": _CHECK_PASS,
+        "detail": f"anchored at {state.newest_entry_count} entries, last at {when}",
+        "fix": "",
+    }
+
+
 def run_all_checks() -> list[dict[str, Any]]:
     """Run all health checks and return results."""
     checks: list[dict[str, Any]] = []
@@ -916,6 +963,7 @@ def run_all_checks() -> list[dict[str, Any]]:
     checks.extend((check_price_table_advisory(), check_knob_matrix_advisory()))
     checks.extend(check_skill_revocations())
     checks.append(check_eval_gate_min_n_advisory())
+    checks.append(check_audit_anchoring())
     checks.extend(check_api_keys())
     checks.extend(
         (
