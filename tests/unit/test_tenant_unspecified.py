@@ -20,11 +20,6 @@ from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from bernstein.cli.commands import chat_cmd
-from bernstein.core.agents import agent_identity
-from bernstein.core.agents.agent_identity import AgentCredential
-from bernstein.core.cost import cost_tracker
-from bernstein.core.cost.cost_tracker import TokenUsage, _usage_tenant_scope
 from bernstein.core.tenant_isolation import TenantIsolationManager
 from bernstein.core.tenanting import (
     DEFAULT_TENANT_ID,
@@ -34,6 +29,12 @@ from bernstein.core.tenanting import (
     normalize_tenant_id,
     try_normalize_tenant_id,
 )
+
+from bernstein.cli.commands import chat_cmd
+from bernstein.core.agents import agent_identity
+from bernstein.core.agents.agent_identity import AgentCredential
+from bernstein.core.cost import cost_tracker
+from bernstein.core.cost.cost_tracker import TokenUsage, _usage_tenant_scope
 
 if TYPE_CHECKING:
     from pathlib import Path
