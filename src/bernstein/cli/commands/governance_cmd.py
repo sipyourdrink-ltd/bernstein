@@ -26,6 +26,12 @@ produces no chain events and no receipt can mention it. This is the first
 transport into the ingest boundary: a file or stdin. A payload the boundary
 rejects appends nothing, and a submission already anchored returns the receipt
 it was anchored with instead of a second one.
+
+    bernstein govern posture [--workdir <path>] [--json-output]
+
+Score the install's posture from chain-evidenced facts only. The number is a
+projection of the lineage log; no configuration file is read, so switching a
+control on cannot move it.
 """
 
 from __future__ import annotations
@@ -41,6 +47,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from bernstein.cli.commands.govern_cmd import govern_reconcile_cmd
 from bernstein.cli.helpers import console
 from bernstein.core.govern import compute_plan as _compute_plan
 from bernstein.core.lineage.spine import LineageSpine
@@ -64,6 +71,7 @@ def govern_group() -> None:
       bernstein govern verify <run> --bindings b.json --ledger ledger.jsonl
       bernstein govern plan --playbook p.json --inventory i.json [--workdir w]
       bernstein govern ingest --spans spans.json --source otel-collector-prod
+      bernstein govern posture [--workdir w] [--json-output]
     """
 
 
@@ -221,6 +229,49 @@ def governance_plan_cmd(playbook_file: str, inventory_file: str, workdir: str) -
         )
 
     console_obj.print(table)
+    raise SystemExit(0)
+
+
+@govern_group.command("posture")
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option(
+    "--json-output",
+    "as_json",
+    is_flag=True,
+    help="Print the signed canonical document instead of a table.",
+)
+def governance_posture_cmd(workdir: str, as_json: bool) -> None:
+    """Score this install's posture from chain-evidenced facts only.
+
+    The score consumes the per-control coverage report over the lineage log and
+    reads no configuration, so enabling a control cannot raise it; producing
+    evidence for that control can. The document names every contributing chain
+    event, the weights version, and its own denominator -- the weight that was
+    measurable, not the weight that exists.
+
+    Exit 0 always. A score is a measurement, not a gate.
+    """
+    from bernstein.core.security.security_posture import (
+        collect_evidenced_posture,
+        evidenced_posture_json,
+        format_evidenced_posture,
+    )
+
+    root = Path(workdir).resolve()
+
+    if as_json:
+        click.echo(evidenced_posture_json(root, hmac_key=_load_hmac_key()))
+        raise SystemExit(0)
+
+    console.print()
+    console.print(format_evidenced_posture(collect_evidenced_posture(root)))
     raise SystemExit(0)
 
 
@@ -722,6 +773,11 @@ def governance_ingest_cmd(
     console.print(f"  chain entry        {receipt.chain_entry_hash}")
     console.print(f"  coverage           {receipt.coverage}")
     console.print(f"  [dim]{receipt.coverage_detail}[/dim]")
+
+
+# Desired-state reconcile diff over the governed surface (#5085). Registered
+# here, before the alias mirror below, so the subcommand sets stay identical.
+govern_group.add_command(govern_reconcile_cmd, "reconcile")
 
 
 @click.group("governance")

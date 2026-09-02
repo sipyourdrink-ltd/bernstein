@@ -26,7 +26,7 @@ from bernstein.adapters.plugin_sdk import (
 from bernstein.adapters.registry import adapter_name_for_provider, get_adapter
 from bernstein.adapters.skills_injector import inject_skills
 from bernstein.agents.registry import AgentRegistry, get_registry
-from bernstein.bridges.base import AgentState, BridgeError, RuntimeBridge, SpawnRequest
+from bernstein.bridges.base import AgentState, AgentStatus, BridgeError, RuntimeBridge, SpawnRequest
 from bernstein.core.agents import project_context as _project_context
 from bernstein.core.agents.adapter_health import AdapterHealthMonitor
 from bernstein.core.agents.attachment_dispatch import (
@@ -3111,7 +3111,7 @@ class AgentSpawner:
         """
         if self._runtime_bridge is None:
             return False
-        bridge_status = self._run_bridge_call(
+        bridge_status: AgentStatus = self._run_bridge_call(
             self._runtime_bridge.spawn(
                 SpawnRequest(
                     agent_id=session.id,
@@ -3519,7 +3519,7 @@ class AgentSpawner:
 
         profile = PROFILES.get(adapter_name)
         tier_decision = getattr(self, "_pending_tier_decision", None)
-        self._pending_tier_decision = None
+        self._pending_tier_decision: dict[str, Any] | None = None
         if profile is None:
             # Untracked adapter: still record an opt-in tier decision if present.
             if tier_decision is not None:

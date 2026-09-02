@@ -15,6 +15,23 @@ from bernstein.core.govern.playbook_models import (
     PlaybookValidationError,
 )
 from bernstein.core.govern.proposal import DraftProposal, ProposalStatus
+from bernstein.core.govern.reconcile import (
+    compute_reconcile_diff,
+    propose_reconcile,
+    snapshot_surface,
+)
+from bernstein.core.govern.reconcile_models import (
+    DesiredEntity,
+    DesiredState,
+    DiffAction,
+    EntityKind,
+    EntityPolicy,
+    EntityStatus,
+    ReconcileDiff,
+    ReconcileEntry,
+    Snapshot,
+    SnapshotEntity,
+)
 
 
 def compute_plan(
@@ -190,7 +207,13 @@ def _compare_values(observed: str, ceiling: str) -> int:
 
 
 __all__ = [
+    "DesiredEntity",
+    "DesiredState",
+    "DiffAction",
     "DraftProposal",
+    "EntityKind",
+    "EntityPolicy",
+    "EntityStatus",
     "Finding",
     "FindingsDocument",
     "GovernPlan",
@@ -201,6 +224,13 @@ __all__ = [
     "PlaybookClause",
     "PlaybookValidationError",
     "ProposalStatus",
+    "ReconcileDiff",
+    "ReconcileEntry",
+    "Snapshot",
+    "SnapshotEntity",
     "Surface",
     "compute_plan",
+    "compute_reconcile_diff",
+    "propose_reconcile",
+    "snapshot_surface",
 ]

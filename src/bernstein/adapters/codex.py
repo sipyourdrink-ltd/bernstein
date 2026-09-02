@@ -1,10 +1,33 @@
 """OpenAI Codex CLI adapter.
 
-Last verified against upstream @openai/codex 0.117.x on 2026-05-05.
+Last verified against upstream @openai/codex 0.152.1 on 2026-09-02.
 Install: ``npm i -g @openai/codex`` (or ``brew install --cask codex``).
-Recommended models: ``gpt-5.5`` (GA 2026-04-24) or ``gpt-5.5-mini`` for cheap
-work; ``gpt-5.4`` retained as a pinned fallback.  The o-series reasoning
-models (``o3``, ``o4-mini``) are also accepted by the CLI.
+Recommended models: ``gpt-5.5`` (GA 2026-04-24), which is also the pinned
+fallback, or ``gpt-5.4-mini`` for cheap work.  ``gpt-5.4`` is no longer served
+on the ChatGPT-account auth path.  The o-series reasoning models (``o3``,
+``o4-mini``) are also accepted by the CLI.
+
+Sandbox posture is derived from the adapter's declared
+:class:`~bernstein.adapters._contract.DangerousModeStrategy` rather than
+hardcoded, because the right answer depends on where the CLI runs.
+
+``codex exec --sandbox workspace-write`` is implemented with bubblewrap on
+Linux, and bubblewrap needs an unprivileged user namespace to start. A runner
+that already provides isolation typically denies exactly that: a container
+started with ``--cap-drop ALL --security-opt no-new-privileges:true``, or a
+host with unprivileged user namespaces disabled, makes every model-issued
+shell command fail with ``bwrap: No permissions to create a new namespace``.
+The failure is silent from the orchestrator's side -- ``codex exec`` still
+emits ``turn.completed`` and exits 0 after producing an empty diff -- so the
+run reads as a model that had nothing to do rather than as a sandbox that
+could not initialise.
+
+An operator whose runner is already isolated therefore declares the escalated
+strategy, and the spawn passes ``--dangerously-bypass-approvals-and-sandbox``
+instead. Upstream's own help text scopes that flag the same way: "Intended
+solely for running in environments that are externally sandboxed." The
+un-escalated default stays ``--sandbox workspace-write``, so a spawn on a
+plain host keeps the vendor sandbox.
 """
 
 from __future__ import annotations
@@ -15,6 +38,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from bernstein.adapters._contract import DangerousModeStrategy
 from bernstein.adapters.base import (
     DEFAULT_TIMEOUT_SECONDS,
     CLIAdapter,
@@ -38,8 +62,26 @@ _CODEX_AUTH_FILE = Path.home() / ".codex" / "auth.json"
 # selector hands one to this adapter (e.g. the high-stakes-role default), fall
 # back to a Codex model so ``codex exec -m`` receives something the CLI accepts.
 # The real selection fix lives in the spawner; this is a last-resort safety net.
-_DEFAULT_CODEX_MODEL = "gpt-5.4"
+#
+# ``gpt-5.4`` was the pin until 2026-09-02 and no longer works on the
+# ChatGPT-account auth path: the backend rejects it with HTTP 400
+# ``invalid_request_error`` -- "The 'gpt-5.4' model is not supported when using
+# Codex with a ChatGPT account" -- and the account's own model catalogue lists
+# only ``gpt-5.5`` and ``gpt-5.4-mini``. A last-resort fallback that 400s is
+# worse than no fallback, so the pin follows the recommended GA model, which
+# both auth paths accept.
+_DEFAULT_CODEX_MODEL = "gpt-5.5"
 _CLAUDE_TIER_MODELS = frozenset({"opus", "sonnet", "haiku"})
+
+#: Sandbox argv for a spawn that keeps the vendor sandbox. Codex implements
+#: this profile with bubblewrap on Linux, so it needs an unprivileged user
+#: namespace the host must allow.
+_SANDBOXED_ARGS: tuple[str, ...] = ("--sandbox", "workspace-write")
+
+#: Sandbox argv for a spawn whose runner already provides isolation. Upstream
+#: scopes the flag to exactly that case: "Intended solely for running in
+#: environments that are externally sandboxed."
+_BYPASS_SANDBOX_FLAG = "--dangerously-bypass-approvals-and-sandbox"
 
 
 def _has_codex_auth() -> bool:
@@ -53,7 +95,7 @@ def _codex_model(model: str) -> str:
         logger.warning(
             "CodexAdapter: model %r is a Claude tier name Codex cannot run; using %r "
             "instead. Set role_model_policy.<role>.model or default_model to a Codex "
-            "model (e.g. gpt-5.4) to choose explicitly.",
+            "model (e.g. gpt-5.5) to choose explicitly.",
             model,
             _DEFAULT_CODEX_MODEL,
         )
@@ -81,6 +123,38 @@ class CodexAdapter(CLIAdapter):
     # ``insufficient_quota`` error codes; the meter records both under
     # the same provider label.
     rate_limit_provider = "openai"
+
+    def _dangerous_mode(self) -> DangerousModeStrategy:
+        """Return the declared dangerous-mode strategy for this adapter."""
+        declared = getattr(self.strategy(), "dangerous_mode", DangerousModeStrategy.UNSUPPORTED)
+        return declared if isinstance(declared, DangerousModeStrategy) else DangerousModeStrategy.UNSUPPORTED
+
+    def _sandbox_bypassed(self) -> bool:
+        """Whether this spawn runs Codex without its own sandbox.
+
+        Only :attr:`DangerousModeStrategy.ALWAYS_ON` bypasses. That value
+        means "no permission surface exists to skip", which is what the
+        bypass flag produces: no approval prompt and no vendor sandbox. The
+        shipped declaration for this adapter is
+        :attr:`DangerousModeStrategy.CLI_FLAG` -- a flag pins the posture,
+        and the posture it pins is the sandboxed one -- so a default spawn
+        keeps ``--sandbox workspace-write``. An operator whose runner is
+        already isolated declares ``ALWAYS_ON`` instead.
+        """
+        return self._dangerous_mode() is DangerousModeStrategy.ALWAYS_ON
+
+    def _sandbox_args(self) -> tuple[str, ...]:
+        """Return the sandbox argv for one spawn, derived from the declaration."""
+        if not self._sandbox_bypassed():
+            return _SANDBOXED_ARGS
+        logger.warning(
+            "CodexAdapter: dangerous_mode=%s, so this spawn passes %s -- model-issued "
+            "shell commands run with no Codex sandbox. Declare this only when the "
+            "runner itself provides the isolation.",
+            DangerousModeStrategy.ALWAYS_ON,
+            _BYPASS_SANDBOX_FLAG,
+        )
+        return (_BYPASS_SANDBOX_FLAG,)
 
     def spawn(
         self,
@@ -113,8 +187,7 @@ class CodexAdapter(CLIAdapter):
         cmd = [
             "codex",
             "exec",
-            "--sandbox",
-            "workspace-write",
+            *self._sandbox_args(),
             "-m",
             model,
             "--json",

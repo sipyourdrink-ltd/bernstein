@@ -20,6 +20,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `registry_guard.py`         | Shared duplicate-registration guard for the registry classes under ``bernstein`` |
 | `run_auth_token.py`         | Persist and read the auto-generated run Bearer token (issue #2794) |
 | `streaming_merge.py`        | Streaming task results for long-running agents (incremental merge) |
+| `verify_dispatch.py`        | Kind-detecting dispatcher for a single ``bernstein verify <artefact>`` entry point (#5103) |
 | `verify_result.py`          | The one shape an offline verification answers in |
 | `admission/`                | Named resource pools with lease-backed admission (#2544) |
 | `agents/`                   | agents sub-package |
@@ -27,6 +28,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `autofix/`                  | Bernstein autofix daemon - auto-repair CI failures on Bernstein PRs |
 | `autoheal/`                 | Auto-heal v2 subpackage |
 | `chat/`                     | Chat-control bridges for driving Bernstein agents from messaging apps |
+| `checks/`                   | Audit check contract, registry, and producer adapters (#5072) |
 | `communication/`            | communication sub-package |
 | `compliance/`               | Compliance subpackage |
 | `config/`                   | Config: seed parsing, config management, settings, feature gates |

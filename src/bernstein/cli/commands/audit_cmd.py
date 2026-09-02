@@ -997,6 +997,7 @@ def _verify_checkpoints() -> bool:
         CheckpointFileError,
         authorize_divergence,
         check_extension,
+        check_pointer,
         find_divergence_acks,
         load_checkpoints,
     )
@@ -1021,6 +1022,16 @@ def _verify_checkpoints() -> bool:
         console.print(Panel("[bold red]Checkpoint Verification FAILED[/bold red]", border_style="red", expand=False))
         for err in exc.errors:
             console.print(f"  [red]![/red] {err}")
+        return False
+
+    # The ledger is append-only, so truncating it back over a pin leaves a
+    # shorter file that still validates and an older pin the history still
+    # extends. The atomically-replaced pointer names the checkpoint that was
+    # actually published, which is what makes that regression visible.
+    pointer_problem = check_pointer(AUDIT_DIR, state, key=key)
+    if pointer_problem is not None:
+        console.print(Panel("[bold red]Checkpoint Verification FAILED[/bold red]", border_style="red", expand=False))
+        console.print(f"  [red]![/red] {pointer_problem}")
         return False
 
     last = state.last
@@ -3681,6 +3692,109 @@ def receipt_verify_cmd(
     if proc.returncode != 0 and proc.stderr:
         console.print(f"[red]{proc.stderr.rstrip()}[/red]")
     raise SystemExit(proc.returncode)
+
+
+@receipt_group.command("conform")
+@click.argument(
+    "receipt_path",
+    required=False,
+    type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+)
+@click.option(
+    "--verifier",
+    "verifier_path",
+    default=None,
+    type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+    help="Verifier implementation to check (default: this repo's own tools/verify_audit_receipt.py).",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit a machine-readable report.")
+def receipt_conform_cmd(receipt_path: str | None, verifier_path: str | None, as_json: bool) -> None:
+    """Check conformance to the numbered audit-receipt requirements (#4987).
+
+    \b
+      bernstein audit receipt conform
+          Run the executable corpus against a verifier implementation
+          (default: our own standalone verifier) and report, per numbered
+          requirement, whether it reaches the corpus's expected verdict.
+          Our own verifier gets no privileged path: point --verifier at any
+          other implementation that speaks the same --receipt/--format
+          convention and it is checked the same way.
+
+    \b
+      bernstein audit receipt conform RECEIPT.json
+          Check one already-built receipt (of unknown provenance) against
+          every requirement and name whichever one(s) it violates, instead
+          of a single pass/fail bit.
+
+    \b
+    Exit codes: 0 fully conformant, 1 at least one requirement violated,
+    2 could not locate a verifier to run.
+    """
+    import json
+    import tempfile
+
+    from bernstein.core.security.audit_receipt_conformance import (
+        REQUIREMENTS,
+        build_corpus,
+        default_verifier_path,
+        evaluate_receipt,
+        run_corpus,
+    )
+
+    resolved_verifier = Path(verifier_path) if verifier_path else (_find_receipt_verifier() or default_verifier_path())
+    if not resolved_verifier.is_file():
+        console.print(
+            "[red]Could not locate tools/verify_audit_receipt.py.[/red] "
+            "Pass --verifier PATH, set BERNSTEIN_AUDIT_RECEIPT_VERIFIER, or "
+            "run from a bernstein source checkout.",
+        )
+        raise SystemExit(2)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        if receipt_path:
+            receipt = json.loads(Path(receipt_path).read_text(encoding="utf-8"))
+            case_results = evaluate_receipt(receipt, verifier_path=resolved_verifier, tmp_dir=tmp_dir)
+            ok = all(r.conformant for r in case_results)
+            rows = [(r.requirement_id, r.conformant, r.detail) for r in case_results]
+            subject = receipt_path
+        else:
+            corpus = build_corpus()
+            run = run_corpus(corpus, verifier_path=resolved_verifier, tmp_dir=tmp_dir)
+            ok = run.ok
+            rows = [
+                (
+                    v.requirement_id,
+                    v.conformant,
+                    "; ".join(f"{c.case_id}: {c.detail}" for c in v.case_results if not c.conformant),
+                )
+                for v in run.verdicts
+            ]
+            subject = f"corpus ({len(REQUIREMENTS)} requirements, {len(corpus)} cases)"
+
+    if as_json:
+        console.print_json(
+            data={
+                "ok": ok,
+                "verifier": str(resolved_verifier),
+                "subject": subject,
+                "requirements": [
+                    {"id": rid, "conformant": conformant, "detail": detail} for rid, conformant, detail in rows
+                ],
+            },
+        )
+    else:
+        table = Table(title=f"Audit receipt conformance -- {subject}")
+        table.add_column("requirement")
+        table.add_column("verdict")
+        table.add_column("detail")
+        for rid, conformant, detail in rows:
+            table.add_row(rid, "[green]PASS[/green]" if conformant else "[red]FAIL[/red]", detail)
+        console.print(table)
+        console.print(f"verifier: {resolved_verifier}")
+        console.print(f"OVERALL: {'[green]PASS[/green]' if ok else '[red]FAIL[/red]'}")
+
+    raise SystemExit(0 if ok else 1)
 
 
 # ---------------------------------------------------------------------------
