@@ -375,6 +375,7 @@ nav:
           - Token growth monitor: operations/token-growth-monitor.md
           - Payment mandates: operations/payment-mandates.md
           - Showback canonicalization: cost/showback-canonical.md
+          - Budget halt receipts: cost/budget-halt-receipts.md
       - Observability:
           - Overview: operations/observability-overview.md
           - Instrumentation: operations/INSTRUMENTATION.md
