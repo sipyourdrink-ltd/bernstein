@@ -1425,6 +1425,12 @@ from bernstein.cli.commands.artifact_cmd import artifact_group  # noqa: E402
 
 cli.add_command(artifact_group, "artifact")
 
+# Executor admission policy: which adapters, models, endpoints and sandbox
+# tiers this repository may spawn on, checked without running anything (#4907).
+from bernstein.cli.commands.admission_cmd import admission_group  # noqa: E402
+
+cli.add_command(admission_group, "admission")
+
 # In-process verification gate driven by worker hooks: blocks a failing
 # completion or an out-of-scope write in-session, sealing gate receipts (#2360).
 from bernstein.cli.commands.hook_gate_cmd import hook_gate_group  # noqa: E402

@@ -2430,6 +2430,34 @@ class AgentSpawner:
         self._emit_admission_refusal_audit_event(session_id=session_id, decision=decision)
         raise SpawnError(f"admission refused: {decision.reason}")
 
+    def _admission_sandbox_tier(self, isolation_mode: IsolationMode) -> str:
+        """Return the sandbox tier this spawn runs under, for admission.
+
+        Resolution order mirrors what actually confines the agent, most
+        specific first, so an operator's ``sandboxes:`` rule names the
+        boundary rather than a proxy for it:
+
+        1. the bound sandbox backend's name (``docker``, ``e2b``, ...);
+        2. the configured container runtime, when a ``sandbox:`` block is
+           active but no backend object was handed to this spawner;
+        3. otherwise the resolved isolation mode (``container`` /
+           ``worktree`` / ``none``).
+
+        ``bernstein admission check`` derives the same value from the
+        config alone, so the printed decision table matches the gate.
+
+        Args:
+            isolation_mode: Isolation resolved for this spawn.
+
+        Returns:
+            The tier string the policy matches against.
+        """
+        if self._sandbox_backend is not None:
+            return self._sandbox_backend.name
+        if self._sandbox is not None:
+            return str(self._sandbox.runtime)
+        return isolation_mode.value
+
     def _emit_admission_refusal_audit_event(
         self,
         *,
@@ -4452,9 +4480,7 @@ class AgentSpawner:
         # beside the lethal-trifecta check above because the executor
         # identity it judges - adapter, model, endpoint - is only fully
         # resolved at this point; it is still ahead of every process
-        # start, so a refusal produces no agent.  The sandbox tier is the
-        # bound backend's name when one is configured, otherwise the
-        # isolation mode recorded on the session below.
+        # start, so a refusal produces no agent.
         self._enforce_admission_policy(
             session_id=session_id,
             subject=AdmissionSubject(
@@ -4462,7 +4488,7 @@ class AgentSpawner:
                 adapter=resolved_endpoint_adapter_name,
                 model=resolved_endpoint_model,
                 endpoint=resolved_endpoint_base_url,
-                sandbox=(self._sandbox_backend.name if self._sandbox_backend is not None else isolation_mode.value),
+                sandbox=self._admission_sandbox_tier(isolation_mode),
                 task_type=getattr(tasks[0].task_type, "value", str(tasks[0].task_type)),
             ),
         )
