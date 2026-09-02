@@ -273,11 +273,12 @@ def load_latest_checkpoint(audit_dir: Path, key: bytes) -> dict[str, Any] | None
         return None
     if not isinstance(doc, dict):
         return None
-    payload = doc.get("payload")
+    record = cast("dict[str, Any]", doc)
+    payload = record.get("payload")
     if not isinstance(payload, dict):
         return None
     payload = cast("dict[str, Any]", payload)
-    if not _hmac.compare_digest(str(doc.get("hmac", "")), _sign(payload, key)):
+    if not _hmac.compare_digest(str(record.get("hmac", "")), _sign(payload, key)):
         return None
     if payload.get("version") != CHECKPOINT_VERSION:
         return None

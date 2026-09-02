@@ -953,6 +953,7 @@ def _verify_checkpoints() -> bool:
         CheckpointFileError,
         authorize_divergence,
         check_extension,
+        check_pointer,
         find_divergence_acks,
         load_checkpoints,
     )
@@ -977,6 +978,16 @@ def _verify_checkpoints() -> bool:
         console.print(Panel("[bold red]Checkpoint Verification FAILED[/bold red]", border_style="red", expand=False))
         for err in exc.errors:
             console.print(f"  [red]![/red] {err}")
+        return False
+
+    # The ledger is append-only, so truncating it back over a pin leaves a
+    # shorter file that still validates and an older pin the history still
+    # extends. The atomically-replaced pointer names the checkpoint that was
+    # actually published, which is what makes that regression visible.
+    pointer_problem = check_pointer(AUDIT_DIR, state, key=key)
+    if pointer_problem is not None:
+        console.print(Panel("[bold red]Checkpoint Verification FAILED[/bold red]", border_style="red", expand=False))
+        console.print(f"  [red]![/red] {pointer_problem}")
         return False
 
     last = state.last
