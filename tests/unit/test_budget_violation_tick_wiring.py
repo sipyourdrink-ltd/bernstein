@@ -78,9 +78,7 @@ class TestBudgetViolationTickWiring:
         """A single tick calls `check_budget_violations(self, result)` exactly once."""
         orch = _build_orch(tmp_path)
 
-        with patch(
-            "bernstein.core.orchestration.orchestrator.check_budget_violations"
-        ) as mock_check:
+        with patch("bernstein.core.orchestration.orchestrator.check_budget_violations") as mock_check:
             orch.tick()
 
         assert mock_check.call_count == 1
