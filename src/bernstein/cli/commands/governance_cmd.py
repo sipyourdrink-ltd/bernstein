@@ -1,9 +1,9 @@
-"""``bernstein governance``: verify RBAC + budget decisions as chain projections.
+"""``bernstein govern``: verify RBAC + budget decisions as chain projections.
 
 Issue #2309. Recomputes every access and budget decision recorded for a run from
 the signed lineage spine and confirms the recorded verdicts:
 
-    bernstein governance verify <run> --bindings <file> [--ledger <file>]
+    bernstein govern verify <run> --bindings <file> [--ledger <file>]
 
 Access decisions re-resolve the subject's role from the presented signed role
 bindings and re-project the role's permissions onto the action. Budget decisions
@@ -18,7 +18,7 @@ declared posture (playbook) and enumerated environment (inventory). The plan
 contains one entry per mismatch (FORBIDDEN, ABSENT, WIDER_CEILING, UNKNOWN)
 and is anchored in the lineage spine for offline verification.
 
-    bernstein governance ingest --spans <file|-> --source <label> [--profile <name>]
+    bernstein govern ingest --spans <file|-> --source <label> [--profile <name>]
 
 Anchor OTLP spans reported by a runtime Bernstein did not schedule (#4962).
 The record starts at ``Orchestrator.run()``, so activity driven elsewhere
@@ -56,18 +56,18 @@ def _lineage_root(workdir: Path) -> Path:
     return workdir / ".sdd" / "lineage"
 
 
-@click.group("governance")
-def governance_group() -> None:
+@click.group("govern")
+def govern_group() -> None:
     """Verify RBAC and budget decisions as projections over the audit chain.
 
     \b
-      bernstein governance verify <run> --bindings b.json --ledger ledger.jsonl
+      bernstein govern verify <run> --bindings b.json --ledger ledger.jsonl
       bernstein govern plan --playbook p.json --inventory i.json [--workdir w]
-      bernstein governance ingest --spans spans.json --source otel-collector-prod
+      bernstein govern ingest --spans spans.json --source otel-collector-prod
     """
 
 
-@governance_group.command("verify")
+@govern_group.command("verify")
 @click.argument("run_id", required=True)
 @click.option(
     "--bindings",
@@ -123,7 +123,7 @@ def governance_verify_cmd(run_id: str, bindings_file: str, ledger_file: str | No
     raise SystemExit(2)
 
 
-@governance_group.command("plan")
+@govern_group.command("plan")
 @click.option(
     "--playbook",
     "playbook_file",
@@ -435,7 +435,7 @@ def _parse_playbook_json(raw_output: str) -> dict[str, object]:
     return result
 
 
-@governance_group.command("discover")
+@govern_group.command("discover")
 @click.option(
     "--inventory",
     "inventory_file",
@@ -608,7 +608,7 @@ def govern_discover_cmd(
     raise SystemExit(0)
 
 
-@governance_group.command("ingest")
+@govern_group.command("ingest")
 @click.option(
     "--spans",
     "spans_file",
@@ -719,3 +719,19 @@ def governance_ingest_cmd(
     console.print(f"  chain entry        {receipt.chain_entry_hash}")
     console.print(f"  coverage           {receipt.coverage}")
     console.print(f"  [dim]{receipt.coverage_detail}[/dim]")
+
+
+@click.group("governance")
+@click.pass_context
+def governance_alias_cmd(ctx: click.Context) -> None:
+    """[Deprecated] Use 'bernstein govern' instead."""
+    click.echo(
+        "WARNING: 'bernstein governance' is deprecated and will be removed in v4.0.0 (#5010): "
+        "use 'bernstein govern' instead.",
+        err=True,
+    )
+    ctx.forward(govern_group)
+
+
+for _name, _cmd in govern_group.commands.items():
+    governance_alias_cmd.add_command(_cmd, _name)
