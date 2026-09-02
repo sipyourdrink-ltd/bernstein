@@ -303,6 +303,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein governance verify`](../operations/governance.md) | Full | 3 | Recompute access and budget verdicts for a run |
 | [`bernstein webhook verify`](../operations/webhook-node.md) | Full | 3 | Recompute inbound-event and outbound webhook-node hashes |
 | [`bernstein review-receipt emit/verify`](../operations/review-receipts.md) | Full | 3 | Bind and offline-verify PR review receipts (issue + plan + tool calls + diff) |
+| `bernstein review-annotation derive/resolve` | Partial | 2 | Bind an operator comment to the diff bytes it targets and resolve it against a file's current bytes, reporting `orphaned` rather than re-anchoring to the recorded line numbers |
 | [`bernstein receipt create/verify`](receipt.md) | Full | 3 | Sign a result receipt bundle from a JSON spec and verify one offline, naming the exact field that diverged |
 | [`bernstein escalation show/verify`](../operations/stall-escalation.md) | Full | 3 | Project and reconstruct escalation receipts from the journal |
 | [`bernstein supervisor status/escalate`](../api/supervisor.md) | Full | 3 | Supervise stalled workers and seal stall escalation receipts |
