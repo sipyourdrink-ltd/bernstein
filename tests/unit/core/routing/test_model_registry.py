@@ -278,7 +278,7 @@ def test_projection_refuses_an_unverifiable_chain(tmp_path: Path) -> None:
         load_registry_events(_chain(tmp_path))
 
 
-def test_versioned_reference_is_covered_by_an_unversioned_admission(tmp_path: Path) -> None:
+def test_pinned_admission_covers_only_its_own_snapshot(tmp_path: Path) -> None:
     chain = _chain(tmp_path)
     record_model_admission(
         chain=chain,
