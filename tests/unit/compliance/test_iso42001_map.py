@@ -201,8 +201,7 @@ def test_build_evidence_pack_wellformed(tmp_path: Path) -> None:
     # No control silently dropped from the summary: mapped + partial +
     # organisational + todo must reach every control in the map.
     assert (
-        pack.controls_mapped + pack.controls_partial + pack.controls_organisational + pack.controls_todo
-        == n_controls
+        pack.controls_mapped + pack.controls_partial + pack.controls_organisational + pack.controls_todo == n_controls
     )
     assert pack.controls_organisational > 0
     assert out.is_file()
