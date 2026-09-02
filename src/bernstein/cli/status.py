@@ -492,7 +492,7 @@ def _render_agent_section(con: Console, agents: list[dict[str, Any]]) -> None:
     con.print()
     if agents:
         agent_table = AgentStatusTable()
-        con.print(agent_table.render(agents))
+        con.print(agent_table.render(agents))  # type: ignore[arg-type]
     else:
         con.print("[dim]No active agents.[/dim]")
 
@@ -559,7 +559,7 @@ def render_status(
         con.print(alert_lines)
 
     _render_task_section(con, tasks, vc)
-    _render_agent_section(con, agents)
+    _render_agent_section(con, agents)  # type: ignore[arg-type]
     _render_cost_section(con, total_cost, per_role, vc)
 
     if vc.show_model_details:

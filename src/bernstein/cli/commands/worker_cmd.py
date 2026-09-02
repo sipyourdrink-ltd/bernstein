@@ -674,7 +674,7 @@ class WorkerLoop:
             last_heartbeat = time.monotonic()
 
             while self._running:
-                node_id, last_heartbeat = self._do_heartbeat(client, node_id, heartbeat_s, last_heartbeat)
+                node_id, last_heartbeat = self._do_heartbeat(client, node_id, heartbeat_s, last_heartbeat)  # type: ignore[arg-type]
 
                 # Reap finished agents into the pending-report queue on every
                 # cycle regardless of node_id, so an agent that exits while

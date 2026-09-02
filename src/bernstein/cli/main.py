@@ -1278,6 +1278,11 @@ cli.add_command(payment_mandate_group, "payment-mandate")
 from bernstein.cli.commands.review_receipt_cmd import review_receipt_group  # noqa: E402
 
 cli.add_command(review_receipt_group, "review-receipt")
+
+# Content-addressed anchors for operator review annotations (#3456).
+from bernstein.cli.commands.review_annotation_cmd import review_annotation_group  # noqa: E402
+
+cli.add_command(review_annotation_group, "review-annotation")
 # Journal-anchored stall escalation receipts (#2299).
 from bernstein.cli.commands.escalation_cmd import escalation_group  # noqa: E402
 
