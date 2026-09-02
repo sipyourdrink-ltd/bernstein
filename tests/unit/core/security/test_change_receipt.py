@@ -16,13 +16,19 @@ from typing import Any
 
 import pytest
 
-from bernstein.core.receipts.protocol import ReceiptVerification, sign_receipt, verify_receipt
+from bernstein.core.receipts.protocol import (
+    ReceiptVerification,
+    registered_kinds,
+    sign_receipt,
+    verify_receipt,
+)
 from bernstein.core.security.change_receipt import (
     CHANGE_RECEIPT_SCHEMA_VERSION,
     RECEIPT_KIND,
     ChangeAttempt,
     ChangeReceipt,
     canonical_bytes,
+    change_receipt_payload_errors,
 )
 from bernstein.core.skills.catalog.signature import generate_signer_keypair
 
@@ -203,6 +209,42 @@ class TestChangeReceipt:
         )
         d = receipt.to_dict()
         assert d["final_status"] == "partial"
+
+
+# ---------------------------------------------------------------------------
+# The registered payload check, called directly
+# ---------------------------------------------------------------------------
+
+
+class TestPayloadCheck:
+    """The ``security.change`` payload check on its own, off the envelope path.
+
+    The shared verifier reaches this function through the kind registry, so a
+    direct call is the only place its contract is pinned: which fields it
+    rejects, and that it names them.
+    """
+
+    def test_importing_the_module_registers_its_kind(self) -> None:
+        """The check is wired: importing the module puts its kind in the registry."""
+        assert RECEIPT_KIND in registered_kinds()
+
+    def test_well_formed_payload_has_no_errors(self, sample_receipt: ChangeReceipt) -> None:
+        """A valid payload produces no semantic errors."""
+        assert change_receipt_payload_errors(sample_receipt.to_dict()) == ()
+
+    def test_invalid_final_status_is_named(self, sample_receipt: ChangeReceipt) -> None:
+        """A rejected field is named, so a caller can report which one failed."""
+        payload = sample_receipt.to_dict()
+        payload["final_status"] = "not-a-status"
+        errors = change_receipt_payload_errors(payload)
+        assert any(e.startswith("final_status:") for e in errors), errors
+
+    def test_missing_changes_is_reported(self, sample_receipt: ChangeReceipt) -> None:
+        """A receipt that records no change list is not well-formed."""
+        payload = sample_receipt.to_dict()
+        del payload["changes"]
+        errors = change_receipt_payload_errors(payload)
+        assert any(e.startswith("changes:") for e in errors), errors
 
 
 # ---------------------------------------------------------------------------
