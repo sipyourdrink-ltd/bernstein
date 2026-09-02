@@ -75,9 +75,7 @@ def cli() -> None:
     show_default=True,
     help="Which format(s) to verify.",
 )
-@click.option(
-    "--verbose", "-v", is_flag=True, default=False, help="Print PASS-line details."
-)
+@click.option("--verbose", "-v", is_flag=True, default=False, help="Print PASS-line details.")
 def verify_cmd(
     receipt_path: Path,
     jwk_path: Path | None,
