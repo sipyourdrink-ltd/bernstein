@@ -190,6 +190,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `use_cases.py`              | Per-adapter metadata for the ``bernstein integrations list`` command |
 | `ci/`                       | CI system adapters for log parsing and failure extraction |
 | `digest/`                   | Tool output digesters registry and ruleset models |
+| `directory/`                | Directory provisioning adapters |
 
 ### `src/bernstein/agents/` - agent catalog & discovery
 
