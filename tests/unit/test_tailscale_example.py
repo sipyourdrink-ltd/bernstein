@@ -10,7 +10,6 @@ from __future__ import annotations
 import shlex
 from pathlib import Path
 
-import yaml
 from click.core import Group
 
 from bernstein.cli.main import cli
@@ -23,13 +22,18 @@ def _discover_yaml_configs() -> list[Path]:
     return sorted(config_dir.glob("*.yaml"))
 
 
-def _load_yaml_config(path: Path) -> dict:
-    """Load and parse a YAML config file."""
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+def _join_continuations(content: str) -> str:
+    """Join lines ending with a backslash-newline so multi-line shell
+    commands are lexed as a single line."""
+    return content.replace("\\\n", " ")
 
 
 def _find_bernstein_cli_invocations() -> list[tuple[str, list[str]]]:
-    """Find all CLI invocations (as text) in the Tailscale examples directory."""
+    """Find all CLI invocations (as text) in the Tailscale examples directory.
+
+    Scans every file (including `#`-commented lines) for mentions of
+    ``bernstein`` so that CLI examples embedded in comments are discovered.
+    """
     config_dir = Path(__file__).resolve().parents[2] / "examples" / "cluster" / "tailscale"
     invocations: list[tuple[str, list[str]]] = []
 
@@ -37,19 +41,26 @@ def _find_bernstein_cli_invocations() -> list[tuple[str, list[str]]]:
         if not path.is_file():
             continue
 
-        content = path.read_text(encoding="utf-8")
+        content = _join_continuations(path.read_text(encoding="utf-8"))
         # Split content by lines and scan for potential CLI invocations
         for _lineno, line in enumerate(content.splitlines(), start=1):
-            line = line.strip()
-            if not line or line.startswith("#"):
+            # Strip leading comment markers and whitespace so that
+            # commented-out CLI examples (``# bernstein worker ...``) are
+            # still discovered.
+            raw = line.strip()
+            if not raw:
+                continue
+            if raw.startswith("#"):
+                raw = raw.lstrip("#").strip()
+            if not raw:
                 continue
 
             # Look for lines that might be CLI invocations
             # This is a simple heuristic - we look for lines that contain "bernstein"
-            if "bernstein" in line.lower():
+            if "bernstein" in raw.lower():
                 # Parse the line as a shell command
                 try:
-                    lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+                    lexer = shlex.shlex(raw, posix=True, punctuation_chars=True)
                     lexer.whitespace_split = True
                     tokens = list(lexer)
 
@@ -83,19 +94,31 @@ def test_all_tailscale_configs_load_and_validate() -> None:
         assert isinstance(config, BernsteinConfig), f"Not a valid BernsteinConfig: {config_path}"
 
 
+def _collect_command_params(command: Group) -> set[str]:
+    """Collect all flag names (opts + secondary_opts) from a Click command."""
+    params: set[str] = set()
+    for p in command.params:
+        params.update(p.opts)
+        params.update(p.secondary_opts or ())
+    return params
+
+
 def _walk_cli_tree(argv: list[str]) -> tuple[bool, str]:
     """Walk argv (everything after the `bernstein` binary name) against the
     real Click command tree rooted at `bernstein.cli.main.cli`.
 
-    Stops at the first token that looks like a flag (`-...`), or once it
-    resolves to a leaf command (which may itself take positional args this
-    guard doesn't need to understand). Returns (ok, human-readable detail).
+    Resolves the command path, then checks that every flag supplied
+    after the leaf command is declared on that command (via its
+    Click param ``opts`` / ``secondary_opts``). Returns (ok,
+    human-readable detail).
     """
     group: Group = cli
     consumed: list[str] = []
+    remaining_idx = 0
 
-    for token in argv:
+    for i, token in enumerate(argv):
         if token.startswith("-"):
+            remaining_idx = i
             break
         consumed.append(token)
         command = group.commands.get(token) if isinstance(group, Group) else None
@@ -104,10 +127,28 @@ def _walk_cli_tree(argv: list[str]) -> tuple[bool, str]:
             return False, f"`bernstein {path}` is not a registered CLI command"
         if isinstance(command, Group):
             group = command
-            continue
+            remaining_idx = i + 1
+        else:
+            remaining_idx = i + 1
+    else:
+        remaining_idx = len(argv)
 
     path = " ".join(consumed)
-    return True, f"`bernstein {path}` resolves to a real command group"
+    if not consumed:
+        return True, "`bernstein` resolves (no subcommand)"
+
+    leaf = group.commands.get(consumed[-1]) if isinstance(group, Group) else None
+    if leaf is None:
+        return True, f"`bernstein {path}` resolves to a real command group"
+
+    valid_flags = _collect_command_params(leaf)
+    for token in argv[remaining_idx:]:
+        if not token.startswith("-"):
+            continue
+        if token not in valid_flags:
+            return False, (f"`bernstein {path}` has no flag `{token}`; expected one of {sorted(valid_flags)}")
+
+    return True, f"`bernstein {path}` resolves to a real command with valid flags"
 
 
 def test_all_cli_invocations_parse_correctly() -> None:
