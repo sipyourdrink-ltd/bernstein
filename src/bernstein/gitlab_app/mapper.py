@@ -9,6 +9,14 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.tasks.instruction_provenance import (
+    SPAN_ORIGIN_EXTERNAL,
+    SPAN_ORIGIN_REPOSITORY,
+    make_span,
+    render_instruction,
+    spans_to_metadata,
+)
+
 if TYPE_CHECKING:
     from bernstein.gitlab_app.webhooks import GitLabWebhookEvent
 
@@ -131,15 +139,22 @@ def merge_request_to_tasks(event: GitLabWebhookEvent) -> list[dict[str, Any]]:
     role = _role_from_labels(labels)
     scope = _scope_from_body(body)
 
-    description = f"GitLab merge request !{iid} from @{event.sender} in {event.project_path}.\n\n{body[:2000]}"
+    spans = [
+        make_span(
+            f"GitLab merge request !{iid} from @{event.sender} in {event.project_path}.\n\n",
+            SPAN_ORIGIN_REPOSITORY,
+        ),
+        make_span(body[:2000], SPAN_ORIGIN_EXTERNAL),
+    ]
 
     task: dict[str, Any] = {
         "title": f"[GL-MR!{iid}] {title}"[:120],
-        "description": description,
+        "description": render_instruction(spans),
         "role": role,
         "priority": priority,
         "scope": scope,
         "task_type": "standard",
+        "metadata": spans_to_metadata(spans),
     }
 
     logger.info(
@@ -194,19 +209,21 @@ def note_to_task(event: GitLabWebhookEvent) -> dict[str, Any] | None:
 
     role_hint = "qa" if "merge" in noteable_type else "backend"
 
-    description = (
-        f"GitLab MR note on {noteable_type or 'item'} !{iid} ({target_title}) "
-        f"in {event.project_path} by @{event.sender}.\n\n"
-        f"Note:\n{note_body[:2000]}"
-    )
+    spans = [
+        make_span(f"GitLab MR note on {noteable_type or 'item'} !{iid} (", SPAN_ORIGIN_REPOSITORY),
+        make_span(target_title, SPAN_ORIGIN_EXTERNAL),
+        make_span(f") in {event.project_path} by @{event.sender}.\n\nNote:\n", SPAN_ORIGIN_REPOSITORY),
+        make_span(note_body[:2000], SPAN_ORIGIN_EXTERNAL),
+    ]
 
     task: dict[str, Any] = {
         "title": f"[GL-MR!{iid}] Fix: {note_body[:80]}"[:120],
-        "description": description,
+        "description": render_instruction(spans),
         "role": role_hint,
         "priority": 1,
         "scope": "small",
         "task_type": "fix",
+        "metadata": spans_to_metadata(spans),
     }
 
     logger.info(

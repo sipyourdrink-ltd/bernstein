@@ -9,6 +9,15 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.tasks.instruction_provenance import (
+    SPAN_ORIGIN_EXTERNAL,
+    SPAN_ORIGIN_REPOSITORY,
+    InstructionSpan,
+    make_span,
+    render_instruction,
+    spans_to_metadata,
+)
+
 if TYPE_CHECKING:
     from bernstein.gitlab_app.webhooks import GitLabWebhookEvent
 
@@ -77,13 +86,19 @@ def slash_command_to_task(
     target_title = str(mr.get("title") or issue.get("title") or "")
     note_body = str(attrs.get("note", "") or "")
 
-    args_line = f" - {args}" if args else ""
-    description = (
-        f"Slash command `/bernstein {action}`{args_line} by @{event.sender} "
-        f"on !{iid} in {event.project_path}.\n\n"
-        f"MR/Issue: {target_title}\n\n"
-        f"Note context:\n{note_body[:1000]}"
+    spans: list[InstructionSpan] = [make_span(f"Slash command `/bernstein {action}`", SPAN_ORIGIN_REPOSITORY)]
+    if args:
+        spans.append(make_span(" - ", SPAN_ORIGIN_REPOSITORY))
+        spans.append(make_span(args, SPAN_ORIGIN_EXTERNAL))
+    spans.append(
+        make_span(
+            f" by @{event.sender} on !{iid} in {event.project_path}.\n\nMR/Issue: ",
+            SPAN_ORIGIN_REPOSITORY,
+        )
     )
+    spans.append(make_span(target_title, SPAN_ORIGIN_EXTERNAL))
+    spans.append(make_span("\n\nNote context:\n", SPAN_ORIGIN_REPOSITORY))
+    spans.append(make_span(note_body[:1000], SPAN_ORIGIN_EXTERNAL))
 
     if args:
         title = f"[/bernstein {action}] {args}"[:120]
@@ -96,11 +111,12 @@ def slash_command_to_task(
 
     task: dict[str, Any] = {
         "title": title,
-        "description": description,
+        "description": render_instruction(spans),
         "role": spec["role"],
         "priority": priority,
         "scope": "small",
         "task_type": spec["task_type"],
+        "metadata": spans_to_metadata(spans),
     }
 
     logger.info(
