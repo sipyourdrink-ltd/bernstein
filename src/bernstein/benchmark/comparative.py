@@ -314,14 +314,12 @@ class ComparativeBenchmark:
         cost_usd = 0.0
         tokens_used = 0
         try:
-            model_config = ModelConfig(model="default", provider="default")
+            model_config = ModelConfig(model="default", effort="normal")
             adapter.spawn(
                 prompt=prompt,
                 workdir=self._workdir,
                 model_config=model_config,
-                role="benchmark",
                 session_id=f"bench-{task.task_id}",
-                pid_dir=self._workdir / ".sdd" / "runtime" / "pids",
             )
             success = True
         except Exception:

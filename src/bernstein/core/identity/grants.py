@@ -300,7 +300,7 @@ class GrantSigner:
 
         return (
             serialization.load_pem_private_key(self._private_pem, password=None)
-            .sign(_canonical(body).encode())  # type: ignore[union-attr]
+            .sign(_canonical(body).encode())  # type: ignore[union-attr, call-arg]
             .hex()
         )
 
@@ -317,7 +317,7 @@ def verify_grant_signature(public_key_pem: bytes | str, body: dict[str, Any], si
     pem = public_key_pem.encode() if isinstance(public_key_pem, str) else public_key_pem
     try:
         key = serialization.load_pem_public_key(pem)
-        key.verify(bytes.fromhex(signature_hex), _canonical(body).encode())  # type: ignore[union-attr]
+        key.verify(bytes.fromhex(signature_hex), _canonical(body).encode())  # type: ignore[union-attr, call-arg]
     except (InvalidSignature, ValueError, TypeError):
         return False
     return True
@@ -565,9 +565,19 @@ class GrantLedger:
         task_id: str = "",
         secret_name: str = "",
         audience: str = "",
+        store: str = "",
         created: int | None = None,
     ) -> GrantReceipt:
-        """Append a ``grant_exchanged`` record binding a minted ``token_id`` to a grant."""
+        """Append a ``grant_exchanged`` record binding a minted ``token_id`` to a grant.
+
+        Args:
+            store: Identity of the external secret store that issued the
+                credential behind the token, when one did. It is written into
+                the existing signed ``reason`` field as ``store:<id>`` rather
+                than as a new field, so records written before external stores
+                existed keep verifying against the same signed body. The store
+                identity is non-secret; the credential value is never recorded.
+        """
         return self._append(
             run_id=run_id,
             kind=GRANT_EXCHANGED,
@@ -578,7 +588,7 @@ class GrantLedger:
             expiry=0,
             capability_ceiling=(),
             token_id=token_id,
-            reason="",
+            reason=f"store:{store}" if store else "",
             created=created,
         )
 

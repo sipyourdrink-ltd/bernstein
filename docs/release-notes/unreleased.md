@@ -10,13 +10,7 @@ holds the page to that — an entry naming an issue or PR a tagged release page
 already documents fails the build. An entry that cites released work as context
 rather than as its own attribution is exempted by hand there, with the reason.
 
-- `bernstein audit export --standard` gained `iso-42001`, mapping the
-  records-derivable subset of ISO/IEC 42001 Annex A controls (event logging,
-  operation monitoring, data provenance, third-party and data resources,
-  human oversight) onto the same audit chain, lineage log and cost ledger the
-  `ai-act`, `owasp-asi` and `owasp-skills` packs already read. Every control
-  resolves to `mapped`, `partial`, or `organisational` (named explicitly when
-  no chain record can evidence it), and the pack's control counters now count
-  `organisational` controls instead of dropping them from the summary. See
-  `docs/compliance/iso42001-mapping.md`. (#3238)
 
+## Lineage
+
+- Lineage entries carry an additive optional `sensitivity` classification, and the effective sensitivity of an artefact is the maximum class over its lineage closure — so a summary of a confidential document is confidential. Absence fails closed to the highest class, and the verdict names the closure member that raised the level and the path through the graph that reaches it. An entry without the field canonicalises byte-identically to the pre-change schema, so every historical signature and HMAC is untouched (#5042).

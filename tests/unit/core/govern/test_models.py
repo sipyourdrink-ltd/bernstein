@@ -7,7 +7,11 @@ import pytest
 from bernstein.core.govern import compute_plan
 from bernstein.core.govern.inventory_models import Inventory, Surface
 from bernstein.core.govern.plan_models import PlanEntryKind
-from bernstein.core.govern.playbook_models import Playbook, PlaybookClause
+from bernstein.core.govern.playbook_models import (
+    Playbook,
+    PlaybookClause,
+    PlaybookValidationError,
+)
 
 
 class TestSurface:
@@ -274,7 +278,13 @@ class TestPlaybook:
         pb2 = Playbook(clauses=clauses)
         assert pb1.content_hash() == pb2.content_hash()
 
-    def test_playbook_content_hash_different_order(self) -> None:
+    def test_semantically_identical_playbooks_hash_equal_regardless_of_clause_order(
+        self,
+    ) -> None:
+        # A playbook is a *set* of declared posture rules: two operators who
+        # write the same rules in a different order have declared the same
+        # posture, and a receipt naming "the playbook in force" must not
+        # depend on which order an author happened to type the clauses in.
         clauses1 = (
             PlaybookClause("s1", "c1", "forbidden"),
             PlaybookClause("s2", "c2", "required", declared_value="v2"),
@@ -285,8 +295,7 @@ class TestPlaybook:
         )
         pb1 = Playbook(clauses=clauses1)
         pb2 = Playbook(clauses=clauses2)
-        # Hash differs because clauses preserve their tuple order
-        assert pb1.content_hash() != pb2.content_hash()
+        assert pb1.content_hash() == pb2.content_hash()
 
     def test_playbook_content_hash_different_content(self) -> None:
         clauses1 = (PlaybookClause("s1", "c1", "forbidden"),)
@@ -322,6 +331,67 @@ class TestPlaybook:
         pb = Playbook(clauses=(PlaybookClause("s1", "c1", "forbidden"),))
         with pytest.raises(AttributeError):
             pb.clauses = ()  # type: ignore[attr-defined]
+
+
+class TestPlaybookValidation:
+    """Tests for #4979: a playbook is data, not a script -- an unknown key or
+    an undeclared reference is a validation error, never a silently-ignored
+    field."""
+
+    def test_unknown_clause_field_is_rejected_not_ignored(self) -> None:
+        d = {
+            "surface": "s1",
+            "clause": "c1",
+            "kind": "forbidden",
+            "notes": "left over from an older schema",
+        }
+        with pytest.raises(PlaybookValidationError):
+            PlaybookClause.from_dict(d)
+
+    def test_unknown_playbook_field_is_rejected_not_ignored(self) -> None:
+        d = {
+            "clauses": [{"surface": "s1", "clause": "c1", "kind": "forbidden"}],
+            "owner": "someone typed the wrong top-level key",
+        }
+        with pytest.raises(PlaybookValidationError):
+            Playbook.from_dict(d)
+
+    def test_clause_kind_outside_declared_set_is_rejected(self) -> None:
+        d = {"surface": "s1", "clause": "c1", "kind": "recommended"}
+        with pytest.raises(PlaybookValidationError):
+            PlaybookClause.from_dict(d)
+
+    def test_clause_referencing_undeclared_principal_class_fails_validation(
+        self,
+    ) -> None:
+        clause = PlaybookClause(
+            surface="tool:shell",
+            clause="worker agents may not invoke shell",
+            kind="forbidden",
+            principal_class="worker",
+        )
+        with pytest.raises(PlaybookValidationError):
+            # "manager" is declared, but the clause names "worker", which is
+            # not -- a ceiling that references a principal class nobody
+            # declared can never be satisfied or violated, so it must fail
+            # to construct rather than parse into an inert no-op.
+            Playbook(clauses=(clause,), principal_classes=("manager",))
+
+    def test_clause_referencing_declared_principal_class_is_accepted(self) -> None:
+        clause = PlaybookClause(
+            surface="tool:shell",
+            clause="worker agents may not invoke shell",
+            kind="forbidden",
+            principal_class="worker",
+        )
+        pb = Playbook(clauses=(clause,), principal_classes=("worker", "manager"))
+        assert pb.clauses[0].principal_class == "worker"
+
+    def test_content_hash_changes_when_principal_classes_differ(self) -> None:
+        clause = PlaybookClause("s1", "c1", "forbidden")
+        pb1 = Playbook(clauses=(clause,), principal_classes=("worker",))
+        pb2 = Playbook(clauses=(clause,), principal_classes=("manager",))
+        assert pb1.content_hash() != pb2.content_hash()
 
 
 class TestRoundTrip:

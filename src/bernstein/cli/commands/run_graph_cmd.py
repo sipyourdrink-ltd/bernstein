@@ -134,7 +134,7 @@ def _render(receipt_path: Path, receipt_body: Mapping[str, object], rows: list[t
     tree = Tree(f"[bold]{receipt_path.stem}[/bold]")
     tree.add(f"graph root  {receipt_body.get('graph_root_hash', '?')}")
     tree.add(f"anchored at {receipt_body.get('journal_entry_hash') or '[red]nothing[/red]'}")
-    branches = tree.add(f"branches ({len(rows)} on the tree, {len(receipt_body.get('node_hashes', []) or [])} sealed)")
+    branches = tree.add(f"branches ({len(rows)} on the tree, {len(receipt_body.get('node_hashes', []) or [])} sealed)")  # type: ignore[arg-type]
     for session_id, state, detail in rows:
         style = _STATE_STYLE[state]
         branches.add(f"[{style}]{state:<10}[/{style}] {session_id}  {detail}")

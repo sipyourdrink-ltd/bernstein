@@ -12,6 +12,7 @@ Commands:
   bernstein audit seal               Compute and store a Merkle root.
   bernstein audit seal --anchor-git  Also create a git tag.
   bernstein audit ack-tear           Acknowledge recorded tear evidence.
+  bernstein audit anchor             Anchor a checkpoint with an RFC 3161 token.
   bernstein audit verify             Verify HMAC chain, Merkle tree, checkpoint.
   bernstein audit verify --hmac-only Verify HMAC chain only.
   bernstein audit verify --merkle-only  Verify Merkle tree only.
@@ -46,6 +47,10 @@ from bernstein.cli.helpers import console
 
 if TYPE_CHECKING:
     from datetime import date
+
+    from cryptography.x509 import Certificate
+
+    from bernstein.core.persistence.checkpoint_anchor import CheckpointAnchor
 
 AUDIT_DIR = Path(".sdd/audit")
 MERKLE_DIR = AUDIT_DIR / "merkle"
@@ -253,7 +258,25 @@ def seal_cmd(anchor_git: bool, allow_broken_chain: bool) -> None:
     type=click.Path(dir_okay=False, exists=True, resolve_path=True),
     help="Original trigger body to re-digest against a trigger receipt.",
 )
-def verify_cmd(merkle_only: bool, hmac_only: bool, receipt_path: str | None, payload_path: str | None) -> None:
+@click.option(
+    "--rfc3161-trusted-tsa-bundle",
+    "rfc3161_trust_bundle",
+    default=None,
+    type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+    help=(
+        "Path to a PEM/DER X.509 trust bundle (operator-supplied TSA roots). "
+        "Enables TSA chain validation of recorded checkpoint anchors. Without "
+        "it, an anchor's token is still bound to the checkpoint it covers, but "
+        "the issuing TSA is not authenticated."
+    ),
+)
+def verify_cmd(
+    merkle_only: bool,
+    hmac_only: bool,
+    receipt_path: str | None,
+    payload_path: str | None,
+    rfc3161_trust_bundle: str | None,
+) -> None:
     """Verify audit log integrity (HMAC chain per RFC 2104 + Merkle tree).
 
     \b
@@ -267,6 +290,10 @@ def verify_cmd(merkle_only: bool, hmac_only: bool, receipt_path: str | None, pay
       bernstein audit verify --receipt r.json --payload body.json
                                           Also re-digest the original trigger
                                           body against the receipt
+      bernstein audit verify --rfc3161-trusted-tsa-bundle roots.pem
+                                          Also authenticate the TSA that
+                                          signed each recorded checkpoint
+                                          anchor
 
     Exits non-zero on any chain break, missing record, or HMAC mismatch.
     Run from cron and fail the run on non-zero exit (cite: docs/security/audit-log.md).
@@ -303,6 +330,16 @@ def verify_cmd(merkle_only: bool, hmac_only: bool, receipt_path: str | None, pay
     if not _verify_checkpoints():
         failed_pillars.append("Checkpoints")
 
+    # External anchors are the pillar the operator cannot satisfy from inside:
+    # a checkpoint proves the history did not shrink relative to material we
+    # hold, and an actor who holds all of it can roll all of it back together.
+    # A TSA token over a checkpoint payload is a statement someone else signed
+    # about how long the history was, so a rollback below the newest anchored
+    # entry count contradicts it. Runs regardless of --hmac-only / --merkle-only
+    # for the same reason the checkpoint pillar does.
+    if not _verify_anchors(rfc3161_trust_bundle):
+        failed_pillars.append("External Anchors")
+
     # Evidence bundles are a third integrity pillar: a tampered evidence file
     # must fail verify exactly like a tampered chain entry (#2362). This runs
     # regardless of --hmac-only / --merkle-only because it is orthogonal to
@@ -315,6 +352,13 @@ def verify_cmd(merkle_only: bool, hmac_only: bool, receipt_path: str | None, pay
     # named (#2553). Orthogonal to both the HMAC chain and the Merkle seal.
     if not _verify_run_artifacts():
         failed_pillars.append("Run Artifacts")
+
+    # Govern audit reports are a further integrity pillar: a report identifies
+    # a posture by the hash of its canonical bytes, so an edited stored report
+    # must fail verify rather than read as a different posture (#5077).
+    # Orthogonal to both the HMAC chain and the Merkle seal.
+    if not _verify_audit_reports():
+        failed_pillars.append("Govern Audit Reports")
 
     # Tournament selection receipts are a further integrity pillar: a tampered
     # score or a hand-picked winner must fail verify exactly like a tampered
@@ -1013,6 +1057,144 @@ def _verify_checkpoints() -> bool:
     return False
 
 
+def _known_checkpoint_roots() -> set[str] | None:
+    """Return the roots of the checkpoints on record, or ``None`` when unreadable.
+
+    ``None`` means "cannot tell" (no audit key, or a damaged checkpoints
+    file), not "none recorded": an anchor whose checkpoint is genuinely gone
+    must not be confused with one we simply could not look up.
+    """
+    from bernstein.core.persistence.chain_checkpoint import (
+        CheckpointFileError,
+        load_checkpoints,
+    )
+    from bernstein.core.security.audit import AuditKeyMissingError, load_audit_key
+
+    try:
+        key = load_audit_key()
+    except AuditKeyMissingError:
+        return None
+    try:
+        state = load_checkpoints(AUDIT_DIR, key)
+    except CheckpointFileError:
+        return None
+    return {str(cp.get("root_hash", "")) for cp in state.checkpoints}
+
+
+def _load_anchor_trust(trust_bundle: str | None) -> tuple[list[Certificate] | None, bool]:
+    """Load operator TSA trust anchors; ``(certs, ok)``."""
+    if not trust_bundle:
+        return None, True
+    from bernstein.core.security.rfc3161_verifier import load_trusted_tsa_certs
+
+    try:
+        return load_trusted_tsa_certs(Path(trust_bundle)), True
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]TSA trust bundle load failed: {exc}[/red]")
+        return None, False
+
+
+def _verify_anchors(trust_bundle: str | None = None) -> bool:
+    """Verify recorded external anchors against the local audit history.
+
+    Three ways to fail, all loud: the anchors file itself does not read, an
+    anchor's token does not hold up (unparsable, or covering other bytes, or -
+    when the operator supplied trust anchors - issued by a TSA they do not
+    trust), or the local history contradicts what an anchor recorded.
+
+    An install with no anchors passes and says so. Anchoring is optional, and
+    an air-gapped install must be able to run without a TSA; what it must not
+    do is stay quiet about being unanchored.
+    """
+    from bernstein.core.persistence.checkpoint_anchor import (
+        AnchorFileError,
+        anchor_gen_time,
+        check_anchor_contradictions,
+        load_anchors,
+        newest_anchor,
+        verify_anchor_token,
+    )
+
+    console.print()
+    try:
+        anchors = load_anchors(AUDIT_DIR)
+    except AnchorFileError as exc:
+        console.print(
+            Panel("[bold red]External Anchor Verification FAILED[/bold red]", border_style="red", expand=False)
+        )
+        for err in exc.errors:
+            console.print(f"  [red]![/red] {err}")
+        return False
+
+    if not anchors:
+        console.print(
+            "[yellow]Audit history is not externally anchored[/yellow] "
+            "[dim](no RFC 3161 anchor recorded; a rollback of the chain and the "
+            "checkpoints together would leave nothing to contradict it).[/dim]"
+        )
+        console.print("[dim]To anchor: bernstein audit anchor --print-request[/dim]")
+        return True
+
+    trusted, ok = _load_anchor_trust(trust_bundle)
+    if not ok:
+        return False
+
+    token_errors: list[tuple[CheckpointAnchor, list[str]]] = []
+    for anchor in anchors:
+        errors = verify_anchor_token(anchor, trusted_tsa_certs=trusted)
+        if errors:
+            token_errors.append((anchor, errors))
+    if token_errors:
+        console.print(
+            Panel("[bold red]External Anchor Verification FAILED[/bold red]", border_style="red", expand=False)
+        )
+        for anchor, errors in token_errors:
+            console.print(f"  [red]![/red] anchor: {anchor.describe()}")
+            for err in errors:
+                console.print(f"    [red]-[/red] {err}")
+        return False
+
+    conflicts = check_anchor_contradictions(
+        AUDIT_DIR,
+        anchors,
+        checkpoint_roots=_known_checkpoint_roots(),
+    )
+    if conflicts:
+        console.print(Panel("[bold red]External Anchor Contradiction[/bold red]", border_style="red", expand=False))
+        for anchor in anchors:
+            console.print(f"  [red]![/red] anchor: {anchor.describe()}")
+        for conflict in conflicts:
+            console.print(f"  [red]![/red] {conflict.detail}")
+        console.print(
+            "  [dim]The local audit history contradicts a statement signed outside this\n"
+            "  machine. This is not clearable with 'bernstein audit ack-tear': an\n"
+            "  acknowledgement records that an operator looked at local damage, and it\n"
+            "  cannot withdraw a third party's signature. Restore the missing history,\n"
+            "  or treat the anchored range as unaccounted for.[/dim]"
+        )
+        return False
+
+    newest = newest_anchor(anchors)
+    console.print(
+        Panel("[bold green]External Anchor Verification Passed[/bold green]", border_style="green", expand=False)
+    )
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("Key", style="dim", no_wrap=True, min_width=14)
+    table.add_column("Value")
+    table.add_row("Anchors", str(len(anchors)))
+    if newest is not None:
+        table.add_row("Anchored entries", str(newest.entry_count))
+        table.add_row("Anchored root", newest.checkpoint_root)
+        gen_time = anchor_gen_time(newest)
+        table.add_row("Anchored at", gen_time.isoformat() if gen_time else "-")
+        if newest.tsa_url:
+            table.add_row("TSA", newest.tsa_url)
+    if not trusted:
+        table.add_row("Note", "TSA identity unverified (pass --rfc3161-trusted-tsa-bundle)")
+    console.print(table)
+    return True
+
+
 def _os_user() -> str:
     """Best-effort OS user name, for acknowledgement records."""
     import getpass
@@ -1101,6 +1283,129 @@ def ack_tear_cmd(segment: str, offset: int, reason: str, actor: str | None) -> N
             details,
         )
     console.print(f"[green]Acknowledged[/green] tear in {segment} at byte {offset}.")
+
+
+@audit_group.command("anchor")
+@click.option(
+    "--print-request",
+    "print_request",
+    is_flag=True,
+    default=False,
+    help="Print the digest to timestamp (and the openssl invocation), then exit.",
+)
+@click.option(
+    "--rfc3161-token",
+    "rfc3161_token",
+    default=None,
+    type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+    help="Path to the TSA response: raw DER (.tsr) or the base64 form 'audit export' takes.",
+)
+@click.option(
+    "--rfc3161-tsa-url",
+    "rfc3161_tsa_url",
+    default="",
+    help="URL of the TSA that issued the token (recorded for the operator, informational).",
+)
+def anchor_cmd(print_request: bool, rfc3161_token: str | None, rfc3161_tsa_url: str) -> None:
+    """Anchor the newest checkpoint with an RFC 3161 timestamp token.
+
+    \b
+      bernstein audit anchor --print-request
+                                          Print sha256(checkpoint payload) and
+                                          the openssl command that requests a
+                                          token over it
+      bernstein audit anchor --rfc3161-token resp.tsr
+                                          Record the TSA's response beside the
+                                          checkpoint
+
+    A checkpoint proves the audit history did not shrink relative to material
+    on this disk. An actor who can rewrite the chain can rewrite that material
+    too. The timestamp token is the part they cannot produce: a TSA will not
+    issue one dated earlier, so a history shorter than the newest anchored
+    entry count contradicts a signature made outside this machine, and
+    'bernstein audit verify' exits non-zero saying so.
+
+    Bernstein never contacts the TSA. The operator makes the request and
+    supplies the response, the same contract as
+    'bernstein audit export --rfc3161-token'; an air-gapped install simply
+    runs without an anchor, and 'bernstein doctor' reports that it is
+    unanchored.
+    """
+    from bernstein.core.persistence.chain_checkpoint import (
+        CheckpointFileError,
+        load_checkpoints,
+    )
+    from bernstein.core.persistence.checkpoint_anchor import (
+        anchors_path,
+        checkpoint_digest,
+        record_anchor,
+    )
+    from bernstein.core.security.audit import AuditKeyMissingError, load_audit_key
+
+    if not AUDIT_DIR.is_dir():
+        raise click.ClickException(f"audit directory not found: {AUDIT_DIR}")
+    if print_request == bool(rfc3161_token):
+        raise click.ClickException("pass exactly one of --print-request or --rfc3161-token")
+
+    try:
+        key = load_audit_key()
+    except AuditKeyMissingError as exc:
+        raise click.ClickException(f"{exc} (checkpoints are signed with the audit key)") from None
+    try:
+        checkpoint = load_checkpoints(AUDIT_DIR, key).last
+    except CheckpointFileError as exc:
+        raise click.ClickException(str(exc)) from None
+    if checkpoint is None:
+        raise click.ClickException("no checkpoint recorded yet; run 'bernstein audit seal' first")
+
+    digest = checkpoint_digest(checkpoint).hex()
+    if print_request:
+        console.print(f"[bold]Checkpoint payload digest (sha256):[/bold] {digest}")
+        console.print(f"[dim]Pinned entries:[/dim] {checkpoint.get('entry_count', '-')}")
+        console.print(f"[dim]Checkpoint root:[/dim] {checkpoint.get('root_hash', '')}")
+        console.print()
+        console.print("[dim]Request a token over exactly that digest, then record the response:[/dim]")
+        console.print(f"  openssl ts -query -digest {digest} -sha256 -cert -no_nonce -out req.tsq")
+        console.print("  curl -sS -H 'Content-Type: application/timestamp-query' \\")
+        console.print("       --data-binary @req.tsq <your-tsa-url> -o resp.tsr")
+        console.print("  bernstein audit anchor --rfc3161-token resp.tsr --rfc3161-tsa-url <your-tsa-url>")
+        return
+
+    token_path = Path(str(rfc3161_token))
+    raw = token_path.read_bytes()
+    token_bytes = _decode_tsa_response(raw)
+    try:
+        anchor = record_anchor(AUDIT_DIR, checkpoint, token_bytes, tsa_url=rfc3161_tsa_url)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from None
+
+    console.print(f"[green]Anchored[/green] {anchor.describe()}")
+    console.print(f"[dim]Recorded in {anchors_path(AUDIT_DIR)}[/dim]")
+    console.print(
+        "[dim]Keep a copy of that file off this machine: an anchor deleted with the "
+        "history it contradicts protects nothing.[/dim]"
+    )
+
+
+def _decode_tsa_response(raw: bytes) -> bytes:
+    """Return DER token bytes from a TSA response file.
+
+    Accepts both shapes operators actually hold: the raw DER ``.tsr`` that
+    ``openssl ts -reply`` and TSA HTTP endpoints emit, and the base64 text
+    form that ``bernstein audit export --rfc3161-token`` already takes. DER
+    always starts with a SEQUENCE tag, which base64 text never does, so the
+    two are told apart without guessing.
+    """
+    import base64
+    import binascii
+
+    if raw[:1] == b"\x30":
+        return raw
+    try:
+        return base64.b64decode(raw.decode("ascii").strip(), validate=True)
+    except (UnicodeDecodeError, binascii.Error, ValueError) as exc:
+        msg = f"token file is neither DER nor base64: {exc}"
+        raise click.ClickException(msg) from None
 
 
 def _verify_merkle_tree() -> bool:
@@ -1214,6 +1519,55 @@ def _verify_run_artifacts() -> bool:
     console.print(Panel("[bold red]Run Artifact Verification FAILED[/bold red]", border_style="red", expand=False))
     for result in failures:
         console.print(f"  [red]![/red] task {result.task_id} key={result.key} v{result.version}: {result.reason}")
+    return False
+
+
+def _verify_audit_reports() -> bool:
+    """Verify every stored govern-audit report and print results. Returns True if valid.
+
+    A report identifies a posture by the sha256 of its canonical bytes, so a
+    flipped byte in a stored report matches no spine entry and makes
+    ``bernstein audit verify`` fail with the report named -- exactly like a
+    tampered chain entry (#5077). When no reports exist the check is a silent
+    no-op.
+    """
+    from bernstein.core.govern.audit_report import verify_all_audit_reports
+
+    # AUDIT_DIR is ``.sdd/audit``; the project root is two levels up. Reports
+    # live under ``<root>/.sdd/lineage/govern-audit/reports``.
+    workdir = AUDIT_DIR.parent.parent
+
+    key = _verify_key("Govern audit report")
+    if key is None:
+        return True
+
+    results = verify_all_audit_reports(workdir, hmac_key=key)
+    if not results:
+        return True  # no audit reports recorded; nothing to verify
+
+    failures = [r for r in results if not r.ok]
+    console.print()
+    if not failures:
+        console.print(
+            Panel(
+                "[bold green]Govern Audit Report Verification Passed[/bold green]",
+                border_style="green",
+                expand=False,
+            )
+        )
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Key", style="dim", no_wrap=True, min_width=14)
+        table.add_column("Value")
+        table.add_row("Reports", str(len(results)))
+        console.print(table)
+        return True
+
+    console.print(
+        Panel("[bold red]Govern Audit Report Verification FAILED[/bold red]", border_style="red", expand=False)
+    )
+    for result in failures:
+        anchor = result.report.journal_entry_hash if result.report is not None else "?"
+        console.print(f"  [red]![/red] report anchor={anchor or '(unanchored)'}: {result.reason}")
     return False
 
 

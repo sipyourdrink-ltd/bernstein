@@ -413,10 +413,73 @@ scope, stated honestly: the checkpoint gate makes a shrink
 non-launderable by the seal job and detectable by every verify run
 against the local directory. an actor with write access to **both**
 the chain segments and the checkpoints file can still rewind both to
-a mutually consistent earlier state; catching that requires retention
-outside the writer's filesystem (an independent co-signer over
-checkpoints), which is planned as a follow-up and tracked on the
-issue tracker.
+a mutually consistent earlier state; catching that needs retention
+outside the writer's filesystem, which is what external anchors are.
+
+### External anchors: retention outside this machine
+
+everything the checkpoint gate compares against is material we hold.
+an actor who controls the audit directory holds all of it, so they
+can roll all of it back together and every local check passes. an
+**anchor** is the part they cannot reproduce: an RFC 3161 timestamp
+token, issued by a TSA, over `sha256(canonical checkpoint payload)`.
+the checkpoint payload already pins the origin, the record count and
+the per-segment leaves, so timestamping it timestamps the claim about
+how long the history was - and a TSA will not issue a token dated
+earlier.
+
+anchoring is optional, off by default, and bernstein never contacts a
+TSA. the operator makes the request and hands back the response:
+
+```bash
+# 1. what to timestamp
+bernstein audit anchor --print-request
+
+# 2. ask your TSA (any RFC 3161 endpoint)
+openssl ts -query -digest <digest> -sha256 -cert -no_nonce -out req.tsq
+curl -sS -H 'Content-Type: application/timestamp-query' \
+     --data-binary @req.tsq <tsa-url> -o resp.tsr
+
+# 3. record it beside the checkpoint
+bernstein audit anchor --rfc3161-token resp.tsr --rfc3161-tsa-url <tsa-url>
+```
+
+anchors live in `.sdd/audit/checkpoints/anchors.jsonl`, append-only
+and fsynced, beside `checkpoints.jsonl` and never inside it: a
+checkpoint payload carries no timestamps by design, and folding a
+token into it would break the byte-determinism of the checkpoints
+file. the record copies the anchored `origin`, `entry_count` and
+`checkpoint_root` out of the checkpoint, so deleting the checkpoints
+file does not delete the number the anchor was pinning.
+
+`bernstein audit verify` then runs an **external anchors** pillar:
+
+- the token must parse and its `messageImprint` must cover the
+  checkpoint payload the anchor names. this needs nothing from the
+  operator, so it always runs.
+- pass `--rfc3161-trusted-tsa-bundle <roots.pem>` to also authenticate
+  the issuing TSA. without it the token is bound to the checkpoint but
+  the signer is not identified - verify says so in its output.
+- a local history shorter than the newest anchored record count, a
+  different chain origin, or an anchored checkpoint that is no longer
+  on record are all **contradictions**, and each exits non-zero naming
+  the anchor.
+
+an anchor contradiction is **not** clearable with `audit ack-tear`.
+an acknowledgement records that an operator looked at local damage;
+it cannot withdraw a signature a third party made. restore the
+missing history, or treat the anchored range as unaccounted for.
+
+keep a copy of `anchors.jsonl` off the machine that writes it. an
+anchor deleted together with the history it contradicts protects
+nothing - which is why `bernstein doctor` reports the anchoring state
+(`never anchored` / `anchored at N entries, last at T`) rather than
+letting an unanchored install look as strong as an anchored one.
+
+still open, and deliberately not shipped here: a witness
+co-signature protocol between two installs, and operator-supplied
+external sinks (object lock, append-only bucket) for checkpoint
+retention.
 
 ## Replaying a log
 
