@@ -16,6 +16,19 @@ if TYPE_CHECKING:
 
 DEFAULT_TENANT_ID = "default"
 
+#: Marker a record carries when its writer supplied no tenant at all.
+#:
+#: A missing tenant and the tenant named ``default`` are different facts, and
+#: a field default spelled ``"default"`` writes the second when it means the
+#: first. The two then serialise identically, so a signed record naming
+#: ``default`` no longer establishes that anyone asserted it.
+#:
+#: The value is deliberately not a valid tenant id: it starts with an
+#: underscore, which `is_valid_tenant_id` rejects, so nothing can configure,
+#: create, or name a tenant that collides with it. Reading it back therefore
+#: means exactly one thing.
+UNSPECIFIED_TENANT_ID: Final[str] = "__unspecified__"
+
 
 @dataclass(frozen=True)
 class TenantConfig:
@@ -163,6 +176,17 @@ def _describe_tenant_id(value: str) -> str:
     return repr(shown)
 
 
+def is_unspecified_tenant(raw: object) -> bool:
+    """Return whether *raw* is the marker for "no tenant was supplied".
+
+    Takes `object` for the same reason `try_normalize_tenant_id` does: the
+    value usually arrives from JSON or from a field whose type is whatever
+    was written there, and a non-string is simply not the marker.
+    """
+
+    return isinstance(raw, str) and raw.strip() == UNSPECIFIED_TENANT_ID
+
+
 def normalize_tenant_id(raw: str | None) -> str:
     """Normalize a raw tenant ID into a stable non-empty value.
 
@@ -171,6 +195,13 @@ def normalize_tenant_id(raw: str | None) -> str:
     A value that is present but not a usable path segment is a caller error
     rather than a default, so it is refused.
 
+    `UNSPECIFIED_TENANT_ID` is refused with a message of its own. It would be
+    refused anyway - it is not a valid identifier - but this is the boundary
+    between a record that says nobody supplied a tenant and a caller that
+    needs one, and the refusal is the whole point of the marker rather than
+    an incidental syntax error. Callers that record attribution rather than
+    resolve a scope use `normalize_tenant_attribution` instead.
+
     Args:
         raw: Raw tenant identifier, possibly absent or padded.
 
@@ -178,12 +209,18 @@ def normalize_tenant_id(raw: str | None) -> str:
         The normalized tenant ID, or `DEFAULT_TENANT_ID` when *raw* is blank.
 
     Raises:
-        InvalidTenantIdError: If *raw* is non-blank and not a valid tenant ID.
+        InvalidTenantIdError: If *raw* is the unspecified marker, or is
+            non-blank and not a valid tenant ID.
     """
 
     value = (raw or "").strip()
     if not value:
         return DEFAULT_TENANT_ID
+    if value == UNSPECIFIED_TENANT_ID:
+        raise InvalidTenantIdError(
+            "tenant id is unspecified: the record carries no tenant, which is not the same as the tenant "
+            f"named {DEFAULT_TENANT_ID!r}; supply the tenant at the call site"
+        )
     if not is_valid_tenant_id(value):
         raise InvalidTenantIdError(
             f"invalid tenant id {_describe_tenant_id(value)}: expected 1-{TENANT_ID_MAX_LENGTH} characters "
@@ -229,6 +266,39 @@ def try_normalize_tenant_id(raw: object) -> str | None:
         return normalize_tenant_id(raw)
     except InvalidTenantIdError:
         return None
+
+
+def normalize_tenant_attribution(raw: str | None) -> str:
+    """Normalize a tenant ID that is being *recorded* rather than resolved.
+
+    The counterpart to `normalize_tenant_id`, for the writers and readers of
+    records that carry a tenant as attribution: a cost usage row, an agent
+    credential's scope. Those have to be able to state that no tenant was
+    supplied, so the marker passes through unchanged instead of being
+    refused. Everything else is normalized by the same rules, so a recorded
+    tenant is still a real one.
+
+    Use this only where the value is being stored or read back. Anywhere the
+    value selects a scope - a directory to write under, a filter to apply, a
+    quota to charge - `normalize_tenant_id` is the right function, and its
+    refusal of the marker is what keeps an unattributed record out of a real
+    tenant's view.
+
+    Args:
+        raw: Raw tenant identifier, possibly absent, padded, or the marker.
+
+    Returns:
+        `UNSPECIFIED_TENANT_ID` when *raw* is the marker, otherwise the
+        normalized tenant ID.
+
+    Raises:
+        InvalidTenantIdError: If *raw* is non-blank, not the marker, and not
+            a valid tenant ID.
+    """
+
+    if is_unspecified_tenant(raw):
+        return UNSPECIFIED_TENANT_ID
+    return normalize_tenant_id(raw)
 
 
 def build_tenant_registry(configs: Sequence[TenantConfig] | None) -> TenantRegistry:
