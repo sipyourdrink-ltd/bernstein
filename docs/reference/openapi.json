@@ -6260,7 +6260,7 @@
           "approvals"
         ],
         "summary": "Resolve Queued Approval",
-        "description": "Resolve a queued approval with ``allow``, ``reject``, or ``always``.\n\nThe request body must echo the ``nonce`` the gate issued when the\napproval was queued. Mismatches return ``409 NONCE_MISMATCH``; a\nnonce replayed against an already-resolved or evicted approval\nreturns ``410 NONCE_EXPIRED``.",
+        "description": "Resolve a queued approval with ``allow``, ``reject``, or ``always``.\n\nThe request body must echo the ``nonce`` the gate issued when the\napproval was queued. Mismatches return ``409 NONCE_MISMATCH``; a\nnonce replayed against an already-resolved or evicted approval\nreturns ``410 NONCE_EXPIRED``. The resolution is attributed to the\nprincipal the request authenticated as. When scoped tokens are\nconfigured and the request presents none, the call is refused with\n``401`` rather than recorded against an unnamed caller; when no scoped\ntokens are configured the server is in its loopback posture and the\ndecision is attributed to the loopback operator.",
         "operationId": "resolve_queued_approval_approvals__approval_id__resolve_post",
         "parameters": [
           {
@@ -6300,6 +6300,9 @@
           },
           "400": {
             "description": "Invalid approval id or decision"
+          },
+          "401": {
+            "description": "No authenticated principal to attribute the decision to"
           },
           "404": {
             "description": "No pending approval with that id"
@@ -15059,7 +15062,7 @@
           "approvals"
         ],
         "summary": "Resolve Queued Approval",
-        "description": "Resolve a queued approval with ``allow``, ``reject``, or ``always``.\n\nThe request body must echo the ``nonce`` the gate issued when the\napproval was queued. Mismatches return ``409 NONCE_MISMATCH``; a\nnonce replayed against an already-resolved or evicted approval\nreturns ``410 NONCE_EXPIRED``.",
+        "description": "Resolve a queued approval with ``allow``, ``reject``, or ``always``.\n\nThe request body must echo the ``nonce`` the gate issued when the\napproval was queued. Mismatches return ``409 NONCE_MISMATCH``; a\nnonce replayed against an already-resolved or evicted approval\nreturns ``410 NONCE_EXPIRED``. The resolution is attributed to the\nprincipal the request authenticated as. When scoped tokens are\nconfigured and the request presents none, the call is refused with\n``401`` rather than recorded against an unnamed caller; when no scoped\ntokens are configured the server is in its loopback posture and the\ndecision is attributed to the loopback operator.",
         "operationId": "resolve_queued_approval_api_v1_approvals__approval_id__resolve_post",
         "parameters": [
           {
@@ -15099,6 +15102,9 @@
           },
           "400": {
             "description": "Invalid approval id or decision"
+          },
+          "401": {
+            "description": "No authenticated principal to attribute the decision to"
           },
           "404": {
             "description": "No pending approval with that id"

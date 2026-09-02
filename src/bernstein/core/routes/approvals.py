@@ -409,8 +409,11 @@ def resolve_queued_approval(request: Request, approval_id: str, body: ResolveReq
     approval was queued. Mismatches return ``409 NONCE_MISMATCH``; a
     nonce replayed against an already-resolved or evicted approval
     returns ``410 NONCE_EXPIRED``. The resolution is attributed to the
-    request's authenticated principal; see :func:`_resolve_approval_principal`
-    for the posture split and the ``401`` it raises.
+    principal the request authenticated as. When scoped tokens are
+    configured and the request presents none, the call is refused with
+    ``401`` rather than recorded against an unnamed caller; when no scoped
+    tokens are configured the server is in its loopback posture and the
+    decision is attributed to the loopback operator.
     """
     if not re.fullmatch(r"[a-zA-Z0-9_-]+", approval_id):
         raise HTTPException(status_code=400, detail="Invalid approval id format")
