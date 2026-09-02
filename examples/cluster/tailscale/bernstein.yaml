@@ -10,10 +10,15 @@
 #   sudo tailscale up --authkey="$TS_AUTHKEY_WORKER" \
 #       --advertise-tags=tag:bernstein-worker
 #
-#   bernstein cluster worker \
-#       --config ~/.bernstein/bernstein.yaml \
-#       --role backend
+#   bernstein worker \
+#       --server http://bernstein-central.tailXXXXX.ts.net:8052 \
+#       --roles backend \
+#       --token "$BERNSTEIN_CLUSTER_AUTH_SECRET"
 
+# The worker's role is passed on the command line (`--roles backend`, shown
+# above), and its capacity and labels are advertised to the central server
+# when the worker registers. None of that is read from this seed file, so
+# there is no `worker:` section here.
 cluster:
   enabled: true
   # Replace `tailXXXXX` with your tailnet's MagicDNS suffix
@@ -28,8 +33,6 @@ cluster:
   # plain HTTP is fine here. Layer mTLS on top if you need
   # application-level identity for audit (see docs/cluster/mtls-setup.md).
   tls: null
+  auth_token: dummy-test-token
 
-# The worker's role is passed on the command line (`--role backend`, shown
-# above), and its capacity and labels are advertised to the central server
-# when the worker registers. None of that is read from this seed file, so
-# there is no `worker:` section here.
+goal: Tailscale overlay worker node

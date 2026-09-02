@@ -78,6 +78,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/trunk-health-slo.yml | Trunk Health SLO | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "trunk-health-slo"} | 1 |
 | .github/workflows/typecheck-ts.yml | TypeScript typecheck | merge_group, pull_request, push | {"cancel-in-progress": "true", "group": "typecheck-ts-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/volunteer-verify.yml | Volunteer receipt verification check run | pull_request_target | {"cancel-in-progress": "true", "group": "volunteer-verify-${{ github.event.pull_request.number }}"} | 1 |
+| .github/workflows/webui-render-recapture.yml | Web UI render recapture | pull_request, workflow_dispatch | {"cancel-in-progress": "true", "group": "webui-render-recapture-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/zizmor.yml | zizmor (workflow static analysis) | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "zizmor-${{ github.ref }}"} | 1 |
 
 ## Check Emitters
@@ -151,6 +152,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/trunk-health-slo.yml | compute: Compute trunk red-rate and toggle the andon marker |
 | .github/workflows/typecheck-ts.yml | typecheck: typecheck (${{ matrix.package }}) |
 | .github/workflows/volunteer-verify.yml | verify: Verify volunteer receipt |
+| .github/workflows/webui-render-recapture.yml | recapture: Recapture the web UI renders |
 | .github/workflows/zizmor.yml | zizmor: zizmor static analysis |
 
 ## Permissions And Secrets
@@ -224,6 +226,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/trunk-health-slo.yml | compute: {"actions": "read", "issues": "write"} | - |
 | .github/workflows/typecheck-ts.yml | workflow: {"contents": "read"}<br>typecheck: {"contents": "read"} | - |
 | .github/workflows/volunteer-verify.yml | verify: {"checks": "write", "contents": "read", "pull-requests": "read"} | GITHUB_TOKEN |
+| .github/workflows/webui-render-recapture.yml | workflow: {"contents": "read"}<br>recapture: {"contents": "read"} | - |
 | .github/workflows/zizmor.yml | workflow: {"contents": "read"}<br>zizmor: {"actions": "read", "contents": "read", "security-events": "write"} | - |
 
 ## Cross-Workflow Calls
@@ -257,3 +260,4 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/soc2-evidence-weekly.yml | pack: upload soc2-evidence-${{ github.run_id }} |
 | .github/workflows/static-analysis-extended.yml | perflint: upload perflint-sarif<br>refurb: upload refurb-sarif<br>semgrep: upload semgrep-sarif<br>trivy-fs: upload trivy-fs-sarif<br>trivy-iac: upload trivy-iac-sarif<br>vulture: upload vulture-sarif |
 | .github/workflows/trace-conformance.yml | trace-tests: upload trace-conformance-report |
+| .github/workflows/webui-render-recapture.yml | recapture: upload webui-renders-recaptured |
