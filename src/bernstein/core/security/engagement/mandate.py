@@ -38,6 +38,17 @@ the same signature, but nothing here enforces it:
 :func:`~bernstein.core.admission.rate_limit.effective_rate_limit` needs
 recorded 429 observation timestamps that no caller supplies yet.
 
+Not to be confused with the projection stub
+------------------------------------------
+``bernstein.core.security.engagement_mandate.EngagementMandate`` is a
+different, unrelated type: an unsigned, wall-clock, prefix-matching stub
+that tags phase nodes during engagement projection. It carries no
+signature and no content address, so it cannot bind an action into the
+audit chain. This module is the signed substrate; the two are kept
+separate rather than merged, because collapsing them would either strip
+the projection stub's prefix matching or widen this grant with a
+subsumption rule that has no monotonicity check behind it yet.
+
 Revocation is not part of this projection's failure set. Consulting a
 revocation log requires a location that a content-addressed body cannot
 carry, so no unreachable ``revoked`` outcome ships here; the gate lands
