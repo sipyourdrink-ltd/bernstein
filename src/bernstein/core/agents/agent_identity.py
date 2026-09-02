@@ -183,6 +183,12 @@ def _pattern_covered_by(child: str, parent_patterns: tuple[str, ...]) -> bool:
     A child that is itself a glob is covered only when the parent declared that
     same glob.  Whether one glob is contained in another is not a question this
     check guesses at, and refusing is the direction that cannot widen a scope.
+
+    Deliberately not :func:`~bernstein.core.security.capability_tokens.path_covered_by`:
+    that one answers the same question for capability-token path *prefixes*, where
+    ``src`` does cover ``src/secret.py``.  ``allowed_files`` is a glob field, and
+    the surface that enforces it is the merge gate, so it has to be read the way
+    the merge gate reads it.
     """
     if child in parent_patterns:
         return True
@@ -755,9 +761,13 @@ class AgentIdentityStore:
                 msg = f"parent identity {parent_identity_id} not found"
                 raise ValueError(msg)
 
-            # task_ids: allowlist subset check. Empty parent task_ids means
-            # unrestricted parent → child can be anything. Non-empty parent
-            # means child must be a subset (or empty, which narrows to nothing).
+            # task_ids is an allowlist: an empty parent list means unrestricted,
+            # so the child may name anything; otherwise the child must be a
+            # subset, and an empty child narrows to nothing.  This is set
+            # containment, the same relation
+            # ``bernstein.core.security.capability_tokens.allowlist_narrows``
+            # states for two present sets; it is spelled out here rather than
+            # imported because that module imports this one.
             if parent_identity.task_ids:
                 child_ids = set(scoped_task_ids)
                 parent_ids = set(parent_identity.task_ids)
