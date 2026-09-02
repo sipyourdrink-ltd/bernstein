@@ -70,7 +70,7 @@ def test_tasks_write_token_denied_on_shutdown_route() -> None:
 
     user = SimpleNamespace(role=SimpleNamespace(value="operator"), has_permission=_has_tasks_write_only)
 
-    def _validate_token(token: str) -> tuple[Any, dict[str, str]]:
+    def _validate_token(token: str, **_binding: Any) -> tuple[Any, dict[str, str]]:
         del token
         return user, {"sub": "op1"}
 
@@ -97,7 +97,7 @@ def test_admin_manage_token_accepted_on_shutdown_route() -> None:
 
     user = SimpleNamespace(role=SimpleNamespace(value="admin"), has_permission=_has_admin_manage)
 
-    def _validate_token(token: str) -> tuple[Any, dict[str, str]]:
+    def _validate_token(token: str, **_binding: Any) -> tuple[Any, dict[str, str]]:
         del token
         return user, {"sub": "admin1"}
 
@@ -244,7 +244,7 @@ def test_jwt_user_without_permission_gets_403() -> None:
 
     user = SimpleNamespace(role=SimpleNamespace(value="viewer"), has_permission=_deny)
 
-    def _validate_token(token: str) -> tuple[Any, dict[str, str]]:
+    def _validate_token(token: str, **_binding: Any) -> tuple[Any, dict[str, str]]:
         del token
         return user, {"sub": "u1"}
 

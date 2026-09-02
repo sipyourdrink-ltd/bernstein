@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 try:
     import yaml as _yaml
 except ImportError:
-    _yaml = None
+    _yaml = None  # type: ignore[assignment]
 
 # ---------------------------------------------------------------------------
 # Data models

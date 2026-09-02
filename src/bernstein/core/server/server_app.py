@@ -1064,7 +1064,19 @@ def create_app(
     sdd_dir = jsonl_path.parent.parent
     auth_config = SSOConfig()
     auth_enabled = auth_config.enabled or auth_config.oidc.enabled or auth_config.saml.enabled
-    auth_service = AuthService(auth_config, AuthStore(sdd_dir)) if auth_enabled else None
+
+    # The audit chain the auth layers anchor into. Built here rather than at
+    # the dashboard block below because ``AuthService`` needs it too: a token
+    # bound to an X.509-SVID that is presented by something which cannot show
+    # that SVID is refused, and the refusal is a chain event naming which
+    # proof failed (#5030).
+    from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.core.server.dashboard_tokens import resolve_dashboard_hmac_key
+
+    _chain_key = resolve_dashboard_hmac_key(sdd_dir)
+    _audit_chain = AuditChainStore(sdd_dir / "audit", key=_chain_key)
+
+    auth_service = AuthService(auth_config, AuthStore(sdd_dir), audit_chain=_audit_chain) if auth_enabled else None
     legacy_auth_token = effective_token or auth_config.legacy_token or None
 
     # Wire the cluster authenticator with a single worker-join credential
@@ -1259,16 +1271,11 @@ def create_app(
     # (shared with the mailbox block below) because every dashboard authz
     # decision is anchored in the ``dashboard-auth`` lineage run and mirrored
     # onto the chain with the acting principal attached.
-    from bernstein.core.security.audit_chain import AuditChainStore
     from bernstein.core.server.dashboard_auth import DashboardAuthMiddleware, DashboardAuthState
     from bernstein.core.server.dashboard_tokens import (
         DashboardGovernance,
         DashboardTokenRegistry,
-        resolve_dashboard_hmac_key,
     )
-
-    _chain_key = resolve_dashboard_hmac_key(sdd_dir)
-    _audit_chain = AuditChainStore(sdd_dir / "audit", key=_chain_key)
 
     dashboard_auth_state = DashboardAuthState(
         token_registry=DashboardTokenRegistry(sdd_dir / "auth" / "dashboard_tokens.jsonl", hmac_key=_chain_key),

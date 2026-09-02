@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from bernstein.core.lifecycle import _emit
+from bernstein.core.lifecycle import _emit  # type: ignore[attr-defined]  # meta-path redirect
 from bernstein.core.models import (
     LifecycleEvent,
     Task,
