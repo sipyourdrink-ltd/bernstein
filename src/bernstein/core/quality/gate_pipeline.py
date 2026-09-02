@@ -79,6 +79,7 @@ VALID_GATE_NAMES = frozenset(
         "review_rubric",
         "test_expansion",
         "agent_test_mutation",
+        "behavior_probe",
         "incident_evals",
     }
 )
@@ -250,6 +251,10 @@ _DEFAULT_GATE_SPECS: list[tuple[str, str, bool, str]] = [
     ("review_rubric", "review_rubric", True, "python_changed"),
     ("test_expansion", "test_expansion", False, "python_changed"),
     ("agent_test_mutation", "agent_test_mutation", True, "tests_changed"),
+    # Executes the changed callables against boundary inputs derived from
+    # their own signatures. Heavy (one subprocess per probe) and
+    # crash-level only, so it ships off and advisory; graduate on evidence.
+    ("behavior_probe", "behavior_probe", False, "python_changed"),
     # P0 incident evals block merge; the gate runner reads severity from the
     # YAML files under src/bernstein/eval/cases/incidents/.
     ("incident_evals", "incident_evals", True, "always"),
