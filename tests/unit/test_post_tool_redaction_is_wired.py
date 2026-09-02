@@ -231,3 +231,24 @@ async def test_payload_without_tool_output_still_redacts_and_audits(
     record = _sidecar_records(tmp_path, "sess-no-output")[0]
     assert _AWS_KEY not in record["tool_input"]
     assert [r for r in _audit_records(tmp_path) if r["session_id"] == "sess-no-output"]
+
+
+@pytest.mark.anyio
+async def test_secret_straddling_the_input_truncation_point_is_not_half_persisted(
+    client: AsyncClient,
+    tmp_path: Path,
+) -> None:
+    """8. Redaction runs over the whole input, not over the 200-char copy."""
+    padding = "x" * 190
+    await _signed_post(
+        client,
+        "/hooks/sess-straddle",
+        {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Bash",
+            "tool_input": f"{padding}{_AWS_KEY}",
+        },
+    )
+
+    raw = (tmp_path / ".sdd" / "runtime" / "hooks" / "sess-straddle.jsonl").read_text(encoding="utf-8")
+    assert _AWS_KEY[:10] not in raw, "half of a straddling secret survived truncation"
