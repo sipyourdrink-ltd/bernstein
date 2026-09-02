@@ -19,7 +19,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final, Literal, cast, get_args
 
 from bernstein.core.auth import create_jwt, verify_jwt
-from bernstein.core.path_scope import ScopePatternError, validate_repo_relative_pattern
+from bernstein.core.path_scope import ScopePatternError, paths_outside_scope, validate_repo_relative_pattern
 from bernstein.core.sanitize import sanitize_log
 from bernstein.core.tenanting import (
     DEFAULT_TENANT_ID,
@@ -167,6 +167,41 @@ TokenType = Literal["opaque", "jwt"]
 #: type-checks clean.  Deriving it makes that unreachable rather than
 #: discouraged, which is what the comment here used to claim (#4015).
 _CREDENTIAL_TOKEN_TYPES: Final[tuple[TokenType, ...]] = get_args(TokenType)
+
+
+def _pattern_covered_by(child: str, parent_patterns: tuple[str, ...]) -> bool:
+    """Return True when the parent's declared scope already admits ``child``.
+
+    Decided by :func:`~bernstein.core.path_scope.paths_outside_scope`, the same
+    matcher the merge gate reads ``allowed_files`` with, so the scope that mints
+    a credential and the scope that admits its diff cannot disagree.  A
+    string-prefix test would: ``src`` covers the path ``src`` and nothing under
+    it, so treating it as a prefix would let a parent scoped to ``src`` mint a
+    child scoped to ``src/secret.py`` -- a file the parent's own scope never
+    admitted.  ``src/**`` is how a tree is admitted.
+
+    A child that is itself a glob is covered only when the parent declared that
+    same glob.  Whether one glob is contained in another is not a question this
+    check guesses at, and refusing is the direction that cannot widen a scope.
+
+    Deliberately not the prefix-coverage helper in
+    :mod:`bernstein.core.security.capability_tokens`: that one answers this
+    question for capability-token path *prefixes*, where ``src`` does cover
+    ``src/secret.py``.  ``allowed_files`` is a glob field and the surface that
+    enforces it is the merge gate, so it has to be read the way the merge gate
+    reads it.
+    """
+    if child in parent_patterns:
+        return True
+    if any(wildcard in child for wildcard in "*?"):
+        return False
+    return not paths_outside_scope((child,), parent_patterns)
+
+
+def _all_patterns_covered_by(child_patterns: set[str], parent_patterns: set[str]) -> bool:
+    """Return True when every child pattern falls inside the parent's scope."""
+    parents = tuple(sorted(parent_patterns))
+    return all(_pattern_covered_by(child, parents) for child in child_patterns)
 
 
 def _string_list(raw: Any, field: str) -> list[str]:
@@ -715,6 +750,47 @@ class AgentIdentityStore:
         # signed a token with no task scope at all.
         scoped_task_ids = _string_list(() if task_ids is None else task_ids, "task_ids")
         scoped_files = _string_list(() if allowed_files is None else allowed_files, "allowed_files")
+
+        # When a parent identity is named, the child's task_ids and allowed_files
+        # must be a subset of the parent's.  An unrestricted parent (empty
+        # task_ids) may mint anything; a restricted parent may only mint children
+        # that narrow its scope.  This prevents a child from holding a scope its
+        # parent never held, which was the original issue #5046.
+        if parent_identity_id is not None:
+            parent_identity = self._load(parent_identity_id)
+            if parent_identity is None:
+                msg = f"parent identity {parent_identity_id} not found"
+                raise ValueError(msg)
+
+            # task_ids is an allowlist: an empty parent list means unrestricted,
+            # so the child may name anything; otherwise the child must be a
+            # subset, and an empty child narrows to nothing.  This is set
+            # containment, the same relation
+            # ``bernstein.core.security.capability_tokens.allowlist_narrows``
+            # states for two present sets; it is spelled out here rather than
+            # imported because that module imports this one.
+            if parent_identity.task_ids:
+                child_ids = set(scoped_task_ids)
+                parent_ids = set(parent_identity.task_ids)
+                if not child_ids <= parent_ids:
+                    raise ValueError(
+                        f"child task_ids {sorted(child_ids)} are not a subset of parent task_ids {sorted(parent_ids)}"
+                    )
+
+            # allowed_files: every child pattern must fall inside the parent's
+            # scope, read by the same matcher the merge gate uses.  An empty
+            # parent scope means unrestricted, so the child may name anything.
+            # An empty child scope under a restricted parent is the widening
+            # direction -- empty means unrestricted -- so it is refused rather
+            # than passing vacuously.
+            if parent_identity.allowed_files:
+                child_patterns = set(scoped_files)
+                parent_patterns = set(parent_identity.allowed_files)
+                if not child_patterns or not _all_patterns_covered_by(child_patterns, parent_patterns):
+                    raise ValueError(
+                        f"child allowed_files {sorted(child_patterns)} are not a subset of "
+                        f"parent allowed_files {sorted(parent_patterns)}"
+                    )
         # Shape is not enough for the file scope: the merge gate reads these as
         # repository-relative globs, so a pattern that names a drive or walks
         # out of the root is refused before it can be signed.  Validated only

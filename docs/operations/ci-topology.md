@@ -58,6 +58,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/pr-labels.yml | PR labels | pull_request_target | {"cancel-in-progress": "true", "group": "pr-labels-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/pr-observability-summary.yml | PR observability summary | pull_request, workflow_dispatch | {"cancel-in-progress": "true", "group": "pr-observability-${{ github.event.pull_request.number \|\| github.event.inputs.pr_number }}"} | 1 |
 | .github/workflows/pr-policy.yml | PR policy | pull_request | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "pr-policy-${{ github.event.pull_request.number }}"} | 1 |
+| .github/workflows/project-pulse.yml | Project pulse | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "project-pulse"} | 1 |
 | .github/workflows/publish-docker.yml | Publish Docker Image | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-docker-${{ github.ref }}"} | 1 |
 | .github/workflows/publish-extension.yml | Publish VS Code Extension | push, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-extension-${{ github.ref }}"} | 1 |
 | .github/workflows/publish-homebrew.yml | Publish Homebrew Formula | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-homebrew-${{ github.ref }}"} | 1 |
@@ -78,6 +79,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/trunk-health-slo.yml | Trunk Health SLO | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "trunk-health-slo"} | 1 |
 | .github/workflows/typecheck-ts.yml | TypeScript typecheck | merge_group, pull_request, push | {"cancel-in-progress": "true", "group": "typecheck-ts-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/volunteer-verify.yml | Volunteer receipt verification check run | pull_request_target | {"cancel-in-progress": "true", "group": "volunteer-verify-${{ github.event.pull_request.number }}"} | 1 |
+| .github/workflows/webui-render-recapture.yml | Web UI render recapture | pull_request, workflow_dispatch | {"cancel-in-progress": "true", "group": "webui-render-recapture-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/zizmor.yml | zizmor (workflow static analysis) | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "zizmor-${{ github.ref }}"} | 1 |
 
 ## Check Emitters
@@ -131,6 +133,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/pr-labels.yml | label |
 | .github/workflows/pr-observability-summary.yml | summary: Sticky observability comment |
 | .github/workflows/pr-policy.yml | pr-policy: PR policy |
+| .github/workflows/project-pulse.yml | pulse: Collect and publish the project pulse |
 | .github/workflows/publish-docker.yml | publish: Build and push image to GHCR |
 | .github/workflows/publish-extension.yml | publish |
 | .github/workflows/publish-homebrew.yml | update-formula: Update Homebrew formula |
@@ -151,6 +154,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/trunk-health-slo.yml | compute: Compute trunk red-rate and toggle the andon marker |
 | .github/workflows/typecheck-ts.yml | typecheck: typecheck (${{ matrix.package }}) |
 | .github/workflows/volunteer-verify.yml | verify: Verify volunteer receipt |
+| .github/workflows/webui-render-recapture.yml | recapture: Recapture the web UI renders |
 | .github/workflows/zizmor.yml | zizmor: zizmor static analysis |
 
 ## Permissions And Secrets
@@ -204,6 +208,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/pr-labels.yml | workflow: {"contents": "read"}<br>label: {"contents": "read", "issues": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/pr-observability-summary.yml | workflow: {"contents": "read"}<br>summary: {"checks": "read", "contents": "read", "pull-requests": "write", "security-events": "read"} | GITHUB_TOKEN |
 | .github/workflows/pr-policy.yml | workflow: {"contents": "read"}<br>pr-policy: {"actions": "read", "contents": "write", "issues": "read", "pull-requests": "read"} | BERNSTEIN_AUTOSYNC_TOKEN |
+| .github/workflows/project-pulse.yml | pulse: {"contents": "read", "issues": "write"} | - |
 | .github/workflows/publish-docker.yml | publish: {"attestations": "write", "contents": "read", "id-token": "write", "packages": "write"} | GITHUB_TOKEN |
 | .github/workflows/publish-extension.yml | workflow: {"contents": "read"}<br>publish: {"contents": "read"} | OPEN_VSX_TOKEN, VS_MARKETPLACE_TOKEN |
 | .github/workflows/publish-homebrew.yml | workflow: {"contents": "read"}<br>update-formula: {"contents": "read"} | HOMEBREW_TAP_TOKEN |
@@ -224,6 +229,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/trunk-health-slo.yml | compute: {"actions": "read", "issues": "write"} | - |
 | .github/workflows/typecheck-ts.yml | workflow: {"contents": "read"}<br>typecheck: {"contents": "read"} | - |
 | .github/workflows/volunteer-verify.yml | verify: {"checks": "write", "contents": "read", "pull-requests": "read"} | GITHUB_TOKEN |
+| .github/workflows/webui-render-recapture.yml | workflow: {"contents": "read"}<br>recapture: {"contents": "read"} | - |
 | .github/workflows/zizmor.yml | workflow: {"contents": "read"}<br>zizmor: {"actions": "read", "contents": "read", "security-events": "write"} | - |
 
 ## Cross-Workflow Calls
@@ -251,9 +257,11 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/mutation-fixed.yml | mutate: upload mutation-${{ matrix.module }} |
 | .github/workflows/nightly-deep-tests.yml | bandit-medium-and-high: upload nightly-bandit-results<br>mutmut-full: upload nightly-mutmut-results |
 | .github/workflows/pentest.yml | pentest: upload pentest-results-${{ github.run_number }} |
+| .github/workflows/project-pulse.yml | pulse: upload project-pulse |
 | .github/workflows/publish.yml | build: upload dist<br>github-release: download dist<br>publish: download dist |
 | .github/workflows/sbom.yml | sbom: upload sbom |
 | .github/workflows/scorecard.yml | analysis: upload scorecard-results<br>upload: download scorecard-results |
 | .github/workflows/soc2-evidence-weekly.yml | pack: upload soc2-evidence-${{ github.run_id }} |
 | .github/workflows/static-analysis-extended.yml | perflint: upload perflint-sarif<br>refurb: upload refurb-sarif<br>semgrep: upload semgrep-sarif<br>trivy-fs: upload trivy-fs-sarif<br>trivy-iac: upload trivy-iac-sarif<br>vulture: upload vulture-sarif |
 | .github/workflows/trace-conformance.yml | trace-tests: upload trace-conformance-report |
+| .github/workflows/webui-render-recapture.yml | recapture: upload webui-renders-recaptured |

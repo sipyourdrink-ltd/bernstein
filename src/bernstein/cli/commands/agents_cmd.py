@@ -697,7 +697,14 @@ def agents_trust(workdir: str, agent_id: str | None, as_json: bool) -> None:
 
 @agents_group.command("discover")
 @click.option("--net", "include_network", is_flag=True, default=False, help="Also search GitHub and npm.")
-def agents_discover(include_network: bool) -> None:
+@click.option(
+    "--harness-local",
+    "include_harness_local",
+    is_flag=True,
+    default=False,
+    help="Also read agent definitions the operator installed for their own harness (read-only, off by default).",
+)
+def agents_discover(include_network: bool, include_harness_local: bool) -> None:
     """Scan known sources for agent directories and update the registry.
 
     \b
@@ -706,17 +713,37 @@ def agents_discover(include_network: bool) -> None:
       .sdd/agents/local/       project-level definitions
       GitHub (--net)           repos tagged bernstein-agents
       npm (--net)              packages with bernstein-agent keyword
+      harness dirs             ~/.claude/agents, ~/.claude/plugins,
+      (--harness-local)        ./.claude/agents - read-only, opt-in
+
+    Harness-local directories hold third-party prompts the operator
+    installed for a different tool, so they are read only when
+    --harness-local is passed. Each one is listed with its path and the
+    content digest it was read at; a directory pinned by an agents.lock
+    whose digest no longer matches is listed as refused.
     """
     from bernstein.agents.discovery import AgentDiscovery
 
     discovery = AgentDiscovery.load()
 
     console.print("[bold]Discovering agent directories…[/bold]\n")
-    results = discovery.full_sync(include_network=include_network)
+    results = discovery.full_sync(
+        include_network=include_network,
+        include_harness_local=include_harness_local,
+    )
 
     for source, count in results.items():
         icon = "[green]✓[/green]" if count >= 0 else "[yellow]![/yellow]"
         console.print(f"  {icon} [cyan]{source}[/cyan]  {count} agent(s)")
+
+    if include_harness_local:
+        harness_entries = [d for d in discovery.directories if d.name.startswith("harness:")]
+        if harness_entries:
+            console.print(f"\n  [magenta]harness-local[/magenta] ({len(harness_entries)} directories)")
+            for e in harness_entries:
+                status = "[green]ok[/green]" if e.enabled else "[red]refused[/red]"
+                digest = e.content_digest[:12] if e.content_digest else "(none)"
+                console.print(f"    {status}  [dim]{e.path}[/dim]  digest {digest}")
 
     if include_network:
         gh_entries = [d for d in discovery.directories if d.source_type == "github"]

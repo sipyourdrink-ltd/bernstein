@@ -3576,7 +3576,19 @@ def _evaluate_approval_gate(
             timeout_s=timeout_s,
         )
         if approval_result.rejected:
-            logger.warning("Approval gate: task %s rejected -- skipping merge for agent %s", task.id, session.id)
+            if approval_result.resolution == "timed_out":
+                logger.warning(
+                    "Approval gate: task %s rejected on timeout (no decision within the review window) "
+                    "-- skipping merge for agent %s",
+                    task.id,
+                    session.id,
+                )
+            else:
+                logger.warning(
+                    "Approval gate: task %s rejected -- skipping merge for agent %s",
+                    task.id,
+                    session.id,
+                )
             return True
         if not approval_result.approved:
             _create_approval_pr(orch, task, session, completion_data)

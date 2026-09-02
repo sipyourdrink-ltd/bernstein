@@ -13,9 +13,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.commands.bom_cmd import bom_group
+from bernstein.core.lineage.spine import LineageSpine
 
 
 def _sha(label: str) -> str:
@@ -348,3 +350,169 @@ class TestRoundTrip:
             assert result.exit_code == 0, result.output
             decoded = json.loads(out.read_text(encoding="utf-8"))
             assert key in decoded
+
+
+# ---------------------------------------------------------------------------
+# 4. ``bom emit --from-lineage`` -- project the snapshot off the run spine
+# ---------------------------------------------------------------------------
+
+
+_SPINE_KEY = b"k" * 32
+
+
+def _seed_spine(workdir: Path, run_id: str) -> LineageSpine:
+    spine = LineageSpine(workdir / ".sdd" / "lineage", run_id=run_id, hmac_key=_SPINE_KEY)
+    spine.record(
+        artifact_path="src/a.py",
+        content=b"a",
+        actor="agent:worker",
+        step_id="s1",
+        model="claude-sonnet",
+        timestamp=1767225600,
+    )
+    spine.record(
+        artifact_path="src/b.py",
+        content=b"b",
+        actor="agent:worker",
+        step_id="s2",
+        model="claude-sonnet",
+        timestamp=1767225660,
+    )
+    return spine
+
+
+def _install_audit_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    key_file = tmp_path / "audit.key"
+    key_file.write_bytes(_SPINE_KEY)
+    key_file.chmod(0o600)
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(key_file))
+
+
+class TestBOMEmitFromLineage:
+    def test_emit_from_lineage_projects_the_run_spine(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _install_audit_key(tmp_path, monkeypatch)
+        spine = _seed_spine(tmp_path, "20260101-run-a")
+
+        result = CliRunner().invoke(
+            bom_group,
+            ["emit", "--run", "20260101-run-a", "--from-lineage", "--workdir", str(tmp_path)],
+        )
+
+        assert result.exit_code == 0, result.output
+        doc = json.loads(result.stdout)
+        assert doc["run_id"] == "20260101-run-a"
+        assert doc["lineage_root_hash"] == spine.head_hash()
+        assert [(m["name"], m["invocation_count"]) for m in doc["models"]] == [("claude-sonnet", 2)]
+
+    def test_emit_from_lineage_needs_no_hand_written_snapshot(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The whole point: ``.sdd/runs/<run>/bom_snapshot.json`` need not exist."""
+        _install_audit_key(tmp_path, monkeypatch)
+        _seed_spine(tmp_path, "20260101-run-b")
+        assert not (tmp_path / ".sdd" / "runs" / "20260101-run-b" / "bom_snapshot.json").exists()
+
+        result = CliRunner().invoke(
+            bom_group,
+            ["emit", "--run", "20260101-run-b", "--from-lineage", "--workdir", str(tmp_path)],
+        )
+        assert result.exit_code == 0, result.output
+
+    def test_emit_from_lineage_output_passes_structural_verify(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _install_audit_key(tmp_path, monkeypatch)
+        _seed_spine(tmp_path, "20260101-run-c")
+        out = tmp_path / "bom.json"
+
+        emit = CliRunner().invoke(
+            bom_group,
+            [
+                "emit",
+                "--run",
+                "20260101-run-c",
+                "--from-lineage",
+                "--workdir",
+                str(tmp_path),
+                "--out",
+                str(out),
+            ],
+        )
+        assert emit.exit_code == 0, emit.output
+
+        verify = CliRunner().invoke(bom_group, ["verify", str(out)])
+        assert verify.exit_code == 0, verify.output
+
+    def test_emit_from_lineage_rejects_a_run_with_an_empty_spine(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _install_audit_key(tmp_path, monkeypatch)
+        (tmp_path / ".sdd" / "lineage").mkdir(parents=True)
+
+        result = CliRunner().invoke(
+            bom_group,
+            ["emit", "--run", "20260101-empty", "--from-lineage", "--workdir", str(tmp_path)],
+        )
+        assert result.exit_code == 1
+        assert "20260101-empty" in result.output
+
+    def test_emit_from_lineage_requires_run_and_excludes_snapshot(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _install_audit_key(tmp_path, monkeypatch)
+        snap_path = tmp_path / "snap.json"
+        snap_path.write_text(json.dumps(_snapshot()), encoding="utf-8")
+
+        no_run = CliRunner().invoke(bom_group, ["emit", "--from-lineage", "--workdir", str(tmp_path)])
+        assert no_run.exit_code == 2
+
+        with_snapshot = CliRunner().invoke(
+            bom_group,
+            ["emit", "--from-lineage", "--snapshot", str(snap_path), "--workdir", str(tmp_path)],
+        )
+        assert with_snapshot.exit_code == 2
+
+    def test_emit_from_lineage_fails_closed_without_an_audit_key(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A read-only projection must never mint key material (issue #2639)."""
+        _seed_spine(tmp_path, "20260101-run-d")
+        key_file = tmp_path / "absent.key"
+        monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(key_file))
+
+        result = CliRunner().invoke(
+            bom_group,
+            ["emit", "--run", "20260101-run-d", "--from-lineage", "--workdir", str(tmp_path)],
+        )
+
+        assert result.exit_code != 0
+        assert not key_file.exists()
+
+    def test_emit_from_lineage_rejects_a_run_id_that_escapes_its_directory(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _install_audit_key(tmp_path, monkeypatch)
+
+        result = CliRunner().invoke(
+            bom_group,
+            ["emit", "--run", "../elsewhere", "--from-lineage", "--workdir", str(tmp_path)],
+        )
+
+        assert result.exit_code == 1
+        assert "invalid run id" in result.output
