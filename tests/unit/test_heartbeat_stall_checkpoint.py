@@ -21,8 +21,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from bernstein.core.tasks.models import AgentSession, ModelConfig
-
+from bernstein.cli.commands.resume_cmd import prepare_resume
 from bernstein.core.agents.heartbeat import (
     AGENT,
     StallProfile,
@@ -32,7 +31,7 @@ from bernstein.core.agents.heartbeat import (
 )
 from bernstein.core.orchestration.supervisor_receipt import StallReason
 from bernstein.core.persistence.task_resume import load_checkpoint
-from bernstein.cli.commands.resume_cmd import prepare_resume
+from bernstein.core.tasks.models import AgentSession, ModelConfig
 
 RUN_ID = "run-stall-checkpoint-1"
 

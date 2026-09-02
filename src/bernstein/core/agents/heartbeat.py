@@ -536,9 +536,9 @@ def _write_stall_checkpoint(
         from bernstein.core.tasks.task_lifecycle import _write_task_resume_checkpoint
 
         worktree_path = orch._spawner.get_worktree_path(session.id)
-        adapter_name = adapter_name_for_provider(
-            session.provider, session.model_config.model
-        ) or getattr(orch._spawner, "default_adapter_name", None)
+        adapter_name = adapter_name_for_provider(session.provider, session.model_config.model) or getattr(
+            orch._spawner, "default_adapter_name", None
+        )
         for task_id in task_ids:
             _write_task_resume_checkpoint(
                 workdir,
