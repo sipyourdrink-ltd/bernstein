@@ -27,6 +27,13 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from bernstein.core.cost.cost import _MODEL_COST_USD_PER_1K  # pyright: ignore[reportPrivateUsage]
+from bernstein.core.cost.principal_attribution import (
+    UNATTRIBUTED,
+    PrincipalAttribution,
+    PrincipalBudgetError,
+    PrincipalEnvelope,
+    check_principal_ceiling,
+)
 from bernstein.core.models import (
     AgentCostSummary,
     ModelCostBreakdown,
@@ -589,6 +596,13 @@ class CostTracker:
     # its configured threshold.
     envelopes: dict[str, EnvelopeConfig] = field(default_factory=dict[str, EnvelopeConfig])
 
+    # Per-principal budget ceilings (issue #4985). Maps principal id to its
+    # :class:`PrincipalEnvelope`. An envelope attached here refuses at the
+    # ceiling and names the principal in the refusal receipt. Spend that
+    # carries no attribution has no principal to charge and is bucketed
+    # under ``UNATTRIBUTED`` rather than folded into anyone's total.
+    principal_envelopes: dict[str, PrincipalEnvelope] = field(default_factory=dict[str, PrincipalEnvelope])
+
     # Mutable tracking state (not constructor args)
     _spent_usd: float = field(default=0.0, init=False, repr=False)
     _usages: deque[TokenUsage] = field(
@@ -629,6 +643,9 @@ class CostTracker:
     # under ``_lock`` so envelope rollups stay consistent with ``record()``.
     _spent_by_envelope: dict[str, float] = field(default_factory=dict[str, float], init=False, repr=False)
     _calls_by_envelope: dict[str, int] = field(default_factory=dict[str, int], init=False, repr=False)
+    # Per-principal spend totals (issue #4985), keyed by principal id or by
+    # ``UNATTRIBUTED``. Updated under ``_lock`` beside the envelope totals.
+    _spent_by_principal: dict[str, float] = field(default_factory=dict[str, float], init=False, repr=False)
     # Envelopes that have already fired the threshold hook so we don't
     # spam observers each call once they're over the watermark.
     _envelope_warned: set[str] = field(default_factory=set[str], init=False, repr=False)
@@ -681,6 +698,9 @@ class CostTracker:
         feature_label: str = "",
         cost_tags: dict[str, str] | None = None,
         quota_envelope: str = DEFAULT_QUOTA_ENVELOPE,
+        principal_id: str = "",
+        grant_id: str = "",
+        authorizing_identity: str = "",
     ) -> BudgetStatus:
         """Record token usage for an agent and return updated budget status.
 
@@ -699,6 +719,12 @@ class CostTracker:
             quota_envelope: Quota envelope tag attributed to this call
                 (issue #1405). Defaults to ``"subscription"`` so legacy
                 callers keep working unchanged.
+            principal_id: The principal that incurred this cost (issue
+                #4985). Empty means "not recorded" and buckets the spend
+                under ``UNATTRIBUTED``; it is never assumed.
+            grant_id: The grant that authorized the call -- threaded from
+                the grant already present at spawn, not re-derived here.
+            authorizing_identity: The issuer that signed that grant.
 
         Returns:
             Current ``BudgetStatus`` after recording.
@@ -707,6 +733,9 @@ class CostTracker:
             EnvelopeBudgetError: When the envelope has a configured
                 ``hard_budget_usd`` and admitting this call would breach
                 it, or when ``model`` is not in the envelope's allowlist.
+            PrincipalBudgetError: When ``principal_id`` has a configured
+                :class:`PrincipalEnvelope` and admitting this call would
+                breach its ceiling.
         """
         normalized_tenant = normalize_tenant_id(tenant_id)
         if cost_usd is None:
@@ -741,12 +770,31 @@ class CostTracker:
                         cap_usd=env_cfg.hard_budget_usd,
                     )
 
+        # Per-principal ceiling (issue #4985). Checked beside the envelope
+        # gates, before any state moves, so a refused call leaves every
+        # total exactly where it was.
+        attribution = PrincipalAttribution(
+            principal_id=principal_id,
+            grant_id=grant_id,
+            authorizing_identity=authorizing_identity,
+        )
+        refusal = check_principal_ceiling(
+            self.principal_envelopes,
+            attribution,
+            spent_usd=self._spent_by_principal.get(principal_id, 0.0),
+            cost_usd=cost_usd,
+        )
+        if refusal is not None:
+            raise PrincipalBudgetError(refusal)
+
         merged_tags: dict[str, str] = dict(cost_tags or {})
         if role and "role" not in merged_tags:
             merged_tags["role"] = role
         if feature_label and "feature_label" not in merged_tags:
             merged_tags["feature_label"] = feature_label
         merged_tags.setdefault("quota_envelope", envelope)
+        for tag_key, tag_value in attribution.as_tags().items():
+            merged_tags.setdefault(tag_key, tag_value)
 
         usage = TokenUsage(
             input_tokens=input_tokens,
@@ -775,6 +823,8 @@ class CostTracker:
             self._spent_by_model[model] = self._spent_by_model.get(model, 0.0) + cost_usd
             self._spent_by_envelope[envelope] = self._spent_by_envelope.get(envelope, 0.0) + cost_usd
             self._calls_by_envelope[envelope] = self._calls_by_envelope.get(envelope, 0) + 1
+            principal_bucket = principal_id or UNATTRIBUTED
+            self._spent_by_principal[principal_bucket] = self._spent_by_principal.get(principal_bucket, 0.0) + cost_usd
             self._update_accumulators(usage)
             status = self.status()
             envelope_fired = self._maybe_fire_envelope_threshold_locked(envelope)
@@ -817,7 +867,22 @@ class CostTracker:
                 role=str(merged_tags.get("role", "")),
                 feature_label=str(merged_tags.get("feature_label", "")),
                 quota_envelope=envelope,
-                extra={k: v for k, v in merged_tags.items() if k not in {"role", "feature_label", "quota_envelope"}},
+                principal_id=principal_id,
+                grant_id=grant_id,
+                authorizing_identity=authorizing_identity,
+                extra={
+                    k: v
+                    for k, v in merged_tags.items()
+                    if k
+                    not in {
+                        "role",
+                        "feature_label",
+                        "quota_envelope",
+                        "principal_id",
+                        "grant_id",
+                        "authorizing_identity",
+                    }
+                },
             )
             try:
                 self.spend_ledger.record(
@@ -1005,6 +1070,16 @@ class CostTracker:
         with self._lock:
             seen = set(self._spent_by_envelope) | set(self.envelopes)
             return {name: self._envelope_report_locked(name) for name in sorted(seen)}
+
+    def spent_by_principal(self) -> dict[str, float]:
+        """Return per-principal spend totals (issue #4985).
+
+        Calls that carried no attribution are bucketed under
+        :data:`~bernstein.core.cost.principal_attribution.UNATTRIBUTED`;
+        they are never added to a named principal's total.
+        """
+        with self._lock:
+            return dict(self._spent_by_principal)
 
     def _envelope_report_locked(self, name: str) -> EnvelopeReport:
         cfg = self.envelopes.get(name)
