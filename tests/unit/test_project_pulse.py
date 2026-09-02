@@ -1,18 +1,23 @@
 """Unit tests for ``scripts/project_pulse.py``.
 
-Three properties carry the weight here, because the page is published
+Four properties carry the weight here, because the page is published
 unattended every week into an issue everyone can read:
 
-* ``render`` is a pure function -- identical input, byte-identical output.
-  The weekly job upserts one issue body, so a renderer that reorders a dict
-  or formats a float differently would rewrite the body on every run and
-  bury real movement in the noise.
+* ``render`` and ``render_svg`` are pure functions -- identical input,
+  byte-identical output. The weekly job upserts one issue body and pushes
+  the card to a data branch, so a renderer that reorders a dict or formats a
+  float differently would rewrite both on every run and bury real movement
+  in the noise.
 * ``collect`` fails closed. A page built from a partly-failed collection
   would publish zeros that read as "quiet week" instead of "the query
   broke", so any API failure must abort with a non-zero exit and leave no
-  output file behind.
-* The rendered page carries aggregates only: no individual logins beyond the
-  two documented account labels, and no e-mail addresses.
+  output file behind. The history is held to the same standard: a corrupt
+  file is an error, never a silently restarted series.
+* The rendered page and card carry aggregates only: no individual logins
+  beyond the two documented account labels, and no e-mail addresses. The
+  history is a strict subset of the same allow-list.
+* The card loads nothing from anywhere: no script, no font, no image, no
+  URL. It is a picture of the numbers, not a web page.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ import importlib.util
 import itertools
 import json
 import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
@@ -38,12 +44,50 @@ FIXTURE = _REPO_ROOT / "tests" / "fixtures" / "ci" / "project_pulse.json"
 #: count. Keep in step with the allow-list at the top of the script.
 DOCUMENTED_ACCOUNTS = frozenset({"chernistry", "bernstein-orchestrator"})
 
+#: The collected fields, i.e. the allow-list as it appears on disk.
+ALLOW_LIST = frozenset(
+    {
+        "adapters",
+        "commits_main_7d",
+        "days_since_last_commit",
+        "distinct_outside_authors",
+        "generated_at",
+        "grabbable",
+        "issue_close_lag_hours_median",
+        "issues_closed_count",
+        "latest_release",
+        "merged_prs_by_author_class",
+        "pr_merge_lag_hours_median",
+        "pr_merged_count",
+        "pr_merged_within_24h_pct",
+        "readme_translations",
+        "repo",
+        "windows",
+    }
+)
+
 _LOGIN_RE = re.compile(r"@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))")
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+_SVG_NS = "{http://www.w3.org/2000/svg}"
 
 
 def _fixture() -> dict[str, Any]:
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+
+def _history(weeks: int) -> dict[str, Any]:
+    """*weeks* earlier collections, one per week, with moving numbers."""
+    history: dict[str, Any] = {"weeks": []}
+    for i in range(weeks, 0, -1):
+        data = _fixture()
+        data["generated_at"] = (
+            (_MOD.datetime(2026, 9, 2, tzinfo=_MOD.UTC) - _MOD.timedelta(days=7 * i)).date().isoformat()
+        )
+        data["pr_merged_count"] = 900 + 13 * i
+        data["pr_merge_lag_hours_median"] = 3.0 + 0.4 * i
+        data["pr_merged_within_24h_pct"] = 80.0 + i
+        history = _MOD.append_history(history, data)
+    return history
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +120,16 @@ def test_render_carries_no_timestamp_beyond_the_collected_date() -> None:
     assert not re.search(r"\d{2}:\d{2}:\d{2}", page), "a wall-clock time would change the body on every run"
 
 
+def test_card_is_byte_identical_across_calls_and_themes_differ() -> None:
+    """The card is as pure as the page, in both colour schemes."""
+    light = _MOD.render_svg(_fixture(), _history(7), "light")
+    assert light == _MOD.render_svg(_fixture(), _history(7), "light")
+    dark = _MOD.render_svg(_fixture(), _history(7), "dark")
+    assert dark == _MOD.render_svg(_fixture(), _history(7), "dark")
+    assert light != dark
+    assert not re.search(r"\d{2}:\d{2}:\d{2}", light)
+
+
 def test_headline_states_the_median_merge_lag_and_links_grabbable_issues() -> None:
     """The page answers 'will my PR be reviewed?' before anything else."""
     page = _MOD.render(_fixture())
@@ -93,6 +147,113 @@ def test_absent_medians_render_as_not_available_rather_than_zero() -> None:
     page = _MOD.render(data)
     assert "n/a" in page
     assert "0.0 h" not in page
+    card = _MOD.render_svg(data)
+    assert "n/a" in card
+    assert "0.0 h" not in card
+    ET.fromstring(card)
+
+
+# ---------------------------------------------------------------------------
+# The page embeds the card and charts the history
+# ---------------------------------------------------------------------------
+
+
+def test_page_embeds_the_card_for_both_colour_schemes() -> None:
+    """One ``<picture>``, light and dark, cache-busted by the collection date."""
+    page = _MOD.render(_fixture())
+    base = f"https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/{_MOD.DATA_BRANCH}"
+    assert "<picture>" in page
+    assert f'srcset="{base}/pulse-dark.svg?v=2026-09-02"' in page
+    assert f'src="{base}/pulse.svg?v=2026-09-02"' in page
+    assert 'media="(prefers-color-scheme: dark)"' in page
+
+
+def test_page_honours_an_explicit_image_base() -> None:
+    page = _MOD.render(_fixture(), image_base="https://example.invalid/cards/")
+    assert 'src="https://example.invalid/cards/pulse.svg?v=2026-09-02"' in page
+
+
+def test_page_without_history_has_no_trend_section() -> None:
+    """A first run has nothing to chart and must not show an empty chart."""
+    page = _MOD.render(_fixture())
+    assert "## Trend" not in page
+    assert "xychart" not in page
+
+
+def test_page_with_history_charts_the_weekly_series() -> None:
+    """The trend charts the last weeks, oldest to newest, current week last."""
+    page = _MOD.render(_fixture(), _history(7))
+    assert "## Trend" in page
+    assert page.count("xychart-beta") == 2
+    bars = re.search(r"bar \[([^\]]+)\]", page)
+    assert bars is not None
+    values = [int(v) for v in bars.group(1).split(", ")]
+    assert len(values) == _MOD.TREND_WEEKS
+    assert values[-1] == _fixture()["pr_merged_count"]
+    assert values[0] == 900 + 13 * 7
+
+
+def test_page_charts_author_classes_with_counts_only() -> None:
+    page = _MOD.render(_fixture())
+    assert "pie showData" in page
+    assert '"Outside contributors" : 11' in page
+    assert '"Maintainer" : 920' in page
+
+
+# ---------------------------------------------------------------------------
+# The card
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_card_is_well_formed_svg(theme: str) -> None:
+    root = ET.fromstring(_MOD.render_svg(_fixture(), _history(7), theme))
+    assert root.tag == f"{_SVG_NS}svg"
+    assert root.get("viewBox") == f"0 0 {_MOD.CARD_WIDTH} {_MOD.CARD_HEIGHT}"
+    assert root.get("role") == "img"
+    assert root.find(f"{_SVG_NS}title") is not None
+    assert root.find(f"{_SVG_NS}desc") is not None
+
+
+def test_card_loads_nothing_and_runs_nothing() -> None:
+    """A picture of the numbers: no script, no fetch, no external resource."""
+    card = _MOD.render_svg(_fixture(), _history(7))
+    stripped = card.replace('xmlns="http://www.w3.org/2000/svg"', "")
+    assert "http://" not in stripped
+    assert "https://" not in stripped
+    for forbidden in ("<script", "<image", "<foreignObject", "@import", "url(", "<a ", "xlink:href"):
+        assert forbidden not in card, f"card must not contain {forbidden!r}"
+
+
+def test_card_sparklines_need_a_history() -> None:
+    """Without earlier weeks there is no line to draw and none is drawn."""
+    bare = _MOD.render_svg(_fixture())
+    assert 'class="spark"' not in bare
+    assert "vs last week" not in bare
+    trended = _MOD.render_svg(_fixture(), _history(7))
+    assert 'class="spark"' in trended
+    points = re.search(r'class="spark"[^>]*points="([^"]+)"', trended)
+    assert points is not None
+    assert len(points.group(1).split(" ")) == _MOD.TREND_WEEKS
+    assert "vs last week" in trended
+
+
+def test_card_rejects_an_unknown_theme() -> None:
+    with pytest.raises(_MOD.PulseError, match="theme"):
+        _MOD.render_svg(_fixture(), None, "sepia")
+
+
+def test_week_over_week_delta_reads_direction_against_what_is_better() -> None:
+    """A shorter lag is an improvement; a higher 24-hour share is too."""
+    assert _MOD._delta(3.0, 4.0, lower_is_better=True, fmt=_MOD._hours) == ("▼ 1.0 h vs last week", "green")
+    assert _MOD._delta(5.0, 4.0, lower_is_better=True, fmt=_MOD._hours) == ("▲ 1.0 h vs last week", "orange")
+    assert _MOD._delta(90.0, 88.0, lower_is_better=False, fmt=lambda v: f"{v:.1f} pt") == (
+        "▲ 2.0 pt vs last week",
+        "green",
+    )
+    assert _MOD._delta(4.0, 4.02, lower_is_better=True, fmt=_MOD._hours) == ("no change vs last week", "muted")
+    assert _MOD._delta(None, 4.0, lower_is_better=True, fmt=_MOD._hours) == ("", "")
+    assert _MOD._delta(4.0, None, lower_is_better=True, fmt=_MOD._hours) == ("", "")
 
 
 # ---------------------------------------------------------------------------
@@ -102,14 +263,23 @@ def test_absent_medians_render_as_not_available_rather_than_zero() -> None:
 
 def test_rendered_page_names_no_undocumented_account() -> None:
     """No ``@login`` other than the two documented account labels."""
-    page = _MOD.render(_fixture())
+    page = _MOD.render(_fixture(), _history(7))
     found = {match.lower() for match in _LOGIN_RE.findall(page)}
     assert found <= DOCUMENTED_ACCOUNTS, f"page names undocumented account(s): {sorted(found - DOCUMENTED_ACCOUNTS)}"
 
 
 def test_rendered_page_carries_no_email_address() -> None:
-    page = _MOD.render(_fixture())
+    page = _MOD.render(_fixture(), _history(7))
     assert not _EMAIL_RE.findall(page)
+
+
+def test_rendered_card_names_no_account_and_no_email() -> None:
+    """The card's text carries no ``@login`` and no address (CSS at-rules aside)."""
+    for theme in ("light", "dark"):
+        card = _MOD.render_svg(_fixture(), _history(7), theme)
+        text = re.sub(r"<style>.*?</style>", "", card, flags=re.S)
+        assert not _LOGIN_RE.findall(text)
+        assert not _EMAIL_RE.findall(text)
 
 
 def test_collected_fields_stay_inside_the_allow_list() -> None:
@@ -118,25 +288,73 @@ def test_collected_fields_stay_inside_the_allow_list() -> None:
     A new top-level key means someone widened what gets published without
     widening the allow-list comment the page's privacy claim rests on.
     """
-    expected = {
-        "adapters",
-        "commits_main_7d",
-        "days_since_last_commit",
-        "distinct_outside_authors",
-        "generated_at",
-        "grabbable",
-        "issue_close_lag_hours_median",
-        "issues_closed_count",
-        "latest_release",
-        "merged_prs_by_author_class",
-        "pr_merge_lag_hours_median",
-        "pr_merged_count",
-        "pr_merged_within_24h_pct",
-        "readme_translations",
-        "repo",
-        "windows",
-    }
-    assert set(_fixture()) == expected
+    assert set(_fixture()) == ALLOW_LIST
+
+
+def test_history_rows_are_a_subset_of_the_allow_list() -> None:
+    """The history introduces no field the page could not already show."""
+    row = _MOD.history_row(_fixture())
+    assert set(row) <= ALLOW_LIST
+    assert set(_MOD.HISTORY_FIELDS) < ALLOW_LIST
+
+
+# ---------------------------------------------------------------------------
+# History: one row per collection date, capped, never silently restarted
+# ---------------------------------------------------------------------------
+
+
+def test_history_upsert_replaces_the_same_date_and_keeps_order() -> None:
+    history = _history(3)
+    dates = [row["generated_at"] for row in history["weeks"]]
+    assert dates == sorted(dates)
+    again = _MOD.append_history(history, _fixture())
+    assert len(again["weeks"]) == 4
+    twice = _MOD.append_history(again, _fixture())
+    assert len(twice["weeks"]) == 4, "a re-run on the same date must replace its row, not duplicate it"
+    assert twice["weeks"][-1]["generated_at"] == "2026-09-02"
+
+
+def test_history_is_capped_to_the_documented_number_of_weeks() -> None:
+    history: dict[str, Any] = {"weeks": []}
+    for i in range(_MOD.HISTORY_KEEP_WEEKS + 5):
+        data = _fixture()
+        data["generated_at"] = (
+            (_MOD.datetime(2020, 1, 6, tzinfo=_MOD.UTC) + _MOD.timedelta(days=7 * i)).date().isoformat()
+        )
+        history = _MOD.append_history(history, data)
+    assert len(history["weeks"]) == _MOD.HISTORY_KEEP_WEEKS
+
+
+def test_history_cli_creates_then_updates_the_file(tmp_path: Path) -> None:
+    path = tmp_path / "history.json"
+    assert _MOD.main(["history", str(FIXTURE), "--history", str(path)]) == 0
+    assert len(json.loads(path.read_text(encoding="utf-8"))["weeks"]) == 1
+    assert _MOD.main(["history", str(FIXTURE), "--history", str(path)]) == 0
+    assert len(json.loads(path.read_text(encoding="utf-8"))["weeks"]) == 1
+
+
+def test_history_cli_refuses_a_corrupt_file(tmp_path: Path) -> None:
+    """A history that does not parse is an error, not a fresh start.
+
+    Restarting the series on a read error would, on push, erase two years
+    of weekly rows behind a green run.
+    """
+    path = tmp_path / "history.json"
+    path.write_text("{not json", encoding="utf-8")
+    assert _MOD.main(["history", str(FIXTURE), "--history", str(path)]) == 2
+    assert path.read_text(encoding="utf-8") == "{not json"
+    path.write_text(json.dumps({"weeks": [{"no_date": 1}]}), encoding="utf-8")
+    assert _MOD.main(["history", str(FIXTURE), "--history", str(path)]) == 2
+
+
+def test_render_cli_writes_the_page_and_both_cards(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    out = tmp_path / "out"
+    assert _MOD.main(["render", str(FIXTURE), "--svg-dir", str(out)]) == 0
+    page = capsys.readouterr().out
+    assert page.startswith("# Project pulse\n")
+    assert page == _MOD.render(_fixture())
+    assert (out / "pulse.svg").read_text(encoding="utf-8") == _MOD.render_svg(_fixture(), None, "light")
+    assert (out / "pulse-dark.svg").read_text(encoding="utf-8") == _MOD.render_svg(_fixture(), None, "dark")
 
 
 # ---------------------------------------------------------------------------
@@ -256,10 +474,10 @@ def test_workflow_runs_weekly_and_on_demand() -> None:
 
 
 def test_workflow_asks_for_no_more_than_it_needs() -> None:
-    """Default-deny at the top, read + issues:write on the one job."""
+    """Default-deny at the top; the one job writes the data branch and the issue."""
     doc = _workflow()
     assert doc["permissions"] == {}
-    assert doc["jobs"]["pulse"]["permissions"] == {"contents": "read", "issues": "write"}
+    assert doc["jobs"]["pulse"]["permissions"] == {"contents": "write", "issues": "write"}
 
 
 def test_workflow_uses_only_the_built_in_token() -> None:
@@ -267,15 +485,27 @@ def test_workflow_uses_only_the_built_in_token() -> None:
     assert "secrets." not in WORKFLOW.read_text(encoding="utf-8")
 
 
-def test_workflow_does_not_commit_the_generated_page() -> None:
-    """Generated output is upserted into an issue and uploaded, never pushed."""
+def test_workflow_publishes_generated_output_only_to_the_data_branch() -> None:
+    """Generated output goes to the data branch and the artifact, never to main.
+
+    The branch name is pinned in one place per side -- ``DATA_BRANCH`` in the
+    workflow and in the script -- and the two must agree, or the page would
+    embed a card from a branch the workflow never writes.
+    """
     body = WORKFLOW.read_text(encoding="utf-8")
-    assert "git push" not in body
-    assert "git commit" not in body
+    assert _workflow()["env"]["DATA_BRANCH"] == _MOD.DATA_BRANCH
+    assert "HEAD:refs/heads/${DATA_BRANCH}" in body
+    assert "--force" not in body
+    assert "HEAD:main" not in body
+    assert "refs/heads/main" not in body
     assert "upload-artifact" in body
 
 
-def test_documented_page_exists_and_is_in_the_nav() -> None:
+def test_documented_page_exists_embeds_the_card_and_is_in_the_nav() -> None:
     doc_path = _REPO_ROOT / "docs" / "project-pulse.md"
     assert doc_path.is_file()
+    body = doc_path.read_text(encoding="utf-8")
+    assert "<picture>" in body
+    assert f"/{_MOD.DATA_BRANCH}/pulse.svg" in body
+    assert f"`{_MOD.DATA_BRANCH}` branch" in body
     assert "project-pulse.md" in (_REPO_ROOT / "mkdocs.yml").read_text(encoding="utf-8")
