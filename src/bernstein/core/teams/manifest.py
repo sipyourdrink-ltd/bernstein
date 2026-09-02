@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING, cast
 from bernstein import _BUNDLED_TEMPLATES_DIR  # type: ignore[reportPrivateUsage]
 from bernstein.core.config.seed_config import SeedError
 from bernstein.core.orchestration.activity import ActivityKind
+from bernstein.core.orchestration.activity_modalities import RUNNABLE_ACTIVITY_KINDS
 from bernstein.core.skills.catalog.signature import (
     ManifestSignatureError,
     VerificationOutcome,
@@ -126,12 +127,16 @@ class TeamRoleSpec:
             :attr:`~bernstein.core.orchestration.activity.ActivityKind.CODING`,
             the modality the deterministic scheduler is already validated for.
 
-            The key is parsed, validated against the known modalities, and
-            round-tripped into the canonical manifest. It is **not read on the
-            execution path**: a role declaring ``research`` runs exactly as it
-            would without the key. Dispatching on it is tracked in #2996 and
-            #3110; see "Reachability today" in
-            ``docs/operations/activity-boundary.md``.
+            The key is parsed, validated against
+            :data:`~bernstein.core.orchestration.activity_modalities.RUNNABLE_ACTIVITY_KINDS`
+            -- the modalities something in this tree actually runs -- and
+            round-tripped into the canonical manifest. A modality with no
+            worker is refused at load rather than accepted and downgraded.
+
+            The accepted value is still **not read on the execution path**: a
+            role declaring ``research`` runs exactly as it would without the
+            key. Dispatching on it is tracked in #2996 and #3110; see
+            "Reachability today" in ``docs/operations/activity-boundary.md``.
     """
 
     role: str
@@ -281,13 +286,18 @@ def _parse_role_entry(index: int, raw: object, *, context: str) -> TeamRoleSpec:
     if raw_kind is not None:
         if not isinstance(raw_kind, str):
             raise TeamManifestValidationError(f"{context}: roles[{index}].agent_kind must be a string")
+        valid = ", ".join(sorted(k.value for k in RUNNABLE_ACTIVITY_KINDS))
         try:
             agent_kind = ActivityKind(raw_kind)
         except ValueError as exc:
-            valid = ", ".join(sorted(k.value for k in ActivityKind))
             raise TeamManifestValidationError(
                 f"{context}: roles[{index}].agent_kind {raw_kind!r} is not one of: {valid}"
             ) from exc
+        if agent_kind not in RUNNABLE_ACTIVITY_KINDS:
+            raise TeamManifestValidationError(
+                f"{context}: roles[{index}] (role {role!r}) declares agent_kind {agent_kind.value!r}, "
+                f"which no worker in this tree runs; accepted modalities are: {valid}"
+            )
 
     return TeamRoleSpec(
         role=role,
