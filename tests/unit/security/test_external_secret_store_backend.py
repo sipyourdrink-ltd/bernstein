@@ -137,7 +137,7 @@ class TestContractEndToEnd:
 
     def test_store_reported_expiry_caps_the_token_window(self, tmp_path) -> None:
         """2. A credential the store issues for less than the config TTL shortens the token."""
-        broker, ledger, store, now = _build(tmp_path)
+        broker, ledger, _store, now = _build(tmp_path)
         grant = _issue(ledger)
         token = broker.mint(
             secret_name=SECRET_NAME,
@@ -165,7 +165,7 @@ class TestContractEndToEnd:
 class TestNoSecretValueOnChain:
     def test_no_secret_value_appears_in_any_chain_event(self, tmp_path) -> None:
         """4. Load-bearing: scan every chain record for the credential value."""
-        broker, ledger, store, _ = _build(tmp_path)
+        broker, ledger, _store, _ = _build(tmp_path)
         grant = _issue(ledger)
         token = broker.mint(secret_name=SECRET_NAME, task_id="t-1", grant=grant)
         broker.revoke(token.token_id)
