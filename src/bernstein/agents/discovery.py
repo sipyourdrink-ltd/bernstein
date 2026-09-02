@@ -41,6 +41,11 @@ class DirectoryEntry:
         agents: Number of agents found in this directory.
         last_sync: ISO-8601 timestamp of the last sync.
         enabled: Whether this directory is active.
+        content_digest: SHA-256 digest of the directory content as it was
+            read, empty for sources whose content is not read locally
+            (GitHub/npm search hits). Recorded for refused directories too,
+            so a refusal reports what is on disk rather than only what was
+            pinned.
     """
 
     name: str
@@ -50,6 +55,7 @@ class DirectoryEntry:
     agents: int = 0
     last_sync: str | None = None
     enabled: bool = True
+    content_digest: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to JSON-compatible dict."""
@@ -61,6 +67,7 @@ class DirectoryEntry:
             "agents": self.agents,
             "last_sync": self.last_sync,
             "enabled": self.enabled,
+            "content_digest": self.content_digest,
         }
 
     @classmethod
@@ -74,6 +81,7 @@ class DirectoryEntry:
             agents=d.get("agents", 0),
             last_sync=d.get("last_sync"),
             enabled=d.get("enabled", True),
+            content_digest=d.get("content_digest", ""),
         )
 
 
@@ -308,6 +316,12 @@ class AgentDiscovery:
         OFF by default: when *enabled* is False, makes zero filesystem reads outside
         the project directory and returns an empty list.
 
+        Every directory that is read records the digest of its content on the
+        returned entry, whether it was admitted or refused, so the registry can
+        say what was loaded and from where. A directory pinned by an
+        ``agents.lock`` whose digest no longer matches is returned disabled
+        rather than dropped.
+
         Args:
             enabled: Explicit opt-in flag. Must be True to perform discovery.
 
@@ -336,18 +350,24 @@ class AgentDiscovery:
             agent_count = 0
             is_refused = False
 
+            # The digest of what is on disk right now. Computed for every
+            # directory, pinned or not: it is the answer to "at what digest"
+            # that the registry has to carry, and a refusal reports the
+            # content actually present rather than the pin it failed.
+            try:
+                actual_digest = compute_catalog_digest(hdir)
+            except OSError:
+                actual_digest = ""
+                is_refused = True
+
             # Lockfile digest verification (#3973)
             lock_file = hdir / "agents.lock"
-            if lock_file.is_file():
+            if not is_refused and lock_file.is_file():
                 try:
                     data = json.loads(lock_file.read_text(encoding="utf-8"))
                     expected_digest = data.get("content_digest", "") if isinstance(data, dict) else ""
-                    if not expected_digest:
+                    if not expected_digest or actual_digest != expected_digest:
                         is_refused = True
-                    else:
-                        actual_digest = compute_catalog_digest(hdir)
-                        if actual_digest != expected_digest:
-                            is_refused = True
                 except (json.JSONDecodeError, UnicodeDecodeError, OSError):
                     # A lockfile that is present but unusable - malformed JSON, undecodable
                     # bytes, or an unreadable file under it - refuses the directory rather
@@ -363,6 +383,7 @@ class AgentDiscovery:
                     agents=0,
                     last_sync=_now_iso(),
                     enabled=False,
+                    content_digest=actual_digest,
                 )
                 self.directories.append(entry)
                 added.append(entry)
@@ -382,6 +403,7 @@ class AgentDiscovery:
                 agents=agent_count,
                 last_sync=_now_iso(),
                 enabled=True,
+                content_digest=actual_digest,
             )
             self.directories.append(entry)
             added.append(entry)
