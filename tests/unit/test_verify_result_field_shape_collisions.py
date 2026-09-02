@@ -1,12 +1,13 @@
 """One field shape must mean one type.
 
 A verification result is the most-copied shape in this repository. Eight
-separate classes declare exactly ``(ok, reason, receipt)`` under eight names,
-another five declare ``(errors, ok)``, four declare ``(detail, name, passed)``.
-Every one of them means the same thing - did the check pass, and why - but no
-two are related, so a caller that wants to handle "any verification result"
-either hand-writes an adapter per class or, far more often, is hardcoded to
-exactly one of them.
+separate classes declared exactly ``(ok, reason, receipt)`` under eight names -
+they are now specialisations of one :class:`~bernstein.core.verify_result.VerifyResult`
+- and five more still declare ``(errors, ok)``, four declare
+``(detail, name, passed)``. Every one of them means the same thing - did the
+check pass, and why - but no two are related, so a caller that wants to handle
+"any verification result" either hand-writes an adapter per class or, far more
+often, is hardcoded to exactly one of them.
 
 The duplicates were never decided on; they accumulated one module at a time,
 each author reasonably declaring a small local result type rather than hunting
@@ -376,11 +377,11 @@ def test_sbom_finding_and_response_dto_stay_deliberately_split() -> None:
 def test_verify_result_subclasses_expose_ok_reason_receipt() -> None:
     """Every migrated receipt verifier answers "did it pass, and why" the same way.
 
-    The eight names survive as specialisations of the one base type - the
-    issue's "subclass" in the sense that matters here, since a specialisation
-    of a generic dataclass is the base class with its receipt slot pinned. The
-    property under test is that a caller holding any of them can read ``ok``,
-    ``reason`` and ``receipt`` without knowing which verifier produced it.
+    The eight names survive as specialisations of the one base type: a
+    specialisation of a generic dataclass is that base class with its receipt
+    slot pinned, so each name still says which receipt it carries. The property
+    under test is that a caller holding any of them can read ``ok``, ``reason``
+    and ``receipt`` without knowing which verifier produced it.
     """
     from bernstein.core.cost.scheduling.receipt import DispatchVerifyResult
     from bernstein.core.orchestration.escalation import EscalationVerifyResult
