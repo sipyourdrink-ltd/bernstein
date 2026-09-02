@@ -205,7 +205,7 @@ def test_unrecognised_kind_via_cli_exits_distinctly_from_a_failed_verification(t
 # ---------------------------------------------------------------------------
 # test_json_shape_identical_across_kinds
 # ---------------------------------------------------------------------------
-# Local stand-in for #5099's shared result type: every registered verifier
+# The property the dispatcher exists to guarantee: every registered verifier
 # returns the same VerifyOutcome field set no matter which of the 55 original
 # commands used to own the kind.
 

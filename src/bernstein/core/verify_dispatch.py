@@ -9,14 +9,20 @@ call site regardless of kind.
 
 Two upstream pieces this module deliberately does not build:
 
-* the shared result type every verifier is meant to converge on is #5099's
-  scope; :class:`VerifyOutcome` here is a local, minimal stand-in carrying
-  the same shape (``ok``, ``kind``, ``exit_code``, ``message``, ``detail``)
-  and is expected to be replaced once #5099 lands.
+* :class:`VerifyOutcome` is not
+  :class:`~bernstein.core.verify_result.VerifyResult`. That type answers
+  "did this receipt read back intact, and why" (``ok``, ``reason``,
+  ``receipt``); a dispatcher additionally has to report which kind it routed
+  to and what process exit code the CLI should return, neither of which
+  ``VerifyResult`` carries. Reconciling the two -- whether the dispatcher
+  wraps a ``VerifyResult`` or ``VerifyResult`` grows a kind -- is its own
+  decision, not this slice's.
 * the registry helper (duplicate-id detection at load, decision-record
   history) is #5104's scope; :data:`_REGISTRY` here is a plain dict with
-  just enough duplicate-safety to be usable now, swapped for the shared
-  registry once #5104 ships.
+  just enough duplicate-safety to be usable now. Adopting
+  :class:`~bernstein.core.registry_guard.DuplicateGuard` for the duplicate
+  half is follow-up under #5104, which also wants the load-time and
+  decision-record behaviour the guard does not cover.
 
 Kind detection is field-first with a sniffing fallback: an artefact whose
 top-level JSON object carries a ``"kind"`` string matching a registered kind
@@ -51,12 +57,15 @@ class DuplicateVerifierKindError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class VerifyOutcome:
-    """Local stand-in for the shared verify-result type #5099 will define.
+    """What a registered verifier reports back to the dispatcher.
 
     Every registered verifier returns this same shape, which is the property
     the dispatcher exists to guarantee: a caller checking ``ok``/``exit_code``
     never needs to know which of the 55 original commands used to own this
-    artefact kind.
+    artefact kind. Distinct from
+    :class:`~bernstein.core.verify_result.VerifyResult`, which reports an
+    offline receipt check rather than a routed dispatch -- see the module
+    docstring.
     """
 
     kind: str
