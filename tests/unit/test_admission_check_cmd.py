@@ -15,13 +15,7 @@ from click.testing import CliRunner
 
 from bernstein.cli.commands.admission_cmd import admission_group
 
-_POLICY = (
-    "admission:\n"
-    "  rules:\n"
-    "    - id: approved-adapters\n"
-    "      effect: allow\n"
-    "      adapters: [claude]\n"
-)
+_POLICY = "admission:\n  rules:\n    - id: approved-adapters\n      effect: allow\n      adapters: [claude]\n"
 
 _ROLES = (
     "role_model_policy:\n"
