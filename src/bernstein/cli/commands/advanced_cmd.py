@@ -1418,7 +1418,7 @@ def trace_export_cmd(
     """
     # Gate on trace extra
     try:
-        import agentrust_trace as _trace_lib  # type: ignore[import-untyped,unused-ignore]
+        import agentrust_trace as _trace_lib  # type: ignore[import-untyped, unused-ignore, import-not-found]
 
         del _trace_lib
     except ImportError:

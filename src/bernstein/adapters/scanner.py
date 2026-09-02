@@ -182,18 +182,25 @@ class ScannerAdapter(ABC):
 
     # --- inherited network + rate-limit infra ------------------------------
 
-    def enforce_network_policy(self) -> None:
-        """Refuse to scan when a declared endpoint is denied by the policy.
+    def enforce_network_policy(self, *extra_endpoints: tuple[str, int | None]) -> None:
+        """Refuse to scan when a declared or per-call endpoint is denied by the policy.
 
-        No-op when :attr:`external_endpoints` is empty (pure local scanner) or
+        Checks the class-level :attr:`external_endpoints` declaration (fixed
+        destinations known at import time, e.g. a cloud API) plus any
+        ``extra_endpoints`` the caller passes in - the concrete destination a
+        per-call scan is actually about to dial, for adapters like Nmap whose
+        target is a caller-supplied argument rather than a class attribute.
+
+        No-op when neither yields anything to check (pure local scanner) or
         when the policy is unrestricted.
         """
-        if not self.external_endpoints:
+        endpoints: tuple[tuple[str, int | None], ...] = tuple(self.external_endpoints) + extra_endpoints
+        if not endpoints:
             return
         from bernstein.core.security.network_policy import policy_from_env
 
         policy = policy_from_env()
-        for host, port in self.external_endpoints:
+        for host, port in endpoints:
             policy.check(host, port, source=f"scanner:{self.name()}")
 
     @property
