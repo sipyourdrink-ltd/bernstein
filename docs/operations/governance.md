@@ -147,5 +147,7 @@ decision is also mirrored into the HMAC audit chain as a `governance.decision`
 event, so an operator can confirm from the chain alone that a decision bound the
 claimed inputs to a named spine entry.
 
-Inventory topology (a different group) is `bernstein govern inventory --render`.
-See [govern inventory --render](govern-inventory.md).
+Inventory topology is a sibling subcommand of the same group,
+`bernstein govern inventory --render`. It reads an inventory store rather than
+the audit chain, so it verifies nothing; see
+[govern inventory --render](govern-inventory.md).

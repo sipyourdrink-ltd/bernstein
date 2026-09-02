@@ -452,6 +452,7 @@ nav:
           - Lethal trifecta: security/lethal-trifecta.md
           - Coordinated disclosure: security/bug-bounty.md
           - Log redaction: security/log-redaction.md
+          - Tool-output redaction: security/tool-output-redaction.md
           - PII scan gate: security/pii-scan-gate.md
       - Compliance & audit:
           - Compliance overview: operations/compliance.md
@@ -498,6 +499,7 @@ nav:
           - Worker contracts: operations/worker-contracts.md
           - Model policy: operations/MODEL_POLICY.md
           - Ticket schema: sdd/ticket_schema.md
+          - Design tokens: design/tokens.md
           - Adapter capability contract: adapters/capability_contract.md
           - Global config CLI: operations/global-config.md
           - Workflow manifests: operations/workflow-manifests.md
@@ -666,6 +668,7 @@ nav:
           - Audit-chain default cost: decisions/010-audit-chain-default-cost.md
   - Contribute:
       - contributing/index.md
+      - Project pulse: project-pulse.md
       - Code review process: CODE_REVIEW.md
       - Testing & CI hardening: contributing/testing.md
       - Lifecycle hooks contract: contributing/hooks.md

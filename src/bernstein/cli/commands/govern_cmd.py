@@ -3,6 +3,11 @@
 Issue #5133. ``--render`` copies the ``click.Choice`` wiring of
 ``graph_cmd.graph_tasks`` (``--format`` at ``graph_cmd.py:129-141``). The
 walk itself is the inventory store, not the task DAG.
+
+The command is a standalone ``click.Command`` rather than its own group:
+``govern`` already exists in ``governance_cmd`` (``verify`` / ``plan`` /
+``discover`` / ``ingest``), and ``main`` attaches this one onto that group so
+``inventory`` joins the existing surface instead of shadowing it.
 """
 
 from __future__ import annotations
@@ -16,16 +21,7 @@ EXIT_OK = 0
 EXIT_STORE = 1
 
 
-@click.group("govern")
-def govern_group() -> None:
-    """Govern an enumerated agent surface.
-
-    \b
-      bernstein govern inventory --render mermaid|dot --store PATH
-    """
-
-
-@govern_group.command("inventory")
+@click.command("inventory")
 @click.option(
     "--render",
     "output_format",
@@ -57,3 +53,6 @@ def govern_inventory_cmd(output_format: str, store_path: Path) -> None:
         click.echo(str(exc), err=True)
         raise SystemExit(EXIT_STORE) from exc
     raise SystemExit(EXIT_OK)
+
+
+__all__ = ["govern_inventory_cmd"]

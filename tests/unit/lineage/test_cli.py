@@ -166,6 +166,59 @@ def test_chain_unknown_artefact(tmp_path: Path) -> None:
     assert result.exit_code == 1
 
 
+# ── export-prov (issue #5039) ─────────────────────────────────────────────
+
+
+def test_export_prov_json_embeds_content_hash(tmp_path: Path) -> None:
+    root = _mk_entry("agent:a", "k1", "x.py", _h("1"), [], 1)
+    child = _mk_entry("agent:a", "k1", "x.py", _h("2"), [entry_hash(root)], 2)
+    log, _cards, *_ = _write_setup(tmp_path, [root, child])
+    runner = CliRunner()
+    result = runner.invoke(lineage_cmd, ["export-prov", "x.py", "--log", str(log)])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert _h("2") in json.dumps(payload)
+    assert _h("1") in json.dumps(payload)
+
+
+def test_export_prov_turtle_contains_derivation(tmp_path: Path) -> None:
+    root = _mk_entry("agent:a", "k1", "x.py", _h("1"), [], 1)
+    child = _mk_entry("agent:a", "k1", "x.py", _h("2"), [entry_hash(root)], 2)
+    log, _cards, *_ = _write_setup(tmp_path, [root, child])
+    runner = CliRunner()
+    result = runner.invoke(lineage_cmd, ["export-prov", "x.py", "--format", "turtle", "--log", str(log)])
+    assert result.exit_code == 0, result.output
+    assert "prov:wasDerivedFrom" in result.output
+
+
+def test_export_prov_unknown_artefact_exits_nonzero(tmp_path: Path) -> None:
+    g = _mk_entry("agent:a", "k1", "x.py", _h("1"), [], 1)
+    log, _cards, *_ = _write_setup(tmp_path, [g])
+    runner = CliRunner()
+    result = runner.invoke(lineage_cmd, ["export-prov", "other.py", "--log", str(log)])
+    assert result.exit_code == 1
+
+
+def test_export_prov_unresolved_fork_exits_nonzero(tmp_path: Path) -> None:
+    root = _mk_entry("agent:a", "k1", "x.py", _h("1"), [], 1)
+    fork_a = _mk_entry("agent:a", "k1", "x.py", _h("2"), [entry_hash(root)], 2)
+    fork_b = _mk_entry("agent:a", "k1", "x.py", _h("3"), [entry_hash(root)], 3)
+    log, _cards, *_ = _write_setup(tmp_path, [root, fork_a, fork_b])
+    runner = CliRunner()
+    result = runner.invoke(lineage_cmd, ["export-prov", "x.py", "--log", str(log)])
+    assert result.exit_code == 1
+
+
+def test_export_prov_writes_output_file(tmp_path: Path) -> None:
+    g = _mk_entry("agent:a", "k1", "x.py", _h("1"), [], 1)
+    log, _cards, *_ = _write_setup(tmp_path, [g])
+    out = tmp_path / "out.json"
+    runner = CliRunner()
+    result = runner.invoke(lineage_cmd, ["export-prov", "x.py", "--log", str(log), "--output", str(out)])
+    assert result.exit_code == 0, result.output
+    assert _h("1") in out.read_text()
+
+
 # ── reindex ─────────────────────────────────────────────────────────────────
 
 

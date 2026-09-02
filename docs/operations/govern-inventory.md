@@ -33,4 +33,4 @@ Exit codes: `0` emitted, `1` store unreadable or not a JSON object, `2` usage
 (missing `--render` / `--store`).
 
 See also [`bernstein graph tasks --format mermaid`](cli-reference.md) (task DAG,
-not this store) and [governance verify](governance.md).
+not this store) and [govern verify](governance.md).
