@@ -253,6 +253,7 @@ _SPECS: tuple[ComplianceCheckSpec, ...] = (
         function_name="check_sdd_state_directory",
         source="artifact",
         asserts="the state directory exists; not that it holds valid state",
+        dir_locators=(".sdd",),
     ),
     ComplianceCheckSpec(
         check_id="CMP-018",

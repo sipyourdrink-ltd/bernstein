@@ -242,3 +242,19 @@ def test_profile_selects_required_ids_without_asserting_conformance() -> None:
     by_function = {spec.function_name: spec.check_id for spec in iter_compliance_checks()}
     expected = {by_function[rule.check_function_name] for rule in get_framework_rules(ComplianceFramework.SOC2)}
     assert required == expected
+
+
+# 10 ------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("populated", [True, False])
+def test_no_measured_finding_ever_carries_empty_evidence(
+    populated: bool,  # noqa: FBT001 - parametrised over both install shapes
+    configured_project: Path,
+    bare_project: Path,
+) -> None:
+    """A measured verdict without evidence is a claim with nothing behind it."""
+    root = configured_project if populated else bare_project
+    for outcome in run_compliance_checks(root):
+        if outcome.verdict is CheckVerdict.MEASURED:
+            assert outcome.evidence, outcome.check_id
