@@ -13,6 +13,7 @@ import {
   ListChecks,
   Moon,
   Network,
+  Scale,
   ScrollText,
   Search,
   Settings as SettingsIcon,
@@ -29,11 +30,12 @@ import { CommandPalette } from './CommandPalette';
 
 type GuiMeta = { version: string; commit: string; build_time: string };
 
-const NAV = [
+export const NAV = [
   { to: '/tasks', label: 'Tasks', icon: ListChecks, key: 'tasks' as const },
   { to: '/agents', label: 'Agents', icon: Activity, key: 'agents' as const },
   { to: '/approvals', label: 'Approvals', icon: ShieldCheck, key: 'approvals' as const },
   { to: '/audit', label: 'Audit', icon: ScrollText, key: 'audit' as const },
+  { to: '/governance', label: 'Governance', icon: Scale, key: 'governance' as const },
   { to: '/costs', label: 'Costs', icon: DollarSign, key: 'costs' as const },
   { to: '/missions', label: 'Missions', icon: Target, key: 'missions' as const },
   { to: '/fleet', label: 'Fleet', icon: Network, key: 'fleet' as const },

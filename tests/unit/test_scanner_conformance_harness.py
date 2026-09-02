@@ -131,6 +131,47 @@ def test_replay_step_compares_the_pinned_transcript() -> None:
     assert "transcript differs" in result.message
 
 
+def test_conformance_transcript_anchored_check_uses_the_invocation_digest() -> None:
+    """A matching transcript is not enough: the invocation has to be the same one.
+
+    The transcript cannot carry this. Nmap records the hosts and ports it FOUND, never
+    the ones requested, so a replay of a different target that also finds nothing
+    matches byte for byte - and the replay passed on evidence that proved nothing
+    (#5151).
+    """
+    _reset(result=ScanResult(findings=[], transcript="t", invocation_digest="ran-something-else"))
+    step = ScannerTranscriptStep(expected_transcript="t", expected_invocation_digest="what-was-recorded")
+
+    result = ScannerConformanceHarness().replay_step(_RecordingScanner(), step, 0)
+
+    assert not result.passed
+    assert "invocation digest" in result.message
+
+
+def test_a_matching_invocation_digest_does_not_fail_the_replay() -> None:
+    """The over-correction guard: a faithful replay must still pass."""
+    _reset(result=ScanResult(findings=[], transcript="t", invocation_digest="the-same-one"))
+    step = ScannerTranscriptStep(expected_transcript="t", expected_invocation_digest="the-same-one")
+
+    result = ScannerConformanceHarness().replay_step(_RecordingScanner(), step, 0)
+
+    assert result.passed, result.message
+
+
+def test_a_transcript_pinned_without_an_invocation_digest_is_unchanged() -> None:
+    """Existing golden transcripts carry no digest and must keep passing.
+
+    The field is optional, so a recorded corpus predating it is not retroactively
+    failed for holding evidence it could not have had.
+    """
+    _reset(result=ScanResult(findings=[], transcript="t", invocation_digest="anything"))
+    step = ScannerTranscriptStep(expected_transcript="t")
+
+    result = ScannerConformanceHarness().replay_step(_RecordingScanner(), step, 0)
+
+    assert result.passed, result.message
+
+
 def test_replay_step_matches_an_expected_exception() -> None:
     _reset(raise_exc=RuntimeError)
     step = ScannerTranscriptStep(expect_exception="RuntimeError")

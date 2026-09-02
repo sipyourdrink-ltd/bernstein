@@ -631,6 +631,39 @@ class BernsteinSpec:
         """
 
     @hookspec
+    def provide_secret_store(self) -> Any:
+        """Provide one or more external secret-store registrations.
+
+        An external secret store is the operator's own store -- their Vault,
+        their cloud secret manager, their credential broker -- used as a
+        backend behind
+        :class:`bernstein.core.security.external_secret_store.ExternalSecretStore`.
+        The store resolves a named secret, mints a short-lived credential, and
+        reports a revocation; the credential value never enters the audit
+        chain, only the grant, the store identity, the audience and the expiry.
+
+        Stores ship as plugins so a vendor SDK import stays out of
+        ``bernstein.core``. Plugins implementing this hook return one of:
+
+        * ``None`` -- opt out for this call.
+        * A single
+          :class:`bernstein.core.security.secret_store_registry.SecretStoreRegistration`.
+        * A ``(name, factory)`` tuple where ``factory`` constructs the store
+          when called with keyword arguments.
+        * A list containing any mix of the above.
+
+        The registered name is the store half of a secret reference, so a
+        store registered as ``"acme"`` serves ``secret_name="acme:db/password"``.
+        Duplicate names are skipped with a warning; the first wins.
+
+        Construction is deferred until the broker resolves the store by name,
+        so factories may do non-trivial work (TLS handshake, auth login).
+
+        Returns:
+            A registration, list of registrations, or ``None``.
+        """
+
+    @hookspec
     def on_metric_record(
         self,
         metric_type: str,
