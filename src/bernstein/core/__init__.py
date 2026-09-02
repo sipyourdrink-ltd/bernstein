@@ -593,8 +593,9 @@ _REDIRECT_MAP: dict[str, str] = {
 #: with unrelated types that both answered "who is this agent". Both moved into
 #: ``core/identity/`` (issue #5097). A redirect entry would have forwarded the
 #: old paths silently and left callers straddling two namespaces indefinitely,
-#: so these fail the import and name where the contents went. Kept for one
-#: release, then deleted along with the finder below.
+#: so these fail the import and name where the contents went. Every production
+#: caller is migrated in the same change, so the tombstone period starts at
+#: v3.19.0: this map and the finder below are deleted together one release later.
 _TOMBSTONE_MAP: dict[str, str] = {
     "agents.agent_identity": "bernstein.core.identity.agent_jwt",
     "security.agent_identity": "bernstein.core.identity.agent_card",
