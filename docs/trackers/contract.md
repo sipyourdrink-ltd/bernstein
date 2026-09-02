@@ -154,6 +154,47 @@ present in `bernstein.yaml`, the command reports `status: skipped` with
 the missing-argument error rather than failing. This makes the same
 invocation safe to run in ephemeral CI environments.
 
+## Synthetic transaction
+
+`bernstein trackers test` proves an adapter is *reachable*. It does not
+prove it is right: a status id can map to the wrong workflow state and a
+comment can land on the wrong field while the smoke test stays green.
+
+`bernstein.core.trackers.synthetic` drives the stronger check. It creates
+one throwaway entity through the adapter, runs an ordered list of
+validator callables against it, and lets the last validator delete it and
+assert absence:
+
+```python
+from bernstein.core.trackers.synthetic import run_synthetic_transaction
+
+report = run_synthetic_transaction(adapter)
+raise SystemExit(report.exit_code)
+```
+
+Each validator prints one verdict line (`PASS` / `FAIL` / `SKIP`) and
+`report.exit_code` is non-zero if any validator failed. A validator that
+does not apply to an adapter raises `ValidatorSkipped`; a skip is not a
+failure. Adding a check is appending one callable to
+`DEFAULT_VALIDATORS`, with the deleting validator staying last.
+
+Every entity is titled with a deterministic, date-derived marker
+(`bernstein-synthetic-<tracker>-<YYYYMMDD>`). Trackers assign their own
+ids, so the marker -- not the id -- is what a re-run can predict: two runs
+on the same UTC day compute the same marker, so a run that aborts halfway
+leaves a leftover the next run recognises and sweeps.
+
+Hosting a throwaway entity is optional, and deliberately not part of
+`AbstractTrackerAdapter`: the hot path never creates or deletes tickets,
+and a general-purpose delete on the shared contract would be reachable by
+accident. An adapter opts in by implementing three methods --
+`create_probe_ticket`, `find_probe_tickets`, `delete_probe_ticket` --
+where the delete reads the entity back and refuses any whose title does
+not carry the marker. Adapters that do not implement them are refused
+with `SyntheticProbeUnsupported`; the runner has no per-adapter branch.
+
+`GitLabAdapter` is the reference implementation.
+
 ## Reference fake
 
 `tests/fixtures/trackers/in_memory_tracker.py` ships a deterministic
