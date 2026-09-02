@@ -30,7 +30,11 @@ from bernstein.core.memory.compaction import auto as auto_tier
 from bernstein.core.memory.compaction import micro as micro_tier
 from bernstein.core.memory.compaction import session_memory as session_tier
 from bernstein.core.memory.compaction import time_based as time_tier
-from bernstein.core.memory.compaction.tiers import TIER_COST_WEIGHT, estimate_tokens
+from bernstein.core.memory.compaction.tiers import (
+    COMPACTION_POLICY_VERSION,
+    TIER_COST_WEIGHT,
+    estimate_tokens,
+)
 from bernstein.core.memory.compaction.verification import (
     compute_referenced_content_hashes,
     compute_source_content_hash,
@@ -579,3 +583,110 @@ class TestLegacyShim:
 )
 def test_estimate_tokens(text: str, expected_floor: int) -> None:
     assert estimate_tokens(text) == expected_floor
+
+
+# ---------------------------------------------------------------------------
+# Deterministic structural tiers (Issue #2915)
+# ---------------------------------------------------------------------------
+
+
+class TestStructuralTierDeterminism:
+    """The LLM-free tiers must be a pure, versioned fold of their input.
+
+    ``micro`` and ``time_based`` do no model call, so two runs over a
+    byte-identical ``TierContext`` have to produce a byte-identical
+    ``TierResult`` -- including the correlation id that ties the event to
+    the trace store. Anything derived from process-local entropy makes the
+    recorded compaction event unreproducible on replay.
+    """
+
+    @staticmethod
+    def _micro_ctx(session_id: str = "s", turn_count: int = 3) -> TierContext:
+        return TierContext(
+            session_id=session_id,
+            context_text=_tool_result_block("E" * 900),
+            pressure=BudgetPressure(turn_count=turn_count, context_pct_used=0.2),
+        )
+
+    @staticmethod
+    def _time_ctx(session_id: str = "s", turn_count: int = 3) -> TierContext:
+        text = "[age:9] stale block\nbody line\n[age:1] fresh block\nkept line\n"
+        return TierContext(
+            session_id=session_id,
+            context_text=text,
+            pressure=BudgetPressure(
+                turn_count=turn_count,
+                context_pct_used=0.2,
+                idle_seconds=400.0,
+            ),
+        )
+
+    def test_structural_tier_result_is_byte_identical_across_runs(self) -> None:
+        micro_ctx = self._micro_ctx()
+        assert micro_tier.compact(micro_ctx).to_dict() == micro_tier.compact(micro_ctx).to_dict()
+
+        time_ctx = self._time_ctx()
+        assert time_tier.compact(time_ctx).to_dict() == time_tier.compact(time_ctx).to_dict()
+
+    def test_structural_correlation_id_keeps_its_tier_prefix_shape(self) -> None:
+        micro_id = micro_tier.compact(self._micro_ctx()).correlation_id
+        time_id = time_tier.compact(self._time_ctx()).correlation_id
+        assert micro_id.startswith("compact-micro-")
+        assert time_id.startswith("compact-time-")
+        assert len(micro_id.removeprefix("compact-micro-")) == 8
+        assert len(time_id.removeprefix("compact-time-")) == 8
+
+    def test_structural_correlation_id_differs_across_turns_in_one_session(self) -> None:
+        first = micro_tier.compact(self._micro_ctx(turn_count=3)).correlation_id
+        second = micro_tier.compact(self._micro_ctx(turn_count=4)).correlation_id
+        assert first != second
+
+    def test_structural_correlation_id_differs_across_sessions(self) -> None:
+        first = micro_tier.compact(self._micro_ctx(session_id="s1")).correlation_id
+        second = micro_tier.compact(self._micro_ctx(session_id="s2")).correlation_id
+        assert first != second
+
+    def test_structural_correlation_id_tracks_the_compacted_content(self) -> None:
+        base = self._micro_ctx()
+        changed = TierContext(
+            session_id=base.session_id,
+            context_text=_tool_result_block("F" * 900),
+            pressure=base.pressure,
+        )
+        assert micro_tier.compact(base).correlation_id != micro_tier.compact(changed).correlation_id
+
+    def test_structural_tiers_record_the_compaction_policy_version(self) -> None:
+        micro_result = micro_tier.compact(self._micro_ctx())
+        time_result = time_tier.compact(self._time_ctx())
+        assert micro_result.policy_version == COMPACTION_POLICY_VERSION
+        assert time_result.policy_version == COMPACTION_POLICY_VERSION
+        assert micro_result.to_dict()["policy_version"] == COMPACTION_POLICY_VERSION
+
+    def test_llm_backed_tiers_keep_uuid_correlation_ids_and_no_policy_version(self) -> None:
+        # ``auto`` and ``session_memory`` route through CompactionPipeline with
+        # an optional model call, so they cannot claim a reproducible fold.
+        ctx = TierContext(
+            session_id="s",
+            context_text="\n".join(f"# section {i}\n" + "detail " * 40 for i in range(20)),
+            pressure=BudgetPressure(turn_count=3, context_pct_used=0.85),
+        )
+        first = auto_tier.compact(ctx)
+        second = auto_tier.compact(ctx)
+        assert first.correlation_id.startswith("compact-auto-")
+        assert first.correlation_id != second.correlation_id
+        assert first.policy_version == ""
+
+        session_result = session_tier.compact(ctx)
+        assert session_result.correlation_id.startswith("compact-session-")
+        assert session_result.policy_version == ""
+
+    def test_from_dict_defaults_policy_version_for_legacy_records(self) -> None:
+        restored = TierResult.from_dict(
+            {
+                "tier": "micro",
+                "before_tokens": 100,
+                "after_tokens": 50,
+                "correlation_id": "compact-micro-deadbeef",
+            }
+        )
+        assert restored.policy_version == ""

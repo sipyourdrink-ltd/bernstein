@@ -22,6 +22,7 @@ Tier              Trigger                      Cost / recall
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
@@ -32,6 +33,14 @@ from bernstein.core import defaults
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
+
+
+#: Version of the structural compaction policy: the closed set of rules the
+#: LLM-free tiers apply (which regions are collapsed, by which thresholds, and
+#: how the correlation id is derived). Bump it whenever a change alters the
+#: bytes a structural tier produces or the id it derives, so a recorded result
+#: says which fold produced it and an old record still names its own version.
+COMPACTION_POLICY_VERSION: str = "1"
 
 
 class Tier(StrEnum):
@@ -96,6 +105,7 @@ class TierResultDict(TypedDict):
     reason: str
     source_content_hash: str
     referenced_content_hashes: dict[str, str]
+    policy_version: str
 
 
 @dataclass(frozen=True)
@@ -112,6 +122,9 @@ class TierResult:
         cost_estimate: Estimated USD cost attributed to this tier.
         correlation_id: Correlation id tying the event to the trace store.
         reason: Human-readable trigger reason.
+        policy_version: :data:`COMPACTION_POLICY_VERSION` when a deterministic
+            structural tier produced this result, empty when the tier routed
+            through a model call and so cannot claim a reproducible fold.
     """
 
     tier: Tier
@@ -123,6 +136,7 @@ class TierResult:
     cost_estimate: float = 0.0
     correlation_id: str = ""
     reason: str = ""
+    policy_version: str = ""
 
     @property
     def tokens_saved(self) -> int:
@@ -141,6 +155,7 @@ class TierResult:
             reason=self.reason,
             source_content_hash=self.source_content_hash,
             referenced_content_hashes=dict(self.referenced_content_hashes),
+            policy_version=self.policy_version,
         )
 
     @classmethod
@@ -158,7 +173,53 @@ class TierResult:
             cost_estimate=float(d.get("cost_estimate", 0.0)),
             correlation_id=str(d.get("correlation_id", "")),
             reason=str(d.get("reason", "")),
+            policy_version=str(d.get("policy_version", "")),
         )
+
+
+#: Number of hex characters kept from the derived digest. Matches the width the
+#: ``uuid4``-based ids used before the structural tiers became deterministic, so
+#: existing readers of ``compact-<tier>-<id>`` keep working unchanged.
+_CORRELATION_ID_HEX_WIDTH: int = 8
+
+#: Field separator for the correlation-id pre-image. NUL cannot occur in a
+#: session id or in the context text the tiers fold, so the encoding is
+#: unambiguous and two different field tuples cannot hash to the same id.
+_PREIMAGE_SEP: str = "\x00"
+
+
+def derive_correlation_id(
+    prefix: str,
+    *,
+    session_id: str,
+    turn_count: int,
+    pre_text: str,
+    post_text: str,
+    policy_version: str = COMPACTION_POLICY_VERSION,
+) -> str:
+    """Derive a reproducible correlation id for a structural compaction.
+
+    The id is a function of the policy version, the session, the turn, and the
+    exact bytes the fold consumed and produced -- nothing process-local. Two
+    operators folding the same context under the same policy therefore record
+    the same id, and two compactions within one session stay distinct because
+    the turn count is part of the pre-image.
+
+    Args:
+        prefix: Short tier label placed in the id, preserving the
+            ``compact-micro-`` / ``compact-time-`` shapes already recorded.
+        session_id: Agent session being compacted.
+        turn_count: 1-based turn number for the active session.
+        pre_text: Context text handed to the fold.
+        post_text: Context text the fold produced.
+        policy_version: Version of the structural policy that ran.
+
+    Returns:
+        A ``compact-<tier>-<8 hex>`` correlation id.
+    """
+    preimage = _PREIMAGE_SEP.join((policy_version, session_id, str(turn_count), pre_text, post_text))
+    digest = hashlib.sha256(preimage.encode("utf-8")).hexdigest()
+    return f"compact-{prefix}-{digest[:_CORRELATION_ID_HEX_WIDTH]}"
 
 
 def estimate_tokens(text: str) -> int:

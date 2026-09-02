@@ -12,14 +12,15 @@ tagged with an age marker older than the cutoff are dropped.
 from __future__ import annotations
 
 import re
-import uuid
 from typing import TYPE_CHECKING
 
 from bernstein.core import defaults
 from bernstein.core.memory.compaction.tiers import (
+    COMPACTION_POLICY_VERSION,
     TIER_COST_WEIGHT,
     Tier,
     TierResult,
+    derive_correlation_id,
     estimate_tokens,
 )
 from bernstein.core.memory.compaction.verification import (
@@ -83,6 +84,11 @@ def compact(ctx: TierContext) -> TierResult:
     Args:
         ctx: Inputs for the active session.
 
+    The prune is a pure function of ``ctx.context_text`` and the
+    ``COMPACTION`` thresholds, so the whole result -- correlation id included
+    -- is reproducible: it is derived from the folded bytes rather than drawn
+    from process-local entropy.
+
     Returns:
         A :class:`TierResult` describing the age-based prune.
     """
@@ -105,6 +111,13 @@ def compact(ctx: TierContext) -> TierResult:
         source_content_hash=source_hash,
         referenced_content_hashes=ref_hashes,
         cost_estimate=cost_estimate,
-        correlation_id=f"compact-time-{uuid.uuid4().hex[:8]}",
+        correlation_id=derive_correlation_id(
+            "time",
+            session_id=ctx.session_id,
+            turn_count=ctx.pressure.turn_count,
+            pre_text=ctx.context_text,
+            post_text=compacted,
+        ),
         reason="time_based: idle cleanup",
+        policy_version=COMPACTION_POLICY_VERSION,
     )
