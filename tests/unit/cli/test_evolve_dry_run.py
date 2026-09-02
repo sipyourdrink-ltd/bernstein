@@ -285,4 +285,3 @@ class TestShowFailureDrafts:
             _show_failure_drafts(tmp_path, state_dir, github_sync=False, github_repo=None)
 
         mock_sync.assert_not_called()
-
