@@ -53,6 +53,41 @@ operators holding the same ledger compute the byte-identical total. The
 attribution dimension (`agent` / `task` / `role` / `feature_label`) is
 selectable; `agent` is the per-seat default.
 
+## Coverage: what a run can and cannot account for
+
+A screen built out of decision records only ever shows the decisions that
+exist, so it cannot show the actions no decision covers.
+`src/bernstein/core/security/governance_coverage.py` projects that gap for one
+run:
+
+| Metric | Meaning |
+|---|---|
+| `attributable_action_ratio` | Recorded actions whose actor is named as the `subject` of some decision in the run. A spine entry's `actor` is a free-form string the writing adapter supplied; a decision naming it is where the installation resolved it to a principal. |
+| `decision_coverage` | Recorded actions whose actor holds an `allow` verdict in the run. A `deny` or `refuse` attributes the actor without authorising it, so it counts in the denominator only. |
+
+Three rules keep the numbers from flattering the run:
+
+- Decision records are anchored into the same spine, so they are excluded from
+  the action count. Otherwise a run would raise its own coverage by recording
+  more decisions.
+- The journal-head seal and artifact-attempt rows are chain bookkeeping, not
+  agent actions, and are excluded the same way every other spine consumer
+  excludes them.
+- A run that recorded no actions reports `null`, not `0` and not `1`. Zero over
+  zero is absent evidence.
+
+`chain_status` travels with the numbers and carries the spine verify status
+verbatim, so a `tampered` run cannot read as a clean one that merely scored
+badly.
+
+```
+GET /governance/coverage?run_id=<run>
+```
+
+returns the canonical document. The route returns exactly the bytes
+`governance_coverage_json` produces, so a number pinned from the dashboard
+recomputes offline from `.sdd` alone.
+
 ## Guarantees
 
 - **Verifiability** - `bernstein governance verify <run>` re-resolves and

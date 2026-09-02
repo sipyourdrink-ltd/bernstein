@@ -6,9 +6,11 @@ import hashlib
 import json
 from typing import Any
 
+from bernstein.core.govern.findings import Finding, FindingsDocument
 from bernstein.core.govern.inventory_models import Inventory, Surface
 from bernstein.core.govern.plan_models import GovernPlan, PlanEntry, PlanEntryKind
 from bernstein.core.govern.playbook_models import Playbook, PlaybookClause
+from bernstein.core.govern.proposal import DraftProposal, ProposalStatus
 
 
 def compute_plan(
@@ -184,12 +186,16 @@ def _compare_values(observed: str, ceiling: str) -> int:
 
 
 __all__ = [
+    "DraftProposal",
+    "Finding",
+    "FindingsDocument",
     "GovernPlan",
     "Inventory",
     "PlanEntry",
     "PlanEntryKind",
     "Playbook",
     "PlaybookClause",
+    "ProposalStatus",
     "Surface",
     "compute_plan",
 ]

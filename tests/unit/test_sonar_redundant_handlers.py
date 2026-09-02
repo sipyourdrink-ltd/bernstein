@@ -8,7 +8,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TARGETS = (
     Path("src/bernstein/core/protocols/acp/transport.py"),
-    Path("src/bernstein/core/security/lineage_kms.py"),
+    # The adapters this guard was written for now live in key_custody.py;
+    # lineage_kms.py is the compatibility re-export.
+    Path("src/bernstein/core/security/key_custody.py"),
 )
 
 
