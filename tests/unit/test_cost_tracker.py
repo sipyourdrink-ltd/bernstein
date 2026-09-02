@@ -12,6 +12,7 @@ from bernstein.core.cost_tracker import (
     TokenUsage,
     estimate_cost,
 )
+from bernstein.core.tenanting import UNSPECIFIED_TENANT_ID
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -492,16 +493,35 @@ class TestLoadRejectsUnreadableUsageRows:
         assert tracker.spent_for_agent("ghost") == pytest.approx(0.0)
         assert [u.agent_id for u in tracker.usages] == ["a"]
 
-    def test_absent_and_blank_tenants_stay_in_the_default_scope(self, tmp_path: Path) -> None:
-        """Leniency for rows that predate the field is preserved."""
+    def test_a_blank_tenant_stays_in_the_default_scope(self, tmp_path: Path) -> None:
+        """A blank is how an unset tenant was written; it still normalizes."""
         rows = [self._row(cost_usd=1.0)]
         rows.append(self._row(cost_usd=2.0, agent_id="blank", tenant_id=""))
-        no_key = self._row(cost_usd=4.0, agent_id="absent")
-        del no_key["tenant_id"]
-        rows.append(no_key)
         self._write_run(tmp_path, "run-lenient", rows)
 
         tracker = CostTracker.load(tmp_path, "run-lenient", tenant_id="default")
 
         assert tracker is not None
-        assert tracker.spent_usd == pytest.approx(7.0)
+        assert tracker.spent_usd == pytest.approx(3.0)
+
+    def test_a_row_with_no_tenant_key_joins_no_tenant_scope(self, tmp_path: Path) -> None:
+        """A row that names no tenant is not the default tenant's spend.
+
+        It still loads - a whole-file replay counts it, so the run's own
+        total stays right - but a scoped load leaves it out, because nothing
+        in the file says whose spend it was (#5028).
+        """
+        rows = [self._row(cost_usd=1.0)]
+        no_key = self._row(cost_usd=4.0, agent_id="absent")
+        del no_key["tenant_id"]
+        rows.append(no_key)
+        self._write_run(tmp_path, "run-no-key", rows)
+
+        scoped = CostTracker.load(tmp_path, "run-no-key", tenant_id="default")
+        whole_file = CostTracker.load(tmp_path, "run-no-key")
+
+        assert scoped is not None
+        assert scoped.spent_usd == pytest.approx(1.0)
+        assert whole_file is not None
+        assert whole_file.spent_usd == pytest.approx(5.0)
+        assert [u.tenant_id for u in whole_file.usages if u.agent_id == "absent"] == [UNSPECIFIED_TENANT_ID]

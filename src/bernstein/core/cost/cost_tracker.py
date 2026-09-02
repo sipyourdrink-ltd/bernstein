@@ -39,7 +39,7 @@ from bernstein.core.persistence.anchored_write import (
     anchored_write_text,
     mkdir_anchored,
 )
-from bernstein.core.tenanting import DEFAULT_TENANT_ID, normalize_tenant_id
+from bernstein.core.tenanting import UNSPECIFIED_TENANT_ID, normalize_tenant_attribution, normalize_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -139,19 +139,24 @@ def _usage_tenant_scope(raw: object) -> str:
     ever had - so a stored value that is not a string is refused here instead
     of being invented into one.
 
-    Absent, ``null`` and blank stay lenient and resolve to the default
-    tenant: rows predate the field, and a blank is what an unset tenant was
-    written as.  Padded strings normalize, so a row stored as ``"  acme  "``
-    is read as belonging to ``acme``.
+    Absent and ``null`` read back as :data:`UNSPECIFIED_TENANT_ID`: rows
+    predate the field, and what such a row establishes is that nobody
+    supplied a tenant, not that its spend belongs to the tenant named
+    ``default`` (#5028).  A scoped load therefore leaves those rows out of
+    every tenant's totals rather than adding them to one tenant's.  Padded
+    strings normalize, so a row stored as ``"  acme  "`` is read as belonging
+    to ``acme``, and a row storing the marker reads back as the marker rather
+    than being dropped as unreadable - dropping it would lose the spend from
+    the whole-file replay as well.
 
     Raises:
         ValueError: The row carries a ``tenant_id`` that is not a string.
     """
     if raw is None:
-        return cast(str, DEFAULT_TENANT_ID)
+        return cast(str, UNSPECIFIED_TENANT_ID)
     if not isinstance(raw, str):
         raise ValueError(f"usage tenant_id must be a string, got {type(raw).__name__}")
-    return cast(str, normalize_tenant_id(raw))
+    return cast(str, normalize_tenant_attribution(raw))
 
 
 def _resolve_usage_buffer_size() -> int:
@@ -359,7 +364,9 @@ class TokenUsage:
     cost_usd: float
     agent_id: str
     task_id: str
-    tenant_id: str = "default"
+    # A row nobody gave a tenant records that, rather than claiming the
+    # tenant named ``default`` and being rolled up into its spend (#5028).
+    tenant_id: str = UNSPECIFIED_TENANT_ID
     timestamp: float = field(default_factory=time.time)
     cache_hit: bool = False  # Prompt cache hit tracking (legacy)
     cached_tokens: int = 0  # Tokens served from cache (legacy)
@@ -408,7 +415,7 @@ class TokenUsage:
             cost_usd=float(d["cost_usd"]),
             agent_id=str(d["agent_id"]),
             task_id=str(d["task_id"]),
-            tenant_id=str(d.get("tenant_id", "default") or "default"),
+            tenant_id=_usage_tenant_scope(d.get("tenant_id")),
             timestamp=float(d.get("timestamp", 0.0)),
             cache_hit=bool(d.get("cache_hit", False)),
             cached_tokens=int(d.get("cached_tokens", 0)),
@@ -674,7 +681,7 @@ class CostTracker:
         output_tokens: int,
         cost_usd: float | None = None,
         *,
-        tenant_id: str = "default",
+        tenant_id: str = UNSPECIFIED_TENANT_ID,
         cache_read_tokens: int = 0,
         cache_write_tokens: int = 0,
         role: str = "",
@@ -708,7 +715,7 @@ class CostTracker:
                 ``hard_budget_usd`` and admitting this call would breach
                 it, or when ``model`` is not in the envelope's allowlist.
         """
-        normalized_tenant = normalize_tenant_id(tenant_id)
+        normalized_tenant = normalize_tenant_attribution(tenant_id)
         if cost_usd is None:
             cost_usd = estimate_cost(
                 model,
@@ -843,7 +850,7 @@ class CostTracker:
         total_output_tokens: int,
         total_cost_usd: float | None = None,
         *,
-        tenant_id: str = "default",
+        tenant_id: str = UNSPECIFIED_TENANT_ID,
         total_cache_read_tokens: int = 0,
         total_cache_write_tokens: int = 0,
         role: str = "",
@@ -911,7 +918,7 @@ class CostTracker:
             input_tokens=delta_input,
             output_tokens=delta_output,
             cost_usd=delta_cost,
-            tenant_id=normalize_tenant_id(tenant_id),
+            tenant_id=normalize_tenant_attribution(tenant_id),
             cache_read_tokens=delta_cache_read,
             cache_write_tokens=delta_cache_write,
             role=role,

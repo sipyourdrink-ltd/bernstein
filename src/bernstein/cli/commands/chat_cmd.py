@@ -32,6 +32,7 @@ from bernstein.core.chat import (
     load_allow_list,
     load_driver,
 )
+from bernstein.core.tenanting import DEFAULT_TENANT_ID
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -511,6 +512,10 @@ async def _create_task_via_store(
         scope="chat",
         complexity="medium",
         task_type="feature",
+        # The chat bridge is a single-tenant surface, so it asserts the
+        # tenant it writes under instead of leaving the field to a default
+        # that reads identically to an omission (#5028).
+        tenant_id=DEFAULT_TENANT_ID,
     )
     task = await store.create(req)  # type: ignore[arg-type]
     session_id = f"chat-{thread_id}-{task.id}"
@@ -533,10 +538,13 @@ class _ChatTaskRequest:
     scope: str
     complexity: str
     task_type: str
+    # No default: the task store writes this into the record and derives the
+    # tenant subtree from it, so the tenant the chat bridge runs in is said
+    # once, at the call site, rather than inherited from a field (#5028).
+    tenant_id: str
     estimated_minutes: int | None = None
     parent_task_id: str | None = None
     depends_on_repo: str | None = None
-    tenant_id: str = "default"
     cell_id: str | None = None
     repo: str | None = None
     model: str | None = None

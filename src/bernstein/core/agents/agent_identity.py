@@ -22,9 +22,9 @@ from bernstein.core.auth import create_jwt, verify_jwt
 from bernstein.core.path_scope import ScopePatternError, validate_repo_relative_pattern
 from bernstein.core.sanitize import sanitize_log
 from bernstein.core.tenanting import (
-    DEFAULT_TENANT_ID,
+    UNSPECIFIED_TENANT_ID,
     InvalidTenantIdError,
-    normalize_tenant_id,
+    normalize_tenant_attribution,
 )
 
 if TYPE_CHECKING:
@@ -264,11 +264,15 @@ def _credential_tenant_id(raw: Any) -> str:
 
     Leniency is keyed on the *key* being absent, not on the value being
     empty: a record written before the field existed carries no ``tenant_id``
-    at all and belongs to :data:`DEFAULT_TENANT_ID`.  A record that carries
-    the key with ``null`` in it is a different thing - something wrote a
-    tenant and wrote a non-tenant - and it is refused like any other value
-    that is not a real tenant id, rather than being quietly authenticated
-    under the default tenant.
+    at all, and what that record establishes is that nobody supplied one, so
+    it reads back as :data:`UNSPECIFIED_TENANT_ID` rather than as the tenant
+    named ``default`` (#5028).  Reading it as the default tenant would make
+    the record indistinguishable from one whose writer asserted that tenant,
+    and the marker is refused by every scope check, so the ambiguity becomes
+    a refusal at the point of use instead of an attribution nobody made.  A
+    record that carries the key with ``null`` in it is a third thing -
+    something wrote a tenant and wrote a non-tenant - and it is refused like
+    any other value that is not a real tenant id.
 
     Args:
         raw: The stored value, or :data:`_TENANT_KEY_ABSENT` when the record
@@ -279,12 +283,12 @@ def _credential_tenant_id(raw: Any) -> str:
             non-blank string.
     """
     if raw is _TENANT_KEY_ABSENT:
-        return DEFAULT_TENANT_ID
+        return UNSPECIFIED_TENANT_ID
     if not isinstance(raw, str):
         raise ValueError(f"credential tenant_id must be a string, got {type(raw).__name__}")
     if not raw.strip():
         raise ValueError("credential tenant_id must not be blank")
-    return normalize_tenant_id(raw)
+    return normalize_tenant_attribution(raw)
 
 
 def _credential_token_type(raw: Any) -> TokenType:
@@ -349,7 +353,10 @@ class AgentCredential:
     token_type: TokenType = "opaque"
     algorithm: str = "HS256"
     jti: str = ""
-    tenant_id: str = "default"
+    # No tenant supplied is not the tenant named ``default``: a credential
+    # built without one records that fact rather than claiming a scope, and
+    # every scope check refuses the marker (#5028).
+    tenant_id: str = UNSPECIFIED_TENANT_ID
     # Zero-trust: task scope - the task IDs this credential is authorised to act on.
     # An empty list means no task-scope restriction (legacy / manager tokens).
     task_ids: list[str] = field(default_factory=list)
@@ -732,7 +739,11 @@ class AgentIdentityStore:
         # Use shorter expiry (4 h) for task-scoped tokens to limit blast radius.
         default_expiry = 14400 if scoped_task_ids else 86400
         expiry_s = int(token_expiry_s if token_expiry_s > 0 else default_expiry)
-        tenant_id = normalize_tenant_id(str((metadata or {}).get("tenant_id", "default")))
+        # A caller that threads no tenant through gets the unspecified
+        # marker, not the default tenant: the credential and the token it
+        # signs then say that nobody named a scope, which is what the
+        # isolation checks refuse (#5028).
+        tenant_id = normalize_tenant_attribution(str((metadata or {}).get("tenant_id", UNSPECIFIED_TENANT_ID)))
         raw_token = create_jwt(
             claims={
                 "sub": identity_id,
@@ -916,8 +927,11 @@ class AgentIdentityStore:
         # (already valid) tenant, so it is a claim mismatch like any other -
         # deny rather than letting the refusal escape this bool-returning
         # validator and surface as a server error at the auth boundary.
+        # The credential's own tenant may legitimately be the unspecified
+        # marker, so the claim is normalized on the attribution side: the two
+        # have to compare as the values that were recorded, not as scopes.
         try:
-            claim_tenant = normalize_tenant_id(str(claims.get("tenant_id", "default")))
+            claim_tenant = normalize_tenant_attribution(str(claims.get("tenant_id", UNSPECIFIED_TENANT_ID)))
         except InvalidTenantIdError:
             return False
         if claim_tenant != cred.tenant_id:

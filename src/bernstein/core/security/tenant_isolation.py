@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.core.persistence.anchored_write import mkdir_anchored
 from bernstein.core.security.tenanting import (
-    DEFAULT_TENANT_ID,
+    UNSPECIFIED_TENANT_ID,
     TenantRegistry,
     ensure_tenant_layout,
     normalize_tenant_id,
@@ -196,11 +196,22 @@ class TenantIsolationManager:
             tasks: Mapping of task_id to task objects.
             tenant_id: Tenant to filter for.
 
+        A task carrying no tenant - no ``tenant_id`` attribute at all, or the
+        unspecified marker - matches no tenant, including the default one
+        (#5028). Attributing it to the default tenant would hand a record
+        nobody scoped to a tenant that did not write it, which is the
+        boundary this manager exists to hold.
+
         Returns:
             Filtered dict containing only the tenant's tasks.
+
+        Raises:
+            InvalidTenantIdError: *tenant_id* does not name a real tenant.
         """
         normalized = normalize_tenant_id(tenant_id)
-        return {tid: task for tid, task in tasks.items() if getattr(task, "tenant_id", DEFAULT_TENANT_ID) == normalized}
+        return {
+            tid: task for tid, task in tasks.items() if getattr(task, "tenant_id", UNSPECIFIED_TENANT_ID) == normalized
+        }
 
     def check_quota(self, tenant_id: str, current_task_count: int) -> tuple[bool, str]:
         """Check whether a tenant can create another task.

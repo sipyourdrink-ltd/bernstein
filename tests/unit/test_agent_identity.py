@@ -17,6 +17,7 @@ from bernstein.core.agent_identity import (
     _hash_token,
     permissions_for_role,
 )
+from bernstein.core.tenanting import DEFAULT_TENANT_ID, UNSPECIFIED_TENANT_ID
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -393,11 +394,18 @@ class TestAgentCredentialTenantDeserialization:
     of coercing whatever shape was on disk into a usable one.
     """
 
-    def test_absent_tenant_resolves_to_the_default(self) -> None:
-        """Records written before the field existed still load."""
+    def test_absent_tenant_resolves_to_the_unspecified_marker(self) -> None:
+        """Records written before the field existed still load.
+
+        They load as carrying no tenant rather than as carrying the tenant
+        named ``default``: the record establishes that nobody supplied one,
+        and reading it as the default tenant would make it indistinguishable
+        from a record whose writer asserted that tenant (#5028).
+        """
         credential = AgentCredential.from_dict({"token_hash": "abc"})
 
-        assert credential.tenant_id == "default"
+        assert credential.tenant_id == UNSPECIFIED_TENANT_ID
+        assert credential.tenant_id != DEFAULT_TENANT_ID
 
     def test_named_tenant_is_preserved(self) -> None:
         credential = AgentCredential.from_dict({"token_hash": "abc", "tenant_id": "tenant-a"})
@@ -711,14 +719,14 @@ class TestExplicitNullTenantIsRefused:
     """An omitted tenant is the legacy case; an explicit null is not.
 
     Leniency exists for records written before the field existed, which carry
-    no key at all.  A record that carries the key with `null` in it asserted a
-    scope and asserted a non-scope, so treating it as the legacy case would
-    authenticate it under the default tenant on the strength of a value that
-    is not a tenant.
+    no key at all, and it extends only to loading them - they load as
+    unattributed, which no scope check accepts.  A record that carries the
+    key with `null` in it asserted a scope and asserted a non-scope, so it is
+    refused outright rather than loaded as either.
     """
 
-    def test_absent_key_still_resolves_to_the_default(self) -> None:
-        assert AgentCredential.from_dict({"token_hash": "abc"}).tenant_id == "default"
+    def test_absent_key_still_loads_as_unattributed(self) -> None:
+        assert AgentCredential.from_dict({"token_hash": "abc"}).tenant_id == UNSPECIFIED_TENANT_ID
 
     def test_explicit_null_is_refused(self) -> None:
         with pytest.raises(ValueError, match="tenant_id"):
