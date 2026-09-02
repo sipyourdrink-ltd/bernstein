@@ -1,9 +1,12 @@
 """``bernstein resume <task-id>`` - pick up a task from its last checkpoint.
 
 Loads the per-task checkpoint written by the orchestrator after every
-successful step transition, validates it, bumps ``resume_count``, fires
-the ``task.resume`` lifecycle event, and hands control back so the
-orchestrator can re-spawn the task from the next step boundary.
+successful step transition, or before an automatic stall kill (heartbeat
+staleness or identical-progress detection; issue #3376) discards the
+worker's state, validates it, bumps ``resume_count``, fires the
+``task.resume`` lifecycle event, and hands control back so the
+orchestrator can re-spawn the task from the next step boundary. A
+checkpoint written at a stall kill carries its ``stall_reason``.
 
 See ``feat-resume-from-checkpoint`` spec for the full contract. v1 scope
 is local-only - cross-machine resume, distributed checkpoint storage,

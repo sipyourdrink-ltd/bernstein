@@ -24,6 +24,11 @@ Schema (versioned via :data:`SCHEMA_VERSION`):
   scope is local-only, so this is intentionally a literal path).
 * ``resume_count`` - how many times this task has been resumed; the CLI
   bumps it before re-spawning so flaky tasks are visible in the dashboard.
+* ``stall_reason`` - *optional*. Set when the checkpoint was written at an
+  automatic stall-kill boundary (heartbeat staleness or identical-progress
+  detection) rather than after a normal step completion; ``None`` for the
+  latter. Value is a :class:`~bernstein.core.orchestration.supervisor_receipt.StallReason`
+  string.
 * ``merge_cursor`` - *optional* streaming-merge cursor handed in by
   :mod:`bernstein.core.streaming_merge`. Coordination with the merge
   pipeline is a follow-up; we capture the shape now so adopters do not
@@ -109,6 +114,7 @@ class TaskResumeCheckpoint(BaseModel):
     adapter_session_id: str = ""
     worktree_path: str | None = None
     resume_count: int = Field(default=0, ge=0)
+    stall_reason: str | None = None
     merge_cursor: dict[str, Any] | None = None
     meta: dict[str, Any] = Field(default_factory=dict)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
