@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
-import pytest
-
 from bernstein.core.govern import DraftProposal, ProposalStatus
 
 
@@ -111,7 +107,7 @@ def test_draft_proposal_is_signed() -> None:
         human_signature=None,
     )
     assert not dp_draft.is_signed()
-    
+
     # Draft status with signature (should not happen but handle gracefully)
     dp_draft_with_sig = DraftProposal(
         findings_hash="sha256:abc123def456",
@@ -123,7 +119,7 @@ def test_draft_proposal_is_signed() -> None:
         human_signature="hmac-signature",
     )
     assert not dp_draft_with_sig.is_signed()  # Status is DRAFT, so not signed
-    
+
     # Signed status with signature -> signed
     dp_signed = DraftProposal(
         findings_hash="sha256:abc123def456",
@@ -135,7 +131,7 @@ def test_draft_proposal_is_signed() -> None:
         human_signature="hmac-signature",
     )
     assert dp_signed.is_signed()
-    
+
     # Rejected status -> not signed
     dp_rejected = DraftProposal(
         findings_hash="sha256:abc123def456",
@@ -165,7 +161,7 @@ def test_draft_proposal_sign() -> None:
         human_signature=None,
     )
     dp_signed = dp_draft.sign("human-hmac-signature")
-    
+
     assert dp_signed.findings_hash == dp_draft.findings_hash
     assert dp_signed.prompt == dp_draft.prompt
     assert dp_signed.playbook == dp_draft.playbook
@@ -173,7 +169,7 @@ def test_draft_proposal_sign() -> None:
     assert dp_signed.timestamp == dp_draft.timestamp
     assert dp_signed.status == ProposalStatus.SIGNED
     assert dp_signed.human_signature == "human-hmac-signature"
-    
+
     # Original should be unchanged
     assert dp_draft.status == ProposalStatus.DRAFT
     assert dp_draft.human_signature is None
@@ -198,7 +194,7 @@ def test_draft_proposal_findings_hash_reference() -> None:
         human_signature=None,
     )
     assert dp.findings_hash == "sha256:abcd1234567890"
-    
+
     raw = dp.to_dict()
     assert raw["findings_hash"] == "sha256:abcd1234567890"
 
