@@ -13,7 +13,7 @@ diverged ledger fails the check.
 
 Issue #4979. Governance playbook schema and validation::
 
-    bernstein governance validate playbook.yaml
+    bernstein govern validate playbook.yaml
 
 Validates playbook structure, referential integrity (surface_refs and
 ceiling_refs), and absence of duplicates.
@@ -62,6 +62,7 @@ def govern_group() -> None:
 
     \\b
       bernstein govern inventory   discover and catalog governable surfaces
+      bernstein govern validate    check a governance playbook against the schema
     """
 
 
@@ -121,41 +122,6 @@ def governance_verify_cmd(run_id: str, bindings_file: str, ledger_file: str | No
     raise SystemExit(2)
 
 
-@governance_group.command("validate")
-@click.argument("playbook_file", type=click.Path(exists=True, dir_okay=False))
-def governance_validate_cmd(playbook_file: str) -> None:
-    """Validate a governance playbook YAML file.
-
-    Checks playbook structure, referential integrity (surface_refs and
-    ceiling_refs resolve), and absence of duplicate ids.
-
-    Exit codes: 0 = valid, 1 = validation failed.
-
-    \\b
-    Example:
-      bernstein governance validate playbook.yaml
-    """
-    from bernstein.core.governance.playbook import (
-        PlaybookSchema,
-        PlaybookValidationError,
-        load_playbook,
-    )
-
-    path = Path(playbook_file).resolve()
-
-    try:
-        playbook = load_playbook(path)
-        schema = PlaybookSchema()
-        schema.validate(playbook)
-    except PlaybookValidationError as exc:
-        console.print(f"[red]VALIDATION FAILED[/red] -- {path}")
-        console.print_json(data=exc.to_json())
-        sys.exit(1)
-
-    console.print(f"[green]OK[/green] -- {path} is a valid governance playbook")
-    sys.exit(0)
-
-
 @govern_group.command("inventory")
 @click.option(
     "--output",
@@ -203,7 +169,7 @@ def govern_inventory_cmd(
 
     try:
         inventory = discover_surfaces(root)
-    except Exception as exc:
+    except OSError as exc:
         console.print(f"[red]Discovery failed:[/red] {exc}")
         sys.exit(1)
 

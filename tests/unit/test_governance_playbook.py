@@ -428,7 +428,7 @@ def test_cli_validate_valid_playbook(tmp_path) -> None:
     """CLI validate command exits 0 for valid playbook."""
     from click.testing import CliRunner
 
-    from bernstein.cli.commands.governance_cmd import governance_group
+    from bernstein.cli.commands.governance_cmd import govern_group
 
     playbook_yaml = """
 playbook_id: pb-001
@@ -452,7 +452,7 @@ clauses:
     file_path.write_text(playbook_yaml)
 
     runner = CliRunner()
-    result = runner.invoke(governance_group, ["validate", str(file_path)])
+    result = runner.invoke(govern_group, ["validate", str(file_path)])
 
     assert result.exit_code == 0
     assert "OK" in result.output
@@ -462,7 +462,7 @@ def test_cli_validate_invalid_playbook(tmp_path) -> None:
     """CLI validate command exits 1 for invalid playbook with JSON errors."""
     from click.testing import CliRunner
 
-    from bernstein.cli.commands.governance_cmd import governance_group
+    from bernstein.cli.commands.governance_cmd import govern_group
 
     playbook_yaml = """
 playbook_id: pb-001
@@ -483,7 +483,7 @@ clauses:
     file_path.write_text(playbook_yaml)
 
     runner = CliRunner()
-    result = runner.invoke(governance_group, ["validate", str(file_path)])
+    result = runner.invoke(govern_group, ["validate", str(file_path)])
 
     assert result.exit_code == 1
     assert "VALIDATION FAILED" in result.output
@@ -494,13 +494,13 @@ def test_cli_validate_malformed_yaml(tmp_path) -> None:
     """CLI validate handles malformed YAML gracefully."""
     from click.testing import CliRunner
 
-    from bernstein.cli.commands.governance_cmd import governance_group
+    from bernstein.cli.commands.governance_cmd import govern_group
 
     file_path = tmp_path / "playbook.yaml"
     file_path.write_text("invalid: yaml: : :")
 
     runner = CliRunner()
-    result = runner.invoke(governance_group, ["validate", str(file_path)])
+    result = runner.invoke(govern_group, ["validate", str(file_path)])
 
     assert result.exit_code == 1
     assert "VALIDATION FAILED" in result.output
