@@ -53,11 +53,13 @@ merely stops logging.
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from bernstein.core.orchestration.activity import (
     ACTIVITY_RESULT_EVENT,
@@ -82,12 +84,13 @@ from bernstein.core.replay.journal import JournalPathError, load_events, run_jou
 from bernstein.core.skills.catalog.signature import sign_payload, verify_payload
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "RUNNABLE_ACTIVITY_KINDS",
     "ActivityVerifyResult",
     "BrowserActivity",
     "ContentStore",
@@ -100,6 +103,7 @@ __all__ = [
     "ResearchActivity",
     "SignedArtifact",
     "StageVerdict",
+    "activity_worker_for_kind",
     "replay_reattach",
     "verify_data_ops_receipt",
     "verify_run_activities",
@@ -684,6 +688,60 @@ class OpsActivity(_SignedArtifactActivity):
     """
 
     kind = ActivityKind.OPS
+
+
+# ---------------------------------------------------------------------------
+# Which modality this tree can actually run
+# ---------------------------------------------------------------------------
+
+#: The in-tree worker driving each modality end to end, keyed by modality.
+#:
+#: Values are ``"module:attribute"`` targets rather than imported classes
+#: because both workers import *this* module, so a module-level import here
+#: would close a cycle. :func:`activity_worker_for_kind` resolves a target on
+#: demand.
+#:
+#: Absent members are deliberate, not oversights.
+#: :attr:`~bernstein.core.orchestration.activity.ActivityKind.CODING` is the
+#: ordinary coding spawn and has no activity worker at all. ``DATA`` and ``OPS``
+#: ship only the :class:`DataActivity` / :class:`OpsActivity` collectors above:
+#: those build an ``ActivityResult`` when something drives them, and nothing in
+#: this tree does.
+_ACTIVITY_WORKER_TARGETS: Final[Mapping[ActivityKind, str]] = MappingProxyType(
+    {
+        ActivityKind.RESEARCH: "bernstein.core.orchestration.research_worker:ResearchWorker",
+        ActivityKind.BROWSER: "bernstein.core.orchestration.browser_worker:BrowserWorker",
+    }
+)
+
+#: The modalities a run may declare, because something here runs them: the
+#: ordinary coding spawn plus every modality with an activity worker.
+#:
+#: A modality outside this set is a valid ``ActivityKind`` member that no code
+#: path executes. Accepting such a declaration and then running a coding spawn
+#: presents an unimplemented modality as a supported configuration, so the
+#: declaration surfaces refuse it instead.
+RUNNABLE_ACTIVITY_KINDS: Final[frozenset[ActivityKind]] = frozenset({ActivityKind.CODING, *_ACTIVITY_WORKER_TARGETS})
+
+
+def activity_worker_for_kind(kind: ActivityKind) -> type[Any] | None:
+    """Return the activity worker that runs *kind*, or ``None`` when it has none.
+
+    ``None`` covers two distinct cases the caller already knows apart from
+    :data:`RUNNABLE_ACTIVITY_KINDS`: ``CODING`` is runnable but not as an
+    activity, while a modality outside that set has no runner at all.
+
+    Args:
+        kind: The modality to resolve.
+
+    Returns:
+        The worker class, or ``None`` if no activity worker drives *kind*.
+    """
+    target = _ACTIVITY_WORKER_TARGETS.get(kind)
+    if target is None:
+        return None
+    module_name, _, attribute = target.partition(":")
+    return cast("type[Any]", getattr(importlib.import_module(module_name), attribute))
 
 
 def replay_reattach(journal_path: Path, *, store: ContentStore, stage_id: str) -> list[bytes]:
