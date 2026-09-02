@@ -14,12 +14,12 @@ import yaml
 from click.core import Group
 
 from bernstein.cli.main import cli
-from bernstein.core.config.config_schema import load_and_validate
+from bernstein.core.config.config_schema import BernsteinConfig, load_and_validate
 
 
 def _discover_yaml_configs() -> list[Path]:
     """Find all YAML config files in the Tailscale examples directory."""
-    config_dir = Path(__file__).resolve().parents[3] / "examples" / "cluster" / "tailscale"
+    config_dir = Path(__file__).resolve().parents[2] / "examples" / "cluster" / "tailscale"
     return sorted(config_dir.glob("*.yaml"))
 
 
@@ -30,7 +30,7 @@ def _load_yaml_config(path: Path) -> dict:
 
 def _find_bernstein_cli_invocations() -> list[tuple[str, list[str]]]:
     """Find all CLI invocations (as text) in the Tailscale examples directory."""
-    config_dir = Path(__file__).resolve().parents[3] / "examples" / "cluster" / "tailscale"
+    config_dir = Path(__file__).resolve().parents[2] / "examples" / "cluster" / "tailscale"
     invocations: list[tuple[str, list[str]]] = []
 
     for path in sorted(config_dir.glob("*")):
@@ -80,7 +80,7 @@ def test_all_tailscale_configs_load_and_validate() -> None:
         config = load_and_validate(config_path)
 
         # Basic validation - the config should be a BernsteinConfig
-        assert config is not None, f"Failed to load config: {config_path}"
+        assert isinstance(config, BernsteinConfig), f"Not a valid BernsteinConfig: {config_path}"
 
 
 def _walk_cli_tree(argv: list[str]) -> tuple[bool, str]:
