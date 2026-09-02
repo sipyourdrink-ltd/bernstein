@@ -11,7 +11,11 @@ keeps the collected count stable and stays green without an override.
 
 Base and head are collected under the **same** isolated temp environment
 (``git show`` bytes into sibling files, one pytest invocation style) so the
-delta measures the diff, not the ambient tree.
+delta measures the diff, not the ambient tree. The repo root is on
+``PYTHONPATH`` for both: a module that imports a repo-local test helper
+(``tests.unit._adapter_test_helpers`` and the rest of that convention) has
+to resolve it, or the first diff that extracts shared setup out of a test
+module reads as that module losing all of its cases.
 
 Outcome words (never collapse these)::
 
@@ -222,8 +226,21 @@ def _parse_collect_output(result: subprocess.CompletedProcess[str]) -> CollectRe
     return CollectResult(status="ok", count=len(lines))
 
 
-def pytest_collect_file(path: Path, *, python: str, cwd: Path) -> CollectResult:
-    """Run collect-only on *path* with cwd=*cwd* (shared isolation root)."""
+def pytest_collect_file(path: Path, *, python: str, cwd: Path, repo: Path) -> CollectResult:
+    """Run collect-only on *path* with cwd=*cwd* (shared isolation root).
+
+    *repo* is prepended to ``PYTHONPATH``. The isolation root holds only the
+    file under test, so a module that imports a repo-local test helper -
+    ``tests.unit._adapter_test_helpers``, ``tests.support.ssh_fake`` and the
+    rest of that convention - would otherwise raise ``ModuleNotFoundError``,
+    collect zero and be reported as having lost every case. Only import
+    resolution changes: a module that genuinely lost cases still collects
+    fewer, and conftest discovery still runs from the isolation root, so the
+    ambient-fixture drift the isolation exists to avoid stays excluded.
+    """
+    env = os.environ.copy()
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = f"{repo}{os.pathsep}{existing}" if existing else str(repo)
     result = subprocess.run(
         [
             python,
@@ -236,6 +253,7 @@ def pytest_collect_file(path: Path, *, python: str, cwd: Path) -> CollectResult:
             "--no-cov",
         ],
         cwd=cwd,
+        env=env,
         capture_output=True,
         text=True,
         check=False,
@@ -279,12 +297,12 @@ def collect_pair(
             base_result = CollectResult(status="missing")
         else:
             base_path.write_bytes(base_bytes)
-            base_result = pytest_collect_file(base_path, python=python, cwd=root)
+            base_result = pytest_collect_file(base_path, python=python, cwd=root, repo=repo)
         if head_bytes is None:
             head_result = CollectResult(status="missing")
         else:
             head_path.write_bytes(head_bytes)
-            head_result = pytest_collect_file(head_path, python=python, cwd=root)
+            head_result = pytest_collect_file(head_path, python=python, cwd=root, repo=repo)
         return base_result, head_result
 
 

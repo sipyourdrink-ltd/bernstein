@@ -143,6 +143,41 @@ def test_import_error_named_in_drop_message(check_module: ModuleType, tmp_path: 
     assert "cause=import_error" in check_module.format_report(report)
 
 
+def test_extracting_a_repo_local_test_helper_is_not_a_drop(check_module: ModuleType, tmp_path: Path) -> None:
+    """Collection resolves ``tests.*`` helpers, so moving shared setup out is not a drop.
+
+    The isolation root holds only the file under test. Without the repo on
+    ``PYTHONPATH`` every module following the repo's ``tests.unit._helper``
+    convention raises ``ModuleNotFoundError`` the first time it is touched,
+    collects zero, and reads as having lost every case it still has.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    test_dir = repo / "tests" / "unit"
+    test_dir.mkdir(parents=True)
+    (repo / "tests" / "__init__.py").write_text("", encoding="utf-8")
+    (test_dir / "__init__.py").write_text("", encoding="utf-8")
+    (test_dir / "test_sample.py").write_text(
+        "LIMIT = 3\n\ndef test_a():\n    assert LIMIT == 3\n\ndef test_b():\n    assert LIMIT == 3\n",
+        encoding="utf-8",
+    )
+    base = _commit_all(repo, "two tests with the limit inline")
+
+    (test_dir / "_sample_helper.py").write_text("LIMIT = 3\n", encoding="utf-8")
+    (test_dir / "test_sample.py").write_text(
+        "from tests.unit._sample_helper import LIMIT\n\n"
+        "def test_a():\n    assert LIMIT == 3\n\ndef test_b():\n    assert LIMIT == 3\n",
+        encoding="utf-8",
+    )
+    _commit_all(repo, "move the limit into a shared helper")
+
+    report = check_module.build_report(repo, base=base, python=sys.executable)
+    assert report.drops == []
+    assert check_module.format_report(report).startswith("OK:")
+    assert check_module.main(["--root", str(repo), "--base", base]) == 0
+
+
 def test_override_excuses_drop_and_stale_fails(check_module: ModuleType, tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
