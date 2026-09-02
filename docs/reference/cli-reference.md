@@ -927,6 +927,7 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `bernstein governance ...` | Deprecated alias for `bernstein govern`, removed in v4.0.0 (#5010). | `cli/commands/governance_cmd.py` |
 | `bernstein pool` | Named sandbox pool ops (group): `register`, `list`, `show`, `verify`. Projected from audit chain. Distinct from `bernstein limits pool`. | `cli/commands/pool_cmd.py` |
 | `bernstein limits` | Lease-backed admission and concurrency limits (group): `pool`, `tag`, `rate`, `queue`, `status`, `verify`. Projected from admission ledger. Distinct from `bernstein pool`. | `cli/commands/limits_cmd.py` |
+| `bernstein admission` | Executor admission policy declared in `bernstein.yaml` (group, read-only): `check` evaluates the executor identity each configured role would spawn on and prints the decision plus the deciding rule id without spawning. Distinct from `bernstein limits`, which governs slot concurrency rather than which executors are permitted at all. | `cli/commands/admission_cmd.py` |
 
 > Task-level `approve` / `reject` are different commands - see [Plan & tasks](#plan-tasks). Both also accept `--tool <id>` to resolve tool-call approvals (the flag form of `approve-tool` / `reject-tool`).
 
@@ -1120,6 +1121,20 @@ Named resource pools with lease-backed admission (verify, status, CRUD) projecte
 | `verify` | Recompute admission state from genesis over the admission ledger and fail closed on drift. `--workdir DIR`, `--json`. |
 
 > **Deliberate distinction (#3138):** `bernstein limits pool` manages lease-backed concurrency slot pools in the admission work ledger (`.sdd/admission/`). It is distinct from `bernstein pool`, which defines sandbox execution environments in the HMAC audit chain.
+
+#### `bernstein admission`
+
+Check the executor admission policy declared in `bernstein.yaml` without
+spawning anything. The gate itself runs inside the spawner, so without this
+command an operator only learns a role is refused when a run reaches it.
+
+| Subcommand | Purpose |
+|---|---|
+| `check` | Derive one executor identity per configured role from the config alone, evaluate each against the declared policy, and print `ROLE ADAPTER MODEL ENDPOINT SANDBOX DECISION RULE`. Exits 1 when any row is refused, so it doubles as a CI check that a config change did not make a role unspawnable. `--workdir DIR`, `--role NAME`, `--json`, plus `--adapter` / `--model` / `--endpoint` / `--sandbox` / `--task-type` to evaluate a hypothetical subject. |
+
+A config with no `admission:` block reports that no policy is declared and
+exits 0. See [Executor admission policy](../operations/admission-policy.md)
+for the rule model and a worked example.
 
 #### `bernstein approve-tool` / `bernstein reject-tool`
 

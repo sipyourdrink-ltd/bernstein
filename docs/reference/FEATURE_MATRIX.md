@@ -95,6 +95,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | Rule enforcement (`.bernstein/rules.yaml`) | Full | 3 | Enforcement behavior documented |
 | [Log redaction (PII filter)](../security/log-redaction.md) | Full | 3 | Active |
 | Lethal-trifecta capability gate | Full | 3 | Taint-aware egress denial: a chain that unions private data, tainted input, and external comms is refused even when static tags would pass (`core/security/capability_matrix.py`) |
+| [Executor admission policy](../operations/admission-policy.md) | Full | 3 | Fail-closed allow/deny rules over the executor identity of every spawn — role, adapter, model, endpoint, sandbox tier, task type. An unmatched subject is refused, a refusal starts no process and appends an `admission_refusal` event to the audit chain, and both outcomes are recorded with the deciding rule id (`core/security/executor_admission.py`) |
 | Circuit breaker | Full | 3 | Halts misbehaving agents, writes SHUTDOWN signal |
 | [Token growth monitor](../operations/token-growth-monitor.md) | Full | 3 | Auto-intervention on runaway consumption |
 | [Cost anomaly detection](../operations/cost-anomaly-detection.md) | Full | 3 | Z-score based, acts via task completion |
@@ -336,6 +337,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein pool register/list/show/verify`](../operations/sandbox-pools.md) | Full | 3 | Manage lease-backed named resource pools |
 | [`bernstein volunteer verify`](volunteer-manifest.md) | Full | 3 | Validate a project's `.bernstein/volunteer.json` and print the manifest digest a receipt binds to |
 | [`bernstein volunteer budget`](volunteer-budget.md) | Full | 3 | Set or inspect persistent donor limits and completed/in-flight usage |
+| [`bernstein admission check`](../operations/admission-policy.md) | Full | 3 | Evaluate the declared executor admission policy against the executor identity each configured role would spawn on, printing the decision and the deciding rule id without spawning; exits non-zero when a role is refused |
 
 ## Cloud / Cloudflare
 > **How a row graduates:** A row graduates out of Preview when its maturity score increases to ≥ 3 (or when a first-run smoke test lands and the marker is intentionally removed).
