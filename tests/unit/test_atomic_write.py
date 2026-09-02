@@ -334,3 +334,23 @@ def test_runtime_write_file_locks_atomic(tmp_path: Path) -> None:
     data = json.loads(lock_path.read_text(encoding="utf-8"))
     assert any(entry["file_path"] == "src/foo.py" for entry in data)
     assert [p.name for p in lock_path.parent.iterdir() if ".tmp." in p.name] == []
+
+
+def test_promote_atomic_swaps_the_directory_entry_and_consumes_the_staged_file(
+    tmp_path: Path,
+) -> None:
+    """promote_atomic replaces the destination by rename, not by truncation."""
+    from bernstein.core.persistence.atomic_write import promote_atomic, write_atomic_text
+
+    published = tmp_path / "published" / "pack.md"
+    write_atomic_text(published, "old\n")
+    old_ino = published.stat().st_ino
+
+    staged = tmp_path / "published" / ".staging" / "pack.md"
+    write_atomic_text(staged, "new\n")
+
+    promote_atomic(staged, published)
+
+    assert published.read_text(encoding="utf-8") == "new\n"
+    assert published.stat().st_ino != old_ino
+    assert not staged.exists()

@@ -47,6 +47,12 @@ jobs:
   trace-tests:
     name: trace-tests verify
     runs-on: ubuntu-latest
+    # The job installs the published suite from PyPI and then loops over
+    # every committed vector, so a hung index fetch or a vector that never
+    # terminates would otherwise hold a runner slot for the platform default
+    # of six hours. Longest observed run to date is 9m26s; 20 minutes leaves
+    # room for a slow index without leaving the ceiling unguarded.
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -102,3 +108,8 @@ jobs:
           name: trace-conformance-report
           path: trace-conformance-report/
           if-no-files-found: warn
+          # The report is read while the run is still on someone's screen;
+          # without this it inherits the repository default of 90 days. Every
+          # other retained artefact in this repository sets 7, 14, 30 or 90
+          # deliberately, so state the intent here too.
+          retention-days: 14

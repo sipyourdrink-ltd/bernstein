@@ -53,6 +53,73 @@ operators holding the same ledger compute the byte-identical total. The
 attribution dimension (`agent` / `task` / `role` / `feature_label`) is
 selectable; `agent` is the per-seat default.
 
+## Coverage: what a run can and cannot account for
+
+A screen built out of decision records only ever shows the decisions that
+exist, so it cannot show the actions no decision covers.
+`src/bernstein/core/security/governance_coverage.py` projects that gap for one
+run:
+
+| Metric | Meaning |
+|---|---|
+| `attributable_action_ratio` | Recorded actions whose actor is named as the `subject` of some decision in the run. A spine entry's `actor` is a free-form string the writing adapter supplied; a decision naming it is where the installation resolved it to a principal. |
+| `decision_coverage` | Recorded actions whose actor holds an `allow` verdict in the run. A `deny` or `refuse` attributes the actor without authorising it, so it counts in the denominator only. |
+
+Three rules keep the numbers from flattering the run:
+
+- Decision records are anchored into the same spine, so they are excluded from
+  the action count. Otherwise a run would raise its own coverage by recording
+  more decisions.
+- The journal-head seal and artifact-attempt rows are chain bookkeeping, not
+  agent actions, and are excluded the same way every other spine consumer
+  excludes them.
+- A run that recorded no actions reports `null`, not `0` and not `1`. Zero over
+  zero is absent evidence.
+
+`chain_status` travels with the numbers and carries the spine verify status
+verbatim, so a `tampered` run cannot read as a clean one that merely scored
+badly.
+
+```
+GET /governance/coverage?run_id=<run>
+```
+
+returns the canonical document. The route returns exactly the bytes
+`governance_coverage_json` produces, so a number pinned from the dashboard
+recomputes offline from `.sdd` alone.
+
+## Verifying a dropped receipt
+
+```
+POST /governance/verify-receipt
+```
+
+The request body is a run receipt, verbatim. The response is the canonical
+verdict document `src/bernstein/core/security/governance_receipt_verdict.py`
+produces from
+[`verify_run_receipt`](../reference/receipt.md) — the same verifier
+`bernstein verify receipt` runs. Nothing under `.sdd` and no key material is
+read, so the endpoint answers about the uploaded file and not about the
+installation serving it.
+
+| Field | Meaning |
+|---|---|
+| `status` | `ok`, `tampered` (a recompute or the signature diverged), or `malformed` (not a receipt at all, an empty upload included). |
+| `tier` | `integrity-only` on a pass; `null` when the receipt did not verify. |
+| `caveat` | Set exactly when `tier` is set. Names the key source, so the pass cannot be rendered as a bare tick. |
+| `divergent_step` | The first divergent journal step, when journal tamper was located. |
+
+The tier is always `integrity-only` because the signature is checked against
+the key embedded in the receipt: that proves the file is internally consistent
+and that no byte changed after signing, not who produced it. Provenance
+requires the operator's key out of band —
+`bernstein verify receipt <file> --public-key <pem>` — and no key can be pinned
+through the endpoint, because a key arriving in the same request as the receipt
+is the same channel rather than an independent anchor.
+
+A receipt that does not verify is answered with `200` and a failing verdict.
+The result is a statement about the evidence, not a failed request.
+
 ## Guarantees
 
 - **Verifiability** - `bernstein governance verify <run>` re-resolves and

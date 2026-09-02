@@ -33,7 +33,7 @@ Two invariants, in order of importance:
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -88,7 +88,7 @@ def make_rendering_fetcher() -> Callable[[str], bytes]:
     return fetch
 
 
-def _render(playwright_api: type, source_ref: str) -> bytes:
+def _render(playwright_api: Callable[[], Any], source_ref: str) -> bytes:
     """Render ``source_ref`` once and return the DOM as UTF-8 bytes.
 
     The headless browser is created and closed per call so a failed render
