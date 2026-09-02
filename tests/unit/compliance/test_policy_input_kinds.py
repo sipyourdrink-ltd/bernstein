@@ -17,10 +17,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from click.testing import CliRunner
-
-from bernstein.cli.commands.compliance_cmd import compliance_group
 from bernstein.core.compliance_policies import (
+    _BY_ID,
     ALL_POLICIES,
     PolicyEvidenceStatus,
     PolicyInput,
@@ -32,9 +30,9 @@ from bernstein.core.compliance_policies import (
     policy_input_fields,
     summarise_evidence_coverage,
 )
-from bernstein.core.compliance_policies import (
-    _BY_ID,
-)
+from click.testing import CliRunner
+
+from bernstein.cli.commands.compliance_cmd import compliance_group
 
 _ENFORCEMENT_FREE_PREFIX = "The operator declares"
 
