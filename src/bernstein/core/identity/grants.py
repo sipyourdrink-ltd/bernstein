@@ -94,6 +94,7 @@ __all__ = [
     "find_active_grant",
     "hash_secret_name",
     "install_grant_signer",
+    "record_hmac",
     "render_report",
     "secret_name_matches",
     "verify_grant_chain",
@@ -155,13 +156,18 @@ def _canonical(body: dict[str, Any]) -> str:
     return json.dumps(body, sort_keys=True, separators=(",", ":"))
 
 
-def _compute_hmac(key: bytes, prev_hmac: str, body: dict[str, Any]) -> str:
+def record_hmac(key: bytes, prev_hmac: str, body: dict[str, Any]) -> str:
     """HMAC-SHA256 over ``prev_hmac`` concatenated with the canonical record body.
 
     Identical construction to
     :func:`bernstein.core.identity.delegation._compute_hmac` and
     :func:`bernstein.core.security.audit._compute_hmac`, so the grant chain
     shares tamper-evidence semantics with the delegation and audit chains.
+
+    Public because a reader that authenticates the chain incrementally (see
+    :mod:`bernstein.core.security.grant_precondition`) must recompute the
+    *same* digest as the writer; a second copy of the construction elsewhere
+    could drift from this one and silently accept a re-chained record.
     """
     payload = prev_hmac + json.dumps(body, sort_keys=True)
     return _hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
@@ -507,7 +513,7 @@ class GrantLedger:
         chain_body = signed.copy()
         chain_body["prev_hmac"] = prev_hmac
         chain_body["signature"] = signature
-        computed = _compute_hmac(self._key, prev_hmac, chain_body)
+        computed = record_hmac(self._key, prev_hmac, chain_body)
         entry = chain_body.copy()
         entry["hmac"] = computed
         path = self.receipt_path(run_id)
@@ -724,7 +730,7 @@ def verify_grant_chain(*, root: Path, run_id: str, key: bytes) -> GrantChainResu
         if chain_body.get("prev_hmac") != prev_hmac:
             errors.append(f"record {idx}: broken linkage (prev_hmac does not match preceding record)")
             break
-        expected = _compute_hmac(key, prev_hmac, chain_body)
+        expected = record_hmac(key, prev_hmac, chain_body)
         if not _hmac.compare_digest(expected, stored_hmac):
             errors.append(f"record {idx}: HMAC mismatch (record tampered or wrong key)")
             break
