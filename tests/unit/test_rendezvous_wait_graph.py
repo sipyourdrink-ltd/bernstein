@@ -107,6 +107,26 @@ def test_three_task_cycle_is_named_lowest_task_id_first() -> None:
     assert find_cycle(wait_graph(entries)) == ["task-1", "task-2", "task-3"]
 
 
+def test_cycle_reached_through_a_task_outside_it_still_leads_with_the_lowest_id() -> None:
+    """The walk enters the cycle at ``task-n``; the cycle is still named from ``task-m``.
+
+    The three-task case above starts the walk on the cycle's own lowest id, so
+    the rotation there is a no-op and an implementation that dropped it would
+    still look right. Here a waiter outside the cycle is the lowest id in the
+    graph, so the walk reaches the cycle at its higher member: only the
+    rotation makes the reported order a function of the cycle rather than of
+    where the walk happened to arrive. ``task-a`` waits but is not deadlocked,
+    so it must not be named.
+    """
+    entries = [
+        _open("task-a", "task-n", seq=0, entry_hash="hmac-sha256:o1"),
+        _open("task-n", "task-m", seq=1, entry_hash="hmac-sha256:o2"),
+        _open("task-m", "task-n", seq=2, entry_hash="hmac-sha256:o3"),
+    ]
+    assert wait_graph(entries) == {"task-a": {"task-n"}, "task-n": {"task-m"}, "task-m": {"task-n"}}
+    assert find_cycle(wait_graph(entries)) == ["task-m", "task-n"]
+
+
 def test_open_entry_binds_question_hash_and_both_task_ids() -> None:
     """The open record carries the question it blocks on and both ends of the wait."""
     entries = [_open("task-a", "task-b", seq=7, entry_hash="hmac-sha256:o1", question="hmac-sha256:qq")]
