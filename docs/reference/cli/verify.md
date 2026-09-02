@@ -59,7 +59,7 @@ unsigned). Exits 0 on success, 1 when the run has no journal events or the
 key cannot load, 2 on usage errors (no key configured, conflicting flags,
 missing audit window).
 
-### Verify (`verify receipt PATH [--public-key PEM]`)
+### Verify (`verify receipt PATH [--public-key PEM] [--key-chain PATH]`)
 
 Verifies a receipt from the file: recomputes the journal head from the
 embedded timing-excluded rows (the exact `verify_journal` walk), recomputes
@@ -82,11 +82,24 @@ labelled accordingly:
   `OK (provenance: pinned key)`. Provenance-sensitive review should always
   pin.
 
+`--key-chain` widens the pin from one key to a key generation. The operator
+rotates receipt-signing keys and revokes compromised ones in a signed
+succession chain; `--public-key` then pins the chain's *root* key and the
+receipt's own key is resolved through the chain. A key that was merely
+rotated out still verifies (`superseded`) — rotation must not invalidate
+receipts an auditor already holds — while a revoked key does not, and the
+verdict names which side of the revocation instant the signature falls on.
+Receipt bytes carry no wall clock, so that instant comes from `--signed-at`
+(timezone-aware ISO-8601); without it a revoked key fails closed. `--json`
+carries the verdict as `key_verdict`.
+
 | Exit code | Meaning |
 |---|---|
 | 0 | Every head recomputes from the embedded ranges and the signature verifies. |
 | 1 | Empty or malformed input (unreadable file, missing ranges or fields). |
 | 2 | Tamper detected — the first divergent journal step index is named (a pinned-key mismatch also exits 2). |
+| 3 | `--require-provenance` was given and only the integrity-only tier was reached. |
+| 4 | The signature is authentic but the key that produced it is not trusted by the supplied `--key-chain`. |
 
 Full format description:
 [deterministic replay](../../operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
@@ -189,6 +202,8 @@ Every verification command in Bernstein follows a strict exit-code contract. The
 | `verify receipt <path>` | `0` | `OK (provenance: pinned key)` / `OK (integrity-only: embedded key)` | Receipt verified: all embedded heads recompute and Ed25519 signature checks |
 | | `1` | `MALFORMED` | Unreadable receipt file or missing required fields/ranges |
 | | `2` | `TAMPER DETECTED` | Step divergence, spine/audit head mismatch, signature or pinned-key mismatch |
+| | `3` | `REQUIRE-PROVENANCE NOT MET` | `--require-provenance` given but only the integrity-only tier was reached |
+| | `4` | `SIGNING KEY NOT TRUSTED` | Authentic signature under a key the supplied `--key-chain` revoked, does not introduce, or introduces as a different key |
 | `lineage verify <run>` | `0` | `OK` | Lineage spine/chain intact and non-empty, all HMAC tags / signatures valid |
 | | `1` | `NO ENTRIES` / `SEAL ONLY` | Empty run emitted no lineage (1), or chain records only journal-head seal with no artifact provenance (1) |
 | | `2` | `TAMPER DETECTED` / `RECEIPT VERIFICATION FAILED` | HMAC tag mismatch, broken Merkle chain, or recovery receipt resolution failed |
@@ -201,5 +216,6 @@ Every verification command in Bernstein follows a strict exit-code contract. The
 
 `src/bernstein/cli/commands/verify_cmd.py` (command group);
 `src/bernstein/core/replay/run_receipt.py` (receipt build + offline verify);
+`src/bernstein/core/security/receipt_key_chain.py` (key succession chain);
 `src/bernstein/core/quality/verifier_ladder.py` (ladder receipts).
 
