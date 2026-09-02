@@ -30,8 +30,8 @@ import click
 from rich.console import Console
 
 from bernstein.core.replay.journal import (
-    JOURNAL_FILENAME,
     read_sealed_journal_head,
+    run_journal_path,
     verify_journal,
 )
 from bernstein.core.security.path_containment import PathContainmentError, contained_path
@@ -59,20 +59,38 @@ def seal_group() -> None:
     """Anchor a run's sealed head to an external timestamping authority."""
 
 
-def _run_dir(sdd_dir: str, run_id: str) -> Path:
-    """Return the run's directory under ``<sdd>/runs``, containment-checked.
+def _journal_path(sdd_dir: str, run_id: str) -> Path:
+    """Return the run's journal path, resolved through the containment barrier.
 
-    The run id reaches here straight from argv, so it is validated as a single
-    safe path segment before it names a directory.
+    The run id reaches here straight from argv, and validating it as a safe
+    segment is only half the check: an ordinary run directory can hold a
+    ``journal.jsonl`` that is itself a symlink out of the runs root, so the
+    whole path is resolved rather than joined onto a checked directory.
+    Anchoring is where that half matters most - a redirected read would mint
+    an external timestamp over a head this install never produced.
     """
     try:
-        return contained_path(Path(sdd_dir) / "runs", run_id, label="run id")
+        return run_journal_path(Path(sdd_dir), run_id)
     except PathContainmentError as exc:
         console.print(f"[red]{exc}[/red]")
         raise SystemExit(_FAILURE_EXIT) from exc
 
 
-def _recomputed_head(run_dir: Path, run_id: str, sdd_dir: str) -> str:
+def _anchor_path(sdd_dir: str, run_id: str) -> Path:
+    """Return the run's anchor path, resolved through the same barrier.
+
+    The anchor is the artifact ``seal verify`` trusts, so a symlinked
+    ``seal_anchor.json`` would let a reply stored outside the runs root be
+    read as this run's - and let ``publish`` write one there.
+    """
+    try:
+        return contained_path(Path(sdd_dir) / "runs", run_id, ANCHOR_FILENAME, label="run id")
+    except PathContainmentError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(_FAILURE_EXIT) from exc
+
+
+def _recomputed_head(run_id: str, sdd_dir: str) -> str:
     """Recompute the run's journal head, refusing anything not anchorable.
 
     A head is anchorable only when the journal chain is intact, every physical
@@ -80,7 +98,7 @@ def _recomputed_head(run_dir: Path, run_id: str, sdd_dir: str) -> str:
     recomputed head is the sealed one. Anchoring a head that already disagrees
     with the run's own seal would mint an external proof for a rewrite.
     """
-    journal_path = run_dir / JOURNAL_FILENAME
+    journal_path = _journal_path(sdd_dir, run_id)
     if not journal_path.is_file():
         console.print(f"[red]No journal for {run_id}:[/red] {journal_path}")
         raise SystemExit(_FAILURE_EXIT)
@@ -162,8 +180,7 @@ def seal_publish(
       bernstein seal publish latest-run --tsa-url https://freetsa.org/tsr
       bernstein seal publish latest-run --token ./reply.tsr
     """
-    run_dir = _run_dir(sdd_dir, run_id)
-    head = _recomputed_head(run_dir, run_id, sdd_dir)
+    head = _recomputed_head(run_id, sdd_dir)
     token_der, recorded_url = _obtain_token(head=head, token=token, tsa_url=tsa_url, timeout=timeout)
 
     try:
@@ -177,7 +194,7 @@ def seal_publish(
         console.print(f"[red]{exc}[/red]")
         raise SystemExit(_FAILURE_EXIT) from exc
 
-    anchor_path = run_dir / ANCHOR_FILENAME
+    anchor_path = _anchor_path(sdd_dir, run_id)
     write_anchor(anchor_path, anchor)
 
     if as_json:
@@ -210,14 +227,13 @@ def seal_verify(run_id: str, sdd_dir: str, trust_bundle: str | None, as_json: bo
     """
     from bernstein.core.security.rfc3161_verifier import load_trusted_tsa_certs
 
-    run_dir = _run_dir(sdd_dir, run_id)
-    anchor_path = run_dir / ANCHOR_FILENAME
+    anchor_path = _anchor_path(sdd_dir, run_id)
     if not anchor_path.is_file():
         console.print(f"[red]No anchor for {run_id}[/red] ({anchor_path} does not exist).")
         console.print("Create one with [bold]bernstein seal publish[/bold].")
         raise SystemExit(_FAILURE_EXIT)
 
-    journal_path = run_dir / JOURNAL_FILENAME
+    journal_path = _journal_path(sdd_dir, run_id)
     head = verify_journal(journal_path).head
 
     try:

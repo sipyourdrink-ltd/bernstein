@@ -156,3 +156,70 @@ def test_verify_without_an_anchor_says_so_rather_than_failing_open(tmp_path: Pat
 
     assert result.exit_code != 0
     assert "no anchor" in result.output.lower()
+
+
+def _symlink_or_skip(link: Path, target: Path) -> None:
+    """Point *link* at *target*, or skip where the platform forbids it."""
+    try:
+        link.symlink_to(target)
+    except OSError:  # pragma: no cover - unprivileged Windows runners
+        pytest.skip("cannot create symlinks on this platform")
+
+
+def test_publish_refuses_a_run_whose_journal_is_a_symlink_out_of_the_runs_root(
+    tmp_path: Path,
+) -> None:
+    """An ordinary run directory can still hold a journal that points away.
+
+    Validating the run id as a safe segment does not cover this: the entry
+    name is innocent and the directory really is under ``runs``. Only
+    resolving the journal path itself catches it, and it has to be caught -
+    anchoring here would mint a TSA-witnessed proof over a head that never
+    belonged to this install.
+    """
+    sdd_dir = tmp_path / ".sdd"
+    elsewhere = tmp_path / "elsewhere"
+    outside = _sealed_journal(elsewhere, "run-outside")
+
+    planted_dir = sdd_dir / "runs" / "run-planted"
+    planted_dir.mkdir(parents=True)
+    _symlink_or_skip(planted_dir / outside.path.name, outside.path)
+    assert (planted_dir / outside.path.name).is_file()
+
+    result = _publish(sdd_dir, "run-planted")
+
+    assert result.exit_code != 0, result.output
+    assert not (planted_dir / ANCHOR_FILENAME).exists()
+
+
+def test_publish_refuses_to_write_an_anchor_through_a_symlink_out_of_the_runs_root(
+    tmp_path: Path,
+) -> None:
+    """The anchor path is resolved before it is written, not just joined.
+
+    ``write_anchor`` opens the path for writing, so a planted
+    ``seal_anchor.json`` symlink turns ``publish`` into a write to whatever
+    the link names. Resolving the path first is what keeps the write inside
+    the runs root; the file outside has to come back untouched.
+    """
+    sdd_dir = tmp_path / ".sdd"
+    _sealed_journal(sdd_dir, "run-clobber")
+
+    outside = tmp_path / "not-ours.json"
+    outside.write_text("keep me\n", encoding="utf-8")
+    _symlink_or_skip(sdd_dir / "runs" / "run-clobber" / ANCHOR_FILENAME, outside)
+
+    result = _publish(sdd_dir, "run-clobber")
+
+    assert result.exit_code != 0, result.output
+    assert outside.read_text(encoding="utf-8") == "keep me\n"
+
+
+@pytest.mark.parametrize("hostile", ["../escape", "sub/dir", "..", "with space"])
+def test_both_commands_refuse_a_run_id_that_is_not_a_safe_segment(tmp_path: Path, hostile: str) -> None:
+    """A crafted run id names nothing, on either subcommand."""
+    sdd_dir = tmp_path / ".sdd"
+    _sealed_journal(sdd_dir, "run-real")
+
+    assert _publish(sdd_dir, hostile).exit_code != 0
+    assert CliRunner().invoke(seal_group, ["verify", hostile, "--sdd-dir", str(sdd_dir)]).exit_code != 0
