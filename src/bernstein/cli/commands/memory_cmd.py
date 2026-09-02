@@ -367,3 +367,57 @@ def forget_memory(entry_hash: str, scope: str, namespace: str, actor: str, workd
         f"(tombstone={tombstone.entry_hash[:19]}...); original retained and chain intact."
     )
     raise SystemExit(0)
+
+
+@memory_group.command("show")
+@click.option("--scope", type=_SCOPE_CHOICE, required=True, help="Identity scope (chain namespace).")
+@click.option("--namespace", required=True, help="Chain key within the scope.")
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit the canonical fold bytes verbatim instead of a table.",
+)
+def show_memory(scope: str, namespace: str, workdir: str, as_json: bool) -> None:
+    """Print what a scope/namespace currently says, and where each line came from.
+
+    The current state is the deterministic fold of the record chain:
+    every write in append order, minus the ones a tombstone has
+    forgotten. ``--json`` emits the canonical fold bytes, which are
+    byte-identical across readers and therefore safe to hash or diff.
+
+    Exit codes: 0 = live claims printed, 1 = nothing live in this
+    scope/namespace.
+    """
+    chain = MemoryChain(_chain_root(workdir), hmac_key=_load_hmac_key())
+    memory_scope = MemoryScope(scope)
+    entries = chain.fold(memory_scope, namespace)
+
+    if as_json:
+        click.echo(chain.fold_bytes(memory_scope, namespace).decode("utf-8"))
+        raise SystemExit(0 if entries else 1)
+
+    console.print()
+    if not entries:
+        console.print(f"[yellow]No live claims[/yellow] in scope={scope} namespace={namespace}.")
+        raise SystemExit(1)
+
+    table = Table(title=f"Memory state (scope={scope}, namespace={namespace})")
+    table.add_column("Claim")
+    table.add_column("Run", style="cyan")
+    table.add_column("Step", style="cyan")
+    table.add_column("Actor", style="green")
+    table.add_column("Entry", style="dim")
+    for entry in entries:
+        table.add_row(entry.claim, entry.run_id, entry.step_id, entry.actor, entry.entry_hash)
+    console.print(table)
+    raise SystemExit(0)
