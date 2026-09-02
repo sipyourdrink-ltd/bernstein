@@ -46,7 +46,7 @@ import json
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from bernstein.core.replay.journal import EventJournal
@@ -316,6 +316,39 @@ def record_loaded_extension_set(journal: EventJournal, extension_set: LoadedExte
     )
 
 
+def record_run_extension_set(journal: EventJournal, workdir: Path) -> LoadedExtensionSet:
+    """Resolve *workdir*'s skills and plugins and append the set to *journal*.
+
+    This is the run-start entry point: it asks the two resolution surfaces
+    what they ended up with - the skill loader for ``templates/skills`` plus
+    any ``bernstein.skill_sources`` entry points, and the process plugin
+    manager for entry-point, config and reporter plugins - and records the
+    result once per run, before any agent is spawned.
+
+    Both surfaces are the same ones the run itself uses (the loader comes
+    from the role resolver's cache, the manager is the process singleton),
+    so the recorded set is what the run served, not a second resolution
+    that might differ.
+
+    Args:
+        journal: The run's Merkle-chained journal.
+        workdir: Project root the run is executing against.
+
+    Returns:
+        The set that was recorded.
+    """
+    from bernstein import get_templates_dir
+    from bernstein.core.planning.role_resolver import get_loader
+    from bernstein.plugins.manager import get_plugin_manager
+
+    extension_set = build_loaded_extension_set(
+        loader=get_loader(get_templates_dir(workdir) / "roles"),
+        plugin_manager=get_plugin_manager(workdir),
+    )
+    record_loaded_extension_set(journal, extension_set)
+    return extension_set
+
+
 def extension_set_digest_from_events(events: list[dict[str, Any]]) -> str | None:
     """Recompute the resolved-set digest from journal rows, or ``None``.
 
@@ -330,8 +363,9 @@ def extension_set_digest_from_events(events: list[dict[str, Any]]) -> str | None
         raw = event.get("extensions")
         if not isinstance(raw, list):
             continue
-        rows: list[dict[str, Any]] = [row for row in raw if isinstance(row, dict)]
-        if len(rows) != len(raw):
+        items = cast("list[Any]", raw)
+        rows: list[dict[str, Any]] = [cast("dict[str, Any]", row) for row in items if isinstance(row, dict)]
+        if len(rows) != len(items):
             continue
         return content_digest(digest_preimage(rows))
     return None

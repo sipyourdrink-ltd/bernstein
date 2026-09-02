@@ -391,3 +391,45 @@ def test_skill_resolved_outside_the_declared_root_records_its_real_origin(tmp_pa
 
     assert entry.origin == str(external_md.resolve())
     assert str(skills_root) not in entry.origin
+
+
+# ---------------------------------------------------------------------------
+# 11. A run journal records the resolved set of the install it ran on.
+# ---------------------------------------------------------------------------
+
+
+def test_run_journal_records_the_set_resolved_from_the_install(tmp_path: Path) -> None:
+    from bernstein.core.replay.journal import load_events
+    from bernstein.core.security.loaded_extension_set import (
+        LOADED_EXTENSION_SET_EVENT,
+        extension_set_digest_from_events,
+        record_run_extension_set,
+    )
+
+    workdir = tmp_path / "project"
+    _write_skill(workdir / "templates" / "skills", "zeta-pack", version="4.0.0", body="Zeta body.")
+
+    journal = EventJournal(run_id="extset-spawn", sdd_dir=workdir / ".sdd")
+    journal.record("run_started", run_id="extset-spawn")
+    recorded = record_run_extension_set(journal, workdir)
+
+    events = load_events(journal.path).events
+    rows = [e for e in events if e.get("event") == LOADED_EXTENSION_SET_EVENT]
+
+    assert len(rows) == 1
+    assert "zeta-pack" in [e.name for e in recorded.loaded()]
+    assert extension_set_digest_from_events(events) == recorded.digest
+
+
+# ---------------------------------------------------------------------------
+# 12. The run start path actually records it.
+# ---------------------------------------------------------------------------
+
+
+def test_orchestrator_run_start_records_the_resolved_set() -> None:
+    import inspect
+
+    from bernstein.core.orchestration.orchestrator import Orchestrator
+
+    source = inspect.getsource(Orchestrator.run)
+    assert "record_run_extension_set" in source

@@ -3111,6 +3111,27 @@ class Orchestrator:
             config_hash=self._replay_metadata.config_hash,
             **_run_started_extra,
         )
+        # Record the skill and plugin set this install actually resolved,
+        # once per run and before the first agent spawns. `bernstein skills`
+        # and `bernstein plugins` report the declaration; a path override, a
+        # stale cache or an import that raised makes the loaded set differ,
+        # and the difference is what "what could this agent do?" needs months
+        # later. The run receipt recomputes the set digest from these rows
+        # and binds it into its signed subject. A resolution surface that
+        # cannot answer must not take the run down, so failure is logged.
+        try:
+            from bernstein.core.security.loaded_extension_set import record_run_extension_set
+
+            _extension_set = record_run_extension_set(self._recorder, self._workdir)
+            logger.debug(
+                "Recorded loaded extension set %s (%d loaded, %d not loaded)",
+                _extension_set.digest[:23],
+                len(_extension_set.loaded()),
+                len(_extension_set.not_loaded()),
+            )
+        except Exception:
+            logger.exception("Loaded extension set not recorded (non-fatal) - continuing startup")
+
         try:
             from bernstein.core.orchestration.run_closure_owner import write_spawner_run_owner
 
