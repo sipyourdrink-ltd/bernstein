@@ -70,7 +70,7 @@ def caller_module_name(depth: int = 1) -> str:
     naming a mis-detected caller in an error message is far less costly
     than the guard itself crashing on a legitimate registration.
     """
-    frame = sys._getframe(depth + 1)
+    frame = sys._getframe(depth + 1)  # pyright: ignore[reportPrivateUsage]
     try:
         return frame.f_globals.get("__name__", "<unknown>")
     finally:
