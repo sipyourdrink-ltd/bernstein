@@ -1536,15 +1536,16 @@ def verify_hmac_cmd() -> None:
     "--standard",
     "standard",
     default=None,
-    type=click.Choice(["ai-act", "owasp-asi", "owasp-skills"]),
+    type=click.Choice(["ai-act", "owasp-asi", "owasp-skills", "iso-42001"]),
     help=(
         "Emit a one-command compliance evidence pack mapped to the chosen "
         "control catalogue, anchored on the operator's own HMAC-chained "
         "audit events. 'ai-act' maps EU AI Act Article 12/13/15; "
         "'owasp-asi' maps the OWASP Top 10 for Agentic Applications "
         "(ASI01-ASI10); 'owasp-skills' maps the Agentic Skills Top 10 "
-        "(AST01-AST10). DORA and FINOS AIGF are tracked under #1316 and "
-        "will be added once their clause maps are validated."
+        "(AST01-AST10); 'iso-42001' maps the records-derivable subset of "
+        "ISO/IEC 42001 Annex A controls. DORA and FINOS AIGF are tracked "
+        "under #1316 and will be added once their clause maps are validated."
     ),
 )
 @click.option(
@@ -1948,8 +1949,8 @@ def _run_standard_export(
     table.add_row("Lineage entries", str(pack.lineage_count))
     table.add_row("Cost snapshots", str(pack.cost_count))
     table.add_row(
-        "Controls mapped/partial/todo",
-        f"{pack.controls_mapped} / {pack.controls_partial} / {pack.controls_todo}",
+        "Controls mapped/partial/todo/organisational",
+        f"{pack.controls_mapped} / {pack.controls_partial} / {pack.controls_todo} / {pack.controls_organisational}",
     )
     table.add_row("SHA-256", pack.sha256[:16] + "...")
     if pack.archive_path is not None:
