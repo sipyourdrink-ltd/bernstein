@@ -46,7 +46,9 @@ def get_known_flaky_tests(workdir: Path) -> list[str]:
     return sorted(FlakyDetector(workdir).get_quarantined())
 
 
-def extract_co_change_neighbours(repo_root: Path, targets: list[str], *, limit: int = 20) -> dict[str, list[str]]:
+def extract_co_change_neighbours(
+    repo_root: Path, targets: list[str], *, limit: int | None = 20
+) -> dict[str, list[str]]:
     """Return files that co-change with each target in the repository history.
 
     Frequency is the primary ranking signal. When files have the same
@@ -54,6 +56,10 @@ def extract_co_change_neighbours(repo_root: Path, targets: list[str], *, limit: 
     by a path tie-breaker. The commit graph is the source of truth, so files
     in unrelated directories are included and same-directory files are not
     preferred implicitly. History failures fail open with an empty result.
+
+    ``limit=None`` returns the full ranked list. The pack assembles the bound
+    itself so it can state the size of what it left out; a caller that only
+    receives the capped list cannot tell a cut list from a short one.
     """
     result: dict[str, list[str]] = {}
     for target in sorted(set(targets)):
@@ -82,24 +88,28 @@ def extract_co_change_neighbours(repo_root: Path, targets: list[str], *, limit: 
             continue
 
         ranked = sorted(counts, key=lambda path: (-counts[path], -latest[path], path))
-        if len(ranked) > limit:
+        if limit is not None and len(ranked) > limit:
             logger.info(
                 "co-change neighbours truncated for %s: kept %d of %d",
                 target,
                 limit,
                 len(ranked),
             )
-        result[target] = ranked[:limit]
+            ranked = ranked[:limit]
+        result[target] = ranked
     return result
 
 
-def extract_test_to_source_map(repo_root: Path, targets: list[str], *, limit: int = 20) -> dict[str, list[str]]:
+def extract_test_to_source_map(repo_root: Path, targets: list[str], *, limit: int | None = 20) -> dict[str, list[str]]:
     """Map source targets to tests co-changed by unreverted commits.
 
     The commit graph is the available landed-green evidence: commits reachable
     from the checked-out history are candidates, while an explicit Git revert
     removes the reverted commit from the map.  This is deterministic and does
     not infer CI status from commit-message wording.
+
+    ``limit=None`` returns the full ranked list, for the same reason as
+    :func:`extract_co_change_neighbours`.
     """
     result: dict[str, list[str]] = {}
     for target in sorted(set(targets)):
@@ -121,9 +131,11 @@ def extract_test_to_source_map(repo_root: Path, targets: list[str], *, limit: in
             logger.warning("could not derive test-to-source history for %s: %s", target, exc)
             result[target] = []
             continue
-        if len(counts) > limit:
-            logger.info("test-to-source map truncated for %s: kept %d of %d tests", target, limit, len(counts))
-        result[target] = sorted(counts, key=lambda path: (-counts[path], path))[:limit]
+        ranked = sorted(counts, key=lambda path: (-counts[path], path))
+        if limit is not None and len(ranked) > limit:
+            logger.info("test-to-source map truncated for %s: kept %d of %d tests", target, limit, len(ranked))
+            ranked = ranked[:limit]
+        result[target] = ranked
     return result
 
 
