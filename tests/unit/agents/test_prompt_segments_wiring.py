@@ -26,9 +26,7 @@ def test_render_prompt_computes_segments_without_persisting_them(tmp_path: Path,
 
     with patch(
         "bernstein.core.agents.spawn_prompt.segment_prompt",
-        wraps=__import__(
-            "bernstein.core.agents.prompt_segments", fromlist=["segment_prompt"]
-        ).segment_prompt,
+        wraps=__import__("bernstein.core.agents.prompt_segments", fromlist=["segment_prompt"]).segment_prompt,
     ) as spy:
         prompt = _render_prompt(
             [task],
