@@ -64,16 +64,21 @@ security:
 """
 
 
+def _populate(root: Path) -> Path:
+    """Satisfy every policy-library control in *root*, on disk and in config."""
+    (root / "bernstein.yaml").write_text(_CONFIGURED_YAML, encoding="utf-8")
+    (root / ".sdd" / "audit").mkdir(parents=True)
+    (root / "docs").mkdir()
+    (root / "docs" / "incident-response.md").write_text("# Incident response\n", encoding="utf-8")
+    (root / "docs" / "privacy-policy.md").write_text("# Privacy\n", encoding="utf-8")
+    (root / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    return root
+
+
 @pytest.fixture
 def configured_project(tmp_path: Path) -> Path:
     """An install where every policy-library control is satisfied on disk."""
-    (tmp_path / "bernstein.yaml").write_text(_CONFIGURED_YAML, encoding="utf-8")
-    (tmp_path / ".sdd" / "audit").mkdir(parents=True)
-    (tmp_path / "docs").mkdir()
-    (tmp_path / "docs" / "incident-response.md").write_text("# Incident response\n", encoding="utf-8")
-    (tmp_path / "docs" / "privacy-policy.md").write_text("# Privacy\n", encoding="utf-8")
-    (tmp_path / "uv.lock").write_text("version = 1\n", encoding="utf-8")
-    return tmp_path
+    return _populate(tmp_path)
 
 
 @pytest.fixture
@@ -244,17 +249,17 @@ def test_profile_selects_required_ids_without_asserting_conformance() -> None:
     assert required == expected
 
 
-# 10 ------------------------------------------------------------------------
+# 12 ------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("populated", [True, False])
 def test_no_measured_finding_ever_carries_empty_evidence(
-    populated: bool,  # noqa: FBT001 - parametrised over both install shapes
-    configured_project: Path,
-    bare_project: Path,
+    populated: bool,
+    tmp_path: Path,
 ) -> None:
     """A measured verdict without evidence is a claim with nothing behind it."""
-    root = configured_project if populated else bare_project
-    for outcome in run_compliance_checks(root):
-        if outcome.verdict is CheckVerdict.MEASURED:
-            assert outcome.evidence, outcome.check_id
+    root = _populate(tmp_path) if populated else tmp_path
+    measured = [o for o in run_compliance_checks(root) if o.verdict is CheckVerdict.MEASURED]
+    assert measured, "the fixture must exercise at least one measured check"
+    for outcome in measured:
+        assert outcome.evidence, outcome.check_id
