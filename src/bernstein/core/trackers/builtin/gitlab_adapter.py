@@ -33,7 +33,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
 
 if TYPE_CHECKING:
@@ -50,9 +50,11 @@ from bernstein.core.trackers.contract import (
     RateLimited,
     RoutingHint,
     Ticket,
+    TrackerError,
     TrackerUnavailable,
     TransitionResult,
 )
+from bernstein.core.trackers.synthetic import probe_body, probe_title
 
 logger = logging.getLogger(__name__)
 
@@ -351,6 +353,54 @@ class GitLabAdapter(AbstractTrackerAdapter):
             etag=None,
         )
 
+    # -- synthetic-transaction probe ----------------------------------------
+    #
+    # GitLab is the reference probe implementation: a free-tier or
+    # self-hosted project is the lowest-friction throwaway target of the
+    # built-in adapters, and issue create/delete are plain REST calls on
+    # the same ``_request`` path the hot-path methods already use, so the
+    # probe exercises the adapter's real transport, auth and error
+    # mapping rather than a side channel.
+
+    def create_probe_ticket(self, marker: str) -> str:
+        """Create a throwaway issue titled with ``marker``; return its iid."""
+        payload = {"title": probe_title(marker), "description": probe_body(marker)}
+        data = _as_row(self._request("POST", f"/projects/{self._project_segment}/issues", json=payload))
+        iid = data.get("iid")
+        if iid is None:
+            msg = f"GitLab did not return an iid for the synthetic issue {marker!r}"
+            raise TrackerUnavailable(msg)
+        return str(iid)
+
+    def find_probe_tickets(self, marker: str) -> tuple[str, ...]:
+        """Return the iids of every issue whose title carries ``marker``.
+
+        Searches every state, not just ``opened``: a probe run transitions
+        its entity before deleting it, and a tracker that closes on
+        transition must not hide the leftover from the next run's sweep.
+        """
+        rows = _as_rows(
+            self._request(
+                "GET",
+                f"/projects/{self._project_segment}/issues",
+                params={"search": marker, "in": "title", "state": "all", "per_page": 100},
+            )
+        )
+        # GitLab's ``search`` is fuzzy; re-check the marker client-side so a
+        # near-miss never becomes a delete target.
+        return tuple(
+            str(row["iid"]) for row in rows if row.get("iid") is not None and marker in str(row.get("title") or "")
+        )
+
+    def delete_probe_ticket(self, ticket_id: str, marker: str) -> None:
+        """Delete ``ticket_id``, refusing any issue whose title lacks ``marker``."""
+        data = _as_row(self._request("GET", f"/projects/{self._project_segment}/issues/{ticket_id}"))
+        title = str(data.get("title") or "")
+        if marker not in title:
+            msg = f"GitLab issue {ticket_id} does not carry the synthetic marker {marker!r}; refusing to delete it."
+            raise TrackerError(msg)
+        self._request("DELETE", f"/projects/{self._project_segment}/issues/{ticket_id}")
+
     # -- internals ----------------------------------------------------------
 
     def _idempotency_headers(self, key: str | None) -> dict[str, str]:
@@ -469,6 +519,20 @@ class GitLabAdapter(AbstractTrackerAdapter):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _as_row(payload: Any) -> dict[str, Any]:
+    """Normalise a decoded JSON payload into an object row (empty when it is not one)."""
+    if isinstance(payload, dict):
+        return cast("dict[str, Any]", payload)
+    return {}
+
+
+def _as_rows(payload: Any) -> list[dict[str, Any]]:
+    """Normalise a decoded JSON payload into a list of object rows."""
+    if not isinstance(payload, list):
+        return []
+    return [cast("dict[str, Any]", item) for item in cast("list[Any]", payload) if isinstance(item, dict)]
 
 
 def _looks_like_rate_limit(response: Any) -> bool:
