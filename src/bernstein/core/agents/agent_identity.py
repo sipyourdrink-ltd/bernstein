@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING, Any, Final, Literal, cast, get_args
 from bernstein.core.auth import create_jwt, verify_jwt
 from bernstein.core.path_scope import ScopePatternError, validate_repo_relative_pattern
 from bernstein.core.sanitize import sanitize_log
-from bernstein.core.security.capability_tokens import prefixes_narrow
 from bernstein.core.tenanting import (
     DEFAULT_TENANT_ID,
     InvalidTenantIdError,
