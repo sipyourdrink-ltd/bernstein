@@ -313,3 +313,23 @@ def test_conformance_replays_two_runs_with_the_same_db_pin(tmp_path: Path) -> No
     assert result.determinism_tier is DeterminismTier.FEED_PINNED
     assert [step.feed_digest for step in result.step_results] == [_DB_IDENTITY, _DB_IDENTITY]
     assert sum(call.args[0][1] == "filesystem" for call in run.call_args_list) == 2
+
+
+def test_scan_result_carries_the_invocation_digest(tmp_path: Path) -> None:
+    """The digest on the returned object is the one the adapter recorded (#5151).
+
+    Every adapter computed this and assigned it only to `self.last_invocation`, an
+    attribute of the adapter INSTANCE - so the object a caller stores could not say
+    which invocation produced it.
+    """
+    adapter = TrivyAdapter(cache_dir=tmp_path / "cache")
+    with (
+        patch("bernstein.adapters.trivy.shutil.which", return_value="/usr/local/bin/trivy"),
+        patch("bernstein.adapters.trivy._db_identity", return_value=_DB_IDENTITY),
+        patch("bernstein.adapters.trivy.subprocess.run", side_effect=_fake_trivy_run),
+    ):
+        result = adapter.scan(_TARGET, _scope(), tmp_path / "work")
+
+    assert adapter.last_invocation is not None
+    assert result.invocation_digest == adapter.last_invocation.argv_hash
+    assert result.invocation_digest != ""

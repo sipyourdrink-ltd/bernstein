@@ -121,11 +121,21 @@ class ScanResult:
             verify step can diff it.
         feed_digest: Optional digest of the recorded feed (used when determinism
             is ``feed_pinned``).  Empty when the adapter did not pin a feed.
+        invocation_digest: Semantic digest of the invocation that produced this
+            result.  Every adapter already computed one and assigned it only to
+            ``self.last_invocation`` - an attribute of the adapter INSTANCE - so
+            the object callers receive and store could not say which invocation
+            produced it.  That is load-bearing for an empty scan: nmap builds its
+            transcript from the hosts and ports it found, never from the ones
+            requested, so two scans of different targets that both find nothing
+            return byte-identical results.  Empty when the adapter records no
+            invocation provenance.
     """
 
     findings: list[Finding] = field(default_factory=list)
     transcript: str = ""
     feed_digest: str = ""
+    invocation_digest: str = ""
 
     def finding_hashes(self) -> list[str]:
         """Return the per-finding canonical hashes, sorted."""
