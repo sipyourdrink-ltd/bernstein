@@ -40,7 +40,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import yaml
 
@@ -284,20 +284,22 @@ class AdmissionPolicy:
         """
         if not isinstance(raw, dict):
             raise AdmissionPolicyError(f"admission must be a mapping, got: {type(raw).__name__}")
-        unknown = sorted(set(raw) - _POLICY_KEYS)
+        block = cast("dict[str, object]", raw)
+        unknown = sorted({str(key) for key in block} - _POLICY_KEYS)
         if unknown:
             raise AdmissionPolicyError(
                 f"admission has unknown keys: {', '.join(unknown)} (known keys: {', '.join(sorted(_POLICY_KEYS))})"
             )
-        mode = _parse_mode(raw.get("mode"))
-        raw_rules = raw.get("rules")
+        mode = _parse_mode(block.get("mode"))
+        raw_rules: object = block.get("rules", [])
         if raw_rules is None:
             raw_rules = []
         if not isinstance(raw_rules, list):
             raise AdmissionPolicyError(f"admission.rules must be a list, got: {type(raw_rules).__name__}")
+        entries = cast("list[object]", raw_rules)
         rules: list[AdmissionRule] = []
         seen: set[str] = set()
-        for index, entry in enumerate(raw_rules):
+        for index, entry in enumerate(entries):
             rule = _parse_rule(index, entry)
             if rule.rule_id in seen:
                 # Two rules under one id would make a decision record
@@ -337,9 +339,12 @@ class AdmissionPolicy:
             data: object = yaml.safe_load(path.read_text(encoding="utf-8"))
         except (OSError, yaml.YAMLError) as exc:
             raise AdmissionPolicyError(f"could not read admission policy from {path}: {exc}") from exc
-        if not isinstance(data, dict) or "admission" not in data:
+        if not isinstance(data, dict):
             return None
-        return cls.from_mapping(data["admission"])
+        document = cast("dict[str, object]", data)
+        if "admission" not in document:
+            return None
+        return cls.from_mapping(document["admission"])
 
 
 def _parse_mode(raw: object) -> EnforcementMode:
@@ -360,18 +365,19 @@ def _parse_rule(index: int, entry: object) -> AdmissionRule:
     where = f"admission.rules[{index}]"
     if not isinstance(entry, dict):
         raise AdmissionPolicyError(f"{where} must be a mapping, got: {type(entry).__name__}")
-    unknown = sorted(set(entry) - _RULE_KEYS)
+    fields = cast("dict[str, object]", entry)
+    unknown = sorted({str(key) for key in fields} - _RULE_KEYS)
     if unknown:
         raise AdmissionPolicyError(
             f"{where} has unknown keys: {', '.join(unknown)} (known keys: {', '.join(sorted(_RULE_KEYS))})"
         )
-    rule_id = entry.get("id")
+    rule_id = fields.get("id")
     if not isinstance(rule_id, str) or not rule_id:
         raise AdmissionPolicyError(f"{where}.id must be a non-empty string")
-    effect = entry.get("effect")
+    effect = fields.get("effect")
     if effect not in ("allow", "deny"):
         raise AdmissionPolicyError(f"{where}.effect must be 'allow' or 'deny' (got {effect!r})")
-    axes = {key: _parse_patterns(f"{where}.{key}", entry.get(key)) for key in ADMISSION_AXES}
+    axes = {key: _parse_patterns(f"{where}.{key}", fields.get(key)) for key in ADMISSION_AXES}
     if effect == "allow" and not any(axes.values()):
         # An allow rule with no constrained axis admits every possible
         # subject, which quietly turns a fail-closed policy into an
@@ -387,7 +393,7 @@ def _parse_patterns(where: str, raw: object) -> tuple[str, ...]:
     if not isinstance(raw, list):
         raise AdmissionPolicyError(f"{where} must be a list of patterns, got: {type(raw).__name__}")
     patterns: list[str] = []
-    for item in raw:
+    for item in cast("list[object]", raw):
         if not isinstance(item, str) or not item:
             raise AdmissionPolicyError(f"{where} entries must be non-empty strings (got {item!r})")
         patterns.append(item)
