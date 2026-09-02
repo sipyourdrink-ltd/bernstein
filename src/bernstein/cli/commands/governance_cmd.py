@@ -833,7 +833,8 @@ def govern_audit_cmd(
     if profile:
         click.echo("")
         click.echo(
-            f"  required by profile {profile.lower()}: {len(required & set(specs))} of {total} ids "
+            f"  required by profile {profile.lower()}: "
+            f"{len(required & {o.check_id for o in outcomes})} of {total} ids "
             "(marked *; the profile selects ids and states nothing about the result)"
         )
 
