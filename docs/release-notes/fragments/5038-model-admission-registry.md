@@ -1,0 +1,3 @@
+## Model Admission Registry (Issue #5038)
+
+Bernstein now projects a model-admission registry from the audit chain, enabling public API functions to record and verify model admission and withdrawal events. This feature adds `record_model_admission`, `record_model_withdrawal`, `load_registry_events`, `project_registry`, and `is_admitted` functions to `model_registry.py`, along with new `model.admitted` and `model.withdrawn` event types in `audit_chain.py`. The registry uses deterministic ordering via `_order` and keys admissions on canonical `provider/model @version` from `ModelRef`, with verification performed against one snapshot of the chain through `verify_and_query`. #5038
