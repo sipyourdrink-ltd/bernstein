@@ -497,9 +497,7 @@ def _push_trigger_event(event: Any) -> Any:
     )
 
 
-def _handle_push(
-    event: Any, request: Request
-) -> tuple[list[dict[str, Any]], TriggerGateResult | None] | JSONResponse:
+def _handle_push(event: Any, request: Request) -> tuple[list[dict[str, Any]], TriggerGateResult | None] | JSONResponse:
     """Map a GitHub ``push`` event to task payloads, governed by ``triggers.yaml``.
 
     ``triggers.yaml`` cooldown/dedup/filter rules for ``source: github_push``
