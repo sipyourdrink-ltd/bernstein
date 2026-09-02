@@ -103,8 +103,12 @@ class TestOmittedTenantIsNotTheDefaultTenant:
         apart. If these compare equal the signature is attesting to a fact
         nobody asserted.
         """
-        omitted = AgentCredential(token_hash="abc")
-        asserted = AgentCredential(token_hash="abc", tenant_id=DEFAULT_TENANT_ID)
+        # ``created_at`` is pinned so the whole-record comparison can only be
+        # carried by the tenant field: left to its default_factory the two
+        # records differ by a timestamp and the assertion passes for a reason
+        # that has nothing to do with tenancy.
+        omitted = AgentCredential(token_hash="abc", created_at=1.0)
+        asserted = AgentCredential(token_hash="abc", created_at=1.0, tenant_id=DEFAULT_TENANT_ID)
         assert omitted.to_dict() != asserted.to_dict()
         assert omitted.to_dict()["tenant_id"] != asserted.to_dict()["tenant_id"]
 
