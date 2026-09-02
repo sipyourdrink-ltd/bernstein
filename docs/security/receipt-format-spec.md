@@ -482,7 +482,7 @@ surface and the auditor's standalone surface share one contract:
 
 > **Not the run-receipt command.** `bernstein verify receipt <path>` verifies a
 > *run* receipt (`https://bernstein.run/attestations/run-receipt/v1`) — a
-> different document with its own `0/1/2/3` contract. Pointed at an audit
+> different document with its own `0/1/2/3/4` contract. Pointed at an audit
 > receipt it exits `1` (MALFORMED), because an audit receipt carries no
 > `run_id`. The two surfaces are not interchangeable.
 
