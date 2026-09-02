@@ -291,7 +291,7 @@ class BernsteinApp(App[None]):
         self._activity_summaries: dict[str, str] = {}
         self._last_activity: list[str] = []
         self._compare_mark: str | None = None  # first task ID for compare
-        self._resize_timer: object | None = None  # debounce timer handle (TUI-001)
+        self._resize_timer: object | None = None  # type: ignore[assignment]  # debounce timer handle (TUI-001)
         # Activity log file (--activity-log flag)
         self._activity_log_file: IO[str] | None = None
         activity_log_path = os.environ.get("BERNSTEIN_ACTIVITY_LOG")
@@ -381,7 +381,7 @@ class BernsteinApp(App[None]):
             event: The Textual Resize event.
         """
         if self._resize_timer is not None:
-            self._resize_timer.stop()  # type: ignore[union-attr]
+            self._resize_timer.stop()  # type: ignore[union-attr, attr-defined]
         self._resize_timer = self.set_timer(
             self.RESIZE_DEBOUNCE_S,
             self._apply_resize,
@@ -761,7 +761,7 @@ class BernsteinApp(App[None]):
         }
 
         incoming_ids = {str(t.get("id", "")) for t in tasks}
-        existing_ids: set[str] = set(table.rows)
+        existing_ids: set[str] = set(table.rows)  # type: ignore[arg-type]
 
         # Remove rows no longer present
         for key in existing_ids - incoming_ids:

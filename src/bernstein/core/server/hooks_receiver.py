@@ -15,6 +15,15 @@ Design:
   rather than waiting for stream-json parsing).
 - ``PostToolUse`` events update an activity timestamp file so the heartbeat
   monitor has a second source of liveness signals.
+- ``PostToolUse`` events are the call site for post-tool enforcement
+  (:mod:`bernstein.core.security.post_tool_enforcement`): the tool input and
+  the tool output the hook runner reported are inspected for secrets and
+  redacted *before* the sidecar record is written, an audit record is appended
+  to ``.sdd/metrics/tool_audit.jsonl``, and a dangerous pattern writes a
+  ``TOOL_ABORT`` signal through the existing abort chain rather than only
+  setting a flag.  This is the mirror of the pre-tool ``check_secrets`` flow;
+  the receiver is the one place in the live path where post-tool data reaches
+  persistent storage.
 
 Security:
 - ``session_id`` arrives from an untrusted URL path parameter and is used
@@ -39,7 +48,7 @@ import json
 import logging
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -47,6 +56,11 @@ from bernstein.core.security.path_containment import (
     PathContainmentError,
     contained_path,
 )
+from bernstein.core.security.post_tool_enforcement import (
+    redact_tool_output,
+    run_post_tool_enforcement,
+)
+from bernstein.core.tasks.abort_chain import AbortChain
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -174,6 +188,11 @@ class HookEvent:
         raw_event_name: The original event name string from the payload.
         tool_name: Tool name (PostToolUse only).
         tool_input: Truncated tool input (PostToolUse only).
+        tool_output: Tool output as reported by the hook runner (PostToolUse
+            only).  Kept untruncated so post-tool enforcement inspects the whole
+            text; ``process_hook_event`` replaces it with the redacted form
+            before anything is persisted.  Empty when the payload carries no
+            output field.
         timestamp: Unix epoch when the event was received.
         payload: Full raw payload for downstream consumers.
     """
@@ -183,8 +202,43 @@ class HookEvent:
     raw_event_name: str
     tool_name: str = ""
     tool_input: str = ""
+    tool_output: str = ""
     timestamp: float = field(default_factory=time.time)
     payload: dict[str, Any] = field(default_factory=dict[str, Any])
+
+
+#: Payload keys a hook runner may use for the text a tool produced.  The adapter
+#: forwards the runner's body verbatim (``BODY=$(cat)``), so which of these is
+#: present is the runner's choice, not a Bernstein protocol: the receiver reads
+#: whichever it finds and enforces on an empty string when it finds none.
+_TOOL_OUTPUT_KEYS: tuple[str, ...] = ("tool_response", "tool_output", "output")
+
+
+def _extract_tool_output(body: dict[str, Any]) -> str:
+    """Return the tool output carried by a ``PostToolUse`` payload, as text.
+
+    A structured response is serialised rather than dropped - a secret inside a
+    nested field must still be visible to the redaction patterns.
+
+    Args:
+        body: The JSON body of the hook POST request.
+
+    Returns:
+        The tool output as a string, or ``""`` when the payload carries none.
+    """
+    for key in _TOOL_OUTPUT_KEYS:
+        if key not in body:
+            continue
+        raw = body[key]
+        if raw is None:
+            return ""
+        if isinstance(raw, str):
+            return raw
+        try:
+            return json.dumps(raw, sort_keys=True, default=str)
+        except (TypeError, ValueError):  # pragma: no cover - defensive
+            return str(raw)
+    return ""
 
 
 def parse_hook_event(session_id: str, body: dict[str, Any]) -> HookEvent:
@@ -202,10 +256,12 @@ def parse_hook_event(session_id: str, body: dict[str, Any]) -> HookEvent:
 
     tool_name = ""
     tool_input = ""
+    tool_output = ""
     if event_type == HookEventType.POST_TOOL_USE:
         tool_name = str(body.get("tool_name", ""))
         raw_input = body.get("tool_input", body.get("input", ""))
         tool_input = str(raw_input)[:200]  # Truncate for storage
+        tool_output = _extract_tool_output(body)
 
     return HookEvent(
         session_id=session_id,
@@ -213,6 +269,7 @@ def parse_hook_event(session_id: str, body: dict[str, Any]) -> HookEvent:
         raw_event_name=raw_name,
         tool_name=tool_name,
         tool_input=tool_input,
+        tool_output=tool_output,
         timestamp=time.time(),
         payload=body,
     )
@@ -222,6 +279,11 @@ def write_hook_event(event: HookEvent, workdir: Path) -> None:
     """Append a hook event to the session's JSONL sidecar file.
 
     Creates ``.sdd/runtime/hooks/{session_id}.jsonl`` if it does not exist.
+
+    Writes ``event`` as given.  For ``PostToolUse`` the caller is expected to
+    have run :func:`_enforce_post_tool_use` first; the redaction lives there and
+    not here so the audit record and the persisted record are produced from one
+    decision.
 
     Args:
         event: The parsed hook event to persist.
@@ -244,6 +306,11 @@ def write_hook_event(event: HookEvent, workdir: Path) -> None:
         record["tool_name"] = event.tool_name
     if event.tool_input:
         record["tool_input"] = event.tool_input
+    if event.tool_output:
+        # Truncated for storage on the same budget as the input.  Redaction has
+        # already run over the *whole* text in ``process_hook_event``, so a
+        # secret straddling the cut is replaced before it can be halved.
+        record["tool_output"] = event.tool_output[:200]
 
     try:
         with sidecar.open("a", encoding="utf-8") as fh:
@@ -347,18 +414,97 @@ def touch_heartbeat(session_id: str, workdir: Path) -> None:
         logger.debug("Failed to touch heartbeat for session %s", session_id)
 
 
-def process_hook_event(event: HookEvent, workdir: Path) -> dict[str, str]:
-    """Process a hook event: persist, update heartbeat, write markers.
+def _enforce_post_tool_use(event: HookEvent, workdir: Path) -> tuple[HookEvent, bool]:
+    """Run post-tool enforcement over a ``PostToolUse`` event.
 
-    This is the main entry point called by the route handler.
+    The mirror of the pre-tool ``check_secrets`` flow, at the seam where
+    post-tool data first reaches persistent storage.  Redaction happens over the
+    full text and *before* the caller persists anything, the audit record lands
+    under ``.sdd/metrics/``, and a dangerous pattern writes a ``TOOL_ABORT``
+    record through the abort chain that already owns per-tool refusals - so a
+    ``should_block`` verdict reaches the signals directory an agent reads rather
+    than dying in a return value.
+
+    Args:
+        event: The parsed ``PostToolUse`` event, still carrying raw text.
+        workdir: Project working directory.
+
+    Returns:
+        ``(redacted_event, blocked)`` - the event whose input, output and raw
+        payload no longer carry detected secrets, and whether continuation was
+        refused.
+    """
+    # ``parse_hook_event`` truncates the input for storage, so redacting
+    # ``event.tool_input`` would work on a copy already cut at 200 characters and
+    # leave the first half of a straddling secret on disk.  Redact the whole
+    # payload value, then cut.
+    raw_input = str(event.payload.get("tool_input", event.payload.get("input", "")))
+    redacted_input = redact_tool_output(raw_input)
+
+    result = run_post_tool_enforcement(
+        session_id=event.session_id,
+        tool=event.tool_name,
+        tool_input={"tool_input": redacted_input},
+        raw_output=event.tool_output,
+        workdir=workdir,
+    )
+
+    redacted_payload = dict(event.payload)
+    for key in _TOOL_OUTPUT_KEYS:
+        if key in redacted_payload:
+            redacted_payload[key] = result.redacted_output
+            break
+    for key in ("tool_input", "input"):
+        if key in redacted_payload:
+            redacted_payload[key] = redacted_input
+            break
+
+    redacted_event = replace(
+        event,
+        tool_input=redacted_input[:200],
+        tool_output=result.redacted_output,
+        payload=redacted_payload,
+    )
+
+    if not result.should_block:
+        return redacted_event, False
+
+    AbortChain(signals_dir=workdir / ".sdd" / "runtime" / "signals").abort_tool(
+        event.session_id,
+        event.tool_name,
+        "post-tool enforcement: dangerous pattern in tool output",
+    )
+    logger.warning(
+        "Post-tool enforcement blocked continuation for session %s: tool=%s",
+        event.session_id,
+        event.tool_name,
+    )
+    return redacted_event, True
+
+
+def process_hook_event(event: HookEvent, workdir: Path) -> dict[str, str]:
+    """Process a hook event: enforce, persist, update heartbeat, write markers.
+
+    This is the main entry point called by the route handler.  A
+    ``PostToolUse`` event goes through :func:`_enforce_post_tool_use` first, so
+    the record that is persisted and the payload handed to downstream consumers
+    carry redacted text rather than whatever the tool printed.
 
     Args:
         event: The parsed hook event.
         workdir: Project working directory.
 
     Returns:
-        A status dict suitable for the JSON response body.
+        A status dict suitable for the JSON response body.  A ``PostToolUse``
+        whose output tripped a dangerous pattern reports
+        ``"action": "tool_use_blocked"``.
     """
+    # Post-tool enforcement runs before anything is written: the sidecar, the
+    # heartbeat and every downstream consumer see redacted text only.
+    blocked = False
+    if event.event_type == HookEventType.POST_TOOL_USE:
+        event, blocked = _enforce_post_tool_use(event, workdir)
+
     # Always persist the event
     write_hook_event(event, workdir)
 
@@ -397,6 +543,8 @@ def process_hook_event(event: HookEvent, workdir: Path) -> dict[str, str]:
             event.session_id,
             event.tool_name,
         )
+        if blocked:
+            return {"status": "ok", "action": "tool_use_blocked"}
         return {"status": "ok", "action": "tool_use_logged"}
 
     return {"status": "ok", "action": "event_logged"}

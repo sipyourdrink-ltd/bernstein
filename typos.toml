@@ -40,6 +40,7 @@ abd = "abd"          # deterministic 3-byte hash fixture b"abd" (test_computer_u
 continu = "continu"  # intentional substring match for "continue"/"continuity" in error text (test_capability_tokens.py)
 reprot = "reprot"    # intentionally malformed artifact-kind fixture (test_artifact_spec_declaration.py)
 critera = "critera"  # intentionally malformed artifact_spec key fixture (test_artifact_spec_declaration.py)
+Pn = "Pn"            # `-Pn` is a valid Nmap flag
 
 # Technical terms used consistently in the codebase
 unparseable = "unparseable"

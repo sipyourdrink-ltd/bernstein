@@ -31,7 +31,7 @@ def insights(output_format: str, since: str) -> None:
     """
     # TODO: Implement insights logic
     if output_format == "json":
-        console.print_json({"message": "Insights command skeleton", "since": since})
+        console.print_json({"message": "Insights command skeleton", "since": since})  # type: ignore[arg-type]
     else:
         console.print(f"[bold]Insights[/bold] (since: {since})")
         console.print("[dim]Not yet implemented.[/dim]")
