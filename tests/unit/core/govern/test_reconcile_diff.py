@@ -28,6 +28,7 @@ from bernstein.core.govern.reconcile_models import (
     EntityKind,
     EntityStatus,
 )
+from bernstein.core.security.audit import load_or_create_audit_key
 from bernstein.core.security.governance import read_decisions
 
 RUN_ID = "govern-reconcile"
@@ -131,9 +132,9 @@ def test_snapshot_covers_all_four_entity_kinds_with_observed_at(project: Path) -
     keys = [(e.kind, e.entity_id) for e in snapshot.entities]
     assert len(keys) == len(set(keys))
     assert (EntityKind.SCHEDULED_TASK, "sched-abc") in keys
-    assert all(
-        "/" in e.entity_id for e in snapshot.entities if e.kind is EntityKind.CAPABILITY
-    ), "capability ids are scope/name"
+    assert all("/" in e.entity_id for e in snapshot.entities if e.kind is EntityKind.CAPABILITY), (
+        "capability ids are scope/name"
+    )
     # Two snapshots of an unchanged tree are byte-identical.
     assert snapshot.content_hash() == snapshot_surface(sdd_dir=project / ".sdd", observed_at=1234).content_hash()
 
@@ -145,6 +146,9 @@ def test_snapshot_covers_all_four_entity_kinds_with_observed_at(project: Path) -
 
 def test_propose_mutates_nothing_on_disk_or_process(project: Path) -> None:
     """``--propose`` writes its decision record and touches nothing else."""
+    # Bootstrap the audit key up front: creating it is chain infrastructure the
+    # run needs, not a change to the governed surface under test.
+    load_or_create_audit_key(project / "audit.key")
     _write_schedule(project, "sched-abc", "0 3 * * *")
     desired = _desired_from_snapshot(project)
 

@@ -1311,6 +1311,11 @@ from bernstein.cli.commands.governance_cmd import governance_group  # noqa: E402
 
 cli.add_command(governance_group, "governance")
 
+# Desired-state reconcile diff over the governed surface (#5085).
+from bernstein.cli.commands.govern_cmd import govern_group  # noqa: E402
+
+cli.add_command(govern_group, "govern")
+
 # Per-tool-call snapshots + stacked agent branches.
 from bernstein.cli.commands.git_cmd import git_cmd  # noqa: E402
 
