@@ -27,7 +27,7 @@ the caller owns the transport and hands this module the decoded resource.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, cast
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -81,7 +81,8 @@ def _ceiling(groups: Iterable[Any]) -> tuple[str, ...]:
         if isinstance(entry, str):
             name = entry.strip()
         elif isinstance(entry, dict):
-            name = _text(entry, "display") or _text(entry, "value")
+            member = cast("Mapping[str, Any]", entry)
+            name = _text(member, "display") or _text(member, "value")
         else:  # pragma: no cover - defensive
             name = ""
         if name:
@@ -106,13 +107,12 @@ def principal_from_user(resource: Mapping[str, Any]) -> DirectoryPrincipal:
     if not principal_id:
         raise DirectorySchemaError("SCIM User resource carries no userName, externalId, or id")
     groups = resource.get("groups")
-    active = resource.get("active", True)
     return DirectoryPrincipal(
         principal_id=principal_id,
         external_id=_text(resource, "externalId"),
         display_name=_text(resource, "displayName"),
-        capability_ceiling=_ceiling(groups if isinstance(groups, list) else ()),
-        active=bool(active),
+        capability_ceiling=_ceiling(cast("list[Any]", groups) if isinstance(groups, list) else ()),
+        active=bool(resource.get("active", True)),
     )
 
 
@@ -134,9 +134,10 @@ def principals_in_group(resource: Mapping[str, Any]) -> tuple[str, ...]:
     if not isinstance(members, list):
         return ()
     out: list[str] = []
-    for member in members:
-        if not isinstance(member, dict):
+    for entry in cast("list[Any]", members):
+        if not isinstance(entry, dict):
             continue
+        member = cast("Mapping[str, Any]", entry)
         name = _text(member, "display") or _text(member, "value")
         if name and name not in out:
             out.append(name)

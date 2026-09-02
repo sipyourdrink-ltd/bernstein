@@ -82,9 +82,7 @@ class TestProvisioning:
 
 
 class TestDeprovisioningIsConsultedByGrantValidity:
-    def test_deprovisioning_makes_every_later_grant_check_fail(
-        self, tmp_path, grant_ledger, principal_ledger
-    ) -> None:
+    def test_deprovisioning_makes_every_later_grant_check_fail(self, tmp_path, grant_ledger, principal_ledger) -> None:
         principal_ledger.provision(principal_id="agent:a", capability_ceiling=("read",), created=1_000)
         grant_ledger.issue_grant(
             run_id="run-1",

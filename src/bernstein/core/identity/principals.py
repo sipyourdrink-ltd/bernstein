@@ -52,6 +52,7 @@ One JSONL line per record under ``<root>/principals/<scope>.jsonl``::
 
 from __future__ import annotations
 
+import hashlib
 import hmac as _hmac
 import json
 import time
@@ -62,7 +63,6 @@ from typing import TYPE_CHECKING, Any, Final
 from bernstein.core.identity.grants import (
     GENESIS_HMAC,
     GrantSigner,
-    _compute_hmac,
     verify_grant_signature,
 )
 
@@ -98,6 +98,18 @@ DEFAULT_SCOPE: Final[str] = "install"
 
 class PrincipalError(Exception):
     """Raised when a principal record cannot be signed or recorded."""
+
+
+def _compute_hmac(key: bytes, prev_hmac: str, body: dict[str, Any]) -> str:
+    """HMAC-SHA256 over ``prev_hmac`` concatenated with the canonical record body.
+
+    Identical construction to
+    :func:`bernstein.core.identity.grants._compute_hmac`, so a verifier holding
+    the install audit key walks the principal chain exactly as it walks the
+    grant chain.
+    """
+    payload = prev_hmac + json.dumps(body, sort_keys=True)
+    return _hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
 
 
 def _safe_scope(scope: str) -> str:
@@ -469,7 +481,13 @@ def default_principal_ledger(
     The principal chain shares the grant chain's root and key so a verifier
     holding the install audit key can reconstruct both from one slice.
     """
-    from bernstein.core.identity.grants import DEFAULT_ROOT, _audit_key, install_grant_signer
+    from bernstein.core.identity.grants import DEFAULT_ROOT, install_grant_signer
+    from bernstein.core.security.audit import load_or_create_audit_key
 
     active_signer = signer if signer is not None else install_grant_signer(issuer=issuer)
-    return PrincipalLedger(root=root or DEFAULT_ROOT, key=_audit_key(), signer=active_signer, scope=scope)
+    return PrincipalLedger(
+        root=root or DEFAULT_ROOT,
+        key=load_or_create_audit_key(),
+        signer=active_signer,
+        scope=scope,
+    )
