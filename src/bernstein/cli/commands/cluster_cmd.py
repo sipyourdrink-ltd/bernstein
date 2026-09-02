@@ -30,7 +30,8 @@ def cluster_group() -> None:
     """Cluster lifecycle helpers.
 
     \b
-      bernstein cluster bootstrap-ca   # generate self-signed CA + server/node certs
+      bernstein cluster bootstrap-ca      # generate self-signed CA + server/node certs
+      bernstein cluster govern-inventory  # inventory workloads by their governance label
     """
 
 
@@ -582,3 +583,124 @@ def cluster_claims_verify(as_json: bool, journal_path: str | None, workdir: str,
         raise SystemExit(1)
     if result.forks:
         raise SystemExit(2)
+
+
+def _read_workload_listing(path: Path) -> list[dict[str, Any]]:
+    """Read a workload listing, accepting a ``kubectl`` List or a bare array."""
+    doc: Any = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(doc, list):
+        return cast("list[dict[str, Any]]", doc)
+    if isinstance(doc, dict):
+        items: Any = cast("dict[str, Any]", doc).get("items")
+        if isinstance(items, list):
+            return cast("list[dict[str, Any]]", items)
+    raise click.ClickException(f"{path}: expected a workload list or a document with an 'items' array")
+
+
+def _render_workloads(workloads: tuple[Any, ...]) -> None:
+    from rich.table import Table
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Namespace")
+    table.add_column("Kind")
+    table.add_column("Name")
+    table.add_column("State")
+    table.add_column("Label")
+    for w in workloads:
+        table.add_row(w.namespace, w.kind, w.name, w.state.value, w.label_value or "-")
+    console.print(table)
+
+
+def _render_transitions(transitions: tuple[Any, ...]) -> None:
+    from rich.table import Table
+
+    if not transitions:
+        console.print("  no governance changes since the previous inventory")
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Change")
+    table.add_column("Workload")
+    table.add_column("From")
+    table.add_column("To")
+    for t in transitions:
+        table.add_row(
+            t.kind.value,
+            t.workload_ref,
+            t.previous_state.value if t.previous_state else "-",
+            t.current_state.value if t.current_state else "-",
+        )
+    console.print(table)
+
+
+@cluster_group.command("govern-inventory")
+@click.option(
+    "--manifests",
+    "manifests_file",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Workload listing, as 'kubectl get deploy,sts -A -o json' writes it.",
+)
+@click.option(
+    "--previous",
+    "previous_file",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="An earlier inventory document, to report governance changes against.",
+)
+@click.option(
+    "--label-key",
+    default=None,
+    help="Label declaring the posture (default: bernstein.io/govern).",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit the inventory document instead of tables.")
+def cluster_govern_inventory(
+    manifests_file: str,
+    previous_file: str | None,
+    label_key: str | None,
+    as_json: bool,
+) -> None:
+    """Inventory cluster workloads by the governance label they declare.
+
+    Reads the listing and writes nothing back: a workload is enrolled by
+    carrying the label, not by having its manifest edited here. Unlabelled and
+    opted-out workloads stay in the inventory, and ``--previous`` reports a
+    workload that left governance as a change rather than as a missing row.
+    """
+    from bernstein.core.govern.cluster_inventory import (
+        GOVERN_LABEL,
+        ClusterGovernanceError,
+        ClusterWorkload,
+        build_inventory,
+        diff_workloads,
+        inventory_workloads,
+    )
+
+    key = label_key or GOVERN_LABEL
+    try:
+        workloads = inventory_workloads(_read_workload_listing(Path(manifests_file)), label_key=key)
+        previous: tuple[Any, ...] = ()
+        if previous_file is not None:
+            prior_doc = json.loads(Path(previous_file).read_text(encoding="utf-8"))
+            previous = tuple(ClusterWorkload.from_dict(row) for row in prior_doc.get("workloads", []))
+        transitions = diff_workloads(cast("Any", previous), workloads)
+    except ClusterGovernanceError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    document = {
+        "label_key": key,
+        "workloads": [w.to_dict() for w in workloads],
+        "inventory_hash": build_inventory(workloads).content_hash(),
+        "transitions": [t.to_dict() for t in transitions],
+    }
+
+    if as_json or is_json():
+        print_json(document)
+        return
+
+    console.print()
+    console.print(f"[bold]Cluster governance inventory[/bold] label={key}")
+    _render_workloads(workloads)
+    console.print(f"  inventory hash  {document['inventory_hash']}")
+    console.print()
+    console.print("[bold]Governance changes[/bold]")
+    _render_transitions(transitions)
