@@ -182,6 +182,55 @@ instead of the ambiguous former `ok` flag.
   divergence.
 - `bernstein replay <run-id> --from-step N` rebuilds a deterministic state
   projection over events `[0, N)`; two invocations are byte-identical.
+- `bernstein replay <run-id> --re-derive` re-derives the coordination sequence
+  from the recorded inputs and compares the re-derived head to the recorded
+  one (see below).
+
+### Coordination re-derivation (`--re-derive`)
+
+`--verify` recomputes the chain over the rows already on disk. That proves the
+journal was not edited afterwards; it does not prove the coordination sequence
+those rows record is the sequence the scheduler's rules produce. Without a
+second check the determinism property is enforced by code structure alone.
+
+`--re-derive` supplies that check. It reads the two things coordination does
+not choose - the recorded planning output (`plan.graph.full`) and the recorded
+per-task outcomes (`task_completed`, `task_verification_failed`,
+`task_retried`) - walks the run back through the coordination state machine,
+appends every accepted step to a **fresh journal in a throwaway sandbox**, and
+exits 0 only when the re-derived timing-excluded head equals the recorded head.
+
+What is an input and what is a decision:
+
+| Recorded fact | Treated as | Why |
+|---|---|---|
+| plan graph, leaf outcome, agent id, model, cost | input, carried verbatim | coordination did not choose it; re-derivation holds it fixed |
+| whether a task was claimable when it was claimed | decision, re-derived | this is the rule the scheduler applies |
+| whether an outcome belonged to a running task | decision, re-derived | an outcome with no outstanding claim is not a reachable step |
+| the chain over the resulting sequence | decision, re-derived | the head is computed from inputs, never copied |
+
+A step the rules cannot produce is reported by index **and** by the rule that
+refused it (`dependency_not_completed`, `task_already_claimed`,
+`task_not_in_plan`, `outcome_for_unclaimed_task`), so an injected outcome
+surfaces as a named first divergence rather than a bare hash difference. When
+every step is derivable but a payload differs, the pairwise divergence locator
+(`core/replay/diff.py`) names the first differing step instead.
+
+Re-derivation re-executes nothing: no adapter binary, no task server, no
+network, and no write outside the sandbox. Re-running the agents is a live
+re-run, which is a different operation.
+
+Refusal codes: `underivable_step`, `head_mismatch`, `plan_missing`,
+`journal_unreadable`, `journal_not_found`. `--as-json` emits them alongside
+`step_index`, `rule`, `recorded_head` and `derived_head`.
+
+`plan.graph.full` is appended on normal ticks only (every sixth tick, and the
+first tick is always a fast tick), so a run that finished in fewer ticks than
+that recorded no planning output and re-derives to `plan_missing`. That is a
+gap in what the run recorded, not a fault in the run: there is nothing to
+re-derive the dependency gate from. For the same reason the dependency gate is
+skipped for claims that precede the first graph event, rather than reporting a
+missing input as a coordination fault.
 
 Capsule-governed finalization can seal the journal head and event count outside
 the journal. Where that seal exists, finished-journal identity and artifact
