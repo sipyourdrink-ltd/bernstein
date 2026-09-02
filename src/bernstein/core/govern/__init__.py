@@ -11,6 +11,12 @@ from bernstein.core.govern.inventory_models import Inventory, Surface
 from bernstein.core.govern.plan_models import GovernPlan, PlanEntry, PlanEntryKind
 from bernstein.core.govern.playbook_models import Playbook, PlaybookClause
 from bernstein.core.govern.proposal import DraftProposal, ProposalStatus
+from bernstein.core.govern.restore import (
+    RestoreEntry,
+    RestorePlan,
+    RestoreRefusal,
+    build_restore_plan,
+)
 
 
 def compute_plan(
@@ -196,6 +202,10 @@ __all__ = [
     "Playbook",
     "PlaybookClause",
     "ProposalStatus",
+    "RestoreEntry",
+    "RestorePlan",
+    "RestoreRefusal",
     "Surface",
+    "build_restore_plan",
     "compute_plan",
 ]
