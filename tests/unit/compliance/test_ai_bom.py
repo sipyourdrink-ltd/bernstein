@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -29,8 +30,10 @@ from bernstein.core.compliance.ai_bom import (
     bom_content_hash,
     encode_bom,
     generate_bom,
+    snapshot_from_spine,
     verify_bom,
 )
+from bernstein.core.lineage.spine import LineageSpine
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1005,3 +1008,144 @@ class TestProperties:
         for pkg in decoded["packages"]:
             assert pkg["checksums"][0]["algorithm"] == "SHA256"
             assert len(pkg["checksums"][0]["checksumValue"]) == 64
+
+
+# ---------------------------------------------------------------------------
+# Snapshot projection from the lineage spine (issue #2916)
+# ---------------------------------------------------------------------------
+
+
+class TestSnapshotFromSpine:
+    """``snapshot_from_spine`` derives the BOM input from the run's chain.
+
+    Before this projection existed the ``bom emit --run`` path only worked
+    if an operator hand-assembled ``bom_snapshot.json``: nothing in the tree
+    wrote that file. These tests pin that the snapshot is a faithful,
+    deterministic projection of the spine rather than a fresh claim.
+    """
+
+    @staticmethod
+    def _spine(tmp_path: Path, run_id: str = "run-bom-1") -> LineageSpine:
+        return LineageSpine(tmp_path / ".sdd" / "lineage", run_id=run_id, hmac_key=b"k" * 32)
+
+    @staticmethod
+    def _seed(spine: LineageSpine) -> None:
+        spine.record(
+            artifact_path="src/a.py",
+            content=b"a",
+            actor="agent:worker",
+            step_id="s1",
+            model="claude-sonnet",
+            timestamp=1767225600,
+        )
+        spine.record(
+            artifact_path="src/b.py",
+            content=b"b",
+            actor="agent:worker",
+            step_id="s2",
+            model="claude-sonnet",
+            timestamp=1767225660,
+        )
+        spine.record(
+            artifact_path="src/c.py",
+            content=b"c",
+            actor="agent:reviewer",
+            step_id="s3",
+            model="gpt-mini",
+            timestamp=1767225720,
+        )
+
+    def test_bom_snapshot_from_spine_is_byte_identical_across_derivations(self, tmp_path: Path) -> None:
+        spine = self._spine(tmp_path)
+        self._seed(spine)
+
+        first = snapshot_from_spine(spine)
+        second = snapshot_from_spine(spine)
+        assert encode_bom(generate_bom(first)) == encode_bom(generate_bom(second))
+
+        # Every line item is a link into the chain, not a claim: each emitted
+        # model hash must be an entry hash the spine actually yields.
+        entry_hashes = {entry.entry_hash for entry in spine.iter_entries()}
+        emitted = {model.sha256 for model in generate_bom(first).models}
+        assert emitted
+        assert emitted <= entry_hashes
+
+    def test_snapshot_from_spine_counts_invocations_per_distinct_model(self, tmp_path: Path) -> None:
+        spine = self._spine(tmp_path)
+        self._seed(spine)
+
+        bom = generate_bom(snapshot_from_spine(spine))
+        counts = {model.name: model.invocation_count for model in bom.models}
+        assert counts == {"claude-sonnet": 2, "gpt-mini": 1}
+
+    def test_snapshot_from_spine_skips_entries_that_recorded_no_model(self, tmp_path: Path) -> None:
+        spine = self._spine(tmp_path)
+        spine.record(
+            artifact_path="run-artifacts/x/v1",
+            content=b"x",
+            actor="agent:worker",
+            step_id="artifact:x:v1",
+            model="",
+            timestamp=1767225600,
+        )
+        spine.record(
+            artifact_path="src/a.py",
+            content=b"a",
+            actor="agent:worker",
+            step_id="s1",
+            model="claude-sonnet",
+            timestamp=1767225660,
+        )
+
+        bom = generate_bom(snapshot_from_spine(spine))
+        assert [model.name for model in bom.models] == ["claude-sonnet"]
+
+    def test_snapshot_from_spine_anchors_lineage_root_at_the_chain_head(self, tmp_path: Path) -> None:
+        spine = self._spine(tmp_path)
+        self._seed(spine)
+
+        bom = generate_bom(snapshot_from_spine(spine))
+        assert bom.lineage_root_hash == spine.head_hash()
+        assert bom.run_id == "run-bom-1"
+
+    def test_snapshot_from_spine_rejects_a_run_with_no_entries(self, tmp_path: Path) -> None:
+        spine = self._spine(tmp_path, run_id="empty-run")
+        with pytest.raises(BOMError, match="empty-run"):
+            snapshot_from_spine(spine)
+
+    def test_snapshot_from_spine_window_spans_first_and_last_entry(self, tmp_path: Path) -> None:
+        spine = self._spine(tmp_path)
+        self._seed(spine)
+
+        snapshot = snapshot_from_spine(spine)
+        assert snapshot["started_at"] == "2026-01-01T00:00:00Z"
+        assert snapshot["finished_at"] == "2026-01-01T00:02:00Z"
+
+    def test_snapshot_from_spine_reads_second_and_nanosecond_stamps_alike(self, tmp_path: Path) -> None:
+        """The spine's ``timestamp`` unit is caller-chosen and mixed in-tree.
+
+        ``core/evidence/run_artifacts.py`` stamps ``int(time.time())`` while
+        ``core/tasks/task_lifecycle.py`` stamps ``time.time_ns()``, so the same
+        instant reaches the chain in two units and must project to one date.
+        """
+        seconds = self._spine(tmp_path, run_id="run-seconds")
+        seconds.record(
+            artifact_path="src/a.py",
+            content=b"a",
+            actor="agent:worker",
+            step_id="s1",
+            model="claude-sonnet",
+            timestamp=1767225600,
+        )
+        nanos = self._spine(tmp_path, run_id="run-nanos")
+        nanos.record(
+            artifact_path="src/a.py",
+            content=b"a",
+            actor="agent:worker",
+            step_id="s1",
+            model="claude-sonnet",
+            timestamp=1767225600 * 1_000_000_000,
+        )
+
+        assert snapshot_from_spine(seconds)["started_at"] == snapshot_from_spine(nanos)["started_at"]
+        assert snapshot_from_spine(nanos)["started_at"] == "2026-01-01T00:00:00Z"

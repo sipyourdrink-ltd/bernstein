@@ -452,6 +452,7 @@ nav:
           - PII scan gate: security/pii-scan-gate.md
       - Compliance & audit:
           - Compliance overview: operations/compliance.md
+          - AI bill of materials: operations/run-bom.md
           - SOC 2 audit: security/AUDIT.md
           - Audit log: security/audit-log.md
           - Multi-tenant audit export: security/audit-multitenant.md
