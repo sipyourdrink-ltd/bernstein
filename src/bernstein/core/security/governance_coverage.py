@@ -121,7 +121,7 @@ class GovernanceCoverage:
         }
 
 
-def is_agent_action(entry: SpineEntry) -> bool:
+def _is_agent_action(entry: SpineEntry) -> bool:
     """Whether a spine entry records an action an agent took.
 
     False for the run's own bookkeeping: the journal-head seal, artifact
@@ -152,7 +152,7 @@ def collect_governance_coverage(workdir: Path, run_id: str, *, hmac_key: bytes) 
     lineage_root = workdir / ".sdd" / "lineage"
     spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=hmac_key)
 
-    actions = [entry for entry in spine.iter_entries() if is_agent_action(entry)]
+    actions = [entry for entry in spine.iter_entries() if _is_agent_action(entry)]
     decisions = read_decisions(lineage_root, run_id)
 
     subjects = {decision.subject for decision in decisions}
@@ -191,5 +191,4 @@ __all__ = [
     "GovernanceCoverage",
     "collect_governance_coverage",
     "governance_coverage_json",
-    "is_agent_action",
 ]
