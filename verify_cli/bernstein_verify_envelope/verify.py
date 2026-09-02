@@ -17,7 +17,10 @@ signature says who asserted the envelope; the recomputation says the assertion
 follows from its own inputs.
 
 The envelope's embedded key is a hint, not a trust anchor: an envelope that
-verifies against the key it carries is reported as trust-on-first-use.
+verifies against the key it carries is reported as trust-on-first-use, never as
+plainly verified. Pin a key obtained out of band with ``--jwk`` or
+``--public-key`` and the pinned key becomes the verifying key, so an envelope
+re-signed by anyone else is rejected however well-formed it is.
 
 Air-gap guarantee: no network calls. Only stdlib + ``cryptography``.
 """
@@ -42,6 +45,24 @@ JWS_ALG = "EdDSA"
 SECTION_NAMES = ("principal", "grants", "decisions", "evidence", "coverage")
 _TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
+# How the verifying key was obtained. Reported on every run, because "the
+# signature checks out" means something different in each case.
+TRUST_PINNED_JWK = "pinned-jwk"
+TRUST_PINNED_PUBLIC_KEY = "pinned-public-key"
+TRUST_ON_FIRST_USE = "trust-on-first-use"
+TRUST_NONE = "unverified"
+
+TRUST_EXPLANATIONS = {
+    TRUST_PINNED_JWK: "verified against the Ed25519 JWK pinned with --jwk",
+    TRUST_PINNED_PUBLIC_KEY: "verified against the Ed25519 public key pinned with --public-key",
+    TRUST_ON_FIRST_USE: (
+        "the signature was checked against the key the envelope carries, which the envelope "
+        "itself asserts; this is not evidence the signer is who the envelope names. "
+        "Pin a key obtained out of band with --jwk or --public-key."
+    ),
+    TRUST_NONE: "no trust source was established",
+}
+
 
 # ---------------------------------------------------------------------------
 # Result types
@@ -62,6 +83,8 @@ class VerifyResult:
     """Aggregate outcome across every check that ran."""
 
     checks: list[CheckResult] = field(default_factory=list)
+    trust: str = TRUST_NONE
+    """How the verifying key was obtained -- one of the ``TRUST_*`` labels."""
 
     @property
     def ok(self) -> bool:
@@ -141,6 +164,62 @@ def _public_key_from_jwk(jwk: Any) -> Any:
     return Ed25519PublicKey.from_public_bytes(raw)
 
 
+def _raw_public_bytes(public_key: Any) -> bytes:
+    """Return the 32 raw bytes of an Ed25519 public key, for pin comparison."""
+    from cryptography.hazmat.primitives import serialization
+
+    return public_key.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+
+
+def _resolve_verifying_key(
+    block: dict[str, Any],
+    *,
+    pinned_jwk: dict[str, Any] | None,
+    pinned_pem: bytes | None,
+) -> tuple[Any, str]:
+    """Resolve the key the signature is checked against, honouring a pin.
+
+    Returns ``(public_key, trust_label)``. When a pin is supplied the pinned
+    key is the verifying key -- the envelope's own ``public_key_jwk`` is only
+    compared against it so a mismatch can be named. Raises ValueError when the
+    envelope's key is unusable or when it is not the pinned one.
+    """
+    embedded_jwk = block.get("public_key_jwk")
+    embedded_key = _public_key_from_jwk(embedded_jwk)
+
+    if pinned_pem is not None:
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+        try:
+            pinned_key = serialization.load_pem_public_key(pinned_pem)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(
+                f"pinned --public-key is not a readable PEM public key: {exc}"
+            ) from exc
+        if not isinstance(pinned_key, Ed25519PublicKey):
+            raise ValueError(
+                f"pinned --public-key is not Ed25519 (got {type(pinned_key).__name__})"
+            )
+        if _raw_public_bytes(pinned_key) != _raw_public_bytes(embedded_key):
+            raise ValueError(
+                "the envelope is signed by a key other than the one pinned with --public-key; "
+                "an envelope re-signed by another key is rejected, not reported as verified"
+            )
+        return pinned_key, TRUST_PINNED_PUBLIC_KEY
+
+    if pinned_jwk is not None:
+        pinned_key = _public_key_from_jwk(pinned_jwk)
+        if _raw_public_bytes(pinned_key) != _raw_public_bytes(embedded_key):
+            raise ValueError(
+                "the envelope is signed by a key other than the one pinned with --jwk; "
+                "an envelope re-signed by another key is rejected, not reported as verified"
+            )
+        return pinned_key, TRUST_PINNED_JWK
+
+    return embedded_key, TRUST_ON_FIRST_USE
+
+
 def _parse_timestamp(value: Any, what: str) -> datetime:
     """Parse an RFC 3339 UTC timestamp, raising ValueError with context."""
     if not isinstance(value, str):
@@ -195,38 +274,54 @@ def verify_coverage_present(envelope: dict[str, Any]) -> CheckResult:
     return CheckResult("coverage", ok=True)
 
 
-def verify_signature(envelope: dict[str, Any]) -> tuple[CheckResult, str]:
+def verify_signature(
+    envelope: dict[str, Any],
+    *,
+    pinned_jwk: dict[str, Any] | None = None,
+    pinned_pem: bytes | None = None,
+) -> tuple[CheckResult, str]:
     """Verify the detached EdDSA JWS over the JCS bytes of the envelope body.
 
-    Returns ``(check, note)`` where the note records how the verifying key was
-    obtained. The embedded key is a hint, so a successful verification against
-    it is reported as trust-on-first-use.
+    Returns ``(check, trust_label)`` recording how the verifying key was
+    obtained. With no pin the embedded key is a hint, so a successful
+    verification against it is reported as trust-on-first-use rather than as
+    verified. With a pin, the pinned key is the verifying key.
     """
     from cryptography.exceptions import InvalidSignature
 
     block = envelope.get("signature")
     if not isinstance(block, dict):
-        return CheckResult("signature", ok=False, detail="signature section missing"), ""
+        return CheckResult("signature", ok=False, detail="signature section missing"), TRUST_NONE
     if block.get("alg") != JWS_ALG:
-        return CheckResult("signature", ok=False, detail=f"unexpected alg {block.get('alg')!r}"), ""
+        return (
+            CheckResult("signature", ok=False, detail=f"unexpected alg {block.get('alg')!r}"),
+            TRUST_NONE,
+        )
 
     jws = block.get("jws")
     if not isinstance(jws, str) or jws.count(".") != 2:
-        return CheckResult("signature", ok=False, detail="jws is not a compact JWS"), ""
+        return (
+            CheckResult("signature", ok=False, detail="jws is not a compact JWS"),
+            TRUST_NONE,
+        )
     header_b64, payload_b64, sig_b64 = jws.split(".")
     if payload_b64:
         # Not a detached signature -- refuse rather than verify a payload that
         # is not the envelope body.
-        return CheckResult("signature", ok=False, detail="jws is not detached"), ""
+        return CheckResult("signature", ok=False, detail="jws is not detached"), TRUST_NONE
 
     try:
         header = json.loads(_b64url_decode(header_b64))
     except (ValueError, json.JSONDecodeError) as exc:
-        return CheckResult(
-            "signature", ok=False, detail=f"protected header decode failed: {exc}"
-        ), ""
+        return (
+            CheckResult("signature", ok=False, detail=f"protected header decode failed: {exc}"),
+            TRUST_NONE,
+        )
     if not isinstance(header, dict):
-        return CheckResult("signature", ok=False, detail="protected header is not an object"), ""
+        return (
+            CheckResult("signature", ok=False, detail="protected header is not an object"),
+            TRUST_NONE,
+        )
     if header.get("alg") != JWS_ALG or header.get("typ") != JWS_TYP:
         return (
             CheckResult(
@@ -237,20 +332,22 @@ def verify_signature(envelope: dict[str, Any]) -> tuple[CheckResult, str]:
                     f"{header.get('alg')!r}/{header.get('typ')!r}"
                 ),
             ),
-            "",
+            TRUST_NONE,
         )
     if header.get("kid") != block.get("kid"):
         return (
             CheckResult(
                 "signature", ok=False, detail="protected header kid differs from signature.kid"
             ),
-            "",
+            TRUST_NONE,
         )
 
     try:
-        public_key = _public_key_from_jwk(block.get("public_key_jwk"))
+        public_key, trust = _resolve_verifying_key(
+            block, pinned_jwk=pinned_jwk, pinned_pem=pinned_pem
+        )
     except ValueError as exc:
-        return CheckResult("signature", ok=False, detail=f"embedded key unusable: {exc}"), ""
+        return CheckResult("signature", ok=False, detail=str(exc)), TRUST_NONE
 
     body = {key: value for key, value in envelope.items() if key != "signature"}
     signing_input = f"{header_b64}.{_b64url(canonicalize_jcs(body))}".encode("ascii")
@@ -263,13 +360,15 @@ def verify_signature(envelope: dict[str, Any]) -> tuple[CheckResult, str]:
                 ok=False,
                 detail="detached JWS does not verify over the canonical envelope body",
             ),
-            "",
+            TRUST_NONE,
         )
     except ValueError as exc:
-        return CheckResult("signature", ok=False, detail=f"signature decode failed: {exc}"), ""
+        return (
+            CheckResult("signature", ok=False, detail=f"signature decode failed: {exc}"),
+            TRUST_NONE,
+        )
 
-    note = "trust-on-first-use (verified against the key the envelope carries)"
-    return CheckResult("signature", ok=True, detail=note), note
+    return CheckResult("signature", ok=True, detail=f"{trust}: {TRUST_EXPLANATIONS[trust]}"), trust
 
 
 def verify_section_digests(envelope: dict[str, Any]) -> list[CheckResult]:
@@ -670,8 +769,29 @@ def _print_check(check: CheckResult, *, verbose: bool, stream: IO[str]) -> None:
     print(line, file=stream)
 
 
-def run_verify(*, envelope_path: Path, verbose: bool, stream: IO[str]) -> VerifyResult:
-    """Run every check over the envelope at *envelope_path*."""
+def _print_trust(result: VerifyResult, stream: IO[str]) -> None:
+    """Name the trust source on every run, pass or fail.
+
+    An operator reading only the last two lines must be able to tell a pass
+    against a pinned key from a pass against the key the file carries.
+    """
+    print(f"TRUST: {result.trust} - {TRUST_EXPLANATIONS[result.trust]}", file=stream)
+
+
+def run_verify(
+    *,
+    envelope_path: Path,
+    verbose: bool,
+    stream: IO[str],
+    pinned_jwk: dict[str, Any] | None = None,
+    pinned_pem: bytes | None = None,
+) -> VerifyResult:
+    """Run every check over the envelope at *envelope_path*.
+
+    *pinned_jwk* / *pinned_pem* supply a trust source obtained out of band. With
+    neither, verification falls back to the key the envelope carries and the
+    result is labelled trust-on-first-use.
+    """
     result = VerifyResult()
 
     def record(check: CheckResult) -> None:
@@ -682,10 +802,12 @@ def run_verify(*, envelope_path: Path, verbose: bool, stream: IO[str]) -> Verify
         envelope = json.loads(Path(envelope_path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         record(CheckResult("envelope_load", ok=False, detail=str(exc)))
+        _print_trust(result, stream)
         print("OVERALL: FAIL", file=stream)
         return result
     if not isinstance(envelope, dict):
         record(CheckResult("envelope_load", ok=False, detail="envelope is not a JSON object"))
+        _print_trust(result, stream)
         print("OVERALL: FAIL", file=stream)
         return result
 
@@ -696,10 +818,14 @@ def run_verify(*, envelope_path: Path, verbose: bool, stream: IO[str]) -> Verify
     presence = verify_coverage_present(envelope)
     if not presence.ok:
         record(presence)
+        _print_trust(result, stream)
         print("OVERALL: FAIL", file=stream)
         return result
 
-    signature_check, _note = verify_signature(envelope)
+    signature_check, trust = verify_signature(
+        envelope, pinned_jwk=pinned_jwk, pinned_pem=pinned_pem
+    )
+    result.trust = trust
     record(signature_check)
     for check in verify_section_digests(envelope):
         record(check)
@@ -709,6 +835,7 @@ def run_verify(*, envelope_path: Path, verbose: bool, stream: IO[str]) -> Verify
     record(verify_evidence(envelope))
     record(verify_coverage(envelope))
 
+    _print_trust(result, stream)
     print(f"OVERALL: {'PASS' if result.ok else 'FAIL'}", file=stream)
     return result
 
@@ -719,8 +846,39 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Verify a Bernstein authority envelope without importing the bernstein package."
     )
     parser.add_argument("--envelope", required=True, type=Path, help="Path to the envelope JSON.")
+    parser.add_argument(
+        "--jwk",
+        type=Path,
+        default=None,
+        help="Trusted Ed25519 JWK (OKP) to pin; an envelope signed by another key is rejected.",
+    )
+    parser.add_argument(
+        "--public-key",
+        type=Path,
+        default=None,
+        help=(
+            "Trusted Ed25519 public key PEM to pin; an envelope signed by another key is rejected."
+        ),
+    )
     parser.add_argument("--verbose", "-v", action="store_true", help="Print PASS-line details.")
     return parser
+
+
+def load_pinned_jwk(path: Path) -> dict[str, Any]:
+    """Read a pinned JWK file, raising ValueError with the operator's wording."""
+    try:
+        pinned = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read --jwk: {exc}") from exc
+    if not isinstance(pinned, dict):
+        raise ValueError("--jwk must be a JSON object")
+    return pinned
+
+
+CONFLICTING_PINS = (
+    "pass either --jwk or --public-key, not both: honouring one silently would leave "
+    "the operator believing they pinned a key that was never consulted"
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -729,7 +887,33 @@ def main(argv: list[str] | None = None) -> int:
     if not args.envelope.is_file():
         print(f"ERROR: not a file: {args.envelope}", file=sys.stderr)
         return 2
-    result = run_verify(envelope_path=args.envelope, verbose=args.verbose, stream=sys.stdout)
+    if args.jwk is not None and args.public_key is not None:
+        print(f"ERROR: {CONFLICTING_PINS}", file=sys.stderr)
+        return 2
+
+    pinned_jwk: dict[str, Any] | None = None
+    if args.jwk is not None:
+        try:
+            pinned_jwk = load_pinned_jwk(args.jwk)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+
+    pinned_pem: bytes | None = None
+    if args.public_key is not None:
+        try:
+            pinned_pem = args.public_key.read_bytes()
+        except OSError as exc:
+            print(f"ERROR: cannot read --public-key: {exc}", file=sys.stderr)
+            return 2
+
+    result = run_verify(
+        envelope_path=args.envelope,
+        verbose=args.verbose,
+        stream=sys.stdout,
+        pinned_jwk=pinned_jwk,
+        pinned_pem=pinned_pem,
+    )
     return 0 if result.ok else 1
 
 
