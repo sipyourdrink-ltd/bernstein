@@ -1,0 +1,74 @@
+name: auditor-conformance
+
+# Runs the auditor conformance suite: one recorded run, one exported
+# bundle, and the vectors that answer the questions asked about a run
+# after the fact. A vector that stops passing fails this job, so a
+# regression in the evidence surface is named on the pull request that
+# causes it rather than found later by someone reading the score.
+#
+# Deliberately NOT in the required set while the suite is young. The
+# unit shards do not collect tests/conformance/, so this job is what
+# runs it.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tests/conformance/**'
+      - 'scripts/auditor_conformance.py'
+      - 'verify_cli/**'
+      - 'src/bernstein/core/security/article12_bundle.py'
+      - 'src/bernstein/core/security/audit_receipt.py'
+      - 'src/bernstein/core/replay/run_receipt.py'
+      - 'config/eu_ai_act_clause_map.yaml'
+      - '.github/workflows/auditor-conformance.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tests/conformance/**'
+      - 'scripts/auditor_conformance.py'
+      - 'verify_cli/**'
+      - 'src/bernstein/core/security/article12_bundle.py'
+      - 'src/bernstein/core/security/audit_receipt.py'
+      - 'src/bernstein/core/replay/run_receipt.py'
+      - 'config/eu_ai_act_clause_map.yaml'
+      - '.github/workflows/auditor-conformance.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auditor-conformance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  auditor-conformance:
+    name: auditor conformance
+    runs-on: ubuntu-latest
+    # The suite records a run, exports a bundle and shells out to the
+    # standalone verifier a handful of times. Observed under a minute;
+    # 15 minutes leaves room for a slow dependency install without
+    # leaving the ceiling unguarded.
+    timeout-minutes: 15
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/bootstrap
+        with:
+          python-version: "3.13"
+
+      - name: Run the auditor conformance suite
+        run: uv run pytest tests/conformance/auditor -q --no-cov
+
+      - name: Score the vectors
+        # Prints "auditor conformance: n/21". The step is a second gate
+        # as well as a report: the score target exits non-zero when a
+        # vector stops passing.
+        run: uv run python scripts/auditor_conformance.py score
