@@ -15,6 +15,9 @@ Subcommands:
   paste into their shell to suppress all emit sites.
 * ``bernstein identity attest show|verify --run <id>`` - project or verify a
   run-attestation receipt without overloading install-rev verification.
+* ``bernstein identity review --since <date>`` - derive a signed per-principal
+  access review from the delegation and grant chains, and record a reviewer's
+  sign-off as its own chain event.
 
 The install-rev verbs are read-only and never open a network connection.  This
 is the project's hard rule: no telemetry, ever.  The nested ``attest verify``
@@ -29,6 +32,7 @@ from __future__ import annotations
 import click
 
 from bernstein.cli.commands.identity_attest_cmd import attest_group
+from bernstein.cli.commands.identity_review_cmd import review_group
 from bernstein.core.identity import install_rev as _identity
 from bernstein.core.identity.install_rev import (
     DISABLED_SENTINEL,
@@ -61,6 +65,7 @@ def identity_group() -> None:
       bernstein identity disable
       bernstein identity attest show --run r-1234 \\
           --signing-key-path key.pem
+      bernstein identity review --since 2026-01-01
     """
 
 
@@ -191,3 +196,9 @@ def disable_cmd() -> None:
 # different object from a run's attestation evidence; sharing the verb would
 # give one noun two meanings.
 identity_group.add_command(attest_group, "attest")
+
+# ``identity review`` is a third noun again: not an install-rev token and not a
+# run's attestation evidence, but a windowed projection of who was granted what
+# across runs. The verbs stay grouped so ``review verify`` cannot be confused
+# with either of the other two ``verify`` verbs.
+identity_group.add_command(review_group, "review")
