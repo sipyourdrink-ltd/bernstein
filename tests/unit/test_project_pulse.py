@@ -198,6 +198,75 @@ def test_search_refuses_to_truncate_at_the_api_result_cap() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Collection: pull requests
+# ---------------------------------------------------------------------------
+
+#: A trimmed recording of the ``search/issues`` response shape for a merged
+#: pull request: the fields ``_collect_pull_requests`` actually reads, on
+#: four items spanning all three author classes plus one lag outside the
+#: 24-hour bucket. Real GitHub responses carry many more fields; keeping
+#: only these is what makes it a fixture instead of a live-API snapshot.
+PR_SEARCH_ITEMS = _REPO_ROOT / "tests" / "fixtures" / "ci" / "project_pulse_search_items.json"
+
+
+class _RecordedSearchClient:
+    """Replays recorded merged-PR items, sliced by each query's ``merged:`` range.
+
+    ``_collect_pull_requests`` issues one search per 7-day slice of the
+    30-day window. Rather than stub a single canned page, this filters the
+    fixture by each item's real ``merged_at`` date against the ``start..stop``
+    the query under test asks for, so the test exercises slicing plus
+    aggregation together -- the same seam that shipped broken when the
+    weekly workflow's token could not see pull request data at all and every
+    slice came back with ``total_count: 0``.
+    """
+
+    def __init__(self, items: list[dict[str, Any]]) -> None:
+        self._items = items
+
+    def get(self, path: str, params: dict[str, str] | None = None) -> tuple[Any, dict[str, str]]:
+        assert path == "search/issues"
+        query = (params or {}).get("q", "")
+        match = re.search(r"merged:(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})", query)
+        assert match, f"query carries no merged: date range: {query}"
+        start, stop = match.group(1), match.group(2)
+        matched = [item for item in self._items if start <= item["pull_request"]["merged_at"][:10] <= stop]
+        return {"total_count": len(matched), "items": matched}, {}
+
+
+def test_collect_pull_requests_counts_by_author_class_and_lag() -> None:
+    """Merged PRs are counted, classed, and timed from real-shaped search items.
+
+    Before the fix this reproduced the incident directly: replace
+    ``_RecordedSearchClient`` with one that returns ``total_count: 0`` for
+    every ``is:pr`` query (what the Search API does when the caller cannot
+    see pull request data) and every one of these assertions fails, exactly
+    as issue #5334 published "Merged PRs (30 d): 0" while the same window's
+    issue count was correct.
+    """
+    items = json.loads(PR_SEARCH_ITEMS.read_text(encoding="utf-8"))
+    client = _RecordedSearchClient(items)
+    now = _MOD.datetime(2026, 9, 2, 12, 0, tzinfo=_MOD.UTC)
+
+    result = _MOD._collect_pull_requests(client, "sipyourdrink-ltd/bernstein", now)
+
+    assert result["pr_merged_count"] == 4
+    assert result["merged_prs_by_author_class"] == {"outside": 2, "maintainer": 1, "automation": 1}
+    # Lags: outside 5.0h, maintainer 1.0h, automation 2.0h, outside 36.0h.
+    assert result["pr_merge_lag_hours_median"] == 3.5
+    assert result["pr_merged_within_24h_pct"] == 75.0
+
+
+def test_collect_outside_authors_counts_distinct_logins_only() -> None:
+    """Cardinality of outside logins, not a raw item count."""
+    items = json.loads(PR_SEARCH_ITEMS.read_text(encoding="utf-8"))
+    client = _RecordedSearchClient(items)
+    now = _MOD.datetime(2026, 9, 2, 12, 0, tzinfo=_MOD.UTC)
+
+    assert _MOD._collect_outside_authors(client, "sipyourdrink-ltd/bernstein", now) == 2
+
+
+# ---------------------------------------------------------------------------
 # Classification
 # ---------------------------------------------------------------------------
 
@@ -256,10 +325,21 @@ def test_workflow_runs_weekly_and_on_demand() -> None:
 
 
 def test_workflow_asks_for_no_more_than_it_needs() -> None:
-    """Default-deny at the top, read + issues:write on the one job."""
+    """Default-deny at the top; read-only contents and pull-requests, write on issues only.
+
+    ``pull-requests: read`` is load-bearing, not decoration: the Search API
+    silently returns ``total_count: 0`` for every ``is:pr`` query -- no
+    error -- when the calling token cannot see pull request data, which is
+    exactly how issue #5334 published zero for every PR metric while the
+    ``is:issue`` metrics in the same run were correct.
+    """
     doc = _workflow()
     assert doc["permissions"] == {}
-    assert doc["jobs"]["pulse"]["permissions"] == {"contents": "read", "issues": "write"}
+    assert doc["jobs"]["pulse"]["permissions"] == {
+        "contents": "read",
+        "issues": "write",
+        "pull-requests": "read",
+    }
 
 
 def test_workflow_uses_only_the_built_in_token() -> None:
