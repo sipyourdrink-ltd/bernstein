@@ -727,11 +727,11 @@ See [`operations/cluster-mode.md`](../operations/cluster-mode.md) for the full s
 
 > **Preview:** `bernstein evolve run` is not a zero-workspace first-run path. In a clean directory it exits before starting the evolution loop because `.sdd/` is missing. Initialise a Bernstein workspace first, then run the command from that workspace.
 
-Group: self-evolution proposals and their review lifecycle.
+Group: self-evolution proposals and their review lifecycle. See [Evolve CLI](cli/evolve.md) for the run-ledger to draft to issue contour and the dry-run flow.
 
 | Subcommand | Purpose |
 |---|---|
-| `run` | Run evolution cycles (`--window`, `--max-proposals`, `--cycle`, `--dir`, `--github`, `--github-repo`); reads evolve config from `bernstein.yaml` for flags not set. |
+| `run` | Run evolution cycles (`--window`, `--max-proposals`, `--cycle`, `--dir`, `--github`, `--github-repo`); reads evolve config from `bernstein.yaml` for flags not set. `--dry-run` prints the failure-pattern drafts and makes no remote writes. |
 | `review` | Show upgrade proposals pending human review (`--dir`). |
 | `approve PROPOSAL_ID` | Approve an upgrade proposal (`--reviewer`, `--dir`). |
 | `export OUTPUT` | Export a static evolution report, HTML or Markdown (`--format`, `--dir`). |
