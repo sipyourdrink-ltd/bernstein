@@ -92,8 +92,11 @@ bernstein.core.git.idempotent_merge: #4526 package audit pending - wire or delet
 bernstein.core.git.jira_sync: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.git.merge_tree_probe: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.git.pr_size_governor: #4526 package audit pending - wire or delete decided per module, not here
+bernstein.core.govern.audit_sweep: unreachable at the commit this guard turns on; landed while #4526 was open - wire or delete, same terms as the audit backlog
 bernstein.core.govern.audit_watch: unreachable at the commit this guard turns on; landed while #4526 was open - wire or delete, same terms as the audit backlog
 bernstein.core.govern.identity_join: unreachable at the commit this guard turns on; landed while #4526 was open - wire or delete, same terms as the audit backlog
+bernstein.core.govern.reconcile_receipts: unreachable at the commit this guard turns on; landed while #4526 was open - wire or delete, same terms as the audit backlog
+bernstein.core.govern.selector: unreachable at the commit this guard turns on; landed while #4526 was open - wire or delete, same terms as the audit backlog
 bernstein.core.identity.spiffe.grant_identity: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.identity.spiffe.mtls: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.knowledge.graphify_code_graph: #4526 package audit pending - wire or delete decided per module, not here
@@ -172,7 +175,6 @@ bernstein.core.persistence.store_redis: #4526 package audit pending - wire or de
 bernstein.core.persistence.wal_replication: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.planning.engagement_library: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.planning.plan_execute: #4526 package audit pending - wire or delete decided per module, not here
-bernstein.core.plugins_core.plugin_manifest: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.plugins_core.plugin_reconciler: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.plugins_core.sdk_generator: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.plugins_core.skill_badges: #4526 package audit pending - wire or delete decided per module, not here
@@ -272,7 +274,6 @@ bernstein.core.security.permission_matrix: #4526 package audit pending - wire or
 bernstein.core.security.policy: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.security.policy_limits: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.security.policy_templates: #4526 package audit pending - wire or delete decided per module, not here
-bernstein.core.security.post_tool_enforcement: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.security.promptware_ingest: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.security.quarantined_parser: #4526 package audit pending - wire or delete decided per module, not here
 bernstein.core.security.rbac: #4526 package audit pending - wire or delete decided per module, not here
