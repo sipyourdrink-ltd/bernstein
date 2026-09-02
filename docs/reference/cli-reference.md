@@ -926,6 +926,7 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `bernstein govern discover` | Run governance discovery and optionally draft a playbook. | `cli/commands/governance_cmd.py` |
 | `bernstein govern posture` | Score the install's governance posture from chain-evidenced facts only: per-control coverage over the lineage log, no configuration read. Names every contributing chain event, the weights version, and its own denominator (the weight that was measurable). Signed with the audit-chain key; `--json-output` prints the canonical document. | `cli/commands/governance_cmd.py` |
 | `bernstein govern inventory --render` | Emit the inventory topology graph from a store as mermaid or dot. Same store, same bytes. | `cli/commands/govern_cmd.py` |
+| `bernstein govern reconcile` | Diff the adapter / lane / schedule / capability surface against a desired-state document and record it. | `cli/commands/govern_cmd.py` |
 | `bernstein governance ...` | Deprecated alias for `bernstein govern`, removed in v4.0.0 (#5010). | `cli/commands/governance_cmd.py` |
 | `bernstein pool` | Named sandbox pool ops (group): `register`, `list`, `show`, `verify`. Projected from audit chain. Distinct from `bernstein limits pool`. | `cli/commands/pool_cmd.py` |
 | `bernstein limits` | Lease-backed admission and concurrency limits (group): `pool`, `tag`, `rate`, `queue`, `status`, `verify`. Projected from admission ledger. Distinct from `bernstein pool`. | `cli/commands/limits_cmd.py` |
