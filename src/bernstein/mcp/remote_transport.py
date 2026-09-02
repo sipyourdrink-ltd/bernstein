@@ -92,9 +92,9 @@ def _header_checks_enabled() -> bool:
 
 def _supported_protocol_versions() -> tuple[str, ...]:
     """The protocol revisions this deployment serves, from the pinned SDK."""
-    from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS
+    from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
 
-    return tuple(SUPPORTED_PROTOCOL_VERSIONS)
+    return (*HANDSHAKE_PROTOCOL_VERSIONS, *MODERN_PROTOCOL_VERSIONS)
 
 
 def _origin_allowed(origin: str, allowed: list[str]) -> bool:
@@ -354,7 +354,7 @@ def _jsonrpc_result(
     }
 
 
-# -- Tool definitions (mirrors the FastMCP tools in server.py) ---------------
+# -- Tool definitions (mirrors the MCPServer tools in server.py) ---------------
 
 _TOOL_DEFS: list[dict[str, Any]] = [
     {
@@ -519,7 +519,7 @@ _CAPABILITIES: dict[str, Any] = {
 
 # Built-in prompt catalogue mirroring src/bernstein/mcp/prompts.py. Mirroring
 # here keeps the streamable HTTP transport self-contained: it does not need
-# to spin up a FastMCP instance to answer prompts/list and prompts/get.
+# to spin up an MCPServer instance to answer prompts/list and prompts/get.
 _PROMPT_DEFS: list[dict[str, Any]] = [
     {
         "name": "orchestrate_goal",
@@ -987,7 +987,7 @@ class StreamableHTTPTransport:
         """Handle 'prompts/list' - return the built-in prompt catalogue.
 
         Common auto-discovery hosts probe this surface to populate a prompt
-        picker. The catalogue is the same one the FastMCP server registers,
+        picker. The catalogue is the same one the MCPServer registers,
         kept in sync via ``_PROMPT_DEFS`` on this transport.
         """
         _ = params

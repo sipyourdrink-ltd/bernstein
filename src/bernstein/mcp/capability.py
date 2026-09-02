@@ -15,7 +15,7 @@ card to decide how to connect without trial and error.
 
 The card is exposed two ways, both returning the same dict:
 
-  * over the FastMCP server as the ``bernstein://capability`` resource;
+  * over the MCPServer server as the ``bernstein://capability`` resource;
   * on the streamable HTTP transport's ``initialize`` result under the
     ``capabilityCard`` key, alongside the spec ``capabilities`` object.
 """
@@ -35,7 +35,7 @@ from bernstein.core.protocols.mcp.tool_tiers import (
 from bernstein.mcp.cost_meter import COST_METER_ENV, cost_meter_enabled
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
 #: MCP spec revision the Bernstein server targets. Kept in one place so the
 #: card and the HTTP ``initialize`` response cannot drift apart.
@@ -166,7 +166,7 @@ def build_capability_card(spec_revision: str | None = None) -> dict[str, Any]:
     }
 
 
-def register_capability_resource(mcp: FastMCP[None]) -> None:
+def register_capability_resource(mcp: MCPServer[None]) -> None:
     """Register the runtime capability card as an MCP resource.
 
     Exposes the card at :data:`CAPABILITY_RESOURCE_URI` so any client can read
@@ -175,7 +175,7 @@ def register_capability_resource(mcp: FastMCP[None]) -> None:
     current process state.
 
     Args:
-        mcp: The FastMCP server to register the resource on.
+        mcp: The MCPServer server to register the resource on.
     """
 
     @mcp.resource(

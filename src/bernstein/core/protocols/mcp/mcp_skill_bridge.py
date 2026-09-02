@@ -32,7 +32,7 @@ from bernstein.core.skill_discovery import SkillDefinition, SkillSource
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
 log = logging.getLogger(__name__)
 
@@ -115,18 +115,18 @@ def collect_mcp_skills() -> dict[str, SkillDefinition]:
 
 
 # ---------------------------------------------------------------------------
-# Convenience helper - extract tool info from a FastMCP instance
+# Convenience helper - extract tool info from a MCPServer instance
 # ---------------------------------------------------------------------------
 
 
-def build_skills_from_mcp_server(mcp_server: FastMCP) -> list[MCPToolInfo]:  # type: ignore[type-arg]
-    """Extract :class:`MCPToolInfo` objects from a live FastMCP instance.
+def build_skills_from_mcp_server(mcp_server: MCPServer) -> list[MCPToolInfo]:  # type: ignore[type-arg]
+    """Extract :class:`MCPToolInfo` objects from a live MCPServer instance.
 
     Uses ``mcp_server._tool_manager.list_tools()`` to enumerate the tools
     registered on the server and converts each to a :class:`MCPToolInfo`.
 
     Args:
-        mcp_server: A configured :class:`mcp.server.fastmcp.FastMCP` instance.
+        mcp_server: A configured :class:`mcp.server.mcpserver.MCPServer` instance.
 
     Returns:
         List of :class:`MCPToolInfo` objects, one per registered tool.

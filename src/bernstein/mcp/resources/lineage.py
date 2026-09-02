@@ -14,7 +14,7 @@ Per ADR-009 §7:
 
 Default-off in remote/SSE MCP, on for local stdio. Callers pass
 ``enabled=False`` for the remote registrar - the function then returns
-``False`` without touching the FastMCP instance.
+``False`` without touching the MCPServer instance.
 """
 
 from __future__ import annotations
@@ -26,14 +26,14 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mcp.server.fastmcp.resources.templates import ResourceTemplate
+from mcp.server.mcpserver.resources.templates import ResourceTemplate
 
 from bernstein.core.lineage.entry import canonicalise, entry_hash
 from bernstein.core.lineage.store import LineageStore
 from bernstein.mcp.input_validation import validate_or_error, validation_error_response
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ class _SlashTolerantResourceTemplate(ResourceTemplate):
 def lineage_artefact_body(root: Path, artefact_path: str) -> str:
     """JSONL chain of lineage entries for ``artefact_path``.
 
-    Shared by the FastMCP resource below and the streamable HTTP transport's
+    Shared by the MCPServer resource below and the streamable HTTP transport's
     ``resources/read`` (#3084), so both surfaces serve the same bytes.
     """
     store = LineageStore(root)
@@ -100,7 +100,7 @@ def lineage_stats_body(root: Path) -> str:
 
 
 def register_lineage_resources(
-    mcp: FastMCP[None],
+    mcp: MCPServer[None],
     *,
     lineage_root: Path,
     enabled: bool = True,
@@ -108,7 +108,7 @@ def register_lineage_resources(
     """Register the lineage resources + verify_chain tool on ``mcp``.
 
     Args:
-        mcp: FastMCP instance to mount on.
+        mcp: MCPServer instance to mount on.
         lineage_root: Root of the lineage store (typically
             ``<repo>/.sdd/lineage``).
         enabled: When ``False``, return immediately without registering.
@@ -128,7 +128,7 @@ def register_lineage_resources(
         """JSONL chain of lineage entries for ``artefact_path``."""
         return lineage_artefact_body(root, artefact_path)
 
-    # Bypass the FastMCP decorator for this template because the default
+    # Bypass the MCPServer decorator for this template because the default
     # placeholder regex (``[^/]+``) rejects path segments containing ``/``.
     # The lineage URI is ``lineage://artefact/<repo-relative-path>`` and the
     # path almost always contains a slash, so we register a slash-tolerant

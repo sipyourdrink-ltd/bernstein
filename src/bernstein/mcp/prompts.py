@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 from bernstein.core.protocols.mcp.tool_tiers import TOOL_TIERS
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
 
 def _tool(name: str) -> str:
@@ -114,15 +114,15 @@ def _cost_recap_template(window: str = "today") -> str:
     ).strip()
 
 
-def register_prompt_resources(mcp: FastMCP[None]) -> None:
-    """Register the built-in prompt catalogue on a FastMCP server.
+def register_prompt_resources(mcp: MCPServer[None]) -> None:
+    """Register the built-in prompt catalogue on a MCPServer server.
 
     Exposes three orchestration-focused prompts via the MCP `prompts/list`
     and `prompts/get` routes. Each prompt is a pure render of its arguments
     so the surface is deterministic and cheap.
 
     Args:
-        mcp: The FastMCP server to register the prompts on.
+        mcp: The MCPServer server to register the prompts on.
     """
 
     @mcp.prompt(

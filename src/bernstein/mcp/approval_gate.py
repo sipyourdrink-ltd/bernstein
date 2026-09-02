@@ -1,7 +1,7 @@
 """The gates shared by every MCP surface that exposes an approval or completion verb.
 
 ``bernstein_approve`` and ``bernstein_complete`` are reachable both through
-the in-process FastMCP server (:mod:`bernstein.mcp.server`) and through the
+the in-process MCPServer server (:mod:`bernstein.mcp.server`) and through the
 streamable HTTP transport (:mod:`bernstein.mcp.remote_transport`). Both
 enforce the gates from here, so a caller cannot pick a transport to get a
 weaker rule, and both sets are projected from the task state machine
