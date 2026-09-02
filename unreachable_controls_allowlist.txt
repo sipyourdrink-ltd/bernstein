@@ -1,0 +1,419 @@
+# Allowlist for scripts/check_unreachable_controls.py (issue #5053).
+#
+# Each line names a public symbol under src/bernstein/core/security/ or
+# src/bernstein/core/identity/ that no production code path reaches, and
+# states why. The reason after '#' is mandatory - an entry without one, or
+# one still carrying the 'REASON REQUIRED' marker, fails the gate.
+#
+# Format:
+#   <path>::<function>            # <reason>
+#   <path>::<Class>.<method>      # <reason>
+#
+# Regenerate the entry list (reasons for existing entries are preserved):
+#   uv run python scripts/check_unreachable_controls.py --update
+#
+# Removing an entry is the goal: wire the symbol into a live code path, or
+# delete it. An entry whose symbol became reachable fails the gate too, so a
+# stale line cannot sit here unnoticed.
+
+src/bernstein/core/identity/delegation.py::DelegationLedger.record_hop                         # backing method for record_delegation_hop, which itself has no caller
+src/bernstein/core/identity/delegation.py::record_delegation_hop                               # delegation-hop ledger writer; nothing calls it and no test covers it - wiring the hop recorder is its own slice
+src/bernstein/core/identity/delegation_scope.py::DelegationScope.is_narrowing_of               # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/identity/grants.py::GrantLedger.issue_grant                                 # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/identity/grants.py::GrantReceipt.to_entry                                   # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/identity/grants.py::GrantSigner.with_issuer                                 # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/identity/spiffe/binding.py::BindingError                                    # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/identity/spiffe/binding.py::bind_svid_to_card                               # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/identity/spiffe/grant_identity.py::spiffe_grant_issuer                      # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/identity/spiffe/grant_identity.py::spiffe_grant_issuer_with_reference       # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/identity/spiffe/mtls.py::svid_tls_config                                    # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/identity/spiffe/mtls.py::tls_config_from_svid_files                         # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/identity/spiffe/mtls.py::write_svid_to_files                                # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/identity/spiffe/spiffe_id.py::SpiffeId                                      # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/identity/spiffe/spiffe_id.py::parse_spiffe_id                               # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/identity/spiffe/svid.py::X509Svid                                           # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/identity/spiffe/svid.py::svid_reference_from_x509                           # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/identity/spiffe/workload_api.py::WorkloadApiError                           # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/identity/spiffe/workload_api.py::fetch_x509_svid                            # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/agent_card_signer.py::sign_agent_card                              # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/agent_identity.py::check_capability                                # capability check for identity cards nothing issues yet; unblocks once issue_identity_card is wired
+src/bernstein/core/security/agent_identity.py::issue_identity_card                             # identity-card issuance is exercised by tests only; no runtime path mints a card yet
+src/bernstein/core/security/agent_identity.py::load_identity_card                              # exercised by tests only; no production caller
+src/bernstein/core/security/agent_identity.py::save_identity_card                              # exercised by tests only; no production caller
+src/bernstein/core/security/article12_bundle.py::ChainBreakError                               # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/article12_bundle.py::RunBundleResult                               # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/security/article12_bundle.py::assemble_from_run                             # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/article12_bundle.py::emit_run_audit_event                          # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/article12_bundle.py::validate_retention                            # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/article12_bundle.py::verify_bundle                                 # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit.py::AuditLog.force_full_verify                               # exercised by tests only; no production caller
+src/bernstein/core/security/audit.py::AuditLog.last_tile_read_count                            # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/audit.py::AuditLog.verify_incremental                              # exercised by tests only; no production caller
+src/bernstein/core/security/audit.py::IncrementalVerifyReport                                  # exercised by tests only; no production caller
+src/bernstein/core/security/audit_chain.py::CapabilityAuthorizationDetails                     # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::CapabilityDeltaDetails                             # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::MemoryWriteDetails                                 # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/security/audit_chain.py::ThreadApprovalDetails                              # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/security/audit_chain.py::reconstruct_claim_holders                          # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::reconstruct_mcp_call_order                         # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_a2a_message_receipt                         # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_adapter_floor_update_receipt                # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_cache_dedup_claim                           # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_cache_hit                                   # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_cache_miss                                  # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_capability_authorization                    # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_capability_delta                            # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_delegation_minted                           # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/security/audit_chain.py::record_escalation_ladder_budget_stop               # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_escalation_ladder_exhaustion                # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_escalation_ladder_hop                       # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_escalation_ladder_refusal                   # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_expectation_expired                         # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/security/audit_chain.py::record_intent_capsule                              # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/security/audit_chain.py::record_intent_drift                                # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_mcp_task_handle                             # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_memory_write                                # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_pool_claim_receipt                          # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/security/audit_chain.py::record_pool_override_refused                       # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_pool_retired                                # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/security/audit_chain.py::record_pool_worker_enrolled                        # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_provenance_quarantine                       # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_render_failure                              # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_schedule_collision                          # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/security/audit_chain.py::record_skill_usage                                 # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_spiffe_svid_binding                         # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_taint_decision                              # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_thread_approval                             # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_tournament_selection                        # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_webhook_node_receipt                        # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_webhook_payload_anchor                      # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::release_ledger_boundary                            # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_dsse.py::EnvelopeSignatureError                              # exercised by tests only; no production caller
+src/bernstein/core/security/audit_dsse.py::EnvelopeTypeMismatchError                           # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/audit_dsse.py::wrap_bundle                                         # exercised by tests only; no production caller
+src/bernstein/core/security/audit_export.py::BaseSIEMExporter                                  # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/audit_export.py::CloudWatchExporter                                # exercised by tests only; no production caller
+src/bernstein/core/security/audit_export.py::ElasticsearchExporter                             # exercised by tests only; no production caller
+src/bernstein/core/security/audit_export.py::FileExporter                                      # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/audit_export.py::SplunkHECExporter                                 # exercised by tests only; no production caller
+src/bernstein/core/security/audit_export.py::SyslogExporter                                    # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/audit_export.py::WebhookExporter                                   # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/auth.py::AuthService.validate_legacy_token                         # exercised by tests only; no production caller
+src/bernstein/core/security/auth.py::AuthSession.max_acknowledgement_lag                       # exercised by tests only; no production caller
+src/bernstein/core/security/auth.py::AuthStore.cleanup_expired_devices                         # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/auth.py::AuthStore.cleanup_expired_sessions                        # exercised by tests only; no production caller
+src/bernstein/core/security/auth.py::AuthStore.find_user_by_email                              # exercised by tests only; no production caller
+src/bernstein/core/security/auth.py::AuthStore.revoke_user_sessions                            # exercised by tests only; no production caller
+src/bernstein/core/security/auth.py::GroupRoleMappingEntry                                     # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/auth_rate_limiter.py::RateLimitDecision                            # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/auth_rate_limiter.py::RequestRateLimitMiddleware.sse_connections   # exercised by tests only; no production caller
+src/bernstein/core/security/auth_rate_limiter.py::check_auth_rate_limit                        # exercised by tests only; no production caller
+src/bernstein/core/security/auto_approve.py::reload_extra_allow_patterns_from_env              # exercised by tests only; no production caller
+src/bernstein/core/security/auto_approve.py::set_extra_allow_patterns                          # exercised by tests only; no production caller
+src/bernstein/core/security/blocking_hooks.py::BlockingHookRunner.registered_events            # exercised by tests only; no production caller
+src/bernstein/core/security/blocking_hooks.py::make_blocking_payload                           # exercised by tests only; no production caller
+src/bernstein/core/security/blocking_hooks.py::validate_blocking_event                         # exercised by tests only; no production caller
+src/bernstein/core/security/capability_delta.py::compute_grant_delta                           # exercised by tests only; no production caller
+src/bernstein/core/security/capability_matrix.py::record_spawn_capabilities                    # exercised by tests only; no production caller
+src/bernstein/core/security/capability_tokens.py::AttenuationError                             # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/capability_tokens.py::Caveats.is_narrowing_of                      # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/capability_tokens.py::TokenVerificationError                       # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/capability_tokens.py::attenuate                                    # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/capability_tokens.py::caveats_for_scope                            # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/security/capability_tokens.py::mint_root                                    # root of the capability-token chain; the delegation CLI verifies chains but nothing mints one, so no production path reaches it
+src/bernstein/core/security/capability_tokens.py::scope_permissions                            # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/capability_tokens.py::sign_token                                   # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/capability_tokens.py::to_actor_claims                              # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/change_receipt.py::ChangeAttempt                                   # exercised by tests only; no production caller
+src/bernstein/core/security/change_receipt.py::ChangeReceipt                                   # exercised by tests only; no production caller
+src/bernstein/core/security/change_receipt.py::ChangeReceiptError                              # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/claude_permission_profiles.py::PermissionProfile.to_settings_json  # exercised by tests only; no production caller
+src/bernstein/core/security/claude_permission_profiles.py::PermissionProfileManager            # exercised by tests only; no production caller
+src/bernstein/core/security/claude_tool_result_injection.py::ToolResultInjector.has_failures   # exercised by tests only; no production caller
+src/bernstein/core/security/command_allowlist.py::AllowlistVerdict                             # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/command_allowlist.py::ScopeAllowlistConfig                         # exercised by tests only; no production caller
+src/bernstein/core/security/command_allowlist.py::check_command                                # exercised by tests only; no production caller
+src/bernstein/core/security/command_policy.py::CommandPoliciesConfig                           # exercised by tests only; no production caller
+src/bernstein/core/security/command_policy.py::CommandVerdict                                  # exercised by tests only; no production caller
+src/bernstein/core/security/command_policy.py::check_command                                   # exercised by tests only; no production caller
+src/bernstein/core/security/command_policy.py::load_command_policies                           # exercised by tests only; no production caller
+src/bernstein/core/security/command_policy.py::record_command_verdict                          # exercised by tests only; no production caller
+src/bernstein/core/security/commit_signing.py::CommitProvenance                                # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/commit_signing.py::SignedCommitResult                              # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/commit_signing.py::SigningConfig                                   # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/commit_signing.py::build_provenance_trailers                       # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/commit_signing.py::is_agent_commit                                 # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/commit_signing.py::read_commit_provenance                          # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/commit_signing.py::sign_and_commit                                 # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/commit_signing.py::verify_commit_signature                         # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/compliance.py::SBOMEntry                                           # exercised by tests only; no production caller
+src/bernstein/core/security/compliance.py::ai_label_for_file                                   # exercised by tests only; no production caller
+src/bernstein/core/security/compliance.py::export_evidence_bundle                              # exercised by tests only; no production caller
+src/bernstein/core/security/compliance.py::generate_sbom                                       # exercised by tests only; no production caller
+src/bernstein/core/security/compliance_library.py::ComplianceReport                            # exercised by tests only; no production caller
+src/bernstein/core/security/compliance_library.py::get_all_rules                               # exercised by tests only; no production caller
+src/bernstein/core/security/compliance_library.py::get_framework_rules                         # exercised by tests only; no production caller
+src/bernstein/core/security/compliance_library.py::get_registered_check_names                  # exercised by tests only; no production caller
+src/bernstein/core/security/compliance_library.py::get_rule_by_id                              # exercised by tests only; no production caller
+src/bernstein/core/security/compliance_library.py::render_compliance_report                    # exercised by tests only; no production caller
+src/bernstein/core/security/compliance_library.py::run_compliance_check                        # exercised by tests only; no production caller
+src/bernstein/core/security/compliance_report.py::CompliancePackage                            # exercised by tests only; no production caller
+src/bernstein/core/security/compliance_report.py::build_compliance_package                     # exercised by tests only; no production caller
+src/bernstein/core/security/compliance_report.py::compute_merkle_root                          # exercised by tests only; no production caller
+src/bernstein/core/security/compliance_report.py::format_compliance_report                     # exercised by tests only; no production caller
+src/bernstein/core/security/compliance_report.py::map_events_to_controls                       # exercised by tests only; no production caller
+src/bernstein/core/security/data_residency.py::DataResidencyController                         # exercised by tests only; no production caller
+src/bernstein/core/security/data_residency.py::ResidencyCheckResult                            # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/data_residency.py::ResidencyViolation                              # exercised by tests only; no production caller
+src/bernstein/core/security/denial_tracker.py::DenialTracker.clear_session                     # exercised by tests only; no production caller
+src/bernstein/core/security/denial_tracker.py::DenialTracker.get_all_sessions                  # exercised by tests only; no production caller
+src/bernstein/core/security/denial_tracker.py::DenialTracker.get_denial_count                  # exercised by tests only; no production caller
+src/bernstein/core/security/denial_tracker.py::DenialTracker.get_record                        # exercised by tests only; no production caller
+src/bernstein/core/security/denial_tracker.py::DenialTracker.is_over_threshold                 # exercised by tests only; no production caller
+src/bernstein/core/security/deployment_profile.py::read_posture_attestation                    # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/dlp_scanner.py::DLPScanner.scan_diff                               # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/dlp_scanner.py::scan_diff_for_dlp                                  # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/dlp_scanner.py::scan_text_for_dlp                                  # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/dlp_scanner_v2.py::render_dlp_report                               # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/dlp_scanner_v2.py::scan_agent_output                               # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/dlp_scanner_v2.py::scan_file                                       # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/dp_telemetry.py::DPTelemetryExporter                               # exercised by tests only; no production caller
+src/bernstein/core/security/dp_telemetry.py::PrivacyBudgetTracker.epsilon_remaining            # exercised by tests only; no production caller
+src/bernstein/core/security/dp_telemetry.py::PrivacyBudgetTracker.epsilon_spent                # exercised by tests only; no production caller
+src/bernstein/core/security/dp_telemetry.py::PrivacyBudgetTracker.queries_remaining            # exercised by tests only; no production caller
+src/bernstein/core/security/dual_approval.py::ApprovalChannel                                  # exercised by tests only; no production caller
+src/bernstein/core/security/dual_approval.py::ApprovalRequest                                  # exercised by tests only; no production caller
+src/bernstein/core/security/dual_approval.py::ApprovalResponse                                 # exercised by tests only; no production caller
+src/bernstein/core/security/dual_approval.py::ApprovalStatus                                   # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/dual_approval.py::create_approval_request                          # exercised by tests only; no production caller
+src/bernstein/core/security/dual_approval.py::evaluate_approval                                # exercised by tests only; no production caller
+src/bernstein/core/security/dual_approval.py::format_approval_prompt                           # exercised by tests only; no production caller
+src/bernstein/core/security/dual_approval.py::is_destructive                                   # exercised by tests only; no production caller
+src/bernstein/core/security/engagement_mandate.py::EngagementMandate                           # exercised by tests only; no production caller
+src/bernstein/core/security/engagement_mandate.py::MandateAction                               # exercised by tests only; no production caller
+src/bernstein/core/security/engagement_mandate.py::MandateReceipt                              # exercised by tests only; no production caller
+src/bernstein/core/security/engagement_mandate.py::check_mandate                               # exercised by tests only; no production caller
+src/bernstein/core/security/environment_digest.py::DigestMismatchError                         # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/environment_digest.py::compare_digests                             # exercised by tests only; no production caller
+src/bernstein/core/security/environment_digest.py::compute_environment_digest                  # exercised by tests only; no production caller
+src/bernstein/core/security/eu_ai_act.py::assess_risk                                          # exercised by tests only; no production caller
+src/bernstein/core/security/external_policy_hook.py::CedarHook                                 # exercised by tests only; no production caller
+src/bernstein/core/security/external_policy_hook.py::OPAHook                                   # exercised by tests only; no production caller
+src/bernstein/core/security/external_policy_hook.py::PolicyHookRegistry                        # exercised by tests only; no production caller
+src/bernstein/core/security/governance.py::BudgetRefused                                       # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/governance.py::check_budget_decision                               # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/guardrail_pipeline.py::CostGuardrail.check_input                   # exercised by tests only; no production caller
+src/bernstein/core/security/guardrail_pipeline.py::Guardrail.check_input                       # exercised by tests only; no production caller
+src/bernstein/core/security/guardrail_pipeline.py::GuardrailPipeline.check_input               # exercised by tests only; no production caller
+src/bernstein/core/security/guardrail_pipeline.py::PromptInjectionGuardrail.check_input        # exercised by tests only; no production caller
+src/bernstein/core/security/guardrail_pipeline.py::ScopeGuardrail.check_input                  # exercised by tests only; no production caller
+src/bernstein/core/security/guardrail_pipeline.py::SecretLeakGuardrail.check_input             # exercised by tests only; no production caller
+src/bernstein/core/security/hipaa.py::HIPAAComplianceReport                                    # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/hipaa.py::HIPAAMode                                                # exercised by tests only; no production caller
+src/bernstein/core/security/hipaa.py::PHIDetector                                              # exercised by tests only; no production caller
+src/bernstein/core/security/hipaa.py::decrypt_file_aes256gcm                                   # exercised by tests only; no production caller
+src/bernstein/core/security/hipaa.py::encrypt_file_aes256gcm                                   # exercised by tests only; no production caller
+src/bernstein/core/security/hipaa.py::generate_hipaa_report                                    # exercised by tests only; no production caller
+src/bernstein/core/security/hipaa.py::is_phi_file                                              # exercised by tests only; no production caller
+src/bernstein/core/security/hipaa.py::load_or_create_hipaa_encryption_key                      # exercised by tests only; no production caller
+src/bernstein/core/security/hipaa.py::save_hipaa_report                                        # exercised by tests only; no production caller
+src/bernstein/core/security/identity_spawn_anchor.py::IdentitySpawnAnchor                      # spawn anchor is written by tests only, so run_attestation_receipt's 'exactly one anchor' branch cannot fire on real data - wiring is its own slice
+src/bernstein/core/security/input_refusal.py::RefusalVerifyResult                              # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/input_refusal.py::read_refusal_receipt                             # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/input_refusal.py::verify_refusal_against_chain                     # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/intent_capsule.py::approve_and_capsule                             # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/intent_capsule.py::assemble_intent_drift_escalation                # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/intent_capsule.py::assert_no_llm_imports                           # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/intent_capsule.py::bind_capsule_into_journal                       # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/intent_capsule.py::classify_journal_event                          # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/intent_capsule.py::compile_capsule                                 # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/intent_capsule.py::iter_module_import_names                        # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/security/intent_capsule.py::record_intent_drift                             # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/intent_capsule.py::write_capsule                                   # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/ip_allowlist.py::check_ip_allowed                                  # exercised by tests only; no production caller
+src/bernstein/core/security/jwt_tokens.py::TokenRefreshScheduler                               # exercised by tests only; no production caller
+src/bernstein/core/security/key_rotation.py::KeyRotationManager.detect_leak                    # exercised by tests only; no production caller
+src/bernstein/core/security/key_rotation.py::KeyRotationManager.get_active_keys                # exercised by tests only; no production caller
+src/bernstein/core/security/key_rotation.py::KeyRotationManager.get_all_keys                   # exercised by tests only; no production caller
+src/bernstein/core/security/key_rotation.py::KeyRotationManager.handle_leak                    # exercised by tests only; no production caller
+src/bernstein/core/security/key_rotation.py::KeyRotationManager.register_key                   # exercised by tests only; no production caller
+src/bernstein/core/security/key_rotation.py::KeyRotationManager.revoke_key                     # exercised by tests only; no production caller
+src/bernstein/core/security/key_rotation.py::KeyRotationScheduler                              # exercised by tests only; no production caller
+src/bernstein/core/security/key_rotation_support.py::AgentKeyUpdater.get_agent_env             # exercised by tests only; no production caller
+src/bernstein/core/security/key_rotation_support.py::AgentKeyUpdater.unregister_agent          # exercised by tests only; no production caller
+src/bernstein/core/security/key_rotation_support.py::AgentKeyUpdater.update_agent              # exercised by tests only; no production caller
+src/bernstein/core/security/key_rotation_support.py::AgentKeyUpdater.update_all_agents         # exercised by tests only; no production caller
+src/bernstein/core/security/key_rotation_support.py::AgentKeyUpdater.update_log                # exercised by tests only; no production caller
+src/bernstein/core/security/key_rotation_support.py::ExpiryStatus                              # exercised by tests only; no production caller
+src/bernstein/core/security/key_rotation_support.py::KeyExpiryDetector.check_key               # exercised by tests only; no production caller
+src/bernstein/core/security/key_rotation_support.py::KeyExpiryDetector.check_keys              # exercised by tests only; no production caller
+src/bernstein/core/security/key_rotation_support.py::KeyExpiryDetector.get_expiring            # exercised by tests only; no production caller
+src/bernstein/core/security/key_rotation_support.py::KeyExpiryInfo                             # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/key_rotation_support.py::RotationOrchestrator                      # exercised by tests only; no production caller
+src/bernstein/core/security/license_manager.py::FeatureCheckResult                             # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/license_manager.py::LicenseManager                                 # exercised by tests only; no production caller
+src/bernstein/core/security/license_manager.py::LicenseValidationResult                        # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/license_manager.py::decode_license                                 # exercised by tests only; no production caller
+src/bernstein/core/security/license_manager.py::encode_license                                 # exercised by tests only; no production caller
+src/bernstein/core/security/license_manager.py::validate_license_signature                     # exercised by tests only; no production caller
+src/bernstein/core/security/native_toolcall_evidence.py::NativeToolCallEvidenceProvider        # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/network_isolation.py::NetworkIsolationValidator                    # exercised by tests only; no production caller
+src/bernstein/core/security/oauth_pkce.py::OAuthStateError                                     # exercised by tests only; no production caller
+src/bernstein/core/security/oauth_pkce.py::PKCEFlow                                            # exercised by tests only; no production caller
+src/bernstein/core/security/owasp_asi_detectors.py::OwaspAsiGuardrail.check_input              # exercised by tests only; no production caller
+src/bernstein/core/security/permission_delegation.py::DelegationToken.use                      # exercised by tests only; no production caller
+src/bernstein/core/security/permission_delegation.py::PermissionDelegator                      # exercised by tests only; no production caller
+src/bernstein/core/security/permission_delegation.py::enum_to_caveats                          # exercised by tests only; no production caller
+src/bernstein/core/security/permission_delegation.py::should_delegate                          # exercised by tests only; no production caller
+src/bernstein/core/security/permission_graph.py::ClassifierLayer                               # exercised by tests only; no production caller
+src/bernstein/core/security/permission_graph.py::DenyRulesLayer                                # exercised by tests only; no production caller
+src/bernstein/core/security/permission_graph.py::PermissionGraph                               # exercised by tests only; no production caller
+src/bernstein/core/security/permission_graph.py::PromptLayer                                   # exercised by tests only; no production caller
+src/bernstein/core/security/permission_matrix.py::log_resolution                               # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/permission_mode.py::default_for_no_match                           # exercised by tests only; no production caller
+src/bernstein/core/security/permission_policy.py::check_tool_call                              # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/permission_policy.py::list_builtin_profiles                        # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/permission_rules.py::load_permission_rules                         # exercised by tests only; no production caller
+src/bernstein/core/security/permissions.py::is_command_allowed                                 # exercised by tests only; no production caller
+src/bernstein/core/security/pii_output_gate.py::scan_diff                                      # exercised by tests only; no production caller
+src/bernstein/core/security/plan_approval.py::PlanStore.save_plan                              # exercised by tests only; no production caller
+src/bernstein/core/security/policy.py::PolicyEngine.add_policy                                 # exercised by tests only; no production caller
+src/bernstein/core/security/policy.py::PolicyEngine.disable_policy                             # exercised by tests only; no production caller
+src/bernstein/core/security/policy.py::PolicyEngine.enable_policy                              # exercised by tests only; no production caller
+src/bernstein/core/security/policy.py::PolicyEngine.list_policies                              # exercised by tests only; no production caller
+src/bernstein/core/security/policy.py::PolicyEngine.remove_policy                              # exercised by tests only; no production caller
+src/bernstein/core/security/policy.py::create_context                                          # exercised by tests only; no production caller
+src/bernstein/core/security/policy_engine.py::PolicyCheckResult                                # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/policy_engine.py::evaluate_lethal_trifecta                         # exercised by tests only; no production caller
+src/bernstein/core/security/policy_engine.py::run_policy_engine                                # exercised by tests only; no production caller
+src/bernstein/core/security/policy_limits.py::PolicyLimitsClient.get_snapshot                  # exercised by tests only; no production caller
+src/bernstein/core/security/policy_limits.py::PolicyLimitsClient.start_background_polling      # exercised by tests only; no production caller
+src/bernstein/core/security/policy_limits.py::PolicyLimitsClient.stop_background_polling       # exercised by tests only; no production caller
+src/bernstein/core/security/policy_limits.py::is_allowed_sync                                  # exercised by tests only; no production caller
+src/bernstein/core/security/policy_limits.py::managed_policy_limits                            # exercised by tests only; no production caller
+src/bernstein/core/security/policy_templates.py::OrgPolicyTemplate                             # exercised by tests only; no production caller
+src/bernstein/core/security/policy_templates.py::apply_org_policies                            # exercised by tests only; no production caller
+src/bernstein/core/security/policy_templates.py::load_org_policies                             # exercised by tests only; no production caller
+src/bernstein/core/security/post_tool_enforcement.py::redact_tool_output                       # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/post_tool_enforcement.py::run_post_tool_enforcement                # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/promptware_detector.py::PromptwareScore.is_warn                    # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/promptware_ingest.py::PromptwareIngestResult                       # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/security/promptware_ingest.py::QuarantinedIngestResult                      # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/promptware_ingest.py::build_lifecycle_payload                      # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/promptware_ingest.py::get_default_detector                         # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/security/promptware_ingest.py::quarantine_untrusted_payload                 # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/promptware_ingest.py::scan_tool_output                             # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/quarantined_parser.py::FieldSpec                                   # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/quarantined_parser.py::QuarantinedExtract                          # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/quarantined_parser.py::extract_structured                          # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/rbac.py::RBACEnforcer                                              # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/rbac.py::require_permission                                        # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/rbac.py::require_role                                              # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/resource_limits.py::ResourceLimits.has_any_limit                   # exercised by tests only; no production caller
+src/bernstein/core/security/resource_limits.py::ResourceUsage                                  # exercised by tests only; no production caller
+src/bernstein/core/security/resource_limits.py::check_usage                                    # exercised by tests only; no production caller
+src/bernstein/core/security/result_receipt_bundle.py::BundleError                              # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/result_receipt_bundle.py::parse_bundle                             # exercised by tests only; no production caller
+src/bernstein/core/security/rfc3161_verifier.py::hash_payload_for_tsa                          # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/role_adapter_policy.py::reset_policy                               # exercised by tests only; no production caller
+src/bernstein/core/security/role_adapter_policy.py::set_policy                                 # exercised by tests only; no production caller
+src/bernstein/core/security/rule_enforcer.py::get_rule_violation_stats                         # exercised by tests only; no production caller
+src/bernstein/core/security/run_closure.py::RunClosureProjection.complete_range                # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/run_closure.py::project_run_closure                                # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/sandbox_escape_detector.py::SandboxEscapeDetector                  # exercised by tests only; no production caller
+src/bernstein/core/security/sandbox_eval.py::SandboxManager.check_timeouts                     # exercised by tests only; no production caller
+src/bernstein/core/security/sandbox_eval.py::SandboxManager.cleanup_finished                   # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/sandbox_eval.py::SandboxManager.get_orchestrator_config            # exercised by tests only; no production caller
+src/bernstein/core/security/sandbox_eval.py::SandboxManager.mark_cloning                       # exercised by tests only; no production caller
+src/bernstein/core/security/sandbox_eval.py::SandboxManager.mark_started                       # exercised by tests only; no production caller
+src/bernstein/core/security/sandbox_eval.py::SandboxManager.record_cost                        # exercised by tests only; no production caller
+src/bernstein/core/security/sandbox_profiles.py::ProfileConflict                               # exercised by tests only; no production caller
+src/bernstein/core/security/sandbox_profiles.py::compose_profiles                              # exercised by tests only; no production caller
+src/bernstein/core/security/sandbox_profiles.py::list_builtin_profiles                         # exercised by tests only; no production caller
+src/bernstein/core/security/sandbox_profiles.py::render_profile_summary                        # exercised by tests only; no production caller
+src/bernstein/core/security/sandbox_profiles.py::validate_profile                              # exercised by tests only; no production caller
+src/bernstein/core/security/sbom.py::SBOMScanResult.has_critical                               # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/seccomp_profiles.py::build_custom_profile                          # exercised by tests only; no production caller
+src/bernstein/core/security/seccomp_profiles.py::build_profile                                 # exercised by tests only; no production caller
+src/bernstein/core/security/seccomp_profiles.py::profile_for_role                              # exercised by tests only; no production caller
+src/bernstein/core/security/seccomp_profiles.py::write_custom_profile                          # exercised by tests only; no production caller
+src/bernstein/core/security/seccomp_profiles.py::write_profile                                 # exercised by tests only; no production caller
+src/bernstein/core/security/seccomp_sandbox.py::generate_seccomp_json                          # exercised by tests only; no production caller
+src/bernstein/core/security/seccomp_sandbox.py::get_recommended_profile                        # exercised by tests only; no production caller
+src/bernstein/core/security/seccomp_sandbox.py::merge_profiles                                 # exercised by tests only; no production caller
+src/bernstein/core/security/seccomp_sandbox.py::render_profile_summary                         # exercised by tests only; no production caller
+src/bernstein/core/security/seccomp_sandbox.py::validate_profile                               # exercised by tests only; no production caller
+src/bernstein/core/security/secrets_broker.py::SecretsBroker.list_live                         # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/secrets_broker.py::SecretsBroker.mint_scoped                       # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/secrets_broker.py::SecretsBroker.revoke_task                       # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/secrets_broker.py::clear_redaction_registry                        # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/security_correlation.py::CorrelationMatch                          # exercised by tests only; no production caller
+src/bernstein/core/security/security_correlation.py::SecurityEvent                             # exercised by tests only; no production caller
+src/bernstein/core/security/security_correlation.py::correlate_events                          # exercised by tests only; no production caller
+src/bernstein/core/security/security_correlation.py::format_correlation_report                 # exercised by tests only; no production caller
+src/bernstein/core/security/security_correlation.py::load_security_events                      # exercised by tests only; no production caller
+src/bernstein/core/security/security_incident_response.py::ContainmentResult                   # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/security_incident_response.py::ContainmentStep                     # exercised by tests only; no production caller
+src/bernstein/core/security/security_incident_response.py::SecurityEventType                   # exercised by tests only; no production caller
+src/bernstein/core/security/security_incident_response.py::SecurityIncidentResponder           # exercised by tests only; no production caller
+src/bernstein/core/security/security_incident_response.py::is_task_blocked                     # exercised by tests only; no production caller
+src/bernstein/core/security/security_incident_response.py::list_active_security_incidents      # exercised by tests only; no production caller
+src/bernstein/core/security/security_incident_response.py::load_block_metadata                 # exercised by tests only; no production caller
+src/bernstein/core/security/security_posture.py::PostureReport                                 # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/security_posture.py::compute_posture                               # exercised by tests only; no production caller
+src/bernstein/core/security/security_posture.py::format_posture_report                         # exercised by tests only; no production caller
+src/bernstein/core/security/security_posture.py::score_audit_integrity                         # exercised by tests only; no production caller
+src/bernstein/core/security/security_posture.py::score_permissions                             # exercised by tests only; no production caller
+src/bernstein/core/security/security_posture.py::score_policy_compliance                       # exercised by tests only; no production caller
+src/bernstein/core/security/security_posture.py::score_sandbox                                 # exercised by tests only; no production caller
+src/bernstein/core/security/security_posture.py::score_secrets                                 # exercised by tests only; no production caller
+src/bernstein/core/security/sensitive_data.py::SensitiveData                                   # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/sensitive_data.py::is_sensitive                                    # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/sensitive_data.py::strip_sensitive_fields                          # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/sensitive_file_detector.py::ScanSummary                            # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/sensitive_file_detector.py::SensitiveFileDetector                  # exercised by tests only; no production caller
+src/bernstein/core/security/sigstore_attestation.py::list_attestations                         # exercised by tests only; no production caller
+src/bernstein/core/security/sigstore_attestation.py::load_attestation_record                   # exercised by tests only; no production caller
+src/bernstein/core/security/sigstore_attestation.py::verify_local_attestation                  # exercised by tests only; no production caller
+src/bernstein/core/security/soc2_report.py::MerkleAttestation                                  # exercised by tests only; no production caller
+src/bernstein/core/security/soc2_report.py::SOC2ComplianceReport                               # exercised by tests only; no production caller
+src/bernstein/core/security/soc2_report.py::generate_soc2_report                               # exercised by tests only; no production caller
+src/bernstein/core/security/soc2_report.py::save_soc2_report                                   # exercised by tests only; no production caller
+src/bernstein/core/security/socket_guard.py::collect_unmonitored_destinations                  # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/sso_oidc.py::OIDCProvider                                          # exercised by tests only; no production caller
+src/bernstein/core/security/sso_oidc.py::parse_discovery_document                              # exercised by tests only; no production caller
+src/bernstein/core/security/sso_oidc.py::parse_token_response                                  # exercised by tests only; no production caller
+src/bernstein/core/security/state_encryption.py::EncryptedFile.encrypted_path                  # exercised by tests only; no production caller
+src/bernstein/core/security/state_encryption.py::KeyManager                                    # exercised by tests only; no production caller
+src/bernstein/core/security/state_encryption.py::decrypt_file                                  # exercised by tests only; no production caller
+src/bernstein/core/security/state_encryption.py::encrypt_file                                  # exercised by tests only; no production caller
+src/bernstein/core/security/state_encryption.py::is_encrypted                                  # exercised by tests only; no production caller
+src/bernstein/core/security/surface_grant_delta.py::SurfaceGrantChange                         # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/surface_grant_delta.py::SurfaceGrantDelta                          # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/surface_grant_delta.py::compute_surface_grant_delta                # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/surface_grant_delta.py::is_permission_bearing_surface              # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/tenant_isolation.py::TenantIsolationContext.normalized_id          # exercised by tests only; no production caller
+src/bernstein/core/security/tenant_isolation.py::TenantIsolationManager.list_tenants           # exercised by tests only; no production caller
+src/bernstein/core/security/tenant_isolation.py::TenantIsolationManager.persist_state          # exercised by tests only; no production caller
+src/bernstein/core/security/tenant_isolation.py::TenantIsolationManager.register_quota         # exercised by tests only; no production caller
+src/bernstein/core/security/tenant_isolation_verify.py::IsolationReport                        # exercised by tests only; no production caller
+src/bernstein/core/security/tenant_isolation_verify.py::IsolationTest                          # exercised by tests only; no production caller
+src/bernstein/core/security/tenant_isolation_verify.py::TenantIsolationVerifier                # exercised by tests only; no production caller
+src/bernstein/core/security/tenant_isolation_verify.py::render_isolation_report                # exercised by tests only; no production caller
+src/bernstein/core/security/tenant_rate_limiter.py::DenialReason                               # exercised by tests only; no production caller
+src/bernstein/core/security/tenant_rate_limiter.py::QuotaDenial                                # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/tenant_rate_limiter.py::QuotaKind                                  # exercised by tests only; no production caller
+src/bernstein/core/security/tenant_rate_limiter.py::TenantRateLimiter                          # exercised by tests only; no production caller
+src/bernstein/core/security/tenanting.py::tenant_metrics_dir                                   # exercised by tests only; no production caller
+src/bernstein/core/security/toolcall_identity.py::LineageToolCallIdentitySigner                # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/toolcall_identity.py::ToolCallIdentitySigner                       # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/security/toolcall_interlock.py::AttestationModeProjection                   # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/security/toolcall_interlock.py::project_attestation_mode                    # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/url_allowlist.py::StrictHTTPRedirectHandler.redirect_request       # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/vault_injector.py::VaultInjector                                   # exercised by tests only; no production caller
+src/bernstein/core/security/vault_injector.py::inject_agent_credentials                        # exercised by tests only; no production caller
+src/bernstein/core/security/vault_injector.py::revoke_agent_credentials                        # exercised by tests only; no production caller
+src/bernstein/core/security/vuln_disclosure.py::DisclosureTimeline                             # exercised by tests only; no production caller
+src/bernstein/core/security/vuln_disclosure.py::RecognitionTier                                # exercised by tests only; no production caller
+src/bernstein/core/security/vuln_disclosure.py::VulnerabilityDisclosureManager                 # exercised by tests only; no production caller
+src/bernstein/core/security/vuln_disclosure.py::generate_security_txt                          # exercised by tests only; no production caller
