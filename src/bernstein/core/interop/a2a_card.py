@@ -457,7 +457,7 @@ def _sign_card_body(card: CapabilityCard, private_key_pem: bytes, *, kid: str) -
     header_b64 = _b64url(canonicalize_jcs(header))
     body_b64 = _b64url(canonicalize_jcs(card.to_body()))
     signing_input = f"{header_b64}.{body_b64}".encode("ascii")
-    signature = private_key.sign(signing_input)
+    signature = private_key.sign(signing_input)  # type: ignore[union-attr, call-arg]
     return f"{header_b64}..{_b64url(signature)}"
 
 

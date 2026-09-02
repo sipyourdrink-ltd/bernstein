@@ -91,7 +91,7 @@ print(decision.reason)
 
 | Knob | Default | Controls |
 |---|--:|---|
-| `security.lethal_trifecta_enforcement` | `enforce` | `enforce` (refuse spawn + signed refusal audit event), `warn` (allow, warning recorded), `off` (allow). Every mode still records the evaluated chain in the per-spawn manifest under `.sdd/runtime/spawn_capabilities/`. |
+| `security.lethal_trifecta_enforcement` | `enforce` | `enforce` (refuse spawn + signed refusal audit event), `warn` (allow, warning recorded), `off` (allow). Every mode still writes a per-spawn manifest under `.sdd/runtime/spawn_capabilities/`, which separates the chain the decision saw (`evaluated`) from the tokens held out of it (`held_out`, each with a reason) - see [what the spawn decision covers](lethal-trifecta.md#what-the-spawn-decision-covers). |
 | `templates/capabilities/*.yaml` | three files: `adapters.yaml` (19 adapters), `mcp_tools.yaml`, `surfaces.yaml` | Capability declarations. |
 | Default for unknown tools | `frozenset(Capability)` (all three) | Fail-closed. |
 
