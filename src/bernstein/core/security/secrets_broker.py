@@ -43,6 +43,17 @@ Six backends ship in this module: ``vault``, ``aws_secretsmanager``,
 ``read(secret_name) -> raw_value``. Network backends are imported lazily so
 the module loads without optional dependencies installed.
 
+A seventh backend, ``external``, is the operator's own secret store behind
+:class:`~bernstein.core.security.external_secret_store.ExternalSecretStore`.
+Instead of copying secrets into a store of ours, the broker resolves a named
+secret in theirs, asks it to mint a short-lived credential, and refuses to
+mint again once that store reports the secret revoked. The credential value
+never enters the audit chain: what the chain records is the grant, the
+identity of the store that issued the credential, the audience, and the
+expiry. Concrete stores are plugins registered through
+:mod:`~bernstein.core.security.secret_store_registry`, so a vendor SDK import
+never lands in ``bernstein.core``.
+
 Audit log
 =========
 
@@ -70,11 +81,21 @@ import subprocess
 import threading
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, MutableMapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+from bernstein.core.security.external_secret_store import (
+    ExternalCredential,
+    ExternalStoreError,
+    SecretDescriptor,
+    SecretRef,
+)
+
+if TYPE_CHECKING:
+    from bernstein.core.security.external_secret_store import ExternalSecretStore
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +104,7 @@ __all__ = [
     "AuditSink",
     "AwsSecretsManagerBackend",
     "BrokerConfig",
+    "ExternalStoreBackend",
     "FileEncryptedBackend",
     "GcpSecretManagerBackend",
     "LinuxKeyringBackend",
@@ -100,6 +122,7 @@ __all__ = [
 ]
 
 BackendName = Literal[
+    "external",
     "vault",
     "aws_secretsmanager",
     "gcp_secret_manager",
@@ -181,7 +204,13 @@ AuditSink = Callable[[AuditEvent], None]
 
 @dataclass(frozen=True)
 class MintedToken:
-    """Result of a successful :meth:`SecretsBroker.mint` call."""
+    """Result of a successful :meth:`SecretsBroker.mint` call.
+
+    ``version_id`` is empty for an ordinary mint. A rotation run sets it so the
+    token, the stored secret version, and the receipt left on the target all
+    name the same version (see
+    :mod:`bernstein.core.security.secret_rotation`).
+    """
 
     token_id: str
     value: str
@@ -190,6 +219,7 @@ class MintedToken:
     expires_at: float
     ttl_seconds: int
     audience: str = ""
+    version_id: str = ""
 
     def is_expired(self, *, now: float | None = None) -> bool:
         """Return ``True`` when wall-clock time has passed ``expires_at``."""
@@ -467,6 +497,83 @@ class FileEncryptedBackend(SecretsBackend):
             return []
 
 
+class ExternalStoreBackend(SecretsBackend):
+    """The operator's own secret store, behind the external-store contract.
+
+    Configure as ``backend: external`` with
+    ``backend_settings: {store_name: "<registered name>"}``; any further
+    settings are forwarded to the store's factory. Tests and in-process
+    wiring may pass an already-constructed ``store`` instead.
+
+    Store construction is deferred to first use, so a name that no plugin
+    registered fails at mint time with a message naming what *is* registered,
+    rather than minting against some other store or failing at import.
+
+    ``secret_name`` here is an opaque reference -- ``"<store>:<path>"`` -- and
+    the ``path`` half is interpreted only by the store that owns it.
+    """
+
+    name = "external"
+
+    def __init__(
+        self,
+        *,
+        store: ExternalSecretStore | None = None,
+        store_name: str = "",
+        **store_settings: Any,
+    ) -> None:
+        self._store = store
+        self._store_name = store_name or (str(getattr(store, "store_id", "")) if store is not None else "")
+        self._store_settings = store_settings
+
+    @property
+    def store_name(self) -> str:
+        """Name this backend answers for, and the store half of a reference."""
+        return self._store_name
+
+    def store(self) -> ExternalSecretStore:
+        """Return the store, constructing it from the registry on first use."""
+        if self._store is None:
+            from bernstein.core.security.secret_store_registry import get_registry
+
+            try:
+                self._store = get_registry().create(self._store_name, **self._store_settings)
+            except KeyError as exc:
+                raise SecretsBrokerError(str(exc)) from exc
+        return self._store
+
+    def _path(self, secret_name: str) -> str:
+        """Split ``secret_name`` into its store-native path, checking the store."""
+        ref = SecretRef.parse(secret_name)
+        if self._store_name and ref.store != self._store_name:
+            raise SecretsBrokerError(
+                f"secret reference {secret_name!r} names store {ref.store!r}, "
+                f"but this backend serves {self._store_name!r}"
+            )
+        return ref.path
+
+    def describe(self, secret_name: str) -> SecretDescriptor:
+        """Return the store's non-secret facts about ``secret_name``."""
+        return self.store().resolve(self._path(secret_name))
+
+    def report_revocation(self, secret_name: str, *, upstream_id: str) -> bool:
+        """Ask the store whether the upstream secret or credential is revoked."""
+        return self.store().report_revocation(self._path(secret_name), upstream_id=upstream_id)
+
+    def issue(self, secret_name: str, *, audience: str, ttl_seconds: int) -> ExternalCredential:
+        """Ask the store to mint a short-lived credential."""
+        return self.store().mint_credential(self._path(secret_name), audience=audience, ttl_seconds=ttl_seconds)
+
+    def read(self, secret_name: str) -> str:
+        """Return a credential value for callers that only hold the thin API.
+
+        The broker itself goes through :meth:`describe` / :meth:`issue` so the
+        revocation check and the store-reported expiry are honoured; this
+        method exists because every backend implements ``read``.
+        """
+        return self.issue(secret_name, audience="", ttl_seconds=_DEFAULT_TTL_SECONDS).value
+
+
 # ---------------------------------------------------------------------------
 # Broker config
 # ---------------------------------------------------------------------------
@@ -629,6 +736,7 @@ class SecretsBroker:
         ttl_seconds: int | None = None,
         grant: Any = None,
         run_id: str | None = None,
+        version_id: str = "",
     ) -> MintedToken:
         """Mint a short-lived token for ``secret_name`` scoped to ``task_id``.
 
@@ -644,6 +752,8 @@ class SecretsBroker:
                 mode; the minted token inherits the grant's audience and expiry.
             run_id: Run scope for chain-anchored refusal records when no grant
                 is presented. Defaults to the grant's run id, else ``task_id``.
+            version_id: Secret-version identifier a rotation run assigns to the
+                material being minted. Empty for an ordinary mint.
 
         Returns:
             A :class:`MintedToken`. The ``value`` field is what the agent
@@ -678,12 +788,30 @@ class SecretsBroker:
                 expires_override = float(grant_expiry)
 
         ttl = self._resolve_ttl(secret_name, ttl_seconds)
-        raw_value = self._backend.read(secret_name)
+        store_id = ""
+        store_expiry: float | None = None
+        if isinstance(self._backend, ExternalStoreBackend):
+            raw_value, store_id, store_expiry = self._issue_external(
+                self._backend,
+                secret_name=secret_name,
+                task_id=task_id,
+                audience=audience,
+                ttl_seconds=ttl,
+                run_id=grant_run_id or task_id,
+                grant_id=grant_id,
+            )
+        else:
+            raw_value = self._backend.read(secret_name)
         token_id = _new_token_id()
         token_value = _new_token_value()
         now = self._clock()
         expires_at = expires_override if expires_override is not None else now + ttl
-        effective_ttl = int(expires_at - now) if expires_override is not None else ttl
+        # A store that issues a shorter-lived credential than we asked for caps
+        # the token: the broker must never outlive the credential behind it.
+        if store_expiry is not None and store_expiry < expires_at:
+            expires_at = store_expiry
+        unbounded = expires_override is None and store_expiry is None
+        effective_ttl = ttl if unbounded else int(expires_at - now)
         token = MintedToken(
             token_id=token_id,
             value=token_value,
@@ -692,6 +820,7 @@ class SecretsBroker:
             expires_at=expires_at,
             ttl_seconds=effective_ttl,
             audience=audience,
+            version_id=version_id,
         )
         registration = _Registration(
             token=token,
@@ -715,6 +844,7 @@ class SecretsBroker:
                 task_id=task_id,
                 secret_name=secret_name,
                 audience=audience,
+                store=store_id,
             )
         self._emit(
             AuditEvent(
@@ -737,6 +867,7 @@ class SecretsBroker:
         ttl_seconds: int | None = None,
         grant: Any = None,
         run_id: str | None = None,
+        version_id: str = "",
     ) -> Generator[MintedToken, None, None]:
         """Mint a token; auto-revoke on context-manager exit."""
         token = self.mint(
@@ -745,10 +876,67 @@ class SecretsBroker:
             ttl_seconds=ttl_seconds,
             grant=grant,
             run_id=run_id,
+            version_id=version_id,
         )
         try:
             yield token
         finally:
+            self.revoke(token.token_id, reason="scope-exit")
+
+    @contextmanager
+    def bind_scoped(
+        self,
+        *,
+        secret_name: str,
+        task_id: str,
+        env_var: str,
+        ttl_seconds: int | None = None,
+        grant: Any = None,
+        run_id: str | None = None,
+        env: MutableMapping[str, str] | None = None,
+    ) -> Generator[MintedToken, None, None]:
+        """Bind a minted token into ``env`` for the duration of one step.
+
+        A spec names a secret by opaque reference; the value is bound into the
+        environment only for the block. On the way out the variable is removed
+        -- or restored to whatever the operator had set under that name -- and
+        the token is revoked, which also drops the backing credential from the
+        broker registry. An environment dump before the block and after it
+        finds the bound value in neither.
+
+        Args:
+            secret_name: Backing-store name or, for the ``external`` backend,
+                a ``"<store>:<path>"`` reference.
+            task_id: Task that owns the token.
+            env_var: Variable name to bind under.
+            ttl_seconds: Lifetime override, as for :meth:`mint`.
+            grant: Grant authorizing the mint, as for :meth:`mint`.
+            run_id: Run scope for chain-anchored refusals, as for :meth:`mint`.
+            env: Mapping to bind into. Defaults to :data:`os.environ`.
+
+        Yields:
+            The :class:`MintedToken` bound under ``env_var``.
+        """
+        if not env_var:
+            raise SecretsBrokerError("env_var must not be empty")
+        target: MutableMapping[str, str] = os.environ if env is None else env
+        token = self.mint(
+            secret_name=secret_name,
+            task_id=task_id,
+            ttl_seconds=ttl_seconds,
+            grant=grant,
+            run_id=run_id,
+        )
+        had_previous = env_var in target
+        previous = target.get(env_var, "")
+        target[env_var] = token.value
+        try:
+            yield token
+        finally:
+            if had_previous:
+                target[env_var] = previous
+            else:
+                target.pop(env_var, None)
             self.revoke(token.token_id, reason="scope-exit")
 
     def resolve(self, token_value: str, *, audience: str | None = None) -> str:
@@ -850,6 +1038,9 @@ class SecretsBroker:
             if reg is None or reg.revoked:
                 return False
             reg.revoked = True
+            # A revoked token's backing credential has no further use; dropping
+            # it keeps a bound value from outliving the step that bound it.
+            reg.raw_value = ""
             deferred = AuditEvent(
                 kind="revoke",
                 token_id=token_id,
@@ -880,6 +1071,7 @@ class SecretsBroker:
                 if reg.revoked or reg.token.task_id != task_id:
                     continue
                 reg.revoked = True
+                reg.raw_value = ""
                 deferred.append(
                     AuditEvent(
                         kind="revoke",
@@ -1004,6 +1196,54 @@ class SecretsBroker:
             return False, "not_active"
         return True, "ok"
 
+    # -- external stores (issue #4984) --------------------------------------
+
+    def _issue_external(
+        self,
+        backend: ExternalStoreBackend,
+        *,
+        secret_name: str,
+        task_id: str,
+        audience: str,
+        ttl_seconds: int,
+        run_id: str,
+        grant_id: str,
+    ) -> tuple[str, str, float | None]:
+        """Resolve, revocation-check, then mint against the operator's store.
+
+        Returns ``(credential value, store identity, store expiry or None)``.
+        The value is held in the broker registry for the token's lifetime and
+        goes nowhere else; only the store identity reaches the chain.
+
+        Raises:
+            SecretsBrokerError: When the store cannot serve the reference, or
+                when it reports the upstream secret revoked. An upstream
+                revocation is recorded as a chain-anchored refusal before the
+                error propagates, so "the operator revoked it upstream" and
+                "we refused to mint" are the same record.
+        """
+        try:
+            descriptor = backend.describe(secret_name)
+            revoked = descriptor.revoked or backend.report_revocation(secret_name, upstream_id=descriptor.upstream_id)
+        except ExternalStoreError as exc:
+            raise SecretsBrokerError(f"external store failed for {secret_name!r}: {exc}") from exc
+        store_id = descriptor.store_id or backend.store_name
+        if revoked:
+            self._record_grant_refusal(
+                run_id=run_id,
+                task_id=task_id,
+                secret_name=secret_name,
+                grant_id=grant_id,
+                reason="upstream_revoked",
+            )
+            raise SecretsBrokerError(f"upstream secret {secret_name!r} is revoked in store {store_id!r}")
+        try:
+            credential = backend.issue(secret_name, audience=audience, ttl_seconds=ttl_seconds)
+        except ExternalStoreError as exc:
+            raise SecretsBrokerError(f"external store refused to mint {secret_name!r}: {exc}") from exc
+        expiry = credential.expires_at if credential.expires_at > 0 else None
+        return credential.value, store_id, expiry
+
     def _record_grant_exchange(
         self,
         *,
@@ -1013,6 +1253,7 @@ class SecretsBroker:
         task_id: str,
         secret_name: str,
         audience: str,
+        store: str = "",
     ) -> None:
         if self._grant_ledger is None:
             return
@@ -1024,6 +1265,7 @@ class SecretsBroker:
                 task_id=task_id,
                 secret_name=secret_name,
                 audience=audience,
+                store=store,
             )
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("grant exchange record failed: %s", type(exc).__name__)
@@ -1089,6 +1331,7 @@ class SecretsBroker:
 
 
 _BACKEND_REGISTRY: dict[BackendName, Callable[..., SecretsBackend]] = {
+    "external": ExternalStoreBackend,
     "vault": VaultBackend,
     "aws_secretsmanager": AwsSecretsManagerBackend,
     "gcp_secret_manager": GcpSecretManagerBackend,

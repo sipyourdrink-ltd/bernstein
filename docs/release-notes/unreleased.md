@@ -11,15 +11,6 @@ already documents fails the build. An entry that cites released work as context
 rather than as its own attribution is exempted by hand there, with the reason.
 
 
-## Governance
+## Lineage
 
-- A change receipt now records, per entry, the value the target held
-  immediately before the change alongside the value written, and
-  `bernstein.core.govern.build_restore_plan` projects an apply receipt into the
-  plan that undoes it. Every restore value is read off the receipt; the
-  environment is consulted only to refuse an entry whose target drifted since
-  the apply or could not be read, which an operator overrides per entry. The
-  plan carries the digest of the receipt it inverts, so a restore is tied to
-  its apply record without a separate index. The three receipt fields are
-  additive and optional, so receipts written before them still verify offline
-  and the schema version is unchanged (#5109).
+- Lineage entries carry an additive optional `sensitivity` classification, and the effective sensitivity of an artefact is the maximum class over its lineage closure — so a summary of a confidential document is confidential. Absence fails closed to the highest class, and the verdict names the closure member that raised the level and the path through the graph that reaches it. An entry without the field canonicalises byte-identically to the pre-change schema, so every historical signature and HMAC is untouched (#5042).

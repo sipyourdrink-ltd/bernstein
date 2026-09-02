@@ -9,7 +9,11 @@ from typing import Any
 from bernstein.core.govern.findings import Finding, FindingsDocument
 from bernstein.core.govern.inventory_models import Inventory, Surface
 from bernstein.core.govern.plan_models import GovernPlan, PlanEntry, PlanEntryKind
-from bernstein.core.govern.playbook_models import Playbook, PlaybookClause
+from bernstein.core.govern.playbook_models import (
+    Playbook,
+    PlaybookClause,
+    PlaybookValidationError,
+)
 from bernstein.core.govern.proposal import DraftProposal, ProposalStatus
 from bernstein.core.govern.restore import (
     RestoreEntry,
@@ -201,6 +205,7 @@ __all__ = [
     "PlanEntryKind",
     "Playbook",
     "PlaybookClause",
+    "PlaybookValidationError",
     "ProposalStatus",
     "RestoreEntry",
     "RestorePlan",

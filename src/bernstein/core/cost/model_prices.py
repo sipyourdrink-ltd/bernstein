@@ -126,6 +126,13 @@ class UsagePriceResult:
             explicit ``$0`` rather than silently vanishing from totals or
             being estimated with a heuristic that would look precise but
             isn't.
+        model_call_id: Id of the
+            :class:`~bernstein.core.cost.model_call_ledger.ModelCallRecord`
+            this row prices, or ``""`` when the caller has no record. It is
+            the only join key between a dollar amount and the call that
+            produced it: with it, ``ModelCallLedger.get_record`` answers
+            what that spend actually sent and received, without a second
+            index.
     """
 
     model: str
@@ -133,9 +140,16 @@ class UsagePriceResult:
     output_tokens: int
     cost_usd: float
     priced: bool
+    model_call_id: str = ""
 
 
-def price_model_usage(model: str, input_tokens: int, output_tokens: int) -> UsagePriceResult:
+def price_model_usage(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    *,
+    model_call_id: str = "",
+) -> UsagePriceResult:
     """Price one LLM call's token usage against :data:`MODEL_COSTS_PER_1M_TOKENS`.
 
     Bug 13 (2026-07-02): a 45-minute MiniMax-M3 run on the ``openai_agents``
@@ -156,6 +170,8 @@ def price_model_usage(model: str, input_tokens: int, output_tokens: int) -> Usag
             as a substring against :data:`MODEL_COSTS_PER_1M_TOKENS` keys.
         input_tokens: Prompt tokens consumed by this call.
         output_tokens: Completion tokens consumed by this call.
+        model_call_id: Id of the model-call record this usage belongs to,
+            carried onto the result so cost and call outcome join by id.
 
     Returns:
         A :class:`UsagePriceResult` with the computed cost and whether the
@@ -178,6 +194,7 @@ def price_model_usage(model: str, input_tokens: int, output_tokens: int) -> Usag
                 output_tokens=output_tokens,
                 cost_usd=cost,
                 priced=True,
+                model_call_id=model_call_id,
             )
     logger.warning(
         "price_model_usage: no pricing-table entry for model %r - metering at "
@@ -194,6 +211,7 @@ def price_model_usage(model: str, input_tokens: int, output_tokens: int) -> Usag
         output_tokens=output_tokens,
         cost_usd=0.0,
         priced=False,
+        model_call_id=model_call_id,
     )
 
 

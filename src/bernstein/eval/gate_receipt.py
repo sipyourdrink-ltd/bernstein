@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
+from bernstein.core.verify_result import VerifyResult
 from bernstein.eval.significance import (
     DEFAULT_ALPHA,
     DEFAULT_MIN_N,
@@ -419,13 +420,8 @@ def read_verdict_receipt(workdir: Path, receipt_hash: str) -> VerdictReceipt | N
         return None
 
 
-@dataclass(frozen=True, slots=True)
-class VerdictVerifyResult:
-    """Outcome of an offline verdict-receipt verification."""
-
-    ok: bool
-    reason: str
-    receipt: VerdictReceipt | None
+#: Outcome of an offline verdict-receipt verification.
+VerdictVerifyResult = VerifyResult[VerdictReceipt]
 
 
 def verify_verdict_receipt(

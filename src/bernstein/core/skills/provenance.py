@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from bernstein.core.lineage.spine import LineageSpine, SpineStatus
+from bernstein.core.verify_result import VerifyResult
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -664,13 +665,8 @@ def _verify_link_head(lineage_root: Path, hmac_key: bytes, link: UsageLink) -> t
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class InstallVerifyResult:
-    """Outcome of :func:`verify_install`."""
-
-    ok: bool
-    reason: str
-    receipt: InstallReceipt | None = None
+#: Outcome of :func:`verify_install`.
+InstallVerifyResult = VerifyResult[InstallReceipt]
 
 
 def verify_install(
