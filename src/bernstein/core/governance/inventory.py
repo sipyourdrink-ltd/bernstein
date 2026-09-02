@@ -37,6 +37,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 # ---------------------------------------------------------------------------
 # Dataclasses
 # --------------------------------------------------------------------------
@@ -123,7 +125,13 @@ def _discover_mcp_tools(workspace_root: Path) -> list[Surface]:
         except (OSError, json.JSONDecodeError):
             continue
 
+        if not isinstance(data, dict):
+            continue
+
         servers = data.get("mcpServers", {})
+        if not isinstance(servers, dict):
+            continue
+
         for name, config in servers.items():
             if isinstance(config, dict):
                 command = config.get("command", "")
@@ -166,26 +174,21 @@ def _discover_api_endpoints(workspace_root: Path) -> list[Surface]:
 
         try:
             raw = spec_path.read_text(encoding="utf-8")
-            if spec_path.suffix == ".json":
-                spec = json.loads(raw)
-            else:
-                import yaml
-
-                spec = yaml.safe_load(raw)
-        except (OSError, json.JSONDecodeError):
+            spec = json.loads(raw) if spec_path.suffix == ".json" else yaml.safe_load(raw)
+        except (OSError, json.JSONDecodeError, yaml.YAMLError):
             continue
-        except ImportError:
-            # YAML library not available, skip YAML files
-            if spec_path.suffix != ".json":
-                continue
-            raise
 
-        if spec is None:
+        if not isinstance(spec, dict):
             continue
 
         servers = spec.get("servers", [])
-        base_url = servers[0].get("url", "") if servers else ""
+        base_url = ""
+        if isinstance(servers, list) and servers and isinstance(servers[0], dict):
+            base_url = str(servers[0].get("url", ""))
+
         paths = spec.get("paths", {})
+        if not isinstance(paths, dict):
+            continue
 
         for path, methods in paths.items():
             if not isinstance(methods, dict):
@@ -217,11 +220,9 @@ def _discover_file_paths(workspace_root: Path) -> list[Surface]:
         return surfaces
 
     try:
-        import yaml
-
         raw = config_path.read_text(encoding="utf-8")
         config = yaml.safe_load(raw)
-    except (OSError, yaml.YAMLError, ImportError):
+    except (OSError, yaml.YAMLError):
         return surfaces
 
     if not isinstance(config, dict):

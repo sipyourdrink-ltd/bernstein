@@ -302,3 +302,68 @@ def test_discover_surfaces_combines_all_sources(workspace: Path) -> None:
     assert "mcp_tool" in kinds
     assert "api_endpoint" in kinds
     assert "file_path" in kinds
+
+
+# ---------------------------------------------------------------------------
+# A config file the scan cannot interpret must not abort the whole scan
+# ---------------------------------------------------------------------------
+
+
+def test_malformed_openapi_yaml_does_not_abort_the_scan(workspace: Path) -> None:
+    """An unparseable OpenAPI YAML is skipped, not raised out of discovery.
+
+    ``bernstein.yaml`` already survived its own YAML errors while the OpenAPI
+    scanner let ``yaml.YAMLError`` escape, so one broken spec in a workspace
+    took down the inventory of every other source.
+    """
+    (workspace / ".mcp.json").write_text(json.dumps({"mcpServers": {"kept": {"command": "kept"}}}), encoding="utf-8")
+    (workspace / "openapi.yaml").write_text("paths: {\n  broken", encoding="utf-8")
+
+    inventory = discover_surfaces(workspace)
+
+    assert [s.identifier for s in inventory.surfaces] == ["kept"]
+
+
+def test_mcp_config_that_is_not_a_mapping_is_skipped(workspace: Path) -> None:
+    """A ``.mcp.json`` holding a JSON list parses but has no ``mcpServers``."""
+    (workspace / ".mcp.json").write_text(json.dumps(["not", "a", "mapping"]), encoding="utf-8")
+
+    inventory = discover_surfaces(workspace)
+
+    assert inventory.surfaces == []
+
+
+def test_mcp_servers_that_is_not_a_mapping_is_skipped(workspace: Path) -> None:
+    """``mcpServers`` holding a list has no name/config pairs to enumerate."""
+    (workspace / ".mcp.json").write_text(json.dumps({"mcpServers": []}), encoding="utf-8")
+
+    inventory = discover_surfaces(workspace)
+
+    assert inventory.surfaces == []
+
+
+def test_openapi_paths_that_is_not_a_mapping_is_skipped(workspace: Path) -> None:
+    """A spec whose ``paths`` is not a mapping yields no endpoints."""
+    (workspace / "openapi.json").write_text(json.dumps({"openapi": "3.0.0", "paths": ["/health"]}), encoding="utf-8")
+
+    inventory = discover_surfaces(workspace)
+
+    assert inventory.surfaces == []
+
+
+def test_openapi_servers_entry_without_a_url_leaves_the_path_unprefixed(workspace: Path) -> None:
+    """A ``servers`` list whose first entry is not a mapping is not read as one."""
+    (workspace / "openapi.json").write_text(
+        json.dumps(
+            {
+                "openapi": "3.0.0",
+                "servers": ["https://example.invalid"],
+                "paths": {"/health": {"get": {}}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    inventory = discover_surfaces(workspace)
+
+    assert [s.identifier for s in inventory.surfaces] == ["GET /health"]

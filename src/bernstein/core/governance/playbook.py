@@ -48,7 +48,7 @@ import re
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 # ---------------------------------------------------------------------------
 # Identifier constraints
@@ -334,7 +334,7 @@ def load_playbook_from_text(text: str) -> GovernancePlaybook:
 
     try:
         return GovernancePlaybook.model_validate(data)
-    except Exception as exc:
+    except ValidationError as exc:
         raise PlaybookValidationError([("schema", str(exc))]) from exc
 
 
