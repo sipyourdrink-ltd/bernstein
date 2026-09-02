@@ -15,7 +15,11 @@ UTF-8, ``\\n`` newlines):
   policy the other canonical cores in the codebase apply;
 * JSONL kinds (``dataset`` / ``action_log``) emit one JCS-canonical JSON object
   per line, ``\\n``-separated;
-* the JSON-object kind (``ops_result``) emits a single JCS-canonical object.
+* the JSON-object kind (``ops_result``) emits a single JCS-canonical object;
+* the ``finding`` kind emits a JCS-canonical *projection* of a scanner result -
+  rule, normalised URI and snippet hash, bound to the invocation that produced
+  it - deliberately without the raw line number, so a cosmetic edit above a
+  finding does not re-identify it.
 
 This module deliberately has no dependency on the task model or the lineage
 store so it can be imported from both sides without a cycle.
@@ -53,6 +57,21 @@ _JSONL_KINDS: frozenset[ArtifactKind] = frozenset({ArtifactKind.DATASET, Artifac
 _JSON_OBJECT_KINDS: frozenset[ArtifactKind] = frozenset({ArtifactKind.OPS_RESULT})
 #: Kinds whose canonical form is raw bytes.
 _BYTE_KINDS: frozenset[ArtifactKind] = frozenset({ArtifactKind.BLOB})
+
+#: Closed key set of a ``finding`` payload. Every key is required - see
+#: :func:`_canonical_finding_bytes` for why an omission cannot be defaulted.
+_FINDING_KEYS: frozenset[str] = frozenset(
+    {
+        "ruleId",
+        "artifactLocation",
+        "region",
+        "tool",
+        "tool_version",
+        "pinned_digest",
+        "invocation_argv_hash",
+        "target",
+    }
+)
 
 #: The three typed criteria that operate on artifact bytes (issue #2608).
 ARTIFACT_CRITERION_TYPES: frozenset[str] = frozenset({"schema_valid", "criteria_match", "hash_stable"})
@@ -150,37 +169,75 @@ def _coerce_rows(raw: Any) -> list[Any]:
 # ---------------------------------------------------------------------------
 
 
+def _finding_text(value: Any, label: str, *, allow_empty: bool = False) -> str:
+    """Return ``value`` as a finding field, rejecting coercion and blanks.
+
+    ``str(8)`` and ``"8"`` are two different bindings; coercing them would let
+    both collide on one identity, so a non-string is rejected outright.
+    """
+    if not isinstance(value, str):
+        raise CanonicalisationError(f"finding field {label!r} must be a string, got {type(value).__name__}")
+    if not value and not allow_empty:
+        raise CanonicalisationError(f"finding field {label!r} must not be empty")
+    return value
+
+
+def _finding_mapping(value: Any, label: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise CanonicalisationError(f"finding field {label!r} must be a mapping, got {type(value).__name__}")
+    return value
+
+
 def _canonical_finding_bytes(raw: Any) -> bytes:
-    """Canonicalise a SARIF 2.1.0 finding artifact for content-addressing.
-    Projects the finding down to stable identity fields, deliberately dropping
-    the raw line number so cosmetic shifts don't change the hash. Binds tool
-    context so the identity is anchored to the exact invocation.
+    """Canonicalise a SARIF 2.1.0-derived finding for content-addressing.
+
+    The projection drops the raw line number on purpose: a cosmetic edit above
+    a finding shifts ``region.startLine`` and must not re-identify it. What
+    survives is ``ruleId`` + the normalised ``artifactLocation.uri`` + a hash of
+    the region snippet, bound to the invocation that produced it.
+
+    Because the projection discards input, the payload's key set is *closed* and
+    every key is required. A missing field must not fall back to an empty
+    default: that would hand an unbound finding - one naming no tool, no
+    version and no invocation - a stable, valid-looking identity, and carrying
+    that binding is the whole point of the kind. Same reject-don't-repair policy
+    the text core applies.
     """
     if not isinstance(raw, dict):
         raise CanonicalisationError(f"finding artifact must be a mapping, got {type(raw).__name__}")
 
-    # Extract SARIF result fields
-    rule_id = str(raw.get("ruleId", ""))
+    keys = set(raw)
+    unknown = sorted(keys - _FINDING_KEYS)
+    if unknown:
+        raise CanonicalisationError(f"finding artifact has unknown field(s): {', '.join(unknown)}")
+    missing = sorted(_FINDING_KEYS - keys)
+    if missing:
+        raise CanonicalisationError(f"finding artifact is missing required field(s): {', '.join(missing)}")
 
-    # Normalise artifact location URI to forward slashes
-    artifact_location = raw.get("artifactLocation", {})
-    uri = str(artifact_location.get("uri", "")).replace("\\", "/")
+    location = _finding_mapping(raw["artifactLocation"], "artifactLocation")
+    if "uri" not in location:
+        raise CanonicalisationError("finding artifact is missing required field(s): artifactLocation.uri")
+    # Path separators are cosmetic too: one file scanned on either platform is
+    # one finding.
+    uri = _finding_text(location["uri"], "artifactLocation.uri").replace("\\", "/")
 
-    # Hash the snippet text instead of using the raw line number
-    region = raw.get("region", {})
-    snippet_text = str(region.get("snippet", {}).get("text", ""))
-    snippet_hash = "sha256:" + hashlib.sha256(snippet_text.encode("utf-8")).hexdigest()
+    region = _finding_mapping(raw["region"], "region")
+    snippet = _finding_mapping(region.get("snippet", {}), "region.snippet")
+    # A finding need not quote source text - a port observation has none.
+    snippet_text = _finding_text(snippet.get("text", ""), "region.snippet.text", allow_empty=True)
 
-    # Bind context fields required by the issue
     projected = {
-        "ruleId": rule_id,
+        "ruleId": _finding_text(raw["ruleId"], "ruleId"),
         "uri": uri,
-        "snippet_hash": snippet_hash,
-        "tool": str(raw.get("tool", "")),
-        "tool_version": str(raw.get("tool_version", "")),
-        "pinned_digest": str(raw.get("pinned_digest", "")),
-        "invocation_argv_hash": str(raw.get("invocation_argv_hash", "")),
-        "target": str(raw.get("target", "")),
+        "snippet_hash": "sha256:" + hashlib.sha256(snippet_text.encode("utf-8")).hexdigest(),
+        "tool": _finding_text(raw["tool"], "tool"),
+        "tool_version": _finding_text(raw["tool_version"], "tool_version"),
+        # Empty is legal here and nowhere else: an adapter on the
+        # ``deterministic`` tier has no feed to pin, and recording "" says so
+        # explicitly rather than by omission.
+        "pinned_digest": _finding_text(raw["pinned_digest"], "pinned_digest", allow_empty=True),
+        "invocation_argv_hash": _finding_text(raw["invocation_argv_hash"], "invocation_argv_hash"),
+        "target": _finding_text(raw["target"], "target"),
     }
 
     return _canonical_json_bytes(projected)
