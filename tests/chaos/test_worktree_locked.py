@@ -26,7 +26,7 @@ async def test_worktree_locked(test_client: TestClient, orchestrator_factory, in
         "subprocess.run(['git', 'add', 'chaos.txt'], check=True)\n"
         "subprocess.run(['git', 'commit', '-m', 'chaos'], check=True)\n"
         "runtime_dir = Path(__file__).parent\n"
-        "(runtime_dir / 'DONE_chaos').write_text('done')\n"
+        "(runtime_dir / 'DONE_chaos-task').write_text('done')\n"
         "import time\n"
         "time.sleep(2)\n"
         "```"
