@@ -304,7 +304,13 @@ def _aggregate_from_ledger_or_tasks(
     written by the LLM-adapter pre-call hook into ``.sdd/cost/ledger.jsonl``.
     When the ledger is unavailable we degrade to ``task_records`` so older
     runs still show a sensible breakdown.
+
+    Issue #4985: ``principal``, ``grant`` and ``authorizing_identity`` are
+    ledger-only columns. Without a ledger every row reports as
+    ``unattributed`` -- the task record cannot say by whose grant a call
+    was made, and inventing one would be worse than saying nothing.
     """
+    from bernstein.core.cost.principal_attribution import ATTRIBUTION_DIMENSIONS, UNATTRIBUTED
     from bernstein.core.cost.spend_ledger import SpendLedger, aggregate_entries
 
     if ledger_path.exists():
@@ -316,7 +322,12 @@ def _aggregate_from_ledger_or_tasks(
 
     rows: dict[str, dict[str, Any]] = defaultdict(lambda: {"tasks": 0, "cost_usd": 0.0})
     for rec in task_records:
-        if dimension == "role":
+        if dimension in ATTRIBUTION_DIMENSIONS:
+            # Attribution lives only on the ledger row (issue #4985). Without
+            # a ledger there is nothing to attribute, and guessing from the
+            # task record would fold unattributed spend onto a principal.
+            label = UNATTRIBUTED
+        elif dimension == "role":
             label = str(rec.get("role", "") or "unknown")
         elif dimension == "envelope":
             raw_tags_env: object = rec.get("cost_tags") or {}
@@ -672,9 +683,26 @@ DEFAULT_METRICS_DIR = ".sdd/metrics"
 @click.option(
     "--by",
     "group_by",
-    type=click.Choice(["agent", "model", "task", "day", "role", "feature_label", "envelope", "profile"]),
+    type=click.Choice(
+        [
+            "agent",
+            "model",
+            "task",
+            "day",
+            "role",
+            "feature_label",
+            "envelope",
+            "profile",
+            "principal",
+            "grant",
+            "authorizing_identity",
+        ]
+    ),
     default=None,
-    help=("Group breakdown by agent, model, task, day, role, feature_label, envelope, or profile (issue #2245)."),
+    help=(
+        "Group breakdown by agent, model, task, day, role, feature_label, envelope, profile (issue #2245), "
+        "principal, grant, or authorizing_identity (issue #4985)."
+    ),
 )
 @click.option(
     "--ledger",
@@ -825,7 +853,7 @@ def cost_cmd(
         grouped_data = _aggregate_by_task(task_records)
     elif group_by == "day":
         grouped_data = _aggregate_by_day(task_records)
-    elif group_by in ("role", "feature_label", "envelope"):
+    elif group_by in ("role", "feature_label", "envelope", "principal", "grant", "authorizing_identity"):
         # Issue #1320 + #1405: role / feature_label / envelope are tagged
         # dimensions that live in the rolling spend ledger. Fall back to
         # task_records when the ledger is missing so old runs still show
