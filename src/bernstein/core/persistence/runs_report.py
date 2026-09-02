@@ -30,9 +30,11 @@ Outcome classes (stable values -- the ``--json`` contract)
 
 Scope note: this module reports what a run's ledger holds; it does not poll
 process liveness. It is meant to run after a batch, so a run still actually
-in flight when invoked simply shows whatever its ledger holds so far -- the
-same "no run.closed entry yet" shape as a kill, which is the honest answer
-absent a heartbeat check.
+in flight when invoked shows the same "no run.closed entry yet" shape as a
+kill and classifies as ``infra-error``. That ambiguity is answered by
+:func:`list_non_terminal_runs`, which returns exactly the runs with no
+closing entry together with their age: a fresh entry on an aged run is a
+run still working, and no entry at all is one that died quietly.
 
 Failure-pattern analysis
 -------------------------
@@ -44,15 +46,19 @@ and contributing run IDs for downstream triage or automated remediation.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.persistence.work_ledger import (
     KIND_RUN_CLOSED,
+    RUN_KINDS,
     LedgerError,
     LedgerReader,
     LedgerState,
+    RunErrorKind,
+    RunJournalState,
     default_ledger_root,
     replay_state,
     run_ledger_dir,
@@ -65,8 +71,10 @@ if TYPE_CHECKING:
     from bernstein.core.persistence.work_ledger import LedgerEntry
 
 #: Error-kind values on a wrap-up that indicate an infrastructure death
-#: rather than a task or gate outcome.
-_INFRA_ERROR_KINDS = frozenset({"adapter", "transport"})
+#: rather than a task or gate outcome. Same closed set the ledger enforces
+#: at append (:class:`~bernstein.core.persistence.work_ledger.RunErrorKind`),
+#: so the classifier and the writer cannot drift apart.
+_INFRA_ERROR_KINDS = frozenset(member.value for member in RunErrorKind)
 
 _NO_WRAPUP_EVIDENCE = "no wrap-up recorded before the run ended (likely killed mid-flight)"
 
@@ -151,12 +159,62 @@ class RunWrapUp:
 
 
 @dataclass(frozen=True)
+class RunStepTiming:
+    """Timing facts for one step (task) of a run, projected from its entries.
+
+    Attributes:
+        task_id: The step's task id.
+        started_at: Unix instant of the step's first ledger entry.
+        ended_at: Unix instant of the step's last ledger entry.
+        elapsed_seconds: ``ended_at - started_at``.
+        entries: How many ledger entries the step recorded -- the item count
+            behind the timings, so a step that churned is visible as such
+            next to one that ran once.
+    """
+
+    task_id: str
+    started_at: float
+    ended_at: float
+    elapsed_seconds: float
+    entries: int
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the JSON shape carried inside a row's ``steps`` list."""
+        return {
+            "task_id": self.task_id,
+            "started_at": self.started_at,
+            "ended_at": self.ended_at,
+            "elapsed_seconds": self.elapsed_seconds,
+            "entries": self.entries,
+        }
+
+
+@dataclass(frozen=True)
 class FinishedRun:
     """One row of ``bernstein runs report``: a classified finished run.
 
     Field names are the stable ``--json`` contract; a scheduler reacting to
     these rows programmatically should key off them, not off ``evidence``
     text.
+
+    The journal fields after ``started_at`` all default, so the five-field
+    positional construction older call sites use keeps working; they are
+    populated by :func:`classify_ledger_dir` from the run's own entries.
+
+    Attributes:
+        state: Recorded run-lifecycle state (see
+            :class:`~bernstein.core.persistence.work_ledger.RunJournalState`).
+        attempt_count: How many times a step of this run was started --
+            the sum of ``task.started`` transitions in the run's ledger. It
+            counts *replays inside this run*, which is the retry mechanism
+            the ledger actually has; a whole run resubmitted as a second
+            ledger is a separate record, not another attempt on this one.
+        ended_at: Unix instant of the run's closing entry (its last entry
+            when it never closed).
+        elapsed_seconds: ``ended_at - started_at``.
+        host: Host that executed the run, as recorded on its entries.
+        parent_run_id: Run that spawned this one, when it recorded one.
+        steps: Per-step timings, ordered by start instant.
     """
 
     run_id: str
@@ -164,15 +222,29 @@ class FinishedRun:
     outcome: RunOutcome
     evidence: str
     started_at: float
+    state: RunJournalState = RunJournalState.CLOSED
+    attempt_count: int = 0
+    ended_at: float = 0.0
+    elapsed_seconds: float = 0.0
+    host: str = ""
+    parent_run_id: str = ""
+    steps: tuple[RunStepTiming, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the stable JSON row shape (``outcome`` as its string value)."""
+        """Return the stable JSON row shape (enums as their string values)."""
         return {
             "run_id": self.run_id,
             "branch": self.branch,
             "outcome": self.outcome.value,
             "evidence": self.evidence,
             "started_at": self.started_at,
+            "state": self.state.value,
+            "attempt_count": self.attempt_count,
+            "ended_at": self.ended_at,
+            "elapsed_seconds": self.elapsed_seconds,
+            "host": self.host,
+            "parent_run_id": self.parent_run_id,
+            "steps": [step.to_dict() for step in self.steps],
         }
 
 
@@ -228,6 +300,71 @@ def _last_wrapup(entries: list[LedgerEntry]) -> RunWrapUp | None:
     return None
 
 
+def _step_timings(entries: list[LedgerEntry]) -> tuple[RunStepTiming, ...]:
+    """Project per-step timings from the task entries of one run.
+
+    A step is one task id: its window runs from its first ledger entry to
+    its last, whatever the transitions in between were, so a step replayed
+    twice reports the whole span rather than only its final attempt.
+    """
+    spans: dict[str, list[float]] = {}
+    counts: dict[str, int] = {}
+    for entry in entries:
+        if not entry.task_id or entry.kind in RUN_KINDS:
+            continue
+        window = spans.get(entry.task_id)
+        if window is None:
+            spans[entry.task_id] = [entry.ts, entry.ts]
+        else:
+            window[1] = entry.ts
+        counts[entry.task_id] = counts.get(entry.task_id, 0) + 1
+    steps = [
+        RunStepTiming(
+            task_id=task_id,
+            started_at=window[0],
+            ended_at=window[1],
+            elapsed_seconds=window[1] - window[0],
+            entries=counts[task_id],
+        )
+        for task_id, window in spans.items()
+    ]
+    steps.sort(key=lambda step: (step.started_at, step.task_id))
+    return tuple(steps)
+
+
+def _recorded_state(entries: list[LedgerEntry], *, run_closed: bool, resumes: int) -> RunJournalState:
+    """Return the run's lifecycle state, preferring what the writer recorded.
+
+    The last ``run.*`` entry that carries a valid ``state`` wins -- the
+    ledger validates that value at append. A ledger written before the
+    field existed falls back to the shape of its entries.
+    """
+    for entry in reversed(entries):
+        if entry.kind not in RUN_KINDS:
+            continue
+        raw = entry.payload.get("state")
+        if isinstance(raw, str):
+            try:
+                return RunJournalState(raw)
+            except ValueError:  # pragma: no cover - append rejects these
+                break
+        break
+    if run_closed:
+        return RunJournalState.CLOSED
+    return RunJournalState.RESUMED if resumes else RunJournalState.OPEN
+
+
+def _run_field(entries: list[LedgerEntry], name: str) -> str:
+    """Return the last string *name* recorded on any ``run.*`` entry."""
+    for entry in reversed(entries):
+        if entry.kind not in RUN_KINDS:
+            continue
+        raw = entry.payload.get(name)
+        if isinstance(raw, str) and raw:
+            return raw
+    return ""
+
+
 def classify_ledger_dir(ledger_dir: Path, *, run_id: str) -> FinishedRun | None:
     """Classify one on-disk ledger directory.
 
@@ -244,12 +381,21 @@ def classify_ledger_dir(ledger_dir: Path, *, run_id: str) -> FinishedRun | None:
     state = replay_state(entries, run_id=run_id)
     wrapup = _last_wrapup(entries)
     outcome, evidence = classify_run(state, wrapup)
+    started_at = entries[0].ts
+    ended_at = entries[-1].ts
     return FinishedRun(
         run_id=state.run_id or run_id,
         branch=wrapup.branch if wrapup is not None else "",
         outcome=outcome,
         evidence=evidence,
-        started_at=entries[0].ts,
+        started_at=started_at,
+        state=_recorded_state(entries, run_closed=state.run_closed, resumes=state.resumes),
+        attempt_count=sum(task.attempts for task in state.tasks.values()),
+        ended_at=ended_at,
+        elapsed_seconds=ended_at - started_at,
+        host=_run_field(entries, "host"),
+        parent_run_id=_run_field(entries, "parent_run_id"),
+        steps=_step_timings(entries),
     )
 
 
@@ -285,6 +431,86 @@ def list_finished_runs(sdd_dir: Path, *, since: float | None = None) -> list[Fin
         runs.append(run)
     runs.sort(key=lambda run: (-run.started_at, run.run_id))
     return runs
+
+
+@dataclass(frozen=True)
+class NonTerminalRun:
+    """One run that has ledger entries and no closing entry yet.
+
+    :func:`list_finished_runs` classifies *every* run directory it finds,
+    so a run still executing and a run killed before it could write a
+    wrap-up both surface there as ``infra-error``. This record answers the
+    other question -- which runs are still open, and for how long -- so an
+    operator can tell "still working" from "died silently" without reading
+    raw ledger entries.
+
+    Attributes:
+        run_id: The run's id.
+        started_at: Unix instant of its first ledger entry.
+        last_entry_at: Unix instant of its most recent ledger entry.
+        age_seconds: How long the run has been open at the evaluated instant.
+    """
+
+    run_id: str
+    started_at: float
+    last_entry_at: float
+    age_seconds: float
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the JSON row shape for this record."""
+        return {
+            "run_id": self.run_id,
+            "started_at": self.started_at,
+            "last_entry_at": self.last_entry_at,
+            "age_seconds": self.age_seconds,
+        }
+
+
+def list_non_terminal_runs(sdd_dir: Path, *, now: float | None = None) -> list[NonTerminalRun]:
+    """Return every run whose ledger holds entries but no closing entry.
+
+    Args:
+        sdd_dir: The install's ``.sdd`` directory.
+        now: Unix instant to age the runs against; defaults to the wall
+            clock. Passing it keeps a caller's ages consistent across a
+            batch (and makes the ageing testable).
+
+    Returns:
+        One :class:`NonTerminalRun` per still-open run, oldest first -- the
+        order an operator triages in. A run directory that fails to read is
+        skipped rather than raised, the same contract
+        :func:`list_finished_runs` gives.
+    """
+    instant = time.time() if now is None else now
+    root = default_ledger_root(sdd_dir)
+    open_runs: list[NonTerminalRun] = []
+    try:
+        children = sorted(root.iterdir())
+    except OSError:
+        return []
+    for child in children:
+        if not child.is_dir():
+            continue
+        try:
+            reader = LedgerReader(run_ledger_dir(sdd_dir, child.name))
+            if not reader.exists():
+                continue
+            entries = list(reader.entries())
+        except (LedgerError, PathContainmentError, OSError):
+            continue
+        if not entries or any(entry.kind == KIND_RUN_CLOSED for entry in entries):
+            continue
+        started_at = entries[0].ts
+        open_runs.append(
+            NonTerminalRun(
+                run_id=child.name,
+                started_at=started_at,
+                last_entry_at=entries[-1].ts,
+                age_seconds=instant - started_at,
+            )
+        )
+    open_runs.sort(key=lambda run: (run.started_at, run.run_id))
+    return open_runs
 
 
 @dataclass(frozen=True)
@@ -360,10 +586,16 @@ def detect_failure_patterns(runs: list[FinishedRun]) -> list[FailurePatternDraft
         sorted_runs = sorted(group_runs, key=lambda r: (-r.started_at, r.run_id))
         most_recent = sorted_runs[0]
 
-        # Build title and body
+        # Build title and body.  The body is what an operator reads on the
+        # tracked issue, so it names how often the pattern recurred and which
+        # run last hit it -- not just the sample the title already carries.
         title = f"{most_recent.outcome.value.upper()}: {most_recent.evidence}"
         body = (
-            f"Failure type: {most_recent.outcome.value}\nEvidence: {most_recent.evidence}\nBranch: {most_recent.branch}"
+            f"Failure type: {most_recent.outcome.value}\n"
+            f"Evidence: {most_recent.evidence}\n"
+            f"Branch: {most_recent.branch}\n"
+            f"Occurrences: {len(group_runs)}\n"
+            f"Most recent run: {most_recent.run_id}"
         )
 
         draft = FailurePatternDraft(
@@ -385,10 +617,14 @@ def detect_failure_patterns(runs: list[FinishedRun]) -> list[FailurePatternDraft
 __all__ = [
     "FailurePatternDraft",
     "FinishedRun",
+    "NonTerminalRun",
+    "RunJournalState",
     "RunOutcome",
+    "RunStepTiming",
     "RunWrapUp",
     "classify_ledger_dir",
     "classify_run",
     "detect_failure_patterns",
     "list_finished_runs",
+    "list_non_terminal_runs",
 ]

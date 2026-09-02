@@ -58,6 +58,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/pr-labels.yml | PR labels | pull_request_target | {"cancel-in-progress": "true", "group": "pr-labels-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/pr-observability-summary.yml | PR observability summary | pull_request, workflow_dispatch | {"cancel-in-progress": "true", "group": "pr-observability-${{ github.event.pull_request.number \|\| github.event.inputs.pr_number }}"} | 1 |
 | .github/workflows/pr-policy.yml | PR policy | pull_request | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "pr-policy-${{ github.event.pull_request.number }}"} | 1 |
+| .github/workflows/project-pulse.yml | Project pulse | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "project-pulse"} | 1 |
 | .github/workflows/publish-docker.yml | Publish Docker Image | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-docker-${{ github.ref }}"} | 1 |
 | .github/workflows/publish-extension.yml | Publish VS Code Extension | push, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-extension-${{ github.ref }}"} | 1 |
 | .github/workflows/publish-homebrew.yml | Publish Homebrew Formula | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-homebrew-${{ github.ref }}"} | 1 |
@@ -132,6 +133,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/pr-labels.yml | label |
 | .github/workflows/pr-observability-summary.yml | summary: Sticky observability comment |
 | .github/workflows/pr-policy.yml | pr-policy: PR policy |
+| .github/workflows/project-pulse.yml | pulse: Collect and publish the project pulse |
 | .github/workflows/publish-docker.yml | publish: Build and push image to GHCR |
 | .github/workflows/publish-extension.yml | publish |
 | .github/workflows/publish-homebrew.yml | update-formula: Update Homebrew formula |
@@ -206,6 +208,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/pr-labels.yml | workflow: {"contents": "read"}<br>label: {"contents": "read", "issues": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/pr-observability-summary.yml | workflow: {"contents": "read"}<br>summary: {"checks": "read", "contents": "read", "pull-requests": "write", "security-events": "read"} | GITHUB_TOKEN |
 | .github/workflows/pr-policy.yml | workflow: {"contents": "read"}<br>pr-policy: {"actions": "read", "contents": "write", "issues": "read", "pull-requests": "read"} | BERNSTEIN_AUTOSYNC_TOKEN |
+| .github/workflows/project-pulse.yml | pulse: {"contents": "read", "issues": "write"} | - |
 | .github/workflows/publish-docker.yml | publish: {"attestations": "write", "contents": "read", "id-token": "write", "packages": "write"} | GITHUB_TOKEN |
 | .github/workflows/publish-extension.yml | workflow: {"contents": "read"}<br>publish: {"contents": "read"} | OPEN_VSX_TOKEN, VS_MARKETPLACE_TOKEN |
 | .github/workflows/publish-homebrew.yml | workflow: {"contents": "read"}<br>update-formula: {"contents": "read"} | HOMEBREW_TAP_TOKEN |
@@ -254,6 +257,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/mutation-fixed.yml | mutate: upload mutation-${{ matrix.module }} |
 | .github/workflows/nightly-deep-tests.yml | bandit-medium-and-high: upload nightly-bandit-results<br>mutmut-full: upload nightly-mutmut-results |
 | .github/workflows/pentest.yml | pentest: upload pentest-results-${{ github.run_number }} |
+| .github/workflows/project-pulse.yml | pulse: upload project-pulse |
 | .github/workflows/publish.yml | build: upload dist<br>github-release: download dist<br>publish: download dist |
 | .github/workflows/sbom.yml | sbom: upload sbom |
 | .github/workflows/scorecard.yml | analysis: upload scorecard-results<br>upload: download scorecard-results |

@@ -10,7 +10,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from bernstein.core.models import ApiTier, ModelConfig, ProviderType
 
-from bernstein.adapters.codex import CodexAdapter
+from bernstein.adapters._contract import AdapterStrategy, DangerousModeStrategy
+from bernstein.adapters.codex import (
+    _BYPASS_SANDBOX_FLAG,
+    _DEFAULT_CODEX_MODEL,
+    _SANDBOXED_ARGS,
+    CodexAdapter,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -349,8 +355,19 @@ class TestCodexWarningsAndFastExit:
                 session_id="codex-opus",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert inner[inner.index("-m") + 1] == "gpt-5.4"
+        assert inner[inner.index("-m") + 1] == _DEFAULT_CODEX_MODEL
         assert "opus" not in inner
+
+    def test_default_model_is_one_upstream_still_serves(self) -> None:
+        """The fallback pin must be a model Codex accepts, or it 400s on every use.
+
+        ``gpt-5.4`` was the pin until 2026-09-02; the backend now rejects it on
+        the ChatGPT-account auth path and it is absent from the account's model
+        catalogue. Pinning the substitution to a retired identifier turns the
+        Claude-tier safety net into a guaranteed failure.
+        """
+        assert _DEFAULT_CODEX_MODEL == "gpt-5.5"
+        assert CodexAdapter.default_model == _DEFAULT_CODEX_MODEL
 
     def test_fast_exit_rate_limit_raises(self, tmp_path: Path) -> None:
         adapter = CodexAdapter()
@@ -439,3 +456,83 @@ class TestCodexDetectTier:
             info = adapter.detect_tier()
         assert info is not None
         assert info.tier == ApiTier.FREE
+
+
+# ---------------------------------------------------------------------------
+# Sandbox posture selection
+# ---------------------------------------------------------------------------
+
+
+class TestSandboxPosture:
+    """The sandbox argv is chosen by the declared strategy, not hardcoded.
+
+    ``--sandbox workspace-write`` is implemented with bubblewrap, which needs
+    an unprivileged user namespace. A runner that already isolates the process
+    denies exactly that, and the resulting failure is silent: every
+    model-issued command fails inside the turn, the diff is empty, and
+    ``codex exec`` still exits 0 with ``turn.completed``. So the posture has to
+    be selectable, and the escalated form has to be the deliberate opt-in
+    rather than the default a plain host inherits.
+    """
+
+    def _spawn_inner(self, adapter: CodexAdapter, tmp_path: Path, pid: int) -> list[str]:
+        proc_mock = _make_popen_mock(pid=pid)
+        with patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5.5", effort="high"),
+                session_id=f"codex-sbx{pid}",
+            )
+        return _inner_cmd(popen.call_args.args[0])
+
+    def test_escalated_strategy_bypasses_the_vendor_sandbox(self, tmp_path: Path) -> None:
+        adapter = CodexAdapter()
+        adapter.strategy_override = AdapterStrategy(dangerous_mode=DangerousModeStrategy.ALWAYS_ON)
+
+        inner = self._spawn_inner(adapter, tmp_path, pid=140)
+
+        assert _BYPASS_SANDBOX_FLAG in inner
+        assert "--sandbox" not in inner
+
+    def test_default_strategy_keeps_the_vendor_sandbox(self, tmp_path: Path) -> None:
+        """The shipped declaration is CLI_FLAG, so a plain spawn stays sandboxed."""
+        adapter = CodexAdapter()
+
+        inner = self._spawn_inner(adapter, tmp_path, pid=141)
+
+        assert _BYPASS_SANDBOX_FLAG not in inner
+        assert tuple(inner[inner.index("--sandbox") : inner.index("--sandbox") + 2]) == _SANDBOXED_ARGS
+
+    @pytest.mark.parametrize(
+        "declared",
+        [
+            DangerousModeStrategy.CLI_FLAG,
+            DangerousModeStrategy.ENV_VAR,
+            DangerousModeStrategy.UNSUPPORTED,
+        ],
+    )
+    def test_only_always_on_escalates(self, tmp_path: Path, declared: DangerousModeStrategy) -> None:
+        """Every other declared value keeps the sandbox; only ALWAYS_ON drops it."""
+        adapter = CodexAdapter()
+        adapter.strategy_override = AdapterStrategy(dangerous_mode=declared)
+
+        inner = self._spawn_inner(adapter, tmp_path, pid=142)
+
+        assert _BYPASS_SANDBOX_FLAG not in inner
+        assert inner[inner.index("--sandbox") + 1] == "workspace-write"
+
+    def test_shipped_declaration_is_not_escalated(self) -> None:
+        """Guards the matrix row: flipping it to ALWAYS_ON would drop the sandbox repo-wide."""
+        assert CodexAdapter()._dangerous_mode() is DangerousModeStrategy.CLI_FLAG
+
+    def test_bypass_is_logged_so_the_escalation_is_visible(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        adapter = CodexAdapter()
+        adapter.strategy_override = AdapterStrategy(dangerous_mode=DangerousModeStrategy.ALWAYS_ON)
+
+        with caplog.at_level("WARNING", logger="bernstein.adapters.codex"):
+            self._spawn_inner(adapter, tmp_path, pid=143)
+
+        assert any(_BYPASS_SANDBOX_FLAG in record.getMessage() for record in caplog.records)

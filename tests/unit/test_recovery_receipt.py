@@ -36,8 +36,8 @@ from bernstein.core.planning.recovery_receipt import (
     journal_tail_for_task,
     record_receipt_on_spine,
     recovery_step_id,
+    resolve_anchored_receipt,
     resolve_receipt_on_spine,
-    verify_receipt,
 )
 from bernstein.core.quality.quality_gates import QualityGateCheckResult, QualityGatesResult
 from bernstein.core.replay.journal import EventJournal
@@ -196,7 +196,7 @@ class TestVerifiability:
         entry_hash = record_receipt_on_spine(receipt, spine=spine, timestamp=0)
         anchored = receipt.with_entry_hash(entry_hash)
 
-        resolution = verify_receipt(spine, anchored)
+        resolution = resolve_anchored_receipt(spine, anchored)
         assert resolution.ok
         assert resolution.resolved
         assert resolution.chain_ok

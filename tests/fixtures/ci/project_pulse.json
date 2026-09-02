@@ -1,0 +1,42 @@
+{
+  "adapters": {
+    "registered": 54,
+    "selectable": 52
+  },
+  "commits_main_7d": 340,
+  "days_since_last_commit": 0,
+  "distinct_outside_authors": 7,
+  "generated_at": "2026-09-02",
+  "grabbable": {
+    "good_first_issue_open": 6,
+    "good_first_issue_unassigned": 5,
+    "up_for_grabs_open": 25,
+    "up_for_grabs_unassigned": 23
+  },
+  "issue_close_lag_hours_median": 6.5,
+  "issues_closed_count": 614,
+  "latest_release": {
+    "date": "2026-08-31",
+    "tag": "v3.19.0"
+  },
+  "merged_prs_by_author_class": {
+    "automation": 61,
+    "maintainer": 920,
+    "outside": 11
+  },
+  "pr_merge_lag_hours_median": 3.4,
+  "pr_merged_count": 992,
+  "pr_merged_within_24h_pct": 88.2,
+  "readme_translations": {
+    "in_sync": 23,
+    "stale": 0,
+    "total": 23
+  },
+  "repo": "sipyourdrink-ltd/bernstein",
+  "windows": {
+    "commit_days": 7,
+    "issue_days": 30,
+    "outside_author_days": 90,
+    "pr_days": 30
+  }
+}

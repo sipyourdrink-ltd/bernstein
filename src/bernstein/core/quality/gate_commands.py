@@ -272,7 +272,7 @@ class GateRunnerCommandsMixin:
         augments with AST-based cross-codebase caller analysis via
         :mod:`bernstein.core.dead_code_detector`.
         """
-        from bernstein.core import dead_code_detector
+        from bernstein.core import dead_code_detector  # type: ignore[attr-defined]  # meta-path redirect
         from bernstein.core import quality_gates as qg
 
         python_files = self._python_files(changed_files)
@@ -310,7 +310,7 @@ class GateRunnerCommandsMixin:
 
     def _run_dead_code_ast_analysis(self: Any, _dead_code_detector: Any, python_files: list[str], run_dir: Path) -> Any:
         """Run AST-based dead code analysis, returning the report."""
-        from bernstein.core import dead_code_detector as dcd
+        from bernstein.core import dead_code_detector as dcd  # type: ignore[attr-defined]  # meta-path redirect
 
         try:
             return dcd.analyse(
@@ -388,7 +388,7 @@ class GateRunnerCommandsMixin:
         Checks docstring accuracy, completeness, redundancy, and style via
         :mod:`bernstein.core.comment_quality`.
         """
-        from bernstein.core import comment_quality
+        from bernstein.core import comment_quality  # type: ignore[attr-defined]  # meta-path redirect
 
         python_files = self._python_files(changed_files)
         if not python_files:
