@@ -28,7 +28,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.adapters._contract import DangerousModeStrategy
-from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
+from bernstein.adapters.base import (
+    DEFAULT_TIMEOUT_SECONDS,
+    CLIAdapter,
+    SpawnResult,
+    append_system_addendum,
+    build_worker_cmd,
+)
 from bernstein.adapters.env_isolation import build_filtered_env
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
 
@@ -150,7 +156,9 @@ class OpenCodeAdapter(CLIAdapter):
         if mcp_config:
             logger.debug("OpenCodeAdapter ignoring runtime MCP config injection for session %s", session_id)
 
-        cmd = self._build_command(model=model_config.model, prompt=prompt)
+        # No separate system-prompt channel -- graft any addendum onto the prompt so
+        # completion / heartbeat instructions still reach the agent. Empty addenda are no-ops.
+        cmd = self._build_command(model=model_config.model, prompt=append_system_addendum(prompt, system_addendum))
 
         pid_dir = workdir / ".sdd" / "runtime" / "pids"
         wrapped_cmd = build_worker_cmd(

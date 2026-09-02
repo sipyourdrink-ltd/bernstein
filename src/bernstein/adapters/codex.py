@@ -15,7 +15,13 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
+from bernstein.adapters.base import (
+    DEFAULT_TIMEOUT_SECONDS,
+    CLIAdapter,
+    SpawnResult,
+    append_system_addendum,
+    build_worker_cmd,
+)
 from bernstein.adapters.env_isolation import build_filtered_env
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
 from bernstein.core.platform_compat import process_group_popen_kwargs
@@ -123,7 +129,9 @@ class CodexAdapter(CLIAdapter):
         # flag and this stays an empty list (issue #4135). The derived id is
         # still recorded in orchestrator state for cross-reference.
         cmd.extend(self.session_id_args(session_id))
-        cmd.append(prompt)
+        # No separate system-prompt channel -- graft any addendum onto the prompt so
+        # completion / heartbeat instructions still reach the agent. Empty addenda are no-ops.
+        cmd.append(append_system_addendum(prompt, system_addendum))
 
         # Wrap with bernstein-worker for process visibility
         pid_dir = workdir / ".sdd" / "runtime" / "pids"

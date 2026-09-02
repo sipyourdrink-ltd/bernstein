@@ -1210,11 +1210,20 @@ _SYSTEM_PROMPT_ADDENDUM_ADAPTERS: frozenset[str] = frozenset(
 #: model. The base ``CLIAdapter.spawn`` contract permits this fallback.
 _PROMPT_APPEND_ADDENDUM_ADAPTERS: frozenset[str] = frozenset(
     {
+        # "antigravity" is the upstream rename of the "gemini" CLI binary and
+        # shares GeminiAdapter's spawn() body verbatim -- see the twin
+        # AdapterStrategy declarations above -- so it carries the same
+        # system_addendum channel.
+        "antigravity",
+        "codex",
         "devin_terminal",
+        "gemini",
         "junie",
         "muse",
+        "opencode",
         "python_runtime",
         "q_dev",
+        "qwen",
         "ralphex",
     }
 )
