@@ -56,9 +56,7 @@ __all__ = [
     "BindingRefusalCode",
     "confirmation_claim",
     "parse_bound_audiences",
-    "token_audiences",
     "verify_token_binding",
-    "x5t_s256_from_der",
     "x5t_s256_from_pem",
     "x5t_s256_from_svid_reference",
 ]
@@ -155,7 +153,7 @@ class BindingRefusal:
 # ---------------------------------------------------------------------------
 
 
-def x5t_s256_from_der(der: bytes) -> str:
+def _x5t_s256_from_der(der: bytes) -> str:
     """Return the RFC 8705 ``x5t#S256`` of a DER-encoded certificate."""
     digest = hashlib.sha256(der).digest()
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
@@ -171,7 +169,7 @@ def x5t_s256_from_pem(cert_pem: bytes) -> str:
     from cryptography.hazmat.primitives import serialization
 
     cert = x509.load_pem_x509_certificate(cert_pem)
-    return x5t_s256_from_der(cert.public_bytes(serialization.Encoding.DER))
+    return _x5t_s256_from_der(cert.public_bytes(serialization.Encoding.DER))
 
 
 def x5t_s256_from_svid_reference(reference: SvidReference) -> str:
@@ -215,7 +213,7 @@ def parse_bound_audiences(raw: str) -> frozenset[str]:
     return frozenset(part.strip() for part in raw.split(",") if part.strip())
 
 
-def token_audiences(claims: dict[str, Any]) -> tuple[str, ...]:
+def _token_audiences(claims: dict[str, Any]) -> tuple[str, ...]:
     """Return the ``aud`` claim as a tuple, accepting the string or list form."""
     aud: Any = claims.get("aud")
     if isinstance(aud, str):
@@ -269,7 +267,7 @@ def verify_token_binding(
         A :class:`BindingRefusal` naming the failed check, or ``None`` when the
         token may be used on this connection.
     """
-    audiences = token_audiences(claims)
+    audiences = _token_audiences(claims)
     audience = audiences[0] if audiences else ""
     spiffe_id = str(claims.get(SVID_ID_CLAIM, "") or "")
     session_id = str(claims.get("session_id", "") or "")
@@ -310,7 +308,7 @@ def verify_token_binding(
 
     try:
         cert = x509.load_pem_x509_certificate(presented_cert_pem)
-        presented = x5t_s256_from_der(cert.public_bytes(serialization.Encoding.DER))
+        presented = _x5t_s256_from_der(cert.public_bytes(serialization.Encoding.DER))
     except Exception:
         return refuse(
             BindingRefusalCode.MALFORMED_CERTIFICATE,
