@@ -7851,6 +7851,26 @@
         }
       }
     },
+    "/governance/coverage": {
+      "get": {
+        "tags": [
+          "governance"
+        ],
+        "summary": "Governance Coverage",
+        "description": "Return the canonical coverage document for ``?run_id=``.",
+        "operationId": "governance_coverage_governance_coverage_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/handoff/{token}": {
       "get": {
         "summary": "Claim Handoff Token",
@@ -16606,6 +16626,26 @@
           },
           "422": {
             "description": "Invalid graduation stage"
+          }
+        }
+      }
+    },
+    "/api/v1/governance/coverage": {
+      "get": {
+        "tags": [
+          "governance"
+        ],
+        "summary": "Governance Coverage",
+        "description": "Return the canonical coverage document for ``?run_id=``.",
+        "operationId": "governance_coverage_api_v1_governance_coverage_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
           }
         }
       }

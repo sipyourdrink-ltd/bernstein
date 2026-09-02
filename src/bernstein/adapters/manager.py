@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
-from bernstein.core.platform_compat import kill_process_group, process_alive
+from bernstein.core.platform_compat import process_alive
 
 
 class ManagerAdapter(CLIAdapter):
@@ -93,9 +93,6 @@ class ManagerAdapter(CLIAdapter):
 
     def is_alive(self, pid: int) -> bool:
         return process_alive(pid)
-
-    def kill(self, pid: int) -> None:
-        kill_process_group(pid, sig=15)
 
     def name(self) -> str:
         return "Internal Manager"
