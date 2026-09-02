@@ -450,6 +450,7 @@ nav:
           - Lethal trifecta: security/lethal-trifecta.md
           - Coordinated disclosure: security/bug-bounty.md
           - Log redaction: security/log-redaction.md
+          - Tool-output redaction: security/tool-output-redaction.md
           - PII scan gate: security/pii-scan-gate.md
       - Compliance & audit:
           - Compliance overview: operations/compliance.md
