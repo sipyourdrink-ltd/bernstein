@@ -17,6 +17,15 @@ Generate a signed, lineage-bearing govern plan representing the diff between
 declared posture (playbook) and enumerated environment (inventory). The plan
 contains one entry per mismatch (FORBIDDEN, ABSENT, WIDER_CEILING, UNKNOWN)
 and is anchored in the lineage spine for offline verification.
+
+    bernstein governance ingest --spans <file|-> --source <label> [--profile <name>]
+
+Anchor OTLP spans reported by a runtime Bernstein did not schedule (#4962).
+The record starts at ``Orchestrator.run()``, so activity driven elsewhere
+produces no chain events and no receipt can mention it. This is the first
+transport into the ingest boundary: a file or stdin. A payload the boundary
+rejects appends nothing, and a submission already anchored returns the receipt
+it was anchored with instead of a second one.
 """
 
 from __future__ import annotations
@@ -26,6 +35,7 @@ import hashlib
 import json
 import time
 from pathlib import Path
+from typing import Any, NoReturn, cast
 
 import click
 from rich.console import Console
@@ -53,6 +63,7 @@ def governance_group() -> None:
     \b
       bernstein governance verify <run> --bindings b.json --ledger ledger.jsonl
       bernstein govern plan --playbook p.json --inventory i.json [--workdir w]
+      bernstein governance ingest --spans spans.json --source otel-collector-prod
     """
 
 
@@ -595,3 +606,116 @@ def govern_discover_cmd(
     console.print(f"  Proposal: {rel_proposal_path}")
 
     raise SystemExit(0)
+
+
+@governance_group.command("ingest")
+@click.option(
+    "--spans",
+    "spans_file",
+    required=True,
+    type=click.Path(dir_okay=False, allow_dash=True),
+    help="OTLP/JSON span file, or - to read the payload from stdin.",
+)
+@click.option(
+    "--source",
+    "source_label",
+    required=True,
+    help="Identity of the reporting source (e.g. otel-collector-prod). Bound into the receipt.",
+)
+@click.option(
+    "--profile",
+    "profile_name",
+    default="generic",
+    show_default=True,
+    help="Ingest profile driving the OTLP attribute mapping.",
+)
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Print the receipt as JSON and nothing else.")
+def governance_ingest_cmd(
+    spans_file: str,
+    source_label: str,
+    profile_name: str,
+    workdir: str,
+    as_json: bool,
+) -> None:
+    """Anchor OTLP spans reported by a runtime Bernstein did not schedule.
+
+    Reads OTLP/JSON spans from a file or stdin, records them in the audit
+    chain, and prints the signed receipt covering the submission. The receipt
+    states its own coverage: the activity was reported, not scheduled here.
+
+    Exit codes: 0 = anchored, 1 = payload rejected (nothing was appended).
+    """
+    import sys
+
+    from bernstein.core.observability.ingest_profiles import ProfileNotFound, get_profile
+    from bernstein.core.observability.otlp_ingest import OTLPIngestAdapter, OTLPIngestError
+    from bernstein.core.observability.otlp_ingest_receipt import IngestOTLPReceipt
+
+    def _reject(reason: str) -> NoReturn:
+        console.print(f"[red]REJECTED[/red] -- {reason}")
+        raise SystemExit(1)
+
+    root = Path(workdir).resolve()
+
+    if spans_file == "-":
+        raw = sys.stdin.read()
+    else:
+        path = Path(spans_file)
+        if not path.is_file():
+            _reject(f"{spans_file} is not a file")
+        raw = path.read_text(encoding="utf-8")
+
+    try:
+        payload: Any = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        _reject(f"payload is not valid JSON: {exc}")
+
+    if isinstance(payload, dict):
+        spans: list[dict[str, Any]] = [cast("dict[str, Any]", payload)]
+    elif isinstance(payload, list):
+        spans = cast("list[dict[str, Any]]", payload)
+    else:
+        _reject(f"payload must be a span object or a list of them, got {type(payload).__name__}")
+
+    try:
+        get_profile(profile_name)
+    except ProfileNotFound:
+        _reject(f"unknown ingest profile {profile_name!r}")
+
+    # Validate before anchoring: a payload the boundary would reject must not
+    # leave a partial record behind, so parsing happens ahead of every append.
+    adapter = OTLPIngestAdapter(source_label=source_label)
+    try:
+        adapter.ingest_payload(spans)
+    except OTLPIngestError as exc:
+        _reject(str(exc))
+
+    receipt, _ = IngestOTLPReceipt(
+        source_label=source_label,
+        profile_name=profile_name,
+        audit_dir=root / ".sdd" / "audit",
+        hmac_key=_load_hmac_key(),
+        ingest_adapter=adapter,
+    ).ingest_batch(spans)
+
+    if as_json:
+        click.echo(json.dumps(receipt.to_dict(), ensure_ascii=False))
+        return
+
+    console.print()
+    console.print(f"[bold]Governance ingest[/bold] source={receipt.source_label}")
+    console.print(f"  spans reported     {receipt.span_count}")
+    console.print(f"  profile            {receipt.profile_name}")
+    console.print(f"  arrival index      {receipt.arrival_index}")
+    console.print(f"  batch digest       {receipt.batch_digest}")
+    console.print(f"  chain entry        {receipt.chain_entry_hash}")
+    console.print(f"  coverage           {receipt.coverage}")
+    console.print(f"  [dim]{receipt.coverage_detail}[/dim]")

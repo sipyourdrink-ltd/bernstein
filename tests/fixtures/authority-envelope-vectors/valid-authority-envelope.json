@@ -1,0 +1,119 @@
+{
+  "coverage": {
+    "covered": [
+      "d-1"
+    ],
+    "statement": "Covers 1 of 2 authorization decisions with an artefact hash. The envelope proves the recorded grant chain attenuates, that each decision follows from the link it cites, and that the covered decision names an artefact digest. It does not prove the artefact was produced, that the signing key is trusted, or that the grants were unrevoked.",
+    "uncovered": [
+      {
+        "action": "task.close",
+        "decision_id": "d-2",
+        "reason": "the artefact this decision authorised was not exported with the envelope"
+      }
+    ]
+  },
+  "decisions": [
+    {
+      "action": "repo.read",
+      "decision_id": "d-1",
+      "grant": "g-hop1",
+      "inputs": {
+        "bindings_hash": "d6873cb83477572bd8ac89499e22d205b04092593080796bdeb9b1c2bd5a7def",
+        "role": "reviewer"
+      },
+      "inputs_hash": "f0bbd033aa4c959bfc63b9a872b241f7cf8507626f77e2afbb2cd09da2bc620d",
+      "policy": {
+        "id": "policy:role-bindings",
+        "version": "3"
+      },
+      "resource": "urn:bernstein:repo:bernstein",
+      "subject": "urn:bernstein:principal:agent:reviewer-7",
+      "timestamp": "2026-05-04T09:15:00Z",
+      "verdict": "allow"
+    },
+    {
+      "action": "task.close",
+      "decision_id": "d-2",
+      "grant": "g-hop1",
+      "inputs": {
+        "bindings_hash": "d6873cb83477572bd8ac89499e22d205b04092593080796bdeb9b1c2bd5a7def",
+        "role": "reviewer"
+      },
+      "inputs_hash": "0548f96f96ae836f24b80c640fd49a3f88f25bc90ffb5360d7dd594fbfabe5fc",
+      "policy": {
+        "id": "policy:role-bindings",
+        "version": "3"
+      },
+      "resource": "urn:bernstein:task:T-4180",
+      "subject": "urn:bernstein:principal:agent:reviewer-7",
+      "timestamp": "2026-05-04T09:17:30Z",
+      "verdict": "allow"
+    }
+  ],
+  "envelope_type": "https://bernstein.run/attestations/authority-envelope/v1",
+  "evidence": [
+    {
+      "decision": "d-1",
+      "digest": {
+        "sha256": "6d22d8a4602b66464654d2a54a32bcdf4eb40620cd69134b200fe255358ab61b"
+      },
+      "name": "lineage/step-0007.json"
+    }
+  ],
+  "grants": [
+    {
+      "grant_hash": "6e9a085b00236d970d42bc41c11c9ecb7c4c2935d0632a77d8a4aabb77712985",
+      "grant_id": "g-root",
+      "issuer": "urn:bernstein:principal:operator:alex",
+      "not_after": "2030-01-01T00:00:00Z",
+      "parent": null,
+      "scope": [
+        "repo.read",
+        "repo.write",
+        "task.close",
+        "task.read"
+      ],
+      "subject": "urn:bernstein:principal:agent:orchestrator-1"
+    },
+    {
+      "grant_hash": "2bf5caa9d5b03e6013934fade85411312f6c99eb41de9d504e85b20618c4a2c2",
+      "grant_id": "g-hop1",
+      "issuer": "urn:bernstein:principal:agent:orchestrator-1",
+      "not_after": "2027-01-01T00:00:00Z",
+      "parent": "g-root",
+      "scope": [
+        "repo.read",
+        "task.close"
+      ],
+      "subject": "urn:bernstein:principal:agent:reviewer-7"
+    }
+  ],
+  "principal": {
+    "id": "urn:bernstein:principal:agent:reviewer-7",
+    "id_binding": "b012e1bece83f2909ead1a16f5a7d1516ec98b6461ed62088f10041b63bee23c",
+    "key": {
+      "crv": "Ed25519",
+      "kty": "OKP",
+      "x": "GSBMjDuoW6BZzRiskBe9AqGNpdEMaPt3mjS-Q-8Gd5E"
+    },
+    "key_id": "principal-reviewer-7"
+  },
+  "schema_version": "1.0.0",
+  "section_digests": {
+    "coverage": "55fe772424c4736c0d3d0c75f1fb6b7820b696892c527834527dfa1801f07fd8",
+    "decisions": "4e7a7f5eb526a5715e36a26f48be85fda4508343c5752b5a4fa0742bceb5e4b9",
+    "evidence": "ca0722167d9d1746b990f0b1d055a1446142b8b90a4ebad1142b95c1e589a097",
+    "grants": "8761d0fe98a26355251e5a8545128d301a44d19671cfeb3e51b0c4235b11a697",
+    "principal": "663a602a23692b85cac222960101847c7b4a269aaeca4f7f2e6cae012d19faed"
+  },
+  "signature": {
+    "alg": "EdDSA",
+    "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImF1dGhvcml0eS1lbnZlbG9wZS12ZWN0b3Ita2V5IiwidHlwIjoiYXBwbGljYXRpb24vdm5kLmJlcm5zdGVpbi5hdXRob3JpdHktZW52ZWxvcGUrandzIn0..cWuKN_msozOxUI63GNm_BbfUc7IdO8dO9OgIbsiDEqWfEFvPA723Ou-lK4PknDIZuJIyGG78lSCsIPGE7U1wAQ",
+    "kid": "authority-envelope-vector-key",
+    "public_key_jwk": {
+      "crv": "Ed25519",
+      "kty": "OKP",
+      "x": "rwaj4ykXFOTzVsGcmxXNGVHsbmZiqne-B1R_KJODNB0"
+    }
+  }
+}

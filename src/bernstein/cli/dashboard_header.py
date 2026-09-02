@@ -233,7 +233,7 @@ class AgentListContainer(Vertical):
         return len(self._all_agents)
 
     @property
-    def scroll_offset(self) -> int:
+    def scroll_offset(self) -> int:  # type: ignore[override]
         """Current scroll offset into the agent list."""
         return self._scroll_offset
 
