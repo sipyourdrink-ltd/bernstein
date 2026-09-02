@@ -91,7 +91,7 @@ def verify_cmd(
     # key (trust on first use).
     pinned = pubkey_path is not None
     if pinned:
-        public_key = serialization.load_pem_public_key(pubkey_path.read_bytes())
+        public_key = serialization.load_pem_public_key(pubkey_path.read_bytes())  # type: ignore[union-attr]
         if not isinstance(public_key, Ed25519PublicKey):
             _fail("pinned key is not an Ed25519 public key")
             return
@@ -106,7 +106,7 @@ def verify_cmd(
 
     result = verify_result_bundle(
         envelope,
-        public_key,
+        public_key,  # type: ignore[arg-type]
         expected_prev_digest=prev_digest,
         expected_manifest_sha256=expected_manifest_digest,
     )

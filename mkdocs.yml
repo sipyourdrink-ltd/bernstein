@@ -436,6 +436,7 @@ nav:
           - Security operations: operations/security.md
           - Hardening: security/security-hardening.md
           - Governance: operations/governance.md
+          - Govern ingest: operations/govern-ingest.md
           - Secrets & creds: operations/secrets.md
           - Secrets broker: security/secrets-broker.md
           - Env isolation: operations/env-isolation.md

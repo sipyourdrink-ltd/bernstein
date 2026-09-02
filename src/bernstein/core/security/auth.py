@@ -36,12 +36,16 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from bernstein.core.security.audit_chain import AuditChainStore
+from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.security.tenanting import DEFAULT_TENANT_ID, normalize_tenant_id
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from signxml import VerifyResult
+
+    from bernstein.core.identity.spiffe.svid import SvidReference
+    from bernstein.core.security.token_binding import BindingRefusal
 
 _PERM_BULLETIN_READ = "bulletin:read"
 
@@ -411,6 +415,18 @@ class SSOConfig(BaseSettings):
     # or as a single string. Any-match semantics - the token only has to
     # match one entry in the list.
     expected_resource: str = ""
+
+    # Issue #5030 -- audiences whose tokens must carry a proof of possession
+    # (RFC 8705: an ``x5t#S256`` confirmation naming the X.509-SVID leaf the
+    # holder must present).  Comma-separated, supplied as
+    # ``BERNSTEIN_AUTH_BOUND_AUDIENCES``.  Binding is opt-in per audience, so
+    # an audience absent from this list keeps working unchanged on upgrade.
+    #
+    # This list only decides which audiences *must* be bound.  A token that
+    # already carries a confirmation claim is checked whatever this says: the
+    # binding lives in the credential, so clearing the list cannot downgrade
+    # an issued token back to a bearer token.
+    bound_audiences: str = ""
 
     # Sub-configs
     oidc: OIDCConfig = Field(default_factory=OIDCConfig)
@@ -1026,9 +1042,19 @@ class AuthService:
     and user lifecycle.
     """
 
-    def __init__(self, config: SSOConfig, store: AuthStore) -> None:
+    def __init__(
+        self,
+        config: SSOConfig,
+        store: AuthStore,
+        audit_chain: AuditChainStore | None = None,
+    ) -> None:
         self.config = config
         self.store = store
+        # Issue #5030 -- where proof-of-possession refusals are anchored. A
+        # deployment without a chain still refuses the token; it just cannot
+        # prove afterwards which proof failed, so wire one wherever the
+        # service is constructed.
+        self._audit_chain = audit_chain
         self._group_role_map: dict[str, AuthRole] = {}
         self._oidc_discovery: dict[str, Any] | None = None
         self._load_group_mappings()
@@ -1345,11 +1371,61 @@ class AuthService:
 
     # -- Token issuance --
 
+    def bound_audiences(self) -> frozenset[str]:
+        """Return the audiences whose tokens must carry a proof of possession."""
+        from bernstein.core.security.token_binding import parse_bound_audiences
+
+        return parse_bound_audiences(self.config.bound_audiences)
+
+    def issue_bound_token(
+        self,
+        user: AuthUser,
+        *,
+        audience: str = "",
+        svid_reference: SvidReference | None = None,
+        ip_address: str = "",
+        user_agent: str = "",
+    ) -> str:
+        """Issue a token for *user*, optionally bound to an X.509-SVID (#5030).
+
+        With *svid_reference* the token carries an RFC 8705 ``cnf`` claim
+        holding the SVID leaf's ``x5t#S256`` thumbprint: it is then usable only
+        on a connection that presents that same leaf, so a copy lifted out of a
+        log, a trace, or a model context is inert.
+
+        Args:
+            user: The principal the token speaks for.
+            audience: The audience the token is minted for, recorded as ``aud``.
+            svid_reference: The SVID the holder must present. Required when
+                *audience* is one of :meth:`bound_audiences`.
+            ip_address: Recorded on the session.
+            user_agent: Recorded on the session.
+
+        Raises:
+            AuthenticationError: If *audience* requires a binding and no SVID
+                reference was supplied. Issuing an unbound token for a bound
+                audience would hand out exactly the credential the audience
+                refuses to accept.
+        """
+        if not svid_reference and audience and audience in self.bound_audiences():
+            msg = f"audience {audience!r} requires proof-of-possession binding; no SVID reference supplied"
+            raise AuthenticationError(msg)
+        return self._issue_token(
+            user,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            audience=audience,
+            svid_reference=svid_reference,
+        )
+
     def _issue_token(
         self,
         user: AuthUser,
         ip_address: str = "",
         user_agent: str = "",
+        *,
+        audience: str = "",
+        svid_reference: SvidReference | None = None,
     ) -> str:
         """Issue a JWT token for a user and create a session."""
         session = AuthSession(
@@ -1359,6 +1435,20 @@ class AuthService:
             user_agent=user_agent,
         )
         self.store.save_session(session)
+
+        binding_claims: dict[str, Any] = {}
+        if audience:
+            binding_claims["aud"] = audience
+        if svid_reference is not None:
+            from bernstein.core.security.token_binding import (
+                CNF_CLAIM,
+                SVID_ID_CLAIM,
+                confirmation_claim,
+                x5t_s256_from_svid_reference,
+            )
+
+            binding_claims[CNF_CLAIM] = confirmation_claim(x5t_s256_from_svid_reference(svid_reference))
+            binding_claims[SVID_ID_CLAIM] = svid_reference.spiffe_id
 
         return create_jwt(
             claims={
@@ -1371,14 +1461,27 @@ class AuthService:
                 # the persisted user record, never from the login request, so
                 # a caller cannot influence which tenant their token carries.
                 "tenant_id": normalize_tenant_id(user.tenant_id),
-            },
+            }
+            | binding_claims,
             secret=self.config.jwt_secret,
             algorithm=self.config.jwt_algorithm,
             expiry_seconds=self.config.jwt_expiry_seconds,
         )
 
-    def validate_token(self, token: str) -> tuple[AuthUser, dict[str, Any]] | None:
-        """Validate a JWT token and return (user, claims) or None."""
+    def validate_token(
+        self,
+        token: str,
+        *,
+        presented_cert_pem: bytes | None = None,
+    ) -> tuple[AuthUser, dict[str, Any]] | None:
+        """Validate a JWT token and return (user, claims) or None.
+
+        *presented_cert_pem* is the client certificate the caller presented on
+        this connection, when the transport supplied one. A token carrying an
+        RFC 8705 confirmation claim is usable only on a connection presenting
+        the certificate it names (#5030); the refusal is anchored in the audit
+        chain and names which proof failed.
+        """
         claims = verify_jwt(token, self.config.jwt_secret, self.config.jwt_algorithm)
         if not claims:
             return None
@@ -1395,7 +1498,62 @@ class AuthService:
         if not user:
             return None
 
+        # Proof of possession last: the checks above establish that the bytes
+        # are a genuine, unexpired, still-authorised credential.  Recording a
+        # refusal for anything weaker would let an unauthenticated caller
+        # append to the audit chain at will.
+        if self.check_token_binding(claims, presented_cert_pem=presented_cert_pem) is not None:
+            return None
+
         return user, claims
+
+    def check_token_binding(
+        self,
+        claims: dict[str, Any],
+        *,
+        presented_cert_pem: bytes | None = None,
+    ) -> BindingRefusal | None:
+        """Check a validated token's proof of possession, recording refusals (#5030).
+
+        Returns ``None`` when the token may be used on this connection, or the
+        :class:`~bernstein.core.security.token_binding.BindingRefusal` naming
+        the failed check. Every refusal is appended to the audit chain when one
+        is configured, so a replayed credential leaves a record that names the
+        SVID that should have been presented and verifies offline.
+        """
+        from bernstein.core.security.token_binding import verify_token_binding
+
+        refusal = verify_token_binding(
+            claims,
+            presented_cert_pem=presented_cert_pem,
+            bound_audiences=self.bound_audiences(),
+        )
+        if refusal is None:
+            return None
+
+        # Only the verdict and the identifiers it names are logged; the token
+        # and the certificate never reach a log line.
+        logger.warning(
+            "Token binding refused: %s (audience=%s, spiffe_id=%s)",
+            refusal.code.value,
+            sanitize_log(refusal.audience),
+            sanitize_log(refusal.spiffe_id),
+        )
+        if self._audit_chain is not None:
+            from bernstein.core.security.audit_chain import record_token_binding_refusal
+
+            record_token_binding_refusal(
+                chain=self._audit_chain,
+                refusal_hash=refusal.content_hash(),
+                refusal_code=refusal.code.value,
+                audience=refusal.audience,
+                spiffe_id=refusal.spiffe_id,
+                expected_thumbprint=refusal.expected_thumbprint,
+                presented_thumbprint=refusal.presented_thumbprint,
+                session_id=refusal.session_id,
+                detail=refusal.detail,
+            )
+        return refusal
 
     def validate_legacy_token(self, token: str) -> bool:
         """Check if a token matches the legacy bearer token."""
