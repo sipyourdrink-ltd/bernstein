@@ -62,7 +62,7 @@ CANONICALIZATION_V1 = "receipt-canonical-json/v1"
 #: Canonicalisation rules this verifier can reproduce. A receipt naming
 #: anything else is reported unverifiable rather than verified under the
 #: wrong rule.
-KNOWN_CANONICALIZATIONS = frozenset({CANONICALIZATION_V1})
+KNOWN_CANONICALIZATION_RULES = frozenset({CANONICALIZATION_V1})
 
 #: A kind's semantic check: takes the payload, returns human-readable errors
 #: (empty when the payload is well-formed for that kind).
@@ -335,7 +335,7 @@ def verify_receipt(receipt: ReceiptEnvelope | Mapping[str, Any]) -> ReceiptVerif
     if isinstance(envelope, str):
         return ReceiptVerification(ok=False, errors=(envelope,))
 
-    if envelope.canonicalization not in KNOWN_CANONICALIZATIONS:
+    if envelope.canonicalization not in KNOWN_CANONICALIZATION_RULES:
         return ReceiptVerification(
             ok=False,
             kind=envelope.kind,

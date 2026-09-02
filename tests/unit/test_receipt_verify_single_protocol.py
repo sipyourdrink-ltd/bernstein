@@ -73,13 +73,44 @@ PENDING_CANONICAL_RECEIPT_BYTES = frozenset(
 )
 
 
+#: HTTP verbs a router or app decorator registers a request handler under.
+_ROUTE_DECORATOR_METHODS = frozenset({"delete", "get", "head", "options", "patch", "post", "put"})
+
+
+def _is_route_handler(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Return True when the function is registered as an HTTP endpoint.
+
+    A route handler is named after the URL it serves, so ``POST
+    /governance/verify-receipt`` is a function called ``verify_receipt`` that
+    verifies nothing itself: it reads the request body and delegates. Counting
+    it would fail the guard over a module that has no verifier to migrate.
+
+    The exclusion cannot hide a real verifier. A verifier is not registered
+    under an HTTP verb, and the stale-entry guards below fail the moment this
+    stops seeing a verifier that is still on an allowlist.
+    """
+    for decorator in node.decorator_list:
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        if isinstance(target, ast.Attribute) and target.attr in _ROUTE_DECORATOR_METHODS:
+            return True
+    return False
+
+
 def _definition_sites(name: str) -> set[str]:
-    """Return package-relative paths of every ``def <name>`` under the package."""
+    """Return package-relative paths of every ``def <name>`` under the package.
+
+    HTTP route handlers are skipped: they expose a verifier over a URL rather
+    than being one.
+    """
     sites: set[str] = set()
     for path in sorted(_SRC.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == name:
+            if (
+                isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+                and node.name == name
+                and not _is_route_handler(node)
+            ):
                 sites.add(path.relative_to(_SRC).as_posix())
     return sites
 
@@ -127,6 +158,33 @@ def test_pending_sign_and_canonical_allowlists_have_no_stale_entries() -> None:
     stale_canonical = PENDING_CANONICAL_RECEIPT_BYTES - _definition_sites("canonical_receipt_bytes")
     assert stale_sign == set(), f"drop from the sign_receipt allowlist: {sorted(stale_sign)}"
     assert stale_canonical == set(), f"drop from the canonical_receipt_bytes allowlist: {sorted(stale_canonical)}"
+
+
+def test_route_handlers_are_not_counted_as_verifier_definitions() -> None:
+    """The endpoint exposing a verifier is not itself a second verifier.
+
+    Narrow by construction: only a function registered under an HTTP verb is
+    skipped. A plain function of the same name still counts, so a real ninth
+    verifier cannot slip past the guards above by sharing a route's name.
+    """
+    module = ast.parse(
+        "import bernstein\n"
+        "@router.post('/governance/verify-receipt')\n"
+        "async def verify_receipt(request): ...\n"
+        "@staticmethod\n"
+        "def sign_receipt(payload): ...\n"
+        "def canonical_receipt_bytes(payload): ...\n",
+    )
+    handlers = {
+        node.name: _is_route_handler(node)
+        for node in ast.walk(module)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+    assert handlers == {
+        "verify_receipt": True,
+        "sign_receipt": False,
+        "canonical_receipt_bytes": False,
+    }
 
 
 # ---------------------------------------------------------------------------
