@@ -4468,9 +4468,23 @@ class AgentSpawner:
             # state baked into a pre-warmed worktree (cached prompt prefixes,
             # half-installed deps, leftover indexes) cannot leak across the
             # restart boundary.
-            warm_entry = (
-                self._warm_pool.claim_slot(role) if self._warm_pool is not None and not fresh_restart_on_retry else None
-            )
+            warm_pool = self._warm_pool
+            warm_entry = warm_pool.claim_slot(role) if warm_pool is not None and not fresh_restart_on_retry else None
+            # A slot with no worktree is not provisioned. `prepare_speculative_warm_pool`
+            # (core/tasks/task_lifecycle.py) adds slots with `worktree_path=""`, and
+            # `Path("")` is the orchestrator's cwd, i.e. the repository root: the agent
+            # then runs at the root, switches the operator checkout to `agent/<session>`
+            # and merges back into whatever branch that leaves checked out. Release the
+            # slot and take the cold path, which the warm-pool design calls the safe
+            # default.
+            if warm_pool is not None and warm_entry is not None and not warm_entry.worktree_path:
+                logger.warning(
+                    "Warm pool slot %s for role=%s has no worktree; releasing it and spawning cold",
+                    warm_entry.slot_id,
+                    role,
+                )
+                warm_pool.release_slot(warm_entry.slot_id)
+                warm_entry = None
             if warm_entry is not None:
                 spawn_cwd = Path(warm_entry.worktree_path)
                 self._worktree_paths[session_id] = spawn_cwd
