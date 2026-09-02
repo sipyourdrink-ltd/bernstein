@@ -36,21 +36,30 @@ label attached to a file:
 Strip the lineage graph and this collapses entirely -- exactly as
 :mod:`~bernstein.core.lineage.provenance` says of the trust direction.
 
-This module is the projection only. Enforcement at a read boundary, the
-operator-controlled source map and the reporting CLI are separate surfaces.
+Classifications enter the graph from an operator-controlled source map --
+``load_sensitivity_source_map``, the mirror of ``load_trust_source_map`` -- which
+says which class a source's results carry. Enforcement at a read boundary is a
+separate surface and lives elsewhere: nothing in this module refuses anything.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+import yaml
+
+from bernstein import _BUNDLED_TEMPLATES_DIR  # type: ignore[reportPrivateUsage]
 from bernstein.core.lineage.entry import LineageEntry, entry_hash
 from bernstein.core.lineage.provenance import resolve_artefact_tip
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
+    from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 class SensitivityClass(StrEnum):
@@ -241,12 +250,113 @@ def sensitivity_for_artefact(artefact_path: str, entries: Sequence[LineageEntry]
     return effective_sensitivity(tip, entries)
 
 
+# ---------------------------------------------------------------------------
+# Source-to-sensitivity-class map (reviewed data)
+# ---------------------------------------------------------------------------
+
+_SENSITIVITY_SOURCES_RELPATH = ("provenance", "sensitivity_sources.yaml")
+
+
+def _coerce_sensitivity_class(raw: object) -> SensitivityClass | None:
+    """Parse a class token, returning None for anything unrecognised.
+
+    A typo is dropped rather than coerced. Coercing it would pick *some* class
+    for a row the operator got wrong, and on this axis the cheapest wrong guess
+    (the least sensitive class) is also the most damaging one.
+    """
+    try:
+        return SensitivityClass(str(raw).strip().lower())
+    except ValueError:
+        logger.warning("Unknown sensitivity token %r in sensitivity source map - ignoring", raw)
+        return None
+
+
+def load_sensitivity_source_map(*, workdir: Path | None = None) -> dict[str, SensitivityClass]:
+    """Load the source-to-sensitivity-class map (reviewed data).
+
+    Resolution mirrors :func:`~bernstein.core.lineage.provenance.load_trust_source_map`:
+    ``<workdir>/templates/provenance/sensitivity_sources.yaml`` when present,
+    else the bundled default. A project-local file replaces the bundled table
+    rather than merging into it, so an operator's classification of a source is
+    exactly what they wrote and a source they left out reads as unlisted.
+
+    Returns:
+        Map of source name -> :class:`SensitivityClass`. Malformed rows are
+        dropped; an unreadable or unparseable file yields an empty map, which
+        by :func:`sensitivity_class_for_source` reads as fail-closed-high for
+        every source rather than as a permissive default.
+    """
+    path: Path | None = None
+    if workdir is not None:
+        local = workdir / "templates" / _SENSITIVITY_SOURCES_RELPATH[0] / _SENSITIVITY_SOURCES_RELPATH[1]
+        if local.is_file():
+            path = local
+    if path is None:
+        bundled = _BUNDLED_TEMPLATES_DIR / _SENSITIVITY_SOURCES_RELPATH[0] / _SENSITIVITY_SOURCES_RELPATH[1]
+        if bundled.is_file():
+            path = bundled
+    if path is None:
+        return {}
+
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        logger.warning("Failed to load sensitivity source map %s: %s", path, exc)
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+
+    rows = cast("dict[str, object]", raw).get("sources", [])
+    if not isinstance(rows, list):
+        return {}
+
+    out: dict[str, SensitivityClass] = {}
+    for row in cast("list[object]", rows):
+        if not isinstance(row, dict):
+            continue
+        entry = cast("dict[str, object]", row)
+        name = entry.get("name")
+        sc = _coerce_sensitivity_class(entry.get("sensitivity"))
+        if isinstance(name, str) and name.strip() and sc is not None:
+            out[name.strip()] = sc
+    return out
+
+
+def sensitivity_class_for_source(
+    source: str,
+    mapping: Mapping[str, SensitivityClass] | None = None,
+) -> SensitivityClass:
+    """Return the sensitivity class for *source*, fail-closed-high when unknown.
+
+    The mirror of :func:`~bernstein.core.lineage.provenance.trust_class_for_source`
+    with the fail-closed end inverted: an unlisted source is
+    :data:`HIGHEST_SENSITIVITY_CLASS`, because an unclassified source of unknown
+    content is not assumed harmless.
+
+    This answers "what class does this source carry"; it is not a label to
+    record on an entry for a source the operator never listed. Writing the
+    fail-closed default into the signed bytes would assert a classification
+    nobody made, and would take the fail-closed decision twice -- once here and
+    again in :func:`effective_sensitivity`, which already applies it to an
+    unlabelled closure at read time.
+
+    Args:
+        source: Source/tool name (e.g. ``operator.attachment``, ``web.fetch``).
+        mapping: Optional pre-loaded map; the bundled default is loaded when
+            ``None``.
+    """
+    table = mapping if mapping is not None else load_sensitivity_source_map()
+    return table.get(source, HIGHEST_SENSITIVITY_CLASS)
+
+
 __all__ = [
     "HIGHEST_SENSITIVITY_CLASS",
     "SensitivityClass",
     "SensitivityVerdict",
     "effective_sensitivity",
+    "load_sensitivity_source_map",
     "max_sensitivity_class",
+    "sensitivity_class_for_source",
     "sensitivity_for_artefact",
     "sensitivity_rank",
 ]
