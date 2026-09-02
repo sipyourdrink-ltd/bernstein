@@ -291,7 +291,8 @@ def verify_subject_binding(receipt: dict[str, Any]) -> tuple[CheckResult, str]:
                 "subject_binding",
                 ok=False,
                 detail=(
-                    f"recomputed head {recomputed[:16]}… != range.head_sha256 {range_head[:16]}…"
+                    f"recomputed head {recomputed[:16]}… "
+                    f"!= range.head_sha256 {range_head[:16]}…"
                 ),
             ),
             recomputed,
@@ -417,7 +418,10 @@ def verify_intoto(receipt: dict[str, Any], public_key: Any, recomputed_head: str
         return CheckResult(
             "intoto",
             ok=False,
-            detail=(f"recomputed head {recomputed_head[:16]}… not in statement subject digests"),
+            detail=(
+                f"recomputed head {recomputed_head[:16]}… "
+                f"not in statement subject digests"
+            ),
         )
     return CheckResult("intoto", ok=True, detail="DSSE/in-toto verified, subject bound to head")
 
@@ -465,7 +469,8 @@ def verify_transparency(
             "transparency",
             ok=False,
             detail=(
-                f"STH subject {subject_sha256[:16]}… != recomputed head {recomputed_head[:16]}…"
+                f"STH subject {subject_sha256[:16]}… "
+                f"!= recomputed head {recomputed_head[:16]}…"
             ),
         )
 
@@ -505,7 +510,10 @@ def verify_transparency(
             return CheckResult(
                 "transparency",
                 ok=False,
-                detail=(f"inclusion proof root {proven_root[:16]}… != STH root {root_hash[:16]}…"),
+                detail=(
+                    f"inclusion proof root {proven_root[:16]}… "
+                    f"!= STH root {root_hash[:16]}…"
+                ),
             )
     return CheckResult(
         "transparency", ok=True, detail="RFC6962 STH signed, root + inclusion proof verified"
