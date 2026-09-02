@@ -7,6 +7,7 @@ guards against smuggling a credential into a string field.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -20,12 +21,35 @@ from bernstein.core.protocols.volunteer.project_card import (
     verify_project_card_envelope,
 )
 from bernstein.core.security.audit_dsse import parse_envelope
+from bernstein.core.volunteer.manifest import GateCommand, VolunteerManifest
 
 
 def _keypair() -> tuple[Ed25519PrivateKey, Any]:
     """Generate a fresh Ed25519 keypair for testing."""
     key = Ed25519PrivateKey.generate()
     return key, key.public_key()
+
+
+def _make_manifest(**overrides: Any) -> VolunteerManifest:
+    """Build a valid VolunteerManifest for testing ``ProjectCard.from_manifest``."""
+    defaults: dict[str, Any] = {
+        "version": 1,
+        "license": "Apache-2.0",
+        "gates": (
+            GateCommand(argv=("uv", "run", "pytest", "-q")),
+            GateCommand(argv=("uv", "run", "ruff", "check", ".")),
+        ),
+        "allowed_paths": ("src/**", "tests/**"),
+        "egress_allowlist": ("pypi.org",),
+        "sandbox": "microvm",
+        "max_wall_clock_minutes": 30,
+        "task_label": "volunteer-ok",
+        "local_ok": True,
+        "status": "active",
+        "extensions": {},
+    }
+    defaults.update(overrides)
+    return VolunteerManifest(**defaults)
 
 
 def _make_project_card(**overrides: Any) -> ProjectCard:
@@ -241,3 +265,86 @@ class TestVerifyProjectCardEnvelope:
         result = verify_project_card_envelope(envelope, other_public)
         assert not result.ok
         assert result.errors != ()
+
+
+# ---------------------------------------------------------------------------
+# from_manifest projection
+# ---------------------------------------------------------------------------
+
+
+class TestProjectCardFromManifest:
+    """``ProjectCard.from_manifest`` is the manifest-loader emission path.
+
+    #3883's own acceptance criteria say the manifest loader "emits/consumes
+    the project card" -- this is that emission side. The manifest is the
+    project's committed acceptance policy (gates, paths, sandbox); the card
+    is a public advertisement of what the project offers. The two must never
+    carry the same bytes: a gate's argv is an acceptance script, not
+    something to publish, so the card carries only a count of it.
+    """
+
+    def test_project_card_from_manifest_carries_the_manifests_own_digest(self) -> None:
+        manifest = _make_manifest()
+        card = ProjectCard.from_manifest(
+            manifest,
+            task_types=["compute"],
+            demand="high",
+            submitted_at="2026-08-21T12:00:00Z",
+        )
+        assert card.demand_snapshot["manifest_digest"] == manifest.digest
+
+    def test_project_card_never_includes_gate_command_contents_only_their_count_or_names(
+        self,
+    ) -> None:
+        manifest = _make_manifest(
+            gates=(GateCommand(argv=("uv", "run", "pytest", "-q", "--secret-flag=xyz")),),
+        )
+        card = ProjectCard.from_manifest(
+            manifest,
+            task_types=["compute"],
+            demand="high",
+            submitted_at="2026-08-21T12:00:00Z",
+        )
+        canonical = json.dumps(card.to_canonical_dict())
+        assert "--secret-flag=xyz" not in canonical
+        assert "pytest" not in canonical
+        assert card.demand_snapshot["gates_count"] == 1
+
+    def test_two_project_cards_from_the_same_manifest_and_demand_hash_identically(self) -> None:
+        manifest = _make_manifest()
+        card_a = ProjectCard.from_manifest(
+            manifest,
+            task_types=["compute"],
+            demand="high",
+            submitted_at="2026-08-21T12:00:00Z",
+        )
+        card_b = ProjectCard.from_manifest(
+            manifest,
+            task_types=["compute"],
+            demand="high",
+            submitted_at="2026-08-21T12:00:00Z",
+        )
+        assert card_a.digest() == card_b.digest()
+
+    def test_project_card_from_manifest_status_matches_manifest_status(self) -> None:
+        manifest = _make_manifest(status="paused")
+        card = ProjectCard.from_manifest(
+            manifest,
+            task_types=["compute"],
+            demand="low",
+            submitted_at="2026-08-21T12:00:00Z",
+        )
+        assert card.status == "paused"
+
+    def test_project_card_from_manifest_can_be_signed_and_verified(self) -> None:
+        manifest = _make_manifest()
+        card = ProjectCard.from_manifest(
+            manifest,
+            task_types=["compute"],
+            demand="high",
+            submitted_at="2026-08-21T12:00:00Z",
+        )
+        key, public = _keypair()
+        envelope = build_project_card_envelope(card, key)
+        result = verify_project_card_envelope(envelope, public)
+        assert result.ok
