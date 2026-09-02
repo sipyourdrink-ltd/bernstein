@@ -202,10 +202,7 @@ def _all_patterns_covered_by(child_patterns: set[str], parent_patterns: set[str]
     of the child (path_covered_by semantics). This implements the prefix subset check for
     allowed_files.
     """
-    for child in child_patterns:
-        if not any(_path_covered_by(child, parent) for parent in parent_patterns):
-            return False
-    return True
+    return all(any(_path_covered_by(child, parent) for parent in parent_patterns) for child in child_patterns)
 
 
 def _string_list(raw: Any, field: str) -> list[str]:
