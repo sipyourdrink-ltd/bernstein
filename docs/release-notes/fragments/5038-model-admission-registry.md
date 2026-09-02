@@ -1,3 +1,12 @@
-## Model Admission Registry (Issue #5038)
+## Model admission recorded as audit-chain events
 
-Bernstein now projects a model-admission registry from the audit chain, enabling public API functions to record and verify model admission and withdrawal events. This feature adds `record_model_admission`, `record_model_withdrawal`, `load_registry_events`, `project_registry`, and `is_admitted` functions to `model_registry.py`, along with new `model.admitted` and `model.withdrawn` event types in `audit_chain.py`. The registry uses deterministic ordering via `_order` and keys admissions on canonical `provider/model @version` from `ModelRef`, with verification performed against one snapshot of the chain through `verify_and_query`. #5038
+Admitting a model for use by an installation now appends a `model.admitted`
+event to the HMAC-chained audit log, and withdrawing one appends
+`model.withdrawn`. The set of admitted models is not stored anywhere: it is
+recomputed by replaying those events up to a named instant, so "was this model
+permitted when that artefact was produced" is answered from the record rather
+than from whatever a configuration file happens to say today. Replaying the
+same log at the same instant yields byte-identical state for any reader,
+admissions lapse at their stated expiry with no event written at expiry time,
+and a log that does not verify yields no registry at all rather than a
+permissive one. Nothing in the routing path consults the registry yet. (#5038)
