@@ -2,13 +2,14 @@
 
 `bernstein verify` is a command group: two run-receipt subcommands
 (`run` and `receipt`, issue #2924), the verifier-ladder subcommand
-(`ladder`, issue #2927), plus five legacy verification modes —
+(`ladder`, issue #2927), the plugin/skill pin subcommand (`pins`,
+issue #5089), plus five legacy verification modes —
 air-gap wheelhouse signatures, WAL hash-chain integrity,
 execution-determinism fingerprints, lesson-memory provenance, and formal
 property checks. The legacy modes live on the default `legacy` subcommand:
 any invocation whose first token is not `run` / `receipt` / `ladder` /
-`legacy` routes there, so pre-group invocations keep their exact behaviour
-and exit codes.
+`pins` / `legacy` routes there, so pre-group invocations keep their exact
+behaviour and exit codes.
 Each legacy mode is selected by its own flag (or a positional argument for
 wheelhouse mode); passing more than one runs all of them and combines their
 exit codes with bitwise OR.
@@ -22,6 +23,7 @@ Merkle-sealed audit trail, see [`bernstein audit verify`](../../security/audit-l
 bernstein verify run <run-id> --signing-key-path key.pem    # build the signed run receipt
 bernstein verify receipt <path> [--public-key pub.pem]      # verify a receipt offline (0/1/2)
 bernstein verify ladder <receipt-hash>                      # re-derive a verifier-ladder receipt (0/1/2)
+bernstein verify pins --manifest pins.yaml --loaded loaded.json  # check the loaded set against the pins (0/1/2)
 bernstein verify <wheelhouse-path>                          # air-gap wheelhouse signatures
 bernstein verify --wal-integrity <run-id>                   # WAL hash-chain check
 bernstein verify --determinism <run-id>                     # print execution fingerprint
@@ -35,8 +37,8 @@ Running the bare command with no arguments prints a usage hint and returns
 without error.
 
 One routing edge: a wheelhouse directory literally named `run`, `receipt`,
-`ladder`, or `legacy` shadows the positional mode — spell it `./run` or use
-`bernstein verify legacy <path>`.
+`ladder`, `pins`, or `legacy` shadows the positional mode — spell it `./run`
+or use `bernstein verify legacy <path>`.
 
 ## Run receipts
 
@@ -131,6 +133,57 @@ substrate no tier can be confirmed to have run.
 
 Architecture: [verifier ladder](../../sdd/verifier-ladder.md).
 
+## Pinned plugins and skills (`verify pins`)
+
+Checks the plugin and skill set an install actually loaded against the
+install-wide pin manifest (issue #5089). The manifest is a governed
+allow-list, not an install log: it names every plugin and skill the install
+*may* load, each at an exact version and content address, plus the sources
+each environment may load them from.
+
+```yaml
+# pins.yaml
+version: 1
+environments:
+  production:
+    allowed_sources:
+      - "github://acme/plugins"
+plugins:
+  - name: audit-logger
+    version: "2.0.0"                     # exact; "latest" or "^2.0" is rejected at parse time
+    content_hash: "sha256:<64 hex>"
+    source: "github://acme/plugins"
+skills:
+  - name: code-review
+    version: "1.2.0"
+    content_hash: "sha256:<64 hex>"
+    source: "github://acme/plugins"
+```
+
+A floating specifier — `latest`, `*`, `^1.2.0`, `1.2`, a branch name — fails
+the parse rather than surviving as a warning, so an install can never drift
+onto whatever `latest` resolves to on a given day. A `content_hash` that is
+not a full `sha256:<64 hex>` address, and a `source` no environment lists,
+fail the parse for the same reason.
+
+`--loaded` takes a JSON list of the resolved components
+(`kind`, `name`, `version`, `content_hash`, `source`); `--environment` names
+the environment whose `allowed_sources` gate them. The command prints one
+line per divergence — presence in either direction, version, content hash,
+and source — so a single run names every drifted entry rather than the
+first. `--json` emits the same list machine-readably alongside the exit
+code.
+
+The source check is independent of version and hash: a component pulled from
+a source the environment does not allow is reported even when its bytes match
+the pin exactly.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Every loaded component matches its pin. |
+| 1 | The manifest or the loaded set could not be read or failed validation. |
+| 2 | At least one entry drifted. |
+
 ## Legacy modes
 
 ### Wheelhouse signature verification
@@ -217,5 +270,7 @@ Every verification command in Bernstein follows a strict exit-code contract. The
 `src/bernstein/cli/commands/verify_cmd.py` (command group);
 `src/bernstein/core/replay/run_receipt.py` (receipt build + offline verify);
 `src/bernstein/core/security/receipt_key_chain.py` (key succession chain);
-`src/bernstein/core/quality/verifier_ladder.py` (ladder receipts).
+`src/bernstein/core/quality/verifier_ladder.py` (ladder receipts);
+`src/bernstein/core/plugins_core/plugin_pin_manifest.py` (pin manifest,
+verify, and idempotent apply).
 

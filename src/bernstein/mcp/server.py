@@ -118,7 +118,7 @@ def _patched_convert_result(self, result: Any) -> Any:
     return _orig_convert_result(self, result)
 
 
-FuncMetadata.convert_result = _patched_convert_result
+FuncMetadata.convert_result = _patched_convert_result  # type: ignore[method-assign]
 
 _DEFAULT_SERVER_URL = "http://127.0.0.1:8052"
 
@@ -403,7 +403,7 @@ def _project_task_helper(data: dict[str, Any]) -> Any:
 
     return Task(
         taskId=mcp_task_id,
-        status=mcp_status,
+        status=mcp_status,  # type: ignore[arg-type]
         statusMessage=status_message,
         createdAt=created_at,
         lastUpdatedAt=last_updated,
@@ -650,7 +650,7 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
         err = _validate_or_error("bernstein_run", args)
         if err is not None:
             return _validation_error_response(err)
-        return await _run_impl(
+        return await _run_impl(  # type: ignore[return-value]
             server_url,
             goal=goal,
             role=role,
@@ -1793,7 +1793,7 @@ def _apply_cost_meter(mcp: FastMCP[None]) -> None:
         tool_name = tool.name
         is_structured = tool_name in structured
 
-        @functools.wraps(original)
+        @functools.wraps(original)  # type: ignore[arg-type]
         async def metered(
             *args: Any,
             __orig: Any = original,
@@ -1880,7 +1880,7 @@ def _apply_tool_timeouts(mcp: FastMCP[None]) -> None:
     # FastMCP exposes no public per-tool timeout hook, so replace the call
     # path on the tool manager directly (same access pattern as
     # _apply_tool_tier).
-    manager.call_tool = bounded_call  # pyright: ignore[reportAttributeAccessIssue]
+    manager.call_tool = bounded_call  # type: ignore[method-assign] # pyright: ignore[reportAttributeAccessIssue]
 
 
 def _apply_advertised_schemas(mcp: FastMCP[None]) -> None:
@@ -2248,7 +2248,7 @@ def _register_tasks_extension(mcp: FastMCP[None], server_url: str) -> None:
             pollInterval=5000,
         )
 
-    @mcp._mcp_server.experimental.get_task_result()
+    @mcp._mcp_server.experimental.get_task_result()  # type: ignore[arg-type]
     async def get_task_result(req: GetTaskPayloadRequest) -> CallToolResult:
         parts = req.params.taskId.split(":", 1)
         task_id = parts[0]

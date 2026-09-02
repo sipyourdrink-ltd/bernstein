@@ -300,7 +300,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein gate verify`](../operations/gate-adjudication.md) | Full | 3 | Recompute a gate panel's inputs hash and confirm the adjudication |
 | [`bernstein mandate emit/verify/revoke`](../operations/spending-mandates.md) | Full | 3 | Bind, prove, and revoke authorized-action mandates |
 | `bernstein payment-mandate issue/show/spend` | Full | 3 | Issue and spend against authorized-spend mandates with signed receipts |
-| [`bernstein governance verify`](../operations/governance.md) | Full | 3 | Recompute access and budget verdicts for a run |
+| [`bernstein govern verify`](../operations/governance.md) | Full | 3 | Recompute access and budget verdicts for a run. `bernstein governance` is a deprecated alias, removed in v4.0.0 (#5010) |
 | [`bernstein webhook verify`](../operations/webhook-node.md) | Full | 3 | Recompute inbound-event and outbound webhook-node hashes |
 | [`bernstein review-receipt emit/verify`](../operations/review-receipts.md) | Full | 3 | Bind and offline-verify PR review receipts (issue + plan + tool calls + diff) |
 | `bernstein review-annotation derive/resolve` | Partial | 2 | Bind an operator comment to the diff bytes it targets and resolve it against a file's current bytes, reporting `orphaned` rather than re-anchoring to the recorded line numbers |
