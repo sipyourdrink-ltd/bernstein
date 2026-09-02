@@ -56,14 +56,14 @@ import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from bernstein.core.identity import delegation as _delegation
 from bernstein.core.identity import grants as _grants
 from bernstein.core.security.agent_card_signer import canonicalize_jcs
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 if sys.platform == "win32":
     fcntl = None  # type: ignore[assignment]
@@ -198,7 +198,7 @@ class AccessReview:
         verification = verify_signed_review(envelope_bytes)
         if not verification.ok or verification.document is None:
             raise AccessReviewError("; ".join(verification.errors) or "envelope did not verify")
-        envelope = json.loads(envelope_bytes.decode("utf-8"))
+        envelope = cast("dict[str, Any]", json.loads(envelope_bytes.decode("utf-8")))
         return cls(
             document=verification.document,
             digest=verification.digest,
@@ -473,14 +473,19 @@ def verify_signed_review(envelope_bytes: bytes) -> ReviewVerification:
     Both anchors are recomputed from the parsed body, so a re-indented file
     still verifies while a changed fact does not.
     """
+    parsed: object
     try:
-        envelope = json.loads(envelope_bytes.decode("utf-8"))
+        parsed = json.loads(envelope_bytes.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         return ReviewVerification(ok=False, errors=(f"envelope is not JSON: {exc}",))
-    if not isinstance(envelope, dict) or not isinstance(envelope.get("review"), dict):
+    if not isinstance(parsed, dict):
+        return ReviewVerification(ok=False, errors=("envelope carries no review body",))
+    envelope = cast("dict[str, Any]", parsed)
+    body = envelope.get("review")
+    if not isinstance(body, dict):
         return ReviewVerification(ok=False, errors=("envelope carries no review body",))
 
-    document = envelope["review"]
+    document = cast("dict[str, Any]", body)
     errors: list[str] = []
     recomputed = digest_body(document)
     if recomputed != str(envelope.get("digest", "")):
@@ -571,7 +576,7 @@ def _compute_hmac(key: bytes, prev_hmac: str, body: dict[str, Any]) -> str:
 
 
 @contextlib.contextmanager
-def _append_lock(path: Path) -> Iterator[None]:
+def _append_lock(path: Path) -> Generator[None]:
     """Serialise the tail-read-through-append across threads and processes.
 
     Without both locks two writers recover the same ``prev_hmac`` and fork the
