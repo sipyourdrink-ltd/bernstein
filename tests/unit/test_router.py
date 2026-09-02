@@ -720,6 +720,7 @@ class TestRoutingWithMockedTierStates:
 
 class TestModelPolicy:
     def test_allow_list_only_permits_listed_providers(self) -> None:
+
         policy = ModelPolicy(allowed_providers=["anthropic", "ollama"])
 
         assert policy.is_provider_allowed("anthropic") is True
@@ -728,6 +729,7 @@ class TestModelPolicy:
         assert policy.is_provider_allowed("google") is False
 
     def test_deny_list_blocks_denied_providers(self) -> None:
+
         policy = ModelPolicy(denied_providers=["openai", "cohere"])
 
         assert policy.is_provider_allowed("anthropic") is True
@@ -736,6 +738,7 @@ class TestModelPolicy:
         assert policy.is_provider_allowed("cohere") is False
 
     def test_allow_and_deny_empty_allows_all(self) -> None:
+
         policy = ModelPolicy()
 
         assert policy.is_provider_allowed("anthropic") is True
@@ -743,6 +746,7 @@ class TestModelPolicy:
         assert policy.is_provider_allowed("any-provider") is True
 
     def test_validation_detects_allow_deny_overlap(self) -> None:
+
         policy = ModelPolicy(
             allowed_providers=["anthropic", "openai"],
             denied_providers=["openai", "cohere"],
@@ -752,6 +756,7 @@ class TestModelPolicy:
         assert any("allow and deny" in issue.lower() for issue in issues)
 
     def test_validation_detects_preferred_in_deny_list(self) -> None:
+
         policy = ModelPolicy(
             denied_providers=["anthropic"],
             prefer="anthropic",
@@ -761,6 +766,7 @@ class TestModelPolicy:
         assert any("preferred provider" in issue.lower() and "deny" in issue.lower() for issue in issues)
 
     def test_validation_detects_preferred_not_in_allow_list(self) -> None:
+
         policy = ModelPolicy(
             allowed_providers=["openai", "google"],
             prefer="anthropic",
@@ -770,6 +776,7 @@ class TestModelPolicy:
         assert any("preferred provider" in issue.lower() and "allow" in issue.lower() for issue in issues)
 
     def test_from_dict_loads_policy_correctly(self) -> None:
+
         data = {
             "allowed_providers": ["anthropic"],
             "denied_providers": [],
@@ -793,6 +800,7 @@ class TestModelPolicy:
 
 class TestPolicyFilter:
     def test_filter_providers_respects_allow_list(self) -> None:
+
         policy = ModelPolicy(allowed_providers=["anthropic", "ollama"])
         filter_obj = PolicyFilter(policy=policy)
 
@@ -808,6 +816,7 @@ class TestPolicyFilter:
         assert {p.name for p in filtered} == {"anthropic", "ollama"}
 
     def test_filter_providers_respects_deny_list(self) -> None:
+
         policy = ModelPolicy(denied_providers=["openai"])
         filter_obj = PolicyFilter(policy=policy)
 
@@ -823,6 +832,7 @@ class TestPolicyFilter:
         assert {p.name for p in filtered} == {"anthropic", "ollama"}
 
     def test_filter_providers_respects_required_region(self) -> None:
+
         policy = ModelPolicy(required_region="eu")
         filter_obj = PolicyFilter(policy=policy)
 

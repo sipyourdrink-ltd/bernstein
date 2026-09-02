@@ -77,7 +77,7 @@ VERDICT_PREDICATE_TYPE: str = "https://bernstein.run/attestations/volunteer/verd
 # ---------------------------------------------------------------------------
 
 
-class Recommendation(str, Enum):
+class Recommendation(str, Enum):  # noqa: UP042
     """Gate-run outcome recommendation.
 
     Attributes:

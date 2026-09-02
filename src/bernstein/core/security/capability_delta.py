@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from bernstein.core.security.permissions import AgentPermissions
 
 
-class GrantDirection(str, Enum):
+class GrantDirection(str, Enum):  # noqa: UP042
     WIDENING = "WIDENING"
     NARROWING = "NARROWING"
     UNCHANGED = "UNCHANGED"
