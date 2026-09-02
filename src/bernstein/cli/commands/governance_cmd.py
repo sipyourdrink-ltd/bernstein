@@ -51,7 +51,7 @@ def _lineage_root(workdir: Path) -> Path:
 def governance_group() -> None:
     """Verify RBAC and budget decisions as projections over the audit chain.
 
-    \\b
+    \b
       bernstein governance verify <run> --bindings b.json --ledger ledger.jsonl
     """
 
@@ -60,7 +60,7 @@ def governance_group() -> None:
 def govern_group() -> None:
     """Governance surface management commands.
 
-    \\b
+    \b
       bernstein govern inventory   discover and catalog governable surfaces
       bernstein govern validate    check a governance playbook against the schema
     """
@@ -222,7 +222,7 @@ def govern_validate_cmd(playbook_file: str) -> None:
 
     Exit codes: 0 = valid, 1 = validation failed.
 
-    \\b
+    \b
     Example:
       bernstein govern validate playbook.yaml
     """
