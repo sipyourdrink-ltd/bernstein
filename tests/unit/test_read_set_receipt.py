@@ -402,3 +402,40 @@ def test_verify_receipt_offline_no_matching_anchor(
         result = verify_receipt_offline(receipt_bytes, str(tmp_path / "chain.db"))
 
         assert result is False
+
+
+def test_verify_receipt_offline_accepts_a_genuinely_anchored_receipt(keys: dict, tmp_path: Path) -> None:
+    """A signed receipt anchored in a real chain verifies offline.
+
+    The three tests above all assert ``False``, so they hold whether or not
+    the chain actually loads. This one pins the positive path against real
+    ``AuditChainStore`` construction rather than a mock: a receipt sealed by
+    ``refuse_read_set`` and anchored in its own chain must verify from the
+    on-disk record alone, with no repository access.
+    """
+    import json
+
+    from bernstein.core.git.read_set_receipt import (
+        ChangedPath,
+        refuse_read_set,
+        verify_receipt_offline,
+    )
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+    sdd_dir = tmp_path / ".sdd"
+    runtime_dir = sdd_dir / "runtime"
+    chain = AuditChainStore(runtime_dir)
+
+    receipt = refuse_read_set(
+        chain=chain,
+        sdd_dir=sdd_dir,
+        task_id="task-offline",
+        base_commit="abcdef",
+        target_branch="main",
+        changed_paths=[ChangedPath(path="src/a.py", old_commit="a1", new_commit="b2")],
+        private_key_pem=keys["private"],
+        public_key_pem=keys["public"],
+    )
+
+    record = json.dumps(receipt.to_dict()).encode("utf-8")
+    assert verify_receipt_offline(record, str(runtime_dir / "chain.db")) is True

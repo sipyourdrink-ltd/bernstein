@@ -21,6 +21,7 @@ import Approvals from './routes/Approvals';
 import Audit from './routes/Audit';
 import Costs from './routes/Costs';
 import Fleet from './routes/Fleet';
+import Governance from './routes/Governance';
 import Missions from './routes/Missions';
 import Settings from './routes/Settings';
 import Vocabulary from './routes/Vocabulary';
@@ -55,6 +56,7 @@ const ROUTE_TITLES: Record<string, string> = {
   '/agents': 'Agents',
   '/approvals': 'Approvals',
   '/audit': 'Audit',
+  '/governance': 'Governance',
   '/costs': 'Costs',
   '/missions': 'Missions',
   '/fleet': 'Fleet',
@@ -202,6 +204,7 @@ function DashboardRoutes() {
         <Route path="/agents" element={<Agents />} />
         <Route path="/approvals" element={<Approvals />} />
         <Route path="/audit" element={<Audit />} />
+        <Route path="/governance" element={<Governance />} />
         <Route path="/costs" element={<Costs />} />
         <Route path="/missions" element={<Missions />} />
         <Route path="/fleet" element={<Fleet />} />
