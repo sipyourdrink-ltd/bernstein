@@ -8,6 +8,7 @@ from typing import Any
 
 from bernstein.core.govern.findings import Finding, FindingsDocument
 from bernstein.core.govern.inventory_models import Inventory, Surface
+from bernstein.core.govern.observation import ObservationEnvelope, ObservationLedger
 from bernstein.core.govern.plan_models import GovernPlan, PlanEntry, PlanEntryKind
 from bernstein.core.govern.playbook_models import (
     Playbook,
@@ -218,6 +219,8 @@ __all__ = [
     "FindingsDocument",
     "GovernPlan",
     "Inventory",
+    "ObservationEnvelope",
+    "ObservationLedger",
     "PlanEntry",
     "PlanEntryKind",
     "Playbook",
