@@ -296,3 +296,39 @@ class TestEntityStore:
         assert sources == ["agent", "mdm"]
         edge_kinds = json.loads((tmp_path / "lookups" / "edge_kinds.json").read_text(encoding="utf-8"))
         assert edge_kinds == ["assigned_to"]
+
+    def test_edge_roundtrip_preserves_from_id(self, tmp_path: Path) -> None:
+        """from_id is lost if to_dict omits it: read from disk and check."""
+        store = EntityStore(tmp_path)
+        graph = _join().graph
+        store.write_graph(graph)
+
+        entity_id = _node_by_key(graph, "AB12CD").entity_id
+        loaded = store.load_entity(entity_id)
+
+        for edge in loaded["edges"]:
+            assert "from" in edge, "write_graph/load_entity round-trip must preserve the 'from' field"
+            assert "to" in edge
+            assert edge["from"].startswith("entity:")
+            assert edge["to"].startswith("entity:")
+
+        # Also verify the loaded 'from' matches the Python dataclass.
+        assert len(graph.edges) == len(loaded["edges"])
+        for py_edge, loaded_edge in zip(graph.edges, loaded["edges"], strict=True):
+            assert loaded_edge["from"] == py_edge.from_id
+            assert loaded_edge["to"] == py_edge.to_id
+
+    def test_entity_schema_requires_from_in_edges(self, tmp_path: Path) -> None:
+        """A missing 'from' on an edge must be rejected at load time."""
+        store = EntityStore(tmp_path)
+        graph = _join().graph
+        store.write_graph(graph)
+
+        entity_id = _node_by_key(graph, "AB12CD").entity_id
+        path = store.entity_path(entity_id)
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw["edges"][0].pop("from")
+        path.write_text(json.dumps(raw), encoding="utf-8")
+
+        with pytest.raises(EntityStoreError):
+            store.load_entity(entity_id)

@@ -297,6 +297,7 @@ class EntityEdge:
         return {
             "edge_id": self.edge_id,
             "kind": self.kind,
+            "from": self.from_id,
             "to": self.to_id,
             "source": self.source,
             "observed_at": self.observed_at,
@@ -527,10 +528,11 @@ ENTITY_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["edge_id", "kind", "to", "source", "observed_at"],
+                "required": ["edge_id", "kind", "from", "to", "source", "observed_at"],
                 "properties": {
                     "edge_id": {"type": "string", "pattern": "^edge:[0-9a-f]{32}$"},
                     "kind": {"type": "string", "minLength": 1},
+                    "from": {"type": "string", "pattern": _ENTITY_ID_PATTERN},
                     "to": {"type": "string", "pattern": _ENTITY_ID_PATTERN},
                     "source": {"type": "string", "minLength": 1},
                     "observed_at": {"type": "string", "minLength": 1},
