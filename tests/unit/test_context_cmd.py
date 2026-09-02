@@ -1,13 +1,18 @@
-"""CLI tests for ``bernstein context show|verify`` (#2545).
+"""CLI tests for ``bernstein context show|verify|manifest`` (#2545, #3366).
 
 ``verify`` recomputes the capsule offline from the on-disk bytes and checks its
 hash against the ``context.capsule`` audit-chain entry and the
 ``context.capsule_recorded`` journal event. A real capsule verifies; a
 mock-layer fixture fails with a mock diagnostic.
+
+``manifest`` derives the content-addressed context manifest from the task's
+declared path set, so an operator can see what the agent would be shown --
+including the entries the deriver could not resolve.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -91,3 +96,64 @@ def test_context_verify_mock_fails(project: Path) -> None:
     result = runner.invoke(context_group, ["verify", "task-mock", "--workdir", str(project)])
     assert result.exit_code == 2
     assert "MOCK" in result.output
+
+
+def _write_task(project: Path, task_id: str, owned_files: list[str]) -> None:
+    """Persist a task with *owned_files* into the store the CLI replays."""
+    from bernstein.core.tasks.models import Task
+
+    task = Task(
+        id=task_id,
+        title="manifest fixture",
+        description="declares a path set",
+        role="backend",
+        owned_files=owned_files,
+    )
+    tasks_path = project / ".sdd" / "runtime" / "tasks.jsonl"
+    tasks_path.parent.mkdir(parents=True, exist_ok=True)
+    with tasks_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(task.to_dict()) + "\n")
+
+
+def test_context_manifest_addresses_declared_files_and_names_unmanifested_entries(project: Path) -> None:
+    (project / "src").mkdir(parents=True, exist_ok=True)
+    (project / "src" / "a.py").write_text("alpha\n", encoding="utf-8")
+    _write_task(project, "task-manifest", ["src/a.py", "src/gone.py"])
+
+    runner = CliRunner()
+    result = runner.invoke(context_group, ["manifest", "task-manifest", "--workdir", str(project)])
+
+    assert result.exit_code == 0, result.output
+    assert "Context manifest" in result.output
+    assert "sha256:" in result.output
+    assert "unmanifested" in result.output
+    assert "missing" in result.output
+    assert "src/gone.py" in result.output
+
+
+def test_context_manifest_json_carries_the_digest_and_every_entry(project: Path) -> None:
+    (project / "src").mkdir(parents=True, exist_ok=True)
+    (project / "src" / "a.py").write_text("alpha\n", encoding="utf-8")
+    _write_task(project, "task-manifest-json", ["src/a.py", "src/gone.py"])
+
+    runner = CliRunner()
+    result = runner.invoke(
+        context_group,
+        ["manifest", "task-manifest-json", "--workdir", str(project), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["manifest_digest"].startswith("sha256:")
+    assert payload["entry_count"] == 2
+    assert payload["unmanifested_count"] == 1
+    assert [entry["path"] for entry in payload["entries"]] == ["src/a.py", "src/gone.py"]
+    assert payload["entries"][1]["reason"] == "missing"
+
+
+def test_context_manifest_exits_nonzero_for_an_unknown_task(project: Path) -> None:
+    runner = CliRunner()
+    result = runner.invoke(context_group, ["manifest", "no-such-task", "--workdir", str(project)])
+
+    assert result.exit_code == 1
+    assert "NO TASK" in result.output

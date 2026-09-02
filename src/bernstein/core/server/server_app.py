@@ -1466,6 +1466,7 @@ def create_app(
     from bernstein.core.routes.file_health import router as file_health_router
     from bernstein.core.routes.fleet import router as fleet_router
     from bernstein.core.routes.gateway import router as gateway_router
+    from bernstein.core.routes.governance import router as governance_router
     from bernstein.core.routes.graduation import router as graduation_router
     from bernstein.core.routes.grafana import router as grafana_router
     from bernstein.core.routes.graphql_api import router as graphql_router
@@ -1543,6 +1544,7 @@ def create_app(
         audit_log_router,
         graphql_router,
         graduation_router,
+        governance_router,
         handoff_router,
         team_router,
         provider_latency_router,

@@ -1005,6 +1005,17 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
 
         user, claims = result
 
+        # Revocation acknowledgement: if the session is revoked, record that
+        # this enforcement point observed the revocation at its chain position.
+        # Sessions revoked past the staleness window are already rejected by
+        # ``validate_token`` (via ``is_valid``), so we reach here only for
+        # sessions revoked within the staleness window that are still valid.
+        session_id = claims.get("session_id", "")
+        if session_id:
+            session = self._auth_service.store.get_session(session_id)
+            if session is not None and session.revoked:
+                session.acknowledge_revocation(session.revocation_chain_position)
+
         # RFC 8707: reject SSO tokens minted for a different audience before
         # the request reaches its handler. Skipped when ``expected_resource``
         # is unconfigured, or when the token omits the claim entirely.

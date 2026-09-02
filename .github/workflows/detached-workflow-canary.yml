@@ -1,0 +1,127 @@
+name: Detached workflow canary
+
+# A workflow file deleted from `main` keeps running, and keeps failing.
+#
+# GitHub registers a workflow the first time it runs and keeps that
+# registration after the file is deleted. `pull_request` runs execute the
+# workflow file from the pull request's merge ref, so any branch opened before
+# the deletion still carries the file and still runs it. The registration stays
+# `active`, the runs still spend runner slots, and their failures still show up
+# on the pull request - for a lane the repository decided to remove.
+#
+# This happened here. `.github/workflows/review-bot-ack.yml` was removed in
+# #3780. It then ran 2125 more times between 2026-08-03 and 2026-08-23, 13.0%
+# of them failing and 52.5% cancelled, entirely from branches predating the
+# removal. Nothing in the repository could see it: the file was gone, so no
+# in-tree check could name it, and the runs looked like an ordinary lane
+# failing. `.github/workflows/main-red-guard.yml` is in the same state today -
+# deleted from `main`, registration still `active`.
+#
+# So this checks the one thing an in-tree check cannot: what the repository is
+# actually running, against what it actually contains.
+#
+# Advisory on purpose. The finding is "somebody should disable a registration",
+# which is a repository-settings action a workflow should not take by itself,
+# and a red weekly job would be a worse signal than a summary that names the
+# workflow and the command.
+
+on:
+  schedule:
+    # Weekly, offset from the other Monday audits so they do not contend.
+    - cron: "43 8 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: detached-workflow-canary-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    name: Detached workflow canary
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Advisory: the action this reports is a settings change a human makes.
+    continue-on-error: true
+    permissions:
+      contents: read
+      # Read-only listing of workflow registrations and their recent runs.
+      actions: read
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Compare registered workflows with the committed ones
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          # Only registrations that actually ran recently are interesting. A
+          # registration with no recent runs is inert; one that is still
+          # producing runs is spending slots on a lane that no longer exists.
+          LOOKBACK_DAYS: "30"
+        run: |
+          set -euo pipefail
+
+          since="$(date -u -d "-${LOOKBACK_DAYS} days" +%Y-%m-%dT%H:%M:%SZ)"
+          detached=""
+
+          # `dynamic/...` paths are GitHub-managed workflows (Dependabot,
+          # code scanning, Pages). They have no file in any repository and
+          # are not what this looks for.
+          while IFS=$'\t' read -r id state wf_path; do
+            case "${wf_path}" in
+              dynamic/*) continue ;;
+            esac
+            [ "${state}" = "active" ] || continue
+            [ -f "${wf_path}" ] && continue
+
+            recent="$(gh api "repos/${GH_REPO}/actions/workflows/${id}/runs?per_page=100&created=>=${since}" \
+              --jq '.total_count' 2>/dev/null || echo 0)"
+            [ "${recent}" -gt 0 ] || continue
+
+            detached="${detached}| \`${wf_path}\` | ${id} | ${recent} |"$'\n'
+          done < <(gh api --paginate "repos/${GH_REPO}/actions/workflows" \
+                     --jq '.workflows[] | [.id, .state, .path] | @tsv')
+
+          if [ -z "${detached}" ]; then
+            {
+              echo "### Detached workflow canary"
+              echo
+              echo "Every active workflow registration that ran in the last"
+              echo "${LOOKBACK_DAYS} days has a file on this ref."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo "### Detached workflows are still running"
+            echo
+            echo "These workflow registrations are \`active\` and produced runs"
+            echo "in the last ${LOOKBACK_DAYS} days, but have no file on this"
+            echo "ref. They are running from branches that predate their"
+            echo "deletion, spending runner slots and reporting results for"
+            echo "lanes this repository removed."
+            echo
+            echo "| path | workflow id | runs in the last ${LOOKBACK_DAYS} days |"
+            echo "| --- | --- | --- |"
+            printf '%s' "${detached}"
+            echo
+            echo "To stop one, disable its registration:"
+            echo
+            echo '```'
+            echo "gh api -X PUT repos/${GH_REPO}/actions/workflows/<id>/disable"
+            echo '```'
+            echo
+            echo "Disabling is reversible (\`/enable\`) and does not touch any"
+            echo "workflow file."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::warning::detached workflow registrations are still producing runs; see the job summary"
