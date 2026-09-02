@@ -576,6 +576,14 @@ jobs:
         # src/bernstein/core/routes/**.py without a `bot-ack:` or
         # `intentional-broad-except` marker within 3 lines.
         run: uv run python scripts/check_routes_broad_except.py
+      - name: Unreached security controls (#5053)
+        # Fails if a public symbol under src/bernstein/core/security/ or
+        # src/bernstein/core/identity/ has no caller in the shipped package.
+        # A control whose only importers are its own tests, an `__init__`
+        # re-export, or the lazy module map in core/__init__.py looks live to
+        # every other tool while never running. Known cases live in
+        # unreachable_controls_allowlist.txt, one written reason each.
+        run: uv run python scripts/check_unreachable_controls.py
 
   spelling:
     name: Spelling (typos)
