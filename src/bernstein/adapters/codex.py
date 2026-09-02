@@ -2,6 +2,19 @@
 
 Last verified against upstream @openai/codex 0.152.1 on 2026-09-02.
 Install: ``npm i -g @openai/codex`` (or ``brew install --cask codex``).
+
+.. important::
+   **codex >= 0.152 speaks only the Responses API.** ``wire_api = "chat"`` in a
+   custom provider block is a hard startup error, not a fallback::
+
+       Error loading config.toml: `wire_api = "chat"` is no longer supported.
+       How to fix: set `wire_api = "responses"` in your provider config.
+
+   This adapter allow-lists ``OPENAI_BASE_URL``, which advertises support for
+   custom OpenAI-compatible endpoints. That support is narrower than it looks:
+   an endpoint serving only ``/v1/chat/completions`` **cannot drive codex at
+   all**, however compatible it is otherwise. Point ``OPENAI_BASE_URL`` at a
+   deployment that implements ``/v1/responses`` (issue #5314).
 Recommended models: ``gpt-5.5`` (GA 2026-04-24), which is also the pinned
 fallback, or ``gpt-5.4-mini`` for cheap work.  ``gpt-5.4`` is no longer served
 on the ChatGPT-account auth path.  The o-series reasoning models (``o3``,
@@ -32,9 +45,11 @@ plain host keeps the vendor sandbox.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +110,80 @@ def _codex_model(model: str) -> str:
         )
         return _DEFAULT_CODEX_MODEL
     return model
+
+
+#: Bubblewrap's refusal when the kernel disallows unprivileged user namespaces.
+#: Codex implements ``--sandbox workspace-write`` with bubblewrap, so in a
+#: capability-dropped container every shell call the model issues fails with
+#: this while ``codex exec`` still emits ``turn.completed`` and exits 0.
+_BWRAP_DENIED = "No permissions to create a new namespace"
+
+
+def detect_sandbox_failure(log_text: str) -> tuple[str, int, int] | None:
+    """Return ``(detail, failed, total)`` when EVERY shell call was refused.
+
+    Issue #5314: a run in which all 16 shell commands failed, nothing changed
+    and ~194k tokens were spent still exited 0 and reported ``turn.completed``.
+    That is indistinguishable from a model that had nothing to do, which makes
+    it the worst of the available failure modes.
+
+    ``_probe_fast_exit`` cannot catch this: it treats an early NON-ZERO exit as
+    a spawn failure, and here the exit code is zero. So the signal has to come
+    from the event stream rather than the status.
+
+    Deliberately narrow, because the cost of a false positive is aborting a run
+    that actually worked:
+
+    * at least one ``command_execution`` item must be present -- a run that
+      shelled out zero times is not evidence of anything;
+    * EVERY one of them must have failed;
+    * at least one must carry bubblewrap's specific refusal, so an agent whose
+      commands merely returned non-zero (a failing test suite, a missing file)
+      is not reported as a sandbox failure.
+
+    Returns ``None`` when the run does not match, so the caller leaves the
+    result untouched.
+    """
+    if not log_text or _BWRAP_DENIED not in log_text:
+        return None
+
+    total = 0
+    failed = 0
+    saw_bwrap = False
+    for line in log_text.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(event, dict):
+            continue
+        nested = event.get("item")
+        item: dict[str, Any] = nested if isinstance(nested, dict) else event
+        if "command_execution" not in (item.get("item_type"), item.get("type")):
+            continue
+        total += 1
+        exit_code = item.get("exit_code")
+        output = str(item.get("aggregated_output") or item.get("output") or "")
+        if _BWRAP_DENIED in output:
+            saw_bwrap = True
+        if exit_code not in (0, None):
+            failed += 1
+
+    if total == 0 or failed != total or not saw_bwrap:
+        return None
+
+    detail = (
+        f"every shell command was refused by the sandbox ({failed}/{total}). "
+        "codex implements --sandbox workspace-write with bubblewrap, which "
+        "cannot start in a capability-dropped container on a kernel without "
+        "unprivileged user namespaces. The run exited 0 and reported success "
+        "while changing nothing. Re-run with a sandbox mode the environment "
+        "supports, or enable unprivileged user namespaces on the host."
+    )
+    return detail, failed, total
 
 
 class CodexAdapter(CLIAdapter):
@@ -231,7 +320,43 @@ class CodexAdapter(CLIAdapter):
         result = SpawnResult(pid=proc.pid, log_path=log_path, proc=proc)
         if timeout_seconds > 0:
             result.timeout_timer = self._start_timeout_watchdog(proc.pid, timeout_seconds, session_id)
+
+        # #5314 - the fast-exit probe above only catches an early NON-ZERO exit.
+        # A sandbox that refuses every shell call still exits 0, so the run has
+        # to be judged from the event stream after it finishes.
+        thread = threading.Thread(target=self._flag_sandbox_failure, args=(proc, log_path, result), daemon=True)
+        thread.start()
+        result.post_exit_thread = thread
         return result
+
+    def _flag_sandbox_failure(self, proc: subprocess.Popen, log_path: Path, result: SpawnResult) -> None:
+        """Mark a run whose every shell call the sandbox refused (#5314).
+
+        Runs after the process exits. Sets ``abort_reason`` so a caller sees a
+        refused run rather than a successful one that happened to change
+        nothing; it does not raise, because by this point the process is gone
+        and there is nothing left to fail.
+        """
+        try:
+            proc.wait()
+            detected = detect_sandbox_failure(log_path.read_text(encoding="utf-8", errors="replace"))
+        except Exception as exc:  # bookkeeping must never wedge the worker
+            logger.debug("codex: sandbox-failure check skipped (%s)", type(exc).__name__)
+            return
+
+        if detected is None:
+            return
+        from bernstein.core.models import AbortReason
+
+        detail, failed, total = detected
+        result.abort_reason = AbortReason.PERMISSION_DENIED
+        result.abort_detail = detail
+        logger.error("CodexAdapter: %s", detail)
+        logger.error(
+            "CodexAdapter: %d/%d shell commands refused; the run reported success regardless",
+            failed,
+            total,
+        )
 
     def name(self) -> str:
         return "Codex"

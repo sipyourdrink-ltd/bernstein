@@ -116,6 +116,16 @@ npm install -g @openai/codex
 
 **Env vars:** `OPENAI_API_KEY` (required), `OPENAI_ORG_ID` (optional, triggers Enterprise tier), `OPENAI_BASE_URL` (optional).
 
+> **`OPENAI_BASE_URL` requires a Responses API endpoint.** codex >= 0.152 speaks only
+> the Responses API — `wire_api = "chat"` is a hard startup error, not a fallback. An
+> endpoint that serves only `/v1/chat/completions` cannot drive codex at all, however
+> OpenAI-compatible it is otherwise. See [#5314](https://github.com/sipyourdrink-ltd/bernstein/issues/5314).
+>
+> **Sandbox.** codex implements `--sandbox workspace-write` with bubblewrap, which cannot
+> start in a capability-dropped container on a kernel without unprivileged user namespaces.
+> Every shell call is then refused while the run still exits 0. The adapter now detects
+> that and marks the run `permission_denied` rather than reporting success.
+
 **Best for:** Tasks that benefit from OpenAI's reasoning models. Good complement to Claude for provider diversity.
 
 ---

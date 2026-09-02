@@ -536,3 +536,96 @@ class TestSandboxPosture:
             self._spawn_inner(adapter, tmp_path, pid=143)
 
         assert any(_BYPASS_SANDBOX_FLAG in record.getMessage() for record in caplog.records)
+
+
+class TestSandboxFailureDetection:
+    """#5314 - a run whose every shell call the sandbox refused still exits 0.
+
+    ``_probe_fast_exit`` cannot catch it: that probe treats an early NON-ZERO
+    exit as a spawn failure, and the exit code here is zero. The signal has to
+    come from the event stream, and the reported run showed why it matters:
+    16/16 commands refused, 0 files changed, ~194k tokens, ``turn.completed``.
+    """
+
+    BWRAP = (
+        "bwrap: No permissions to create a new namespace, likely because the "
+        "kernel does not allow non-privileged user namespaces."
+    )
+
+    def _event(self, exit_code, output=""):
+        import json
+
+        return json.dumps({
+            "item": {
+                "item_type": "command_execution",
+                "command": "pytest",
+                "exit_code": exit_code,
+                "aggregated_output": output,
+            }
+        })
+
+    def test_all_commands_refused_is_detected(self):
+        from bernstein.adapters.codex import detect_sandbox_failure
+
+        log = "\n".join(self._event(1, self.BWRAP) for _ in range(16))
+        detected = detect_sandbox_failure(log)
+
+        assert detected is not None
+        detail, failed, total = detected
+        assert (failed, total) == (16, 16)
+        assert "every shell command was refused" in detail
+
+    def test_a_successful_run_is_untouched(self):
+        from bernstein.adapters.codex import detect_sandbox_failure
+
+        log = "\n".join(self._event(0, "ok") for _ in range(5))
+        assert detect_sandbox_failure(log) is None
+
+    def test_ordinary_command_failures_are_not_a_sandbox_failure(self):
+        """The control that matters. A failing test suite, a missing file, a
+        bad flag - every command can legitimately exit non-zero without the
+        sandbox being at fault. Reporting those as permission_denied would
+        abort real runs, so the bwrap signature is required."""
+        from bernstein.adapters.codex import detect_sandbox_failure
+
+        log = "\n".join(self._event(1, "FAILED tests/test_x.py") for _ in range(9))
+        assert detect_sandbox_failure(log) is None
+
+    def test_a_partial_failure_is_not_reported(self):
+        """One refused command among working ones is not this defect: the run
+        did real work, and aborting it would lose that."""
+        from bernstein.adapters.codex import detect_sandbox_failure
+
+        log = "\n".join([self._event(0, "ok"), self._event(1, self.BWRAP)])
+        assert detect_sandbox_failure(log) is None
+
+    def test_a_run_with_no_shell_calls_is_not_reported(self):
+        """Zero commands is not evidence of anything, even if the bwrap string
+        appears somewhere else in the log."""
+        from bernstein.adapters.codex import detect_sandbox_failure
+
+        assert detect_sandbox_failure(f"some prose mentioning {self.BWRAP}") is None
+
+    def test_empty_and_malformed_logs_do_not_raise(self):
+        from bernstein.adapters.codex import detect_sandbox_failure
+
+        for log in ("", "not json at all", "{broken", "{}\n[]\nnull"):
+            assert detect_sandbox_failure(log) is None
+
+    def test_the_flat_event_shape_is_also_understood(self):
+        """codex has emitted both a nested ``item`` and a flat event; accept
+        either rather than silently seeing zero commands."""
+        import json
+
+        from bernstein.adapters.codex import detect_sandbox_failure
+
+        log = "\n".join(
+            json.dumps({
+                "type": "command_execution",
+                "exit_code": 1,
+                "output": self.BWRAP,
+            })
+            for _ in range(3)
+        )
+        detected = detect_sandbox_failure(log)
+        assert detected is not None and detected[1:] == (3, 3)
