@@ -200,3 +200,15 @@ def test_successful_run_leaves_no_staging_residue_in_published_directory(
     assert hashlib.sha256(_md_path(published).read_bytes()).hexdigest() == (
         hashlib.sha256(rendered.encode("utf-8")).hexdigest()
     )
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes are not meaningful on Windows")
+def test_published_pack_is_readable_the_way_a_direct_write_left_it(
+    workdir: Path,
+    published: Path,
+) -> None:
+    """Staging must not change who can read the published evidence pack."""
+    _run(workdir, published)
+
+    assert _md_path(published).stat().st_mode & 0o777 == 0o644
+    assert _manifest_path(published).stat().st_mode & 0o777 == 0o644

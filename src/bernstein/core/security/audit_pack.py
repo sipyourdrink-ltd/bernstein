@@ -77,6 +77,12 @@ STATUS_STALE: EvidenceStatus = "STALE"
 #: whether the run succeeded or failed.
 STAGING_PREFIX: str = ".staging-"
 
+#: Mode the published pack files carry. ``write_atomic_text`` stages at
+#: owner-only 0o600, which is right for runtime state but would silently
+#: narrow who can read an evidence pack that used to be created with the
+#: ordinary default; the staged files are chmod-ed back before promotion.
+_PUBLISHED_FILE_MODE: int = 0o644
+
 #: Default freshness window in days. Anything older flips a source to
 #: ``STALE``. Operators tune via :func:`generate_audit_pack(stale_after_days=N)`.
 DEFAULT_STALE_AFTER_DAYS: int = 30
@@ -606,6 +612,10 @@ def _publish_pack(
     stage - evidence resolution, rendering, manifest serialisation, either
     staged write - leaves the published path byte-for-byte as it was.
 
+    Staging writes owner-only, so both files are chmod-ed to
+    ``_PUBLISHED_FILE_MODE`` before promotion: staging must not change who
+    can read the published pack.
+
     Args:
         target_dir: Published evidence directory (already created).
         markdown: Rendered checklist body.
@@ -626,6 +636,8 @@ def _publish_pack(
     try:
         write_atomic_text(staged_md, markdown)
         write_atomic_text(staged_manifest, manifest_text)
+        staged_md.chmod(_PUBLISHED_FILE_MODE)
+        staged_manifest.chmod(_PUBLISHED_FILE_MODE)
         promote_atomic(staged_md, md_path)
         promote_atomic(staged_manifest, manifest_path)
     finally:
