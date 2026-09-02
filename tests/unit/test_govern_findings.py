@@ -184,4 +184,3 @@ def test_findings_document_empty() -> None:
     assert fd.timestamp == 1234567890
     assert fd.readable_surfaces() == ()
     assert fd.unreadable_surfaces() == ()
-

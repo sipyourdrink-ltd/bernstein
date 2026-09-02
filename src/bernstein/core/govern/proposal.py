@@ -24,7 +24,6 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import UTC
 from enum import Enum
 from typing import Any
 
@@ -128,7 +127,7 @@ class DraftProposal:
         """
         return self.status == ProposalStatus.SIGNED and self.human_signature is not None
 
-    def sign(self, signature: str) -> "DraftProposal":
+    def sign(self, signature: str) -> DraftProposal:
         """Return a new DraftProposal signed with the given human signature.
 
         Args:
