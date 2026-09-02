@@ -906,7 +906,7 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `bernstein policy` | Policy mgmt (group). | `cli/commands/policy_cmd.py:12` |
 | `bernstein compliance` | Compliance reports (group). | `cli/commands/compliance_cmd.py:26` |
 | `bernstein audit` | Audit-log ops (group). | `cli/commands/audit_cmd.py:25` |
-| `bernstein identity` | Install-identity ops (group): fingerprint helpers plus `keydir`. | `cli/commands/identity_cmd.py:identity_group` |
+| `bernstein identity` | Install-identity ops (group): fingerprint helpers, `keydir`, plus `agents` (the agent-principal registry projected from the chain). | `cli/commands/identity_cmd.py:identity_group` |
 | `bernstein delegation` | Delegation-receipt verification (group). | `cli/commands/delegation_cmd.py:delegation_group` |
 | `bernstein lineage` | Artifact-provenance lineage-spine ops (group). | `cli/commands/lineage_cmd.py` |
 | `bernstein credential` | C2PA content credentials projected from the lineage spine (group). | `cli/commands/credential_cmd.py` |
@@ -935,11 +935,17 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `verify TOKEN [--nonce HEX]` | Full HMAC-strength verify when the operator holds the install nonce. |
 | `keydir` | Print the install-identity key directory (JWKS) used to verify outbound HTTP Message Signatures. Mirrors `/.well-known/http-message-signatures-directory`. |
 | `disable` | Print the env line that suppresses every fingerprint emit site. |
+| `agents` | List the agent principals the grant and delegation chains establish: derived SPIFFE ID, the capability ceiling in force at `--as-of`, the grants issued to each, the delegations each made, and the chain events behind every entry. `--root DIR`, `--json`, `--trust-domain` + `--install-key` for id derivation. `--verify FILE` recomputes a stored projection from the chain and refuses any entry no chain event establishes (exit 0 verified, 2 mismatch). Read-only. |
 
 Outbound agent-facing requests (A2A card fetch, browser/research rendering)
 carry an RFC 9421 Ed25519 signature keyed to the install-identity thumbprint.
 `BERNSTEIN_HTTP_SIGNING_REQUIRED=1` turns an unsigned outbound path into a hard
 error. `BERNSTEIN_AGENT_CARD_KEY_DIR` overrides the key directory location.
+
+`identity agents` is a projection, not a directory: deleting the rendered
+output and rebuilding it from the same chain at the same `--as-of` instant
+reproduces identical bytes, and a run whose chain does not verify contributes
+no principals at all.
 
 #### `bernstein delegation`
 
