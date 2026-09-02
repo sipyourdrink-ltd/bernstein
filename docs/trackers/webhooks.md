@@ -72,11 +72,35 @@ again.
 On boot the orchestrator may call
 `bernstein.core.trackers.webhook_receiver.replay_recent_via_poll` to
 catch events that the tracker tried to deliver while Bernstein was
-down. The helper runs a single poll, filters tickets older than the
-caller-supplied `last_processed_ts`, and feeds the rest into the same
-sink the webhook route uses. Adapters that do not populate
-`raw["updated_at"]` simply replay all open tickets, which is the safe
-default.
+down. The helper runs a single poll, skips tickets at or below the
+source's watermark, and feeds the rest into the same sink the webhook
+route uses. Adapters that do not populate `raw["updated_at"]` simply
+replay all open tickets, which is the safe default.
+
+The watermark lives in a `PollWatermarks` store: an append-only JSONL
+file, same shape as the replay ledger, read on construction and written
+back after a poll that ran to completion. A restart therefore resumes
+where the last poll stopped instead of replaying the same window. A
+poll cut short by the wall-clock bound leaves the watermark alone, so
+records it never reached are not skipped.
+
+Pass `newest_first=True` for adapters whose `pull_open_tickets` yields
+newest records first; the scan then stops at the first record at or
+below the watermark instead of paginating the whole open-ticket set.
+Left at the default the helper filters every record in Python, which is
+correct for any ordering but costs a full scan.
+
+`RateLimited` is retried with jittered backoff capped at
+`backoff_cap_s`; the retry restarts the poll from the top, which is
+safe when the sink upserts on the ticket id. `TicketUpsertSink` is the
+supplied implementation: it keys on `Ticket.id` so a retried poll
+replaces a record rather than appending a duplicate.
+
+`replay_recent_via_poll_all` drives several sources in one sweep. Each
+source polls inside its own `try`/`except`, so one unreachable resource
+type is recorded in `PollSweepResult.errors` and the sweep continues;
+`deadline_s` bounds the whole sweep so a single hung source cannot
+starve the ones behind it.
 
 ## Reverse-proxy setup
 

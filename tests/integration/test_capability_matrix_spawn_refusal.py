@@ -993,3 +993,160 @@ class TestScalarFrontmatterTrifectaEnforcement:
         )
 
         monkeypatch.undo()
+
+
+# ---------------------------------------------------------------------------
+# 10. Manifest fidelity - the record must not overstate what was enforced
+# ---------------------------------------------------------------------------
+
+
+class TestManifestRecordsWhatWasEvaluated:
+    """The spawn manifest records a wider chain than the decision saw.
+
+    ``_enforce_lethal_trifecta`` prepends the adapter envelope token and
+    drops every undeclared catalog tool before calling
+    ``evaluate_chain``.  Both omissions are deliberate, but the manifest
+    under ``.sdd/runtime/spawn_capabilities/`` is the artefact a reviewer
+    reads, so it has to say which tokens the verdict covers and why the
+    rest were held out.
+    """
+
+    @staticmethod
+    def _record_evaluate_chain(
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> list[list[str]]:
+        """Capture every tool sequence handed to ``evaluate_chain``."""
+        from bernstein.core.security.capability_matrix import CapabilityRegistry
+
+        calls: list[list[str]] = []
+        original = CapabilityRegistry.evaluate_chain
+
+        def _spy(
+            self: CapabilityRegistry,
+            tools: Any,
+            **kwargs: Any,
+        ) -> Any:
+            calls.append([str(t) for t in tools])
+            return original(self, tools, **kwargs)
+
+        monkeypatch.setattr(CapabilityRegistry, "evaluate_chain", _spy)
+        return calls
+
+    def test_manifest_evaluated_set_contains_only_tokens_passed_to_evaluate_chain(
+        self,
+        workdir: Path,
+        mock_adapter: MagicMock,
+        make_task: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """No token may be recorded as evaluated unless the decision saw it.
+
+        ``fs.unknown_probe`` is absent from the staged registry, so the
+        spawner filters it out of the evaluated chain.  Recording it as
+        evaluated would tell a reviewer the verdict covered a tool it
+        never looked at.
+        """
+        calls = self._record_evaluate_chain(monkeypatch)
+        catalog = _catalog_with(tools=["fs.read", "fs.unknown_probe"])
+        spawner = _build_spawner(workdir=workdir, adapter=mock_adapter, catalog=catalog)
+
+        session = spawner.spawn_for_tasks([make_task()])
+
+        manifest_path = workdir / ".sdd" / "runtime" / "spawn_capabilities" / f"{session.id}.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        seen: set[str] = {tool for call in calls for tool in call}
+        assert calls, "Expected the spawner to evaluate a chain"
+        assert set(manifest["evaluated"]) <= seen, (
+            "Manifest records tokens as evaluated that were never passed to "
+            f"evaluate_chain: {set(manifest['evaluated']) - seen}"
+        )
+
+    def test_adapter_envelope_is_recorded_as_held_out_with_a_reason(
+        self,
+        workdir: Path,
+        mock_adapter: MagicMock,
+        make_task: Any,
+    ) -> None:
+        """The adapter token is in the chain but outside the verdict."""
+        catalog = _catalog_with(tools=["fs.read"])
+        spawner = _build_spawner(workdir=workdir, adapter=mock_adapter, catalog=catalog)
+
+        session = spawner.spawn_for_tasks([make_task()])
+
+        manifest_path = workdir / ".sdd" / "runtime" / "spawn_capabilities" / f"{session.id}.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        held_out = {entry["tool"]: entry["reason"] for entry in manifest["held_out"]}
+        assert held_out.get("adapter.mockcli") == "outer-envelope", (
+            f"Adapter envelope missing from held_out with its reason: {manifest['held_out']}"
+        )
+        assert "adapter.mockcli" not in manifest["evaluated"]
+
+    def test_undeclared_catalog_tool_is_recorded_as_held_out_with_a_reason(
+        self,
+        workdir: Path,
+        mock_adapter: MagicMock,
+        make_task: Any,
+    ) -> None:
+        """A tool with no registry row is held out, and the record says so."""
+        catalog = _catalog_with(tools=["fs.read", "fs.unknown_probe"])
+        spawner = _build_spawner(workdir=workdir, adapter=mock_adapter, catalog=catalog)
+
+        session = spawner.spawn_for_tasks([make_task()])
+
+        manifest_path = workdir / ".sdd" / "runtime" / "spawn_capabilities" / f"{session.id}.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        held_out = {entry["tool"]: entry["reason"] for entry in manifest["held_out"]}
+        assert held_out.get("fs.unknown_probe") == "undeclared-tool", (
+            f"Undeclared tool missing from held_out with its reason: {manifest['held_out']}"
+        )
+        assert "fs.read" in manifest["evaluated"]
+
+    def test_evaluated_and_held_out_partition_the_recorded_chain(
+        self,
+        workdir: Path,
+        mock_adapter: MagicMock,
+        make_task: Any,
+    ) -> None:
+        """Every recorded token is accounted for, exactly once."""
+        catalog = _catalog_with(tools=["fs.read", "git.commit", "fs.unknown_probe"])
+        spawner = _build_spawner(workdir=workdir, adapter=mock_adapter, catalog=catalog)
+
+        session = spawner.spawn_for_tasks([make_task()])
+
+        manifest_path = workdir / ".sdd" / "runtime" / "spawn_capabilities" / f"{session.id}.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        evaluated = set(manifest["evaluated"])
+        held_out = {entry["tool"] for entry in manifest["held_out"]}
+        assert not (evaluated & held_out), f"Token recorded as both evaluated and held out: {evaluated & held_out}"
+        assert evaluated | held_out == set(manifest["tools"]), (
+            "evaluated + held_out must cover the recorded chain exactly; "
+            f"missing={set(manifest['tools']) - (evaluated | held_out)} "
+            f"extra={(evaluated | held_out) - set(manifest['tools'])}"
+        )
+
+    def test_recorded_chain_split_does_not_change_the_enforcement_outcome(
+        self,
+        workdir: Path,
+        mock_adapter: MagicMock,
+        make_task: Any,
+    ) -> None:
+        """Splitting the record leaves both verdicts where they were.
+
+        A chain that spawns today still spawns even though the adapter
+        envelope carries all three capabilities, and a declared trifecta
+        is still refused.
+        """
+        safe_catalog = _catalog_with(tools=["fs.read", "git.commit", "fs.unknown_probe"])
+        safe_spawner = _build_spawner(workdir=workdir, adapter=mock_adapter, catalog=safe_catalog)
+        session = safe_spawner.spawn_for_tasks([make_task(task_id="T-safe")])
+        manifest = json.loads(
+            (workdir / ".sdd" / "runtime" / "spawn_capabilities" / f"{session.id}.json").read_text(encoding="utf-8")
+        )
+        assert manifest["allowed"] is True
+
+        mock_adapter.spawn.reset_mock()
+        trifecta_catalog = _catalog_with(tools=["fs.read", "web.fetch", "github.post_comment"])
+        trifecta_spawner = _build_spawner(workdir=workdir, adapter=mock_adapter, catalog=trifecta_catalog)
+        with pytest.raises(SpawnError, match="lethal trifecta"):
+            trifecta_spawner.spawn_for_tasks([make_task(task_id="T-trifecta")])
+        mock_adapter.spawn.assert_not_called()

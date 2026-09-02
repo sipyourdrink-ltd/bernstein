@@ -76,3 +76,6 @@ are not sharing state or configuration.
 
 - [PII scan quality gate](pii-scan-gate.md) - pre-merge secret/PII scanning
   of agent-produced diffs (a different mechanism, same four PII patterns).
+- [Tool-output redaction](tool-output-redaction.md) - scrubs what a tool
+  produced before the hook receiver persists it (a third sink, again
+  independent of this filter).

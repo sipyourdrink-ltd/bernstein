@@ -36,6 +36,8 @@ from datetime import UTC, datetime
 from pathlib import Path  # noqa: TC003 - runtime use in dataclass field default
 from typing import Any
 
+from bernstein.core.cost.principal_attribution import ATTRIBUTION_DIMENSIONS, PrincipalAttribution
+
 logger = logging.getLogger(__name__)
 
 # Cap-trip thresholds. ``WARN`` is the soft-reroute trigger; ``SOFT_HALT``
@@ -88,6 +90,13 @@ class CallTags:
     # ``"subscription"`` so existing callers keep the legacy
     # single-envelope rollup.
     quota_envelope: str = "subscription"
+    # Per-principal attribution (issue #4985). The principal that incurred
+    # the cost, the grant that authorized it, and the identity that signed
+    # that grant. Empty means "not recorded" -- never "assume the default
+    # principal"; the rollup reports such a row as unattributed.
+    principal_id: str = ""
+    grant_id: str = ""
+    authorizing_identity: str = ""
     extra: dict[str, str] = field(default_factory=dict)
 
     def merged(self) -> dict[str, str]:
@@ -112,6 +121,12 @@ class CallTags:
         # single-envelope callers.
         if self.quota_envelope and self.quota_envelope != "subscription":
             out["quota_envelope"] = self.quota_envelope
+        if self.principal_id:
+            out["principal_id"] = self.principal_id
+        if self.grant_id:
+            out["grant_id"] = self.grant_id
+        if self.authorizing_identity:
+            out["authorizing_identity"] = self.authorizing_identity
         for k, v in self.extra.items():
             if v:
                 out[k] = v
@@ -145,11 +160,25 @@ class LedgerEntry:
     # ``"subscription"`` so older ledgers that lack the field deserialise
     # cleanly via :meth:`from_dict`.
     quota_envelope: str = "subscription"
+    # Per-principal attribution (issue #4985). Rows written before the
+    # columns existed deserialise to empty strings and are reported as
+    # unattributed rather than backfilled onto a principal.
+    principal_id: str = ""
+    grant_id: str = ""
+    authorizing_identity: str = ""
     tags: dict[str, str] = field(default_factory=dict)
 
     def to_json(self) -> str:
         """Return a stable single-line JSON encoding."""
         return json.dumps(asdict(self), sort_keys=False, separators=(",", ":"))
+
+    def attribution(self) -> PrincipalAttribution:
+        """Return this row's attribution tuple (issue #4985)."""
+        return PrincipalAttribution(
+            principal_id=self.principal_id,
+            grant_id=self.grant_id,
+            authorizing_identity=self.authorizing_identity,
+        )
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> LedgerEntry:
@@ -171,6 +200,9 @@ class LedgerEntry:
             cache_write_tokens=int(d.get("cache_write_tokens", 0) or 0),
             cost_usd=float(d.get("cost_usd", 0.0) or 0.0),
             quota_envelope=str(d.get("quota_envelope") or tags.get("quota_envelope") or "subscription"),
+            principal_id=str(d.get("principal_id") or tags.get("principal_id") or ""),
+            grant_id=str(d.get("grant_id") or tags.get("grant_id") or ""),
+            authorizing_identity=str(d.get("authorizing_identity") or tags.get("authorizing_identity") or ""),
             tags=tags,
         )
 
@@ -269,6 +301,9 @@ class SpendLedger:
             cache_write_tokens=cache_write_tokens,
             cost_usd=cost,
             quota_envelope=envelope,
+            principal_id=tags.principal_id,
+            grant_id=tags.grant_id,
+            authorizing_identity=tags.authorizing_identity,
             tags=merged,
         )
 
@@ -281,6 +316,8 @@ class SpendLedger:
             self._spent_by["role"][tags.role or "unknown"] += cost
             self._spent_by["model"][model or "unknown"] += cost
             self._spent_by["envelope"][envelope] += cost
+            for dimension in ATTRIBUTION_DIMENSIONS:
+                self._spent_by[dimension][entry.attribution().key(dimension)] += cost
             if tags.feature_label:
                 self._spent_by["feature_label"][tags.feature_label] += cost
             status = self._status_locked()
@@ -320,7 +357,7 @@ class SpendLedger:
         )
 
     def totals_by(self, dimension: str) -> dict[str, float]:
-        """Return cost-by-dimension totals (``task|agent|role|model|feature_label``).
+        """Return cost-by-dimension totals (``task|agent|role|model|feature_label|principal|grant``).
 
         Unknown dimensions return an empty dict so callers can probe
         without raising. ``task|agent|role|model`` are always populated
@@ -471,7 +508,9 @@ def aggregate_entries(
     """Group ledger entries by *dimension*; return per-bucket totals.
 
     Supported dimensions: ``task``, ``agent``, ``role``, ``model``,
-    ``feature_label``, ``day``. Unknown dimensions return ``{}``.
+    ``feature_label``, ``envelope``, ``day``, plus the attribution
+    dimensions ``principal``, ``grant`` and ``authorizing_identity``
+    (issue #4985). Unknown dimensions return ``{}``.
 
     Each bucket contains ``cost_usd``, ``calls``, ``input_tokens``,
     ``output_tokens``. Buckets are not pre-sorted - that's the
@@ -493,11 +532,13 @@ def aggregate_entries(
             return e.feature_label or "unknown"
         if dimension == "envelope":
             return e.quota_envelope or "subscription"
+        if dimension in ATTRIBUTION_DIMENSIONS:
+            return e.attribution().key(dimension)
         if dimension == "day":
             return datetime.fromtimestamp(e.ts, tz=UTC).strftime("%Y-%m-%d") if e.ts > 0 else "unknown"
         return ""
 
-    if dimension not in {"task", "agent", "role", "model", "feature_label", "envelope", "day"}:
+    if dimension not in {"task", "agent", "role", "model", "feature_label", "envelope", "day", *ATTRIBUTION_DIMENSIONS}:
         return {}
 
     out: dict[str, dict[str, Any]] = defaultdict(

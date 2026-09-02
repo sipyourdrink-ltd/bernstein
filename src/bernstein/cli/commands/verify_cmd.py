@@ -1598,3 +1598,114 @@ def verify_ladder_cmd(receipt_hash: str, workdir: str) -> None:
     console.print(f"  [red]![/red] {result.reason}")
     console.print()
     raise SystemExit(2)
+
+
+@verify_cmd.command("pins")
+@click.option(
+    "--manifest",
+    "manifest_path",
+    required=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Install-wide pin manifest listing every plugin and skill this install may load.",
+)
+@click.option(
+    "--loaded",
+    "loaded_path",
+    required=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="JSON list of the resolved components: kind, name, version, content_hash, source.",
+)
+@click.option(
+    "--environment",
+    "environment",
+    default=None,
+    help="Environment whose allowed_sources gate the loaded sources. Omit to skip the source check.",
+)
+@click.option(
+    "--json", "as_json", is_flag=True, default=False, help="Emit the drift list as JSON alongside the exit code."
+)
+def verify_pins_cmd(
+    manifest_path: Path,
+    loaded_path: Path,
+    environment: str | None,
+    as_json: bool,
+) -> None:
+    """Verify the loaded plugin/skill set against the pin manifest.
+
+    The manifest is a governed allow-list: each entry names an exact
+    version, a content address, and the source it may come from. Every
+    divergence is printed -- presence in either direction, version,
+    content hash, and a source the environment does not allow -- so one
+    run names all of them rather than the first.
+
+    \b
+    Exit codes:
+      0  every loaded component matches its pin
+      1  the manifest or the loaded set could not be read
+      2  at least one entry drifted
+    """
+    from bernstein.core.plugins_core.plugin_pin_manifest import (
+        PinManifestError,
+        load_pin_manifest,
+        loaded_components_from_json,
+        verify_pinned_set,
+    )
+
+    try:
+        manifest = load_pin_manifest(manifest_path)
+        loaded = loaded_components_from_json(_json.loads(loaded_path.read_text(encoding="utf-8")))
+    except PinManifestError as exc:
+        for err in exc.errors:
+            console.print(f"[red]![/red] {err}")
+        raise SystemExit(1) from None
+    except (OSError, _json.JSONDecodeError) as exc:
+        console.print(f"[red]Failed to read the loaded set: {exc}[/red]")
+        raise SystemExit(1) from None
+
+    result = verify_pinned_set(manifest, loaded, environment=environment)
+
+    if as_json:
+        console.print_json(
+            data={
+                "ok": result.ok,
+                "manifest_hash": manifest.manifest_hash(),
+                "checked": result.checked,
+                "drifts": [
+                    {
+                        "kind": d.kind,
+                        "name": d.name,
+                        "reason": d.reason,
+                        "expected": d.expected,
+                        "actual": d.actual,
+                    }
+                    for d in result.drifts
+                ],
+            }
+        )
+        raise SystemExit(result.exit_code)
+
+    console.print()
+    if result.ok:
+        console.print(
+            Panel(
+                "[bold green]Pin manifest: VERIFIED[/bold green]",
+                border_style="green",
+                expand=False,
+            )
+        )
+        console.print(f"  [dim]{result.checked} component(s) match manifest {manifest.manifest_hash()}[/dim]")
+        console.print()
+        raise SystemExit(0)
+
+    for line in result.render_lines():
+        console.print(f"  [red]![/red] {line}", overflow="fold", soft_wrap=False)
+    console.print()
+    console.print(
+        Panel(
+            f"[bold red]Pin manifest: DRIFTED ({len(result.drifts)} entry/entries)[/bold red]",
+            border_style="red",
+            expand=False,
+        )
+    )
+    console.print()
+    raise SystemExit(result.exit_code)

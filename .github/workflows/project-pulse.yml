@@ -1,0 +1,147 @@
+name: Project pulse
+
+# Publish a weekly, public snapshot of this repository's health into ONE
+# rolling issue, so a prospective contributor can answer "if I open a PR
+# here, will it be reviewed?" without reading the tracker.
+#
+# What it publishes (and does not):
+#   * Ten aggregates, every one of them derivable from the public GitHub API
+#     or this repository's own tree. The exact list is the allow-list comment
+#     block at the top of scripts/project_pulse.py; nothing outside it is
+#     collected or rendered.
+#   * Counts, never people. No individual logins, no e-mail addresses, no
+#     per-person ranking, no commit-hour histograms. Contributions are
+#     bucketed into outside / maintainer / automation and reported as counts,
+#     with a unit test asserting the rendered page names no account.
+#   * The aggregation and rendering live in scripts/project_pulse.py
+#     (unit-tested, deterministic) so a re-run produces a byte-identical body
+#     and the weekly upsert does not thrash the issue.
+#
+# Fails closed: `collect` exits non-zero and writes no file if any API call
+# fails, so a broken query can never publish zeros that read as a quiet week.
+# The publish step only runs on a successful collection.
+#
+# Rolling, not proliferating: exactly one issue titled "Project pulse
+# (weekly)" is created on the first run and edited in place afterwards. It is
+# labelled `docs` and deliberately not pinned.
+#
+# The rendered page is also uploaded as a workflow artifact. Nothing is
+# committed to the repository: the page is generated output, and a workflow
+# that pushes to main to publish a report is a merge-queue hazard for no gain.
+
+on:
+  schedule:
+    # Monday 09:19 UTC -- after the weekend rollover, off the crowded 03:00 -
+    # 08:00 band the nightly and weekly jobs already occupy.
+    - cron: "19 9 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: project-pulse
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  pulse:
+    name: Collect and publish the project pulse
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout (for the collector and the in-repo metrics)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # The adapter count reads the live registry and the translation count
+      # shells out to `bernstein readme-l10n verify`, so the collector needs
+      # the project environment rather than a bare interpreter. Both sources
+      # are offline; only the GitHub queries touch the network.
+      - uses: ./.github/actions/bootstrap
+
+      - name: Collect (fails closed on any API error)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          uv run python scripts/project_pulse.py collect \
+            --repo "${REPO}" \
+            --out pulse.json \
+            --repo-root .
+
+      - name: Render the page
+        run: |
+          set -euo pipefail
+          uv run python scripts/project_pulse.py render pulse.json > project-pulse.md
+          # A renderer that produced an empty page would otherwise blank the
+          # issue body in place, which reads as "the project died" rather than
+          # "the render broke".
+          test -s project-pulse.md
+
+      - name: Upsert the rolling pulse issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TITLE: Project pulse (weekly)
+        run: |
+          set -euo pipefail
+
+          # Strict title match on an exact-title search: a substring match
+          # could adopt an unrelated issue and overwrite someone's report.
+          EXISTING=$(gh issue list --repo "${REPO}" --state open \
+            --search "in:title \"${TITLE}\"" \
+            --limit 100 \
+            --json number,title \
+            --jq ".[] | select(.title == env.TITLE) | .number" \
+            | head -1)
+
+          if [ -n "${EXISTING}" ]; then
+            echo "Updating existing pulse issue #${EXISTING}"
+            gh issue edit "${EXISTING}" --repo "${REPO}" --body-file project-pulse.md
+            PULSE_NUMBER="${EXISTING}"
+          else
+            echo "Creating the pulse issue"
+            # Probe the label rather than retrying a failed create: a blind
+            # `create --label docs || create` retries on any failure -- a
+            # transport error that already created the issue included -- and
+            # can open a duplicate.
+            LABELS=$(gh label list --repo "${REPO}" --limit 200 --json name --jq '.[].name')
+            if grep -qxF "docs" <<<"${LABELS}"; then
+              PULSE_URL=$(gh issue create --repo "${REPO}" \
+                --title "${TITLE}" \
+                --body-file project-pulse.md \
+                --label "docs")
+            else
+              PULSE_URL=$(gh issue create --repo "${REPO}" \
+                --title "${TITLE}" \
+                --body-file project-pulse.md)
+            fi
+            PULSE_NUMBER=$(basename "${PULSE_URL}")
+          fi
+
+          {
+            echo "### Project pulse"
+            echo ""
+            echo "- Pulse issue: #${PULSE_NUMBER}"
+            echo ""
+            cat project-pulse.md
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload the rendered page and its inputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: project-pulse
+          path: |
+            project-pulse.md
+            pulse.json
+          if-no-files-found: error
+          retention-days: 90

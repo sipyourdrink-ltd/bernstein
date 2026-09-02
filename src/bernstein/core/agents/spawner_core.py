@@ -381,6 +381,13 @@ def extract_error_aware_reason(log_text: str, max_chars: int = _FAILURE_REASON_M
 # straight into its cwd (issue #2793).
 _WRITE_BOUNDARY_ROLES = frozenset({"manager"})
 
+# Why a token recorded in a spawn-capability manifest was not part of the
+# chain handed to ``CapabilityRegistry.evaluate_chain``.  The manifest is
+# the artefact an auditor reads, so the held-out set carries its reason
+# rather than leaving it to be inferred from absence (issue #5052).
+_HELD_OUT_OUTER_ENVELOPE = "outer-envelope"
+_HELD_OUT_UNDECLARED = "undeclared-tool"
+
 
 def manager_write_boundary_error(
     role: str,
@@ -2270,6 +2277,27 @@ class AgentSpawner:
         declared_only = [t for t in catalog_tools if t in registry.tools]
         decision = registry.evaluate_chain(declared_only)
 
+        # The recorded chain is wider than the evaluated one: the adapter
+        # envelope is never fed to the gate (every adapter row carries all
+        # three capabilities, so it would deny every spawn) and undeclared
+        # catalog tools are dropped for the reason above.  Both omissions
+        # are deliberate, but a reader of the manifest must not have to
+        # infer them from absence - record each held-out token with why it
+        # was held out, and keep the evaluated set byte-equal to the chain
+        # the decision actually saw.
+        held_out: list[dict[str, str]] = []
+        accounted: set[str] = set(declared_only)
+        for token in chain:
+            if token in accounted:
+                continue
+            accounted.add(token)
+            held_out.append(
+                {
+                    "tool": token,
+                    "reason": (_HELD_OUT_OUTER_ENVELOPE if token == adapter_token else _HELD_OUT_UNDECLARED),
+                }
+            )
+
         runtime_dir = self._workdir / ".sdd" / "runtime" / "spawn_capabilities"
         try:
             runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -2278,7 +2306,8 @@ class AgentSpawner:
                 "role": role,
                 "timestamp": datetime.now(UTC).isoformat(),
                 "tools": chain,
-                "evaluated": catalog_tools,
+                "evaluated": list(declared_only),
+                "held_out": held_out,
                 "triggered": sorted(c.value for c in decision.triggered),
                 "allowed": decision.allowed,
                 "reason": decision.reason,

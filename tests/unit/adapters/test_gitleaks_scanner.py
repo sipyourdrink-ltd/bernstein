@@ -234,3 +234,20 @@ def test_conformance_replays_two_identical_gitleaks_runs(tmp_path: Path) -> None
     assert result.adapter_name == "gitleaks"
     assert result.determinism_tier is DeterminismTier.DETERMINISTIC
     assert sum(call.args[0][1] == "dir" for call in run.call_args_list) == 2
+
+
+def test_scan_result_carries_the_invocation_digest(tmp_path: Path) -> None:
+    """The digest on the returned object is the one the adapter recorded (#5151)."""
+    target = tmp_path / "target"
+    target.mkdir()
+    adapter = GitleaksAdapter(config_path=_CONFIG)
+
+    with (
+        patch("bernstein.adapters.gitleaks.shutil.which", return_value="/usr/local/bin/gitleaks"),
+        patch("bernstein.adapters.gitleaks.subprocess.run", side_effect=_fake_gitleaks_run),
+    ):
+        result = adapter.scan(target, ScanScope(roots=(target,)), tmp_path / "work")
+
+    assert adapter.last_invocation is not None
+    assert result.invocation_digest == adapter.last_invocation.argv_hash
+    assert result.invocation_digest != ""
