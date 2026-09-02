@@ -363,10 +363,6 @@ class ReconcileDiff:
             "v": RECONCILE_SCHEMA_VERSION,
         }
 
-    def to_canonical_bytes(self) -> bytes:
-        """Serialize the diff to canonical JSON bytes."""
-        return _canonical_bytes(self.to_dict())
-
 
 __all__ = [
     "RECONCILE_SCHEMA_VERSION",

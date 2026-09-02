@@ -301,6 +301,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein mandate emit/verify/revoke`](../operations/spending-mandates.md) | Full | 3 | Bind, prove, and revoke authorized-action mandates |
 | `bernstein payment-mandate issue/show/spend` | Full | 3 | Issue and spend against authorized-spend mandates with signed receipts |
 | [`bernstein governance verify`](../operations/governance.md) | Full | 3 | Recompute access and budget verdicts for a run |
+| [`bernstein govern reconcile`](../operations/governance.md) | Full | 3 | Diff the adapter / lane / schedule / capability surface against a desired-state document and record it |
 | [`bernstein webhook verify`](../operations/webhook-node.md) | Full | 3 | Recompute inbound-event and outbound webhook-node hashes |
 | [`bernstein review-receipt emit/verify`](../operations/review-receipts.md) | Full | 3 | Bind and offline-verify PR review receipts (issue + plan + tool calls + diff) |
 | [`bernstein receipt create/verify`](receipt.md) | Full | 3 | Sign a result receipt bundle from a JSON spec and verify one offline, naming the exact field that diverged |
