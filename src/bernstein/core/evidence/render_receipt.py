@@ -1,9 +1,34 @@
-"""Render receipt schema for UI snapshot verification (issue #2362).
+"""Render receipt schema and delta algebra for UI snapshots (issues #2362, #3276).
 
 A render receipt captures the deterministic output of a UI render pass:
 environment metadata, layout geometry, computed styles, and accessibility
 tree. The receipt is sealed via sorted-JSON canonical bytes hashed with
 SHA-256, enabling reproducible comparisons across renders.
+
+Determinism
+-----------
+
+The canonical projection sorts and deduplicates every observation sequence, so
+two captures that saw the same layout boxes, computed styles and accessibility
+nodes hash identically no matter what order the probe walked the tree in. A
+receipt whose hash depends on walk order cannot be compared across two
+worktrees, because nothing forces two walks to agree on order.
+
+Comparison
+----------
+
+:func:`render_delta` is a pure function of two receipts. It returns either a
+sorted tuple of named ``(route, viewport, declared_state, element_path,
+property, before, after)`` deltas, or an explicit *incomparable* result naming
+the receipt field that made the two captures non-comparable -- a differing
+environment descriptor hash, a different route or declared state, a different
+schema or property-vocabulary version, an undeclared environment, or a receipt
+that declares two values for one element property.
+
+Incomparability is a distinct outcome, not an empty delta set. A caller that
+read an incomparable comparison as "nothing changed" would be asserting a
+property that was never checked, which is exactly the claim the receipt exists
+to make falsifiable.
 """
 
 from __future__ import annotations
@@ -12,7 +37,10 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 #: Sentinel epoch for default clock_value when none is supplied.
 _EPOCH_UTC = datetime(1970, 1, 1, tzinfo=timezone.utc)  # noqa: UP017
@@ -27,8 +55,11 @@ __all__ = [
     "ComputedStyle",
     "EnvironmentDescriptor",
     "LayoutBox",
+    "RenderDelta",
+    "RenderObservationDelta",
     "RenderReceipt",
     "Viewport",
+    "render_delta",
 ]
 
 
@@ -50,6 +81,26 @@ def _canonical_bytes(payload: dict[str, Any]) -> bytes:
 def _sha256_hex(data: bytes) -> str:
     """Return the ``sha256:``-prefixed hex digest of ``data``."""
     return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def _canonical_rows(rows: Iterable[Any]) -> list[dict[str, Any]]:
+    """Return the canonical projection of an observation sequence.
+
+    Rows are serialised, deduplicated by their canonical bytes and sorted by
+    those bytes, so the projection depends only on the set of observations and
+    not on the order the probe emitted them in.
+
+    Args:
+        rows: Observation dataclasses exposing ``to_dict()``.
+
+    Returns:
+        The sorted, deduplicated list of observation dicts.
+    """
+    by_bytes: dict[bytes, dict[str, Any]] = {}
+    for row in rows:
+        payload = row.to_dict()
+        by_bytes.setdefault(_canonical_bytes(payload), payload)
+    return [by_bytes[key] for key in sorted(by_bytes)]
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +180,15 @@ class EnvironmentDescriptor:
             "reduced_motion": self.reduced_motion,
             "colour_scheme": self.colour_scheme,
         }
+
+    def descriptor_hash(self) -> str:
+        """Return the ``sha256:`` digest of the canonical descriptor bytes.
+
+        Two receipts are only comparable when this value agrees. It is the
+        check that makes a delta set mean "the rendered state changed" rather
+        than "the two captures ran under different conditions".
+        """
+        return _sha256_hex(_canonical_bytes(self.to_dict()))
 
     @classmethod
     def from_dict(cls, row: dict[str, Any]) -> EnvironmentDescriptor:
@@ -349,9 +409,9 @@ class RenderReceipt:
             "route": self.route,
             "viewport": self.viewport.to_dict(),
             "declared_state": self.declared_state,
-            "layout_tree": [box.to_dict() for box in self.layout_tree],
-            "computed_styles": [style.to_dict() for style in self.computed_styles],
-            "accessibility_tree": [node.to_dict() for node in self.accessibility_tree],
+            "layout_tree": _canonical_rows(self.layout_tree),
+            "computed_styles": _canonical_rows(self.computed_styles),
+            "accessibility_tree": _canonical_rows(self.accessibility_tree),
             "property_vocabulary_version": self.property_vocabulary_version,
         }
         if self.environment is not None:
@@ -423,3 +483,280 @@ class RenderReceipt:
             unstable_properties=unstable_properties,
             property_vocabulary_version=str(row.get("property_vocabulary_version", "")),
         )
+
+
+# ---------------------------------------------------------------------------
+# Delta algebra (issue #3276)
+# ---------------------------------------------------------------------------
+
+
+#: Namespace prefixes keeping the three observation trees from colliding on a
+#: shared element path. The ``property`` field stays an opaque string here; the
+#: property-class taxonomy is left to the step that has a real capture to
+#: constrain it.
+_LAYOUT_NS = "layout"
+_STYLE_NS = "style"
+_A11Y_NS = "a11y"
+_UNSTABLE_NS = "unstable"
+
+
+class _ObservationConflict(Exception):
+    """One receipt declares two values for a single element property.
+
+    Raised while flattening and turned into an incomparable result. A receipt
+    that disagrees with itself cannot be one side of a comparison, and picking
+    a winner would make the delta set depend on emission order.
+    """
+
+    def __init__(self, element_path: str, prop: str) -> None:
+        super().__init__(f"receipt declares conflicting values for {element_path!r} property {prop!r}")
+        self.element_path = element_path
+        self.property = prop
+
+
+def _scalar(value: Any) -> str:
+    """Render one observation value as a canonical string."""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _flatten_observations(receipt: RenderReceipt) -> dict[tuple[str, str], str]:
+    """Flatten a receipt's three trees into ``(element_path, property)`` values.
+
+    Args:
+        receipt: The receipt to project.
+
+    Returns:
+        Mapping of ``(element_path, namespaced property)`` to canonical value.
+
+    Raises:
+        _ObservationConflict: When the receipt declares two different values
+            for one element property.
+    """
+    observed: dict[tuple[str, str], str] = {}
+
+    def record(element_path: str, prop: str, value: Any) -> None:
+        key = (element_path, prop)
+        rendered = _scalar(value)
+        previous = observed.get(key)
+        if previous is not None and previous != rendered:
+            raise _ObservationConflict(element_path, prop)
+        observed[key] = rendered
+
+    for box in receipt.layout_tree:
+        record(box.element_path, f"{_LAYOUT_NS}.border_box", list(box.border_box))
+        record(box.element_path, f"{_LAYOUT_NS}.content_box", list(box.content_box))
+        record(box.element_path, f"{_LAYOUT_NS}.scroll_extent", list(box.scroll_extent))
+        record(box.element_path, f"{_LAYOUT_NS}.stacking_order", box.stacking_order)
+        record(box.element_path, f"{_LAYOUT_NS}.paint_order", box.paint_order)
+
+    for style in receipt.computed_styles:
+        for prop, value in style.properties.items():
+            record(style.element_path, f"{_STYLE_NS}.{prop}", value)
+
+    for node in receipt.accessibility_tree:
+        record(node.element_path, f"{_A11Y_NS}.role", node.role)
+        record(node.element_path, f"{_A11Y_NS}.name", node.name)
+        for state_key, state_value in node.state.items():
+            record(node.element_path, f"{_A11Y_NS}.state.{state_key}", state_value)
+
+    for prop, value in receipt.unstable_properties.items():
+        record("", f"{_UNSTABLE_NS}.{prop}", value)
+
+    return observed
+
+
+@dataclass(frozen=True, slots=True)
+class RenderObservationDelta:
+    """One named property change between two render receipts.
+
+    Attributes:
+        route: Route both receipts were captured on.
+        viewport: Viewport both receipts were captured at.
+        declared_state: Declared application state both receipts were captured in.
+        element_path: Path of the element whose property changed.
+        property: Namespaced property name, e.g. ``style.color``.
+        before: Value in the base receipt, or ``None`` when the observation
+            appeared only in the head receipt.
+        after: Value in the head receipt, or ``None`` when the observation
+            disappeared.
+    """
+
+    route: str = ""
+    viewport: Viewport = field(default_factory=Viewport)
+    declared_state: str = ""
+    element_path: str = ""
+    property: str = ""
+    before: str | None = None
+    after: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert the delta to a dict."""
+        return {
+            "route": self.route,
+            "viewport": self.viewport.to_dict(),
+            "declared_state": self.declared_state,
+            "element_path": self.element_path,
+            "property": self.property,
+            "before": self.before,
+            "after": self.after,
+        }
+
+    @classmethod
+    def from_dict(cls, row: dict[str, Any]) -> RenderObservationDelta:
+        """Construct a delta from a dict."""
+        before = row.get("before")
+        after = row.get("after")
+        return cls(
+            route=str(row.get("route", "")),
+            viewport=Viewport.from_dict(row.get("viewport", {})),
+            declared_state=str(row.get("declared_state", "")),
+            element_path=str(row.get("element_path", "")),
+            property=str(row.get("property", "")),
+            before=None if before is None else str(before),
+            after=None if after is None else str(after),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RenderDelta:
+    """The outcome of comparing two render receipts.
+
+    Exactly one of two shapes. A *comparable* result carries an empty
+    ``incomparable_reason`` and a sorted, possibly empty tuple of deltas. An
+    *incomparable* result carries a reason naming the field responsible and no
+    deltas at all, so it can never be read as "nothing changed".
+
+    Attributes:
+        base_descriptor_hash: Environment descriptor hash of the base receipt,
+            empty when the base declared no environment.
+        head_descriptor_hash: Environment descriptor hash of the head receipt,
+            empty when the head declared no environment.
+        incomparable_reason: Why the two receipts were not compared; empty when
+            they were.
+        deltas: Sorted named property changes; always empty when incomparable.
+    """
+
+    base_descriptor_hash: str = ""
+    head_descriptor_hash: str = ""
+    incomparable_reason: str = ""
+    deltas: tuple[RenderObservationDelta, ...] = ()
+
+    @property
+    def is_incomparable(self) -> bool:
+        """Whether the two receipts were rejected as non-comparable."""
+        return bool(self.incomparable_reason)
+
+    @property
+    def is_clean(self) -> bool:
+        """Whether the two receipts were compared and agreed on every property."""
+        return not self.incomparable_reason and not self.deltas
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert the comparison outcome to a dict."""
+        return {
+            "base_descriptor_hash": self.base_descriptor_hash,
+            "head_descriptor_hash": self.head_descriptor_hash,
+            "incomparable_reason": self.incomparable_reason,
+            "deltas": [delta.to_dict() for delta in self.deltas],
+        }
+
+    @classmethod
+    def from_dict(cls, row: dict[str, Any]) -> RenderDelta:
+        """Construct a comparison outcome from a dict."""
+        return cls(
+            base_descriptor_hash=str(row.get("base_descriptor_hash", "")),
+            head_descriptor_hash=str(row.get("head_descriptor_hash", "")),
+            incomparable_reason=str(row.get("incomparable_reason", "")),
+            deltas=tuple(
+                d if isinstance(d, RenderObservationDelta) else RenderObservationDelta.from_dict(d)
+                for d in cast("Iterable[Any]", row.get("deltas", ()))
+            ),
+        )
+
+
+def _incomparability_reason(base: RenderReceipt, head: RenderReceipt) -> str:
+    """Return why ``base`` and ``head`` cannot be compared, or an empty string."""
+    if base.environment is None or head.environment is None:
+        return "environment not declared on both receipts"
+
+    for label, base_value, head_value in (
+        ("version", base.version, head.version),
+        ("route", base.route, head.route),
+        ("viewport", base.viewport, head.viewport),
+        ("declared_state", base.declared_state, head.declared_state),
+        (
+            "property_vocabulary_version",
+            base.property_vocabulary_version,
+            head.property_vocabulary_version,
+        ),
+    ):
+        if base_value != head_value:
+            return f"{label} differs: {base_value!r} != {head_value!r}"
+
+    base_hash = base.environment.descriptor_hash()
+    head_hash = head.environment.descriptor_hash()
+    if base_hash != head_hash:
+        return f"environment descriptor hash differs: {base_hash} != {head_hash}"
+
+    return ""
+
+
+def render_delta(base: RenderReceipt, head: RenderReceipt) -> RenderDelta:
+    """Compare two render receipts property by property.
+
+    Args:
+        base: Receipt captured from the merge base.
+        head: Receipt captured from the head, under the same declared
+            environment.
+
+    Returns:
+        A :class:`RenderDelta` carrying the sorted named property changes, or an
+        incomparable result naming the field that made the comparison invalid.
+        The function performs no I/O and consults nothing outside its arguments,
+        so a verifier re-derives the same result from receipt bytes alone.
+    """
+    base_hash = base.environment.descriptor_hash() if base.environment is not None else ""
+    head_hash = head.environment.descriptor_hash() if head.environment is not None else ""
+
+    def rejected(reason: str) -> RenderDelta:
+        return RenderDelta(
+            base_descriptor_hash=base_hash,
+            head_descriptor_hash=head_hash,
+            incomparable_reason=reason,
+        )
+
+    mismatch = _incomparability_reason(base, head)
+    if mismatch:
+        return rejected(mismatch)
+
+    try:
+        base_observations = _flatten_observations(base)
+        head_observations = _flatten_observations(head)
+    except _ObservationConflict as conflict:
+        return rejected(str(conflict))
+
+    deltas: list[RenderObservationDelta] = []
+    for element_path, prop in sorted(set(base_observations) | set(head_observations)):
+        before = base_observations.get((element_path, prop))
+        after = head_observations.get((element_path, prop))
+        if before == after:
+            continue
+        deltas.append(
+            RenderObservationDelta(
+                route=head.route,
+                viewport=head.viewport,
+                declared_state=head.declared_state,
+                element_path=element_path,
+                property=prop,
+                before=before,
+                after=after,
+            )
+        )
+
+    return RenderDelta(
+        base_descriptor_hash=base_hash,
+        head_descriptor_hash=head_hash,
+        deltas=tuple(deltas),
+    )
