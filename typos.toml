@@ -106,6 +106,17 @@ extend-exclude = [
     # excluded; the human-authored builder script beside them stays in scope.
     "tests/fixtures/trust-record-vectors/*.json",
     "tests/fixtures/trust-record-vectors/*.pem",
+    # Auditor conformance fixture - the recorded run's exported bundle.
+    # Same content profile as the vectors above: the receipts carry a
+    # base64url Ed25519 JWK and detached signatures, and the scanner reads
+    # slices of the key ("Ahd" inside the public key's x coordinate) as
+    # words. The bytes are a signature over the run, so a spelling fix is
+    # not possible: editing one character invalidates the receipt the
+    # offline verification vector checks. The whole tree is machine-made -
+    # `scripts/auditor_conformance.py regenerate` rewrites it by re-running
+    # the scenario - so an edit here would be reverted by the next
+    # regeneration. The human-authored README beside it stays in scope.
+    "tests/conformance/auditor/fixture/**",
     # Vite-built SPA bundle - minified JS / sourcemaps mangle identifiers to
     # 1–2 chars (``ue``, ``ot``, ``Iy``, ``Archtype``, etc.) that trigger
     # thousands of false-positive typo errors and bury real findings. Human-
