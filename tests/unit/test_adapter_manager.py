@@ -18,6 +18,11 @@ if TYPE_CHECKING:
     from bernstein.adapters.base import CLIAdapter
 
 
+# Above every platform's pid ceiling, so the reap path can probe it with a
+# signal-0 existence check and always observe nothing.
+_UNUSED_PGID = 4_000_000
+
+
 def _make_popen_mock(pid: int) -> MagicMock:
     m = MagicMock(spec=subprocess.Popen)
     m.pid = pid
@@ -186,6 +191,23 @@ class TestKill:
         assert receipt is expected
         assert receipt.pgid == 100
         mock_reap.assert_called_once_with(100)
+
+    def test_undeliverable_stop_is_reported_not_raised(self) -> None:
+        """A stop that cannot be delivered comes back as a receipt, not an exception.
+
+        The previous ``ManagerAdapter.kill`` swallowed a failed
+        ``kill_process_group`` and returned nothing.  The inherited reap path
+        keeps the "must not raise" half of that behaviour and replaces the
+        silent half: the failure is now stated on the receipt.
+        """
+        adapter: CLIAdapter = ManagerAdapter()
+
+        with patch("bernstein.core.platform_compat.kill_process_group", return_value=False):
+            receipt = adapter.kill(_UNUSED_PGID)
+
+        assert receipt.pgid == _UNUSED_PGID
+        assert receipt.delivered is False
+        assert receipt.escalated is False
 
 
 # ---------------------------------------------------------------------------
