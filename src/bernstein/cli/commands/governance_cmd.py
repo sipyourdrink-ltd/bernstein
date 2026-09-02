@@ -735,3 +735,7 @@ def governance_alias_cmd(ctx: click.Context) -> None:
 
 for _name, _cmd in govern_group.commands.items():
     governance_alias_cmd.add_command(_cmd, _name)
+
+
+# Alias so tests can import governance_group as well
+governance_group = govern_group
