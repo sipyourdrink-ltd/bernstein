@@ -15,8 +15,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-_DECISIONS = Path(__file__).resolve().parents[2] / "docs" / "decisions"
+_ROOT = Path(__file__).resolve().parents[2]
+_DECISIONS = _ROOT / "docs" / "decisions"
 _INDEX = _DECISIONS / "index.md"
+_MKDOCS = _ROOT / "mkdocs.yml"
 
 _RECORD_NAME = re.compile(r"^(\d{3})-[a-z0-9-]+\.md$")
 _STATUS = re.compile(r"^\*\*Status\*\*:\s*(?P<value>.+?)\s*$", re.MULTILINE)
@@ -52,7 +54,7 @@ def test_every_decision_record_declares_status_and_date() -> None:
     The reader's first question is "does this still hold, and since when".
     """
     missing: list[str] = []
-    for number, path in sorted(_records().items()):
+    for path in sorted(_records().values()):
         text = path.read_text(encoding="utf-8")
         status = _header_field(text, _STATUS)
         date = _header_field(text, _DATE)
@@ -62,10 +64,7 @@ def test_every_decision_record_declares_status_and_date() -> None:
             missing.append(f"{path.name}: no '**Date**:' line")
         elif not _ISO_DATE.match(date):
             missing.append(f"{path.name}: '**Date**: {date}' is not YYYY-MM-DD")
-        del number
-    assert missing == [], "decision records must carry a status and an ISO date:\n" + "\n".join(
-        missing
-    )
+    assert missing == [], "decision records must carry a status and an ISO date:\n" + "\n".join(missing)
 
 
 def test_decision_record_numbering_has_no_unexplained_gap() -> None:
@@ -108,8 +107,7 @@ def test_a_superseded_record_names_a_successor_that_exists() -> None:
         elif successor == number:
             broken.append(f"{path.name}: names itself as its successor")
     assert broken == [], (
-        "a superseded record must read 'Superseded by ADR-NNN' and point at a "
-        "record that exists:\n" + "\n".join(broken)
+        "a superseded record must read 'Superseded by ADR-NNN' and point at a record that exists:\n" + "\n".join(broken)
     )
 
 
@@ -129,6 +127,20 @@ def test_index_row_exists_for_every_record_and_every_row_resolves() -> None:
     assert dangling == [], f"{_INDEX.name} links files that do not exist: {', '.join(dangling)}"
 
 
+def test_every_record_is_reachable_from_the_published_navigation() -> None:
+    """A record nobody can reach on the docs site is not published.
+
+    The nav is hand-maintained, so a new record is easy to write and easy to
+    leave off — and the omission looks identical to the record not existing.
+    """
+    nav = _MKDOCS.read_text(encoding="utf-8")
+    unlisted = sorted(path.name for path in _records().values() if f"decisions/{path.name}" not in nav)
+    assert unlisted == [], (
+        f"{_MKDOCS.name} nav does not list: {', '.join(unlisted)}; "
+        "a decision record that is not in the nav does not ship on the docs site"
+    )
+
+
 def test_issue_citations_are_well_formed_and_point_at_this_repository() -> None:
     """An ADR derived from a thread has to be traceable back to it.
 
@@ -137,7 +149,7 @@ def test_issue_citations_are_well_formed_and_point_at_this_repository() -> None:
     numbering — both read as evidence and are not.
     """
     bad: list[str] = []
-    for path in sorted(_records().values()) + [_INDEX]:
+    for path in [*sorted(_records().values()), _INDEX]:
         text = path.read_text(encoding="utf-8")
         for lineno, line in enumerate(text.splitlines(), start=1):
             for raw in _ISSUE_CITATION.findall(line):
