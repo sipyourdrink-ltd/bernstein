@@ -166,7 +166,7 @@ def test_provisioning_token_cannot_reach_any_non_provisioning_route(app: Any) ->
     principal = _ScopedPrincipal(SCIM_PERM_READ, SCIM_PERM_WRITE)
     reachable: list[tuple[str, str]] = []
 
-    for path, route in sorted(iter_route_paths(app)):
+    for path, route in sorted(iter_route_paths(app), key=lambda item: item[0]):
         if "/scim" in path:
             continue
         if path in AUTH_PUBLIC_PATHS:

@@ -18,8 +18,12 @@ if TYPE_CHECKING:
 router = APIRouter(tags=["identities"])
 
 
-def _identity_store(request: Request) -> Any:
-    """Lazily create or retrieve the identity store from app state."""
+def identity_store_for_request(request: Request) -> Any:
+    """Lazily create or retrieve the identity store from app state.
+
+    Shared with :mod:`bernstein.core.routes.scim`: the SCIM surface projects the
+    same principals this router serves, so both must read one store.
+    """
     from bernstein.core.agent_identity import AgentIdentityStore
 
     store = getattr(request.app.state, "identity_store", None)
@@ -48,7 +52,7 @@ def list_identities(
     enum by FastAPI, so an unknown value yields a ``422`` rather than
     reaching the handler and raising an unhandled ``ValueError``.
     """
-    store = _identity_store(request)
+    store = identity_store_for_request(request)
     identities = store.list_identities(status=status, role=role)
 
     return JSONResponse(
@@ -78,7 +82,7 @@ def list_identities(
 @router.get("/identities/{identity_id}", responses={404: {"description": "Identity not found"}})
 def get_identity(request: Request, identity_id: str) -> JSONResponse:
     """Get details for a single agent identity."""
-    identity = _identity_store(request).get(identity_id)
+    identity = identity_store_for_request(request).get(identity_id)
     if identity is None:
         raise HTTPException(status_code=404, detail=f"Identity {identity_id!r} not found")
 
@@ -100,7 +104,7 @@ async def revoke_identity(request: Request, identity_id: str) -> JSONResponse:
     with contextlib.suppress(Exception):
         body = await request.json()
 
-    store = _identity_store(request)
+    store = identity_store_for_request(request)
     reason = str(body.get("reason", ""))
     ok = store.revoke(identity_id, reason=reason, actor="api")
     if not ok:
@@ -116,7 +120,7 @@ async def revoke_identity(request: Request, identity_id: str) -> JSONResponse:
 @router.get("/identities/{identity_id}/audit")
 def identity_audit(request: Request, identity_id: str, limit: int = 100) -> JSONResponse:
     """Return the audit trail for an agent identity."""
-    events = _identity_store(request).get_audit_trail(identity_id, limit=limit)
+    events = identity_store_for_request(request).get_audit_trail(identity_id, limit=limit)
     return JSONResponse(
         {
             "identity_id": identity_id,
