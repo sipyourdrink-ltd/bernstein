@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bernstein-verify-envelope"
+version = "1.0.0"
+description = "Standalone auditor CLI for Bernstein authority envelopes. Verifies the principal binding, grant chain, policy decisions, evidence hashes and coverage statement without importing bernstein.*"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [{ name = "Alex Chernysh", email = "alex@alexchernysh.com" }]
+keywords = [
+    "audit",
+    "authority",
+    "delegation",
+    "compliance",
+    "ed25519",
+    "jws",
+    "jcs",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Intended Audience :: Legal Industry",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Security",
+    "Typing :: Typed",
+]
+# Hard rule: this wheel is auditor-grade. Two deps only.
+# - cryptography: Ed25519 signature verification (RFC 8037).
+# - click: argument parsing for the CLI entry-point.
+# Anything else must be vendored or re-implemented locally so the
+# air-gapped laptop install stays a single `pip install bernstein-verify-envelope`.
+dependencies = [
+    "cryptography>=50.0.0",
+    "click>=8.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[project.scripts]
+bernstein-verify-envelope = "bernstein_verify_envelope.__main__:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["bernstein_verify_envelope"]

@@ -11,10 +11,11 @@ without extra glue.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import yaml
 
@@ -50,7 +51,15 @@ from bernstein.core.security.permission_policy import (
 )
 from bernstein.core.security.policy_engine import DecisionType
 
+if TYPE_CHECKING:
+    from bernstein.core.lineage.provenance import TrustClass
+
 logger = logging.getLogger(__name__)
+
+#: Where the signed lineage log lives relative to the workspace root. The
+#: taint verdict is projected from these bytes, so a workspace that records no
+#: provenance simply has no file here and the gate skips the lookup entirely.
+_LINEAGE_LOG_RELPATH = ".sdd/lineage/log.jsonl"
 
 
 @dataclass(frozen=True)
@@ -121,6 +130,80 @@ def _always_allow_hit(
     return check_always_allow_tool(tool_name, tool_args, engine).matched
 
 
+def _operand_path(tool_args: dict[str, Any]) -> str | None:
+    """Return the artefact path *tool_args* operates on, if it names one."""
+    raw = tool_args.get("path") or tool_args.get("file_path")
+    return str(raw) if raw else None
+
+
+def _lineage_path_candidates(raw: str, root: Path) -> list[str]:
+    """Return the forms of *raw* a lineage record could be keyed on.
+
+    Lineage entries key artefacts on their repo-relative POSIX path, while
+    tool arguments routinely carry the absolute path the agent actually
+    passed. Both forms are tried so an absolute operand cannot walk past the
+    record written for its relative form.
+    """
+    candidates = [raw]
+    path = Path(raw)
+    if path.is_absolute():
+        # A ValueError means the operand lies outside the workspace, so no
+        # repo-relative form exists and only the raw path is worth trying.
+        with contextlib.suppress(ValueError):
+            candidates.append(path.relative_to(root).as_posix())
+    return candidates
+
+
+def _derived_trust(tool_args: dict[str, Any], workdir: Path | None) -> TrustClass | None:
+    """Resolve the operand's effective trust class from the signed lineage log.
+
+    The verdict is the deterministic taint projection of
+    :func:`~bernstein.core.lineage.provenance.taint_for_artefact` over the
+    operand's lineage closure, so two verifiers holding the same log compute
+    the same answer with no live process.
+
+    Returns ``None`` -- meaning "no provenance evidence", not "trusted" --
+    whenever the call names no operand, the workspace records no lineage, or
+    the operand is absent from the log. That distinction is load-bearing:
+    ``taint_for_artefact`` fails closed and reports an unknown path as
+    ``public``/tainted, so forwarding an unresolved verdict would downgrade
+    every auto-approval in every workspace that does not record provenance and
+    make the classifier's APPROVE verdict meaningless. Only a *resolved*
+    verdict is evidence, and it can only tighten the decision.
+    """
+    raw = _operand_path(tool_args)
+    if raw is None:
+        return None
+    root = workdir if workdir is not None else Path.cwd()
+    log_path = root / _LINEAGE_LOG_RELPATH
+    if not log_path.exists():
+        return None
+
+    # Imported lazily so the approval hot path does not pull in the lineage
+    # subsystem for workspaces that record no provenance.
+    from bernstein.core.lineage.provenance import (
+        load_entries_from_log,
+        taint_for_artefact,
+    )
+
+    try:
+        entries = load_entries_from_log(log_path)
+        for candidate in _lineage_path_candidates(raw, root):
+            verdict = taint_for_artefact(candidate, entries)
+            if verdict.resolved:
+                return verdict.trust
+    except Exception as exc:  # pragma: no cover - defensive
+        # An unreadable log yields no evidence, which leaves the classifier
+        # verdict exactly as it was before taint was consulted. It never
+        # loosens a decision, so degrading here cannot open the gate.
+        logger.warning(
+            "Could not resolve lineage taint for %s: %s -- proceeding without provenance",
+            raw,
+            exc,
+        )
+    return None
+
+
 def _policy_reject(
     *,
     session_id: str,
@@ -146,7 +229,7 @@ def _policy_reject(
     checker = PolicyChecker(effective)
     call = ToolCall(
         tool=tool_name,
-        path=tool_args.get("path") or tool_args.get("file_path"),
+        path=_operand_path(tool_args),
         host=tool_args.get("host") or tool_args.get("url_host"),
         shell_cmd=tool_args.get("command") or tool_args.get("shell_cmd"),
         session_id=session_id,
@@ -163,7 +246,11 @@ def _policy_reject(
     return None
 
 
-def _classify(tool_name: str, tool_args: dict[str, Any]) -> ClassifierResult:
+def _classify(
+    tool_name: str,
+    tool_args: dict[str, Any],
+    derived_trust: TrustClass | None = None,
+) -> ClassifierResult:
     """Run the smart auto-approve classifier, fail-closed on any error.
 
     Any unexpected exception inside the classifier is mapped to an
@@ -172,9 +259,14 @@ def _classify(tool_name: str, tool_args: dict[str, Any]) -> ClassifierResult:
     enforced by :func:`classify_tool_call`; this wrapper only guarantees
     the gate degrades to "ask the human" rather than to "allow" when the
     classifier itself misbehaves.
+
+    Args:
+        derived_trust: Resolved trust class of the artefact this call
+            operates on, or ``None`` when the lineage log carries no verdict
+            for it. An untrusted derivation downgrades an APPROVE to ASK.
     """
     try:
-        return classify_tool_call(tool_name, tool_args)
+        return classify_tool_call(tool_name, tool_args, derived_trust=derived_trust)
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning(
             "Auto-approve classifier raised for tool %s: %s -- failing closed to ASK",
@@ -255,8 +347,17 @@ def _smart_classifier_decision(
       call is still surfaced for review.
     * ``ASK`` / anything else -> return ``None`` so the existing approval
       flow handles it. Uncertainty never auto-approves (fail-closed).
+
+    The operand's lineage taint verdict is resolved first and handed to the
+    classifier, so a call on an artefact whose closure bottoms out at an
+    untrusted origin cannot be auto-approved on the strength of its shape
+    alone.
     """
-    classification = _classify(tool_name, tool_args)
+    classification = _classify(
+        tool_name,
+        tool_args,
+        _derived_trust(tool_args, workdir),
+    )
 
     if classification.decision is Decision.DENY:
         _record_classifier_decision(
