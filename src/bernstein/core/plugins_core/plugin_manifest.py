@@ -39,6 +39,9 @@ _MAX_STRING_LENGTH = 1024
 #: Max number of hooks/tools/skills a plugin can declare.
 _MAX_DECLARATIONS = 100
 
+#: Exact ``MAJOR.MINOR.PATCH`` version - no ranges, no partials, no moving tags.
+_SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
+
 
 @dataclass(frozen=True)
 class PluginManifest:
@@ -112,6 +115,17 @@ def _validate_plugin_name(name: str) -> list[str]:
     return errors
 
 
+def is_exact_semver(version: str) -> bool:
+    """Return True when *version* is an exact ``MAJOR.MINOR.PATCH`` string.
+
+    Exactness is the whole point: a range (``^1.2.0``), a partial version
+    (``1.2``) or a moving tag (``latest``) all fail, so a caller pinning a
+    version can tell an exact pin from a floating one without re-deriving
+    the rule.
+    """
+    return bool(_SEMVER_RE.match(version))
+
+
 def _validate_semver(version: str) -> list[str]:
     """Validate semantic versioning format (``MAJOR.MINOR.PATCH``)."""
     errors: list[str] = []
@@ -119,8 +133,7 @@ def _validate_semver(version: str) -> list[str]:
         errors.append("Plugin version is required")
         return errors
 
-    semver_re = re.compile(r"^\d+\.\d+\.\d+$")
-    if not semver_re.match(version):
+    if not is_exact_semver(version):
         errors.append(f"Plugin version '{version}' must follow semver (e.g. '1.0.0').")
 
     return errors

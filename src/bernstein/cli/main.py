@@ -1278,6 +1278,11 @@ cli.add_command(payment_mandate_group, "payment-mandate")
 from bernstein.cli.commands.review_receipt_cmd import review_receipt_group  # noqa: E402
 
 cli.add_command(review_receipt_group, "review-receipt")
+
+# Content-addressed anchors for operator review annotations (#3456).
+from bernstein.cli.commands.review_annotation_cmd import review_annotation_group  # noqa: E402
+
+cli.add_command(review_annotation_group, "review-annotation")
 # Journal-anchored stall escalation receipts (#2299).
 from bernstein.cli.commands.escalation_cmd import escalation_group  # noqa: E402
 
@@ -1307,14 +1312,14 @@ from bernstein.cli.commands.gate_cmd import gate_group  # noqa: E402
 cli.add_command(gate_group, "gate")
 
 # RBAC + budget decisions as verifiable projections over the audit chain (#2309).
-from bernstein.cli.commands.governance_cmd import governance_group  # noqa: E402
-
-cli.add_command(governance_group, "governance")
-
-# Desired-state reconcile diff over the governed surface (#5085).
-from bernstein.cli.commands.govern_cmd import govern_group  # noqa: E402
+from bernstein.cli.commands.governance_cmd import govern_group  # noqa: E402
 
 cli.add_command(govern_group, "govern")
+
+# Deprecated governance alias for backward compatibility.
+from bernstein.cli.commands.governance_cmd import governance_alias_cmd  # noqa: E402
+
+cli.add_command(governance_alias_cmd, "governance")
 
 # Per-tool-call snapshots + stacked agent branches.
 from bernstein.cli.commands.git_cmd import git_cmd  # noqa: E402

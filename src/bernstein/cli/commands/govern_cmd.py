@@ -1,4 +1,4 @@
-"""``bernstein govern``: reconcile the governed surface against desired state.
+"""``bernstein govern reconcile``: diff the governed surface against desired state.
 
 Issue #5085::
 
@@ -46,16 +46,7 @@ def _load_hmac_key() -> bytes:
     return load_or_create_audit_key()
 
 
-@click.group("govern")
-def govern_group() -> None:
-    """Reconcile the governed surface against a declared desired state.
-
-    \b
-      bernstein govern reconcile --propose --desired desired.json
-    """
-
-
-@govern_group.command("reconcile")
+@click.command("reconcile")
 @click.option(
     "--propose",
     is_flag=True,
@@ -140,5 +131,5 @@ def _verdict_line(entry: ReconcileEntry) -> str:
 
 __all__ = [
     "RECONCILE_RUN_ID",
-    "govern_group",
+    "govern_reconcile_cmd",
 ]

@@ -210,7 +210,7 @@ def build_summary_card(data: RunSummaryData) -> Table:
     )
 
     if data.quality_score is not None:
-        pct = data.quality_score * 100
+        pct = data.quality_score * 100  # type: ignore[assignment]
         if pct >= 80:
             q_color = "green"
         elif pct >= 50:

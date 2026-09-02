@@ -56,6 +56,7 @@ from bernstein.core.protocols.payments.mandates import (
     read_consent_receipt,
     verify_consent_receipt,
 )
+from bernstein.core.verify_result import VerifyResult
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -945,13 +946,8 @@ class X402SettlementCoordinator:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class SpendVerifyResult:
-    """Outcome of :func:`verify_spend_receipt`."""
-
-    ok: bool
-    reason: str
-    receipt: SpendReceipt | None = None
+#: Outcome of :func:`verify_spend_receipt`.
+SpendVerifyResult = VerifyResult[SpendReceipt]
 
 
 def verify_spend_receipt(

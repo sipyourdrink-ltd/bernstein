@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from bernstein.cli.commands.govern_cmd import govern_group
+from bernstein.cli.commands.governance_cmd import govern_group
 from bernstein.core.govern.reconcile import snapshot_surface
 from bernstein.core.govern.reconcile_models import (
     DiffAction,
