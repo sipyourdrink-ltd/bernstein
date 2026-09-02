@@ -126,7 +126,12 @@ from bernstein.core.prometheus import (
 from bernstein.core.router import ProviderHealthStatus, RouterError, TierAwareRouter
 from bernstein.core.sandbox import DockerSandbox, spawn_in_sandbox
 from bernstein.core.sandbox.selector import SandboxSelectionError
-from bernstein.core.security.executor_admission import AdmissionDecision, AdmissionSubject
+from bernstein.core.security.executor_admission import (
+    AdmissionDecision,
+    AdmissionPolicy,
+    AdmissionPolicyError,
+    AdmissionSubject,
+)
 from bernstein.core.tasks.artifact_completion import needs_git_worktree
 from bernstein.core.team_state import TeamStateStore
 from bernstein.core.traces import AgentTrace, TraceStore, new_trace
@@ -2389,13 +2394,6 @@ class AgentSpawner:
             SpawnError: When the policy refuses the subject, or when the
                 declared policy cannot be parsed.
         """
-        import json
-
-        from bernstein.core.security.executor_admission import (
-            AdmissionPolicy,
-            AdmissionPolicyError,
-        )
-
         try:
             policy = AdmissionPolicy.load(self._workdir)
         except AdmissionPolicyError as exc:
