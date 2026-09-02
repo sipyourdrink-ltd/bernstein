@@ -151,7 +151,7 @@ def _snapshot_from_lineage(run_id: str, workdir: str) -> dict[str, Any]:
     (issue #2639).
     """
     from bernstein.core.compliance.ai_bom import BOMError, snapshot_from_spine
-    from bernstein.core.lineage.spine import LineageSpine
+    from bernstein.core.lineage.spine import LineageSpine, SpineRunIdError
     from bernstein.core.security.audit import (
         AuditKeyMissingError,
         AuditKeyPermissionError,
@@ -163,7 +163,10 @@ def _snapshot_from_lineage(run_id: str, workdir: str) -> dict[str, Any]:
     except (AuditKeyMissingError, AuditKeyPermissionError) as exc:
         raise BOMError(f"cannot read the audit key the lineage chain was written under: {exc}") from None
 
-    spine = LineageSpine(Path(workdir).resolve() / ".sdd" / "lineage", run_id=run_id, hmac_key=hmac_key)
+    try:
+        spine = LineageSpine(Path(workdir).resolve() / ".sdd" / "lineage", run_id=run_id, hmac_key=hmac_key)
+    except SpineRunIdError as exc:
+        raise BOMError(f"invalid run id: {exc}") from None
     return snapshot_from_spine(spine)
 
 

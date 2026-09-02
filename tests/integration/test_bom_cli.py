@@ -501,3 +501,18 @@ class TestBOMEmitFromLineage:
 
         assert result.exit_code != 0
         assert not key_file.exists()
+
+    def test_emit_from_lineage_rejects_a_run_id_that_escapes_its_directory(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _install_audit_key(tmp_path, monkeypatch)
+
+        result = CliRunner().invoke(
+            bom_group,
+            ["emit", "--run", "../elsewhere", "--from-lineage", "--workdir", str(tmp_path)],
+        )
+
+        assert result.exit_code == 1
+        assert "invalid run id" in result.output
