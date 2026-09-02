@@ -201,6 +201,33 @@ class TestAgentIdentityStore:
         child, _ = store.create_identity("child-1", "backend", parent_identity_id=parent.id)
         assert child.parent_identity_id == "parent-1"
 
+    def test_create_with_parent_identity_records_delegation_hop(self, store: AgentIdentityStore) -> None:
+        # Verify that creating a child identity with a parent_identity_id
+        # records a delegation hop in the ledger with the correct issuer→subject chain.
+        from bernstein.core.identity.delegation import DelegationLedger, verify_run_chain
+
+        # Set run_id so the hop is recorded under a real run key
+        store._run_id = "run-1"
+
+        parent, _ = store.create_identity("parent-1", "manager")
+        child, _ = store.create_identity("child-1", "backend", parent_identity_id=parent.id)
+
+        # Verify the delegation hop is recorded in the ledger
+        ledger = DelegationLedger(root=store._base_dir, key=store._jwt_secret)
+        result = verify_run_chain(root=ledger.root, run_id="run-1", key=store._jwt_secret)
+
+        assert result.hops == 1, f"Expected 1 hop, got {result.hops}"
+        hop = result.receipts[0]
+
+        # The bug: subject was set to parent_identity_id ("parent-1")
+        # The fix: subject is session_id (child.id = "child-1")
+        assert hop.subject == "child-1", f"subject should be child session_id, got {hop.subject}"
+        # Verify issuer is the parent identity (the delegating party)
+        assert hop.issuer == "parent-1", f"issuer should be parent identity, got {hop.issuer}"
+        # Verify audience is the child session_id
+        assert hop.audience == "child-1", f"audience should be child session_id, got {hop.audience}"
+        assert hop.act == "task.spawn"
+
     def test_create_with_metadata(self, store: AgentIdentityStore) -> None:
         identity, _ = store.create_identity("s-1", "backend", metadata={"cell_id": "cell-x", "provider": "claude"})
         assert identity.metadata["cell_id"] == "cell-x"

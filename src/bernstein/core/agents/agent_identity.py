@@ -824,7 +824,7 @@ class AgentIdentityStore:
                 _ = record_delegation_hop(
                     run_id=run_id or "",
                     issuer=parent_identity_id,
-                    subject=parent_identity_id,  # parent delegates to orchestrator then child
+                    subject=session_id,  # parent delegates directly to child
                     audience=session_id,
                     act="task.spawn",
                     scope=DelegationScope(
