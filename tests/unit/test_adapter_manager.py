@@ -8,11 +8,14 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 from bernstein.core.models import ModelConfig
+from bernstein.core.platform_compat import ProcessReapReceipt
 
 from bernstein.adapters.manager import ManagerAdapter
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from bernstein.adapters.base import CLIAdapter
 
 
 def _make_popen_mock(pid: int) -> MagicMock:
@@ -165,17 +168,24 @@ class TestIsAlive:
 
 
 class TestKill:
-    def test_calls_kill_process_group_with_sigterm(self) -> None:
-        adapter = ManagerAdapter()
-        with patch("bernstein.adapters.manager.kill_process_group") as mock_kpg:
-            adapter.kill(100)
+    def test_returns_base_reap_receipt(self) -> None:
+        adapter: CLIAdapter = ManagerAdapter()
+        expected = ProcessReapReceipt(
+            pgid=100,
+            os_name="linux",
+            method="posix_process_group",
+            delivered=True,
+            escalated=False,
+            grace_seconds=3.0,
+            confirmed_dead=True,
+        )
 
-        mock_kpg.assert_called_once_with(100, sig=15)
+        with patch("bernstein.adapters.base.reap_process_group", return_value=expected) as mock_reap:
+            receipt = adapter.kill(100)
 
-    def test_suppresses_failed_kill(self) -> None:
-        adapter = ManagerAdapter()
-        with patch("bernstein.adapters.manager.kill_process_group", return_value=False):
-            adapter.kill(150)  # must not raise
+        assert receipt is expected
+        assert receipt.pgid == 100
+        mock_reap.assert_called_once_with(100)
 
 
 # ---------------------------------------------------------------------------
