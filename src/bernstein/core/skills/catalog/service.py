@@ -34,6 +34,7 @@ from bernstein.core.skills.catalog.fetcher import (
 )
 from bernstein.core.skills.catalog.installer import (
     CatalogInstallError,
+    CatalogTrustGateError,
     install_catalog_entry,
     remove_catalog_install,
 )
@@ -290,9 +291,10 @@ class SkillCatalogService:
             :class:`InstallOutcome` summarising the install.
 
         Raises:
-            SkillCatalogError: If the entry is not found, the upstream
-                content digest disagrees with the resolved install, or
-                the chain anchor refuses a replay.
+            SkillCatalogError: If the entry is not found, the trust gate
+                refuses the staged content, the upstream content digest
+                disagrees with the resolved install, or the chain anchor
+                refuses a replay.
             ManifestSignatureError: When ``allow_unverified=False`` and
                 the signature does not verify.
         """
@@ -340,7 +342,10 @@ class SkillCatalogService:
                         "acknowledge the drift and emit a new chain entry.",
                     )
 
-        # Stage install on disk.
+        # Stage install on disk. The staged content passes the trust gate
+        # (strict lint over SKILL.md, including the prompt-space risk table)
+        # before it is promoted, so a hostile body never reaches the skill
+        # directory and never reaches the injector.
         try:
             install_result: CatalogInstallResult = install_catalog_entry(
                 entry,
@@ -349,6 +354,16 @@ class SkillCatalogService:
                 home=self._config.home,
                 plugin_installer=self._installer,
             )
+        except CatalogTrustGateError as exc:
+            detail = str(exc)
+            self._record_refusal(
+                skill_id=entry.id,
+                version=entry.version,
+                stage="install",
+                reason_code=exc.reason_code,
+                detail=detail,
+            )
+            raise SkillCatalogError(detail) from exc
         except CatalogInstallError as exc:
             raise SkillCatalogError(str(exc)) from exc
 

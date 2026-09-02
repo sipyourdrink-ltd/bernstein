@@ -39,6 +39,7 @@ from bernstein.core.skills.catalog.fetcher import (
 from bernstein.core.skills.catalog.installer import (
     CatalogInstallError,
     CatalogInstallResult,
+    CatalogTrustGateError,
     install_catalog_entry,
     remove_catalog_install,
     resolve_plugin_source,
@@ -126,6 +127,7 @@ __all__ = [
     "CatalogLockEntry",
     "CatalogLockState",
     "CatalogStatus",
+    "CatalogTrustGateError",
     "EntryVerifyResult",
     "FetchResult",
     "HTTPResponse",
