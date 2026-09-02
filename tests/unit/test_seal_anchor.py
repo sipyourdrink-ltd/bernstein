@@ -32,9 +32,11 @@ from bernstein.core.security.seal_anchor import (
     AnchorStatus,
     SealAnchor,
     SealAnchorError,
+    _require_echoed_nonce,
     build_rfc3161_anchor,
     build_timestamp_request,
     load_anchor,
+    request_timestamp_token,
     verify_anchor,
     write_anchor,
 )
@@ -198,3 +200,24 @@ def test_timestamp_request_imprints_the_sealed_head(sealed_head: str) -> None:
     # offline later: without it the TSA omits its own certificate.
     assert request["cert_req"].native is True
     assert request["nonce"].native == 42
+
+
+def test_a_reply_that_does_not_echo_the_request_nonce_is_refused(
+    freetsa_token: bytes,
+    sealed_head: str,
+) -> None:
+    """A token that answers some other request is not evidence about this head.
+
+    The fixture was requested with ``-no_nonce``, so it echoes nothing - the
+    same shape a cached or replayed reply has.
+    """
+    request = build_timestamp_request(sealed_head, nonce=12345)
+
+    with pytest.raises(SealAnchorError, match="nonce"):
+        _require_echoed_nonce(request, freetsa_token)
+
+
+def test_a_non_http_tsa_url_is_refused_before_any_request(sealed_head: str) -> None:
+    """The TSA endpoint is a URL to POST to, never a local file to read."""
+    with pytest.raises(SealAnchorError, match="refusing to contact TSA"):
+        request_timestamp_token("file:///etc/passwd", build_timestamp_request(sealed_head, nonce=1))

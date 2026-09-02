@@ -157,7 +157,7 @@ def seal_publish(
     """Anchor RUN_ID's sealed journal head to a timestamping authority.
 
     The TSA is shown only the head digest, never the journal. The reply is
-    stored as ``seal_anchor.json`` next to the journal it witnesses.
+    stored as seal_anchor.json next to the journal it witnesses.
 
       bernstein seal publish latest-run --tsa-url https://freetsa.org/tsr
       bernstein seal publish latest-run --token ./reply.tsr

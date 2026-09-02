@@ -368,6 +368,35 @@ def build_timestamp_request(head_sha256: str, *, nonce: int) -> bytes:
     return cast("bytes", request.dump())
 
 
+def _require_echoed_nonce(request_der: bytes, response_der: bytes) -> None:
+    """Confirm the reply answers *this* request and not an earlier one.
+
+    RFC 3161 §2.4.2 has the TSA copy the request's nonce into ``TSTInfo``. A
+    reply that omits it, or carries a different one, may be a cached or
+    replayed token for some other imprint, so it is refused rather than
+    stored as if it witnessed this head.
+
+    Raises:
+        SealAnchorError: When the reply does not echo the request's nonce.
+    """
+    from asn1crypto import tsp  # type: ignore[reportMissingTypeStubs]
+
+    tsp_module: Any = tsp
+    try:
+        request: Any = tsp_module.TimeStampReq.load(request_der)
+        response: Any = tsp_module.TimeStampResp.load(response_der)
+        sent = request["nonce"].native
+        token: Any = response["time_stamp_token"]
+        tst_info: Any = token["content"]["encap_content_info"]["content"].parsed
+        echoed = tst_info["nonce"].native
+    except (ValueError, KeyError, TypeError) as exc:
+        msg = f"could not read the nonce back out of the TSA reply: {exc}"
+        raise SealAnchorError(msg) from exc
+    if sent != echoed:
+        msg = f"TSA reply does not echo the request nonce (sent {sent}, got {echoed})"
+        raise SealAnchorError(msg)
+
+
 def request_timestamp_token(tsa_url: str, request_der: bytes, *, timeout: float = 30.0) -> bytes:
     """POST *request_der* to *tsa_url* and return the DER reply.
 
@@ -384,8 +413,9 @@ def request_timestamp_token(tsa_url: str, request_der: bytes, *, timeout: float 
         DER bytes of the ``TimeStampResp``.
 
     Raises:
-        SealAnchorError: When the URL is not http(s), the request fails, or
-            the TSA declined to issue a token.
+        SealAnchorError: When the URL is not http(s), the request fails,
+            the TSA declined to issue a token, or the reply does not echo
+            the request's nonce.
     """
     import httpx
     from asn1crypto import tsp  # type: ignore[reportMissingTypeStubs]
@@ -421,4 +451,5 @@ def request_timestamp_token(tsa_url: str, request_der: bytes, *, timeout: float 
     if status not in _GRANTED_STATUSES:
         msg = f"TSA at {tsa_url} declined to issue a token (PKIStatus={status})"
         raise SealAnchorError(msg)
+    _require_echoed_nonce(request_der, body)
     return body
