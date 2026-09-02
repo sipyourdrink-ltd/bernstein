@@ -59,6 +59,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `preview/`                  | ``bernstein preview`` - sandboxed dev-server with public tunnel link |
 | `protocols/`                | protocols sub-package |
 | `quality/`                  | quality sub-package |
+| `receipts/`                 | One receipt protocol for every receipt kind the project emits |
 | `replay/`                   | Deterministic replay package for Bernstein agent runs |
 | `review/`                   | Per-adapter perspective assignment and chain coordination for reviews |
 | `review_responder/`         | PR review responder - react to inline review comments on Bernstein PRs |
