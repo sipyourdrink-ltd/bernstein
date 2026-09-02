@@ -771,8 +771,7 @@ class AgentIdentityStore:
                 parent_ids = set(parent_identity.task_ids)
                 if not child_ids <= parent_ids:
                     raise ValueError(
-                        f"child task_ids {sorted(child_ids)} are not a subset of "
-                        f"parent task_ids {sorted(parent_ids)}"
+                        f"child task_ids {sorted(child_ids)} are not a subset of parent task_ids {sorted(parent_ids)}"
                     )
 
             # allowed_files: prefix subset check. Empty parent allowed_files
