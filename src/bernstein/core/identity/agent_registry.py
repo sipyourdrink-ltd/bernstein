@@ -51,7 +51,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, get_args
+from typing import TYPE_CHECKING, Any, Final, cast, get_args
 
 from bernstein.core.identity import delegation, grants
 from bernstein.core.identity.delegation_scope import DelegationScope
@@ -225,10 +225,10 @@ class _Builder:
     """Mutable accumulator for one principal while the fold runs."""
 
     agent_id: str
-    events: list[ChainEventRef] = field(default_factory=list)
-    ceiling: set[str] = field(default_factory=set)
-    grant_ids: list[str] = field(default_factory=list)
-    delegation_refs: list[str] = field(default_factory=list)
+    events: list[ChainEventRef] = field(default_factory=list[ChainEventRef])
+    ceiling: set[str] = field(default_factory=set[str])
+    grant_ids: list[str] = field(default_factory=list[str])
+    delegation_refs: list[str] = field(default_factory=list[str])
 
 
 def _expand_ceiling(names: Iterable[str]) -> set[str]:
@@ -467,9 +467,12 @@ def verify_registry(
     canonical rendering leaves nowhere for it to hide.
     """
     try:
-        stored = json.loads(Path(path).read_text(encoding="utf-8"))
+        parsed: object = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return RegistryVerification(ok=False, reason=f"cannot read stored projection: {exc}")
+    if not isinstance(parsed, dict):
+        return RegistryVerification(ok=False, reason="stored projection is not a JSON object")
+    stored = cast("dict[str, Any]", parsed)
 
     recomputed = project_agents(
         root=Path(root),
@@ -479,10 +482,13 @@ def verify_registry(
         install_public_key_pem=install_public_key_pem,
     )
     expected_ids = {a.agent_id for a in recomputed.agents}
-    stored_agents = stored.get("agents") if isinstance(stored, dict) else None
-    if not isinstance(stored_agents, list):
+    raw_agents = stored.get("agents")
+    if not isinstance(raw_agents, list):
         return RegistryVerification(ok=False, reason="stored projection has no agents list")
-    stored_ids = {str(a.get("agent_id", "")) for a in stored_agents if isinstance(a, dict)}
+    stored_ids: set[str] = set()
+    for entry in cast("list[Any]", raw_agents):
+        if isinstance(entry, dict):
+            stored_ids.add(str(cast("dict[str, Any]", entry).get("agent_id", "")))
 
     invented = tuple(sorted(stored_ids - expected_ids))
     missing = tuple(sorted(expected_ids - stored_ids))
