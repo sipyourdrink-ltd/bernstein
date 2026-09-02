@@ -177,13 +177,19 @@ class RunReceiptVerifyResult:
     Attributes:
         ok: ``True`` only when every recompute and the signature pass.
         status: ``"ok"``, ``"malformed"`` (unparseable / structurally
-            incomplete input), or ``"tampered"`` (a recompute or the
-            signature diverged).
+            incomplete input), ``"tampered"`` (a recompute or the
+            signature diverged), or ``"untrusted_key"`` (the signature
+            verified but the key it used is not trusted by the supplied
+            key-succession chain).
         run_id: Run id claimed by the receipt (best-effort on failure).
         journal_events: Number of embedded journal rows walked.
         spine_entries: Number of embedded spine entries walked.
         divergent_step: 0-based index of the first divergent journal step,
             when journal tamper was located.
+        key_verdict: Lifecycle verdict for the signing key when a
+            key-succession chain was supplied
+            (:class:`~bernstein.core.security.receipt_key_chain.KeyVerdict`
+            as its string value), else ``None``.
         errors: Human-readable explanations, first failure first.
     """
 
@@ -193,6 +199,7 @@ class RunReceiptVerifyResult:
     journal_events: int = 0
     spine_entries: int = 0
     divergent_step: int | None = None
+    key_verdict: str | None = None
     errors: list[str] = field(default_factory=list[str])
 
 
@@ -682,6 +689,8 @@ def verify_run_receipt(
     receipt_bytes: bytes,
     *,
     public_key_pem: bytes | None = None,
+    key_chain_bytes: bytes | None = None,
+    attested_signed_at: str | None = None,
 ) -> RunReceiptVerifyResult:
     """Verify a run receipt using only its own bytes (and an optional pin).
 
@@ -701,18 +710,40 @@ def verify_run_receipt(
     key - requires supplying that key out-of-band via ``public_key_pem``;
     the embedded key must then match it.
 
+    Key lifecycle: an operator who rotates or revokes receipt-signing
+    keys pins one *root* key and hands over a signed key-succession chain
+    (:mod:`bernstein.core.security.receipt_key_chain`) alongside the
+    receipts. Supplying ``key_chain_bytes`` replaces the single-key pin
+    with a walk from that root to whichever key signed this receipt, so a
+    rotation does not invalidate receipts the predecessor signed and a
+    revoked key stops carrying trust. The verdict is reported in
+    ``key_verdict``.
+
     Args:
         receipt_bytes: The receipt file contents.
-        public_key_pem: Optional PEM Ed25519 public key to pin. The
-            embedded JWK must encode the same key, otherwise the receipt
-            is rejected even when its content recomputes cleanly.
+        public_key_pem: Optional PEM Ed25519 public key to pin. Without
+            ``key_chain_bytes`` the embedded JWK must encode the same key,
+            otherwise the receipt is rejected even when its content
+            recomputes cleanly. With ``key_chain_bytes`` this is the
+            *root* key the chain must be anchored on, and the embedded key
+            is checked against the chain entry for the receipt's ``kid``
+            instead.
+        key_chain_bytes: Optional signed key-succession chain document.
+            Requires ``public_key_pem``: a chain with no pinned root
+            establishes nothing, so it is refused rather than walked.
+        attested_signed_at: Optional timezone-aware ISO-8601 instant at
+            which the receipt is attested to have been signed, from a
+            source outside the receipt (receipt bytes carry no wall
+            clock). Only consulted when the signing key was revoked, to
+            decide which side of the revocation the signature falls on.
 
     Returns:
         A :class:`RunReceiptVerifyResult`. ``status`` is ``"malformed"``
-        for unparseable or structurally incomplete input and
-        ``"tampered"`` for any recompute or signature divergence - with
-        the first divergent journal step index named when journal tamper
-        was located.
+        for unparseable or structurally incomplete input, ``"tampered"``
+        for any recompute or signature divergence - with the first
+        divergent journal step index named when journal tamper was
+        located - and ``"untrusted_key"`` when the signature verified but
+        the key-succession chain does not trust the key that produced it.
     """
     try:
         receipt = json.loads(receipt_bytes.decode("utf-8"))
@@ -835,7 +866,7 @@ def verify_run_receipt(
     except ValueError as exc:
         return _malformed(f"embedded JWK is not a usable Ed25519 key: {exc}", run_id=run_id)
 
-    if public_key_pem is not None:
+    if public_key_pem is not None and key_chain_bytes is None:
         try:
             pinned = serialization.load_pem_public_key(public_key_pem)
         except (ValueError, TypeError) as exc:
@@ -862,12 +893,56 @@ def verify_run_receipt(
     except InvalidSignature:
         return _tampered(["Ed25519 signature does not verify over the recomputed subject binding"])
 
+    # 6. Key lifecycle: the signature is authentic, but is the key trusted?
+    key_verdict: str | None = None
+    if key_chain_bytes is not None:
+        if public_key_pem is None:
+            return _malformed(
+                "a key chain needs public_key_pem: the chain is only evidence relative to the "
+                "root key the auditor pinned out of band",
+                run_id=run_id,
+            )
+        from bernstein.core.security.receipt_key_chain import (
+            KeyChainError,
+            resolve_signing_key,
+            verify_key_chain,
+        )
+
+        def _untrusted(reason: str, verdict: str | None) -> RunReceiptVerifyResult:
+            return RunReceiptVerifyResult(
+                ok=False,
+                status="untrusted_key",
+                run_id=run_id,
+                journal_events=len(events),
+                spine_entries=len(entries),
+                key_verdict=verdict,
+                errors=[reason],
+            )
+
+        try:
+            chain = verify_key_chain(key_chain_bytes, root_public_key_pem=public_key_pem)
+            trust = resolve_signing_key(
+                chain,
+                kid=str(signing.get("key_id", "")),
+                public_key_raw=public_key.public_bytes(
+                    serialization.Encoding.Raw,
+                    serialization.PublicFormat.Raw,
+                ),
+                attested_signed_at=attested_signed_at,
+            )
+        except KeyChainError as exc:
+            return _untrusted(str(exc), None)
+        if not trust.trusted:
+            return _untrusted(trust.detail, str(trust.verdict))
+        key_verdict = str(trust.verdict)
+
     return RunReceiptVerifyResult(
         ok=True,
         status="ok",
         run_id=run_id,
         journal_events=len(events),
         spine_entries=len(entries),
+        key_verdict=key_verdict,
     )
 
 
