@@ -287,6 +287,7 @@ from bernstein.cli.commands.remote_cmd import remote_group
 from bernstein.cli.commands.review_responder_cmd import review_responder_group
 from bernstein.cli.commands.sandbox_cmd import sandbox_group
 from bernstein.cli.commands.schedule_cmd import schedule_group
+from bernstein.cli.commands.seal_cmd import seal_group
 from bernstein.cli.commands.security_review_cmd import security_review_cmd
 from bernstein.cli.commands.ticket_cmd import from_ticket, ticket_group
 from bernstein.cli.commands.tunnel_cmd import tunnel_group
@@ -1066,6 +1067,7 @@ cli.add_command(tunnel_group, "tunnel")
 cli.add_command(preview_group, "preview")
 cli.add_command(sandbox_group, "sandbox")
 cli.add_command(security_review_cmd, "security-review")
+cli.add_command(seal_group, "seal")
 cli.add_command(daemon_group, "daemon")
 cli.add_command(autofix_group, "autofix")
 cli.add_command(pipeline_group, "pipeline")

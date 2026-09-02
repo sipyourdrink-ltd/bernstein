@@ -1960,36 +1960,15 @@ def _resolve_journal_path(run_id: str, runs_dir: Path) -> Path:
 def _replay_sealed_journal_head(*, run_id: str, sdd_dir: str) -> str | None:
     """Look up the run's journal-head seal from the lineage spine, if any.
 
-    A finalized run writes its journal head into the lineage spine at
-    completion (``seal_journal_into_spine``, issue #2293 AC5); a fresh run's
-    single spine entry *is* that seal. Returns the sealed head hash, or
-    ``None`` when the run has no spine, the spine's HMAC chain does not
-    verify (so nothing it carries can be trusted), or the audit key needed to
-    check that chain is not configured -- every one of those is exactly the
-    "no seal to check against" case, so callers fall back to the existing
-    ``unverifiable`` verdict rather than erroring (issue #4203).
+    Thin wrapper over
+    :func:`bernstein.core.replay.journal.read_sealed_journal_head`, which owns
+    the resolution rules: no spine, a tampered spine, or an unconfigured audit
+    key all read as "no seal to check against" (``None``) so callers fall back
+    to the existing ``unverifiable`` verdict rather than erroring (#4203).
     """
-    from bernstein.core.lineage.spine import JOURNAL_SEAL_STEP_PREFIX, LineageSpine, SpineStatus
-    from bernstein.core.security.audit import AuditKeyMissingError, load_audit_key
+    from bernstein.core.replay.journal import read_sealed_journal_head
 
-    lineage_root = Path(sdd_dir) / "lineage"
-    spine_path = lineage_root / run_id / "spine.jsonl"
-    if not spine_path.exists():
-        return None
-    try:
-        hmac_key = load_audit_key()
-    except AuditKeyMissingError:
-        return None
-
-    spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=hmac_key)
-    if spine.verify().status is SpineStatus.TAMPERED:
-        return None
-
-    head = ""
-    for entry in spine.iter_entries():
-        if entry.step_id.startswith(JOURNAL_SEAL_STEP_PREFIX):
-            head = entry.step_id.removeprefix(JOURNAL_SEAL_STEP_PREFIX)
-    return head or None
+    return read_sealed_journal_head(run_id=run_id, sdd_dir=sdd_dir)
 
 
 def _replay_verify_journal(*, run_id: str, sdd_dir: str, as_json: bool) -> None:
