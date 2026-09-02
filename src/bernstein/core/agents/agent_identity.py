@@ -19,6 +19,11 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final, Literal, cast, get_args
 
 from bernstein.core.auth import create_jwt, verify_jwt
+from bernstein.core.identity.delegation import (
+    DelegationScope,
+    default_ledger,
+    record_delegation_hop,
+)
 from bernstein.core.path_scope import ScopePatternError, validate_repo_relative_pattern
 from bernstein.core.sanitize import sanitize_log
 from bernstein.core.tenanting import (
@@ -674,6 +679,16 @@ class AgentIdentityStore:
         (#3914), which contains an out-of-scope write rather than preventing
         it.  See ``docs/operations/security-and-identity.md``.
 
+        When a ``parent_identity_id`` is supplied, records a delegation hop
+        linking the parent identity to this newly minted child. The delegation
+        receipt is written to the run's delegation ledger so that a real run's
+        ``bernstein delegation verify`` can reconstruct the chain and answer
+        "did this sub-agent end up holding more than the worker that spawned it?"
+        with a verifiable receipt rather than a trusting check. This is a
+        critical audit surface for delegation scope: a widening hop would be
+        detectable offline as a violation, and a child can be proven to have
+        been granted the scope that runtime enforcement verified.
+
         Args:
             session_id: Unique agent session identifier.
             role: Agent role (backend, qa, security, etc.).
@@ -797,6 +812,34 @@ class AgentIdentityStore:
                 },
             )
         )
+
+        # Record a delegation hop if this identity has a parent.
+        # This is best-effort: if we can't record the hop (e.g. no run context),
+        # we continue rather than blocking the spawn. This matches the precedent
+        # for sandbox audit mirroring which is also best-effort to avoid masking
+        # the spawn itself.
+        try:
+            if parent_identity_id is not None:
+                run_id = getattr(self, "_run_id", None)
+                _ = record_delegation_hop(
+                    run_id=run_id or "",
+                    issuer=parent_identity_id,
+                    subject=parent_identity_id,  # parent delegates to orchestrator then child
+                    audience=session_id,
+                    act="task.spawn",
+                    scope=DelegationScope(
+                        task_ids=scoped_task_ids,
+                        permissions=frozenset(permissions),
+                    ),
+                    # binding omitted on purpose: the hop records the scope granted
+                    # at decision time; the charter hash would be set at merge/claim
+                    # time, which is beyond this function's scope.
+                )
+        except Exception:
+            # Best-effort recording: never let delegation recording block identity
+            # creation or spawn. If the hop isn't recorded, the chain will be
+            # incomplete but the spawn proceeds.
+            pass
 
         logger.info(
             "Created agent identity %s (role=%s, tasks=%s)",
