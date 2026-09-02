@@ -497,6 +497,7 @@ nav:
           - Worker contracts: operations/worker-contracts.md
           - Model policy: operations/MODEL_POLICY.md
           - Ticket schema: sdd/ticket_schema.md
+          - Design tokens: design/tokens.md
           - Adapter capability contract: adapters/capability_contract.md
           - Global config CLI: operations/global-config.md
           - Workflow manifests: operations/workflow-manifests.md
