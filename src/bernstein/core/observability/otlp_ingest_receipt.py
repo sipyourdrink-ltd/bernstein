@@ -166,6 +166,10 @@ class IngestReceipt:
         claimed_order: List of ``(trace_id, span_id)`` tuples as the source
             submitted them (empty when the source submitted unordered spans).
         trace_ids: Set of distinct trace ids present in the batch.
+        adapter_name: Stable identifier of the ingest adapter that produced
+            this batch (empty when no adapter declaration was supplied).
+        adapter_version: Version of the ingest adapter that produced this
+            batch (empty when no adapter declaration was supplied).
         chain_head: The audit-chain head read at receipt mint time.
         timestamp: Integer Unix timestamp at receipt mint time.
         signer_public_key_pem: The install's Ed25519 public key PEM.
@@ -183,6 +187,8 @@ class IngestReceipt:
     arrival_index: int
     claimed_order: tuple[tuple[str, str], ...] = ()
     trace_ids: tuple[str, ...] = ()
+    adapter_name: str = ""
+    adapter_version: str = ""
     chain_head: str = ""
     timestamp: int = 0
     signer_public_key_pem: str = ""
@@ -204,6 +210,8 @@ class IngestReceipt:
             "arrival_index": self.arrival_index,
             "claimed_order": [list(pair) for pair in self.claimed_order],
             "trace_ids": list(self.trace_ids),
+            "adapter_name": self.adapter_name,
+            "adapter_version": self.adapter_version,
             "chain_head": self.chain_head,
             "timestamp": self.timestamp,
         }
@@ -250,6 +258,8 @@ class IngestReceipt:
                 arrival_index=int(row.get("arrival_index", 0)),
                 claimed_order=tuple(claimed),
                 trace_ids=tuple(traces),
+                adapter_name=str(row.get("adapter_name", "")),
+                adapter_version=str(row.get("adapter_version", "")),
                 chain_head=str(row.get("chain_head", "")),
                 timestamp=int(row.get("timestamp", 0)),
                 signer_public_key_pem=str(row.get("signer_public_key_pem", "")),
@@ -444,6 +454,8 @@ class IngestOTLPReceipt:
     def ingest_batch(
         self,
         spans: list[dict[str, Any]],
+        *,
+        adapter_declaration: Any | None = None,
     ) -> tuple[IngestReceipt, list[Any]]:
         """Ingest a batch of OTLP/JSON spans and mint an anchored receipt.
 
@@ -464,6 +476,11 @@ class IngestOTLPReceipt:
 
         Args:
             spans: List of OTLP/JSON span dicts from one source submission.
+            adapter_declaration: Optional :class:`IngestAdapterDeclaration`
+                provided by the ingest adapter that produced these spans.
+                When supplied, the receipt records the adapter's ``name`` and
+                ``version``. The declaration is not validated here; validation
+                is the caller's responsibility before passing it in.
 
         Returns:
             A ``(receipt, span_results)`` tuple. ``span_results`` is a list
@@ -532,6 +549,8 @@ class IngestOTLPReceipt:
                 arrival_index=arrival_index,
                 claimed_order=tuple(claimed_order),
                 trace_ids=tuple(trace_ids),
+                adapter_name=adapter_declaration.name if adapter_declaration else "",
+                adapter_version=adapter_declaration.version if adapter_declaration else "",
                 chain_head=chain_head,
                 timestamp=timestamp,
             )

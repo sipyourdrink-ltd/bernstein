@@ -105,6 +105,27 @@ bernstein approve --tool           # CLI
 ...plus the TUI `ApprovalPanel`, which polls the same queue. Resolving through
 any of them releases the same pending.
 
+### Who resolved it
+
+Every resolution names a principal: an identifier, how it was authenticated,
+and the session or grant it acted under. There is no default, so a surface
+that cannot name the decider cannot resolve.
+
+| Surface | Identifier | Authentication method |
+|---|---|---|
+| HTTP with scoped tokens configured | the token's principal | `scoped-token` |
+| HTTP with no tokens configured (loopback posture) | `dashboard-operator` | `loopback` |
+| CLI and TUI | `os-user:<name>` | `local-shell` |
+| TTL expiry, sweeper, policy deny, classifier auto-decision | `system:<component>` | `server-internal` |
+
+An HTTP request that presents no valid token while scoped tokens *are*
+configured is refused with `401` rather than resolved against an unnamed
+caller. The `system:` namespace is reserved: a human principal may not use it
+and a server-internal one must, so a decision the software made cannot be read
+as a person's. The principal is written to the resolution sentinel under
+`.sdd/runtime/approvals` and to the `human_approval_decision` audit-chain
+event, whose actor is the principal's identifier.
+
 The agent observes the decision as the hook's exit code: an allow (or an
 always-allow promotion) lets the call proceed, a reject refuses it with the
 operator's reason on stderr, and **TTL expiry is a denial, not a hang** — the

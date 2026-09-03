@@ -7,6 +7,12 @@ import json
 from typing import Any
 
 from bernstein.core.govern.findings import Finding, FindingsDocument
+from bernstein.core.govern.freshness_gate import (
+    FreshnessGate,
+    FreshnessResult,
+    ProducerState,
+    freshness_gated_read,
+)
 from bernstein.core.govern.inventory_models import Inventory, Surface
 from bernstein.core.govern.observation import ObservationEnvelope, ObservationLedger
 from bernstein.core.govern.plan_models import GovernPlan, PlanEntry, PlanEntryKind
@@ -217,6 +223,8 @@ __all__ = [
     "EntityStatus",
     "Finding",
     "FindingsDocument",
+    "FreshnessGate",
+    "FreshnessResult",
     "GovernPlan",
     "Inventory",
     "ObservationEnvelope",
@@ -226,6 +234,7 @@ __all__ = [
     "Playbook",
     "PlaybookClause",
     "PlaybookValidationError",
+    "ProducerState",
     "ProposalStatus",
     "ReconcileDiff",
     "ReconcileEntry",
@@ -234,6 +243,7 @@ __all__ = [
     "Surface",
     "compute_plan",
     "compute_reconcile_diff",
+    "freshness_gated_read",
     "propose_reconcile",
     "snapshot_surface",
 ]

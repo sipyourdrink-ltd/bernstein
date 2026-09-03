@@ -240,6 +240,11 @@ EVENT_MCP_STATELESS_CALL = "mcp.stateless_call"
 #: gained or lost which tools.
 EVENT_MCP_CAPABILITY_DRIFT = "mcp.capability_drift"
 
+#: Issue #5115 -- emitted when the install identity key is rotated. The event
+#: records the new keyid (thumbprint of the install-identity public key), the
+#: old keyid if available, and the timestamp of rotation.
+EVENT_IDENTITY_ROTATION = "identity.rotation"
+
 #: Issue #3610 (slice 1) -- emitted when a run's semantic code graph digest
 #: is anchored in the HMAC chain. This event records the graph digest, the
 #: run id, the graph version, the source/indexed file counts, the unparsed

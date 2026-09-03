@@ -11,7 +11,10 @@ import sys
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+from bernstein.core.identity.http_signing import install_identity_keyid
 from bernstein.core.security.agent_card_keystore import (
     DEFAULT_GRACE_SECONDS,
     AgentCardKeystore,
@@ -255,3 +258,54 @@ class TestRotation:
         archived_mode = stat.S_IMODE(archived_priv.stat().st_mode)
         if sys.platform != "win32":
             assert archived_mode == 0o600
+
+    def test_identity_rotation_emits_audit_event(self, tmp_path: Path) -> None:
+        """Rotation should emit an identity.rotation event to the audit chain."""
+        from bernstein.core.security.audit import AuditLog
+
+        # Create keystore and audit log in temp dir
+        keys_dir = tmp_path / "keys"
+        audit_dir = tmp_path / ".sdd" / "audit"
+        audit_dir.mkdir(parents=True)
+
+        ks = AgentCardKeystore(keys_dir)
+        ks.load_or_generate()
+
+        # Perform rotation
+        ks.rotate()
+
+        # Check that audit event was recorded
+        audit_log = AuditLog(audit_dir)
+        scan = audit_log.scan_verified()
+        identity_events = [e for e in scan.events if e.event_type == "identity.rotation"]
+        assert len(identity_events) == 1
+
+        event = identity_events[0]
+        assert event.actor == "system"
+        assert event.resource_type == "install_identity"
+        assert event.resource_id == "key_rotation"
+
+        # Check details contain new_keyid and old_keyid
+        details = event.details
+        assert "new_keyid" in details
+        assert "old_keyid" in details
+        assert details["new_keyid"] != details["old_keyid"]
+
+
+class TestSigner:
+    def test_signer_signs_under_the_install_identity_without_exposing_the_key(self, tmp_path: Path) -> None:
+        ks = AgentCardKeystore(tmp_path / "keys")
+        _, public_pem = ks.load_or_generate()
+
+        signer = ks.signer()
+
+        assert signer.kid == install_identity_keyid(public_pem)
+        assert signer.public_key_jwk()["kty"] == "OKP"
+        assert not any("pem" in name.lower() for name in dir(signer))
+        public_key = serialization.load_pem_public_key(public_pem)
+        assert isinstance(public_key, Ed25519PublicKey)
+        public_key.verify(signer.sign(b"attestation body"), b"attestation body")
+
+    def test_signer_is_deterministic_across_instances(self, tmp_path: Path) -> None:
+        ks = AgentCardKeystore(tmp_path / "keys")
+        assert ks.signer().sign(b"same body") == AgentCardKeystore(tmp_path / "keys").signer().sign(b"same body")

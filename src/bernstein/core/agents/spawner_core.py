@@ -127,6 +127,12 @@ from bernstein.core.prometheus import (
 from bernstein.core.router import ProviderHealthStatus, RouterError, TierAwareRouter
 from bernstein.core.sandbox import DockerSandbox, spawn_in_sandbox
 from bernstein.core.sandbox.selector import SandboxSelectionError
+from bernstein.core.security.executor_admission import (
+    AdmissionDecision,
+    AdmissionPolicy,
+    AdmissionPolicyError,
+    AdmissionSubject,
+)
 from bernstein.core.tasks.artifact_completion import needs_git_worktree
 from bernstein.core.team_state import TeamStateStore
 from bernstein.core.traces import AgentTrace, TraceStore, new_trace
@@ -2425,6 +2431,141 @@ class AgentSpawner:
                 exc,
             )
 
+    def _enforce_admission_policy(
+        self,
+        *,
+        session_id: str,
+        subject: AdmissionSubject,
+    ) -> None:
+        """Refuse spawns the operator's admission policy does not admit.
+
+        ``bernstein.yaml`` selects an adapter, a model and an endpoint;
+        the optional ``admission:`` block declares which of those a
+        repository may use at all.  The policy is fail closed - a
+        subject matching no allow rule is refused - so widening it is an
+        edit to the config rather than an omission in it.
+
+        The decision is persisted under ``.sdd/runtime/spawn_admission/``
+        for *both* outcomes: an admitted spawn records the rule id that
+        admitted it, so a replay of the same config and the same spawn
+        identity reproduces the same decision.  A refusal additionally
+        emits an ``admission_refusal`` event into the HMAC-chained audit
+        log, mirroring the capability-matrix refusal path above so an
+        auditor reads both classes of blocked spawn from one chain.
+
+        A malformed policy raises rather than admitting: a broken
+        declaration must never read as an absent one.
+
+        Args:
+            session_id: Spawn session identifier (the record's file name
+                and the audit ``resource_id``).
+            subject: The spawn's executor identity.
+
+        Raises:
+            SpawnError: When the policy refuses the subject, or when the
+                declared policy cannot be parsed.
+        """
+        try:
+            policy = AdmissionPolicy.load(self._workdir)
+        except AdmissionPolicyError as exc:
+            logger.error("Refusing spawn %s: invalid admission policy: %s", session_id, exc)
+            raise SpawnError(f"admission policy is invalid: {exc}") from exc
+        if policy is None:
+            return
+
+        decision = policy.evaluate(subject)
+        record = decision.as_record()
+        record["session_id"] = session_id
+        runtime_dir = self._workdir / ".sdd" / "runtime" / "spawn_admission"
+        try:
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            (runtime_dir / f"{session_id}.json").write_text(
+                json.dumps(record, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            logger.warning("Could not persist admission record for %s: %s", session_id, exc)
+
+        if decision.allowed:
+            return
+
+        logger.error(
+            "Refusing spawn %s (role=%s): %s - subject=%s",
+            session_id,
+            subject.role,
+            decision.reason,
+            subject.as_dict(),
+        )
+        self._emit_admission_refusal_audit_event(session_id=session_id, decision=decision)
+        raise SpawnError(f"admission refused: {decision.reason}")
+
+    def _admission_sandbox_tier(self, isolation_mode: IsolationMode) -> str:
+        """Return the sandbox tier this spawn runs under, for admission.
+
+        Resolution order mirrors what actually confines the agent, most
+        specific first, so an operator's ``sandboxes:`` rule names the
+        boundary rather than a proxy for it:
+
+        1. the bound sandbox backend's name (``docker``, ``e2b``, ...);
+        2. the configured container runtime, when a ``sandbox:`` block is
+           active but no backend object was handed to this spawner;
+        3. otherwise the resolved isolation mode (``container`` /
+           ``worktree`` / ``none``).
+
+        ``bernstein admission check`` derives the same value from the
+        config alone, so the printed decision table matches the gate.
+
+        Args:
+            isolation_mode: Isolation resolved for this spawn.
+
+        Returns:
+            The tier string the policy matches against.
+        """
+        if self._sandbox_backend is not None:
+            return self._sandbox_backend.name
+        if self._sandbox is not None:
+            return str(self._sandbox.runtime)
+        return isolation_mode.value
+
+    def _emit_admission_refusal_audit_event(
+        self,
+        *,
+        session_id: str,
+        decision: AdmissionDecision,
+    ) -> None:
+        """Append an ``admission_refusal`` event to the HMAC audit chain.
+
+        Failures (key permission, disk full) are caught and logged - a
+        missing audit log must never mask the refusal raise.
+
+        Args:
+            session_id: Spawn session identifier (audit ``resource_id``).
+            decision: The refusing :class:`AdmissionDecision`.
+        """
+        try:
+            from bernstein.core.security.audit import AuditLog
+
+            audit = AuditLog(audit_dir=self._workdir / ".sdd" / "audit")
+            audit.log(
+                event_type="admission_refusal",
+                actor="spawner",
+                resource_type="agent_session",
+                resource_id=session_id,
+                details={
+                    "rule_id": decision.rule_id,
+                    "effect": decision.effect,
+                    "reason": decision.reason,
+                    "mode": decision.mode.value,
+                    "subject": decision.subject.as_dict(),
+                },
+            )
+        except Exception as exc:  # audit must never mask deny - log and move on
+            logger.warning(
+                "Could not emit admission_refusal audit event for %s: %s",
+                session_id,
+                exc,
+            )
+
     @staticmethod
     def _is_fresh_restart_retry(task: Task) -> bool:
         """Return True when this spawn must run as a fresh-context retry.
@@ -4463,6 +4604,23 @@ class AgentSpawner:
         resolved_endpoint_profile_name = endpoint_profile_name
         resolved_endpoint_adapter_name = self._adapter.name()
         resolved_endpoint_model = model_config.model
+
+        # Executor admission (#4907).  The gate runs here rather than
+        # beside the lethal-trifecta check above because the executor
+        # identity it judges - adapter, model, endpoint - is only fully
+        # resolved at this point; it is still ahead of every process
+        # start, so a refusal produces no agent.
+        self._enforce_admission_policy(
+            session_id=session_id,
+            subject=AdmissionSubject(
+                role=role,
+                adapter=resolved_endpoint_adapter_name,
+                model=resolved_endpoint_model,
+                endpoint=resolved_endpoint_base_url,
+                sandbox=self._admission_sandbox_tier(isolation_mode),
+                task_type=getattr(tasks[0].task_type, "value", str(tasks[0].task_type)),
+            ),
+        )
 
         session = AgentSession(
             id=session_id,
