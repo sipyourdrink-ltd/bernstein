@@ -378,3 +378,94 @@ def test_the_contrast_check_catches_the_pre_fix_dark_destructive_pill_contrast()
         f"Expected pre-fix dark danger pill on surface-raised to fail, got {ratio_sr:.2f}:1"
     )
     assert 4.20 <= ratio_sr <= 4.24
+
+
+def test_the_contrast_check_catches_the_pre_fix_accent_contrast() -> None:
+    """Document that the pre-fix teal accent values passed WCAG AA.
+
+    Before the warm-bone migration, light --accent was
+    \'178.6 33.3% 24.7%\' and dark --accent was \'175.1 38.2% 62.5%\'.
+    Both passed WCAG AA on all surfaces (ratios were 6.4:1 or higher).
+    The migration changed the visual language from teal to warm-bone, not
+    to fix contrast failures.
+    """
+    # Light theme pre-fix: old teal accent on light background
+    light_bg_rgb = hsl_to_srgb(40, 37.5, 96.9)
+    old_light_accent_rgb = hsl_to_srgb(178.6, 33.3, 24.7)
+    light_ratio = contrast_ratio(old_light_accent_rgb, light_bg_rgb)
+    assert light_ratio >= WCAG_AA_TEXT_THRESHOLD, (
+        f"Expected pre-fix light accent on light background to pass WCAG AA, got {light_ratio:.2f}:1"
+    )
+    assert 7.90 <= light_ratio <= 8.00
+
+    # Dark theme pre-fix: old teal accent on dark card
+    dark_card_rgb = hsl_to_srgb(60, 10.6, 9.2)
+    old_dark_accent_rgb = hsl_to_srgb(175.1, 38.2, 62.5)
+    dark_ratio = contrast_ratio(old_dark_accent_rgb, dark_card_rgb)
+    assert dark_ratio >= WCAG_AA_TEXT_THRESHOLD, (
+        f"Expected pre-fix dark accent on dark card to pass WCAG AA, got {dark_ratio:.2f}:1"
+    )
+    assert 8.60 <= dark_ratio <= 8.80
+
+
+def test_the_post_fix_accent_values_pass_wcag_aa() -> None:
+    """Prove the migrated accent values satisfy WCAG AA across all dashboard contexts.
+
+    Post-migration accent values:
+    - Light accent: 12 38.6% 42.0% (--accent in light theme)
+    - Dark accent: 12.4 57.4% 66.9% (--accent in dark theme)
+    - accent-foreground: 40 37.5% 96.9% (light) / 60 14.3% 4.1% (dark)
+
+    Surfaces:
+    - Light background: 40 37.5% 96.9%
+    - Light card: 0 0% 100%
+    - Light surface-raised: 48 38.5% 97.5%
+    - Dark background: 60 11.8% 6.7%
+    - Dark card: 60 10.6% 9.2%
+    - Dark surface-raised: 60 3% 12.9%
+    """
+    # Light theme accent values
+    light_accent_rgb = hsl_to_srgb(12, 38.6, 42.0)
+    light_af_rgb = hsl_to_srgb(40, 37.5, 96.9)
+    light_bg_rgb = hsl_to_srgb(40, 37.5, 96.9)
+    light_card_rgb = hsl_to_srgb(0, 0, 100)
+    light_sr_rgb = hsl_to_srgb(48, 38.5, 97.5)
+
+    # Light accent on light background/card/surface-raised
+    assert contrast_ratio(light_accent_rgb, light_bg_rgb) >= WCAG_AA_TEXT_THRESHOLD
+    assert contrast_ratio(light_accent_rgb, light_card_rgb) >= WCAG_AA_TEXT_THRESHOLD
+    assert contrast_ratio(light_accent_rgb, light_sr_rgb) >= WCAG_AA_TEXT_THRESHOLD
+
+    # accent-foreground on light accent
+    assert contrast_ratio(light_af_rgb, light_accent_rgb) >= WCAG_AA_TEXT_THRESHOLD
+
+    # Tinted accent pill on card (light theme)
+    light_accent_on_card = alpha_composite(light_accent_rgb, light_card_rgb, PILL_TINT_ALPHA)
+    assert contrast_ratio(light_accent_rgb, light_accent_on_card) >= WCAG_AA_TEXT_THRESHOLD
+
+    # Tinted accent pill on surface-raised (light theme)
+    light_accent_on_sr = alpha_composite(light_accent_rgb, light_sr_rgb, PILL_TINT_ALPHA)
+    assert contrast_ratio(light_accent_rgb, light_accent_on_sr) >= WCAG_AA_TEXT_THRESHOLD
+
+    # Dark theme accent values
+    dark_accent_rgb = hsl_to_srgb(12.4, 57.4, 66.9)
+    dark_af_rgb = hsl_to_srgb(60, 14.3, 4.1)
+    dark_bg_rgb = hsl_to_srgb(60, 11.8, 6.7)
+    dark_card_rgb = hsl_to_srgb(60, 10.6, 9.2)
+    dark_sr_rgb = hsl_to_srgb(60, 3, 12.9)
+
+    # Dark accent on dark background/card/surface-raised
+    assert contrast_ratio(dark_accent_rgb, dark_bg_rgb) >= WCAG_AA_TEXT_THRESHOLD
+    assert contrast_ratio(dark_accent_rgb, dark_card_rgb) >= WCAG_AA_TEXT_THRESHOLD
+    assert contrast_ratio(dark_accent_rgb, dark_sr_rgb) >= WCAG_AA_TEXT_THRESHOLD
+
+    # accent-foreground on dark accent
+    assert contrast_ratio(dark_af_rgb, dark_accent_rgb) >= WCAG_AA_TEXT_THRESHOLD
+
+    # Tinted accent pill on card (dark theme)
+    dark_accent_on_card = alpha_composite(dark_accent_rgb, dark_card_rgb, PILL_TINT_ALPHA)
+    assert contrast_ratio(dark_accent_rgb, dark_accent_on_card) >= WCAG_AA_TEXT_THRESHOLD
+
+    # Tinted accent pill on surface-raised (dark theme)
+    dark_accent_on_sr = alpha_composite(dark_accent_rgb, dark_sr_rgb, PILL_TINT_ALPHA)
+    assert contrast_ratio(dark_accent_rgb, dark_accent_on_sr) >= WCAG_AA_TEXT_THRESHOLD
