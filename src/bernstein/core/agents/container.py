@@ -1087,7 +1087,7 @@ def ensure_agent_image(
 
     logger.info("Building agent image: %s", image_name)
     try:
-        result = subprocess.run(
+        build_result = subprocess.run(
             build_args,
             capture_output=True,
             text=True,
@@ -1095,8 +1095,8 @@ def ensure_agent_image(
             errors="replace",
             timeout=600,  # 10 minutes for image build
         )
-        if result.returncode != 0:
-            logger.error("Image build failed: %s", result.stderr[:500])
+        if build_result.returncode != 0:
+            logger.error("Image build failed: %s", build_result.stderr[:500])
             return False
         logger.info("Built agent image: %s", image_name)
         return True

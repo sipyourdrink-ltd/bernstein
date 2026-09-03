@@ -22,7 +22,13 @@ rather than a sampling artefact you can only shrug at. Anything that
 would put a model between "a task finished" and "what runs next" is out
 of scope, however good the model.
 
-Record: [ADR-006](decisions/006-no-embedded-llm.md).
+A model may draft an artefact a human must sign — a proposed governance
+playbook, for instance — because nothing it writes takes effect until
+someone signs a specific content hash. It may never decide what runs
+next, which agent gets it, whether it is retried, or when it ends.
+
+Record: [ADR-011](decisions/011-model-drafts-human-signs.md),
+superseding [ADR-006](decisions/006-no-embedded-llm.md).
 
 ## No database for run state
 

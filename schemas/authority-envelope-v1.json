@@ -1,0 +1,286 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://bernstein.run/schemas/authority-envelope-v1.json",
+  "title": "Bernstein Authority Envelope (v1)",
+  "description": "A portable, self-describing record of who acted, under which delegated authority, and which policy decision allowed it. The envelope is not run-scoped: nothing in it references a run identifier or a lineage root, so activity Bernstein did not schedule can be carried in the same shape. Canonical form is RFC 8785 JCS; the signature is a detached EdDSA JWS (RFC 7515 Appendix F) over the JCS bytes of the envelope body, where the body is every top-level member except `signature`. Every hash the envelope carries is recomputable from material the envelope itself records: `principal.id_binding` binds the principal identifier to its key, each `grants[].grant_hash` chains to its parent, each `decisions[].inputs_hash` covers the decision's policy inputs and the grant it cites, and `section_digests` lets a verifier name which section diverged rather than reporting only a broken signature. A signature says who asserted the envelope; the recomputation says the assertion follows from its own inputs.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "envelope_type",
+    "principal",
+    "grants",
+    "decisions",
+    "evidence",
+    "coverage",
+    "section_digests",
+    "signature"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0.0"],
+      "description": "Pinned envelope schema version."
+    },
+    "envelope_type": {
+      "type": "string",
+      "const": "https://bernstein.run/attestations/authority-envelope/v1",
+      "description": "URL identifying the envelope type."
+    },
+    "principal": {
+      "type": "object",
+      "description": "The acting identity, as a reference plus the material needed to check it. The principal key is the identity that acted; it is not necessarily the key that signed this envelope.",
+      "required": ["id", "key", "id_binding"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable identifier for the acting principal."
+        },
+        "key_id": {
+          "type": "string",
+          "description": "Optional key identifier for the principal key."
+        },
+        "key": {
+          "$ref": "#/definitions/ed25519_jwk",
+          "description": "The principal's Ed25519 public key (RFC 8037 OKP JWK)."
+        },
+        "id_binding": {
+          "$ref": "#/definitions/sha256_hex",
+          "description": "sha256 over the JCS bytes of {\"v\": schema_version, \"id\": principal.id, \"key\": principal.key}. A verifier recomputes it, so an identifier cannot be re-pointed at a different key without detection."
+        }
+      }
+    },
+    "grants": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The authority under which the principal acted, ordered root first. Each link attenuates the previous one: its scope is a subset, its expiry is no later, and its issuer is the previous link's subject. The last link's subject is the principal.",
+      "items": {
+        "type": "object",
+        "required": [
+          "grant_id",
+          "parent",
+          "issuer",
+          "subject",
+          "scope",
+          "not_after",
+          "grant_hash"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "grant_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Identifier for this link, unique within the envelope."
+          },
+          "parent": {
+            "type": ["string", "null"],
+            "description": "grant_id of the preceding link; null on the root link only."
+          },
+          "issuer": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Identity that issued this link."
+          },
+          "subject": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Identity this link was issued to."
+          },
+          "scope": {
+            "type": "array",
+            "uniqueItems": true,
+            "description": "Actions this link authorises, sorted ascending so the canonical form is stable.",
+            "items": {"type": "string", "minLength": 1}
+          },
+          "not_after": {
+            "$ref": "#/definitions/rfc3339_utc",
+            "description": "Expiry of this link. Must be no later than the parent's."
+          },
+          "grant_hash": {
+            "$ref": "#/definitions/sha256_hex",
+            "description": "sha256 over the JCS bytes of {\"v\": schema_version, \"grant_id\", \"issuer\", \"subject\", \"scope\", \"not_after\", \"parent_hash\"}, where parent_hash is the empty string on the root link and the parent's grant_hash otherwise. Chaining the hashes means a rewritten ancestor invalidates every descendant."
+          }
+        }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "minItems": 1,
+      "description": "One record per authorization, each naming the versioned policy that produced it and the grant link it drew authority from.",
+      "items": {
+        "type": "object",
+        "required": [
+          "decision_id",
+          "grant",
+          "subject",
+          "action",
+          "resource",
+          "verdict",
+          "policy",
+          "inputs",
+          "inputs_hash",
+          "timestamp"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "decision_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Identifier for this decision, unique within the envelope."
+          },
+          "grant": {
+            "type": "string",
+            "minLength": 1,
+            "description": "grant_id of the link this decision drew authority from."
+          },
+          "subject": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The identity the decision is about; must equal the cited link's subject."
+          },
+          "action": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The requested action."
+          },
+          "resource": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The resource the action was requested against."
+          },
+          "verdict": {
+            "type": "string",
+            "enum": ["allow", "deny"],
+            "description": "The outcome. An `allow` whose action is outside the cited link's scope does not follow from the recorded authority and is rejected."
+          },
+          "policy": {
+            "type": "object",
+            "required": ["id", "version"],
+            "additionalProperties": false,
+            "description": "The versioned policy that produced the verdict.",
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "version": {"type": "string", "minLength": 1}
+            }
+          },
+          "inputs": {
+            "type": "object",
+            "description": "The policy inputs the verdict was computed from -- policy material only, never secrets. Opaque to the schema and covered verbatim by inputs_hash."
+          },
+          "inputs_hash": {
+            "$ref": "#/definitions/sha256_hex",
+            "description": "sha256 over the JCS bytes of {\"v\": schema_version, \"subject\", \"action\", \"resource\", \"policy\", \"inputs\", \"grant_hash\"} where grant_hash is the cited link's grant_hash. Recomputing it detects an edited input and ties the decision to one exact grant chain."
+          },
+          "timestamp": {
+            "$ref": "#/definitions/rfc3339_utc",
+            "description": "When the decision was taken. Must be no later than the cited link's not_after."
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "description": "Hashes tying decisions to what actually happened. Every entry names a decision the envelope carries; a decision with no entry is a gap and must be declared in coverage.uncovered.",
+      "items": {
+        "type": "object",
+        "required": ["decision", "name", "digest"],
+        "additionalProperties": false,
+        "properties": {
+          "decision": {"type": "string", "minLength": 1},
+          "name": {"type": "string", "minLength": 1},
+          "digest": {
+            "type": "object",
+            "required": ["sha256"],
+            "additionalProperties": false,
+            "properties": {"sha256": {"$ref": "#/definitions/sha256_hex"}}
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "description": "What this envelope does and does not cover, stated in the envelope. A verifier refuses an envelope that omits this member rather than reading silence as full coverage.",
+      "required": ["covered", "uncovered", "statement"],
+      "additionalProperties": false,
+      "properties": {
+        "covered": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "decision_ids that carry at least one evidence entry. Recomputed from evidence; a mismatch is rejected.",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "uncovered": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "Every decision with no evidence entry, named explicitly with the reason it is missing.",
+          "items": {
+            "type": "object",
+            "required": ["decision_id", "action", "reason"],
+            "additionalProperties": false,
+            "properties": {
+              "decision_id": {"type": "string", "minLength": 1},
+              "action": {"type": "string", "minLength": 1},
+              "reason": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        "statement": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Plain-language statement of the envelope's limits, for a reader who will not run the verifier."
+        }
+      }
+    },
+    "section_digests": {
+      "type": "object",
+      "description": "sha256 over the JCS bytes of each named section, so a verifier can report which section diverged instead of only that the signature failed.",
+      "required": ["principal", "grants", "decisions", "evidence", "coverage"],
+      "additionalProperties": false,
+      "properties": {
+        "principal": {"$ref": "#/definitions/sha256_hex"},
+        "grants": {"$ref": "#/definitions/sha256_hex"},
+        "decisions": {"$ref": "#/definitions/sha256_hex"},
+        "evidence": {"$ref": "#/definitions/sha256_hex"},
+        "coverage": {"$ref": "#/definitions/sha256_hex"}
+      }
+    },
+    "signature": {
+      "type": "object",
+      "description": "Detached EdDSA JWS over the JCS bytes of the envelope body (every top-level member except this one). The embedded key is a hint: an external verifier may pin its own.",
+      "required": ["alg", "kid", "public_key_jwk", "jws"],
+      "additionalProperties": false,
+      "properties": {
+        "alg": {"type": "string", "const": "EdDSA"},
+        "kid": {"type": "string", "minLength": 1},
+        "public_key_jwk": {"$ref": "#/definitions/ed25519_jwk"},
+        "jws": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+\\.\\.[A-Za-z0-9_-]+$",
+          "description": "Compact detached JWS: BASE64URL(JCS(protected header)) || '..' || BASE64URL(signature). The protected header is {\"alg\": \"EdDSA\", \"typ\": \"application/vnd.bernstein.authority-envelope+jws\", \"kid\": signature.kid} and the signing input is BASE64URL(JCS(header)) || '.' || BASE64URL(JCS(body))."
+        }
+      }
+    }
+  },
+  "definitions": {
+    "sha256_hex": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "rfc3339_utc": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "ed25519_jwk": {
+      "type": "object",
+      "required": ["kty", "crv", "x"],
+      "additionalProperties": false,
+      "properties": {
+        "kty": {"type": "string", "const": "OKP"},
+        "crv": {"type": "string", "const": "Ed25519"},
+        "x": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"}
+      }
+    }
+  }
+}

@@ -15,10 +15,16 @@ Usage::
     registry = PolicyHookRegistry()
     registry.register(opa_hook)
     result = registry.evaluate(HookRequest(action="bash", resource="rm -rf /"))
+
+Requests and responses here are expressible in the AuthZEN 1.0 evaluation shape
+(:mod:`bernstein.core.security.authzen`), and the registry normalises every
+request through it before dispatch, so the decision boundary speaks one
+vocabulary whether the caller is internal or a foreign enforcement point.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import shutil
@@ -29,9 +35,34 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from bernstein.core.security.agent_card_signer import canonicalize_jcs
+
+if TYPE_CHECKING:
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+from bernstein.core.security.authzen import (
+    RESOURCE_TYPE_OPAQUE,
+    SUBJECT_TYPE_AGENT,
+    AuthZenAction,
+    AuthZenError,
+    AuthZenRequest,
+    AuthZenResource,
+    AuthZenResponse,
+    AuthZenSubject,
+    Obligation,
+)
 
 logger = logging.getLogger(__name__)
+
+#: Subject properties an internal :class:`HookRequest` can carry.
+_CARRIED_SUBJECT_PROPERTIES = frozenset({"role"})
+
+
+def _sha256_hex(data: bytes) -> str:
+    """Return the bare lower-case SHA-256 hex digest of *data*."""
+    return hashlib.sha256(data).hexdigest()
 
 
 class HookVerdict(StrEnum):
@@ -68,6 +99,90 @@ class HookRequest:
     scope: str = ""
     metadata: dict[str, Any] = field(default_factory=dict[str, Any])
 
+    def to_authzen(self) -> AuthZenRequest:
+        """Return this request in the AuthZEN 1.0 evaluation shape.
+
+        Raises:
+            AuthZenError: If the request cannot be expressed in the standard
+                shape - an empty action, or metadata keyed in a way the
+                standard context cannot carry.
+        """
+        properties: dict[str, Any] = {"role": self.role} if self.role else {}
+        context: dict[str, Any] = {}
+        if self.scope:
+            context["scope"] = self.scope
+        if self.metadata:
+            context["metadata"] = dict(self.metadata)
+        return AuthZenRequest(
+            subject=AuthZenSubject(type=SUBJECT_TYPE_AGENT, id=self.agent_id, properties=properties),
+            resource=AuthZenResource(type=RESOURCE_TYPE_OPAQUE, id=self.resource),
+            action=AuthZenAction(name=self.action),
+            context=context,
+        )
+
+    @classmethod
+    def from_authzen(cls, request: AuthZenRequest) -> HookRequest:
+        """Build an internal request from the AuthZEN shape.
+
+        Entity properties this request cannot carry are refused rather than
+        dropped, for the same reason unknown context is refused: an engine
+        answering over fewer attributes than it was sent has answered a
+        different question.
+
+        Raises:
+            AuthZenError: If the payload carries attributes that would be lost.
+        """
+        stray_subject = sorted(set(request.subject.properties) - _CARRIED_SUBJECT_PROPERTIES)
+        if stray_subject:
+            raise AuthZenError(f"subject properties an internal request cannot carry: {', '.join(stray_subject)}")
+        if request.resource.properties:
+            raise AuthZenError(
+                f"resource properties an internal request cannot carry: "
+                f"{', '.join(sorted(request.resource.properties))}",
+            )
+        if request.action.properties:
+            raise AuthZenError(
+                f"action properties an internal request cannot carry: {', '.join(sorted(request.action.properties))}",
+            )
+        role = request.subject.properties.get("role", "")
+        if not isinstance(role, str):
+            raise AuthZenError("subject property 'role' must be a string")
+        metadata = request.context.get("metadata", {})
+        if not isinstance(metadata, dict):
+            raise AuthZenError("context field 'metadata' must be a JSON object")
+        scope = request.context.get("scope", "")
+        if not isinstance(scope, str):
+            raise AuthZenError("context field 'scope' must be a string")
+        return cls(
+            action=request.action.name,
+            resource=request.resource.id,
+            agent_id=request.subject.id,
+            role=role,
+            scope=scope,
+            metadata=dict(metadata),  # pyright: ignore[reportUnknownArgumentType]
+        )
+
+
+def _request_digest(request: HookRequest) -> str:
+    """Return the SHA-256 digest of *request* in RFC 8785 canonical form.
+
+    The digest covers every field including ``metadata``, so a holder of the
+    original request can recompute it and match it against a chain record whose
+    payload deliberately does not carry the caller's free-form context.
+    """
+    return _sha256_hex(
+        canonicalize_jcs(
+            {
+                "action": request.action,
+                "resource": request.resource,
+                "agent_id": request.agent_id,
+                "role": request.role,
+                "scope": request.scope,
+                "metadata": request.metadata,
+            },
+        ),
+    )
+
 
 @dataclass(frozen=True)
 class HookResponse:
@@ -79,7 +194,11 @@ class HookResponse:
         reason: Explanation of the verdict.
         latency_ms: Time taken for the hook evaluation in milliseconds.
         error: Error message if the hook failed.
-        policy_digest: SHA-256 digest of the policy text that produced this verdict (for Cedar).
+        policy_digest: SHA-256 digest of the policy that produced this verdict --
+            the policy text for Cedar, the policy file's bytes for OPA. Empty when
+            the engine could not name a policy (an unreadable file, say).
+        obligations: Conditions attached to the verdict.  A permit carrying one
+            has not permitted the request as it was asked.
     """
 
     hook_name: str
@@ -88,6 +207,22 @@ class HookResponse:
     latency_ms: float = 0.0
     error: str = ""
     policy_digest: str = ""
+    obligations: tuple[Obligation, ...] = ()
+
+    def to_authzen(self) -> AuthZenResponse:
+        """Return this response in the AuthZEN 1.0 evaluation shape.
+
+        Only :attr:`HookVerdict.ALLOW` becomes a permit.  The bernstein verdict
+        travels alongside the boolean because AuthZEN's ``decision`` cannot tell
+        a denial apart from an abstention or an unreachable engine.
+        """
+        return AuthZenResponse(
+            decision=self.verdict is HookVerdict.ALLOW,
+            obligations=self.obligations,
+            reason=self.reason,
+            verdict=str(self.verdict),
+            hook_name=self.hook_name,
+        )
 
 
 class ExternalPolicyHook(ABC):
@@ -136,6 +271,20 @@ class OPAHook(ExternalPolicyHook):
     def name(self) -> str:
         return "opa"
 
+    def _current_policy_digest(self) -> str:
+        """Return the SHA-256 of the policy file as it stands on disk right now.
+
+        Read per evaluation rather than cached at construction: a decision record
+        names the policy that produced *this* verdict, and a policy file edited
+        under a long-lived hook would otherwise be attested by a digest of the
+        bytes it no longer has. An unreadable file yields ``""`` -- the engine
+        could not name a policy, which is exactly what an empty digest means.
+        """
+        try:
+            return _sha256_hex(self._policy_path.read_bytes())
+        except OSError:
+            return ""
+
     def evaluate(self, request: HookRequest) -> HookResponse:
         """Query OPA with the request and return the verdict.
 
@@ -146,6 +295,7 @@ class OPAHook(ExternalPolicyHook):
             ALLOW, DENY, or ABSTAIN based on OPA evaluation.
         """
         start = time.monotonic()
+        policy_digest = self._current_policy_digest()
         input_data = {
             "input": {
                 "action": request.action,
@@ -195,6 +345,7 @@ class OPAHook(ExternalPolicyHook):
                     verdict=HookVerdict.UNAVAILABLE,
                     reason=f"OPA evaluation failed: {result.stderr.strip()}",
                     latency_ms=latency,
+                    policy_digest=policy_digest,
                     error=result.stderr.strip(),
                 )
 
@@ -209,12 +360,14 @@ class OPAHook(ExternalPolicyHook):
                         verdict=HookVerdict.ALLOW,
                         reason="Allowed by OPA policy",
                         latency_ms=latency,
+                        policy_digest=policy_digest,
                     )
                 return HookResponse(
                     hook_name=self.name,
                     verdict=HookVerdict.DENY,
                     reason="Denied by OPA policy",
                     latency_ms=latency,
+                    policy_digest=policy_digest,
                 )
 
             # Deliberately ABSTAIN, not UNAVAILABLE: OPA ran, exited zero and answered
@@ -225,6 +378,7 @@ class OPAHook(ExternalPolicyHook):
                 verdict=HookVerdict.ABSTAIN,
                 reason="OPA returned empty result",
                 latency_ms=latency,
+                policy_digest=policy_digest,
             )
 
         except FileNotFoundError:
@@ -234,6 +388,7 @@ class OPAHook(ExternalPolicyHook):
                 verdict=HookVerdict.UNAVAILABLE,
                 reason="OPA binary not found",
                 latency_ms=latency,
+                policy_digest=policy_digest,
                 error="opa not found on PATH",
             )
         except subprocess.TimeoutExpired:
@@ -243,6 +398,7 @@ class OPAHook(ExternalPolicyHook):
                 verdict=HookVerdict.UNAVAILABLE,
                 reason="OPA evaluation timed out",
                 latency_ms=latency,
+                policy_digest=policy_digest,
                 error="timeout",
             )
         except Exception as exc:
@@ -254,6 +410,7 @@ class OPAHook(ExternalPolicyHook):
                 verdict=HookVerdict.UNAVAILABLE,
                 reason=f"OPA hook error: {exc}",
                 latency_ms=latency,
+                policy_digest=policy_digest,
                 error=str(exc),
             )
         finally:
@@ -452,6 +609,13 @@ class PolicyHookRegistry:
     "no rule matched" have opposite safety properties, and reporting the first as the
     second makes a broken decision boundary look like a permissive one (#4912).
 
+    When an audit chain is supplied, every hook evaluation appends one
+    ``external_policy.decision`` record to it - allow, deny, abstain and
+    unavailable alike. A refusal an operator cannot demonstrate afterwards is a
+    refusal they can only assert, and an evidence trail that carried only
+    refusals could not distinguish an engine that was consulted and had no rule
+    from one that was never consulted at all (#4912).
+
     Args:
         default_verdict: Verdict when all hooks abstain.
         fail_open: If True, an engine that cannot answer is treated as having no
@@ -459,16 +623,20 @@ class PolicyHookRegistry:
             This used to be consulted only for exceptions escaping ``hook.evaluate``,
             which cannot happen because that method catches everything - so the flag
             was unreachable. It is now the per-deployment switch it was written to be.
+        audit_chain: Optional chain store receiving one decision record per hook
+            evaluation. Recording is opt-in; an unwired registry still decides.
     """
 
     def __init__(
         self,
         default_verdict: HookVerdict = HookVerdict.ABSTAIN,
         fail_open: bool = False,
+        audit_chain: AuditChainStore | None = None,
     ) -> None:
         self._hooks: list[ExternalPolicyHook] = []
         self._default_verdict = default_verdict
         self._fail_open = fail_open
+        self._audit_chain = audit_chain
 
     @property
     def hooks(self) -> list[ExternalPolicyHook]:
@@ -487,32 +655,77 @@ class PolicyHookRegistry:
     def evaluate(self, request: HookRequest) -> list[HookResponse]:
         """Evaluate a request against all registered hooks.
 
+        The request is normalised through the AuthZEN shape before any hook sees
+        it, so an internal decision and one arriving from a foreign enforcement
+        point are evaluated over the same bytes.  A request the standard shape
+        cannot express never reaches an engine.
+
+        Each response is appended to the audit chain when one is configured, so
+        the record set matches the evaluation set exactly. A failure to record is
+        not swallowed: it propagates, because a decision boundary that keeps
+        deciding after its evidence trail has stopped being written is the silent
+        failure this module exists to remove.
+
         Args:
             request: The permission request.
 
         Returns:
             List of responses from all hooks.
+
+        Raises:
+            AuthZenError: If the request cannot be expressed in the AuthZEN shape.
         """
+        request = HookRequest.from_authzen(request.to_authzen())
         responses: list[HookResponse] = []
+        digest = _request_digest(request) if self._audit_chain is not None else ""
         for hook in self._hooks:
             try:
                 response = hook.evaluate(request)
-                responses.append(response)
             except Exception as exc:
                 # An escaping exception is an engine that did not answer, like any other
                 # unavailability. Reported as UNAVAILABLE rather than resolved to
                 # ALLOW/DENY here so that ONE place decides what unavailability means -
                 # `first_decisive`, which honours `fail_open`. Deciding it twice is how
                 # the flag came to be consulted on a path that could never run.
-                responses.append(
-                    HookResponse(
-                        hook_name=hook.name,
-                        verdict=HookVerdict.UNAVAILABLE,
-                        reason=f"Hook error: {exc}",
-                        error=str(exc),
-                    ),
+                response = HookResponse(
+                    hook_name=hook.name,
+                    verdict=HookVerdict.UNAVAILABLE,
+                    reason=f"Hook error: {exc}",
+                    error=str(exc),
                 )
+            responses.append(response)
+            self._record(request, response, digest)
         return responses
+
+    def _record(self, request: HookRequest, response: HookResponse, digest: str) -> None:
+        """Append one decision record for *response*, if a chain is configured.
+
+        The engine's own verdict is written down, never the registry's resolution
+        of it: an ``UNAVAILABLE`` engine that :meth:`first_decisive` turns into a
+        denial is recorded as unavailable, so the chain says why the run stopped
+        rather than only that it did.
+        """
+        chain = self._audit_chain
+        if chain is None:
+            return
+
+        from bernstein.core.security.audit_chain import record_external_policy_decision
+
+        record_external_policy_decision(
+            chain=chain,
+            engine=response.hook_name,
+            verdict=response.verdict.value,
+            reason=response.reason,
+            action=request.action,
+            resource=request.resource,
+            agent_id=request.agent_id,
+            role=request.role,
+            scope=request.scope,
+            request_digest=digest,
+            policy_digest=response.policy_digest,
+            error_digest=_sha256_hex(response.error.encode("utf-8")) if response.error else "",
+            latency_ms=response.latency_ms,
+        )
 
     def first_decisive(self, request: HookRequest) -> HookResponse:
         """Evaluate hooks and return the first decisive response.
@@ -527,6 +740,9 @@ class PolicyHookRegistry:
 
         Returns:
             First decisive response, or a default ABSTAIN response.
+
+        Raises:
+            AuthZenError: If the request cannot be expressed in the AuthZEN shape.
         """
         responses = self.evaluate(request)
         for resp in responses:

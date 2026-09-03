@@ -40,6 +40,16 @@ fails validation. A crash-torn trailing fragment (an append that never
 completed) is skipped: the previous complete checkpoint stays authoritative,
 which can only make the pin *older*, never weaker than the last durable seal.
 
+Beside the ledger sits ``checkpoints/latest.json``, the newest-checkpoint
+pointer. It is the one object a reader that wants only the current pin has
+to open, and the one object in this directory that is *replaced* rather than
+appended to - temp file, fsync, ``os.replace``, directory fsync - so a reader
+opening it while a writer publishes sees the old record or the new one, never
+a partial file. It carries the same signed record shape as a ledger line and
+is treated as untrusted input: an unusable pointer degrades to a full ledger
+read, and a signature-valid pointer naming a checkpoint the ledger no longer
+holds is reported as a truncated ledger (:func:`check_pointer`).
+
 Determinism: checkpoint payloads carry no timestamps and are canonically
 serialised, so two byte-identical audit directories sealed with the same key
 produce byte-identical checkpoint files.
@@ -47,8 +57,13 @@ produce byte-identical checkpoint files.
 Residual (documented, not hidden): an actor with write access to both the
 chain segments and the checkpoints file can truncate both to a mutually
 consistent earlier state. Detecting that requires retention outside the
-local filesystem (a witness co-signature over checkpoints), which is a
-follow-up, not part of this module.
+local filesystem, which lives in
+:mod:`bernstein.core.persistence.checkpoint_anchor`: an optional RFC 3161
+token over a checkpoint's canonical bytes, so a history shorter than the
+newest anchored entry count contradicts a signature made off this machine,
+and :mod:`bernstein.core.persistence.checkpoint_witness`: an optional second
+party holding per-origin monotonic state, which co-signs a checkpoint only
+when the tree extends the last one it accepted.
 """
 
 from __future__ import annotations
@@ -74,6 +89,12 @@ CHECKPOINTS_SUBDIR = "checkpoints"
 
 #: File name of the append-only checkpoint log.
 CHECKPOINTS_FILE = "checkpoints.jsonl"
+
+#: File name of the atomically-replaced pointer at the newest checkpoint.
+#: The ledger is append-only, so a reader that wants only the current pin
+#: would otherwise have to read and validate the whole file while a writer
+#: appends to it. This is the one object such a reader opens.
+LATEST_POINTER_FILE = "latest.json"
 
 #: ``prev_checkpoint_sha256`` of the first checkpoint in a file.
 GENESIS_PREV = "0" * 64
@@ -176,8 +197,9 @@ def _sign(payload: dict[str, Any], key: bytes) -> str:
     authenticate the chain can authenticate its checkpoints with the same
     secret, and an attacker with write access to the audit directory (but not
     the key, which lives outside it) cannot forge one. Ed25519 co-signing of
-    checkpoints is a planned follow-up for keyless third-party verification;
-    it layers on top of this record rather than replacing it.
+    checkpoints, for keyless third-party verification, lives in
+    :mod:`bernstein.core.persistence.checkpoint_witness`; it layers on top of
+    this record rather than replacing it.
     """
     return _hmac.new(key, _canonical(payload), hashlib.sha256).hexdigest()
 
@@ -189,6 +211,119 @@ def _record_sha256(doc: dict[str, Any]) -> str:
 def checkpoints_path(audit_dir: Path) -> Path:
     """Return the append-only checkpoints file path for *audit_dir*."""
     return audit_dir / CHECKPOINTS_SUBDIR / CHECKPOINTS_FILE
+
+
+def latest_pointer_path(audit_dir: Path) -> Path:
+    """Return the atomically-replaced newest-checkpoint pointer for *audit_dir*."""
+    return audit_dir / CHECKPOINTS_SUBDIR / LATEST_POINTER_FILE
+
+
+# ---------------------------------------------------------------------------
+# Newest-checkpoint pointer
+# ---------------------------------------------------------------------------
+
+
+def write_latest_pointer(audit_dir: Path, payload: dict[str, Any], *, key: bytes) -> None:
+    """Publish *payload* as the newest-checkpoint pointer, atomically.
+
+    The pointer carries the same ``{"payload": ..., "hmac": ...}`` record
+    shape as a ledger line, so a reader authenticates it with the audit key
+    exactly as it authenticates the ledger. It is replaced, never appended
+    to: :func:`bernstein.core.persistence.atomic_write.write_atomic_bytes`
+    writes a sibling temp file, ``fsync``s it, ``os.replace``s it onto the
+    pointer and ``fsync``s the directory, so a reader opening the pointer
+    concurrently with a publish sees the old record or the new one and never
+    a partial file.
+
+    Publishing is part of recording a checkpoint, not a best-effort extra: a
+    directory that accepted the ledger append accepts this write, so a
+    failure here is a real filesystem problem and propagates.
+
+    Args:
+        audit_dir: The audit directory.
+        payload: The checkpoint payload now pinning the log.
+        key: Audit HMAC key.
+    """
+    from bernstein.core.persistence.atomic_write import write_atomic_bytes
+
+    doc = {"payload": payload, "hmac": _sign(payload, key)}
+    write_atomic_bytes(latest_pointer_path(audit_dir), _canonical(doc) + b"\n")
+
+
+def load_latest_checkpoint(audit_dir: Path, key: bytes) -> dict[str, Any] | None:
+    """Return the pointer's checkpoint payload, or ``None`` when unusable.
+
+    A pure read: no lock is taken and nothing is written, so it works against
+    a read-only copy of the audit directory while a writer appends to the
+    live one.
+
+    The pointer is untrusted input. A missing, unreadable, unparsable,
+    wrong-version or wrongly-signed pointer yields ``None`` and the caller
+    falls back to :func:`load_checkpoints`, which is why deleting the pointer
+    costs a full ledger read and never correctness.
+
+    Args:
+        audit_dir: The audit directory.
+        key: Audit HMAC key.
+
+    Returns:
+        The signature-valid checkpoint payload, or ``None``.
+    """
+    try:
+        raw = latest_pointer_path(audit_dir).read_bytes()
+    except OSError:
+        return None
+    try:
+        doc = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(doc, dict):
+        return None
+    record = cast("dict[str, Any]", doc)
+    payload = record.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    payload = cast("dict[str, Any]", payload)
+    if not _hmac.compare_digest(str(record.get("hmac", "")), _sign(payload, key)):
+        return None
+    if payload.get("version") != CHECKPOINT_VERSION:
+        return None
+    return payload
+
+
+def check_pointer(audit_dir: Path, state: CheckpointFileState, *, key: bytes) -> str | None:
+    """Return the problem the pointer exposes in *state*, or ``None``.
+
+    The pointer is published only after its checkpoint is durably in the
+    ledger, so in a healthy directory the pointed-at payload is always one of
+    the ledger's checkpoints - usually the head, or an older one when a crash
+    landed between the append and the publish. A signature-valid pointer that
+    names a checkpoint the ledger no longer holds means the ledger was
+    truncated or rewritten back over a pin that was already published, which
+    is exactly the shrink the checkpoint substrate exists to make sticky.
+
+    An unusable pointer is never a verdict: it degrades to the ledger.
+
+    Args:
+        audit_dir: The audit directory.
+        state: The already-validated ledger content.
+        key: Audit HMAC key.
+
+    Returns:
+        A message naming the pointer file, or ``None`` when consistent.
+    """
+    pinned = load_latest_checkpoint(audit_dir, key)
+    if pinned is None:
+        return None
+    published = _canonical(pinned)
+    if any(_canonical(cp) == published for cp in state.checkpoints):
+        return None
+    root = str(pinned.get("root_hash", ""))[:16]
+    return (
+        f"{CHECKPOINTS_SUBDIR}/{LATEST_POINTER_FILE}: published checkpoint "
+        f"(root={root}..., entry_count={pinned.get('entry_count', '?')}) is absent from "
+        f"{CHECKPOINTS_FILE}; the checkpoint ledger was truncated or rewritten over a published pin"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -634,6 +769,10 @@ def _record_checkpoint_locked(
     if prev is not None:
         same = all(payload[k] == prev.get(k) for k in ("origin", "entry_count", "root_hash", "leaves"))
         if same:
+            # Nothing to append, but republish the pointer: a re-seal of an
+            # unchanged tree is how a deleted or stale pointer heals without
+            # minting a new pin.
+            write_latest_pointer(audit_dir, prev, key=key)
             return prev
         conflicts = check_extension(audit_dir, prev)
         divergence_ack: dict[str, Any] | None = None
@@ -663,6 +802,10 @@ def _record_checkpoint_locked(
         os.fsync(fd)
     finally:
         os.close(fd)
+    # Publish the pointer only after the ledger append is durable, so a crash
+    # between the two can only leave the pointer *behind* the ledger - a
+    # stale pin, never one the ledger has never held.
+    write_latest_pointer(audit_dir, payload, key=key)
     return payload
 
 
@@ -671,6 +814,7 @@ __all__ = [
     "CHECKPOINTS_FILE",
     "CHECKPOINTS_SUBDIR",
     "CHECKPOINT_VERSION",
+    "LATEST_POINTER_FILE",
     "CheckpointConflict",
     "CheckpointConsistencyError",
     "CheckpointFileError",
@@ -678,10 +822,14 @@ __all__ = [
     "authorize_divergence",
     "chain_snapshot",
     "check_extension",
+    "check_pointer",
     "checkpoints_path",
     "compute_origin",
     "count_entries",
     "find_divergence_acks",
+    "latest_pointer_path",
     "load_checkpoints",
+    "load_latest_checkpoint",
     "record_checkpoint",
+    "write_latest_pointer",
 ]

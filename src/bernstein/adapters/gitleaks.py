@@ -127,7 +127,7 @@ class GitleaksAdapter(ScannerAdapter):
             # SARIF snippets may contain secrets. Findings retain only a digest,
             # so the raw report should not outlive parsing.
             report_path.unlink(missing_ok=True)
-        return ScanResult(findings=findings)
+        return ScanResult(findings=findings, invocation_digest=self.last_invocation.argv_hash)
 
     def _resolve_config_path(self, scope: ScanScope, target: Path) -> Path | None:
         configured = scope.config.get("config_path")

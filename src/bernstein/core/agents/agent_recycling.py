@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from bernstein.core import heartbeat as heartbeat_protocol
+from bernstein.core import heartbeat as heartbeat_protocol  # type: ignore[attr-defined]  # meta-path redirect
 from bernstein.core.agents.agent_reaping import (
     _propagate_abort_to_children,
     _save_partial_work,

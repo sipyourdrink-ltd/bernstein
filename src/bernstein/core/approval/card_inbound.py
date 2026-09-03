@@ -216,7 +216,7 @@ class ElicitationApprovalRouter:
         request_id: str,
         card_hash: str,
         decision: str,
-        approver: str = "",
+        approver: str,
         now: float | None = None,
     ) -> tuple[IssuedCard, ElicitationRequest | None]:
         """Resolve a routed elicitation via the gate, then the handler.
@@ -239,10 +239,20 @@ class ElicitationApprovalRouter:
         The binding is consumed on success, so a replayed pair is refused here
         rather than reaching the gate a second time.
 
+        Args:
+            request_id: The routed elicitation the decision answers.
+            card_hash: The ``card_hash`` echoed by the decision.
+            decision: ``approve`` or ``reject``.
+            approver: Identifier of the operator who decided. Required and
+                passed through unchanged; the gate refuses a blank one rather
+                than settling the card under a placeholder.
+            now: Injected clock for deterministic tests.
+
         Raises:
             ApprovalCardRequestMismatch: When *request_id* and *card_hash* do
                 not name the same routed prompt, or the handler no longer holds
                 it pending.
+            ApprovalCardMissingApprover: When *approver* is blank.
         """
         with self._bind_lock:
             bound = self._bound_cards.get(request_id)
@@ -336,13 +346,24 @@ class A2AInputRequiredRouter:
         *,
         card_hash: str,
         decision: str,
-        approver: str = "",
+        approver: str,
         now: float | None = None,
     ) -> IssuedCard:
         """Resolve the A2A card via the gate.
 
         The router's own worktree and conversation are passed through so the
         gate can enforce the origin pinning it recorded at issue time.
+
+        Args:
+            card_hash: The ``card_hash`` echoed by the decision.
+            decision: ``approve`` or ``reject``.
+            approver: Identifier of the operator who decided. Required; the
+                gate refuses a blank one rather than settling the card under a
+                placeholder.
+            now: Injected clock for deterministic tests.
+
+        Raises:
+            ApprovalCardMissingApprover: When *approver* is blank.
         """
         return self._gate.resolve(
             card_hash=card_hash,

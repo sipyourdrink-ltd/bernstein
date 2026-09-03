@@ -18,7 +18,7 @@ import os
 import re
 import tempfile
 import time
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -406,6 +406,27 @@ def render_task_payload(
         payload["metadata"] = dict(event.metadata)
 
     return payload
+
+
+@dataclass(frozen=True)
+class TriggerGateResult:
+    """Outcome of :meth:`TriggerManager.gate_direct_task` for one event.
+
+    ``trigger_name`` is ``None`` when no enabled trigger configured for the
+    event's source has filters matching it - the transparent pass-through
+    case, covering both "no ``triggers.yaml``" and "no rule targets this
+    event". Callers proceed exactly as they did before this gate existed.
+
+    When a trigger did match, ``suppressed`` says whether the caller should
+    skip creating its task. When it is not suppressed, the caller must create
+    the task and then call :meth:`TriggerManager.record_fire` with
+    ``dedup_key`` so later cooldown/dedup checks see this fire.
+    """
+
+    trigger_name: str | None
+    suppressed: bool
+    reason: str | None
+    dedup_key: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -815,6 +836,52 @@ class TriggerManager:
             event_summary=summary,
         )
         self._record_fire(record)
+
+    # -- Direct-route governance ---------------------------------------------
+
+    def gate_direct_task(self, event: TriggerEvent) -> TriggerGateResult:
+        """Decide whether ``triggers.yaml`` governance suppresses a task a
+        production route is about to build directly from its own mapper.
+
+        Routes such as the GitHub/GitLab webhook handlers normalize the
+        inbound payload and build task content themselves rather than
+        through :meth:`evaluate`'s template rendering. This checks only the
+        *governance* half of the pipeline - filters, cooldown, dedup, and the
+        other per-trigger conditions - for the first enabled trigger
+        configured for ``event.source`` whose filters match; the mapper's own
+        payload content is untouched either way, so triggers.yaml governs
+        whether a task is created, not what it says.
+
+        Returns a :class:`TriggerGateResult`. See its docstring for how to
+        read ``trigger_name``/``suppressed``/``dedup_key``.
+        """
+        if self.is_disabled:
+            return TriggerGateResult(None, False, None, None)
+
+        self._try_reload_config()
+        for trigger in self._configs:
+            if not trigger.enabled or trigger.source != event.source:
+                continue
+            if not _matches_filter(event, trigger):
+                continue
+
+            # An enabled trigger for this source has matching filters -
+            # governance now applies to this event.
+            reason = self._check_conditions(trigger, event)
+            dedup_key = compute_dedup_key(trigger.name, event)
+            if reason is None and self._check_dedup(dedup_key):
+                reason = "deduplicated"
+            if reason is not None:
+                logger.info("Trigger %s suppressed a direct %s task: %s", trigger.name, event.source, reason)
+                return TriggerGateResult(trigger.name, True, reason, None)
+
+            cooldown_s = trigger.conditions.get("cooldown_s", 300)
+            self._record_dedup(dedup_key, max(cooldown_s, 300))
+            self._record_rate()
+            logger.info("Trigger %s governance passed for a direct %s task", trigger.name, event.source)
+            return TriggerGateResult(trigger.name, False, None, dedup_key)
+
+        return TriggerGateResult(None, False, None, None)
 
     # -- Cron evaluation (called from orchestrator tick) ---------------------
 

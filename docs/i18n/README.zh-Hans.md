@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### 面向 AI 智能体的开源治理层
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:739f0a7ad1af" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:9c87d303c594" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -38,7 +38,7 @@
 
 > **状态：beta。** 由单人维护，正在积极开发中。版本号计的是发布次数，而非成熟度——次版本（minor）可能改变接口。凡有依赖请锁定版本；回归问题会被尽快修复，[欢迎提交](https://github.com/sipyourdrink-ltd/bernstein/issues)。
 
-Bernstein 是面向 AI 智能体的开源治理层。确定性调度器 - 协调环路中没有模型 - 并行运行智能体,用门禁把关它们的产出,并记录每一步,因此一次运行可以在事后离线验证,仅凭工件本身。CLI 编码智能体开箱即用(Claude Code、Codex、Gemini CLI 及 40+ 款),同一治理层管辖任何智能体工作负载:交付物可以是 diff、研究报告、数据集,或一份审计证据包。附带 air-gap 安装配置。Apache-2.0。
+Bernstein 是面向 AI 智能体的开源治理层。它运行在 policy as code 之上:你编写策略——谁可以做什么、什么需要审批、什么必须被记录——Bernstein 据此执行并生成可验证的记录。确定性调度器 - 协调环路中没有模型 - 并行运行智能体,用门禁把关它们的产出,并记录每一步,因此一次运行可以在事后离线验证,仅凭工件本身。CLI 编码智能体开箱即用(Claude Code、Codex、Gemini CLI 及 40+ 款),同一治理层管辖任何智能体工作负载:交付物可以是 diff、研究报告、数据集,或一份审计证据包。附带 air-gap 安装配置。Apache-2.0。
 
 ### 一览
 <!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->

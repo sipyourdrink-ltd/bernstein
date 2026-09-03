@@ -580,17 +580,24 @@ def _describe_cost_estimate(backlog_count: int, model: str | None) -> str:
     Returns:
         Plain-text fragment for the startup cost line.
     """
-    from bernstein.core.cost import estimate_run_cost
+    from bernstein.core.cost import estimate_run_cost, model_cost_is_known
+
+    count_note = f"{backlog_count} task(s)" if backlog_count > 0 else "task count pending planning"
+
+    if not model:
+        return f"unknown (no model configured, {count_note})"
+
+    # A model with no pricing-table entry (a gateway alias / self-hosted
+    # route) meters at $0 but is not free - say "unpriced" rather than quote
+    # "$0.00" as if the run cost nothing (issue #5337).
+    if not model_cost_is_known(model):
+        return f"unpriced ({model} not in pricing table, {count_note})"
 
     if backlog_count > 0:
-        if model:
-            low, high = estimate_run_cost(backlog_count, model)
-            return f"~${low:.2f}-${high:.2f} ({backlog_count} task(s), {model})"
-        return f"unknown (no model configured, {backlog_count} task(s))"
-    if model:
-        low, high = estimate_run_cost(1, model)
-        return f"~${low:.2f}-${high:.2f} per task ({model}, task count pending planning)"
-    return "unknown (no model configured, task count pending planning)"
+        low, high = estimate_run_cost(backlog_count, model)
+        return f"~${low:.2f}-${high:.2f} ({backlog_count} task(s), {model})"
+    low, high = estimate_run_cost(1, model)
+    return f"~${low:.2f}-${high:.2f} per task ({model}, task count pending planning)"
 
 
 def _record_team_manifest_lineage(seed: SeedConfig, workdir: Path) -> None:

@@ -24,12 +24,23 @@ WAL output:  {result, error, latency_ms}
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import sys
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from bernstein.core.protocols.mcp_catalog import MCPServerCapabilities, ServerCapabilitiesStore
+    from bernstein.core.protocols.payments.x402 import X402SettlementCoordinator
+    from bernstein.core.replay.journal import EventJournal
+    from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.core.security.toolcall_interlock import ToolCallAttestationInterlock
+    from bernstein.core.wal import WALEntry, WALWriter
 
 from bernstein.core.orchestration.worker_loop_detector import WorkerLoopDetector
 from bernstein.core.persistence.action_cache import open_cache
@@ -38,18 +49,10 @@ from bernstein.core.protocols.mcp.stateless_core import (
     anchor_stateless_call,
     request_span_id,
 )
+from bernstein.core.security.audit_chain import record_mcp_capability_drift
 from bernstein.core.security.claude_tool_result_injection import ToolResultInjector
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from bernstein.core.protocols.payments.x402 import X402SettlementCoordinator
-    from bernstein.core.replay.journal import EventJournal
-    from bernstein.core.security.audit_chain import AuditChainStore
-    from bernstein.core.security.toolcall_interlock import ToolCallAttestationInterlock
-    from bernstein.core.wal import WALEntry, WALWriter
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +181,7 @@ class MCPGateway:
         self,
         upstream_cmd: list[str],
         wal_writer: WALWriter,
+        capabilities_store: ServerCapabilitiesStore | None = None,
         replay: GatewayReplay | None = None,
         *,
         server_name: str = "unknown",
@@ -188,6 +192,7 @@ class MCPGateway:
     ) -> None:
         self._upstream_cmd = upstream_cmd
         self._wal_writer = wal_writer
+        self._capabilities_store = capabilities_store
         self._replay = replay
         self._server_name = server_name.strip() or "unknown"
         self._journal = journal
@@ -209,6 +214,75 @@ class MCPGateway:
         self._reader_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------------
+    # Capability drift
+    # ------------------------------------------------------------------
+
+    def _compute_tool_digest(self, tool_names: tuple[str, ...]) -> str:
+        """Return ``sha256:<hex>`` of sorted canonical JSON of tool names."""
+        canonical = json.dumps(sorted(tool_names), separators=(",", ":"))
+        return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+
+    def _process_capability_drift(
+        self,
+        tool_names: tuple[str, ...],
+        old_caps: MCPServerCapabilities | None,
+    ) -> None:
+        """Process capability drift for given tool names.
+
+        Updates store and emits audit event if drift detected. No-op if
+        no capabilities store or audit chain is configured.
+        """
+        if self._capabilities_store is None or self._audit_chain is None:
+            return
+        digest = self._compute_tool_digest(tool_names)
+        prior = self._capabilities_store.get_capabilities(self._server_name)
+        if prior is not None and prior.capability_digest == digest:
+            return
+        # Get run_id from the wal_writer for the audit chain event
+        run_id = self._wal_writer._run_id
+        self._capabilities_store.set_capabilities(self._server_name, frozenset(tool_names), digest)
+        try:
+            record_mcp_capability_drift(
+                chain=self._audit_chain,
+                run_id=run_id,
+                server_name=self._server_name,
+                current_tools=tool_names,
+                previous_tools=tuple(sorted(prior.tool_names)) if prior is not None else None,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to record MCP capability drift for %s",
+                self._server_name,
+                exc_info=True,
+            )
+
+    async def _check_capability_drift(self) -> None:
+        """Check capability drift on first contact.
+
+        Called on gateway start. Gets current advertised tools via
+        tools/list, computes digest, and checks against stored state.
+        Emits a drift event if the server is new or capabilities changed.
+        """
+        if self._capabilities_store is None or self._audit_chain is None:
+            return
+        try:
+            response, _ = await self._send_request(
+                {"jsonrpc": "2.0", "method": "tools/list", "id": 0},
+                0,
+            )
+        except Exception:
+            logger.debug("Capability drift check: tools/list failed", exc_info=True)
+            return
+        tools = (response or {}).get("result", {}).get("tools", [])
+        if not isinstance(tools, list):
+            return
+        tool_names = tuple(t["name"] for t in tools if isinstance(t, dict) and "name" in t)
+        if not tool_names:
+            return
+        old_caps = self._capabilities_store.get_capabilities(self._server_name)
+        self._process_capability_drift(tool_names, old_caps)
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
@@ -218,6 +292,7 @@ class MCPGateway:
             return
         if not self._upstream_cmd:
             return
+        await self._check_capability_drift()
         self._proc = await asyncio.create_subprocess_exec(
             *self._upstream_cmd,
             stdin=asyncio.subprocess.PIPE,
@@ -347,6 +422,7 @@ class MCPGateway:
 
         await self._prepare_tool_dispatch(message, method, params, req_id)
         response, latency_ms = await self._send_request(message, req_id)
+
         self._record_wal_and_metrics(method, params, req_id, response, latency_ms)
         record = self._anchor_proxied_call(method, params)
 

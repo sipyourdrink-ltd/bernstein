@@ -114,6 +114,43 @@ work.
 - **Supported exec semantics.** Every first-party backend handles
   argv-based exec with exit-code, stdout, and stderr capture.
 
+### Declared host isolation
+
+The backends above are isolation Bernstein *provides*. Some CLI agents also
+ship a sandbox of their own — codex spawns under `--sandbox workspace-write`,
+implemented with bubblewrap — and that sandbox needs an unprivileged user
+namespace to start. An operator running the CLI inside a container or VM they
+control has usually removed exactly that (`--cap-drop ALL`,
+`no-new-privileges`, unprivileged user namespaces disabled), so the agent's
+sandbox cannot initialise and every command it issues is refused while the run
+still exits 0.
+
+The operator declares the isolation the host already applies, once, in the
+normal config chain:
+
+| Key | Env var | Default |
+|---|---|---|
+| `host_isolation_tier` | `BERNSTEIN_HOST_ISOLATION_TIER` | `none` |
+| `host_isolation_evidence` | `BERNSTEIN_HOST_ISOLATION_EVIDENCE` | empty |
+
+The tier vocabulary is `SandboxTier` (`none` < `process` < `container` <
+`vm`), so it cannot drift from the tiers the rest of this layer ranks against;
+anything outside it is rejected rather than assumed. `container` and `vm`
+replace what the agent's own sandbox would have supplied, so an adapter that
+advertises `consumes_host_isolation` drops it. `process` and `none` do not, so
+it stays.
+
+The declaration is anchored in the HMAC audit chain as a
+`sandbox.host_isolation_declared` event carrying the tier, the operator's
+evidence for it, the config layer it resolved from, and whether the agent's
+sandbox was consequently dropped. Dropping a sandbox is a posture change, and
+the record is what makes it a statement somebody made from a named source
+rather than an unexplained flag flip.
+
+- Resolver: `src/bernstein/core/config/host_isolation.py`
+- Injection seam: `AgentSpawner._get_adapter_by_name`
+- Consumer today: `src/bernstein/adapters/codex.py`
+
 ## MicroVM backend and deterministic fork-and-race
 
 The `microvm` backend (`src/bernstein/core/sandbox/backends/microvm.py`)

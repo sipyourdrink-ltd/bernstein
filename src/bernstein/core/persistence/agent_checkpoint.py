@@ -22,6 +22,16 @@ binding ``(checkpoint_hash, grant_hash, chain_head_at_suspend,
 chain_head_at_resume)`` so a verifier can chain suspend → resume with no
 filesystem access.  Absence of the entry means the resume never completed; the
 verifier treats absence as a new run, never as evidence of continuity.
+
+The grant answers whether the run may still act.  It says nothing about the
+bytes the suspended work was derived from, which can move while a checkpoint
+sits without any grant field changing.  :func:`capture_worktree_observations`
+binds those bytes at suspend and :func:`evaluate_observations` re-derives them
+at resume.  The outcome there is deliberately not a refusal: a moved
+observation makes the checkpoint a *discard candidate*, and
+:func:`discard_checkpoint` is the expected answer -- respawning re-reads the
+tree, while resuming onto changed bytes and recording it as continuity does
+not.
 """
 
 from __future__ import annotations
@@ -170,6 +180,11 @@ class ContinuationEntry:
         interpreter_overridden: Whether the operator forced the resume past an
             interpreter mismatch (``--override-interpreter``). A later reader
             can distinguish an overridden resume from a clean one.
+        observations_hash: SHA-256 of the observations the suspended work was
+            derived from, or ``""`` when the checkpoint bound none.
+        observations_overridden: Whether the operator resumed past moved
+            observations (``--override-observations``) instead of discarding
+            the checkpoint and respawning.
         resumed_at: Unix timestamp of resumption.
     """
 
@@ -179,6 +194,8 @@ class ContinuationEntry:
     chain_head_at_resume: str
     interpreter_hash: str = ""
     interpreter_overridden: bool = False
+    observations_hash: str = ""
+    observations_overridden: bool = False
     resumed_at: float = field(default_factory=time.time)
 
 
@@ -257,6 +274,22 @@ def load_checkpoint(agent_id: str, runtime_dir: Path) -> AgentCheckpoint | None:
     if not path.exists():
         return None
     return AgentCheckpoint(**json.loads(path.read_text()))
+
+
+def discard_checkpoint(agent_id: str, runtime_dir: Path) -> bool:
+    """Remove the checkpoint for ``agent_id``; return whether one was removed.
+
+    Discarding is the answer to a checkpoint whose observations moved. Once
+    the file is gone the resume has nothing to continue from, so no
+    continuation entry is appended and the chain reads the next run as a new
+    run rather than as a continuation.
+    """
+    path = runtime_dir / "agents" / agent_id / _CHECKPOINT_FILENAME
+    try:
+        path.unlink()
+    except OSError:
+        return False
+    return True
 
 
 def find_checkpoint_for_task(task_id: str, runtime_dir: Path) -> AgentCheckpoint | None:
@@ -510,11 +543,178 @@ def _git_status(worktree: Path) -> str | None:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Observations — the bytes the suspended work was derived from
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ObservationVerdict:
+    """Outcome of comparing a checkpoint's observations against the worktree.
+
+    The outcome is deliberately *not* a refusal. A moved grant means the run
+    may no longer act and must stop. A moved observation means the suspended
+    work was derived from bytes that are no longer on disk, so resuming would
+    build on a world model that is wrong -- discarding the checkpoint and
+    respawning is the expected answer, and it is a legitimate one.
+
+    Attributes:
+        discard_candidate: Whether any bound observation moved or vanished.
+        moved: Repo-relative paths whose content hash changed.
+        missing: Repo-relative paths that no longer exist.
+        reason: Operator-facing sentence naming what moved; ``""`` when
+            nothing did.
+    """
+
+    discard_candidate: bool
+    moved: tuple[str, ...] = ()
+    missing: tuple[str, ...] = ()
+    reason: str = ""
+
+
+def _dirty_paths(worktree: Path) -> list[str]:
+    """Repo-relative paths git reports as changed in ``worktree``.
+
+    Uses ``--porcelain -z`` so paths are NUL-separated and never quoted or
+    escaped, and ``--untracked-files=all`` so a new directory is expanded to
+    the files inside it rather than reported as one directory entry that
+    cannot be hashed. Returns ``[]`` when git cannot describe the directory.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "-z", "--untracked-files=all"],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return []
+    if result.returncode != 0:
+        return []
+    fields = [f for f in result.stdout.split("\0") if f]
+    paths: list[str] = []
+    index = 0
+    while index < len(fields):
+        record = fields[index]
+        index += 1
+        if len(record) < 4:
+            continue
+        status, path = record[:2], record[3:]
+        # A rename or copy is followed by its source path in its own field;
+        # consume it so it is not mistaken for the next status record.
+        if "R" in status or "C" in status:
+            index += 1
+        paths.append(path)
+    return paths
+
+
+def capture_worktree_observations(worktree: Path) -> dict[str, str]:
+    """Content-hash the uncommitted files in ``worktree``.
+
+    What a checkpoint can bind without inferring a dependency set is the work
+    it is carrying: the files git reports as changed. Those are exactly the
+    bytes a resume picks up and continues from, so they are the bytes whose
+    movement makes the resume unsound.
+
+    Files the suspended agent *read* but did not change are **not** bound --
+    identifying them needs dependency inference, which no part of the
+    checkpoint records today.
+
+    Keyed by repo-relative POSIX path, valued by the ``sha256:``-prefixed
+    content hash, so a file deleted and recreated with identical bytes is
+    identical here. Paths that no longer exist (deletions, and files removed
+    between the status call and the read) are skipped: there is nothing to
+    hash, and a deletion is already visible as an absent key.
+
+    Args:
+        worktree: The agent's worktree.
+
+    Returns:
+        Mapping of repo-relative path to content hash; empty when git cannot
+        describe the directory.
+    """
+    from bernstein.core.lineage.spine import content_hash_of
+
+    root = Path(worktree)
+    observations: dict[str, str] = {}
+    for relative in _dirty_paths(root):
+        candidate = root / relative
+        try:
+            if candidate.is_symlink() or not candidate.is_file():
+                continue
+            observations[relative] = content_hash_of(candidate.read_bytes())
+        except OSError:
+            continue
+    return observations
+
+
+def evaluate_observations(
+    checkpoint: AgentCheckpoint,
+    *,
+    worktree: Path | None = None,
+) -> ObservationVerdict:
+    """Compare a checkpoint's bound observations against the live worktree.
+
+    Call after :func:`is_checkpoint_recoverable` says the grant still holds.
+    A checkpoint that bound nothing is never a discard candidate: absence of
+    a binding is not evidence that something moved.
+
+    Args:
+        checkpoint: The checkpoint whose observations to re-derive.
+        worktree: Override for the worktree to read; defaults to the path the
+            checkpoint recorded.
+
+    Returns:
+        An :class:`ObservationVerdict`.
+    """
+    from bernstein.core.lineage.spine import content_hash_of
+
+    if not checkpoint.observations:
+        return ObservationVerdict(discard_candidate=False)
+
+    root = Path(worktree) if worktree is not None else Path(checkpoint.worktree_path)
+    moved: list[str] = []
+    missing: list[str] = []
+    for relative, recorded_hash in sorted(checkpoint.observations.items()):
+        candidate = root / relative
+        try:
+            content = candidate.read_bytes()
+        except OSError:
+            missing.append(relative)
+            continue
+        if content_hash_of(content) != recorded_hash:
+            moved.append(relative)
+
+    if not moved and not missing:
+        return ObservationVerdict(discard_candidate=False)
+
+    parts: list[str] = []
+    if moved:
+        parts.append("changed: " + ", ".join(moved))
+    if missing:
+        parts.append("gone: " + ", ".join(missing))
+    reason = (
+        "observations moved since suspend (" + "; ".join(parts) + ") — "
+        "the suspended work was derived from bytes that are no longer on disk, "
+        "so this checkpoint is a discard candidate: respawn the task from "
+        "scratch rather than continue on a stale world model"
+    )
+    return ObservationVerdict(
+        discard_candidate=True,
+        moved=tuple(moved),
+        missing=tuple(missing),
+        reason=reason,
+    )
+
+
 def build_continuation_entry(
     checkpoint: AgentCheckpoint,
     *,
     chain_head_at_resume: str = "",
     interpreter_overridden: bool = False,
+    observations_overridden: bool = False,
 ) -> ContinuationEntry:
     """Build the authenticated journal entry for a successful resume.
 
@@ -532,6 +732,9 @@ def build_continuation_entry(
         interpreter_overridden: Whether the operator forced the resume past an
             interpreter mismatch (``--override-interpreter``). Recorded so a
             later reader can tell an overridden resume from a clean one.
+        observations_overridden: Whether the operator resumed past moved
+            observations instead of discarding the checkpoint. Recorded for
+            the same reason.
 
     Returns:
         A :class:`ContinuationEntry` ready to append to the journal.
@@ -543,6 +746,10 @@ def build_continuation_entry(
         chain_head_at_resume=chain_head_at_resume,
         interpreter_hash=checkpoint.interpreter_hash,
         interpreter_overridden=interpreter_overridden,
+        # An empty mapping bound nothing; an empty hash says so, rather than
+        # publishing the digest of ``{}`` as if something had been bound.
+        observations_hash=(compute_observations_hash(checkpoint.observations) if checkpoint.observations else ""),
+        observations_overridden=observations_overridden,
     )
 
 
