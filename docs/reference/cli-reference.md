@@ -906,7 +906,7 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `bernstein policy` | Policy mgmt (group). | `cli/commands/policy_cmd.py:12` |
 | `bernstein compliance` | Compliance reports (group). | `cli/commands/compliance_cmd.py:26` |
 | `bernstein audit` | Audit-log ops (group). | `cli/commands/audit_cmd.py:25` |
-| `bernstein identity` | Install-identity ops (group): fingerprint helpers plus `keydir`. | `cli/commands/identity_cmd.py:identity_group` |
+| `bernstein identity` | Install-identity ops (group): fingerprint helpers plus `keydir` and `export-verifier`. | `cli/commands/identity_cmd.py:identity_group` |
 | `bernstein delegation` | Delegation-receipt verification (group). | `cli/commands/delegation_cmd.py:delegation_group` |
 | `bernstein lineage` | Artifact-provenance lineage-spine ops (group). | `cli/commands/lineage_cmd.py` |
 | `bernstein credential` | C2PA content credentials projected from the lineage spine (group). | `cli/commands/credential_cmd.py` |
@@ -941,6 +941,7 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `decode TOKEN` | Confirm a token came from a real install (shape + sentinel check). |
 | `verify TOKEN [--nonce HEX]` | Full HMAC-strength verify when the operator holds the install nonce. |
 | `keydir` | Print the install-identity key directory (JWKS) used to verify outbound HTTP Message Signatures. Mirrors `/.well-known/http-message-signatures-directory`. |
+| `export-verifier [--target local\|server] [--dry-run]` | Write the install-identity JWKS to a per-platform verifier file (`local`: `~/.config/bernstein/verifier/local.json`; `server`: `~/.config/bernstein/verifier/server.json`). Writes the canonical JSON and a `.json.sha256` sidecar; skips the write when the hash is unchanged. |
 | `disable` | Print the env line that suppresses every fingerprint emit site. |
 
 Outbound agent-facing requests (A2A card fetch, browser/research rendering)
