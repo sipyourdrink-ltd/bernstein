@@ -30,7 +30,7 @@ import hashlib
 import json
 import threading
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Mapping, Sequence
@@ -84,6 +84,14 @@ EVENT_COMPACTION_RECEIPT = "compaction.receipt"
 #: holding the ledger can recompute the report byte-identically and
 #: check it against the chain.
 EVENT_COST_PROFILE_REPORT = "cost.profile_report"
+
+#: Issue #2918 -- emitted the first time a run's spend ledger crosses its
+#: soft or hard budget cap. Until this event existed the halt survived
+#: only as a ``logger.warning`` line, so "this run stopped because of its
+#: budget" was not reconstructable from the tamper-evident chain. The
+#: event records the band that tripped, the spend and the cap as integer
+#: nano-USD, and the previous chain digest.
+EVENT_BUDGET_HALT = "cost.budget_halt"
 
 #: Issue #2247 -- emitted whenever ``bernstein eval ab`` writes a
 #: content-addressed profile comparison artifact. The event records the
@@ -1553,6 +1561,74 @@ def record_cost_profile_report(
         actor=actor,
         resource_type="cost_profile_report",
         resource_id=report_sha256,
+        details=payload,
+    )
+
+
+@dataclass(frozen=True)
+class BudgetHaltDetails:
+    """Structured payload for the ``cost.budget_halt`` event."""
+
+    run_id: str
+    band: Literal["soft", "hard"]
+    spent_nano_usd: int
+    cap_nano_usd: int
+    ledger_entries_written: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "band": self.band,
+            "spent_nano_usd": self.spent_nano_usd,
+            "cap_nano_usd": self.cap_nano_usd,
+            "ledger_entries_written": self.ledger_entries_written,
+        }
+
+
+def record_budget_halt(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    band: Literal["soft", "hard"],
+    spent_nano_usd: int,
+    cap_nano_usd: int,
+    ledger_entries_written: int,
+    actor: str = "cost",
+) -> AuditEvent:
+    """Append a ``cost.budget_halt`` event into *chain*.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: Run whose ledger tripped the cap.
+        band: Which cap tripped -- ``"soft"`` or ``"hard"``. The two
+            bands are the closed vocabulary of this event; a reader
+            never has to interpret free text to know what stopped.
+        spent_nano_usd: Cumulative spend at the halt, in integer
+            nano-USD (never a float -- see
+            :func:`bernstein.core.cost.showback_canonical.nano_usd_from_float`).
+        cap_nano_usd: The cap that was crossed, in integer nano-USD.
+        ledger_entries_written: Rows the halting ledger instance had
+            appended when the cap tripped, so an operator can locate the
+            boundary row in ``.sdd/cost/ledger.jsonl``.
+        actor: Recorded actor; defaults to ``"cost"``.
+
+    Returns:
+        The recorded :class:`AuditEvent`. The event details payload
+        carries every input plus ``prev_chain_digest`` (set to the
+        chain head at write time).
+    """
+    payload = BudgetHaltDetails(
+        run_id=run_id,
+        band=band,
+        spent_nano_usd=spent_nano_usd,
+        cap_nano_usd=cap_nano_usd,
+        ledger_entries_written=ledger_entries_written,
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_BUDGET_HALT,
+        actor=actor,
+        resource_type="budget_halt",
+        resource_id=run_id,
         details=payload,
     )
 
@@ -9588,6 +9664,7 @@ __all__ = [
     "EVENT_APPROVAL_CARD_RESOLVED",
     "EVENT_AUDIT_RECEIPT_EXPORT",
     "EVENT_AUTOMATION_ACTION",
+    "EVENT_BUDGET_HALT",
     "EVENT_CACHE_DEDUP_CLAIM",
     "EVENT_CACHE_EVICTION",
     "EVENT_CACHE_HIT",
@@ -9721,6 +9798,7 @@ __all__ = [
     "GATE_TERMINAL_RESOLUTIONS",
     "UNRELEASED_CLAIM_PATHS",
     "AuditChainStore",
+    "BudgetHaltDetails",
     "CapabilityAuthorizationDetails",
     "CapabilityDeltaDetails",
     "ClearanceResolutionRefusal",
@@ -9748,6 +9826,7 @@ __all__ = [
     "record_adapter_version_posture_receipt",
     "record_audit_receipt_export",
     "record_automation_action",
+    "record_budget_halt",
     "record_cache_dedup_claim",
     "record_cache_eviction",
     "record_cache_hit",

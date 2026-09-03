@@ -172,7 +172,7 @@ class PendingApproval:
             "ttl_seconds": int(data.get("ttl_seconds", 600)),
             "nonce": nonce,
         }
-        return cls(**known)
+        return cls(**known)  # type: ignore[arg-type]
 
 
 @dataclass(frozen=True)

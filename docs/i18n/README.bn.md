@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI এজেন্টদের জন্য ওপেন-সোর্স গভর্নেন্স লেয়ার
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:739f0a7ad1af" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:9c87d303c594" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -38,7 +38,7 @@
 
 > **স্ট্যাটাস: beta।** একজনই মেনটেইন করেন, সক্রিয় ডেভেলপমেন্টে আছে। ভার্সন নম্বর রিলিজ গোনে, পরিপক্বতা নয় — মাইনর ভার্সনেও ইন্টারফেস বদলাতে পারে। যার উপর আপনি নির্ভর করছেন তার ভার্সন পিন করে নিন; রিগ্রেশন দ্রুত সারানো হয়, [সেগুলো জানান](https://github.com/sipyourdrink-ltd/bernstein/issues)।
 
-Bernstein হলো AI এজেন্টদের জন্য ওপেন-সোর্স গভর্নেন্স লেয়ার। একটি ডিটারমিনিস্টিক শিডিউলার - কো-অর্ডিনেশন লুপে কোনো মডেল নেই - এজেন্টদের সমান্তরালে চালায়, তাদের আউটপুট গেট দিয়ে যাচাই করে এবং প্রতিটি ধাপ রেকর্ড করে, তাই একটি রান পরে, অফলাইনে, শুধু আর্টিফ্যাক্ট থেকেই যাচাই করা যায়। CLI কোডিং এজেন্ট সরাসরি কাজ করে (Claude Code, Codex, Gemini CLI ও আরও 40+), আর একই লেয়ার যেকোনো এজেন্ট ওয়ার্কলোড গভর্ন করে: ডেলিভারেবল হতে পারে একটি diff, রিসার্চ রিপোর্ট, ডেটাসেট বা অডিট এভিডেন্স প্যাক। Air-gap ইনস্টল প্রোফাইল অন্তর্ভুক্ত। Apache-2.0.
+Bernstein হলো AI এজেন্টদের জন্য ওপেন-সোর্স গভর্নেন্স লেয়ার। এটি policy as code হিসেবে কাজ করে: আপনি নীতি লেখেন - কে কী করতে পারবে, কীসের জন্য অনুমোদন লাগবে, কী রেকর্ড করতে হবে - আর Bernstein তা প্রয়োগ করে যাচাইযোগ্য রেকর্ড তৈরি করে। একটি ডিটারমিনিস্টিক শিডিউলার - কো-অর্ডিনেশন লুপে কোনো মডেল নেই - এজেন্টদের সমান্তরালে চালায়, তাদের আউটপুট গেট দিয়ে যাচাই করে এবং প্রতিটি ধাপ রেকর্ড করে, তাই একটি রান পরে, অফলাইনে, শুধু আর্টিফ্যাক্ট থেকেই যাচাই করা যায়। CLI কোডিং এজেন্ট সরাসরি কাজ করে (Claude Code, Codex, Gemini CLI ও আরও 40+), আর একই লেয়ার যেকোনো এজেন্ট ওয়ার্কলোড গভর্ন করে: ডেলিভারেবল হতে পারে একটি diff, রিসার্চ রিপোর্ট, ডেটাসেট বা অডিট এভিডেন্স প্যাক। Air-gap ইনস্টল প্রোফাইল অন্তর্ভুক্ত। Apache-2.0.
 
 ### এক নজরে
 <!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->

@@ -399,12 +399,10 @@ def incremental_merge_files(
                     if audit_chain:
                         # Get audit chain key for signing
 
-                        from bernstein.core.security.audit import AuditLog
                         from bernstein.core.security.audit_chain import AuditChainStore
 
                         sdd_dir = runtime_dir.parent
-                        audit_log = AuditLog(sdd_dir / "runtime")
-                        chain = AuditChainStore(audit_log)
+                        chain = AuditChainStore(sdd_dir / "runtime")
                         # Sign and persist the refusal receipt
                         receipt = refuse_read_set(
                             chain=chain,

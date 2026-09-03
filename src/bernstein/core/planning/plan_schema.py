@@ -56,6 +56,7 @@ COMPLETION_SIGNAL_TYPES: list[str] = [
     "file_contains",
     "llm_review",
     "llm_judge",
+    "absence_verified",
 ]
 
 # Issue #3110: the declared artifact contract. The strict parser in

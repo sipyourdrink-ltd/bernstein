@@ -1,0 +1,657 @@
+"""Integrity and independence vectors (#5062).
+
+Six vectors land here: question 17, the worked example that fixes the
+shape for the rest, and the integrity group - questions 15, 16, 18, 19
+and 20. Every vector answers its question from the exported bundle
+alone, under an interpreter that has neither the product nor a network,
+or does not claim to have answered it.
+
+Five of the integrity questions cannot be answered by today's evidence,
+and each is an ``xfail(strict=True)`` naming the field that is missing
+and the issue that would add it. Strict matters twice over: the vector
+never flatters the score, and the day the field lands the build fails
+until the vector is un-marked. No evidence field is added here to make
+one pass.
+
+Where a question is only partly answerable, the question-marked vector
+asserts the whole question and carries the ``xfail``; a separate
+unmarked test asserts the part that does hold today, so a regression in
+the working half turns something red instead of disappearing into the
+``xfail``.
+"""
+
+from __future__ import annotations
+
+import base64
+import copy
+import hashlib
+import json
+from typing import TYPE_CHECKING, Any
+
+import cbor2
+import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+from tests.integration.conformance.auditor import scenario
+from tests.integration.conformance.auditor.isolation import RECEIPT_VERIFIER, run_isolated
+
+if TYPE_CHECKING:
+    import subprocess
+    from pathlib import Path
+
+    from tests.integration.conformance.auditor.bundle_reader import BundleReader
+
+# The isolated interpreter is built once per session; creating it is the
+# expensive part of this module, not the verification.
+pytestmark = pytest.mark.slow
+
+
+class TestTheVerifyingInterpreterIsAStranger:
+    """What the auditor's machine has, and what it does not."""
+
+    def test_the_verifying_interpreter_cannot_import_bernstein(self, isolated_python: Path) -> None:
+        """A verifier that leans on the product cannot pass a vector here."""
+        proc = run_isolated(isolated_python, "-c", "import bernstein")
+        assert proc.returncode != 0, "the verifying interpreter must not have bernstein installed"
+        assert "No module named" in proc.stderr, proc.stderr
+
+    def test_the_verifying_interpreter_cannot_open_a_socket(self, isolated_python: Path) -> None:
+        """Offline is enforced, so a network call cannot pass unnoticed."""
+        proc = run_isolated(isolated_python, "-c", "import socket; socket.socket()")
+        assert proc.returncode != 0
+        assert "NetworkDenied" in proc.stderr, proc.stderr
+
+
+class TestQuestion17:
+    """Can the bundle be verified with no network and no bernstein install?"""
+
+    @pytest.mark.auditor_question(17)
+    def test_the_bundle_can_be_verified_with_no_network_and_no_bernstein_install(
+        self,
+        auditor_bundle: BundleReader,
+        isolated_python: Path,
+    ) -> None:
+        """The standalone verifier validates the bundle's receipt, alone."""
+        receipt = auditor_bundle.path(scenario.AUDIT_RECEIPT_NAME)
+        proc = run_isolated(isolated_python, str(RECEIPT_VERIFIER), "--receipt", str(receipt), "--verbose")
+
+        assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+        assert "OVERALL: PASS" in proc.stdout
+        # Every envelope the receipt carries has to verify, not just one:
+        # a receipt that passes on its weakest format answers nothing.
+        assert "[PASS] cose" in proc.stdout
+        assert "[PASS] intoto" in proc.stdout
+        assert "[PASS] transparency" in proc.stdout
+        assert "[PASS] subject_binding" in proc.stdout
+
+    def test_an_edited_event_makes_the_offline_verifier_refuse_the_bundle(
+        self,
+        auditor_bundle: BundleReader,
+        isolated_python: Path,
+        tmp_path: Path,
+    ) -> None:
+        """The pass above is load-bearing: change one event and it goes red."""
+        receipt = json.loads(auditor_bundle.read_bytes(scenario.AUDIT_RECEIPT_NAME).decode("utf-8"))
+        assert receipt["events"], "the receipt embeds the events it attests"
+        receipt["events"][0]["actor"] = "mallory"
+        tampered = tmp_path / "tampered-receipt.json"
+        tampered.write_text(json.dumps(receipt), encoding="utf-8")
+
+        proc = run_isolated(isolated_python, str(RECEIPT_VERIFIER), "--receipt", str(tampered), "--verbose")
+
+        assert proc.returncode == 1, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+        assert "OVERALL: FAIL" in proc.stdout
+        assert "[FAIL] subject_binding" in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# Forging a bundle
+#
+# Questions 18 and 20 are only worth asking if the attack is real, so the
+# helpers below re-issue a receipt the way someone holding the exported
+# bundle and nothing else would: recompute the head over whatever events
+# they want the record to contain, rebuild every binding that head appears
+# in, and sign the lot with a key they generated. Nothing here imports the
+# verifier or ``bernstein`` - a forger has neither - so the wire constants
+# are restated, which is also what makes a silent format change show up as
+# a failing forgery rather than as a passing vector. Cross-checked directly
+# against verify_cli/bernstein_verify_receipt/verify.py: the canonical JSON,
+# events-JSONL and RFC 6962 leaf/node primitives below are byte-identical to
+# that module's own reimplementation.
+# ---------------------------------------------------------------------------
+
+#: Key identifier the forged receipts carry, so a failure names the attacker.
+ATTACKER_KID = "attacker-generated-key"
+
+#: Wire constants, restated from the receipt format rather than imported.
+_DSSE_PAYLOAD_TYPE = "application/vnd.in-toto+json"
+_COSE_SIGN1_TAG = 18
+_COSE_ALG_EDDSA = -8
+_COSE_CONTENT_TYPE = "application/vnd.bernstein.audit-receipt+json"
+
+#: Audit events that record a choice the run could have made differently.
+DECISION_EVENT_TYPES = (
+    "agent.delegated",
+    "tool.invoked",
+    "data.read",
+    "model.request",
+    "repo.changed",
+)
+
+#: Field names any of which would let a decision be recomputed from its
+#: recorded inputs. ``inputs_hash`` is the one the codebase already writes,
+#: for access decisions only (``core/security/governance.py``).
+INPUTS_DIGEST_FIELDS = ("inputs_hash", "inputs_sha256", "input_digest")
+
+#: Field names any of which would let a model step be replayed and compared.
+RECORDED_CONTENT_FIELDS = ("response_sha256", "response_digest", "content_hash", "recording_id")
+
+#: Field names any of which would state what the evidence does not cover.
+COVERAGE_STATEMENT_FIELDS = ("coverage", "not_covered", "excluded", "limitations", "gaps")
+
+
+def _b64(raw: bytes) -> str:
+    """Return standard base64 text for *raw*."""
+    return base64.b64encode(raw).decode("ascii")
+
+
+def _b64url(raw: bytes) -> str:
+    """Return unpadded base64url text for *raw*, as a JWK member."""
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _canonical(obj: object) -> bytes:
+    """Return canonical JSON bytes: sorted keys, compact separators."""
+    return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _events_head(events: list[dict[str, Any]]) -> str:
+    """Return the range head: SHA-256 over canonical event JSONL.
+
+    Restates ``bernstein.core.security.audit_multitenant._events_jsonl_bytes``
+    - one canonical JSON object per line, trailing newline - the same
+    primitive :mod:`verify_cli.bernstein_verify_receipt.verify` recomputes.
+    """
+    if not events:
+        return hashlib.sha256(b"").hexdigest()
+    body = "\n".join(json.dumps(event, sort_keys=True, separators=(",", ":")) for event in events)
+    return hashlib.sha256((body + "\n").encode("utf-8")).hexdigest()
+
+
+def _leaf(data: bytes) -> str:
+    """Return the RFC 6962 leaf hash of *data*."""
+    return hashlib.sha256(b"\x00" + data).hexdigest()
+
+
+def _node(left: str, right: str) -> str:
+    """Return the RFC 6962 internal node over *left* and *right*."""
+    return hashlib.sha256(b"\x01" + left.encode() + right.encode()).hexdigest()
+
+
+def _merkle_root(leaves: list[str]) -> str:
+    """Return the Merkle root over *leaves*, promoting a lone odd node."""
+    level = list(leaves)
+    while len(level) > 1:
+        level = [_node(level[i], level[i + 1]) if i + 1 < len(level) else level[i] for i in range(0, len(level), 2)]
+    return level[0]
+
+
+def _audit_path(leaves: list[str], index: int) -> list[dict[str, object]]:
+    """Return the inclusion proof for the leaf at *index*."""
+    path: list[dict[str, object]] = []
+    level = list(leaves)
+    position = index
+    while len(level) > 1:
+        if position % 2 == 1:
+            path.append({"hash": level[position - 1], "left": True})
+        elif position + 1 < len(level):
+            path.append({"hash": level[position + 1], "left": False})
+        level = [_node(level[i], level[i + 1]) if i + 1 < len(level) else level[i] for i in range(0, len(level), 2)]
+        position //= 2
+    return path
+
+
+#: Journal fields excluded from the payload projection the chain hashes:
+#: the chain fields derived from the payload itself. This is
+#: ``journal._NON_DETERMINISTIC_FIELDS``, restated rather than imported.
+_JOURNAL_ENVELOPE_FIELDS = frozenset({"ts", "elapsed_s", "index", "prev_hash", "payload_hash", "event_hash"})
+
+
+def _journal_head(events: list[dict[str, Any]]) -> str:
+    """Return the head the journal chain over *events* arrives at.
+
+    Recomputed the way an auditor would, from the rule the chain states
+    (``bernstein.core.replay.journal``): a payload hash over the
+    decision-relevant projection of each step with its own event type
+    folded back in, and an event hash linking that payload to its
+    predecessor and its index.
+
+    Args:
+        events: Journal rows as the run receipt carries them.
+
+    Returns:
+        The final ``event_hash``, or the empty string for no events.
+    """
+    head = ""
+    for index, event in enumerate(events):
+        event_type = event["event"]
+        projected = {key: value for key, value in event.items() if key not in _JOURNAL_ENVELOPE_FIELDS}
+        projected["event"] = event_type
+        payload_hash = hashlib.sha256(
+            json.dumps(projected, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        ).hexdigest()
+        head = hashlib.sha256(
+            _canonical(
+                {
+                    "prev_hash": head,
+                    "event_type": event_type,
+                    "payload_hash": payload_hash,
+                    "index": index,
+                }
+            )
+        ).hexdigest()
+    return head
+
+
+def _pae(payload_type: str, payload: bytes) -> bytes:
+    """Return the DSSE pre-authentication encoding of *payload*."""
+    type_bytes = payload_type.encode("utf-8")
+    return b"DSSEv1 %d %s %d %s" % (len(type_bytes), type_bytes, len(payload), payload)
+
+
+def reissue_receipt(receipt: dict[str, Any], key: Ed25519PrivateKey) -> dict[str, Any]:
+    """Return *receipt* re-issued under *key*, bound to its current events.
+
+    Every binding the verifier checks is rebuilt from ``receipt["events"]``:
+    the range head, the subject digest, the COSE payload, the in-toto
+    statement subject, the Merkle root and the inclusion proof. The result
+    is internally consistent and signed end to end - it is a genuine
+    receipt for whatever the forger decided the events were, differing from
+    the operator's only in which key vouches for it.
+
+    Args:
+        receipt: The receipt taken from the bundle, already mutated if the
+            forgery is meant to change the record.
+        key: The forger's freshly generated signing key.
+
+    Returns:
+        The re-issued receipt.
+    """
+    forged = copy.deepcopy(receipt)
+    events: list[dict[str, Any]] = forged["events"]
+    head = _events_head(events)
+
+    forged["subject"]["digest"]["sha256"] = head
+    forged["range"]["head_sha256"] = head
+    public_raw = key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    forged["signing"]["key_id"] = ATTACKER_KID
+    forged["signing"]["public_key_jwk"] = {
+        "alg": "EdDSA",
+        "crv": "Ed25519",
+        "kid": ATTACKER_KID,
+        "kty": "OKP",
+        "x": _b64url(public_raw),
+    }
+
+    protected = cbor2.dumps(
+        {1: _COSE_ALG_EDDSA, 3: _COSE_CONTENT_TYPE, 4: ATTACKER_KID},
+        canonical=True,
+    )
+    payload = bytes.fromhex(head)
+    cose_sig = key.sign(cbor2.dumps(["Signature1", protected, b"", payload], canonical=True))
+    forged["formats"]["cose"] = {
+        "alg": "EdDSA",
+        "content_type": _COSE_CONTENT_TYPE,
+        "cose_sign1_b64": _b64(cbor2.dumps(cbor2.CBORTag(_COSE_SIGN1_TAG, [protected, {}, payload, cose_sig]))),
+        "key_id": ATTACKER_KID,
+    }
+
+    statement = json.loads(base64.b64decode(forged["formats"]["intoto"]["payload"]))
+    for subject in statement.get("subject", []):
+        subject.setdefault("digest", {})["sha256"] = head
+    statement_bytes = _canonical(statement)
+    forged["formats"]["intoto"] = {
+        "payload": _b64(statement_bytes),
+        "payloadType": _DSSE_PAYLOAD_TYPE,
+        "signatures": [
+            {
+                "keyid": ATTACKER_KID,
+                "sig": _b64(key.sign(_pae(_DSSE_PAYLOAD_TYPE, statement_bytes))),
+            }
+        ],
+    }
+
+    leaves = [_leaf(_canonical(event)) for event in events]
+    signed_head = {
+        "tree_size": len(leaves),
+        "root_hash": _merkle_root(leaves),
+        "subject_sha256": head,
+    }
+    transparency = forged["formats"]["transparency"]
+    transparency["signed_tree_head"] = {
+        **signed_head,
+        "signature_b64": _b64(key.sign(_canonical(signed_head))),
+    }
+    transparency["inclusion_proof"] = {
+        "audit_path": _audit_path(leaves, len(leaves) - 1),
+        "leaf_hash": leaves[-1],
+        "leaf_index": len(leaves) - 1,
+    }
+    return forged
+
+
+def _write_receipt(destination: Path, receipt: dict[str, Any]) -> Path:
+    """Write *receipt* to *destination* and return the path."""
+    destination.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return destination
+
+
+def _verify_receipt(
+    isolated_python: Path,
+    *,
+    receipt: Path,
+    public_key: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run the standalone verifier against *receipt* under the isolated interpreter.
+
+    Args:
+        isolated_python: Interpreter with the verifier's dependencies and no
+            ``bernstein``.
+        receipt: Path to the receipt taken from the bundle.
+        public_key: Optional operator public key PEM, supplied out of band.
+            When given, the receipt's embedded key must match it, so a
+            bundle re-signed with an unrelated key fails instead of
+            trusting itself.
+
+    Returns:
+        The completed process; ``returncode == 0`` is a pass.
+    """
+    args = [str(RECEIPT_VERIFIER), "--receipt", str(receipt), "--verbose"]
+    if public_key is not None:
+        args += ["--public-key", str(public_key)]
+    return run_isolated(isolated_python, *args)
+
+
+@pytest.fixture(scope="session")
+def trust_anchor(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The operator's public key, held outside the bundle as an auditor holds it.
+
+    Derived from the fixture's own signing seed - the same key material
+    :mod:`tests.integration.conformance.auditor.scenario` signs the receipt
+    with - rather than read from the bundle, the way an auditor actually
+    receives a pin: out of band, never from the evidence being checked.
+    """
+    key = Ed25519PrivateKey.from_private_bytes(scenario.SIGNING_SEED)
+    pem = key.public_key().public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+    path = tmp_path_factory.mktemp("trust-anchor") / "operator-public-key.pem"
+    path.write_bytes(pem)
+    return path
+
+
+@pytest.mark.auditor_question(15)
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "no receipt states its own coverage gap: neither run-receipt.json nor "
+        "audit-receipt.json carries a coverage field naming what the evidence "
+        "leaves out, so silence reads as completeness (#4968)"
+    ),
+)
+def test_q15_the_evidence_says_what_it_does_not_cover(auditor_bundle: BundleReader) -> None:
+    """Q15: does the evidence say what it does **not** cover?
+
+    A reader who is handed the bundle has no way to tell an activity the
+    run never performed from an activity the recording never captured.
+    Both receipts state what they contain; neither states what they omit.
+
+    The Article 12 pack ships a ``deferred`` list, but that names clauses
+    of the regulation the product has not mapped yet - it says nothing
+    about this run's evidence, which is what the question asks about.
+    """
+    for name in (scenario.RUN_RECEIPT_NAME, scenario.AUDIT_RECEIPT_NAME):
+        receipt = auditor_bundle.read_json(name)
+        stated = [field for field in COVERAGE_STATEMENT_FIELDS if receipt.get(field)]
+        assert stated, f"{name} never says what it leaves out; looked for {list(COVERAGE_STATEMENT_FIELDS)}"
+
+
+@pytest.mark.auditor_question(16)
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "recorded decisions carry no inputs digest: the chain records that a "
+        "delegation, tool call, read, model call and repository change "
+        "happened, not what they were computed from, so none can be "
+        "recomputed and a widened input is invisible (#4213)"
+    ),
+)
+def test_q16_each_decision_can_be_recomputed_from_its_recorded_inputs(
+    auditor_bundle: BundleReader,
+) -> None:
+    """Q16: can each decision be recomputed from its recorded inputs?
+
+    ``core/security/governance.py`` already writes an ``inputs_hash`` over
+    ``(role, action, bindings)`` for access decisions, and a verifier can
+    recompute it, so a binding widened after the fact changes the hash.
+    Nothing else does: the decisions this run actually took reach the
+    bundle as bare statements of outcome.
+    """
+    receipt = auditor_bundle.read_json(scenario.AUDIT_RECEIPT_NAME)
+    decisions = [event for event in receipt["events"] if event.get("event_type") in DECISION_EVENT_TYPES]
+    assert decisions, f"the recording holds no decision to recompute; expected {list(DECISION_EVENT_TYPES)}"
+
+    unrecomputable = [
+        f"{event['event_type']}({event.get('resource_id', '')})"
+        for event in decisions
+        if not any(field in event or field in (event.get("details") or {}) for field in INPUTS_DIGEST_FIELDS)
+    ]
+    assert not unrecomputable, f"no recorded inputs for {unrecomputable}; looked for {list(INPUTS_DIGEST_FIELDS)}"
+
+
+@pytest.mark.auditor_question(18)
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "the bundle carries its own verifying key in signing.public_key_jwk, "
+        "so a receipt re-issued under a key the forger generated verifies "
+        "exactly as well as the operator's; the standalone verifier can pin "
+        "a key but nothing in the bundle says which key to pin (#5033)"
+    ),
+)
+def test_q18_a_bundle_resigned_with_a_fresh_key_is_rejected(
+    auditor_bundle: BundleReader,
+    isolated_python: Path,
+    tmp_path: Path,
+) -> None:
+    """Q18: can a genuine bundle be told from one re-signed by an attacker?
+
+    The forgery is real, not nominal: a keypair is generated inside this
+    test and :func:`reissue_receipt` rebuilds every binding the verifier
+    checks - COSE payload, DSSE statement, Merkle root, inclusion proof
+    and signed tree head - so the result is a fully consistent receipt
+    that nobody but the forger vouches for.
+
+    An auditor holding the bundle and nothing else must be able to reject
+    it. Today the verifier reads the key out of the receipt it is checking
+    and reports ``trust-on-first-use``, which is not a trust decision.
+    """
+    genuine = auditor_bundle.read_json(scenario.AUDIT_RECEIPT_NAME)
+    forged = reissue_receipt(genuine, Ed25519PrivateKey.generate())
+    receipt_path = _write_receipt(tmp_path / "resigned-audit-receipt.json", forged)
+
+    result = _verify_receipt(isolated_python, receipt=receipt_path)
+
+    assert result.returncode != 0, (
+        "a bundle re-signed with a freshly generated key verified from the "
+        f"bundle alone:\n{result.stdout}{result.stderr}"
+    )
+
+
+@pytest.mark.auditor_question(19)
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "the journal's model_call event records inputs_sha256, not what the "
+        "endpoint returned: no response digest and no recording identifier "
+        "reach the bundle, because the replay recorder is opt-in "
+        "(BERNSTEIN_RECORD, core/replay/gateway.py) and off by default, so "
+        "there is nothing to re-execute against (#5107)"
+    ),
+)
+def test_q19_the_run_can_be_replayed_from_what_the_bundle_records(
+    auditor_bundle: BundleReader,
+) -> None:
+    """Q19: can the run be replayed from the evidence?
+
+    Replay needs the responses the run consumed. The journal binds each
+    step into a hash chain, so a changed input does show up - that half is
+    held by :func:`test_a_changed_recorded_input_diverges_from_the_signed_head`
+    - but nothing in the bundle carries the provider output a second
+    execution would have to be fed, so there is no second execution to
+    compare against.
+    """
+    receipt = auditor_bundle.read_json(scenario.RUN_RECEIPT_NAME)
+    calls = [event for event in receipt["journal"]["events"] if event.get("event") == "model_call"]
+    assert calls, "the recording holds no model call to replay"
+
+    unreplayable = [event["index"] for event in calls if not any(field in event for field in RECORDED_CONTENT_FIELDS)]
+    assert not unreplayable, (
+        f"model calls at {unreplayable} record no response content to replay against; "
+        f"looked for {list(RECORDED_CONTENT_FIELDS)}"
+    )
+
+
+@pytest.mark.auditor_question(20)
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "an edited record can be re-issued end to end under a generated key "
+        "and the bundle-only verifier accepts it; the per-event HMAC that "
+        "would catch the edit can only be checked with the operator's "
+        "symmetric audit key, which is the same key that writes the chain "
+        "(core/security/audit.py load_audit_key), so nothing an auditor may "
+        "safely hold distinguishes the two (#5036)"
+    ),
+)
+def test_q20_an_edited_record_cannot_be_passed_off_as_the_original(
+    auditor_bundle: BundleReader,
+    isolated_python: Path,
+    tmp_path: Path,
+) -> None:
+    """Q20: can the evidence show the record was not edited after the fact?
+
+    Say plainly what this question turns on. The bundle offers two
+    integrity witnesses and an auditor can rely on neither:
+
+    * the per-event ``hmac`` chain is symmetric - verifying it requires the
+      operator's audit key, and that key also writes valid events, so an
+      auditor who holds enough to check the chain holds enough to forge it;
+    * the Ed25519 signatures are asymmetric, but the verifying key travels
+      inside the receipt, so re-issuing under another key costs nothing.
+
+    The edit here is the one that matters: the read of the sensitive file
+    is rewritten to name an innocuous one. A naive edit is caught, because
+    the subject digest no longer matches the events - that much holds
+    today. The same edit re-issued under a generated key is not.
+    """
+    genuine = auditor_bundle.read_json(scenario.AUDIT_RECEIPT_NAME)
+    edited = copy.deepcopy(genuine)
+    reads = [event for event in edited["events"] if event.get("event_type") == "data.read"]
+    assert reads, "the recording holds no sensitive read to edit out"
+    reads[0]["resource_id"] = "config/public_defaults.yaml"
+    reads[0]["details"] = {"sensitivity": "public"}
+
+    naive = _verify_receipt(
+        isolated_python,
+        receipt=_write_receipt(tmp_path / "edited-audit-receipt.json", edited),
+    )
+    assert naive.returncode != 0, f"an edited event passed unchanged bindings:\n{naive.stdout}"
+
+    reissued = _verify_receipt(
+        isolated_python,
+        receipt=_write_receipt(
+            tmp_path / "reissued-audit-receipt.json",
+            reissue_receipt(edited, Ed25519PrivateKey.generate()),
+        ),
+    )
+    assert reissued.returncode != 0, (
+        "an edited record, re-issued under a generated key, verified from the "
+        f"bundle alone:\n{reissued.stdout}{reissued.stderr}"
+    )
+
+
+def test_a_pinned_trust_anchor_rejects_a_bundle_resigned_with_another_key(
+    auditor_bundle: BundleReader,
+    trust_anchor: Path,
+    isolated_python: Path,
+    tmp_path: Path,
+) -> None:
+    """The half of question 18 that does hold: a pin, given out of band, works.
+
+    The same forged receipt is verified twice. Pinned against the
+    operator's public key - which the auditor received separately, not
+    from the bundle - it is rejected. Unpinned it verifies and the
+    verifier says so: ``trust-on-first-use``.
+
+    The unpinned pass is also the check on the forgery itself. A sloppy
+    re-issue would fail for the wrong reason and make
+    :func:`test_q18_a_bundle_resigned_with_a_fresh_key_is_rejected` look
+    like a finding when it was only a broken fixture.
+    """
+    forged = reissue_receipt(auditor_bundle.read_json(scenario.AUDIT_RECEIPT_NAME), Ed25519PrivateKey.generate())
+    receipt_path = _write_receipt(tmp_path / "resigned-audit-receipt.json", forged)
+
+    pinned = _verify_receipt(isolated_python, receipt=receipt_path, public_key=trust_anchor)
+    assert pinned.returncode != 0, f"the pinned key accepted a foreign signer:\n{pinned.stdout}"
+    assert "does not match the pinned" in pinned.stdout
+
+    unpinned = _verify_receipt(isolated_python, receipt=receipt_path)
+    assert unpinned.returncode == 0, (
+        f"the forgery is malformed, not merely unauthorised:\n{unpinned.stdout}{unpinned.stderr}"
+    )
+    assert "OVERALL: PASS" in unpinned.stdout
+    assert "trust-on-first-use" in unpinned.stdout
+
+
+def test_a_changed_recorded_input_diverges_from_the_signed_head(auditor_bundle: BundleReader) -> None:
+    """The half of question 19 that does hold: divergence is detectable.
+
+    The journal is a hash chain over the decision-relevant projection of
+    each step, so a second execution that consumed a different input
+    chains to a different head. Recomputing the chain from the bundle
+    reproduces the signed head exactly; flipping one recorded input - the
+    endpoint the delegated agent called - moves the head, and every event
+    after it.
+    """
+    journal = auditor_bundle.read_json(scenario.RUN_RECEIPT_NAME)["journal"]
+    events = journal["events"]
+
+    assert _journal_head(events) == journal["head_hash"], "the recomputed chain does not reproduce the signed head"
+
+    diverged = copy.deepcopy(events)
+    changed = next(event for event in diverged if event.get("event") == "model_call")
+    changed["base_url"] = "https://elsewhere.example.invalid/v1"
+
+    assert _journal_head(diverged) != journal["head_hash"], "a changed recorded input left the head unmoved"
+
+
+def test_the_only_per_event_witness_in_the_bundle_is_a_symmetric_hmac(
+    auditor_bundle: BundleReader,
+) -> None:
+    """What question 20 rests on, asserted rather than asserted about.
+
+    Every event's own integrity witness is an HMAC, and the receipt names
+    no anchor outside itself: no issuer, no certificate, no chain. The
+    only asymmetric key in the bundle is the one the receipt asserts about
+    its own signature.
+    """
+    receipt = auditor_bundle.read_json(scenario.AUDIT_RECEIPT_NAME)
+
+    for event in receipt["events"]:
+        assert "hmac" in event and "prev_hmac" in event, f"event without an HMAC witness: {event.get('event_type')}"
+        signed = [field for field in ("signature", "signature_b64", "sig", "public_key_jwk") if field in event]
+        assert not signed, f"unexpected per-event signature fields {signed}"
+
+    anchors = [field for field in ("issuer", "trust_anchor", "certificate_chain", "x5c") if field in receipt]
+    assert not anchors, f"the receipt does name an outside anchor after all: {anchors}"
+    assert receipt["signing"]["public_key_jwk"]["kid"] == receipt["signing"]["key_id"]

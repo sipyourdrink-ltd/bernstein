@@ -77,6 +77,64 @@ def test_spawn_warns_when_auth_missing(tmp_path: Path, caplog: pytest.LogCapture
     assert "no OpenCode/provider auth detected" in caplog.text
 
 
+def test_opencode_prompt_carries_the_completion_protocol(tmp_path: Path) -> None:
+    """OpenCode has no system-prompt flag; a non-empty addendum must still
+    reach the agent by riding on the positional prompt argument (issue
+    #5325), or the completion / heartbeat / signal-check protocol never
+    reaches a ``--cli opencode`` run.
+    """
+    adapter = OpenCodeAdapter()
+    proc_mock = _make_popen_mock(109)
+
+    with patch("bernstein.adapters.opencode.subprocess.Popen", return_value=proc_mock) as popen:
+        adapter.spawn(
+            prompt="fix the bug",
+            workdir=tmp_path,
+            model_config=ModelConfig(model="openai/gpt-5.4-mini", effort="high"),
+            session_id="oc-s9",
+            system_addendum="When done, POST /complete. Heartbeat every 30s.",
+        )
+
+    inner = _inner_cmd(popen.call_args.args[0])
+    assert "When done, POST /complete. Heartbeat every 30s." in inner[-1]
+
+
+def test_opencode_addendum_appended_after_task_brief(tmp_path: Path) -> None:
+    """A truncated prompt must lose the addendum, never the task brief."""
+    adapter = OpenCodeAdapter()
+    proc_mock = _make_popen_mock(110)
+
+    with patch("bernstein.adapters.opencode.subprocess.Popen", return_value=proc_mock) as popen:
+        adapter.spawn(
+            prompt="primary task brief",
+            workdir=tmp_path,
+            model_config=ModelConfig(model="openai/gpt-5.4-mini", effort="high"),
+            session_id="oc-s10",
+            system_addendum="HEARTBEAT every 30s",
+        )
+
+    inner = _inner_cmd(popen.call_args.args[0])
+    full_prompt = inner[-1]
+    assert full_prompt.index("primary task brief") < full_prompt.index("HEARTBEAT every 30s")
+
+
+def test_opencode_empty_addendum_leaves_prompt_untouched(tmp_path: Path) -> None:
+    adapter = OpenCodeAdapter()
+    proc_mock = _make_popen_mock(111)
+
+    with patch("bernstein.adapters.opencode.subprocess.Popen", return_value=proc_mock) as popen:
+        adapter.spawn(
+            prompt="just the task",
+            workdir=tmp_path,
+            model_config=ModelConfig(model="openai/gpt-5.4-mini", effort="high"),
+            session_id="oc-s11",
+            system_addendum="",
+        )
+
+    inner = _inner_cmd(popen.call_args.args[0])
+    assert inner[-1] == "just the task"
+
+
 class TestPermissionPosture:
     """The spawn pins its own permission posture instead of inheriting the host's.
 
