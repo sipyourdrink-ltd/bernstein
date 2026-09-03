@@ -86,9 +86,9 @@ EVIDENCE_ENVELOPE_SCHEMA_VERSION: str = "1.0.0"
 EVIDENCE_ENVELOPE_TYPE: str = "https://bernstein.run/attestations/evidence-envelope/v1"
 #: URL identifying the envelope type, dispatched by readers from the envelope
 #: itself. This is independent of the schema's ``$id``
-#: (``https://bernstein.alexchernysh.com/schemas/evidence-envelope-v1.json``),
-#: which locates the JSON Schema file; the two live on different hosts and
-#: serve different purposes -- one names the artefact type, the other pins the
+#: (``https://bernstein.run/schemas/evidence-envelope-v1.json``), which
+#: locates the JSON Schema file; the two live under different paths and serve
+#: different purposes -- one names the artefact type, the other pins the
 #: schema document.
 
 #: JWS ``typ`` header for an envelope signature. Distinct from the identity

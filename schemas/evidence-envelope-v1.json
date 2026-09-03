@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://bernstein.alexchernysh.com/schemas/evidence-envelope-v1.json",
+  "$id": "https://bernstein.run/schemas/evidence-envelope-v1.json",
   "title": "Bernstein Evidence Envelope (v1)",
   "description": "A portable, signed statement about a bounded set of actions: who acted (principal), under what authority (grants), what was authorised (decisions), what was recorded (evidence), and -- required, never optional -- what the envelope does not account for (coverage). The envelope proves that these sections were signed together by the key the principal names; it does not by itself prove that the actions happened, that the grant chain was ever valid, or that no action is missing. Coverage is where the last of those is stated explicitly rather than left to silence. Canonical form is JCS (RFC 8785); the signature is a detached JWS over every member except 'signature'.",
   "type": "object",
