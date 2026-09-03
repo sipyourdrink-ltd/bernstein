@@ -15,6 +15,13 @@ from bernstein.core.govern.freshness_gate import (
 )
 from bernstein.core.govern.inventory_models import Inventory, Surface
 from bernstein.core.govern.observation import ObservationEnvelope, ObservationLedger
+from bernstein.core.govern.observation_store import (
+    ObservationRecord,
+    ObservationStore,
+    ObservationStoreError,
+    RecordState,
+    observation_store_root,
+)
 from bernstein.core.govern.plan_models import GovernPlan, PlanEntry, PlanEntryKind
 from bernstein.core.govern.playbook_models import (
     Playbook,
@@ -229,6 +236,9 @@ __all__ = [
     "Inventory",
     "ObservationEnvelope",
     "ObservationLedger",
+    "ObservationRecord",
+    "ObservationStore",
+    "ObservationStoreError",
     "PlanEntry",
     "PlanEntryKind",
     "Playbook",
@@ -238,12 +248,14 @@ __all__ = [
     "ProposalStatus",
     "ReconcileDiff",
     "ReconcileEntry",
+    "RecordState",
     "Snapshot",
     "SnapshotEntity",
     "Surface",
     "compute_plan",
     "compute_reconcile_diff",
     "freshness_gated_read",
+    "observation_store_root",
     "propose_reconcile",
     "snapshot_surface",
 ]
