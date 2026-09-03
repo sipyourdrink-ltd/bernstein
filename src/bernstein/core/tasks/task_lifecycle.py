@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import httpx
 
+from bernstein.core import defaults as _defaults
 from bernstein.core.agent_log_aggregator import AgentLogAggregator
 from bernstein.core.agents.spawn_errors import ModelNotConfiguredError
 from bernstein.core.completion_budget import CompletionBudget
@@ -29,7 +30,6 @@ from bernstein.core.cross_model_verifier import (
     CrossModelVerifierConfig,
     run_cross_model_verification_sync,
 )
-from bernstein.core.defaults import TASK
 from bernstein.core.effectiveness import EffectivenessScorer
 from bernstein.core.evidence.completion_gate import seal_evidence_on_completion
 from bernstein.core.fast_path import (
@@ -345,15 +345,23 @@ def _batch_timeout_seconds(batch: list[Task]) -> int:
     about behavior without reconstructing adaptive multipliers:
     small=15m, medium=30m, large=60m, xl=120m.
     """
-    bucket_seconds = max(TASK.scope_timeout_s.get(task.scope.value, 30 * 60) for task in batch)
+    # Read the tuning singleton THROUGH the module on every call. bernstein.yaml
+    # is parsed (``config/seed_parser._parse_tuning`` -> ``defaults.override``)
+    # long after this module is imported, and ``override`` rebinds the module
+    # attribute rather than mutating the frozen instance - so a name captured by
+    # ``from ... import TASK`` is a permanent snapshot of the shipped defaults,
+    # and ``tuning.task.scope_timeout_s`` / ``xl_timeout_s`` never reach the
+    # value the adapter watchdog is armed with.
+    task_defaults = _defaults.TASK
+    bucket_seconds = max(task_defaults.scope_timeout_s.get(task.scope.value, 30 * 60) for task in batch)
     xl_batch = any(task.role in _XL_ROLES for task in batch) or any(
         task.scope.value == "large" and task.complexity.value == "high" for task in batch
     )
-    # TASK.scope_timeout_s / xl_timeout_s are typed float (see defaults.py), but
+    # scope_timeout_s / xl_timeout_s are typed float (see defaults.py), but
     # every configured bucket is a whole second count and every downstream
     # consumer (AgentSession.timeout_s) is int - convert explicitly rather than
     # widen the return type and push the float onward.
-    return int(TASK.xl_timeout_s) if xl_batch else int(bucket_seconds)
+    return int(task_defaults.xl_timeout_s) if xl_batch else int(bucket_seconds)
 
 
 # ---------------------------------------------------------------------------

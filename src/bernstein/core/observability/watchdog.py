@@ -15,8 +15,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from bernstein.core import defaults as _defaults
 from bernstein.core.agent_log_aggregator import AgentLogAggregator
-from bernstein.core.defaults import AGENT
 from bernstein.core.heartbeat import HeartbeatMonitor, compute_stall_profile
 from bernstein.core.tasks.auto_spawn_guard import AutoSpawnGuard
 
@@ -66,9 +66,19 @@ def _log_signal_is_fresh(log_age_s: float | None, heartbeat_age_s: float | None 
     incident is raised. ``heartbeat_age_s`` of ``None`` means "unbounded",
     preserving the caller-side behaviour for callers that have no heartbeat age.
     """
-    if log_age_s is None or log_age_s >= AGENT.liveness_grace_s:
+    # Read THROUGH the module on every call. ``defaults.override`` (how
+    # bernstein.yaml's ``tuning:`` block lands) rebinds the module attribute
+    # rather than mutating the frozen singleton, and runs long after this module
+    # imports - so a name captured with ``from ... import`` is a permanent
+    # snapshot of the shipped defaults. This file was the last kill-adjacent
+    # module still judging by that snapshot: ``agent_lifecycle`` and
+    # ``heartbeat`` honour ``liveness_grace_s`` and the tier-1 watchdog did not,
+    # so with ``liveness_grace_s: 600`` configured an agent quiet for 100-150s
+    # was alive to the reaper and stale to the watchdog at the same instant.
+    agent = _defaults.AGENT
+    if log_age_s is None or log_age_s >= agent.liveness_grace_s:
         return False
-    return heartbeat_age_s is None or heartbeat_age_s < AGENT.liveness_suppression_cap_s
+    return heartbeat_age_s is None or heartbeat_age_s < agent.liveness_suppression_cap_s
 
 
 @dataclass(frozen=True)
@@ -282,7 +292,9 @@ def collect_watchdog_findings(orch: Any) -> list[WatchdogFinding]:
 
     config = getattr(orch, "_config", None)
     timeout_s = float(getattr(config, "heartbeat_timeout_s", 120))
-    starting_timeout_s = float(getattr(config, "heartbeat_starting_timeout_s", AGENT.heartbeat_starting_timeout_s))
+    starting_timeout_s = float(
+        getattr(config, "heartbeat_starting_timeout_s", _defaults.AGENT.heartbeat_starting_timeout_s)
+    )
     monitor = HeartbeatMonitor(workdir, timeout_s=timeout_s)
     logs = AgentLogAggregator(workdir)
     now = time.time()
