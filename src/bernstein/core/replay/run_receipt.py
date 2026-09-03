@@ -229,6 +229,9 @@ def _binding_block(
     spine_count: int,
     audit_head_sha256: str | None,
     endpoint_identities: list[dict[str, str]] | None = None,
+    audit_since: str | None = None,
+    audit_until: str | None = None,
+    audit_head_hmac: str | None = None,
 ) -> dict[str, Any]:
     """The subject binding: one canonical block over every recomputed head.
 
@@ -238,6 +241,14 @@ def _binding_block(
     ``audit_head_sha256`` is omitted (not nulled) when absent so stripping
     the opt-in audit block from a receipt that was signed with it changes
     the binding bytes and collapses verification.
+
+    ``audit_since``/``audit_until``/``audit_head_hmac`` describe the
+    declared audit window itself, not just its recomputed content head, and
+    are bound alongside it: the verifier cannot re-derive ``head_hmac``
+    without the operator's HMAC key, so it passes through the receipt's own
+    ``audit_range`` values here rather than recomputing them, which is
+    enough to make relabelling the window post-signing fail the signature
+    check the same way mutating the audit events does.
 
     When ``endpoint_identities`` is provided (non-empty), it is included in
     the binding block as an ``endpoints`` array. The verifier will only
@@ -257,6 +268,12 @@ def _binding_block(
         block["endpoints"] = endpoint_identities
     if audit_head_sha256 is not None:
         block["audit_range_head_sha256"] = audit_head_sha256
+        if audit_since is not None:
+            block["audit_range_since"] = audit_since
+        if audit_until is not None:
+            block["audit_range_until"] = audit_until
+        if audit_head_hmac is not None:
+            block["audit_range_head_hmac"] = audit_head_hmac
     return block
 
 
@@ -600,6 +617,9 @@ def build_run_receipt(
         spine_count=len(spine_rows),
         audit_head_sha256=audit_head,
         endpoint_identities=_extract_endpoint_identities(journal_rows),
+        audit_since=audit_block["since"] if audit_block is not None else None,
+        audit_until=audit_block["until"] if audit_block is not None else None,
+        audit_head_hmac=audit_block["head_hmac"] if audit_block is not None else None,
     )
     binding_bytes = _canonical_json_bytes(binding)
     subject_sha256 = hashlib.sha256(binding_bytes).hexdigest()
@@ -817,6 +837,9 @@ def verify_run_receipt(
 
     # 3. Optional audit range: head recomputes from the embedded events.
     audit_head: str | None = None
+    audit_since: str | None = None
+    audit_until: str | None = None
+    audit_head_hmac: str | None = None
     audit_block = receipt.get("audit_range")
     if audit_block is not None:
         if not isinstance(audit_block, dict) or not isinstance(audit_block.get("events"), list):
@@ -830,6 +853,11 @@ def verify_run_receipt(
         if audit_block.get("event_count") != len(audit_events):
             return _tampered(["audit_range.event_count does not match the embedded events"])
         audit_head = recomputed_audit_head
+        # Cannot be recomputed here without the operator's HMAC key, so the
+        # receipt's own values are bound as-is (see _binding_block).
+        audit_since = audit_block.get("since")
+        audit_until = audit_block.get("until")
+        audit_head_hmac = audit_block.get("head_hmac")
 
     # 4. Subject binding: rebuilt from recomputed values only.
     endpoint_identities = _extract_endpoint_identities(events)
@@ -841,6 +869,9 @@ def verify_run_receipt(
         spine_count=len(entries),
         audit_head_sha256=audit_head,
         endpoint_identities=endpoint_identities if endpoint_identities else None,
+        audit_since=audit_since,
+        audit_until=audit_until,
+        audit_head_hmac=audit_head_hmac,
     )
     binding_bytes = _canonical_json_bytes(binding)
     recomputed_subject = hashlib.sha256(binding_bytes).hexdigest()

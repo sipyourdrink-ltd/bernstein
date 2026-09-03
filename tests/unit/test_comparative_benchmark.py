@@ -391,6 +391,47 @@ class TestComparativeBenchmark:
         assert len(report.results) == 3
         assert all(r.mode == "orchestrated" for r in report.results)
 
+    def test_run_single_agent_matches_the_adapter_spawn_contract(
+        self, sample_tasks: list[BenchmarkTask], tmp_path: Path
+    ) -> None:
+        """``run_single_agent`` passes only arguments ``CLIAdapter.spawn`` declares.
+
+        The method reports ``success=False`` for any exception, so a call that
+        does not match the adapter contract is indistinguishable from a task
+        that legitimately failed. The stub below mirrors the abstract
+        keyword-only signature, which turns an undeclared argument into a
+        failed run rather than a silent pass.
+        """
+        from bernstein.adapters.base import SpawnResult
+
+        calls: list[dict[str, object]] = []
+
+        class _RecordingAdapter:
+            def spawn(
+                self,
+                *,
+                prompt: str,
+                workdir: Path,
+                model_config: object,
+                session_id: str,
+                mcp_config: dict[str, object] | None = None,
+                timeout_seconds: int = 900,
+                task_scope: str = "medium",
+                budget_multiplier: float = 1.0,
+                system_addendum: str = "",
+                multimodal_context: object | None = None,
+            ) -> SpawnResult:
+                calls.append({"prompt": prompt, "session_id": session_id})
+                return SpawnResult(pid=1234, log_path=workdir / "agent.log")
+
+        suite = ComparativeBenchmark(tasks=sample_tasks, workdir=tmp_path)
+        task = sample_tasks[0]
+        result = suite.run_single_agent(task, _RecordingAdapter())
+
+        assert result.success is True
+        assert len(calls) == 1
+        assert calls[0]["session_id"] == f"bench-{task.task_id}"
+
 
 # ---------------------------------------------------------------------------
 # TestLoadBundledBenchmarks

@@ -57,7 +57,7 @@ from bernstein.core.security.path_containment import (
     PathContainmentError,
     contained_subpath,
 )
-from bernstein.core.skills.lint import LintSeverity, lint_skill
+from bernstein.core.skills.lint import LintFinding, LintSeverity, lint_skill
 from bernstein.core.skills.manifest import SkillManifest, parse_skill_md
 from bernstein.core.skills.packaging import tree_content_hash
 from bernstein.core.skills.plugin_schema import PLUGIN_SCHEMA_ID, schema_errors
@@ -95,6 +95,21 @@ _SUPPORTED_SOURCES: frozenset[str] = frozenset({"local"})
 
 class SkillLifecycleError(RuntimeError):
     """Raised when an install / remove / sync operation fails."""
+
+
+class SkillLintRefusedError(SkillLifecycleError):
+    """Raised when strict lint refuses an install, carrying the blocking findings.
+
+    A subclass so callers that need the machine-readable finding codes -- the
+    catalog install path records a refusal receipt whose ``reason_code``
+    depends on them -- can read them off the exception instead of re-parsing
+    the message. Callers that only catch :class:`SkillLifecycleError` are
+    unaffected.
+    """
+
+    def __init__(self, message: str, *, findings: tuple[LintFinding, ...]) -> None:
+        super().__init__(message)
+        self.findings = findings
 
 
 class SkillsTomlError(SkillLifecycleError):
@@ -554,7 +569,10 @@ def _raise_for_strict_lint_errors(skill_dir: Path, *, skill_name: str) -> None:
     if not errors:
         return
     details = "; ".join(f"{finding.code}: {finding.message}" for finding in errors)
-    raise SkillLifecycleError(f"{skill_name}: strict lint failed: {details}")
+    raise SkillLintRefusedError(
+        f"{skill_name}: strict lint failed: {details}",
+        findings=tuple(errors),
+    )
 
 
 def _raise_for_invisible_unicode(
@@ -1414,6 +1432,7 @@ __all__ = [
     "LockEntry",
     "SkillDigest",
     "SkillLifecycleError",
+    "SkillLintRefusedError",
     "SkillsToml",
     "SkillsTomlEntry",
     "SkillsTomlError",

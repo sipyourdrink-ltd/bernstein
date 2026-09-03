@@ -155,7 +155,11 @@ class NmapAdapter(ScannerAdapter):
             normalized = normalize_nmap_xml(report_path.read_bytes())
         finally:
             report_path.unlink(missing_ok=True)
-        return ScanResult(findings=list(normalized.findings), transcript=normalized.transcript)
+        return ScanResult(
+            findings=list(normalized.findings),
+            transcript=normalized.transcript,
+            invocation_digest=self.last_invocation.argv_hash,
+        )
 
 
 def _validate_scope(target: Path, scope: ScanScope) -> tuple[str, str]:

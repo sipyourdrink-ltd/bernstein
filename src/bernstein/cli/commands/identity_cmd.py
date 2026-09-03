@@ -15,6 +15,10 @@ Subcommands:
   paste into their shell to suppress all emit sites.
 * ``bernstein identity attest show|verify --run <id>`` - project or verify a
   run-attestation receipt without overloading install-rev verification.
+* ``bernstein identity agents`` - list the agent principals the grant and
+  delegation chains establish, with the capability ceiling in force now and
+  the chain events behind each entry.  ``--verify <file>`` recomputes a stored
+  projection from the chain and refuses any entry the chain does not establish.
 
 The install-rev verbs are read-only and never open a network connection.  This
 is the project's hard rule: no telemetry, ever.  The nested ``attest verify``
@@ -26,9 +30,12 @@ playbook (seed generation, storage, rotation, decode).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import click
 
 from bernstein.cli.commands.identity_attest_cmd import attest_group
+from bernstein.core.identity import agent_registry
 from bernstein.core.identity import install_rev as _identity
 from bernstein.core.identity.install_rev import (
     DISABLED_SENTINEL,
@@ -61,6 +68,7 @@ def identity_group() -> None:
       bernstein identity disable
       bernstein identity attest show --run r-1234 \\
           --signing-key-path key.pem
+      bernstein identity agents --json
     """
 
 
@@ -184,6 +192,115 @@ def disable_cmd() -> None:
     disabled sentinel without touching code.
     """
     click.echo("export BERNSTEIN_DISABLE_IDENTITY=1")
+
+
+def _audit_key_for_read() -> bytes:
+    """Return the install audit key, read-only.
+
+    A verifier that minted its own key would fail every HMAC check against a
+    chain written under the real one, so a missing key is an operator error
+    rather than something to paper over with fresh key material -- the same
+    rule ``bernstein spiffe verify-binding`` follows.
+    """
+    from bernstein.core.security.audit import load_audit_key
+
+    return load_audit_key()
+
+
+@identity_group.command("agents")
+@click.option(
+    "--root",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Audit root holding grants/ and delegation/ (default: .sdd/audit).",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit the canonical JSON projection.")
+@click.option(
+    "--as-of",
+    "as_of",
+    type=int,
+    default=None,
+    help="Epoch second the capability ceiling is resolved at (default: now).",
+)
+@click.option("--trust-domain", "trust_domain", default=None, help="SPIFFE trust domain for id derivation.")
+@click.option(
+    "--install-key",
+    "install_key",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Install public key PEM (SPKI Ed25519) for SPIFFE id derivation.",
+)
+@click.option(
+    "--verify",
+    "verify_file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Recompute a stored projection from the chain instead of printing one.",
+)
+def agents_cmd(
+    root: Path | None,
+    as_json: bool,
+    as_of: int | None,
+    trust_domain: str | None,
+    install_key: Path | None,
+    verify_file: Path | None,
+) -> None:
+    """List the agent principals the audit chain establishes.
+
+    The listing is a projection over the grant and delegation chains, not a
+    stored directory: every entry names the chain events behind it, and the
+    capability ceiling is the one in force at ``--as-of``, not the one the
+    widest grant carried when it was issued.
+
+    With ``--verify`` the stored projection is recomputed from the chain.
+    Exit codes: 0 verified, 1 no records or unreadable input, 2 mismatch.
+    """
+    import time
+
+    if (trust_domain is None) != (install_key is None):
+        raise click.UsageError("--trust-domain and --install-key must be given together")
+
+    audit_root = root if root is not None else Path(".sdd/audit")
+    moment = int(as_of if as_of is not None else time.time())
+    install_pem = install_key.read_bytes() if install_key is not None else None
+    key = _audit_key_for_read()
+
+    if verify_file is not None:
+        verification = agent_registry.verify_registry(
+            verify_file,
+            root=audit_root,
+            key=key,
+            now=moment,
+            trust_domain=trust_domain,
+            install_public_key_pem=install_pem,
+        )
+        if verification.ok:
+            click.echo(f"verified: {verification.reason}")
+            raise SystemExit(0)
+        click.echo(f"mismatch: {verification.reason}", err=True)
+        raise SystemExit(2)
+
+    projection = agent_registry.project_agents(
+        root=audit_root,
+        key=key,
+        now=moment,
+        trust_domain=trust_domain,
+        install_public_key_pem=install_pem,
+    )
+    if as_json:
+        click.echo(agent_registry.render_registry(projection))
+        return
+
+    if not projection.agents:
+        click.echo("no agent principals: the chain under this root establishes none", err=True)
+    for entry in projection.agents:
+        ceiling = ", ".join(entry.capability_ceiling) or "(nothing in force)"
+        click.echo(f"{entry.agent_id}\t{entry.spiffe_id or '-'}\t{ceiling}")
+        click.echo(
+            f"  grants={len(entry.grants)} delegations={len(entry.delegations)} events={len(entry.chain_events)}"
+        )
+    for err in projection.errors:
+        click.echo(err, err=True)
 
 
 # ``identity attest`` is a separate group rather than new verbs here because

@@ -40,11 +40,56 @@ from bernstein.core.security.audit_chain import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from pathlib import Path
 
     from bernstein.core.security.audit import AuditEvent
 
-__all__ = ["ApprovalCardVerifyResult", "verify_approval_cards"]
+__all__ = [
+    "ApprovalCardVerifyResult",
+    "VerifiedApprovalCard",
+    "verify_approval_card_events",
+    "verify_approval_cards",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedApprovalCard:
+    """One issue/resolve pair that survived every check in this module.
+
+    Reconstructing the pair and then discarding it makes the verifier able to
+    say *that* a decision is sound but not *what* it was, so anything that
+    wants to project the decision has to read the chain a second time and
+    re-derive the pairing -- a second read that can disagree with the verdict.
+    Returning the reconstruction keeps the projection and the verdict on the
+    same evidence.
+
+    ``issued_hmac`` and ``resolved_hmac`` are the chain anchors of the two
+    events the pair was reconstructed from: they name exactly which entries a
+    reader must re-verify to re-derive this record.
+
+    Attributes:
+        card: The issued envelope, rehydrated from the issue event.
+        card_hash: The committed envelope hash, and the decision identity.
+        decision: The settled decision, one of :data:`ALLOWED_DECISIONS`.
+        approver: Identity recorded on the settlement.
+        resolved_at: Settlement time, validated against the envelope window.
+        issued_hmac: Chain anchor of the ``chat.approval_card.issued`` event.
+        resolved_hmac: Chain anchor of the ``chat.approval_card.resolved``
+            event.
+        issued_timestamp: ISO timestamp of the issue event.
+        resolved_timestamp: ISO timestamp of the settlement event.
+    """
+
+    card: ApprovalCardV2
+    card_hash: str
+    decision: str
+    approver: str
+    resolved_at: float
+    issued_hmac: str
+    resolved_hmac: str
+    issued_timestamp: str
+    resolved_timestamp: str
 
 
 @dataclass(frozen=True)
@@ -72,6 +117,11 @@ class ApprovalCardVerifyResult:
         ok: ``True`` only when neither list has entries.
         errors: Records that were evaluated and failed. Accuses the data.
         verifier_errors: Records that could not be evaluated. Accuses this code.
+        records: The fully reconstructed issue/resolve pairs, in chain order.
+            Exactly the settlements counted by ``reconstructed_count``: a card
+            that failed any check contributes an entry to ``errors`` and no
+            record here, so a consumer projecting these cannot project a
+            decision that has no verifying source event.
     """
 
     ok: bool
@@ -80,12 +130,14 @@ class ApprovalCardVerifyResult:
     resolved_count: int = 0
     reconstructed_count: int = 0
     verifier_errors: list[str] = field(default_factory=lambda: [])
+    records: tuple[VerifiedApprovalCard, ...] = ()
 
 
 def _admit_issue(
     event: AuditEvent,
     issued: dict[str, ApprovalCardV2],
     origins: dict[str, tuple[str, str]],
+    issue_events: dict[str, AuditEvent],
     errors: list[str],
 ) -> None:
     """Admit one issue event into *issued*, flagging mutation or a bad envelope."""
@@ -113,6 +165,7 @@ def _admit_issue(
         )
         return
     issued[stored_hash] = card
+    issue_events[stored_hash] = event
     origins[stored_hash] = (
         str(details.get("worktree_id", "")),
         str(details.get("thread_id", "")),
@@ -220,12 +273,16 @@ def _check_resolution(
     event: AuditEvent,
     issued: dict[str, ApprovalCardV2],
     origins: dict[str, tuple[str, str]],
+    issue_events: dict[str, AuditEvent],
     settled: set[str],
     errors: list[str],
-) -> bool:
+) -> VerifiedApprovalCard | None:
     """Validate one resolve event against the issues seen earlier in the chain.
 
-    Returns ``True`` when the resolution is fully reconstructable.
+    Returns the reconstructed pair when the resolution is fully
+    reconstructable, and ``None`` otherwise. The reconstruction is the return
+    value rather than a side effect so a caller cannot end up holding a pair
+    that failed a check.
     """
     details: dict[str, Any] = event.details
     echoed = str(details.get("card_hash", ""))
@@ -238,7 +295,7 @@ def _check_resolution(
         errors.append(
             f"approval card {echoed!r} was settled more than once; a card settles exactly once",
         )
-        return False
+        return None
     card = issued.get(echoed)
     if card is None:
         # Either the hash names no issued envelope at all, or the issue event
@@ -248,7 +305,7 @@ def _check_resolution(
             f"resolved approval card {echoed!r} has no matching issued envelope with an intact hash "
             f"recorded before it in the chain",
         )
-        return False
+        return None
     resolved_at = _resolved_at(details)
     if resolved_at is None:
         errors.append(
@@ -256,62 +313,68 @@ def _check_resolution(
             f"({details.get('resolved_at')!r}); a settlement with no usable timestamp cannot be "
             f"checked against the envelope's window",
         )
-        return False
+        return None
     if resolved_at < card.created_at:
         errors.append(
             f"resolved approval card {echoed!r} was decided at {resolved_at:.0f}, "
             f"before its envelope's created_at {card.created_at:.0f}",
         )
-        return False
+        return None
     if resolved_at >= card.not_after:
         errors.append(
             f"resolved approval card {echoed!r} was decided at {resolved_at:.0f} "
             f"at or after its not_after {card.not_after:.0f}",
         )
-        return False
+        return None
     # Both are evaluated (not short-circuited) so one settlement reports every
     # way in which it is invalid rather than only the first.
     decision_ok = _check_decision(echoed, details, errors)
     origin_ok = _check_origin(echoed, details, origins.get(echoed), errors)
-    return decision_ok and origin_ok
+    if not (decision_ok and origin_ok):
+        return None
+    issue_event = issue_events[echoed]
+    return VerifiedApprovalCard(
+        card=card,
+        card_hash=echoed,
+        decision=str(details.get("decision", "")),
+        approver=str(details.get("approver") or event.actor),
+        resolved_at=resolved_at,
+        issued_hmac=str(issue_event.hmac),
+        resolved_hmac=str(event.hmac),
+        issued_timestamp=str(issue_event.timestamp),
+        resolved_timestamp=str(event.timestamp),
+    )
 
 
-def verify_approval_cards(audit_dir: Path, *, key: bytes | None = None) -> ApprovalCardVerifyResult:
-    """Verify every resolved approval card in *audit_dir* offline.
+def verify_approval_card_events(events: Iterable[AuditEvent]) -> ApprovalCardVerifyResult:
+    """Verify the approval-card semantics carried by *events*.
 
-    Args:
-        audit_dir: Directory holding the HMAC-chained audit JSONL files.
-        key: Optional HMAC key. Only used to read the events; the semantic
-            checks here do not depend on the key (the HMAC chain check does).
+    *events* must be in chain order, and may contain unrelated event types
+    (they are ignored). This is the whole of the check; the ``audit_dir`` entry
+    point below is a convenience that reads the chain first.
 
-    Returns:
-        An :class:`ApprovalCardVerifyResult`. ``ok`` is ``True`` when no
-        resolved card references a mutated envelope, an unknown ``card_hash``,
-        or a decision made after expiry (and when there are no cards at all).
-        Records that failed evaluation land in ``errors``; records this code
-        could not evaluate land in ``verifier_errors``. Either keeps ``ok`` at
-        ``False``.
+    Taking pre-read events matters for a caller that needs the verdict and a
+    projection of the same rows: it can read once under
+    :meth:`AuditChainStore.verify_and_query` and hand the result here, rather
+    than verifying one snapshot and projecting another.
     """
-    log = AuditLog(audit_dir=audit_dir, key=key) if key is not None else AuditLog(audit_dir=audit_dir)
-
     # One ordered pass over the chain rather than two independent queries. The
     # order is the evidence: reading issues and resolutions separately loses the
     # happens-before relation between them, which is exactly what lets a
     # backfilled issue event legitimise a resolution that was recorded first.
-    events = [
-        event for event in log.query() if event.event_type in {EVENT_APPROVAL_CARD_ISSUED, EVENT_APPROVAL_CARD_RESOLVED}
-    ]
-
     errors: list[str] = []
     verifier_errors: list[str] = []
     issued: dict[str, ApprovalCardV2] = {}
     origins: dict[str, tuple[str, str]] = {}
+    issue_events: dict[str, AuditEvent] = {}
     settled: set[str] = set()
+    records: list[VerifiedApprovalCard] = []
     issued_count = 0
     resolved_count = 0
-    reconstructed = 0
 
     for event in events:
+        if event.event_type not in {EVENT_APPROVAL_CARD_ISSUED, EVENT_APPROVAL_CARD_RESOLVED}:
+            continue
         # A verifier that its own input can crash is a denial-of-audit
         # primitive: `bernstein audit verify` runs this pillar before three
         # others, with no try/except of its own, so an escaping exception
@@ -327,11 +390,12 @@ def verify_approval_cards(audit_dir: Path, *, key: bytes | None = None) -> Appro
         try:
             if event.event_type == EVENT_APPROVAL_CARD_ISSUED:
                 issued_count += 1
-                _admit_issue(event, issued, origins, errors)
+                _admit_issue(event, issued, origins, issue_events, errors)
                 continue
             resolved_count += 1
-            if _check_resolution(event, issued, origins, settled, errors):
-                reconstructed += 1
+            reconstructed = _check_resolution(event, issued, origins, issue_events, settled, errors)
+            if reconstructed is not None:
+                records.append(reconstructed)
             settled.add(str(event.details.get("card_hash", "")))
         except Exception as exc:
             verifier_errors.append(
@@ -348,6 +412,28 @@ def verify_approval_cards(audit_dir: Path, *, key: bytes | None = None) -> Appro
         errors=errors,
         issued_count=issued_count,
         resolved_count=resolved_count,
-        reconstructed_count=reconstructed,
+        reconstructed_count=len(records),
         verifier_errors=verifier_errors,
+        records=tuple(records),
     )
+
+
+def verify_approval_cards(audit_dir: Path, *, key: bytes | None = None) -> ApprovalCardVerifyResult:
+    """Verify every resolved approval card in *audit_dir* offline.
+
+    Args:
+        audit_dir: Directory holding the HMAC-chained audit JSONL files.
+        key: Optional HMAC key. Only used to read the events; the semantic
+            checks here do not depend on the key (the HMAC chain check does).
+
+    Returns:
+        An :class:`ApprovalCardVerifyResult`. ``ok`` is ``True`` when no
+        resolved card references a mutated envelope, an unknown ``card_hash``,
+        or a decision made after expiry (and when there are no cards at all).
+        Records that failed evaluation land in ``errors``; records this code
+        could not evaluate land in ``verifier_errors``. Either keeps ``ok`` at
+        ``False``. The settlements that passed every check are returned in
+        ``records``.
+    """
+    log = AuditLog(audit_dir=audit_dir, key=key) if key is not None else AuditLog(audit_dir=audit_dir)
+    return verify_approval_card_events(log.query())

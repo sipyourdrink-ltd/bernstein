@@ -51,6 +51,13 @@ from bernstein.adapters.conformance import (
         ("junie", SystemAddendumChannel.PROMPT_APPEND),
         ("devin_terminal", SystemAddendumChannel.PROMPT_APPEND),
         ("q_dev", SystemAddendumChannel.PROMPT_APPEND),
+        # Issue #5325: these four used to fall through to IGNORED even though
+        # spawn() accepted system_addendum, silently dropping the completion /
+        # heartbeat / signal-check protocol.
+        ("qwen", SystemAddendumChannel.PROMPT_APPEND),
+        ("opencode", SystemAddendumChannel.PROMPT_APPEND),
+        ("codex", SystemAddendumChannel.PROMPT_APPEND),
+        ("gemini", SystemAddendumChannel.PROMPT_APPEND),
         ("plandex", SystemAddendumChannel.IGNORED),
         ("forge", SystemAddendumChannel.IGNORED),
     ],

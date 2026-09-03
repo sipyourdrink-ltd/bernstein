@@ -1,0 +1,6 @@
+rules:
+  - id: bernstein-test-eval-use
+    languages: [python]
+    message: Bernstein synthetic dangerous eval() use
+    severity: ERROR
+    pattern: eval(...)

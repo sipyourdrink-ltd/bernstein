@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://bernstein.alexchernysh.com/schemas/audit-multitenant-export-v2.json",
+  "$id": "https://bernstein.run/schemas/audit-multitenant-export-v2.json",
   "title": "Bernstein Multi-Tenant Audit Export (v2)",
   "description": "Versioned wire format for tenant-scoped HMAC-chained audit-log slices. v2 layers two opt-in cryptographic features on top of v1: (a) a verifiable RFC 3161 TimeStampToken - bernstein.core.security.rfc3161_verifier walks the TSA cert chain end-to-end, no longer deferred to operator toolchain - and (b) an Ed25519 signature over the bundle's head_sha256 ('head_signature' block) so a key-less auditor can authenticate the bundle's origin without sharing the operator's HMAC key. v1 readers tolerate v2 bundles by ignoring the additional 'head_signature' field - additionalProperties=true at the top level is intentional.",
   "type": "object",

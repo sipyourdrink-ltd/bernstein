@@ -6,6 +6,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 from bernstein.core.github import (
+    _FINGERPRINT_LABEL_PREFIX,
     _HASH_LABEL_PREFIX,
     _LABEL_AUTO,
     _LABEL_CLAIMED,
@@ -14,6 +15,7 @@ from bernstein.core.github import (
     GitHubIssue,
     _hash_title,
     _label_color,
+    _short_fingerprint,
 )
 
 # ---------------------------------------------------------------------------
@@ -326,6 +328,60 @@ def test_find_by_hash_returns_none_when_no_match() -> None:
         found = client.find_by_hash("Non-existent proposal")
 
     assert found is None
+
+
+# ---------------------------------------------------------------------------
+# GitHubClient.find_by_fingerprint
+# ---------------------------------------------------------------------------
+
+
+def test_find_by_fingerprint_matches_issue_whose_title_changed() -> None:
+    """A pattern's identity is its fingerprint label, never its title text."""
+    client = GitHubClient()
+    client._available = True
+
+    fingerprint = "c" * 64
+    label = _FINGERPRINT_LABEL_PREFIX + _short_fingerprint(fingerprint)
+
+    raw = [
+        {
+            "number": 5,
+            "title": "Unrelated",
+            "url": "",
+            "state": "open",
+            "labels": [{"name": _LABEL_EVOLVE}],
+        },
+        {
+            # Filed when the pattern had 3 occurrences; the title has since moved on.
+            "number": 6,
+            "title": "GATE_FAILED: lint (3 runs)",
+            "url": "",
+            "state": "open",
+            "labels": [{"name": _LABEL_EVOLVE}, {"name": label}],
+        },
+    ]
+    with patch("bernstein.core.git.github.subprocess.run", return_value=_mock_run_ok(raw)):
+        found = client.find_by_fingerprint(fingerprint)
+
+    assert found is not None
+    assert found.number == 6
+
+
+def test_find_by_fingerprint_returns_none_for_an_unseen_fingerprint() -> None:
+    client = GitHubClient()
+    client._available = True
+
+    raw = [
+        {
+            "number": 1,
+            "title": "Other",
+            "url": "",
+            "state": "open",
+            "labels": [{"name": _LABEL_EVOLVE}, {"name": _FINGERPRINT_LABEL_PREFIX + "deadbeef"}],
+        },
+    ]
+    with patch("bernstein.core.git.github.subprocess.run", return_value=_mock_run_ok(raw)):
+        assert client.find_by_fingerprint("f" * 64) is None
 
 
 # ---------------------------------------------------------------------------

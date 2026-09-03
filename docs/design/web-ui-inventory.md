@@ -46,7 +46,7 @@ measuring it as if it were understated the risk (see `warning` below).
 | `--popover-foreground` on `--popover` | Popover text | 17.74:1 | 14.38:1 | WCAG AA (≥ 4.5:1) |
 | `--primary-foreground` on `--primary` | Primary action button | 16.73:1 | 16.17:1 | WCAG AA (≥ 4.5:1) |
 | `--secondary-foreground` on `--secondary` | Secondary action button | 15.43:1 | 17.02:1 | WCAG AA (≥ 4.5:1) |
-| `--accent-foreground` on `--accent` | Solid accent button / strong pill | 7.96:1 | 9.77:1 | WCAG AA (≥ 4.5:1) |
+| `--accent-foreground` on `--accent` | Solid accent button / strong pill | 5.56:1 | 9.13:1 | WCAG AA (≥ 4.5:1) |
 | `--destructive-foreground` on `--destructive` | Destructive action button | 7.81:1 | 7.38:1 | WCAG AA (≥ 4.5:1) |
 | `--success-foreground` on `--success` | Solid success badge | 5.89:1 | 9.56:1 | WCAG AA (≥ 4.5:1) |
 | `--warning-foreground` on `--warning` | Solid warning badge | 5.81:1 | 9.81:1 | WCAG AA (≥ 4.5:1) |
@@ -56,11 +56,11 @@ measuring it as if it were understated the risk (see `warning` below).
 | `--meta-foreground` on `--background` | SectionLabel / uppercase metadata | 5.54:1 | 6.00:1 | WCAG AA (≥ 4.5:1) |
 | `--meta-foreground` on `--card` | Card metadata / timestamp | 5.87:1 | 5.63:1 | WCAG AA (≥ 4.5:1) |
 | `--meta-foreground` on `--surface-raised` | Raised metadata label | 5.62:1 | 5.15:1 | WCAG AA (≥ 4.5:1) |
-| `--accent` on `--card` / `--surface-raised` (solid) | Interactive link / standalone accent text | 8.43:1 / 8.08:1 | 8.71:1 / 7.96:1 | WCAG AA (≥ 4.5:1) |
+| `--accent` on `--card` / `--surface-raised` (solid) | Interactive link / standalone accent text | 5.90:1 / 5.65:1 | 8.14:1 / 7.44:1 | WCAG AA (≥ 4.5:1) |
 | `--destructive` on `--card` / `--surface-raised` (solid) | Standalone error text | 8.28:1 / 7.94:1 | 6.93:1 / 6.33:1 | WCAG AA (≥ 4.5:1) |
 | `--success` on `--card` / `--surface-raised` (solid) | Standalone success text | 6.25:1 / 5.99:1 | 8.53:1 / 7.79:1 | WCAG AA (≥ 4.5:1) |
 | `--warning` on `--card` / `--surface-raised` (solid) | Standalone warning text | 6.15:1 / 5.90:1 | 8.75:1 / 7.99:1 | WCAG AA (≥ 4.5:1) |
-| `--accent` text on 15%-tint `bg-accent/15` over `--card` / `--surface-raised` | Accent Pill (non-strong) | 6.63:1 / 6.38:1 | 6.49:1 / 5.86:1 | WCAG AA (≥ 4.5:1) |
+| `--accent` text on 15%-tint `bg-accent/15` over `--card` / `--surface-raised` | Accent Pill (non-strong) | 4.77:1 / 4.59:1 | 6.13:1 / 5.54:1 | WCAG AA (≥ 4.5:1) |
 | `--destructive` text on 15%-tint `bg-destructive/15` over `--card` / `--surface-raised` | Danger Pill | 6.42:1 / 6.17:1 | 5.41:1 / 4.90:1 | WCAG AA (≥ 4.5:1) |
 | `--success` text on 15%-tint `bg-success/15` over `--card` / `--surface-raised` | Success Pill | 5.04:1 / 4.85:1 | 6.38:1 / 5.76:1 | WCAG AA (≥ 4.5:1) |
 | `--warning` text on 15%-tint `bg-warning/15` over `--card` / `--surface-raised` | Warning Pill | 4.97:1 / 4.78:1 | 6.50:1 / 5.87:1 | WCAG AA (≥ 4.5:1) |

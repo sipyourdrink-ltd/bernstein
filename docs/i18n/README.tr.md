@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI ajanları için açık kaynak governance katmanı
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:739f0a7ad1af" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:9c87d303c594" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -38,7 +38,7 @@
 
 > **Durum: beta.** Tek bir kişi tarafından sürdürülmekte olup aktif geliştirme aşamasındadır. Sürüm numarası olgunluğu değil yayınları sayar — ara sürümler (minor) arayüzleri değiştirebilir. Bağımlı olduğunuz her şey için sürümü sabitleyin; gerilemeler (regressions) hızla düzeltilir, [bildirin](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein, AI ajanları için açık kaynak governance katmanıdır. Deterministik bir zamanlayıcı - koordinasyon döngüsünde model yok - ajanları paralel çalıştırır, ürettiklerini kapılardan geçirir ve her adımı kaydeder; böylece bir çalıştırma sonradan, çevrimdışı, yalnızca artefaktlardan doğrulanabilir. CLI kod ajanları kutudan çıktığı gibi çalışır (Claude Code, Codex, Gemini CLI ve 40+ daha), ve aynı katman her ajan iş yükünü governe eder: çıktı bir diff, bir araştırma raporu, bir veri kümesi ya da bir denetim kanıt paketi olabilir. Air-gap kurulum profili dahildir. Apache-2.0.
+Bernstein, AI ajanları için açık kaynak governance katmanıdır. policy as code üzerinde çalışır: politikayı sen yazarsın - kim neyi yapabilir, ne onay ister, ne kayıt altına alınmalı - Bernstein da bunu uygular ve doğrulanabilir kaydı üretir. Deterministik bir zamanlayıcı - koordinasyon döngüsünde model yok - ajanları paralel çalıştırır, ürettiklerini kapılardan geçirir ve her adımı kaydeder; böylece bir çalıştırma sonradan, çevrimdışı, yalnızca artefaktlardan doğrulanabilir. CLI kod ajanları kutudan çıktığı gibi çalışır (Claude Code, Codex, Gemini CLI ve 40+ daha), ve aynı katman her ajan iş yükünü governe eder: çıktı bir diff, bir araştırma raporu, bir veri kümesi ya da bir denetim kanıt paketi olabilir. Air-gap kurulum profili dahildir. Apache-2.0.
 
 ### bir bakışta
 <!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->
