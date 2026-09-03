@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from bernstein.core.knowledge.task_graph import TaskGraph
 from bernstein.core.models import Task, TaskStatus
+from bernstein.core.tasks.unreachable import is_task_succeeded_or_retrying
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,14 @@ class DependencyValidator:
     def validate(self, tasks: list[Task]) -> DepValidationResult:
         """Run full validation for the current task set."""
         task_map = {task.id: task for task in tasks}
+        # A dependency whose retry has succeeded OR is still in flight is not
+        # stuck: the retry carries a new id and the edge still names the
+        # original, so a raw status read reports "depends on X which is failed
+        # - task remains blocked" for a dependent that is about to run or is
+        # already running. ``is_task_succeeded_or_retrying`` is the same
+        # question ``blocking_dependency`` asks; this is a warning an operator
+        # greps to decide whether a run is wedged, so it must not fire on a
+        # dependency the engine is actively re-attempting.
         missing: list[tuple[str, str]] = []
         stuck: list[tuple[str, str, str]] = []
         warnings: list[str] = []
@@ -39,7 +48,7 @@ class DependencyValidator:
                 if dep is None:
                     missing.append((task.id, dep_id))
                     continue
-                if dep.status in self._STUCK_STATUSES:
+                if dep.status in self._STUCK_STATUSES and not is_task_succeeded_or_retrying(dep_id, task_map):
                     stuck.append((task.id, dep_id, dep.status.value))
 
         cycles = self._find_cycles(tasks)

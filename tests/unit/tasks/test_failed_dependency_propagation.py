@@ -393,6 +393,24 @@ class TestSchedulerAgreement:
             EdgeResolution.PENDING: "pending",
         }[resolution]
 
+    @staticmethod
+    def _readiness_verdict(status: TaskStatus) -> str:
+        """What the orchestrator's own open-task readiness filter says.
+
+        The third consumer of this question, and the one that was never
+        enrolled here: ``Orchestrator`` folds the successful-terminal buckets
+        into the set of dependency ids they satisfy and spawns a dependent
+        whose every edge names one. It answers satisfied / not-satisfied only -
+        permanence is the unreachable sweep's job, not the filter's - so
+        "pending" and "never" are one verdict from where it stands.
+        """
+        from bernstein.core.tasks.unreachable import satisfied_dependency_ids
+
+        dep = _task("A", status)
+        # The filter is handed exactly the successful-terminal buckets.
+        completed = [dep] if status in (TaskStatus.DONE, TaskStatus.CLOSED) else []
+        return "satisfied" if "A" in satisfied_dependency_ids(completed) else "not-satisfied"
+
     @pytest.mark.parametrize("status", list(TaskStatus))
     def test_both_schedulers_agree_for_every_dependency_status(self, status: TaskStatus, tmp_path: Path) -> None:
         store_verdict = self._store_verdict(status, tmp_path)
@@ -402,3 +420,38 @@ class TestSchedulerAgreement:
             f"dependency in {status.value!r}: store says {store_verdict!r} but "
             f"DAGExecutor.resolve_edge says {dag_verdict!r}"
         )
+
+    @pytest.mark.parametrize("status", list(TaskStatus))
+    def test_the_readiness_filter_agrees_with_the_store(self, status: TaskStatus, tmp_path: Path) -> None:
+        """The third consumer decides "can this dependency satisfy me" too.
+
+        It sat outside this guard, which is how it came to carry a raw id set
+        while the other two resolved retry lineage.
+        """
+        store_says_satisfied = self._store_verdict(status, tmp_path) == "satisfied"
+        filter_says_satisfied = self._readiness_verdict(status) == "satisfied"
+
+        assert store_says_satisfied == filter_says_satisfied, (
+            f"dependency in {status.value!r}: store satisfied={store_says_satisfied} but "
+            f"the orchestrator's readiness filter satisfied={filter_says_satisfied}"
+        )
+
+    @pytest.mark.parametrize("lineage_key", ["original_task_id", "retry_of"])
+    def test_every_consumer_resolves_a_retry_to_the_original_edge(self, lineage_key: str, tmp_path: Path) -> None:
+        """A retry carries a NEW id, so a dependent's ``depends_on`` still names
+        the original. The store and the readiness filter must both read the
+        succeeded retry as satisfying that edge, through the same lineage."""
+        from bernstein.core.tasks.unreachable import satisfied_dependency_ids
+
+        retry = _task("A-retry", TaskStatus.DONE)
+        retry.metadata = {lineage_key: "A"}
+        dependent = _task("B", TaskStatus.OPEN, ["A"])
+
+        store = TaskStore(tmp_path / f"lineage-{lineage_key}" / "tasks.jsonl")
+        store._tasks = {"A-retry": retry, "B": dependent}
+        store._by_status = {s: {} for s in TaskStatus}
+        store._by_status[TaskStatus.DONE]["A-retry"] = retry
+        store._by_status[TaskStatus.OPEN]["B"] = dependent
+
+        assert store._dependencies_satisfied(dependent), "store lost the retry lineage"
+        assert "A" in satisfied_dependency_ids([retry]), "readiness filter lost the retry lineage"
