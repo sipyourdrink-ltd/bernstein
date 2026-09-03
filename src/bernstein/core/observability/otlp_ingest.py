@@ -327,9 +327,13 @@ class OTLPIngestAdapter:
     def validate_declaration(self, declaration: IngestAdapterDeclaration) -> None:
         """Validate a plugin's ingest adapter declaration.
 
+        The declaration must name every event type this adapter can
+        produce: an adapter may not quietly narrow its declared surface
+        below what it emits (issue #4963).
+
         Raises:
-            ValueError: When the declaration declares event types this
-                adapter does not support.
+            ValueError: When the declaration names an event type this
+                adapter does not support, or omits one it does.
         """
         from bernstein.core.observability.ingest_contract import VALID_INGEST_EVENT_TYPES
 
@@ -340,6 +344,12 @@ class OTLPIngestAdapter:
                     f"adapter {declaration.name!r} declared unsupported event type {et!r}; "
                     f"supported types are {sorted(valid)}"
                 )
+        missing = set(self.declared_event_types) - set(declaration.declared_event_types)
+        if missing:
+            raise ValueError(
+                f"adapter {declaration.name!r} does not declare event types {sorted(missing)} "
+                f"which this adapter can produce; supported types are {sorted(valid)}"
+            )
 
     def ingest_span(self, raw: dict[str, Any]) -> IngestSpanResult:
         """Ingest one OTLP/JSON span dict.
