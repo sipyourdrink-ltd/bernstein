@@ -13,16 +13,16 @@ is detected in the active state, or ``None`` when the sweep passes cleanly.
 from __future__ import annotations
 
 import time
-from typing import Any, Optional, cast
+from typing import Any
 
-from bernstein.core.identity.grants import compute_grant_sets, GrantChainResult, find_active_grant
+from bernstein.core.identity.grants import GrantChainResult, compute_grant_sets
 
 
 def sweep_grants(
     result: GrantChainResult,
     *,
     now: float | None = None,
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Reconcile-time grant sweep.
 
     Derives the revoked and approved sets from ``result`` and checks whether

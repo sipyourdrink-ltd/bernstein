@@ -352,12 +352,12 @@ def propose_reconcile(
         counts[entry.status.value] = counts.get(entry.status.value, 0) + 1
 
     # Import here to avoid circular imports
-    from bernstein.core.identity.grant_sweep import sweep_grants
     from bernstein.core.identity import grants
+    from bernstein.core.identity.grant_sweep import sweep_grants
 
     # Perform grant sweep check
     grant_finding = None
-    grant_records_path = lineage_root / "audit" / "grants" / f"{run_id}.jsonl"
+    grant_records_path = lineage_root.parent / "audit" / "grants" / f"{run_id}.jsonl"
     if grant_records_path.is_file():
         # Read the grant records from the audit directory
         result = grants.verify_grant_chain(root=lineage_root.parent / "audit", run_id=run_id, key=hmac_key)

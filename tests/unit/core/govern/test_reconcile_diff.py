@@ -311,3 +311,103 @@ def test_entity_absent_from_previous_report_classifies_as_new(project: Path) -> 
     assert len(drift_lines) == 1
     assert EntityStatus.NEW.value in drift_lines[0]
     assert "scheduled_task:sched-new" in drift_lines[0]
+
+
+# ---------------------------------------------------------------------------
+# 9. Grant sweep wired into propose_reconcile
+# ---------------------------------------------------------------------------
+
+
+def test_propose_reconcile_includes_sweep_when_grant_records_exist(project: Path) -> None:
+    """When grant chain files exist, propose_reconcile runs sweep and stores the finding."""
+    from bernstein.core.govern.reconcile import propose_reconcile, snapshot_surface
+    from bernstein.core.identity.grants import (
+        GRANT_ISSUED,
+        GrantLedger,
+        GrantSigner,
+        _compute_hmac,
+    )
+    from bernstein.core.govern.reconcile_models import DesiredState
+
+    signer = GrantSigner.generate(issuer="manager:test")
+    # Write grants under project/.sdd/audit/ so propose_reconcile finds them
+    ledger = GrantLedger(root=project / ".sdd" / "audit", key=b"k" * 32, signer=signer)
+    g = ledger.issue_grant(
+        run_id=RUN_ID,
+        task_id="t-1",
+        secret_name="K",
+        audience="aud",
+        expiry=0,
+    )
+    ledger.revoke_grant(run_id=RUN_ID, grant_id=g.grant_id, reason="test")
+    # Add an out-of-band second grant for the same (task_id, secret_name) to
+    # simulate a revoked-then-re-added drift. We write a properly chained
+    # JSONL record with the same salted secret_name so compute_grant_sets puts
+    # the key in both revoked and approved.
+    receipt_path = ledger.receipt_path(RUN_ID)
+    lines = receipt_path.read_text(encoding="utf-8").splitlines()
+    last = json.loads(lines[-1])
+    body = {
+        "run_id": RUN_ID,
+        "record_index": len(lines),
+        "kind": GRANT_ISSUED,
+        "grant_id": "grant-readded",
+        "task_id": g.task_id,
+        "secret_name": g.secret_name,
+        "audience": "aud",
+        "expiry": 0,
+        "capability_ceiling": [],
+        "issuer": "manager:test",
+        "issuer_pubkey": signer.public_key_pem,
+        "token_id": "",
+        "reason": "",
+        "created": last["created"] + 1,
+    }
+    sig = signer.sign(body)
+    chain_body = {**body, "prev_hmac": last["hmac"], "signature": sig}
+    hmac_val = _compute_hmac(b"k" * 32, last["hmac"], chain_body)
+    new_record = {**chain_body, "hmac": hmac_val}
+    lines.append(json.dumps(new_record, sort_keys=True))
+    receipt_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    snapshot = snapshot_surface(sdd_dir=project / ".sdd", observed_at=1_000_000_000)
+    desired = DesiredState.from_dict({"v": 1, "entities": []})
+
+    diff, decision = propose_reconcile(
+        run_id=RUN_ID,
+        lineage_root=project / ".sdd" / "lineage",
+        hmac_key=b"k" * 32,
+        snapshot=snapshot,
+        desired=desired,
+        now=1_000_000_000,
+    )
+    # The decision context must include the sweep finding because the grant
+    # chain has an overlap between revoked and approved.
+    assert "grant_finding" in decision.context
+    finding = decision.context["grant_finding"]
+    assert finding is not None
+    assert finding["severity"] == "critical"
+    assert finding["category"] == "grant-sweep"
+
+
+def test_propose_reconcile_sweep_is_none_when_grants_absent(project: Path) -> None:
+    """When no grant chain exists, propose_reconcile stores grant_finding=None."""
+    from bernstein.core.govern.reconcile import propose_reconcile, snapshot_surface
+    from bernstein.core.govern.reconcile_models import DesiredState
+
+    lineage_root = project / ".sdd" / "lineage"
+    lineage_root.mkdir(parents=True, exist_ok=True)
+    # Do NOT create any grant records under tmp_path / .sdd / audit
+
+    snapshot = snapshot_surface(sdd_dir=project / ".sdd", observed_at=1_000_000_000)
+    desired = DesiredState.from_dict({"v": 1, "entities": []})
+
+    diff, decision = propose_reconcile(
+        run_id=RUN_ID,
+        lineage_root=lineage_root,
+        hmac_key=b"k" * 32,
+        snapshot=snapshot,
+        desired=desired,
+        now=1_000_000_000,
+    )
+    assert decision.context["grant_finding"] is None

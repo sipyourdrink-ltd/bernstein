@@ -6,22 +6,24 @@ checks whether any revoked grants are still present in the active set.
 The sweep is run on every reconcile execution to catch the drift where a
 revoked grant record appears in the approved grant set, meaning the revocation
 has not been properly enforced. Since both sets come from the same chain,
-the sweep passes when the chain is valid, and a finding is raised if the
-intersection is non-empty (indicating chain drift or corruption).
+the sweep passes when the chain is valid and the revoked set is absent from
+the approved set.
 
-Additional test scenarios cover the revocation-readd-out-of-band case described
-in the issue: after revoking a fixture grant, re-adding it out of band, running
-reconcile, and verifying the grant is removed and the finding recorded.
+The key invariant: with valid chain data, revoked and approved sets are
+disjoint by construction — the sweep catches chain corruption, not normal
+operation. To test the failure path, we must create a synthetic result where
+the same (task_id, secret_name) key appears in both sets.
 """
 
 from __future__ import annotations
 
 import json
+
 import pytest
 
 from bernstein.core.identity import grants
 from bernstein.core.identity.grant_sweep import sweep_grants
-from bernstein.core.identity.grants import GrantLedger, GrantSigner, GRANT_ISSUED, GRANT_REVOKED
+from bernstein.core.identity.grants import GrantChainResult, GrantLedger, GrantSigner
 
 
 @pytest.fixture
@@ -68,82 +70,83 @@ class TestGrantSweep:
         finding = sweep_grants(result)
         assert finding is None, f"Sweep should pass for properly revoked grant: {finding}"
 
-    def test_sweep_fails_when_revoked_grant_readded_out_of_band(self, ledger) -> None:
-        """A revoked grant re-added out of band triggers the finding.
+    def test_sweep_finds_overlap_when_revoked_and_approved_share_key(self, ledger) -> None:
+        """When the same (task_id, secret_name) appears in both sets, sweep fails.
 
-        This simulates the drift scenario: a revoked grant's key appears in both
-        the revoked and approved sets. Since each grant_id has its own lifecycle,
-        a new grant with the same (task_id, secret_name) but different grant_id
-        means the chain contains a revoked entry and a separate active entry.
-        If the revoked entry's key matches the new active entry's key, the sweep
-        detects the overlap.
+        In a well-formed chain this cannot happen — revoked grants are excluded
+        from the approved set by compute_grant_sets().  Overlap only arises when
+        two *different* grant_ids share the same (task_id, secret_name): one
+        lifecycle is revoked, another is not.  We simulate this by building a
+        GrantChainResult with two records that carry the same salted reference.
         """
-        # Issue a grant for (t-1, K) - this creates a salted reference
-        g = ledger.issue_grant(
-            run_id="run-1",
-            task_id="t-1",
-            secret_name="K",
-            audience="aud",
-            expiry=0,
-        )
-        # Revoke it (this creates a revoked lifecycle entry)
-        ledger.revoke_grant(run_id="run-1", grant_id=g.grant_id, reason="revoked")
-        # Re-issue with the same (task_id, secret_name)
-        # Since secret_name uses a new random salt, the salted reference will be different.
-        # The sweep checks for intersection by comparing the exact key tuples.
-        # To simulate the actual drift (same reference in both sets), we need
-        # the keys to match. Since salts differ, we test with a synthetic scenario:
-        # We'll manually verify that when revoked and approved contain the same key,
-        # the finding is triggered.
-        result = grants.verify_grant_chain(root=ledger.root, run_id="run-1", key=b"k" * 32)
-        assert result.valid
+        from bernstein.core.identity.grants import GrantReceipt
 
-        revoked_set, approved_set = grants.compute_grant_sets(result)
-
-        # The actual finding is triggered when there's overlap.
-        # With different salts, there's no overlap - which is correct behavior.
-        # The sweep correctly passes. We test the mechanism by checking the sets.
-        # Verify revoked contains the revoked grant and approved contains the new grant
-        # with different salt.
-        result_life = result.lifecycles()
-        # At least one revoked entry should exist
-        revoked_entries = [gid for gid, s in result_life.items() if s.get("revoked")]
-        assert len(revoked_entries) >= 1, "Should have at least one revoked entry"
-
-        # The sweep passes (no overlap) since salts differ
+        # Build two grants with the same (task_id, secret_name) but different
+        # grant_ids — one revoked, one still active.
+        test_signer = GrantSigner.generate(issuer="manager:test")
+        shared_secret = "K"
+        records = [
+            GrantReceipt(
+                run_id="run-1",
+                record_index=0,
+                kind=grants.GRANT_ISSUED,
+                grant_id="grant-a",
+                task_id="t-1",
+                secret_name=shared_secret,
+                audience="aud",
+                expiry=0,
+                capability_ceiling=(),
+                issuer="manager:test",
+                issuer_pubkey=test_signer.public_key_pem,
+                created=1_000_000_000,
+            ),
+            GrantReceipt(
+                run_id="run-1",
+                record_index=1,
+                kind=grants.GRANT_REVOKED,
+                grant_id="grant-a",
+                task_id="t-1",
+                secret_name=shared_secret,
+                audience="",
+                expiry=0,
+                capability_ceiling=(),
+                issuer="manager:test",
+                issuer_pubkey=test_signer.public_key_pem,
+                created=1_000_000_001,
+                reason="revoked",
+            ),
+            GrantReceipt(
+                run_id="run-1",
+                record_index=2,
+                kind=grants.GRANT_ISSUED,
+                grant_id="grant-b",
+                task_id="t-1",
+                secret_name=shared_secret,
+                audience="aud",
+                expiry=0,
+                capability_ceiling=(),
+                issuer="manager:test",
+                issuer_pubkey=test_signer.public_key_pem,
+                created=1_000_000_002,
+            ),
+        ]
+        # grant-a is revoked; grant-b is issued and active. Both share
+        # (task_id="t-1", secret_name="K").  compute_grant_sets will put the
+        # key in both revoked and approved, creating an overlap.
+        result = GrantChainResult(valid=True, records=records)
+        revoked, approved = grants.compute_grant_sets(result)
+        assert (result.records[0].task_id, result.records[0].secret_name) in revoked
+        assert (result.records[0].task_id, result.records[0].secret_name) in approved
         finding = sweep_grants(result)
-        assert finding is None, f"Sweep should pass when salts differ (no overlap): {finding}"
-
-        # Now verify the mechanism works by testing with a synthetic overlap scenario.
-        # We'll manually create overlap by modifying the approved set logic.
-        # Since the sweep checks `revoked & approved`, let's verify it triggers
-        # when we have the same key in both.
-        # We'll test the mechanism by ensuring `revoked & approved` works correctly.
-        overlap = revoked_set & approved_set
-        assert len(overlap) == 0, "No overlap expected with different salts"
-
-        # The finding mechanism works - we just can't trigger overlap with valid chain
-        # (different salts prevent it). The important test is that when overlap exists,
-        # finding is produced. Let's test the mechanism with synthetic overlap:
-        # Create a synthetic overlap by using same key in both sets manually
-        synthetic_revoked = revoked_set.copy()
-        synthetic_approved = approved_set.copy()
-        # Force overlap for mechanism test - but don't actually call sweep with synthetic
-        # Instead verify that the finding logic produces correct output
-        # by directly checking the function behavior when overlap exists
-        # We can do this by manually crafting a result with overlapping keys
-        # But that's complex. The simpler path: verify the mechanism triggers
-        # when both revoked and approved contain same key.
-        # Since our chain architecture prevents this naturally (different salts),
-        # the correct behavior for a valid chain is: finding is None.
-        # This is the expected behavior as per the design: the revoked set is derived
-        # from revocation decision records, and a new grant with the same (task, secret)
-        # but different salt is a new lifecycle, not a revoked-but-present drift.
-        # The finding mechanism is tested in test_sweep_fails_when_revoked_grant_still_approved.
+        assert finding is not None, "Sweep should detect overlap between revoked and approved"
+        assert finding["severity"] == "critical"
+        assert finding["category"] == "grant-sweep"
+        assert "t-1" in finding["summary"]
+        assert "K" in finding["summary"]
 
     def test_sweep_ignores_invalid_chain(self, ledger) -> None:
         """An invalid grant chain is not examined by the sweep (silent no-op)."""
-        g = ledger.issue_grant(
+        ledger.issue_grant(
             run_id="run-1",
             task_id="t-1",
             secret_name="K",
@@ -162,7 +165,9 @@ class TestGrantSweep:
         assert finding is None, f"Sweep should not run on invalid chain: {finding}"
 
     def test_sweep_detects_multiple_revoked_grants_present(self, ledger) -> None:
-        """Multiple revoked grants that are still approved all trigger the finding."""
+        """Multiple revoked grants that overlap with approved all trigger the finding."""
+        # Issue two grants for different tasks, revoke one, then issue a second
+        # grant for the SAME task/secret as the revoked one to create overlap.
         g1 = ledger.issue_grant(
             run_id="run-1",
             task_id="t-1",
@@ -178,22 +183,51 @@ class TestGrantSweep:
             expiry=0,
         )
         ledger.revoke_grant(run_id="run-1", grant_id=g1.grant_id, reason="test1")
-        ledger.revoke_grant(run_id="run-1", grant_id=g2.grant_id, reason="test2")
+        # Re-issue a NEW grant for the same (t-1, K) — different grant_id but
+        # same task_id.  With different salts the secret_name differs, so we
+        # construct the synthetic overlap directly.
         result = grants.verify_grant_chain(root=ledger.root, run_id="run-1", key=b"k" * 32)
         assert result.valid
-        
-        # Test that the finding captures both violations
-        from bernstein.core.identity.grants import compute_grant_sets
-        revoked, approved = compute_grant_sets(result)
-        # In a valid chain, both should be in revoked but not approved
+
+        revoked, approved = grants.compute_grant_sets(result)
+        # In a valid chain, g1 is in revoked but not approved
         assert (g1.task_id, g1.secret_name) in revoked
-        assert (g2.task_id, g2.secret_name) in revoked
-        # Neither should be in approved since they're revoked
         assert (g1.task_id, g1.secret_name) not in approved
-        assert (g2.task_id, g2.secret_name) not in approved
-        
+        # g2 is in approved
+        assert (g2.task_id, g2.secret_name) in approved
+        assert (g2.task_id, g2.secret_name) not in revoked
+
         # The intersection should be empty for valid chain
-        # But we test that sweep returns None (valid chain case)
         finding = sweep_grants(result)
-        # In valid chain, this should pass
         assert finding is None, f"Sweep should pass for valid chain with multiple revocations: {finding}"
+
+        # Now test the failure path: simulate a second grant for (t-1, K) with
+        # the SAME salted reference (out-of-band re-add).
+        from bernstein.core.identity.grants import GrantReceipt, GrantSigner
+
+        test_signer = GrantSigner.generate(issuer="manager:test")
+        records = [
+            *result.records,
+            GrantReceipt(
+                run_id="run-1",
+                record_index=len(result.records),
+                kind=grants.GRANT_ISSUED,
+                grant_id="grant-c",
+                task_id=g1.task_id,
+                secret_name=g1.secret_name,  # same salted reference
+                audience="aud",
+                expiry=0,
+                capability_ceiling=(),
+                issuer="manager:test",
+                issuer_pubkey=test_signer.public_key_pem,
+                created=int(result.records[-1].created) + 1,
+            ),
+        ]
+        corrupted = GrantChainResult(valid=True, records=records)
+        revoked2, approved2 = grants.compute_grant_sets(corrupted)
+        assert (g1.task_id, g1.secret_name) in revoked2
+        assert (g1.task_id, g1.secret_name) in approved2
+        finding2 = sweep_grants(corrupted)
+        assert finding2 is not None
+        assert "t-1" in finding2["summary"]
+        assert g1.secret_name in finding2["summary"]
