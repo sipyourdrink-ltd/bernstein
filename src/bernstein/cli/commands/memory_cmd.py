@@ -18,16 +18,11 @@ from bernstein.core.memory.chain import (
 )
 from bernstein.core.memory.cross_task_kb import CrossTaskKB, Scope, redact_value
 from bernstein.core.memory.sqlite_store import MemoryType, SQLiteMemoryStore
+from bernstein.core.security.audit import load_or_create_audit_key
 
 _MEMORY_DB_PATH = ".sdd/memory/memory.db"
 
 console = Console()
-
-
-def _load_hmac_key() -> bytes:
-    from bernstein.core.security.audit import load_or_create_audit_key
-
-    return load_or_create_audit_key()
 
 
 def _chain_root(workdir: str) -> Path:
@@ -259,7 +254,7 @@ def verify_memory(scope: str, namespace: str, workdir: str) -> None:
 
     Exit codes: 0 = OK, 1 = no entries / bad input, 2 = tamper detected.
     """
-    chain = MemoryChain(_chain_root(workdir), hmac_key=_load_hmac_key())
+    chain = MemoryChain(_chain_root(workdir), hmac_key=load_or_create_audit_key())
     result = chain.verify(MemoryScope(scope), namespace, spine_root=_spine_root(workdir))
     console.print()
     console.print(f"[bold]Memory chain[/bold] scope={scope} namespace={namespace} entries={result.count}")
@@ -298,7 +293,7 @@ def why_memory(fact: str, scope: str, namespace: str, workdir: str) -> None:
 
     Exit codes: 0 = found, 1 = unknown fact / unresolved provenance.
     """
-    chain = MemoryChain(_chain_root(workdir), hmac_key=_load_hmac_key())
+    chain = MemoryChain(_chain_root(workdir), hmac_key=load_or_create_audit_key())
     origin = chain.why(
         fact,
         scope=MemoryScope(scope),
@@ -343,7 +338,7 @@ def forget_memory(entry_hash: str, scope: str, namespace: str, actor: str, workd
 
     Exit codes: 0 = tombstoned, 1 = target entry not found.
     """
-    chain = MemoryChain(_chain_root(workdir), hmac_key=_load_hmac_key())
+    chain = MemoryChain(_chain_root(workdir), hmac_key=load_or_create_audit_key())
     target = None
     for entry in chain.iter_entries(MemoryScope(scope), namespace):
         if entry.entry_hash == entry_hash:
@@ -398,7 +393,7 @@ def show_memory(scope: str, namespace: str, workdir: str, as_json: bool) -> None
     Exit codes: 0 = live claims printed, 1 = nothing live in this
     scope/namespace.
     """
-    chain = MemoryChain(_chain_root(workdir), hmac_key=_load_hmac_key())
+    chain = MemoryChain(_chain_root(workdir), hmac_key=load_or_create_audit_key())
     memory_scope = MemoryScope(scope)
     entries = chain.fold(memory_scope, namespace)
 

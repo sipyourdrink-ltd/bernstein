@@ -619,3 +619,45 @@ def print_warning(message: str) -> None:
 def print_info(message: str) -> None:
     """Print an informational message in cyan with an → prefix."""
     console.print(f"[cyan]→[/cyan] {message}")
+
+
+# ---------------------------------------------------------------------------
+# Audit key loading for read-only commands (issue #5095)
+# ---------------------------------------------------------------------------
+
+
+def load_verify_only_key(key_path: Path | None = None) -> bytes:
+    """Load the audit HMAC key read-only, for a command that only verifies.
+
+    The named alternative to importing
+    :func:`bernstein.core.security.audit.load_or_create_audit_key` directly,
+    which every writing command does. A ``verify`` pass only reads the chain,
+    so it must never mint key material: ``load_or_create_audit_key`` would
+    generate a fresh key on a machine that has none, that key cannot
+    authenticate a chain written under the real key, every HMAC tag would fail,
+    and a plain missing-key setup error would be reported as tamper
+    (issue #2639).
+
+    It lives here rather than inside one command module so the next read-only
+    ``verify`` shares the fail-closed behaviour instead of copying it -- which
+    is how twenty copies of the *writing* loader accumulated (issue #5095).
+
+    Args:
+        key_path: Optional explicit key location, forwarded unchanged.
+
+    Returns:
+        The raw key bytes suitable for ``hmac.new``.
+
+    Raises:
+        SystemExit: Exit code 3 when no key exists, after printing a distinct
+            ``CANNOT VERIFY`` line so the operator sees a setup problem rather
+            than an integrity failure.
+    """
+    from bernstein.core.security.audit import AuditKeyMissingError, load_audit_key
+
+    try:
+        return load_audit_key(key_path)
+    except AuditKeyMissingError as exc:
+        console.print()
+        console.print(f"[yellow]CANNOT VERIFY[/yellow] -- {exc}")
+        raise SystemExit(3) from exc

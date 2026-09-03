@@ -24,6 +24,7 @@ from pathlib import Path
 import click
 
 from bernstein.cli.helpers import console
+from bernstein.core.security.audit import load_or_create_audit_key
 from bernstein.core.skills.conformance import (
     DEFAULT_MIN_HOSTS,
     SubprocessTransport,
@@ -42,12 +43,6 @@ from bernstein.core.skills.packaging import (
     update_packaged_install,
     verify_packaged_install,
 )
-
-
-def _load_hmac_key() -> bytes:
-    from bernstein.core.security.audit import load_or_create_audit_key
-
-    return load_or_create_audit_key()
 
 
 def _resolve_dest(
@@ -174,7 +169,7 @@ def install_cmd(
         outcome = install_packaged_skill(
             workdir=root,
             dest=target,
-            hmac_key=_load_hmac_key(),
+            hmac_key=load_or_create_audit_key(),
             install_id=install_id,
             timestamp=int(datetime.now(tz=UTC).timestamp()),
             host=host_label,
@@ -234,7 +229,7 @@ def verify_cmd(host: str | None, scope: str, dest: str | None, workdir: str) -> 
         console.print(f"[red]No installed tree at[/red] {target}")
         raise SystemExit(1)
 
-    result = verify_packaged_install(workdir=root, dest=target, hmac_key=_load_hmac_key())
+    result = verify_packaged_install(workdir=root, dest=target, hmac_key=load_or_create_audit_key())
     console.print()
     console.print(f"[bold]Packaged install verify[/bold] dest={target}")
     if result.ok:
@@ -299,7 +294,7 @@ def update_cmd(
             workdir=root,
             dest=target,
             source=Path(source) if source is not None else None,
-            hmac_key=_load_hmac_key(),
+            hmac_key=load_or_create_audit_key(),
             install_id=install_id,
             timestamp=int(datetime.now(tz=UTC).timestamp()),
             host=host_label,
@@ -354,7 +349,7 @@ def status_cmd(as_json: bool, home: str | None, workdir: str) -> None:
     """
     root = Path(workdir).resolve()
     home_dir = Path(home).resolve() if home is not None else None
-    hmac_key = _load_hmac_key()
+    hmac_key = load_or_create_audit_key()
 
     rows: list[dict[str, object]] = []
     any_failed = False
@@ -555,7 +550,7 @@ def conformance_cmd(
             workdir=root,
             hosts=selected,
             transport=_default_transport(),
-            hmac_key=_load_hmac_key(),
+            hmac_key=load_or_create_audit_key(),
             install_id=f"conformance-{scope}",
             timestamp=int(datetime.now(tz=UTC).timestamp()),
             scope=scope,

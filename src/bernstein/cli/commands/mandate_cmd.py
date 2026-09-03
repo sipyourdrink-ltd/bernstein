@@ -23,12 +23,7 @@ from pathlib import Path
 import click
 
 from bernstein.cli.helpers import console
-
-
-def _load_hmac_key() -> bytes:
-    from bernstein.core.security.audit import load_or_create_audit_key
-
-    return load_or_create_audit_key()
+from bernstein.core.security.audit import load_or_create_audit_key
 
 
 def _lineage_root(workdir: Path) -> Path:
@@ -95,7 +90,7 @@ def mandate_emit_cmd(intent_file: str, cart_file: str, settlement_file: str, wor
     from bernstein.core.security.audit_chain import AuditChainStore, record_mandate_consent_receipt
 
     root = Path(workdir).resolve()
-    key = _load_hmac_key()
+    key = load_or_create_audit_key()
 
     intent = IntentMandate.from_dict(_read_json(intent_file))
     cart = CartMandate.from_dict(_read_json(cart_file))
@@ -184,7 +179,7 @@ def mandate_verify_cmd(mandate_hash: str, intent_file: str, cart_file: str, work
     result = verify_consent_receipt(
         workdir=root,
         lineage_root=_lineage_root(root),
-        hmac_key=_load_hmac_key(),
+        hmac_key=load_or_create_audit_key(),
         mandate_hash=mandate_hash,
         intent=intent,
         cart=cart,
@@ -223,7 +218,7 @@ def mandate_revoke_cmd(mandate_hash: str, reason: str, workdir: str) -> None:
     from bernstein.core.security.audit_chain import AuditChainStore, record_mandate_revocation
 
     root = Path(workdir).resolve()
-    key = _load_hmac_key()
+    key = load_or_create_audit_key()
     entry = revoke_mandate(
         workdir=root,
         hmac_key=key,
@@ -279,7 +274,7 @@ def mandate_verify_settlement_cmd(receipt_hash: str, intent_file: str, workdir: 
     result = verify_spend_receipt(
         workdir=root,
         lineage_root=_lineage_root(root),
-        hmac_key=_load_hmac_key(),
+        hmac_key=load_or_create_audit_key(),
         wal_sdd_dir=root / ".sdd",
         spend_receipt_hash=receipt_hash,
         intent=intent,
