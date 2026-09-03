@@ -27,7 +27,6 @@ import yaml
 
 CORPUS_PATH = Path(__file__).parent / "corpus" / "adversarial_pairs.json"
 POLICIES_DIR = Path(__file__).parent / "policies"
-REGOREPO_PATH = POLICIES_DIR / "regorepo.rego"
 
 
 @dataclass(frozen=True)
@@ -77,11 +76,13 @@ class ExperimentSummary:
 def _compute_intent_digest(intent_text: str) -> str:
     """Compute the intent digest for a declared intent string.
 
-    This is a deterministic SHA-256 over the canonical JSON of the intent text,
-    matching the computation performed at attestation time by
-    ToolCallIntent.digest() in the production system.  The digest covers only
-    the declared_intent field (not args) so that benign and harmful variants
-    of the same tool call produce different digests.
+    This is a deterministic SHA-256 over the canonical JSON of the intent text.
+    The digest is synthetic to the experiment: it covers only the declared_intent
+    field so that benign and harmful variants of the same tool call produce
+    different digests.  It does NOT match the production ToolCallIntent.digest()
+    computation (which also includes args_digest, method, request_id, scope_id,
+    server_name, span_id, tool_name).  The experiment uses this as a controlled
+    input to test whether intent binding adds discriminative value over args binding alone.
     """
     canonical = json.dumps({"declared_intent": intent_text}, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return "sha256:" + hashlib.sha256(canonical).hexdigest()
@@ -215,6 +216,7 @@ def _eval_intent_aware(event: dict[str, Any]) -> PolicyEvaluationResult:
         "beacon",
         "c2",
         "recon",
+        "competitor",
         "escalat",
         "bypass",
         "unauthorized",
