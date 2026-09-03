@@ -54,7 +54,7 @@ from typing import TYPE_CHECKING, Any
 from bernstein.core.security.agent_card_signer import (
     canonicalize_jcs,
     ed25519_public_jwk,
-    sign_detached_jws_over_canonical,
+    sign_detached_jws_with_signer,
 )
 from bernstein.core.security.governance import (
     RoleBindings,
@@ -68,6 +68,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bernstein.core.security.governance import GovernanceDecision
+    from bernstein.core.security.key_custody import KMSAdapter
 
 #: Wire-format constants. These MUST match ``schemas/authority-envelope-v1.json``
 #: and ``verify_cli/bernstein_verify_envelope/verify.py``.
@@ -116,21 +117,20 @@ def _okp_jwk(public_key_pem: bytes, *, kid: str) -> dict[str, str]:
     return {member: jwk[member] for member in _JWK_MEMBERS}
 
 
-def _public_pem_of(private_key_pem: bytes) -> bytes:
-    """Return the SPKI PEM of *private_key_pem*'s public half."""
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+def _signer_okp_jwk(signer: KMSAdapter) -> dict[str, str]:
+    """Return the signer's verifying key as the bare OKP JWK the schema admits.
 
-    try:
-        private_key = serialization.load_pem_private_key(private_key_pem, password=None)
-    except (ValueError, TypeError) as exc:
-        raise AuthorityEnvelopeError(f"signing key is not a readable PEM private key: {exc}") from exc
-    if not isinstance(private_key, Ed25519PrivateKey):
-        raise AuthorityEnvelopeError("the authority envelope is signed with EdDSA; supply an Ed25519 key")
-    return private_key.public_key().public_bytes(
-        serialization.Encoding.PEM,
-        serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
+    The key is whatever the custody adapter advertises; this module never sees
+    private key material. A signer that is not Ed25519 cannot produce the
+    ``EdDSA`` signature the envelope claims, so it is refused here rather than
+    discovered by the verifier.
+    """
+    jwk = signer.public_key_jwk()
+    if jwk.get("kty") != "OKP" or jwk.get("crv") != "Ed25519" or not jwk.get("x"):
+        raise AuthorityEnvelopeError(
+            "the authority envelope is signed with EdDSA; the signer must advertise an Ed25519 OKP key"
+        )
+    return {member: jwk[member] for member in _JWK_MEMBERS}
 
 
 def _require_timestamp(value: str, *, field: str) -> datetime:
@@ -303,7 +303,7 @@ def build_run_authority_envelope(
     grant_id: str,
     grant_issuer: str,
     grant_not_after: str,
-    signing_key_pem: bytes,
+    signer: KMSAdapter,
     signing_kid: str,
 ) -> dict[str, Any]:
     """Render one principal's access decisions in *run_id* as a signed envelope.
@@ -321,8 +321,10 @@ def build_run_authority_envelope(
         grant_id: Identifier for the grant link the envelope records.
         grant_issuer: The identity that issued the role grant.
         grant_not_after: RFC 3339 UTC expiry of the grant, ``YYYY-MM-DDThh:mm:ssZ``.
-        signing_key_pem: PKCS#8 PEM of the Ed25519 key that signs the envelope.
-            The signer need not be the principal.
+        signer: The custody-boundary signer (``key_custody.KMSAdapter``: file,
+            env or HSM backed) whose Ed25519 key signs the envelope; the public
+            key it advertises is embedded as the JWK. The signer need not be the
+            principal.
         signing_kid: Key identifier stamped into the JWS protected header.
 
     Returns:
@@ -423,9 +425,9 @@ def build_run_authority_envelope(
         name: _sha256_jcs(body[name]) for name in ("principal", "grants", "decisions", "evidence", "coverage")
     }
 
-    jws = sign_detached_jws_over_canonical(
+    jws = sign_detached_jws_with_signer(
         canonicalize_jcs(body),
-        signing_key_pem,
+        signer,
         typ=JWS_TYP,
         kid=signing_kid,
     )
@@ -433,7 +435,7 @@ def build_run_authority_envelope(
         "signature": {
             "alg": "EdDSA",
             "kid": signing_kid,
-            "public_key_jwk": _okp_jwk(_public_pem_of(signing_key_pem), kid=signing_kid),
+            "public_key_jwk": _signer_okp_jwk(signer),
             "jws": jws,
         }
     }

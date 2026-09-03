@@ -25,6 +25,7 @@ under `lineage_root/<run_id>/` and renders the subset concerning one principal:
 
 ```python
 from bernstein.core.interop.authority_envelope import build_run_authority_envelope
+from bernstein.core.security.key_custody import FileBasedKMSAdapter
 
 envelope = build_run_authority_envelope(
     lineage_root=Path(".sdd/lineage"),
@@ -36,10 +37,15 @@ envelope = build_run_authority_envelope(
     grant_id="grant-role-operator",
     grant_issuer="urn:bernstein:principal:operator:alex",
     grant_not_after="2031-01-01T00:00:00Z",
-    signing_key_pem=signing_pem,
+    signer=FileBasedKMSAdapter(Path("keys/envelope-signer.pem"), kid="envelope-signer-1"),
     signing_kid="envelope-signer-1",
 )
 ```
+
+The signer comes from the key-custody boundary (`bernstein.core.security.key_custody`):
+any `KMSAdapter` -- file, env or HSM backed -- works, the producer never handles
+private key material itself, and the envelope embeds the public key the adapter
+advertises.
 
 The authority the envelope records is the one the run resolved: the principal's
 IDP groups map to a role through the signed `RoleBindings`, and that role's

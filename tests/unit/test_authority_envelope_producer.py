@@ -42,6 +42,7 @@ from bernstein.core.security.governance import (
     decide_access,
     decisions_dir,
 )
+from bernstein.core.security.key_custody import FileBasedKMSAdapter
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VERIFY_CLI_ROOT = REPO_ROOT / "verify_cli"
@@ -153,6 +154,13 @@ def _seeded_run(tmp_path: Path) -> tuple[Path, RoleBindings]:
     return lineage_root, bindings
 
 
+def _signer(root: Path, private_pem: bytes, *, name: str = "envelope-signer.pem") -> FileBasedKMSAdapter:
+    """The envelope signer, obtained through the custody boundary from a key on disk."""
+    key_path = root / name
+    key_path.write_bytes(private_pem)
+    return FileBasedKMSAdapter(key_path, kid=KID)
+
+
 def _build(lineage_root: Path, bindings: RoleBindings, **overrides: Any) -> dict[str, Any]:
     """Build an envelope for the seeded run, with per-test overrides."""
     signing_pem, _ = generate_ed25519_keypair()
@@ -167,7 +175,7 @@ def _build(lineage_root: Path, bindings: RoleBindings, **overrides: Any) -> dict
         "grant_id": GRANT_ID,
         "grant_issuer": ISSUER,
         "grant_not_after": NOT_AFTER,
-        "signing_key_pem": signing_pem,
+        "signer": _signer(lineage_root.parent, signing_pem),
         "signing_kid": KID,
     }
     kwargs.update(overrides)
@@ -387,8 +395,9 @@ def test_two_builds_of_the_same_run_are_byte_identical(tmp_path: Path) -> None:
     signing_pem, _ = generate_ed25519_keypair()
     _, principal_pem = generate_ed25519_keypair()
 
-    first = _build(lineage_root, bindings, signing_key_pem=signing_pem, principal_public_key_pem=principal_pem)
-    second = _build(lineage_root, bindings, signing_key_pem=signing_pem, principal_public_key_pem=principal_pem)
+    pinned = _signer(lineage_root.parent, signing_pem, name="pinned-signer.pem")
+    first = _build(lineage_root, bindings, signer=pinned, principal_public_key_pem=principal_pem)
+    second = _build(lineage_root, bindings, signer=pinned, principal_public_key_pem=principal_pem)
 
     assert json.dumps(first, sort_keys=True) == json.dumps(second, sort_keys=True)
 
