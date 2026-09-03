@@ -263,3 +263,28 @@ class TestCostEstimateUnpricedDisplay:
         out = cap.get()
         assert "$" in out
         assert "unpriced" not in out.lower()
+
+
+class TestFreeAdapterConsistency:
+    """qwen/gemini/ollama and :free must show $0.00, not unpriced, everywhere (issue #5337 follow-up)."""
+
+    @pytest.mark.parametrize("model_str", ["qwen", "gemini", "ollama", "qwen/some-model", "sonnet:free"])
+    def test_shared_helper_treats_free_adapters_as_free(self, model_str: str) -> None:
+        from bernstein.core.cost.model_prices import is_unpriced_model
+
+        assert is_unpriced_model(model_str) is False
+
+    def test_bootstrap_describe_cost_estimate_free_adapter_not_unpriced(self) -> None:
+        from bernstein.core.orchestration.bootstrap import _describe_cost_estimate
+
+        for model_str in ["qwen", "gemini", "ollama", "qwen/some-model", "sonnet:free"]:
+            out = _describe_cost_estimate(3, model_str)
+            assert "unpriced" not in out.lower(), f"model={model_str} out={out}"
+
+    def test_run_bootstrap_dry_run_free_adapter_not_unpriced(self) -> None:
+        """Dry-run cost line in run_bootstrap.py uses the shared helper."""
+        from bernstein.core.cost.model_prices import is_unpriced_model
+
+        # The dry-run path calls is_unpriced_model(est_model) directly
+        for model_str in ["qwen", "gemini", "ollama", "qwen/some-model", "sonnet:free"]:
+            assert is_unpriced_model(model_str) is False, f"model={model_str}"

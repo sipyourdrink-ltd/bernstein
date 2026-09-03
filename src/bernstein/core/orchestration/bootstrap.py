@@ -566,15 +566,12 @@ def _sync_and_plan_tasks(
 def _is_model_unpriced(model: str | None) -> bool:
     """Return True when *model* has no pricing-table entry.
 
-    A ``:free`` suffix is treated as genuinely free, not unpriced.
+    A ``:free`` suffix or a free adapter (qwen/gemini/ollama) is treated as
+    genuinely free, not unpriced.
     """
-    if not model:
-        return False
-    if model.strip().lower().endswith(":free"):
-        return False
-    from bernstein.core.cost.model_prices import price_model_usage
+    from bernstein.core.cost.model_prices import is_unpriced_model
 
-    return not price_model_usage(model.strip(), 1, 1).priced
+    return is_unpriced_model(model)
 
 
 def _describe_cost_estimate(backlog_count: int, model: str | None) -> str:

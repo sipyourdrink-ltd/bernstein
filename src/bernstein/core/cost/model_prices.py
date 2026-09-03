@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 _WARNED_UNPRICED_MODELS: set[str] = set()
 
+_FREE_ADAPTERS = frozenset(("qwen", "gemini", "ollama"))
+
 
 # Model name constants (used across pricing tables and cache tiers)
 MODEL_GPT_5_4 = "gpt-5.4"
@@ -252,3 +254,25 @@ def is_free_route(model: str) -> bool:
     # mean the run's own metering would report no cost for this route.
     probe = price_model_usage(model, 1, 1)
     return (not probe.priced) or probe.cost_usd == 0.0
+
+
+def is_unpriced_model(display_model: str | None) -> bool:
+    """Return True when *display_model* has no pricing-table entry (priced=False).
+
+    *display_model* may be ``"adapter/model"`` or just ``"model"``.
+    A ``:free`` suffix or a free adapter (qwen/gemini/ollama) is treated as
+    genuinely free, not unpriced.
+    """
+    if not display_model:
+        return False
+    model_part = display_model.split("/")[-1] if "/" in display_model else display_model
+    model_part = model_part.strip()
+    if not model_part:
+        return False
+    if model_part.lower().endswith(":free"):
+        return False
+    lower_disp = display_model.lower()
+    for adapter in _FREE_ADAPTERS:
+        if lower_disp == adapter or lower_disp.startswith(adapter + "/"):
+            return False
+    return not price_model_usage(model_part, 1, 1).priced

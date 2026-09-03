@@ -752,9 +752,9 @@ def _show_dry_run_plan(
     est_model = model_override or "sonnet"
     low_usd, high_usd = estimate_run_cost(len(tasks), est_model)
     console.print(f"\n  Total tasks: {len(tasks)}")
-    from bernstein.core.cost.model_prices import price_model_usage
+    from bernstein.core.cost.model_prices import is_unpriced_model
 
-    _is_unpriced = not est_model.lower().endswith(":free") and not price_model_usage(est_model, 1, 1).priced
+    _is_unpriced = is_unpriced_model(est_model)
     if _is_unpriced:
         console.print("  Estimated cost: unpriced")
     else:
