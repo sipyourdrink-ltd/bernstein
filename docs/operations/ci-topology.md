@@ -16,6 +16,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/adapter-contract-drift.yml | Adapter contract drift | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "adapter-contract-drift-${{ github.ref }}"} | 2 |
 | .github/workflows/airgap-e2e.yml | Airgap E2E | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "airgap-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/area-steward-review.yml | Area steward review | pull_request_target | {"cancel-in-progress": "true", "group": "area-steward-${{ github.event.pull_request.number }}"} | 1 |
+| .github/workflows/auditor-conformance.yml | auditor-conformance | pull_request, push | {"cancel-in-progress": "true", "group": "auditor-conformance-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/auto-heal.yml | Auto-heal v2 | workflow_call | - | 2 |
 | .github/workflows/auto-release.yml | Auto-release | workflow_call | - | 5 |
 | .github/workflows/bernstein-ci-fix.yml | Bernstein CI Fix | workflow_call | - | 4 |
@@ -91,6 +92,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/adapter-contract-drift.yml | aggregate: Aggregate drift report<br>check: ${{ matrix.adapter }} |
 | .github/workflows/airgap-e2e.yml | airgap-e2e: Airgap E2E (Linux, real cosign + gpg + unshare) |
 | .github/workflows/area-steward-review.yml | request-steward: Request docs steward review |
+| .github/workflows/auditor-conformance.yml | auditor-conformance: auditor conformance |
 | .github/workflows/auto-heal.yml | heal: Apply chosen strategy<br>triage: Triage and classify |
 | .github/workflows/auto-release.yml | alert-on-stale-release-trigger: Alert on stale release trigger<br>detect-stale-alerts: Detect open auto-release-skipped issues<br>gate: Release gate<br>release: Tag release<br>sweep-stale-alerts-on-success: Close auto-release-skipped issues on green main |
 | .github/workflows/bernstein-ci-fix.yml | fallback-issue: Open ci-fix issue (fallback)<br>fix: Auto-heal with Bernstein<br>tier3-shadow: Tier-3 OpenRouter shadow-mode escalation<br>triage: Triage CI failure |
@@ -166,6 +168,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/adapter-contract-drift.yml | workflow: {"contents": "read"}<br>aggregate: {"contents": "read", "issues": "write"}<br>check: {"contents": "read"} | ADAPTER_CONTRACT_ANTHROPIC_API_KEY, ADAPTER_CONTRACT_GEMINI_API_KEY, ADAPTER_CONTRACT_OPENAI_API_KEY, GITHUB_TOKEN |
 | .github/workflows/airgap-e2e.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/area-steward-review.yml | request-steward: {"pull-requests": "write"} | GITHUB_TOKEN |
+| .github/workflows/auditor-conformance.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/auto-heal.yml | heal: {"attestations": "write", "contents": "write", "id-token": "write", "pull-requests": "write"}<br>triage: {"actions": "read", "contents": "read", "pull-requests": "read"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/auto-release.yml | alert-on-stale-release-trigger: {"contents": "read", "issues": "write"}<br>detect-stale-alerts: {"contents": "read", "issues": "read"}<br>gate: {"contents": "read"}<br>release: {"actions": "write", "contents": "write"}<br>sweep-stale-alerts-on-success: {"contents": "read", "issues": "write"} | GITHUB_TOKEN |
 | .github/workflows/bernstein-ci-fix.yml | fallback-issue: {"contents": "read", "issues": "write"}<br>fix: {"contents": "write", "issues": "write", "pull-requests": "write"}<br>tier3-shadow: {"actions": "read", "contents": "read"}<br>triage: {"actions": "read", "contents": "read", "pull-requests": "read"} | BERNSTEIN_AUTOSYNC_TOKEN, GEMINI_API_KEY, GITHUB_TOKEN, OPENROUTER_API_KEY_FREE |
@@ -208,7 +211,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/pr-labels.yml | workflow: {"contents": "read"}<br>label: {"contents": "read", "issues": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/pr-observability-summary.yml | workflow: {"contents": "read"}<br>summary: {"checks": "read", "contents": "read", "pull-requests": "write", "security-events": "read"} | GITHUB_TOKEN |
 | .github/workflows/pr-policy.yml | workflow: {"contents": "read"}<br>pr-policy: {"actions": "read", "contents": "write", "issues": "read", "pull-requests": "read"} | BERNSTEIN_AUTOSYNC_TOKEN |
-| .github/workflows/project-pulse.yml | pulse: {"contents": "read", "issues": "write", "pull-requests": "read"} | - |
+| .github/workflows/project-pulse.yml | pulse: {"contents": "write", "issues": "write", "pull-requests": "read"} | - |
 | .github/workflows/publish-docker.yml | publish: {"attestations": "write", "contents": "read", "id-token": "write", "packages": "write"} | GITHUB_TOKEN |
 | .github/workflows/publish-extension.yml | workflow: {"contents": "read"}<br>publish: {"contents": "read"} | OPEN_VSX_TOKEN, VS_MARKETPLACE_TOKEN |
 | .github/workflows/publish-homebrew.yml | workflow: {"contents": "read"}<br>update-formula: {"contents": "read"} | HOMEBREW_TAP_TOKEN |

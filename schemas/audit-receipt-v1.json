@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://bernstein.alexchernysh.com/schemas/audit-receipt-v1.json",
+  "$id": "https://bernstein.run/schemas/audit-receipt-v1.json",
   "title": "Bernstein Audit Receipt (v1)",
   "description": "Standard, offline-verifiable receipt projecting an HMAC-chained audit-log range into off-the-shelf envelope formats (COSE_Sign1 per RFC 9052, in-toto/DSSE, and an RFC 6962 style transparency receipt). The receipt is a projection, not new evidence: its subject digest IS the chain range head_sha256 (never independently recomputed). Every format binds that single subject, and the receipt embeds the re-chained event range so a standard verifier can recompute the head from the embedded range and assert it equals the signed subject. Mutating any embedded entry diverges the recomputed head and every format fails.",
   "type": "object",

@@ -129,7 +129,46 @@ def _verdict_line(entry: ReconcileEntry) -> str:
     )
 
 
+EXIT_INVENTORY_OK = 0
+EXIT_INVENTORY_STORE = 1
+
+
+@click.command("inventory")
+@click.option(
+    "--render",
+    "output_format",
+    type=click.Choice(["mermaid", "dot"], case_sensitive=False),
+    required=True,
+    help="Emit the topology graph from the store as Mermaid or Graphviz DOT.",
+)
+@click.option(
+    "--store",
+    "store_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    required=True,
+    help="Inventory graph JSON (nodes + edges). Hand-written fixture until #5129.",
+)
+def govern_inventory_cmd(output_format: str, store_path: Path) -> None:
+    """Print the inventory topology graph from the store.
+
+    Exit codes: 0 = emitted, 1 = store unreadable or not a JSON object, 2 = usage.
+
+    Output is the graph only (no Rich chrome), so two runs over the same
+    store compare equal as bytes.
+    """
+    from bernstein.core.govern.inventory_render import load_inventory_store, render_inventory
+
+    try:
+        store = load_inventory_store(store_path)
+        click.echo(render_inventory(store, output_format))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        click.echo(str(exc), err=True)
+        raise SystemExit(EXIT_INVENTORY_STORE) from exc
+    raise SystemExit(EXIT_INVENTORY_OK)
+
+
 __all__ = [
     "RECONCILE_RUN_ID",
+    "govern_inventory_cmd",
     "govern_reconcile_cmd",
 ]

@@ -60,8 +60,10 @@ consistent earlier state. Detecting that requires retention outside the
 local filesystem, which lives in
 :mod:`bernstein.core.persistence.checkpoint_anchor`: an optional RFC 3161
 token over a checkpoint's canonical bytes, so a history shorter than the
-newest anchored entry count contradicts a signature made off this machine.
-A witness co-signature between two installs is still a follow-up.
+newest anchored entry count contradicts a signature made off this machine,
+and :mod:`bernstein.core.persistence.checkpoint_witness`: an optional second
+party holding per-origin monotonic state, which co-signs a checkpoint only
+when the tree extends the last one it accepted.
 """
 
 from __future__ import annotations
@@ -195,8 +197,9 @@ def _sign(payload: dict[str, Any], key: bytes) -> str:
     authenticate the chain can authenticate its checkpoints with the same
     secret, and an attacker with write access to the audit directory (but not
     the key, which lives outside it) cannot forge one. Ed25519 co-signing of
-    checkpoints is a planned follow-up for keyless third-party verification;
-    it layers on top of this record rather than replacing it.
+    checkpoints, for keyless third-party verification, lives in
+    :mod:`bernstein.core.persistence.checkpoint_witness`; it layers on top of
+    this record rather than replacing it.
     """
     return _hmac.new(key, _canonical(payload), hashlib.sha256).hexdigest()
 

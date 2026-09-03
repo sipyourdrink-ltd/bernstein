@@ -14,20 +14,24 @@ name: Project pulse
 #     bucketed into outside / maintainer / automation and reported as counts,
 #     with a unit test asserting the rendered page names no account.
 #   * The aggregation and rendering live in scripts/project_pulse.py
-#     (unit-tested, deterministic) so a re-run produces a byte-identical body
-#     and the weekly upsert does not thrash the issue.
+#     (unit-tested, deterministic) so a re-run produces byte-identical
+#     output and the weekly upsert does not thrash the issue.
 #
 # Fails closed: `collect` exits non-zero and writes no file if any API call
 # fails, so a broken query can never publish zeros that read as a quiet week.
-# The publish step only runs on a successful collection.
+# Every later step only runs on a successful collection.
 #
 # Rolling, not proliferating: exactly one issue titled "Project pulse
 # (weekly)" is created on the first run and edited in place afterwards. It is
 # labelled `docs` and deliberately not pinned.
 #
-# The rendered page is also uploaded as a workflow artifact. Nothing is
-# committed to the repository: the page is generated output, and a workflow
-# that pushes to main to publish a report is a merge-queue hazard for no gain.
+# Where the generated output lives: the rendered page, the SVG card the page
+# embeds (a light and a dark variant), the collected JSON and the weekly
+# history are committed to the `project-pulse` branch. That branch carries no
+# code and is never merged anywhere; it exists because GitHub only shows an
+# image it can fetch from a URL, and a branch is the one place this workflow
+# can publish a file without touching main or the merge queue. The same files
+# are also uploaded as a workflow artifact.
 
 on:
   schedule:
@@ -42,13 +46,20 @@ concurrency:
 
 permissions: {}
 
+env:
+  # Must match DATA_BRANCH in scripts/project_pulse.py (a unit test checks).
+  DATA_BRANCH: project-pulse
+
 jobs:
   pulse:
     name: Collect and publish the project pulse
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
-      contents: read
+      # contents: write is what pushing to the data branch needs. main is
+      # protected by the repository ruleset (pull request + merge queue
+      # required), which this token cannot bypass.
+      contents: write
       issues: write
       pull-requests: read
     steps:
@@ -79,14 +90,72 @@ jobs:
             --out pulse.json \
             --repo-root .
 
-      - name: Render the page
+      - name: Load the weekly history from the data branch
         run: |
           set -euo pipefail
-          uv run python scripts/project_pulse.py render pulse.json > project-pulse.md
+          # `ls-remote --exit-code` separates "the branch does not exist yet"
+          # (exit 2, first run: start a fresh history) from "the remote could
+          # not be reached" (any other failure). Treating a network error as
+          # an empty history would restart the series and, on push, erase it.
+          set +e
+          git ls-remote --exit-code --heads origin "${DATA_BRANCH}" >/dev/null
+          rc=$?
+          set -e
+          if [ "${rc}" -eq 0 ]; then
+            git fetch --quiet --depth=1 origin "${DATA_BRANCH}"
+            git show "FETCH_HEAD:history.json" > history.json
+          elif [ "${rc}" -eq 2 ]; then
+            echo "no ${DATA_BRANCH} branch yet; starting a fresh history"
+            echo '{"weeks": []}' > history.json
+          else
+            echo "could not list ${DATA_BRANCH} on the remote (exit ${rc})"
+            exit "${rc}"
+          fi
+
+      - name: Append this week and render the page and the card
+        run: |
+          set -euo pipefail
+          uv run python scripts/project_pulse.py history pulse.json --history history.json
+          mkdir -p out
+          uv run python scripts/project_pulse.py render pulse.json \
+            --history history.json \
+            --svg-dir out > out/project-pulse.md
           # A renderer that produced an empty page would otherwise blank the
           # issue body in place, which reads as "the project died" rather than
-          # "the render broke".
-          test -s project-pulse.md
+          # "the render broke". Same for the card the page embeds.
+          test -s out/project-pulse.md
+          test -s out/pulse.svg
+          test -s out/pulse-dark.svg
+          cp pulse.json history.json out/
+
+      - name: Publish the card, the page and the history to the data branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          DATE=$(python3 -c 'import json; print(json.load(open("pulse.json"))["generated_at"])')
+          rm -rf publish
+          mkdir publish
+          cd publish
+          git init --quiet --initial-branch "${DATA_BRANCH}"
+          if git fetch --quiet "https://github.com/${REPO}.git" "${DATA_BRANCH}" 2>/dev/null; then
+            # Keep the branch history: this week's commit sits on last week's.
+            git reset --quiet --soft FETCH_HEAD
+          fi
+          cp ../out/* .
+          git add --all
+          if git diff --cached --quiet; then
+            echo "the data branch already carries this collection"
+          else
+            git -c user.name="github-actions[bot]" \
+                -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                commit --quiet --message "Project pulse ${DATE}"
+          fi
+          # Not a force push: a remote that moved since the fetch is rejected,
+          # and the run fails rather than overwriting a week it never saw.
+          git push --quiet "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" \
+            "HEAD:refs/heads/${DATA_BRANCH}"
 
       - name: Upsert the rolling pulse issue
         env:
@@ -107,7 +176,7 @@ jobs:
 
           if [ -n "${EXISTING}" ]; then
             echo "Updating existing pulse issue #${EXISTING}"
-            gh issue edit "${EXISTING}" --repo "${REPO}" --body-file project-pulse.md
+            gh issue edit "${EXISTING}" --repo "${REPO}" --body-file out/project-pulse.md
             PULSE_NUMBER="${EXISTING}"
           else
             echo "Creating the pulse issue"
@@ -119,12 +188,12 @@ jobs:
             if grep -qxF "docs" <<<"${LABELS}"; then
               PULSE_URL=$(gh issue create --repo "${REPO}" \
                 --title "${TITLE}" \
-                --body-file project-pulse.md \
+                --body-file out/project-pulse.md \
                 --label "docs")
             else
               PULSE_URL=$(gh issue create --repo "${REPO}" \
                 --title "${TITLE}" \
-                --body-file project-pulse.md)
+                --body-file out/project-pulse.md)
             fi
             PULSE_NUMBER=$(basename "${PULSE_URL}")
           fi
@@ -134,15 +203,13 @@ jobs:
             echo ""
             echo "- Pulse issue: #${PULSE_NUMBER}"
             echo ""
-            cat project-pulse.md
+            cat out/project-pulse.md
           } >> "${GITHUB_STEP_SUMMARY}"
 
-      - name: Upload the rendered page and its inputs
+      - name: Upload the rendered page, the card and its inputs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: project-pulse
-          path: |
-            project-pulse.md
-            pulse.json
+          path: out/
           if-no-files-found: error
           retention-days: 90

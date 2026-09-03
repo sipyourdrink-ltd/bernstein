@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### lapisan governance open source untuk agen AI
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:739f0a7ad1af" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:9c87d303c594" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -38,7 +38,7 @@
 
 > **Status: beta.** Dikelola secara mandiri, dalam pengembangan aktif. Nomor versi menghitung rilis, bukan kematangan — versi minor dapat mengubah antarmuka. Kunci versi untuk ketergantungan penting; regresi diperbaiki dengan cepat, [laporkan di sini](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein adalah lapisan governance open source untuk agen AI. Penjadwal deterministik - tanpa model di loop koordinasi - menjalankan agen secara paralel, menyaring hasilnya lewat gate, dan mencatat setiap langkah, sehingga sebuah run bisa diverifikasi setelahnya, offline, hanya dari artefaknya. Agen CLI untuk kode langsung jalan (Claude Code, Codex, Gemini CLI, dan 40+ lainnya), dan lapisan yang sama menggoverne beban kerja agen apa pun: hasilnya bisa berupa diff, laporan riset, dataset, atau paket bukti audit. Profil instalasi air-gap disertakan. Apache-2.0.
+Bernstein adalah lapisan governance open source untuk agen AI. Berjalan di atas policy as code: kamu menulis kebijakannya - siapa boleh melakukan apa, apa yang butuh persetujuan, apa yang harus dicatat - dan Bernstein menegakkannya serta menghasilkan catatan yang bisa diverifikasi. Penjadwal deterministik - tanpa model di loop koordinasi - menjalankan agen secara paralel, menyaring hasilnya lewat gate, dan mencatat setiap langkah, sehingga sebuah run bisa diverifikasi setelahnya, offline, hanya dari artefaknya. Agen CLI untuk kode langsung jalan (Claude Code, Codex, Gemini CLI, dan 40+ lainnya), dan lapisan yang sama menggoverne beban kerja agen apa pun: hasilnya bisa berupa diff, laporan riset, dataset, atau paket bukti audit. Profil instalasi air-gap disertakan. Apache-2.0.
 
 ### sekilas pandang
 <!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->

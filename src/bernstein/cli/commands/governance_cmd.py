@@ -47,7 +47,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from bernstein.cli.commands.govern_cmd import govern_reconcile_cmd
+from bernstein.cli.commands.govern_cmd import govern_inventory_cmd, govern_reconcile_cmd
 from bernstein.cli.helpers import console
 from bernstein.core.govern import compute_plan as _compute_plan
 from bernstein.core.lineage.spine import LineageSpine
@@ -72,6 +72,7 @@ def govern_group() -> None:
       bernstein govern plan --playbook p.json --inventory i.json [--workdir w]
       bernstein govern ingest --spans spans.json --source otel-collector-prod
       bernstein govern posture [--workdir w] [--json-output]
+      bernstein govern inventory --render mermaid|dot --store PATH
     """
 
 
@@ -778,6 +779,8 @@ def governance_ingest_cmd(
 # Desired-state reconcile diff over the governed surface (#5085). Registered
 # here, before the alias mirror below, so the subcommand sets stay identical.
 govern_group.add_command(govern_reconcile_cmd, "reconcile")
+# Inventory topology graph from the store (#5133).
+govern_group.add_command(govern_inventory_cmd, "inventory")
 
 
 @click.group("governance")

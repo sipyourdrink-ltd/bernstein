@@ -38,6 +38,7 @@ The janitor evaluates each `CompletionSignal` declared on the task
 | `file_contains`  | A regex matches the file's content.                                     |
 | `llm_review`     | Synchronous LLM review against a written rubric.                        |
 | `llm_judge`      | Async LLM judge (`judge_task()`, `janitor.py:462`); used for ambiguous tasks. |
+| `absence_verified` | The claim is an *absence* ("no occurrences found"). `value` is the `tool_call_id` that reported it; the signal passes only when that call's recorded coverage payload hash-matches a `coverage` lineage entry anchored to the same `tool_call_id` and describes a complete, exit-checked walk. Every missing or mismatched piece fails closed as `unverified`. |
 | `schema_valid` / `criteria_match` / `hash_stable` / `figures_grounded` | Artifact-mode criteria over the produced artifact's canonical bytes. They fail closed on the filesystem path; only `evaluate_artifact_signals()`, called with the artifact in scope, can pass one. |
 
 A `test_passes` command is resolved against the tree before it runs. The path in

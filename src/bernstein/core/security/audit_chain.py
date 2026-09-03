@@ -510,6 +510,16 @@ EVENT_ADAPTER_CAPABILITY_SELECTION = "adapter.capability_selection"
 #: ``error`` marker is recorded when the classifier raises at the call site.
 EVENT_TASK_TIER_DECISION = "task.tier_decision"
 
+#: Issue #5341 -- emitted when an operator's host-isolation declaration reaches
+#: an adapter that owns a vendor sandbox. Records the declared tier, the
+#: operator's evidence for it, the config layer the declaration came from, and
+#: whether the adapter consequently dropped its vendor sandbox. Dropping a
+#: sandbox is a posture change, so it belongs on the record as a statement
+#: somebody made from a named source rather than as an unexplained flag flip:
+#: a reader reconstructing a run can prove offline which declaration was in
+#: force and what it was based on.
+EVENT_HOST_ISOLATION_DECLARED = "sandbox.host_isolation_declared"
+
 #: Issue #2663 -- emitted when capability-aware routing refuses a task because
 #: no candidate adapter's declared profile satisfied its requirements. The event
 #: anchors the content-addressed refusal receipt (its hash, the unmet axes, and
@@ -5490,6 +5500,61 @@ def record_task_tier_decision(
     )
 
 
+def record_host_isolation_declaration(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    adapter: str,
+    tier: str,
+    evidence: str,
+    source: str,
+    vendor_sandbox_dropped: bool,
+    actor: str = "host_isolation",
+) -> AuditEvent:
+    """Append a ``sandbox.host_isolation_declared`` event into *chain* (#5341).
+
+    Anchors one operator declaration at the dispatch seam
+    :func:`record_capability_selection` already uses. An adapter that ships its
+    own sandbox drops it when the host is declared to isolate the process
+    already; without this record the drop is invisible after the fact, and the
+    difference between "the operator declared a container" and "somebody
+    escalated the adapter" cannot be reconstructed.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run the declaration was resolved for.
+        adapter: Adapter the declaration was injected into.
+        tier: Declared isolation tier (a ``SandboxTier`` value).
+        evidence: The operator's description of the isolation, verbatim. Free
+            text, recorded so a reader can judge the claim rather than take the
+            tier on faith.
+        source: Config layer the tier resolved from (``session``, ``project``,
+            ``global``, ``default``, ...), so the declaration names where it
+            was made and not only what it said.
+        vendor_sandbox_dropped: Whether the adapter consequently spawned
+            without its own sandbox. ``False`` for a tier that does not replace
+            it, which keeps the weak-tier declarations on the record too.
+        actor: Recorded actor; defaults to ``"host_isolation"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_HOST_ISOLATION_DECLARED,
+        actor=actor,
+        resource_type="sandbox",
+        resource_id=adapter,
+        details={
+            "run_id": run_id,
+            "adapter": adapter,
+            "tier": tier,
+            "evidence": evidence,
+            "source": source,
+            "vendor_sandbox_dropped": vendor_sandbox_dropped,
+        },
+    )
+
+
 def record_capability_refusal(
     *,
     chain: AuditChainStore,
@@ -9708,6 +9773,7 @@ __all__ = [
     "EVENT_FORK_SNAPSHOT",
     "EVENT_GATE_ADJUDICATION",
     "EVENT_GOVERNANCE_DECISION",
+    "EVENT_HOST_ISOLATION_DECLARED",
     "EVENT_IDENTITY_REVOKED",
     "EVENT_INPUT_REFUSAL",
     "EVENT_INTENT_CAPSULE",
@@ -9868,6 +9934,7 @@ __all__ = [
     "record_fork_snapshot",
     "record_gate_adjudication",
     "record_governance_decision",
+    "record_host_isolation_declaration",
     "record_input_refusal",
     "record_intent_capsule",
     "record_intent_drift",

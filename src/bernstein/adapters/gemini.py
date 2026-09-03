@@ -52,6 +52,7 @@ from bernstein.adapters.base import (
     CLIAdapter,
     SpawnError,
     SpawnResult,
+    append_system_addendum,
     build_worker_cmd,
 )
 from bernstein.adapters.env_isolation import build_filtered_env
@@ -231,6 +232,11 @@ class GeminiAdapter(CLIAdapter):
         # attachments as separate arguments.
         if multimodal_context is not None:
             prompt = _inject_multimodal_attachments(prompt, multimodal_context)
+        # No separate system-prompt channel -- graft any addendum onto the prompt so
+        # completion / heartbeat instructions still reach the agent. Applied after the
+        # multimodal injection above, so a truncated prompt loses the addendum last
+        # rather than the task brief or any attached content. Empty addenda are no-ops.
+        prompt = append_system_addendum(prompt, system_addendum)
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
 

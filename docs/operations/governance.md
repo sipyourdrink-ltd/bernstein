@@ -147,6 +147,9 @@ decision is also mirrored into the HMAC audit chain as a `governance.decision`
 event, so an operator can confirm from the chain alone that a decision bound the
 claimed inputs to a named spine entry.
 
+Inventory topology is `bernstein govern inventory --render`.
+See [govern inventory --render](govern-inventory.md).
+
 ## Reconciling the governed surface
 
 `bernstein govern reconcile --propose` answers a different question from

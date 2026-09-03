@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.replay.journal import (
     JournalCoverageStatus,
@@ -20,6 +22,14 @@ if TYPE_CHECKING:
     from bernstein.core.lineage.entry import LineageEntry
     from bernstein.core.lineage.store import LineageStore
     from bernstein.core.replay.journal import JournalSeal
+
+logger = logging.getLogger(__name__)
+
+#: Glob for the per-agent tool-call ledgers written by
+#: :class:`bernstein.core.instrumentation.RunInstrumenter` under a project's
+#: ``.sdd/`` tree. Mirrors
+#: :func:`bernstein.core.instrumentation.resolve_agent_dir`.
+_TOOL_CALLS_GLOB = ".sdd/runs/*/tasks/*/agents/*/tool-calls.jsonl"
 
 
 class CompletionCoverageStatus(StrEnum):
@@ -235,4 +245,123 @@ def classify_completion_coverage(
         is_verified=False,
         passed=passed,
         detail=detail or "unverified: no coverage record",
+    )
+
+
+def _canonical_coverage_bytes(payload: dict[str, Any]) -> bytes:
+    """Encode a coverage payload exactly as :func:`anchor_coverage_record` does."""
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _recorded_coverage_payload(workdir: Path, tool_call_id: str) -> dict[str, Any] | None:
+    """Return the coverage payload the instrumenter recorded for ``tool_call_id``.
+
+    Scans the per-agent ``tool-calls.jsonl`` ledgers under ``workdir/.sdd/runs``.
+    A batched agent mirrors identical lines into several task directories, so
+    the first match is authoritative; paths are sorted to keep the choice
+    deterministic when several runs are present.
+    """
+    for path in sorted(workdir.glob(_TOOL_CALLS_GLOB)):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            logger.warning("absence coverage: cannot read tool-call ledger %s: %s", path, exc)
+            continue
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                parsed: object = json.loads(line)
+            except ValueError:
+                # A torn or corrupted ledger line is exactly the "the search may
+                # not have run" case; skip it rather than treat it as evidence.
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            row = cast("dict[str, Any]", parsed)
+            if row.get("call_id") != tool_call_id:
+                continue
+            payload = row.get("coverage")
+            if isinstance(payload, dict):
+                return cast("dict[str, Any]", payload)
+    return None
+
+
+def verify_anchored_absence_claim(
+    *,
+    tool_call_id: str,
+    workdir: Path,
+    lineage_store: LineageStore | None = None,
+) -> tuple[bool, str]:
+    """Verify one absence claim against the coverage anchored to its own tool call.
+
+    An absence claim ("no occurrences found") is readable as verified only when
+    all of the following hold:
+
+    1. The tool call recorded a coverage payload (issue #3769).
+    2. A lineage entry of kind ``coverage`` is anchored to the *same*
+       ``tool_call_id`` (issue #3770) - coverage anchored to another call is
+       not this claim's scope and never stands in for it.
+    3. The recorded payload's canonical digest equals that entry's
+       ``content_hash``, so the scope cannot be rewritten after sealing.
+    4. The walk terminated normally (``coverage == "complete"``, not truncated)
+       and the tool's exit status was actually checked.
+
+    Any failure returns ``(False, "unverified: ...")`` rather than raising, so a
+    caller evaluating a list of signals needs no guard at the call site.
+
+    Args:
+        tool_call_id: Identifier of the call that reported the absence.
+        workdir: Project root containing ``.sdd/``.
+        lineage_store: Store override; defaults to ``workdir/.sdd/lineage``.
+
+    Returns:
+        Tuple of ``(verified, detail)``.
+    """
+    payload = _recorded_coverage_payload(workdir, tool_call_id)
+    if payload is None:
+        return False, f"unverified: absence claim for tool call {tool_call_id!r} has no coverage record"
+
+    store = lineage_store
+    if store is None:
+        store_root = workdir / ".sdd" / "lineage"
+        if not store_root.exists():
+            return False, f"unverified: coverage for tool call {tool_call_id!r} is not anchored (no lineage log)"
+        from bernstein.core.lineage.store import LineageStore as _LineageStore
+
+        store = _LineageStore(store_root)
+
+    from bernstein.core.lineage.coverage import find_coverage_for_tool_call
+
+    entry = find_coverage_for_tool_call(store, tool_call_id)
+    if entry is None:
+        return False, f"unverified: coverage for tool call {tool_call_id!r} is not anchored in lineage"
+
+    digest = "sha256:" + hashlib.sha256(_canonical_coverage_bytes(payload)).hexdigest()
+    if digest != entry.content_hash:
+        return (
+            False,
+            f"unverified: recorded coverage for tool call {tool_call_id!r} does not match its anchor "
+            f"(recorded {digest}, anchored {entry.content_hash})",
+        )
+
+    record = ToolCoverageRecord.from_dict(payload)
+    if record.truncated or record.coverage != "complete":
+        reason = record.truncation_reason or "no reason recorded"
+        return (
+            False,
+            f"unverified: coverage for tool call {tool_call_id!r} is {record.coverage} "
+            f"(truncated={record.truncated}, reason={reason})",
+        )
+    if not record.exit_checked:
+        return (
+            False,
+            f"unverified: coverage for tool call {tool_call_id!r} reports exit status "
+            f"{record.exit_status!r} that was never checked",
+        )
+
+    return (
+        True,
+        f"verified absence: tool call {tool_call_id} covered {record.file_count} item(s) "
+        f"(corpus {record.corpus_digest}, anchored {digest})",
     )
