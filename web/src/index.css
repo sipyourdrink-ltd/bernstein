@@ -84,7 +84,6 @@
     --muted-foreground:        38.8 10.2% 32.7%;
     --accent:                  12 38.6% 42.0%;
     --accent-foreground:       40 37.5% 96.9%;
-    /* accent-foreground (#F9F6F5 / #DCE8E4) on new accent (#A35B48) passes WCAG AA */
     --destructive:             4.5 59.6% 34.9%;
     --destructive-foreground:  40 37.5% 96.9%;
     --border:                  41.7 24.7% 81.8%;
@@ -128,7 +127,7 @@
     --muted-foreground:        44.3 11.1% 59.4%;
     /* Note: dark --accent (oklch(72% 0.10 35) / #DB8E7A) passes WCAG AA on dark
        --background (7.22:1), --card (6.78:1), and --surface-raised (6.19:1). */
-    --accent:                  12.4 57.4% 66.9%;
+    --accent:                  12 38.6% 72%;
     --accent-foreground:       60 14.3% 4.1%;
     /* destructive: was 6.5 65.9% 64.3% - solid pairings all passed WCAG AA,
        but the danger Pill's 15%-opacity tint (bg-destructive/15, states.tsx)
