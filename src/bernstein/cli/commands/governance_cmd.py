@@ -920,6 +920,8 @@ def _print_audit_catalogue(
     for spec in specs:
         marker = "*" if spec.check_id in required else " "
         click.echo(f"  {marker}{spec.check_id}  {spec.area:<12}  {spec.asserts}")
+
+
 @govern_group.command("audit-keys")
 def governance_audit_cmd() -> None:
     """Check whether verifier keys are stale relative to the install identity.
