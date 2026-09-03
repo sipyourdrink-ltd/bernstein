@@ -8,6 +8,10 @@ delegates the actual fetch + extract to
 this module promotes it into the standard skill layout under
 ``<scope-root>/.bernstein/skills/<name>/`` by reusing
 :func:`bernstein.core.skills.lifecycle.install_local`.
+
+Promotion runs under ``strict_lint``: catalog content is third-party
+prompt-space code, so an ERROR lint finding refuses the install while the
+content is still staged and nothing lands in the skill directory.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ from bernstein.core.plugins_core.plugin_installer import (
 )
 from bernstein.core.skills.lifecycle import (
     SkillLifecycleError,
+    SkillLintRefusedError,
     compute_skill_digest,
     install_local,
     scope_root,
@@ -43,6 +48,7 @@ if TYPE_CHECKING:
     )
     from bernstein.core.skills.catalog.manifest import SkillCatalogEntry, SkillSourceSpec
     from bernstein.core.skills.lifecycle import InstallResult, InstallScope
+    from bernstein.core.skills.lint import LintFinding
 
     #: Signature of the pluggable installer dispatcher.
     InstallerCallable = Callable[[PluginSource, Path], PluginInstallResult]
@@ -52,6 +58,29 @@ logger = logging.getLogger(__name__)
 
 class CatalogInstallError(SkillLifecycleError):
     """Raised when a catalog install fails (download, extract, or layout)."""
+
+
+class CatalogTrustGateError(CatalogInstallError):
+    """Raised when the trust gate refuses a staged catalog entry.
+
+    A skill body is prompt-space code, so a catalog entry is admitted only
+    after ``lint_skill`` clears it: hostile instruction shapes
+    (``prompt-space-risk``) and structurally invalid manifests both refuse the
+    install while the content is still in the staging directory. The blocking
+    findings ride along so the caller can record a refusal receipt naming the
+    reason.
+    """
+
+    def __init__(self, message: str, *, findings: tuple[LintFinding, ...]) -> None:
+        super().__init__(message)
+        self.findings = findings
+
+    @property
+    def reason_code(self) -> str:
+        """Machine-readable refusal reason for the audit chain."""
+        if any(finding.code == "prompt-space-risk" for finding in self.findings):
+            return "prompt_space_risk"
+        return "lint_error"
 
 
 @dataclass(frozen=True)
@@ -131,8 +160,9 @@ def install_catalog_entry(
         and recomputed content digest.
 
     Raises:
-        CatalogInstallError: On any failure during download, extraction,
-            layout promotion, or digest validation.
+        CatalogTrustGateError: When strict lint refuses the staged content.
+        CatalogInstallError: On any other failure during download,
+            extraction, layout promotion, or digest validation.
     """
     plugin_source = resolve_plugin_source(entry.source)
     installer = plugin_installer if plugin_installer is not None else install_plugin
@@ -158,7 +188,13 @@ def install_catalog_entry(
                 workdir=workdir,
                 home=home,
                 override_name=entry.name,
+                strict_lint=True,
             )
+        except SkillLintRefusedError as exc:
+            raise CatalogTrustGateError(
+                f"trust gate refused catalog entry {entry.id!r}: {exc}",
+                findings=exc.findings,
+            ) from exc
         except SkillLifecycleError as exc:
             raise CatalogInstallError(f"layout promotion failed for {entry.id!r}: {exc}") from exc
 
@@ -197,6 +233,7 @@ def remove_catalog_install(
 __all__ = [
     "CatalogInstallError",
     "CatalogInstallResult",
+    "CatalogTrustGateError",
     "install_catalog_entry",
     "remove_catalog_install",
     "resolve_plugin_source",

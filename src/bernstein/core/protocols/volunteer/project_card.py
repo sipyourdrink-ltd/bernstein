@@ -66,6 +66,8 @@ if TYPE_CHECKING:
         Ed25519PublicKey,
     )
 
+    from bernstein.core.volunteer.manifest import VolunteerManifest
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -219,6 +221,75 @@ class ProjectCard:
     def digest(self) -> str:
         """SHA-256 hex digest of the canonical bytes (stable identity)."""
         return canonical_hash(self.to_canonical_dict())
+
+    # ---------------------------------------------------------------------------
+    # Manifest projection
+    # ---------------------------------------------------------------------------
+
+    @classmethod
+    def from_manifest(
+        cls,
+        manifest: VolunteerManifest,
+        *,
+        task_types: list[str],
+        demand: str,
+        submitted_at: str,
+        notes: str | None = None,
+    ) -> ProjectCard:
+        """Build a :class:`ProjectCard` from a project's committed manifest.
+
+        This is the manifest-loader emission path: the manifest is the
+        project's committed acceptance policy (gates, allowed paths,
+        sandbox tier); the card is a public advertisement of what the
+        project offers, built *from* that policy without ever importing it
+        back (``protocols/volunteer`` depends on ``core/volunteer``, never
+        the reverse).
+
+        ``task_types`` and ``demand`` have no source on
+        :class:`VolunteerManifest` today (task-type taxonomy and live
+        demand are hub/index concerns, not manifest fields) so the caller
+        supplies them rather than this method inventing a data source.
+
+        The manifest's ``gates`` are acceptance commands, not something to
+        publish: only their count crosses into ``demand_snapshot``, never
+        their argv content. The manifest's own digest is included so a
+        verifier can confirm the card was built from a specific, checkable
+        policy without re-deriving it.
+
+        Args:
+            manifest: The project's loaded, validated manifest.
+            task_types: Task type identifiers this project currently offers.
+                Caller-supplied; not derived from the manifest.
+            demand: Human-readable current demand description.
+                Caller-supplied; not derived from the manifest.
+            submitted_at: ISO-8601 timestamp (with timezone) for this
+                snapshot.
+            notes: Optional human-readable notes.
+
+        Returns:
+            A :class:`ProjectCard` built from the manifest's policy fields
+            plus the caller-supplied task types and demand.
+        """
+        requirements = (
+            f"license={manifest.license}; sandbox={manifest.sandbox}; "
+            f"max_wall_clock_minutes={manifest.max_wall_clock_minutes}; "
+            f"local_ok={manifest.local_ok}"
+        )
+        demand_snapshot: dict[str, Any] = {
+            "manifest_digest": manifest.digest,
+            "gates_count": len(manifest.gates),
+            "allowed_paths_count": len(manifest.allowed_paths),
+            "task_label": manifest.task_label,
+        }
+        return cls(
+            demand=demand,
+            task_types=list(task_types),
+            requirements=requirements,
+            demand_snapshot=demand_snapshot,
+            status=manifest.status,
+            submitted_at=submitted_at,
+            notes=notes,
+        )
 
 
 # ---------------------------------------------------------------------------

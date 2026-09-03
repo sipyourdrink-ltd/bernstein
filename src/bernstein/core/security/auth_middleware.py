@@ -486,6 +486,8 @@ _RESOURCE_MALFORMED_CHALLENGE = 'Bearer error="invalid_token", error_description
 # Operator-sensitive endpoints (``/shutdown``, ``/broadcast``, ``/drain``,
 # ``/config``) require ``admin:manage``, which is only granted to the
 # ``admin`` role - operator and agent tokens cannot reach them.
+_PERM_SCIM_WRITE = "scim:write"
+
 _ROUTE_PERMISSIONS: dict[str, str] = {
     "/tasks": _PERM_TASKS_WRITE,
     "/agents": "agents:write",
@@ -497,6 +499,11 @@ _ROUTE_PERMISSIONS: dict[str, str] = {
     "/shutdown": _PERM_ADMIN_MANAGE,
     "/broadcast": _PERM_ADMIN_MANAGE,
     "/drain": _PERM_ADMIN_MANAGE,
+    # SCIM 2.0 provisioning surface.  Writes need ``scim:write``; the read
+    # derivation below turns this into ``scim:read`` for GET, which keeps
+    # ``/scim/v2/Users`` out of reach of a plain ``status:read`` viewer.
+    "/scim": _PERM_SCIM_WRITE,
+    "/api/v1/scim": _PERM_SCIM_WRITE,
 }
 
 

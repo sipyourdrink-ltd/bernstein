@@ -39,7 +39,9 @@ subsequent runs can load and re-evaluate it::
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass, field, fields
+from datetime import UTC, date, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -70,9 +72,143 @@ class PolicySeverity(StrEnum):
     INFORMATIONAL = "informational"
 
 
+class PolicyInputKind(StrEnum):
+    """Where the value of a :class:`PolicyInput` field came from.
+
+    The distinction is load-bearing for evidence: an ``OBSERVED`` field is
+    derived by Bernstein from something it can point at, an ``ASSERTED``
+    field is a declaration the operator supplied and that nothing here
+    checked.  Both are legitimate policy inputs; only the first is evidence.
+    """
+
+    ASSERTED = "asserted"
+    OBSERVED = "observed"
+
+
+class PolicyEvidenceStatus(StrEnum):
+    """Whether a policy outcome rests on observation or on a declaration.
+
+    A policy is ``EVIDENCED`` only when *every* input it reads is observed.
+    One asserted input is enough to make the whole outcome a declaration,
+    because the outcome is no stronger than its weakest input.
+    """
+
+    EVIDENCED = "evidenced"
+    OPERATOR_ASSERTED = "operator_asserted"
+
+
 # ---------------------------------------------------------------------------
 # Policy input (runtime snapshot)
 # ---------------------------------------------------------------------------
+
+
+#: Evidence reference for :attr:`PolicyInput.audit_retention_days`: the value
+#: is the age of the oldest audit segment still on disk, live or archived.
+_RETENTION_EVIDENCE_REF = "audit-chain:oldest-retained-segment"
+
+#: Filename pattern of a retained audit segment: ``<YYYY-MM-DD>.jsonl`` for a
+#: live day file, ``<YYYY-MM-DD>.jsonl.gz`` once the day has been archived.
+_SEGMENT_DATE_FORMAT = "%Y-%m-%d"
+
+
+def observe_audit_retention_days(audit_dir: Path, *, today: date | None = None) -> int:
+    """Return the span of audit history the install can actually show, in days.
+
+    Read off the audit directory rather than off an operator declaration: the
+    answer is the age of the oldest retained segment, live (``<date>.jsonl``)
+    or archived (``archive/<date>.jsonl.gz``).  An install whose oldest
+    segment is 40 days old evidences 40 days of retention no matter what the
+    configured policy intends to keep, and an install with no segments
+    evidences nothing.
+
+    Args:
+        audit_dir: Directory holding the audit chain, typically
+            ``<workdir>/.sdd/audit``.
+        today: Reference date; defaults to the current UTC date.
+
+    Returns:
+        Days between the oldest retained segment and *today*, or ``0`` when no
+        dated segment is present.
+    """
+    reference = today or datetime.now(tz=UTC).date()
+    audit_dir = Path(audit_dir)
+    candidates: list[Path] = []
+    if audit_dir.is_dir():
+        candidates.extend(audit_dir.glob("*.jsonl"))
+        archive_dir = audit_dir / _archive_subdir()
+        if archive_dir.is_dir():
+            candidates.extend(archive_dir.glob("*.jsonl.gz"))
+
+    oldest = None
+    for path in candidates:
+        token = path.name.split(".", 1)[0]
+        try:
+            day = datetime.strptime(token, _SEGMENT_DATE_FORMAT).date()
+        except ValueError:
+            # Undated or hand-renamed file: it evidences no particular day.
+            continue
+        if oldest is None or day < oldest:
+            oldest = day
+
+    if oldest is None:
+        return 0
+    return max((reference - oldest).days, 0)
+
+
+def _archive_subdir() -> str:
+    """Return the archive subdirectory name the audit log writes into."""
+    from bernstein.core.security.audit import RetentionPolicy
+
+    return RetentionPolicy().archive_subdir
+
+
+def classify_policy_input_fields(cls: type) -> dict[str, PolicyInputKind]:
+    """Return the declared :class:`PolicyInputKind` of every field of *cls*.
+
+    Args:
+        cls: A dataclass whose fields carry ``kind`` metadata.
+
+    Returns:
+        Mapping of field name to its declared kind.
+
+    Raises:
+        ValueError: If a field declares no kind, declares something that is
+            not a :class:`PolicyInputKind`, or is ``OBSERVED`` without an
+            ``evidence_ref``.  Both are refusals to guess: an unclassified
+            field would otherwise default into whichever answer flatters the
+            coverage number.
+    """
+    kinds: dict[str, PolicyInputKind] = {}
+    for f in fields(cls):
+        kind = f.metadata.get("kind")
+        if not isinstance(kind, PolicyInputKind):
+            raise ValueError(
+                f"policy input field {f.name!r} declares no PolicyInputKind; "
+                "use _asserted(...) or _observed(..., evidence_ref=...)"
+            )
+        if kind is PolicyInputKind.OBSERVED and not f.metadata.get("evidence_ref"):
+            raise ValueError(f"observed policy input field {f.name!r} declares no evidence_ref")
+        kinds[f.name] = kind
+    return kinds
+
+
+def _asserted(default: Any) -> Any:
+    """Declare a policy input the operator supplies and nothing here checks."""
+    return field(default=default, metadata={"kind": PolicyInputKind.ASSERTED})
+
+
+def _observed(default: Any, *, evidence_ref: str) -> Any:
+    """Declare a policy input Bernstein derives, naming what evidences it.
+
+    Args:
+        default: Least-secure fallback used when no observation was made.
+        evidence_ref: Stable reference to what the value was read off, e.g.
+            ``audit-chain:oldest-retained-segment``.
+    """
+    return field(
+        default=default,
+        metadata={"kind": PolicyInputKind.OBSERVED, "evidence_ref": evidence_ref},
+    )
 
 
 @dataclass(frozen=True)
@@ -82,10 +218,17 @@ class PolicyInput:
     All fields default to their *least-secure* value so that omitting a field
     results in a policy finding rather than a false-negative pass.
 
+    Every field declares a :class:`PolicyInputKind`.  Fields built with
+    :func:`_asserted` are operator declarations and are rendered as such;
+    fields built with :func:`_observed` are derived by Bernstein and carry the
+    reference to what they were read off.  Adding a field without choosing one
+    of the two raises at import time (:func:`classify_policy_input_fields`).
+
     Attributes:
         audit_logging: Append-only JSONL audit log is enabled.
         audit_hmac_chain: HMAC-chained tamper-evident audit log is active.
-        audit_retention_days: How long audit logs are kept (days).
+        audit_retention_days: Observed span of audit history retained on
+            disk, in days (see :func:`observe_audit_retention_days`).
         sandbox_enabled: Agents run inside containers.
         seccomp_enabled: Seccomp-BPF profile is applied to agent containers.
         network_isolation: Agent containers have network_mode=none or bridge.
@@ -120,41 +263,62 @@ class PolicyInput:
         custom: Additional key-value pairs for framework-specific checks.
     """
 
-    audit_logging: bool = False
-    audit_hmac_chain: bool = False
-    audit_retention_days: int = 0
-    sandbox_enabled: bool = False
-    seccomp_enabled: bool = False
-    network_isolation: bool = False
-    read_only_rootfs: bool = False
-    tls_enforced: bool = False
-    secrets_rotation_days: int = 999
-    mfa_enabled: bool = False
-    rbac_enabled: bool = False
-    least_privilege_caps: bool = False
-    vulnerability_scanning: bool = False
-    sbom_enabled: bool = False
-    change_approval_gates: bool = False
-    incident_response_plan: bool = False
-    data_classification: bool = False
-    encrypt_at_rest: bool = False
-    encrypt_in_transit: bool = False
-    log_integrity: bool = False
-    access_review_days: int = 999
-    password_min_length: int = 0
-    session_timeout_minutes: int = 9999
-    agent_token_expiry_hours: int = 9999
-    rate_limiting_enabled: bool = False
-    waf_enabled: bool = False
-    backup_enabled: bool = False
-    backup_encryption: bool = False
-    dr_rto_hours: int = 9999
-    code_signing: bool = False
-    dependency_pinning: bool = False
-    sast_in_ci: bool = False
-    phi_detection: bool = False
-    data_residency_enforced: bool = False
-    custom: dict[str, Any] = field(default_factory=dict)
+    # Asserted fields are operator declarations; each moves to ``_observed``
+    # when Bernstein can derive it and name what it was derived from.
+    audit_logging: bool = _asserted(False)
+    audit_hmac_chain: bool = _asserted(False)
+    # Observed: read off the retained audit segments, not off a declaration.
+    audit_retention_days: int = _observed(0, evidence_ref=_RETENTION_EVIDENCE_REF)
+    sandbox_enabled: bool = _asserted(False)
+    seccomp_enabled: bool = _asserted(False)
+    network_isolation: bool = _asserted(False)
+    read_only_rootfs: bool = _asserted(False)
+    tls_enforced: bool = _asserted(False)
+    secrets_rotation_days: int = _asserted(999)
+    mfa_enabled: bool = _asserted(False)
+    rbac_enabled: bool = _asserted(False)
+    least_privilege_caps: bool = _asserted(False)
+    vulnerability_scanning: bool = _asserted(False)
+    sbom_enabled: bool = _asserted(False)
+    change_approval_gates: bool = _asserted(False)
+    incident_response_plan: bool = _asserted(False)
+    data_classification: bool = _asserted(False)
+    encrypt_at_rest: bool = _asserted(False)
+    encrypt_in_transit: bool = _asserted(False)
+    log_integrity: bool = _asserted(False)
+    access_review_days: int = _asserted(999)
+    password_min_length: int = _asserted(0)
+    session_timeout_minutes: int = _asserted(9999)
+    agent_token_expiry_hours: int = _asserted(9999)
+    rate_limiting_enabled: bool = _asserted(False)
+    waf_enabled: bool = _asserted(False)
+    backup_enabled: bool = _asserted(False)
+    backup_encryption: bool = _asserted(False)
+    dr_rto_hours: int = _asserted(9999)
+    code_signing: bool = _asserted(False)
+    dependency_pinning: bool = _asserted(False)
+    sast_in_ci: bool = _asserted(False)
+    phi_detection: bool = _asserted(False)
+    data_residency_enforced: bool = _asserted(False)
+    custom: dict[str, Any] = field(
+        default_factory=dict,
+        metadata={"kind": PolicyInputKind.ASSERTED},
+    )
+
+
+#: Declared kind of every :class:`PolicyInput` field.  Built at import so a
+#: field added without a kind fails the module, not a downstream report.
+POLICY_INPUT_KINDS: dict[str, PolicyInputKind] = classify_policy_input_fields(PolicyInput)
+
+#: Evidence reference of every observed :class:`PolicyInput` field.
+POLICY_INPUT_EVIDENCE_REFS: dict[str, str] = {
+    f.name: str(f.metadata["evidence_ref"])
+    for f in fields(PolicyInput)
+    if f.metadata.get("kind") is PolicyInputKind.OBSERVED
+}
+
+#: Matches an ``input.<field>`` reference inside a Rego rule body.
+_INPUT_REF_RE = re.compile(r"\binput\.([a-z_][a-z0-9_]*)")
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +371,16 @@ class PolicyResult:
         passed: Whether the policy check passed.
         finding: Human-readable finding description if the check failed.
         remediation: Suggested remediation.
+        evidence_status: Whether the outcome rests on observation or on an
+            operator declaration.  Defaults to the weaker of the two so a
+            result built without stating it cannot pass as evidence.
+        asserted_inputs: Names of the policy inputs the operator asserted,
+            sorted; empty when every input was observed.
+        evidence_refs: References to what the observed inputs were read off,
+            sorted; empty when nothing was observed.
+        control_statement: The control text as it may be rendered into an
+            artefact - attributed to the operator when the outcome is a
+            declaration rather than an observation.
     """
 
     policy_id: str
@@ -217,6 +391,10 @@ class PolicyResult:
     passed: bool
     finding: str
     remediation: str
+    evidence_status: PolicyEvidenceStatus = PolicyEvidenceStatus.OPERATOR_ASSERTED
+    asserted_inputs: tuple[str, ...] = ()
+    evidence_refs: tuple[str, ...] = ()
+    control_statement: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to a JSON-compatible dict."""
@@ -229,6 +407,10 @@ class PolicyResult:
             "passed": self.passed,
             "finding": self.finding,
             "remediation": self.remediation,
+            "evidence_status": self.evidence_status.value,
+            "asserted_inputs": list(self.asserted_inputs),
+            "evidence_refs": list(self.evidence_refs),
+            "control_statement": self.control_statement,
         }
 
 
@@ -381,7 +563,7 @@ allow {
 default allow = false
 allow { input.audit_retention_days >= 365 }""",
         lambda i: i.audit_retention_days >= 365,
-        "Set audit_retention_days=365 in the compliance configuration.",
+        "Retain audit segments for 365 days; the check reads the oldest segment on disk.",
     ),
     _p(
         "soc2-cc7-04",
@@ -841,7 +1023,7 @@ allow {
 default allow = false
 allow { input.audit_retention_days >= 365 }""",
         lambda i: i.audit_retention_days >= 365,
-        "Set audit_retention_days=365.",
+        "Retain audit segments for 365 days; the check reads the oldest segment on disk.",
     ),
     _p(
         "pci-req11-01",
@@ -1162,6 +1344,28 @@ _BY_FRAMEWORK: dict[ComplianceFramework, list[CompliancePolicy]] = {
 _BY_ID: dict[str, CompliancePolicy] = {p.policy_id: p for p in ALL_POLICIES}
 
 
+#: Policy inputs each policy reads, derived from the ``input.<field>``
+#: references in its Rego rule - the rule that is exported to OPA and shown to
+#: an auditor, so evidence status is derived from the published rule rather
+#: than from a second hand-maintained list that could drift away from it.
+_INPUT_FIELDS_BY_ID: dict[str, tuple[str, ...]] = {
+    policy.policy_id: tuple(sorted(set(_INPUT_REF_RE.findall(policy.rego_rule)) & set(POLICY_INPUT_KINDS)))
+    for policy in ALL_POLICIES
+}
+
+
+def policy_input_fields(policy_id: str) -> tuple[str, ...]:
+    """Return the :class:`PolicyInput` fields *policy_id* reads, sorted.
+
+    Args:
+        policy_id: Policy identifier string.
+
+    Returns:
+        Sorted tuple of field names; empty if *policy_id* is unknown.
+    """
+    return _INPUT_FIELDS_BY_ID.get(policy_id, ())
+
+
 # ---------------------------------------------------------------------------
 # Evaluation helpers
 # ---------------------------------------------------------------------------
@@ -1184,6 +1388,10 @@ def evaluate_policy(policy: CompliancePolicy, inp: PolicyInput) -> PolicyResult:
         passed = False
 
     finding = "" if passed else f"Policy {policy.policy_id} ({policy.control_id}) FAILED: {policy.description}"
+    consumed = policy_input_fields(policy.policy_id)
+    asserted = tuple(f for f in consumed if POLICY_INPUT_KINDS.get(f) is not PolicyInputKind.OBSERVED)
+    evidence_refs = tuple(sorted({POLICY_INPUT_EVIDENCE_REFS[f] for f in consumed if f in POLICY_INPUT_EVIDENCE_REFS}))
+    status = PolicyEvidenceStatus.OPERATOR_ASSERTED if asserted else PolicyEvidenceStatus.EVIDENCED
     return PolicyResult(
         policy_id=policy.policy_id,
         name=policy.name,
@@ -1193,7 +1401,37 @@ def evaluate_policy(policy: CompliancePolicy, inp: PolicyInput) -> PolicyResult:
         passed=passed,
         finding=finding,
         remediation=policy.remediation if not passed else "",
+        evidence_status=status,
+        asserted_inputs=asserted,
+        evidence_refs=evidence_refs,
+        control_statement=_render_control_statement(policy.description, status),
     )
+
+
+def _render_control_statement(description: str, status: PolicyEvidenceStatus) -> str:
+    """Render a control description for an artefact, attributed to its source.
+
+    An operator-asserted outcome is never rendered as a statement about what
+    the system enforces; it is rendered as what the operator declared, so a
+    reader of the artefact can tell the two apart without consulting a
+    separate field.
+
+    Private: the only caller is :func:`evaluate_policy`, which stores the
+    result on :attr:`PolicyResult.control_statement`. That field, not this
+    function, is the public surface - it is what ``--json-output`` serialises
+    and what callers assert on. Nothing outside this module needs to call
+    this directly.
+
+    Args:
+        description: The policy's control description.
+        status: Evidence status of the outcome being rendered.
+
+    Returns:
+        The statement text.
+    """
+    if status is PolicyEvidenceStatus.OPERATOR_ASSERTED:
+        return f"The operator declares, unevidenced: {description}"
+    return f"Observed by Bernstein: {description}"
 
 
 def evaluate_framework(
@@ -1223,6 +1461,64 @@ def evaluate_all(inp: PolicyInput) -> list[PolicyResult]:
         List of all :class:`PolicyResult` objects.
     """
     return [evaluate_policy(p, inp) for p in ALL_POLICIES]
+
+
+@dataclass(frozen=True)
+class EvidenceCoverage:
+    """How much of a policy run rests on observation rather than declaration.
+
+    Attributes:
+        total: Number of policy results summarised.
+        evidenced: Results whose every input Bernstein observed.
+        operator_asserted: Results resting on at least one operator claim.
+        evidenced_ratio: ``evidenced / total``, or ``0.0`` for an empty run.
+        operator_asserted_policy_ids: Sorted ids of the asserted results.
+    """
+
+    total: int
+    evidenced: int
+    operator_asserted: int
+    evidenced_ratio: float
+    operator_asserted_policy_ids: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise to a JSON-compatible dict."""
+        return {
+            "total": self.total,
+            "evidenced": self.evidenced,
+            "operator_asserted": self.operator_asserted,
+            "evidenced_ratio": self.evidenced_ratio,
+            "operator_asserted_policy_ids": list(self.operator_asserted_policy_ids),
+        }
+
+
+def summarise_evidence_coverage(results: list[PolicyResult]) -> EvidenceCoverage:
+    """Summarise how many results are evidenced rather than merely asserted.
+
+    Passing is not evidence: a policy passes because the inputs it read said
+    so, and an asserted input said so because the operator wrote it down.
+    Only results whose every input was observed are counted as evidenced, so
+    the number describes the install rather than the operator's paperwork.
+
+    Args:
+        results: Policy results to summarise.
+
+    Returns:
+        :class:`EvidenceCoverage` over *results*.
+    """
+    asserted_ids = tuple(
+        sorted(r.policy_id for r in results if r.evidence_status is PolicyEvidenceStatus.OPERATOR_ASSERTED)
+    )
+    total = len(results)
+    operator_asserted = len(asserted_ids)
+    evidenced = total - operator_asserted
+    return EvidenceCoverage(
+        total=total,
+        evidenced=evidenced,
+        operator_asserted=operator_asserted,
+        evidenced_ratio=(evidenced / total) if total else 0.0,
+        operator_asserted_policy_ids=asserted_ids,
+    )
 
 
 # ---------------------------------------------------------------------------

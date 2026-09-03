@@ -114,6 +114,43 @@ work.
 - **Supported exec semantics.** Every first-party backend handles
   argv-based exec with exit-code, stdout, and stderr capture.
 
+### Declared host isolation
+
+The backends above are isolation Bernstein *provides*. Some CLI agents also
+ship a sandbox of their own — codex spawns under `--sandbox workspace-write`,
+implemented with bubblewrap — and that sandbox needs an unprivileged user
+namespace to start. An operator running the CLI inside a container or VM they
+control has usually removed exactly that (`--cap-drop ALL`,
+`no-new-privileges`, unprivileged user namespaces disabled), so the agent's
+sandbox cannot initialise and every command it issues is refused while the run
+still exits 0.
+
+The operator declares the isolation the host already applies, once, in the
+normal config chain:
+
+| Key | Env var | Default |
+|---|---|---|
+| `host_isolation_tier` | `BERNSTEIN_HOST_ISOLATION_TIER` | `none` |
+| `host_isolation_evidence` | `BERNSTEIN_HOST_ISOLATION_EVIDENCE` | empty |
+
+The tier vocabulary is `SandboxTier` (`none` < `process` < `container` <
+`vm`), so it cannot drift from the tiers the rest of this layer ranks against;
+anything outside it is rejected rather than assumed. `container` and `vm`
+replace what the agent's own sandbox would have supplied, so an adapter that
+advertises `consumes_host_isolation` drops it. `process` and `none` do not, so
+it stays.
+
+The declaration is anchored in the HMAC audit chain as a
+`sandbox.host_isolation_declared` event carrying the tier, the operator's
+evidence for it, the config layer it resolved from, and whether the agent's
+sandbox was consequently dropped. Dropping a sandbox is a posture change, and
+the record is what makes it a statement somebody made from a named source
+rather than an unexplained flag flip.
+
+- Resolver: `src/bernstein/core/config/host_isolation.py`
+- Injection seam: `AgentSpawner._get_adapter_by_name`
+- Consumer today: `src/bernstein/adapters/codex.py`
+
 ## MicroVM backend and deterministic fork-and-race
 
 The `microvm` backend (`src/bernstein/core/sandbox/backends/microvm.py`)
@@ -362,6 +399,58 @@ round trip is covered by the host-gated
 requirements above). The Firecracker path is covered by the KVM-gated
 `tests/integration/sandbox/test_microvm_firecracker.py`. The refusal-invariant
 assertions in both files run everywhere.
+
+## Isolation attestation
+
+A backend's `capabilities` frozenset is a declaration written at authoring
+time, on another machine. Nothing on the operator's host is measured against
+it, so the first comparison between the declared set and the delivered set
+happens when `create()` raises - after the task graph has already committed to
+that backend.
+
+`src/bernstein/core/sandbox/attestation.py` holds the object that closes the
+gap: an `IsolationAttestation` is a per-host, Ed25519-signed statement of what
+each backend was **observed** to deliver here. It is signed with the install
+identity (`AgentCardKeystore`, published as JWKS at
+`/.well-known/agent.json/keys`), so a measurement has a named signer rather
+than being an unsourced field.
+
+Per backend the body carries `declared`, and partitions it into `observed`,
+`refuted` and `unverifiable`, plus the `probes` those verdicts came from. The
+three sets are disjoint and together exactly the declared set, enforced at
+construction - a declared capability with no verdict would be a third,
+invisible state, and there is no code path that moves a capability out of
+`unverifiable` into `observed`. That last point is a hard non-claim: a client
+can round-trip `file_rw` and `exec` through a remote provider's API, but it
+cannot observe that provider's isolation boundary, and an attestation saying
+otherwise would be a false statement.
+
+The signed body carries **no** wall-clock, run id or chain position, for the
+same reason the selection receipt does not: re-attesting an unchanged host must
+produce **byte-identical** bytes, which is what makes `host_facts_digest`
+usable as a re-mint cache key instead of a timestamp heuristic. Host facts are
+an allowlist (`HOST_FACT_KEYS`), so a collector cannot introduce a varying
+field into the digest without that field being added here first. Backend and
+probe lists are canonically ordered before serialisation, because
+`json.dumps(sort_keys=True)` sorts dict keys and not list items.
+
+**CLI.**
+
+```bash
+# Mint a signed attestation for this host and print the canonical body.
+bernstein sandbox attest --json
+
+# Attest over a fuller host-facts set supplied as JSON.
+bernstein sandbox attest --host-facts host-facts.json --json
+```
+
+**Nothing is measured yet.** Every declared capability is currently recorded as
+`unverifiable` with the reason code `probe_runner_not_implemented`, and the
+selector does not read attestations at all - `select_sandbox()` keeps its
+signature and its purity. The probe layer that turns those entries into real
+verdicts, and the selector wiring that makes them load-bearing, land
+separately; until then an attestation is evidence about this host that nothing
+consumes.
 
 ## `plan.yaml` extension
 

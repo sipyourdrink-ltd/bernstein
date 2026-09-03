@@ -289,6 +289,16 @@ class CompletionSignal:
     record and every material number in the body to be declared in the sidecar.
     Its ``value`` is the severity - ``""``/``"strict"`` (an unanchored figure
     fails completion) or ``"warn"`` (downgrade for exploratory work).
+
+    ``absence_verified`` (issue #3650) is the only absence-shaped type: every
+    other one asserts that something is present, so a task whose real result is
+    "no occurrences found" had no way to state that as a checkable claim. Its
+    ``value`` is the ``tool_call_id`` of the call that reported the absence, and
+    it passes only when that call's recorded coverage payload (issue #3769)
+    hash-matches the lineage coverage entry anchored to the same
+    ``tool_call_id`` (issue #3770) and describes a complete, exit-checked walk.
+    Its evaluator is
+    :func:`bernstein.core.quality.absence_coverage.verify_anchored_absence_claim`.
     """
 
     type: Literal[
@@ -302,8 +312,11 @@ class CompletionSignal:
         "criteria_match",
         "hash_stable",
         "figures_grounded",
+        "absence_verified",
     ]
-    value: str  # path, glob pattern, test command, search string, review instruction, criterion payload, or severity
+    # path, glob, test command, search string, review instruction,
+    # criterion payload, severity, or tool_call_id
+    value: str
 
 
 @dataclass(frozen=True)

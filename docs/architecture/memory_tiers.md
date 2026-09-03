@@ -103,6 +103,31 @@ The event is auditable from a plain JSONL tail without a special reader.
 
 ---
 
+## Deterministic structural tiers
+
+`micro` and `time_based` issue no model call: each is a pure fold of the
+context text under the `COMPACTION` thresholds. Their results are therefore
+reproducible, and the tiers record which fold produced them:
+
+- `policy_version` on `TierResult` carries `COMPACTION_POLICY_VERSION`
+  (`tiers.py`) for these two tiers. It names the closed set of structural
+  rules that ran, so a stored result still says which policy produced it after
+  the rules change. Bump the constant whenever a change alters the bytes a
+  structural tier emits or the id it derives.
+- `correlation_id` is derived, not drawn. `derive_correlation_id(...)` hashes
+  `policy_version`, `session_id`, `turn_count`, the pre-compaction text and the
+  post-compaction text into the existing `compact-micro-<8 hex>` /
+  `compact-time-<8 hex>` shape. Two operators folding the same context under
+  the same policy record the same id; two compactions in one session stay
+  distinct because the turn count is part of the pre-image.
+
+`auto` and `session_memory` route through `CompactionPipeline` with an
+optional model call, so they cannot claim a reproducible fold. They keep their
+`uuid4`-based correlation ids and leave `policy_version` empty rather than
+recording a version they do not honour.
+
+---
+
 ## Verification
 
 A verification helper `verify_compacted_step(step)` (and

@@ -395,10 +395,10 @@ def project_task_graph(*, platform: str, intent: dict[str, Any]) -> TaskGraphPro
         depends_on = (previous_id,) if previous_id else ()
         node = TaskGraphNode(
             node_id=_node_id(body | {"depends_on": list(depends_on)}),
-            title=body["title"],
-            description=body["description"],
-            role=body["role"],
-            priority=body["priority"],
+            title=body["title"],  # type: ignore[arg-type]
+            description=body["description"],  # type: ignore[arg-type]
+            role=body["role"],  # type: ignore[arg-type]
+            priority=body["priority"],  # type: ignore[arg-type]
             depends_on=depends_on,
         )
         nodes.append(node)

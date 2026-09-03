@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://bernstein.alexchernysh.com/schemas/audit-multitenant-export-v1.json",
+  "$id": "https://bernstein.run/schemas/audit-multitenant-export-v1.json",
   "title": "Bernstein Multi-Tenant Audit Export",
   "description": "Versioned wire format for tenant-scoped HMAC-chained audit-log slices. The slice is locally re-chained over filtered events so an external auditor can replay-verify offline using only the operator's HMAC key. The chain_anchor + (optional) timestamp_proof together provide tamper evidence even without the key. References W3C Verifiable Credentials Data Model 2.0 conceptually; uses a custom schema because VC v2 is RDF/JSON-LD and heavy for line-oriented JSONL audit chains.",
   "type": "object",

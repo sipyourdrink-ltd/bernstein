@@ -23,7 +23,11 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Static
 
-from bernstein.core.approval.models import ApprovalDecision, PendingApproval
+from bernstein.core.approval.models import (
+    ApprovalDecision,
+    PendingApproval,
+    local_shell_principal,
+)
 from bernstein.core.approval.queue import ApprovalQueue, get_default_queue
 
 if TYPE_CHECKING:
@@ -78,10 +82,14 @@ class ApprovalRow(Static):
             decision = ApprovalDecision.ALWAYS
         else:
             return
+        # The principal is resolved before the race guard below: a decision
+        # this process cannot attribute is an error to surface, not one of the
+        # concurrent-resolver outcomes the panel shrugs off.
+        principal = local_shell_principal()
         # Another resolver (web UI, CLI) may win the race; swallow the
         # KeyError so the panel just refreshes on its next tick.
         with contextlib.suppress(KeyError):
-            self._queue.resolve(self._approval.id, decision, reason="tui")
+            self._queue.resolve(self._approval.id, decision, principal=principal, reason="tui")
         self.post_message(ApprovalResolved(self._approval.id, decision))
 
 

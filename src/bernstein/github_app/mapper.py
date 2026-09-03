@@ -11,6 +11,14 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.tasks.instruction_provenance import (
+    SPAN_ORIGIN_EXTERNAL,
+    SPAN_ORIGIN_REPOSITORY,
+    make_span,
+    render_instruction,
+    spans_to_metadata,
+)
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -146,15 +154,19 @@ def issue_to_tasks(event: WebhookEvent) -> list[dict[str, Any]]:
     else:
         scope = "medium"
 
-    description = f"GitHub issue #{number} from {event.sender} in {event.repo_full_name}.\n\n{body[:2000]}"
+    spans = [
+        make_span(f"GitHub issue #{number} from {event.sender} in {event.repo_full_name}.\n\n", SPAN_ORIGIN_REPOSITORY),
+        make_span(body[:2000], SPAN_ORIGIN_EXTERNAL),
+    ]
 
     task: dict[str, Any] = {
         "title": f"[GH#{number}] {title}"[:120],
-        "description": description,
+        "description": render_instruction(spans),
         "role": role,
         "priority": priority,
         "scope": scope,
         "task_type": "standard",
+        "metadata": spans_to_metadata(spans),
     }
 
     logger.info(
@@ -195,20 +207,24 @@ def pr_review_to_task(event: WebhookEvent) -> dict[str, Any] | None:
     pr_number = pr.get("number", 0)
     pr_title = pr.get("title", "")
 
-    description = (
-        f"PR review comment on #{pr_number} ({pr_title}) "
-        f"in {event.repo_full_name} by {event.sender}.\n\n"
-        f"File: {path}\n\n"
-        f"Comment:\n{comment_body[:2000]}"
-    )
+    spans = [
+        make_span(f"PR review comment on #{pr_number} (", SPAN_ORIGIN_REPOSITORY),
+        make_span(pr_title, SPAN_ORIGIN_EXTERNAL),
+        make_span(
+            f") in {event.repo_full_name} by {event.sender}.\n\nFile: {path}\n\nComment:\n",
+            SPAN_ORIGIN_REPOSITORY,
+        ),
+        make_span(comment_body[:2000], SPAN_ORIGIN_EXTERNAL),
+    ]
 
     task: dict[str, Any] = {
         "title": f"[GH-PR#{pr_number}] Fix: {comment_body[:80]}"[:120],
-        "description": description,
+        "description": render_instruction(spans),
         "role": role,
         "priority": 1,
         "scope": "small",
         "task_type": "fix",
+        "metadata": spans_to_metadata(spans),
     }
 
     logger.info(
@@ -397,18 +413,23 @@ def trigger_label_to_task(event: WebhookEvent) -> dict[str, Any] | None:
     else:
         scope = "medium"
 
-    description = (
-        f"GitHub issue #{number} assigned to Bernstein via `{label_name}` label "
-        f"by @{event.sender} in {event.repo_full_name}.\n\n{body[:2000]}"
-    )
+    spans = [
+        make_span(
+            f"GitHub issue #{number} assigned to Bernstein via `{label_name}` label "
+            f"by @{event.sender} in {event.repo_full_name}.\n\n",
+            SPAN_ORIGIN_REPOSITORY,
+        ),
+        make_span(body[:2000], SPAN_ORIGIN_EXTERNAL),
+    ]
 
     task: dict[str, Any] = {
         "title": f"[GH#{number}] {title}"[:120],
-        "description": description,
+        "description": render_instruction(spans),
         "role": role,
         "priority": priority,
         "scope": scope,
         "task_type": "fix" if label_name == "agent-fix" else "standard",
+        "metadata": spans_to_metadata(spans),
     }
 
     logger.info(
@@ -448,17 +469,24 @@ def label_to_action(event: WebhookEvent) -> dict[str, Any] | None:
     body = issue.get("body", "") or ""
     number = issue.get("number", 0)
 
-    description = (
-        f"Evolution candidate from GitHub issue #{number} in {event.repo_full_name}.\n\nTitle: {title}\n\n{body[:2000]}"
-    )
+    spans = [
+        make_span(
+            f"Evolution candidate from GitHub issue #{number} in {event.repo_full_name}.\n\nTitle: ",
+            SPAN_ORIGIN_REPOSITORY,
+        ),
+        make_span(title, SPAN_ORIGIN_EXTERNAL),
+        make_span("\n\n", SPAN_ORIGIN_REPOSITORY),
+        make_span(body[:2000], SPAN_ORIGIN_EXTERNAL),
+    ]
 
     task: dict[str, Any] = {
         "title": f"[evolve] {title}"[:120],
-        "description": description,
+        "description": render_instruction(spans),
         "role": "backend",
         "priority": 2,
         "scope": "medium",
         "task_type": "upgrade_proposal",
+        "metadata": spans_to_metadata(spans),
     }
 
     logger.info(

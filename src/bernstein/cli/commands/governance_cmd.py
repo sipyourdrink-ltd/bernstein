@@ -1,9 +1,9 @@
-"""``bernstein governance``: verify RBAC + budget decisions as chain projections.
+"""``bernstein govern``: verify RBAC + budget decisions as chain projections.
 
 Issue #2309. Recomputes every access and budget decision recorded for a run from
 the signed lineage spine and confirms the recorded verdicts:
 
-    bernstein governance verify <run> --bindings <file> [--ledger <file>]
+    bernstein govern verify <run> --bindings <file> [--ledger <file>]
 
 Access decisions re-resolve the subject's role from the presented signed role
 bindings and re-project the role's permissions onto the action. Budget decisions
@@ -18,7 +18,7 @@ declared posture (playbook) and enumerated environment (inventory). The plan
 contains one entry per mismatch (FORBIDDEN, ABSENT, WIDER_CEILING, UNKNOWN)
 and is anchored in the lineage spine for offline verification.
 
-    bernstein governance ingest --spans <file|-> --source <label> [--profile <name>]
+    bernstein govern ingest --spans <file|-> --source <label> [--profile <name>]
 
 Anchor OTLP spans reported by a runtime Bernstein did not schedule (#4962).
 The record starts at ``Orchestrator.run()``, so activity driven elsewhere
@@ -26,6 +26,12 @@ produces no chain events and no receipt can mention it. This is the first
 transport into the ingest boundary: a file or stdin. A payload the boundary
 rejects appends nothing, and a submission already anchored returns the receipt
 it was anchored with instead of a second one.
+
+    bernstein govern posture [--workdir <path>] [--json-output]
+
+Score the install's posture from chain-evidenced facts only. The number is a
+projection of the lineage log; no configuration file is read, so switching a
+control on cannot move it.
 """
 
 from __future__ import annotations
@@ -41,6 +47,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from bernstein.cli.commands.govern_cmd import govern_inventory_cmd, govern_reconcile_cmd
 from bernstein.cli.helpers import console
 from bernstein.core.govern import compute_plan as _compute_plan
 from bernstein.core.lineage.spine import LineageSpine
@@ -56,18 +63,20 @@ def _lineage_root(workdir: Path) -> Path:
     return workdir / ".sdd" / "lineage"
 
 
-@click.group("governance")
-def governance_group() -> None:
+@click.group("govern")
+def govern_group() -> None:
     """Verify RBAC and budget decisions as projections over the audit chain.
 
     \b
-      bernstein governance verify <run> --bindings b.json --ledger ledger.jsonl
+      bernstein govern verify <run> --bindings b.json --ledger ledger.jsonl
       bernstein govern plan --playbook p.json --inventory i.json [--workdir w]
-      bernstein governance ingest --spans spans.json --source otel-collector-prod
+      bernstein govern ingest --spans spans.json --source otel-collector-prod
+      bernstein govern posture [--workdir w] [--json-output]
+      bernstein govern inventory --render mermaid|dot --store PATH
     """
 
 
-@governance_group.command("verify")
+@govern_group.command("verify")
 @click.argument("run_id", required=True)
 @click.option(
     "--bindings",
@@ -123,7 +132,7 @@ def governance_verify_cmd(run_id: str, bindings_file: str, ledger_file: str | No
     raise SystemExit(2)
 
 
-@governance_group.command("plan")
+@govern_group.command("plan")
 @click.option(
     "--playbook",
     "playbook_file",
@@ -221,6 +230,49 @@ def governance_plan_cmd(playbook_file: str, inventory_file: str, workdir: str) -
         )
 
     console_obj.print(table)
+    raise SystemExit(0)
+
+
+@govern_group.command("posture")
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option(
+    "--json-output",
+    "as_json",
+    is_flag=True,
+    help="Print the signed canonical document instead of a table.",
+)
+def governance_posture_cmd(workdir: str, as_json: bool) -> None:
+    """Score this install's posture from chain-evidenced facts only.
+
+    The score consumes the per-control coverage report over the lineage log and
+    reads no configuration, so enabling a control cannot raise it; producing
+    evidence for that control can. The document names every contributing chain
+    event, the weights version, and its own denominator -- the weight that was
+    measurable, not the weight that exists.
+
+    Exit 0 always. A score is a measurement, not a gate.
+    """
+    from bernstein.core.security.security_posture import (
+        collect_evidenced_posture,
+        evidenced_posture_json,
+        format_evidenced_posture,
+    )
+
+    root = Path(workdir).resolve()
+
+    if as_json:
+        click.echo(evidenced_posture_json(root, hmac_key=_load_hmac_key()))
+        raise SystemExit(0)
+
+    console.print()
+    console.print(format_evidenced_posture(collect_evidenced_posture(root)))
     raise SystemExit(0)
 
 
@@ -359,7 +411,8 @@ def _build_findings_from_inventory(
     from bernstein.core.govern import Finding, FindingsDocument
 
     findings: list[Finding] = []
-    for raw_surface in inventory.get("surfaces", []):
+    raw_surfaces = cast("list[dict[str, Any]]", inventory.get("surfaces", []))
+    for raw_surface in raw_surfaces:
         surface_id = str(raw_surface.get("surface", ""))
         observed_value = str(raw_surface.get("observed_value", ""))
         evidence_ref = str(raw_surface.get("evidence_ref", ""))
@@ -382,7 +435,8 @@ def _build_findings_from_inventory(
 def _build_playbook_prompt(findings_dict: dict[str, object], seed: str | None) -> str:
     """Build the prompt sent to the model from the findings document."""
     findings_lines: list[str] = []
-    for f in findings_dict.get("findings", []):
+    raw_findings = cast("list[dict[str, Any]]", findings_dict.get("findings", []))
+    for f in raw_findings:
         readable_str = "readable" if f.get("readable") else "UNREADABLE"
         findings_lines.append(
             f"  - surface: {f['surface']}\n"
@@ -435,7 +489,7 @@ def _parse_playbook_json(raw_output: str) -> dict[str, object]:
     return result
 
 
-@governance_group.command("discover")
+@govern_group.command("discover")
 @click.option(
     "--inventory",
     "inventory_file",
@@ -520,7 +574,8 @@ def govern_discover_cmd(
 
     console.print()
     console.print("[bold]Governance discover[/bold]")
-    console.print(f"  Findings: {len(findings_dict.get('findings', []))} surfaces")
+    finding_rows = cast("list[dict[str, Any]]", findings_dict.get("findings", []))
+    console.print(f"  Findings: {len(finding_rows)} surfaces")
     console.print(f"  Inventory hash: {inventory_hash}")
     console.print(f"  Findings hash: {findings_hash}")
     rel_path = findings_path.relative_to(root) if findings_path.is_relative_to(root) else findings_path
@@ -608,7 +663,7 @@ def govern_discover_cmd(
     raise SystemExit(0)
 
 
-@governance_group.command("ingest")
+@govern_group.command("ingest")
 @click.option(
     "--spans",
     "spans_file",
@@ -719,3 +774,57 @@ def governance_ingest_cmd(
     console.print(f"  chain entry        {receipt.chain_entry_hash}")
     console.print(f"  coverage           {receipt.coverage}")
     console.print(f"  [dim]{receipt.coverage_detail}[/dim]")
+
+
+@govern_group.command("audit")
+def governance_audit_cmd() -> None:
+    """Check whether verifier keys are stale relative to the install identity.
+
+    Exit codes: 0 = up to date or no verifier files, 1 = keystore or verifier
+    file unreadable, 2 = stale verifier key detected.
+    """
+    from bernstein.core.govern.audit_sweep import CheckVerdict, check_verifier_key_staleness
+    from bernstein.core.identity.http_signing import default_keystore
+
+    try:
+        outcomes = check_verifier_key_staleness(default_keystore=default_keystore())
+    except (OSError, PermissionError, TypeError, ValueError) as exc:
+        click.echo(f"keystore failure: {exc}", err=True)
+        raise SystemExit(1) from exc
+
+    for outcome in outcomes:
+        if outcome.verdict is CheckVerdict.NOT_MEASURABLE:
+            click.echo(f"{outcome.check_id}: {outcome.summary}")
+            raise SystemExit(1)
+        if outcome.verdict is CheckVerdict.MEASURED and outcome.passed is False:
+            click.echo(f"{outcome.check_id}: {outcome.summary}")
+            raise SystemExit(2)
+
+    click.echo("verifier keys up to date")
+
+
+# Desired-state reconcile diff over the governed surface (#5085). Registered
+# here, before the alias mirror below, so the subcommand sets stay identical.
+govern_group.add_command(govern_reconcile_cmd, "reconcile")
+# Inventory topology graph from the store (#5133).
+govern_group.add_command(govern_inventory_cmd, "inventory")
+
+
+@click.group("governance")
+@click.pass_context
+def governance_alias_cmd(ctx: click.Context) -> None:
+    """[Deprecated] Use 'bernstein govern' instead."""
+    click.echo(
+        "WARNING: 'bernstein governance' is deprecated and will be removed in v4.0.0 (#5010): "
+        "use 'bernstein govern' instead.",
+        err=True,
+    )
+    ctx.forward(govern_group)
+
+
+for _name, _cmd in govern_group.commands.items():
+    governance_alias_cmd.add_command(_cmd, _name)
+
+
+# Alias so tests can import governance_group as well
+governance_group = govern_group

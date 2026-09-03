@@ -22,6 +22,9 @@ class _FakeEntryPoint:
 
     name: str
     target: object
+    #: The declared ``module:attr`` target. Real entry points always carry
+    #: one, and the resolution record reads it to say what was declared.
+    value: str = "fixture.module:factory"
 
     def load(self) -> object:
         return self.target

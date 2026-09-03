@@ -16,6 +16,15 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.tasks.instruction_provenance import (
+    SPAN_ORIGIN_EXTERNAL,
+    SPAN_ORIGIN_REPOSITORY,
+    InstructionSpan,
+    make_span,
+    render_instruction,
+    spans_to_metadata,
+)
+
 if TYPE_CHECKING:
     from bernstein.github_app.webhooks import WebhookEvent
 
@@ -83,14 +92,22 @@ def slash_command_to_task(
     issue_title = issue.get("title") or pr.get("title", "")
     comment_body = comment.get("body", "") or ""
 
-    # Build description from available context
-    args_line = f" - {args}" if args else ""
-    description = (
-        f"Slash command `/bernstein {action}`{args_line} by @{event.sender} "
-        f"on #{issue_number} in {event.repo_full_name}.\n\n"
-        f"Issue/PR: {issue_title}\n\n"
-        f"Comment context:\n{comment_body[:1000]}"
+    # Build the instruction as origin-tagged spans (#3683): the command verb
+    # is ours (validated against a fixed action map), the args, issue/PR
+    # title, and comment body are text a third party wrote.
+    spans: list[InstructionSpan] = [make_span(f"Slash command `/bernstein {action}`", SPAN_ORIGIN_REPOSITORY)]
+    if args:
+        spans.append(make_span(" - ", SPAN_ORIGIN_REPOSITORY))
+        spans.append(make_span(args, SPAN_ORIGIN_EXTERNAL))
+    spans.append(
+        make_span(
+            f" by @{event.sender} on #{issue_number} in {event.repo_full_name}.\n\nIssue/PR: ",
+            SPAN_ORIGIN_REPOSITORY,
+        )
     )
+    spans.append(make_span(issue_title, SPAN_ORIGIN_EXTERNAL))
+    spans.append(make_span("\n\nComment context:\n", SPAN_ORIGIN_REPOSITORY))
+    spans.append(make_span(comment_body[:1000], SPAN_ORIGIN_EXTERNAL))
 
     if args:
         title = f"[/bernstein {action}] {args}"[:120]
@@ -103,11 +120,12 @@ def slash_command_to_task(
 
     task: dict[str, Any] = {
         "title": title,
-        "description": description,
+        "description": render_instruction(spans),
         "role": spec["role"],
         "priority": priority,
         "scope": "small",
         "task_type": spec["task_type"],
+        "metadata": spans_to_metadata(spans),
     }
 
     logger.info(

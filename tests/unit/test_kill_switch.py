@@ -184,6 +184,87 @@ class TestCheckScopeViolations:
         assert kill_file.exists()
 
 
+class TestCheckScopeViolationsGuardRecording:
+    """check_scope_violations records every clean check into the guard
+    registry, not just violations (issue #3454 step 1)."""
+
+    def test_ten_clean_checks_are_recorded_as_evaluations_not_firings(self, tmp_path: Path) -> None:
+        from bernstein.core.observability.circuit_breaker import SCOPE_VIOLATION_GUARD_ID
+        from bernstein.core.observability.guard_registry import default_registry
+
+        before_evaluations = default_registry.evaluations_for(SCOPE_VIOLATION_GUARD_ID)
+        before_outcomes = default_registry.outcomes_for(SCOPE_VIOLATION_GUARD_ID)
+
+        wt_path = tmp_path / "worktree"
+        wt_path.mkdir()
+        task = MagicMock()
+        task.owned_files = ["src/"]
+
+        for i in range(10):
+            session = _make_session(f"clean-{i}")
+            session.task_ids = ["task-1"]
+            orch = _make_orch(tmp_path, [session])
+            orch._spawner.get_worktree_path.return_value = str(wt_path)
+
+            with (
+                patch("bernstein.core.observability.circuit_breaker._lookup_tasks", return_value=[task]),
+                patch(
+                    "bernstein.core.observability.circuit_breaker._get_worktree_changed_files",
+                    return_value=["src/inside.py"],
+                ),
+            ):
+                result = _make_result()
+                check_scope_violations(orch, result)
+            # Sanity: these are the passing (non-firing) checks.
+            assert result.reaped == []
+
+        after_evaluations = default_registry.evaluations_for(SCOPE_VIOLATION_GUARD_ID)
+        after_outcomes = default_registry.outcomes_for(SCOPE_VIOLATION_GUARD_ID)
+
+        assert after_evaluations - before_evaluations == 10
+        assert after_outcomes.get("clean", 0) - before_outcomes.get("clean", 0) == 10
+        assert after_outcomes.get("violation", 0) == before_outcomes.get("violation", 0)
+
+    def test_evaluated_and_never_fired_is_distinguishable_from_never_evaluated(self, tmp_path: Path) -> None:
+        """The whole feature, against the real production guard: driving ten
+        clean checks through it must not look the same as never calling it."""
+        from bernstein.core.observability.circuit_breaker import SCOPE_VIOLATION_GUARD_ID
+        from bernstein.core.observability.guard_registry import GuardRegistry, default_registry
+
+        before = default_registry.evaluations_for(SCOPE_VIOLATION_GUARD_ID)
+
+        wt_path = tmp_path / "worktree"
+        wt_path.mkdir()
+        task = MagicMock()
+        task.owned_files = ["src/"]
+
+        for i in range(10):
+            session = _make_session(f"clean2-{i}")
+            session.task_ids = ["task-1"]
+            orch = _make_orch(tmp_path, [session])
+            orch._spawner.get_worktree_path.return_value = str(wt_path)
+
+            with (
+                patch("bernstein.core.observability.circuit_breaker._lookup_tasks", return_value=[task]),
+                patch(
+                    "bernstein.core.observability.circuit_breaker._get_worktree_changed_files",
+                    return_value=["src/inside.py"],
+                ),
+            ):
+                check_scope_violations(orch, _make_result())
+
+        driven_evaluations = default_registry.evaluations_for(SCOPE_VIOLATION_GUARD_ID)
+        assert driven_evaluations - before == 10
+
+        never_called = GuardRegistry()
+        never_called.register(SCOPE_VIOLATION_GUARD_ID)
+
+        # A registry that saw ten real, passing evaluations is not equal to
+        # one where the same guard was only ever registered.
+        assert driven_evaluations != never_called.evaluations_for(SCOPE_VIOLATION_GUARD_ID)
+        assert never_called.evaluations_for(SCOPE_VIOLATION_GUARD_ID) == 0
+
+
 # ---------------------------------------------------------------------------
 # check_budget_violations
 # ---------------------------------------------------------------------------
