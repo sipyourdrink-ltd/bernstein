@@ -11,9 +11,13 @@ consecutive sweeps escalates instead of re-raising the same finding.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.govern.audit_sweep import (
+    FINDING_VERIFIER_KEY_STALE,
     NOT_REPORTED,
     UNREACHABLE,
     CheckOutcome,
@@ -21,11 +25,14 @@ from bernstein.core.govern.audit_sweep import (
     FailureLedger,
     TargetProbe,
     audit_target,
+    check_verifier_key_staleness,
     escalate_repeat_failures,
     record_sweep,
     run_audit_sweep,
 )
+from bernstein.core.identity import http_signing
 from bernstein.core.lineage.spine import LineageSpine
+from bernstein.core.security.agent_card_keystore import AgentCardKeystore
 
 CHECK_IDS = ("MDL-001", "OBS-004", "SEC-002")
 HMAC_KEY = b"\x11" * 32
@@ -266,3 +273,66 @@ def test_unreachable_target_does_not_reset_a_failure_streak(tmp_path: Path) -> N
     state["reachable"] = True
     _, decisions = one_sweep(1_700_007_200)
     assert decisions == ("MDL-001",)
+
+
+def _verifier_home(tmp_path: Path, monkeypatch) -> tuple[Path, str]:
+    """Build an isolated verifier directory and current keyid, return both."""
+    home = tmp_path / "home"
+    home.mkdir()
+    key_dir = tmp_path / "keys"
+    _priv, pub = AgentCardKeystore(key_dir).load_or_generate()
+    current_keyid = http_signing.install_identity_keyid(pub)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setenv(http_signing.ENV_KEY_DIR, str(key_dir))
+    return home, current_keyid
+
+
+def test_verifier_key_staleness_no_files(tmp_path: Path, monkeypatch) -> None:
+    """Missing verifier files mean nothing to measure."""
+    _verifier_home(tmp_path, monkeypatch)
+    outcomes = check_verifier_key_staleness(default_keystore=http_signing.default_keystore())
+    assert outcomes == []
+
+
+@pytest.mark.parametrize("filename", ["local.json", "server.json"])
+def test_verifier_key_staleness_current_keyid_present(filename: str, tmp_path: Path, monkeypatch) -> None:
+    """A current keyid in either verifier file is up to date."""
+    home, current_keyid = _verifier_home(tmp_path, monkeypatch)
+    verifier_dir = home / ".config" / "bernstein" / "verifier"
+    verifier_dir.mkdir(parents=True)
+    verifier_dir.joinpath(filename).write_text(json.dumps({"keys": [{"kid": current_keyid}]}))
+    outcomes = check_verifier_key_staleness(default_keystore=http_signing.default_keystore())
+    assert outcomes == []
+
+
+@pytest.mark.parametrize("filename", ["local.json", "server.json"])
+def test_verifier_key_staleness_stale_keyid_present(filename: str, tmp_path: Path, monkeypatch) -> None:
+    """A stale keyid in either verifier file is a measured-failed finding."""
+    home, _current_keyid = _verifier_home(tmp_path, monkeypatch)
+    verifier_dir = home / ".config" / "bernstein" / "verifier"
+    verifier_dir.mkdir(parents=True)
+    verifier_dir.joinpath(filename).write_text(json.dumps({"keys": [{"kid": "old-keyid"}]}))
+    outcomes = check_verifier_key_staleness(default_keystore=http_signing.default_keystore())
+    assert len(outcomes) == 1
+    outcome = outcomes[0]
+    assert outcome.check_id == FINDING_VERIFIER_KEY_STALE
+    assert outcome.verdict is CheckVerdict.MEASURED
+    assert outcome.passed is False
+    assert "predates" in outcome.summary.lower()
+
+
+@pytest.mark.parametrize("filename", ["local.json", "server.json"])
+def test_verifier_key_staleness_unreadable_file(filename: str, tmp_path: Path, monkeypatch) -> None:
+    """An unreadable verifier file is reported as not measurable."""
+    home, _current_keyid = _verifier_home(tmp_path, monkeypatch)
+    verifier_dir = home / ".config" / "bernstein" / "verifier"
+    verifier_dir.mkdir(parents=True)
+    file_path = verifier_dir / filename
+    file_path.write_text("not valid json")
+    outcomes = check_verifier_key_staleness(default_keystore=http_signing.default_keystore())
+    not_measurable = [o for o in outcomes if o.verdict is CheckVerdict.NOT_MEASURABLE]
+    assert len(not_measurable) == 1
+    outcome = not_measurable[0]
+    assert outcome.check_id == FINDING_VERIFIER_KEY_STALE
+    assert "unreadable" in outcome.summary.lower()
+    assert str(file_path) in outcome.summary

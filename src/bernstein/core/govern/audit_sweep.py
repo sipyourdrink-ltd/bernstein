@@ -317,6 +317,7 @@ def check_verifier_key_staleness(
 
     outcomes: list[CheckOutcome] = []
     found_any = False
+    current_keyid_found = False
 
     for verifier_path in verifier_paths:
         if not verifier_path.is_file():
@@ -328,7 +329,7 @@ def check_verifier_key_staleness(
             keys = verifier_data.get("keys", [])
             for key in keys:
                 if key.get("kid") == current_keyid:
-                    return outcomes  # current key found, not stale
+                    current_keyid_found = True
         except (json.JSONDecodeError, OSError, TypeError):
             outcomes.append(
                 CheckOutcome(
@@ -341,7 +342,7 @@ def check_verifier_key_staleness(
                 )
             )
 
-    if not found_any:
+    if found_any and not current_keyid_found:
         outcomes.append(
             CheckOutcome(
                 check_id=FINDING_VERIFIER_KEY_STALE,
