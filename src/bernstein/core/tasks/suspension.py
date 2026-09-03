@@ -1061,6 +1061,7 @@ def park_task(
     from bernstein.core.cost.budget_actions import compute_released_headroom
     from bernstein.core.persistence.agent_checkpoint import (
         AgentCheckpoint,
+        capture_worktree_observations,
         compute_grant_hash,
         compute_interpreter_hash,
         save_checkpoint,
@@ -1128,6 +1129,9 @@ def park_task(
         adapter=adapter,
         model=model,
         interpreter_hash=compute_interpreter_hash(adapter, model) if adapter else "",
+        # The bytes the parked work is carrying, hashed here so a resume can
+        # tell whether it would continue onto the same bytes it left behind.
+        observations=capture_worktree_observations(Path(worktree_path)),
     )
     save_checkpoint(checkpoint, sdd_dir / "runtime")
 
@@ -1235,6 +1239,7 @@ def resume_task(
     ledger: WorkLedger | None = None,
     approval_ref: str = "",
     override_interpreter: bool = False,
+    override_observations: bool = False,
 ) -> ResumeResult:
     """Durably resume a parked task from its suspend row.
 
@@ -1256,6 +1261,10 @@ def resume_task(
             interpreter mismatch (``--override-interpreter``); recorded in the
             continuation row so a later reader can tell an overridden resume
             from a clean one.
+        override_observations: Whether the operator resumed past moved
+            observations (``--override-observations``) instead of discarding
+            the checkpoint; recorded in the continuation row for the same
+            reason.
 
     Returns:
         A :class:`ResumeResult` with the decision and both continuity anchors.
@@ -1359,6 +1368,7 @@ def resume_task(
             _cp_for_cont,
             chain_head_at_resume=resume_event_hash,
             interpreter_overridden=override_interpreter,
+            observations_overridden=override_observations,
         )
         journal.record(
             JOURNAL_EVENT_GRANT_CONTINUATION,
@@ -1369,6 +1379,8 @@ def resume_task(
             chain_head_at_resume=_entry.chain_head_at_resume,
             interpreter_hash=_entry.interpreter_hash,
             interpreter_overridden=_entry.interpreter_overridden,
+            observations_hash=_entry.observations_hash,
+            observations_overridden=_entry.observations_overridden,
         )
 
     receipt = record_task_resume(

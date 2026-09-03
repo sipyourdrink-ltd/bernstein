@@ -112,7 +112,11 @@ def verify_cmd() -> None:
     "wheelhouse_path",
     required=False,
     default=None,
-    type=click.Path(exists=False, file_okay=False, dir_okay=True, path_type=Path),
+    # file_okay=True so a portable artefact (bom, receipt-bundle, ...) can be
+    # routed through the kind-detecting dispatcher (#5103) below. Before this
+    # the type rejected any file outright, so allowing files here is
+    # additive: no prior invocation of this positional could ever be a file.
+    type=click.Path(exists=False, file_okay=True, dir_okay=True, path_type=Path),
 )
 @click.option(
     "--wal-integrity",
@@ -278,19 +282,26 @@ def verify_legacy_cmd(
     exit_code = 0
 
     if wheelhouse_path is not None:
-        exit_code |= _verify_wheelhouse(
-            wheelhouse_path,
-            ca_pubkey=ca_pubkey,
-            require_signatures=require_signatures,
-            require_customer_sig=require_customer_sig,
-            customer_trust_dir=customer_trust_dir,
-            sigstore=sigstore or require_sigstore,
-            sigstore_owner=sigstore_owner,
-            sigstore_repo=sigstore_repo,
-            sigstore_offline=sigstore_offline,
-            sigstore_bundle_dir=sigstore_bundle_dir,
-            require_sigstore=require_sigstore,
-        )
+        if wheelhouse_path.is_file():
+            # A file positional never reached this command before (the
+            # argument's type rejected it outright), so this branch only
+            # ever fires for previously-impossible invocations: no existing
+            # wheelhouse call is affected.
+            exit_code |= _verify_artefact_by_kind(wheelhouse_path)
+        else:
+            exit_code |= _verify_wheelhouse(
+                wheelhouse_path,
+                ca_pubkey=ca_pubkey,
+                require_signatures=require_signatures,
+                require_customer_sig=require_customer_sig,
+                customer_trust_dir=customer_trust_dir,
+                sigstore=sigstore or require_sigstore,
+                sigstore_owner=sigstore_owner,
+                sigstore_repo=sigstore_repo,
+                sigstore_offline=sigstore_offline,
+                sigstore_bundle_dir=sigstore_bundle_dir,
+                require_sigstore=require_sigstore,
+            )
 
     if wal_run_id is not None:
         exit_code |= _verify_wal_integrity(wal_run_id)
@@ -309,6 +320,34 @@ def verify_legacy_cmd(
         exit_code |= _verify_formal(formal_task_id)
 
     raise SystemExit(exit_code)
+
+
+def _verify_artefact_by_kind(path: Path) -> int:
+    """Detect *path*'s artefact kind and dispatch to its verifier (#5103).
+
+    This is the ``bernstein verify <artefact>`` half of the command: a
+    kind-detecting dispatcher over a registry of ``(kind, verifier)`` pairs,
+    so an operator holding an artefact does not need to already know which
+    of the many ``<group> verify`` commands produced it. Only two kinds are
+    wired so far (``bom``, ``receipt-bundle``) -- see
+    :mod:`bernstein.cli.commands.verify_kinds` for why, and for the ~53
+    ``verify`` commands not yet migrated.
+    """
+    from bernstein.cli.commands.verify_kinds import register_default_verifiers
+    from bernstein.core.verify_dispatch import dispatch_verify
+
+    register_default_verifiers()
+    outcome = dispatch_verify(path)
+
+    console.print()
+    console.print(f"[bold]Verify[/bold] artefact={path}")
+    if outcome.kind == "unknown":
+        console.print(f"[yellow]UNKNOWN KIND[/yellow] -- {outcome.message}")
+    elif outcome.ok:
+        console.print(f"[green]OK[/green] kind={outcome.kind} -- {outcome.message}")
+    else:
+        console.print(f"[red]FAILED[/red] kind={outcome.kind} -- {outcome.message}")
+    return outcome.exit_code
 
 
 def _verify_wheelhouse(

@@ -26,7 +26,10 @@ from bernstein.core.skills.sanitizer import sanitize_skill_body
 from bernstein.core.skills.sources.local_dir import LocalDirSkillSource
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from bernstein.core.skills.source import SkillArtifact, SkillSource
+    from bernstein.core.skills.sources.plugin import SkillSourceResolution
 
 # Signature of ``read_reference`` / ``read_script`` on sources that support
 # on-demand file reads. Sources that can't serve bucketed files simply omit
@@ -68,6 +71,9 @@ class LoadedSkill:
         origin:      Where the skill came from (path or plugin name).
         source_name: Label of the :class:`SkillSource` that owns it.
         trigger_keywords: Optional keyword hints for matching.
+        version:     Manifest version of the pack this body came from. Kept
+            on the loaded skill (not only on the manifest) so the resolved
+            set can be recorded without re-reading the source.
     """
 
     name: str
@@ -79,6 +85,7 @@ class LoadedSkill:
     origin: str
     source_name: str
     trigger_keywords: tuple[str, ...]
+    version: str = ""
 
 
 class SkillLoader:
@@ -89,8 +96,14 @@ class SkillLoader:
     :meth:`list_all`, and :meth:`find_source_for` for downstream callers.
     """
 
-    def __init__(self, sources: list[SkillSource]) -> None:
+    def __init__(
+        self,
+        sources: list[SkillSource],
+        *,
+        source_resolutions: Sequence[SkillSourceResolution] = (),
+    ) -> None:
         self._sources: list[SkillSource] = sources.copy()
+        self._source_resolutions: tuple[SkillSourceResolution, ...] = tuple(source_resolutions)
         self._skills: dict[str, LoadedSkill] = {}
         self._source_by_skill: dict[str, SkillSource] = {}
         self._reload()
@@ -99,6 +112,16 @@ class SkillLoader:
     def sources(self) -> tuple[SkillSource, ...]:
         """Expose the sources the loader was constructed with."""
         return tuple(self._sources)
+
+    @property
+    def source_resolutions(self) -> tuple[SkillSourceResolution, ...]:
+        """What each declared skill-source entry point resolved to.
+
+        Carries the sources that failed to import as well as the ones that
+        produced skills: a pack that never loaded is otherwise
+        indistinguishable from one that was never declared.
+        """
+        return self._source_resolutions
 
     def _reload(self) -> None:
         """Re-scan every source. Separate method so tests can force a refresh."""
@@ -146,6 +169,7 @@ class SkillLoader:
             origin=artifact.origin,
             source_name=source.name,
             trigger_keywords=tuple(artifact.manifest.trigger_keywords),
+            version=artifact.manifest.version,
         )
         self._source_by_skill[name] = source
 
@@ -257,12 +281,15 @@ def default_loader_from_templates(
         LocalDirSkillSource(skills_root, source_name="local"),
     ]
 
+    resolutions: tuple[SkillSourceResolution, ...] = ()
     if include_plugins:
-        from bernstein.core.skills.sources.plugin import load_plugin_sources
+        from bernstein.core.skills.sources.plugin import scan_plugin_sources
 
-        sources.extend(load_plugin_sources())
+        scan = scan_plugin_sources()
+        sources.extend(scan.sources)
+        resolutions = scan.resolutions
 
-    return SkillLoader(sources=sources)
+    return SkillLoader(sources=sources, source_resolutions=resolutions)
 
 
 def _resolve_reader(source: SkillSource, attr: str) -> _ReaderFn:

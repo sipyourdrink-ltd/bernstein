@@ -9,6 +9,15 @@ mode attempts the same preparation but deliberately keeps failures non-fatal.
 The provider protocol is intentionally about evidence, not key management or
 policy.  Bernstein's native signer can implement it, as can an operator adapter,
 without making either implementation a dependency of the dispatch boundary.
+
+The boundary is also where a grant is *spent*, so it is where a grant's
+preconditions are re-decided against current chain state.  A grant decided at
+issue and carried for hours can be revoked or narrowed before the call it
+authorises goes out, and the issued signature stays valid throughout.  An
+optional grant gate (see :mod:`bernstein.core.security.grant_precondition`)
+therefore runs before evidence preparation and refuses with the chain position
+of the record that superseded the grant.  Its refusal is an authorisation
+verdict, not an evidence failure, so observed mode does not downgrade it.
 """
 
 from __future__ import annotations
@@ -21,6 +30,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol, cast
 
+from bernstein.core.security.grant_precondition import GrantDecision, GrantRefusedError
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.security.toolcall_identity import ToolCallIdentityError, verify_identity_envelope
 
@@ -122,6 +132,14 @@ class ToolCallEvidenceProvider(Protocol):
         ...
 
 
+class GrantRedecider(Protocol):
+    """Re-decide the grant behind one about-to-dispatch call."""
+
+    def re_decide(self, intent: ToolCallIntent) -> GrantDecision:
+        """Return the decision, raising ``GrantRefusedError`` when refused."""
+        ...
+
+
 class ToolCallInterlockError(RuntimeError):
     """Raised when enforced dispatch cannot establish durable evidence."""
 
@@ -146,6 +164,7 @@ class ToolCallAttestationInterlock:
     provider: ToolCallEvidenceProvider
     scope_id: str
     mode: AttestationMode = AttestationMode.ENFORCED
+    grant_gate: GrantRedecider | None = None
 
     async def before_dispatch(self, intent: ToolCallIntent) -> VerifiedDispatchEvidence | None:
         """Prepare evidence before a connector is invoked.
@@ -153,16 +172,28 @@ class ToolCallAttestationInterlock:
         Enforced mode fails closed.  Observed mode logs preparation failures and
         returns ``None`` so the connector remains reachable, which is precisely
         why a verifier must report that run as observed rather than complete.
+
+        A configured grant gate is consulted before any evidence is prepared,
+        because a call whose authority has lapsed must not be attested as
+        authorised.  Its refusal names the chain position that superseded the
+        grant and propagates in both modes.
         """
         try:
             if not self.scope_id.strip() or intent.scope_id != self.scope_id:
                 raise ToolCallInterlockError("tool-call intent is not bound to the configured evidence scope")
+            if self.grant_gate is not None:
+                self.grant_gate.re_decide(intent)
             evidence = await self.provider.prepare_dispatch(intent)
             if not evidence.attestation_ref.strip() or not evidence.dispatch_ref.strip():
                 raise ToolCallInterlockError("attestation provider returned an incomplete evidence handle")
             if evidence.intent_digest != intent.digest():
                 raise ToolCallInterlockError("attestation provider returned evidence for a different tool-call intent")
             return evidence
+        except GrantRefusedError:
+            # An authorisation verdict, not an evidence failure: observed mode
+            # exists so instrumentation gaps stay non-fatal, and downgrading a
+            # lapsed grant to a warning would make the gate advisory.
+            raise
         except Exception as exc:
             if self.mode is AttestationMode.OBSERVED:
                 logger.warning(
@@ -482,6 +513,7 @@ __all__ = [
     "AttestationMode",
     "AttestationModeProjection",
     "AttestationVerdict",
+    "GrantRedecider",
     "ToolCallAttestationInterlock",
     "ToolCallEvidenceProvider",
     "ToolCallIntent",

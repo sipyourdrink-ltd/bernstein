@@ -34,7 +34,10 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path  # noqa: TC003 - runtime use in dataclass field default
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from bernstein.core.security.audit_chain import AuditChainStore
 
 from bernstein.core.cost.principal_attribution import ATTRIBUTION_DIMENSIONS, PrincipalAttribution
 
@@ -232,6 +235,11 @@ class SpendLedger:
     run_id: str = "default"
     budget_usd: float = 0.0
     hard_budget_usd: float = 0.0
+    #: Optional audit chain. When attached, the first soft and the first
+    #: hard cap transition each append a ``cost.budget_halt`` event, so a
+    #: budget halt is reconstructable from the chain rather than only from
+    #: stderr. Unattached ledgers behave exactly as they did before.
+    chain: AuditChainStore | None = None
 
     # Internal state
     _spent_usd: float = field(default=0.0, init=False, repr=False)
@@ -245,6 +253,9 @@ class SpendLedger:
     _soft_warned: bool = field(default=False, init=False, repr=False)
     _soft_halted_at: float | None = field(default=None, init=False, repr=False)
     _hard_halted_at: float | None = field(default=None, init=False, repr=False)
+    # Separate from ``_lock`` so emitting a transition (logging, and the
+    # chain append) never blocks a concurrent ``record``'s totals update.
+    _halt_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # Normalise non-positive caps to 0 so "no cap" semantics are
@@ -410,26 +421,42 @@ class SpendLedger:
             logger.warning("SpendLedger: failed to append entry: %s", exc)
 
     def _emit_threshold_events(self, status: LedgerStatus) -> None:
-        """Log + stamp soft/hard threshold transitions exactly once each."""
+        """Log + stamp soft/hard threshold transitions exactly once each.
+
+        The stamps are claimed under ``_halt_lock`` so two threads that
+        cross the same cap in the same instant do not both report the
+        transition - the halt receipt appended below must be one event,
+        not one per racing writer.
+        """
         now = time.time()
-        if status.hard_halt and self._hard_halted_at is None:
-            self._hard_halted_at = now
+        with self._halt_lock:
+            first_hard = status.hard_halt and self._hard_halted_at is None
+            if first_hard:
+                self._hard_halted_at = now
+            first_soft = status.soft_halt and self._soft_halted_at is None
+            if first_soft:
+                self._soft_halted_at = now
+            first_warn = not first_soft and status.soft_warn and not self._soft_warned
+            if first_warn:
+                self._soft_warned = True
+
+        if first_hard:
             logger.warning(
                 "SpendLedger HARD CAP HIT: spent=$%.4f hard_cap=$%.4f run_id=%s",
                 status.spent_usd,
                 status.hard_budget_usd,
                 self.run_id,
             )
-        if status.soft_halt and self._soft_halted_at is None:
-            self._soft_halted_at = now
+            self._record_halt_receipt("hard", status.spent_usd, status.hard_budget_usd)
+        if first_soft:
             logger.warning(
                 "SpendLedger SOFT CAP HIT (100%%): spent=$%.4f budget=$%.4f run_id=%s",
                 status.spent_usd,
                 status.budget_usd,
                 self.run_id,
             )
-        elif status.soft_warn and not self._soft_warned:
-            self._soft_warned = True
+            self._record_halt_receipt("soft", status.spent_usd, status.budget_usd)
+        elif first_warn:
             logger.warning(
                 "SpendLedger SOFT CAP WARN (>=80%%): spent=$%.4f budget=$%.4f run_id=%s - "
                 "calls will be rerouted to cheaper models",
@@ -437,6 +464,35 @@ class SpendLedger:
                 status.budget_usd,
                 self.run_id,
             )
+
+    def _record_halt_receipt(self, band: Literal["soft", "hard"], spent_usd: float, cap_usd: float) -> None:
+        """Append the ``cost.budget_halt`` event for one cap transition.
+
+        Money crosses into the chain as integer nano-USD: the signed
+        payload must carry no float, and the sum of exact integers is
+        independent of aggregation order.
+
+        The append is best-effort in the same sense as the JSONL write -
+        the ledger is not allowed to take the orchestrator down - but the
+        failure is logged, never swallowed silently.
+        """
+        chain = self.chain
+        if chain is None:
+            return
+        from bernstein.core.cost.showback_canonical import nano_usd_from_float
+        from bernstein.core.security.audit_chain import record_budget_halt
+
+        try:
+            record_budget_halt(
+                chain=chain,
+                run_id=self.run_id,
+                band=band,
+                spent_nano_usd=nano_usd_from_float(spent_usd),
+                cap_nano_usd=nano_usd_from_float(cap_usd),
+                ledger_entries_written=self._entries_written,
+            )
+        except Exception as exc:  # intentional-broad-except: the halt receipt must never block the ledger
+            logger.warning("SpendLedger: failed to append %s cap halt receipt: %s", band, type(exc).__name__)
 
     # ------------------------------------------------------------------ load
 

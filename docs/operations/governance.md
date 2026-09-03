@@ -146,3 +146,51 @@ The `--bindings` file is a signed `RoleBindings` JSON (`RoleBindings.to_dict()`)
 decision is also mirrored into the HMAC audit chain as a `governance.decision`
 event, so an operator can confirm from the chain alone that a decision bound the
 claimed inputs to a named spine entry.
+
+Inventory topology is `bernstein govern inventory --render`.
+See [govern inventory --render](govern-inventory.md).
+
+## Reconciling the governed surface
+
+`bernstein govern reconcile --propose` answers a different question from
+`govern verify`: not "did these decisions recompute" but "is what is there
+still what was decided".
+
+```
+bernstein govern reconcile --propose --desired desired.json [--workdir w] [--full]
+```
+
+The run enumerates four entity kinds -- registered adapters, cost lanes,
+scheduled tasks, and declared capability entries -- into a snapshot stamped with
+one `observed_at`, diffs that against the desired-state document, and writes the
+result as one anchored governance decision record. Nothing else moves: no entity
+is added, removed, or mutated, so the diff stays a reviewable artefact an
+operator reads before anything executes.
+
+Stable ids, one scheme per kind: an adapter is its registry key, a lane its lane
+name, a scheduled task its schedule id, and a capability entry `<profile>/<axis>`
+-- the profile that declares the axis, then the axis.
+
+The desired-state document declares entities and per-kind defaults:
+
+```json
+{
+  "v": 1,
+  "defaults": {"scheduled_task": {"prune": false, "self_heal": true}},
+  "entities": [
+    {"kind": "lane", "id": "batch", "declared_value": "0.5", "self_heal": true}
+  ]
+}
+```
+
+Each entity classifies as `unchanged`, `new`, `changed`, `declared_but_absent`,
+or `present_but_undeclared`. `prune` and `self_heal` then decide what is
+proposed: an undesired entity under `prune: false` becomes a `hold` finding, never
+a queued removal, and a drifted entity under `self_heal: false` is likewise held
+rather than repaired.
+
+`new` is relative to the previous run's own record, so a second run over an
+unchanged environment reports nothing. By default only drifted entities print;
+`--full` prints one line per entity.
+
+Exit codes: `0` no drift, `1` unreadable desired state, `2` drift.

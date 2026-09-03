@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### la capa de gobernanza open source para agentes de IA
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:739f0a7ad1af" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:9c87d303c594" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -38,7 +38,7 @@
 
 > **Estado: beta.** Mantenido por una sola persona, en desarrollo activo. El número de versión cuenta lanzamientos, no madurez; las versiones menores pueden cambiar interfaces. Fija la versión para cualquier cosa de la que dependas; las regresiones se corrigen rápido, [notifícalas](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein es la capa de gobernanza open source para agentes de IA. Un planificador determinista - sin modelo en el bucle de coordinación - ejecuta agentes en paralelo, filtra lo que producen con gates y registra cada paso, de modo que una ejecución puede verificarse a posteriori, offline, solo con los artefactos. Los agentes CLI de código funcionan de serie (Claude Code, Codex, Gemini CLI y 40+ más), y la misma capa gobierna cualquier carga agéntica: el entregable puede ser un diff, un informe de investigación, un dataset o un paquete de evidencias de auditoría. Perfil de instalación air-gap incluido. Apache-2.0.
+Bernstein es la capa de gobernanza open source para agentes de IA. Funciona con policy as code: tú escribes la política - quién puede hacer qué, qué necesita aprobación, qué debe quedar registrado - y Bernstein la aplica y produce el registro verificable. Un planificador determinista - sin modelo en el bucle de coordinación - ejecuta agentes en paralelo, filtra lo que producen con gates y registra cada paso, de modo que una ejecución puede verificarse a posteriori, offline, solo con los artefactos. Los agentes CLI de código funcionan de serie (Claude Code, Codex, Gemini CLI y 40+ más), y la misma capa gobierna cualquier carga agéntica: el entregable puede ser un diff, un informe de investigación, un dataset o un paquete de evidencias de auditoría. Perfil de instalación air-gap incluido. Apache-2.0.
 
 ### de un vistazo
 <!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->

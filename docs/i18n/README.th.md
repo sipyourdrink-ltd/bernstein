@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### เลเยอร์ governance โอเพนซอร์สสำหรับ AI agent
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:739f0a7ad1af" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:9c87d303c594" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -38,7 +38,7 @@
 
 > **สถานะ: เบต้า** ดูแลรักษาโดยผู้พัฒนาคนเดียว และอยู่ระหว่างการพัฒนาอย่างต่อเนื่อง หมายเลขเวอร์ชันนับตามรอบการเปิดตัว ไม่ใช่ระดับความสมบูรณ์ — เวอร์ชันย่อย (minor) อาจมีการเปลี่ยนแปลงอินเทอร์เฟซ โปรดตรึงเวอร์ชันสำหรับงานที่ต้องพึ่งพาอย่างยิ่งยวด โดยข้อผิดพลาดที่เกิดขึ้นซ้ำจะได้รับการแก้ไขอย่างรวดเร็ว [แจ้งปัญหาได้ที่นี่](https://github.com/sipyourdrink-ltd/bernstein/issues)
 
-Bernstein คือเลเยอร์ governance โอเพนซอร์สสำหรับ AI agent ตัวจัดตารางแบบดีเทอร์มินิสติก - ไม่มีโมเดลในลูปประสานงาน - รัน agent แบบขนาน คัดกรองผลงานผ่านเกต และบันทึกทุกขั้นตอน ทำให้ตรวจสอบการรันย้อนหลังได้แบบออฟไลน์จากอาร์ติแฟกต์ล้วน ๆ CLI coding agent ใช้ได้ทันที (Claude Code, Codex, Gemini CLI และอีก 40+) และเลเยอร์เดียวกันนี้กำกับเวิร์กโหลด agent ทุกแบบ: ผลส่งมอบจะเป็น diff รายงานวิจัย ชุดข้อมูล หรือแพ็กหลักฐานการตรวจสอบก็ได้ มาพร้อมโปรไฟล์ติดตั้งแบบ air-gap Apache-2.0
+Bernstein คือเลเยอร์ governance โอเพนซอร์สสำหรับ AI agent ทำงานแบบ policy as code คุณเขียนนโยบายเอง - ใครทำอะไรได้บ้าง อะไรต้องขออนุมัติ อะไรต้องถูกบันทึก - แล้ว Bernstein จะบังคับใช้และสร้างบันทึกที่ตรวจสอบย้อนกลับได้ ตัวจัดตารางแบบดีเทอร์มินิสติก - ไม่มีโมเดลในลูปประสานงาน - รัน agent แบบขนาน คัดกรองผลงานผ่านเกต และบันทึกทุกขั้นตอน ทำให้ตรวจสอบการรันย้อนหลังได้แบบออฟไลน์จากอาร์ติแฟกต์ล้วน ๆ CLI coding agent ใช้ได้ทันที (Claude Code, Codex, Gemini CLI และอีก 40+) และเลเยอร์เดียวกันนี้กำกับเวิร์กโหลด agent ทุกแบบ: ผลส่งมอบจะเป็น diff รายงานวิจัย ชุดข้อมูล หรือแพ็กหลักฐานการตรวจสอบก็ได้ มาพร้อมโปรไฟล์ติดตั้งแบบ air-gap Apache-2.0
 
 ### สรุปภาพรวม
 <!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->

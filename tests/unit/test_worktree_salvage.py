@@ -268,3 +268,85 @@ def test_worktree_manager_cleanup_with_salvage_disabled(
     ).stdout.strip()
     assert branches == "", f"expected no salvage branch when disabled, got {branches!r}"
     assert mgr.last_salvage is None
+
+
+def test_salvage_refuses_a_plain_directory_that_resolves_to_the_operator_branch(
+    tmp_path: Path,
+) -> None:
+    """A stale ``.sdd/worktrees/<id>`` plain directory must not be salvaged.
+
+    ``git`` resolves a cwd that is no longer a registered worktree by walking
+    up to the enclosing repository, so every command in ``_try_salvage_branch``
+    would run against the operator checkout: ``add -A`` stages ``.sdd``,
+    ``commit`` lands on the integration branch and ``branch -M`` renames that
+    branch to ``salvage/<id>``. The branch guard refuses the whole branch path;
+    the filesystem fallback still captures the work.
+    """
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    _run(["git", "init", "-b", "main"], repo_root)
+    _run(["git", "config", "user.email", "test@example.com"], repo_root)
+    _run(["git", "config", "user.name", "Test User"], repo_root)
+    _run(["git", "config", "commit.gpgsign", "false"], repo_root)
+    (repo_root / "README.md").write_text("seed\n", encoding="utf-8")
+    _run(["git", "add", "README.md"], repo_root)
+    _run(["git", "commit", "-m", "seed"], repo_root)
+
+    # The operator's integration branch, the one a run merges into.
+    _run(["git", "checkout", "-b", "build/x"], repo_root)
+    head_before = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout.strip()
+
+    # A stale directory where a worktree used to be - never registered with git.
+    session_id = "stale-session"
+    stale_dir = repo_root / ".sdd" / "worktrees" / session_id
+    stale_dir.mkdir(parents=True)
+    (stale_dir / "work.py").write_text("agent output\n", encoding="utf-8")
+
+    result = salvage_worktree(repo_root, stale_dir, session_id, push=False)
+
+    # No branch was created, and the reason is recorded.
+    assert result.branch is None
+    assert any("non-agent branch" in e for e in result.errors), result.errors
+
+    # The operator's branch is untouched: same name, same commit, no rename.
+    head_after = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout.strip()
+    assert head_after == head_before, "salvage committed onto the operator's branch"
+    current_branch = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout.strip()
+    assert current_branch == "build/x", "salvage renamed the operator's branch"
+    branches = subprocess.run(
+        ["git", "branch", "--list", f"salvage/{session_id}"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout.strip()
+    assert branches == "", f"unexpected salvage branch: {branches!r}"
+
+    # The work is still captured by the filesystem fallback.
+    assert result.salvaged is True
+    assert result.patch_path is not None
+    assert (result.patch_path / "diff.patch").is_file()
+    assert (result.patch_path / "untracked.json").is_file()
+    assert (result.patch_path / "README.txt").is_file()

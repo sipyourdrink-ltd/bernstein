@@ -1,1 +1,0 @@
-`bernstein runs report` rows carry the run journal's triage facts — lifecycle state, attempt count, end instant, elapsed, executing host, parent run id and per-step timings — the work ledger validates `state`/`error_kind` against closed enumerations at append, and `list_non_terminal_runs` separates a run still in flight from one that died without a wrap-up (#5127).

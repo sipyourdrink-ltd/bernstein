@@ -11,6 +11,9 @@ Environment overrides (take priority over all file-based config layers):
   BERNSTEIN_MAX_AGENTS  Maximum concurrent agents (default 6).
   BERNSTEIN_EFFORT      Default effort level (max | medium | low).
   BERNSTEIN_MODEL       Default model override (empty = adapter default).
+  BERNSTEIN_HOST_ISOLATION_TIER      Isolation the host already provides
+                                     (none | process | container | vm).
+  BERNSTEIN_HOST_ISOLATION_EVIDENCE  Operator's description of that isolation.
 """
 
 from __future__ import annotations
@@ -35,6 +38,14 @@ _DEFAULTS: dict[str, Any] = {
     "max_agents": 6,
     "effort": "max",
     "model": None,
+    # Isolation the runner already applies to this process, declared by the
+    # operator (#5341). Adapters that ship their own vendor sandbox read it to
+    # decide whether that sandbox is redundant. The vocabulary is the
+    # ``SandboxTier`` value set; parsing and validation live in
+    # ``bernstein.core.config.host_isolation`` so this table stays a plain
+    # key -> default map like every other row.
+    "host_isolation_tier": "none",
+    "host_isolation_evidence": "",
 }
 
 _DEFAULT_CONFIG_YAML = """\
@@ -268,6 +279,8 @@ _ENV_OVERRIDE_MAP: dict[str, str] = {
     "max_agents": "BERNSTEIN_MAX_AGENTS",
     "effort": "BERNSTEIN_EFFORT",
     "model": "BERNSTEIN_MODEL",
+    "host_isolation_tier": "BERNSTEIN_HOST_ISOLATION_TIER",
+    "host_isolation_evidence": "BERNSTEIN_HOST_ISOLATION_EVIDENCE",
 }
 
 

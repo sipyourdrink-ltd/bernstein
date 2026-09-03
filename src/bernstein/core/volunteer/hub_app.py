@@ -20,6 +20,7 @@ grant than the action needs.  This module therefore defines a parallel set of
 scopes:
 
 * ``SCOPE_VOLUNTEER_ENROLL`` — operator approval of a new worker.
+* ``SCOPE_VOLUNTEER_PUBLISH`` — putting a task on the hub's own board.
 * ``SCOPE_VOLUNTEER_CLAIM`` — claiming a task.
 * ``SCOPE_VOLUNTEER_HEARTBEAT`` — heartbeating a held task.
 * ``SCOPE_VOLUNTEER_SUBMIT`` — submitting a result.
@@ -31,6 +32,10 @@ Endpoints
 * ``POST /volunteer/enroll`` — body carries an Ed25519 public key; returns a
   worker id.  The enrollment record starts ``pending`` and a separate,
   operator-only endpoint or CLI flips it to ``approved``.
+* ``POST /volunteer/tasks`` — publish a hub-native task, one that originates
+  here rather than mirroring a git-forge issue.  Operator-scoped.
+* ``GET /volunteer/tasks`` — the hub's own board, readable by a caller entitled
+  to claim from it.
 * ``POST /volunteer/tasks/{task_id}/claim``
 * ``POST /volunteer/tasks/{task_id}/heartbeat``
 * ``POST /volunteer/tasks/{task_id}/submit``
@@ -67,11 +72,17 @@ from bernstein.core.volunteer.lease_store import (
     LeaseRefusalReason,
     LeaseStore,
 )
+from bernstein.core.volunteer.task_board import (
+    TaskBoard,
+    TaskPublishError,
+    is_hub_native,
+)
 
 logger = logging.getLogger(__name__)
 
 # Scope constants for volunteer JWT tokens.
 SCOPE_VOLUNTEER_ENROLL = "volunteer:enroll"
+SCOPE_VOLUNTEER_PUBLISH = "volunteer:publish"
 SCOPE_VOLUNTEER_CLAIM = "volunteer:claim"
 SCOPE_VOLUNTEER_HEARTBEAT = "volunteer:heartbeat"
 SCOPE_VOLUNTEER_SUBMIT = "volunteer:submit"
@@ -181,6 +192,7 @@ def build_hub_app(
     lease_store: LeaseStore,
     config: dict | None = None,
     authenticator: VolunteerAuthenticator | None = None,
+    task_board: TaskBoard | None = None,
 ) -> FastAPI:
     """Build the FastAPI application backing the volunteer hub.
 
@@ -192,6 +204,10 @@ def build_hub_app(
             bearer-token verification. When omitted, all auth-gated endpoints
             are open (no-op auth). Auth is intentionally deferred; wire this
             via the CLI once a token-issuance surface exists.
+        task_board: Optional :class:`TaskBoard` holding the hub's own offers.
+            When omitted the hub mirrors a git forge only: the board endpoints
+            report 404 and nothing in the reserved hub-native id namespace can
+            be leased, because nothing could have issued such an id.
 
     Returns:
         Configured :class:`FastAPI` app.
@@ -210,8 +226,14 @@ def build_hub_app(
     )
 
     app.state.lease_store = lease_store
+    app.state.task_board = task_board
     if authenticator is not None:
         app.state.volunteer_authenticator = authenticator
+
+    def _require_board() -> TaskBoard:
+        if task_board is None:
+            raise HTTPException(status_code=404, detail="this hub serves no task board")
+        return task_board
 
     # Health check
     @app.get("/healthz")
@@ -261,6 +283,58 @@ def build_hub_app(
             raise HTTPException(status_code=404, detail=f"Worker {worker_id} not found")
         return Response(status_code=204)
 
+    # Hub-native task board
+    @app.post("/volunteer/tasks", status_code=201)
+    async def publish_task(request: Request) -> JSONResponse:
+        """Publish a task that originates at this hub.
+
+        Requires the volunteer:publish scope.  This is the path that works with
+        a git forge entirely absent: the task has no issue behind it, and its id
+        is the digest of the content published here.
+        """
+        _verify_volunteer_auth(request, SCOPE_VOLUNTEER_PUBLISH)
+        board = _require_board()
+        try:
+            body = await request.json()
+            repo_url = body.get("repo_url")
+            title = body.get("title")
+            task_body = body.get("body", "")
+            task_size = str(body.get("task_size", "s"))
+            ref = body.get("ref")
+        except Exception as exc:
+            if isinstance(exc, HTTPException):
+                raise
+            raise HTTPException(status_code=422, detail=f"Invalid request body: {exc}") from exc
+
+        if not isinstance(repo_url, str) or not isinstance(title, str):
+            raise HTTPException(status_code=422, detail="repo_url and title are required")
+        if ref is not None and not isinstance(ref, str):
+            raise HTTPException(status_code=422, detail="ref must be a string")
+
+        try:
+            task = await board.publish(
+                repo_url=repo_url,
+                title=title,
+                body=str(task_body),
+                task_size=task_size,
+                ref=ref,
+            )
+        except TaskPublishError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return JSONResponse(task.to_dict(), status_code=201)
+
+    @app.get("/volunteer/tasks")
+    async def list_tasks(request: Request) -> JSONResponse:
+        """List the hub's own offers.
+
+        Requires the volunteer:claim scope.  A hub-native task has no public
+        copy on a forge, so the board is readable only by a caller already
+        entitled to claim from it.
+        """
+        _verify_volunteer_auth(request, SCOPE_VOLUNTEER_CLAIM)
+        board = _require_board()
+        return JSONResponse({"tasks": [task.to_dict() for task in board.list_open()]})
+
     # Claim endpoint
     @app.post("/volunteer/tasks/{task_id}/claim", status_code=201)
     async def claim_task(task_id: str, request: Request) -> JSONResponse:
@@ -288,6 +362,19 @@ def build_hub_app(
 
         if not worker_id:
             raise HTTPException(status_code=422, detail="worker_id is required")
+        if is_hub_native(task_id):
+            # The prefix is reserved for tasks this hub issued.  An id under it
+            # that the board does not carry names nothing, and leasing it would
+            # hand a donor a task whose content nobody can produce.
+            hub_task = task_board.get(task_id) if task_board is not None else None
+            if hub_task is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"no task {task_id} on this hub's board",
+                )
+            # The board's size is authoritative: donor admission must not be
+            # decided by the size the claimant chose to declare.
+            task_size = hub_task.task_size
         if token_estimate < 0:
             raise HTTPException(status_code=422, detail="token_estimate must be non-negative")
         if wall_clock_hours is not None and (wall_clock_hours < 0 or not math.isfinite(wall_clock_hours)):

@@ -485,6 +485,46 @@ def _iter_capability_notices(path: Path) -> Iterator[dict[str, Any]]:
             yield parsed
 
 
+# ---------------------------------------------------------------------------
+# Prompt-append fallback for system_addendum (issue #5325)
+# ---------------------------------------------------------------------------
+#
+# Adapters with no separate system-prompt channel graft ``system_addendum``
+# onto the user prompt instead (the ``PROMPT_APPEND`` channel declared in
+# :mod:`bernstein.adapters._contract`). The heading is fixed and shared across
+# every adapter that uses this fallback, so the boundary between task brief
+# and addendum stays recognisable regardless of which CLI received it, and a
+# prompt truncated by an upstream length limit loses the addendum -- appended
+# last -- rather than the brief.
+
+#: Heading that marks the start of the grafted block. Kept as one constant so
+#: every prompt-append adapter emits an identical, recognisable boundary.
+SYSTEM_ADDENDUM_HEADING: str = "## System Addendum"
+
+
+def append_system_addendum(prompt: str, system_addendum: str) -> str:
+    """Graft ``system_addendum`` onto ``prompt`` for adapters with no system-prompt channel.
+
+    Appended after the task brief, separated by a blank line and
+    :data:`SYSTEM_ADDENDUM_HEADING`, so a truncated prompt loses the addendum
+    last rather than losing the brief it was appended to.
+
+    Args:
+        prompt: The task prompt, fully assembled (including any content an
+            adapter already prepends, e.g. inlined multimodal attachments).
+        system_addendum: Protocol-critical instructions (completion call,
+            heartbeat, signal-check). Empty string is a no-op.
+
+    Returns:
+        ``prompt`` unchanged when ``system_addendum`` is empty; otherwise
+        ``prompt`` followed by a blank line, the fixed heading, and the
+        addendum text.
+    """
+    if not system_addendum:
+        return prompt
+    return f"{prompt}\n\n{SYSTEM_ADDENDUM_HEADING}\n{system_addendum}"
+
+
 class CLIAdapter(ABC):
     """Interface for launching and monitoring CLI coding agents.
 
