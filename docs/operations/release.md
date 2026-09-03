@@ -32,7 +32,6 @@ Only open, version-numbered milestones are listed below -- a shipped version dro
 
 | Milestone | Target Date | Status |
 |---|---|---|
-| `v3.19.0` | 2026-09-05 | Planned |
 | `v3.20.0` | 2026-09-19 | Planned |
 | `v4.0.0` | 2026-12-19 | Planned |
 

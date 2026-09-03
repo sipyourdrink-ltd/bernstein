@@ -16,12 +16,14 @@ from typing import TYPE_CHECKING
 
 from bernstein.core.memory.compaction.policy import compact, select_tier
 from bernstein.core.memory.compaction.tiers import (
+    COMPACTION_POLICY_VERSION,
     TIER_COST_WEIGHT,
     BudgetPressure,
     Tier,
     TierContext,
     TierResult,
     TierResultDict,
+    derive_correlation_id,
     estimate_tokens,
 )
 from bernstein.core.memory.compaction.verification import (
@@ -42,6 +44,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ABSENT_HASH",
+    "COMPACTION_POLICY_VERSION",
     "TIER_COST_WEIGHT",
     "ArtifactDivergence",
     "BudgetPressure",
@@ -53,6 +56,7 @@ __all__ = [
     "compact",
     "compute_referenced_content_hashes",
     "compute_source_content_hash",
+    "derive_correlation_id",
     "estimate_tokens",
     "record_tier_event",
     "run_legacy_compaction",

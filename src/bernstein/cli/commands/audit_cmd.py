@@ -13,6 +13,7 @@ Commands:
   bernstein audit seal --anchor-git  Also create a git tag.
   bernstein audit ack-tear           Acknowledge recorded tear evidence.
   bernstein audit anchor             Anchor a checkpoint with an RFC 3161 token.
+  bernstein audit witness            Co-sign checkpoints from a second party.
   bernstein audit verify             Verify HMAC chain, Merkle tree, checkpoint.
   bernstein audit verify --hmac-only Verify HMAC chain only.
   bernstein audit verify --merkle-only  Verify Merkle tree only.
@@ -37,7 +38,7 @@ from __future__ import annotations
 
 import contextlib
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import click
 from rich.panel import Panel
@@ -51,6 +52,8 @@ if TYPE_CHECKING:
     from cryptography.x509 import Certificate
 
     from bernstein.core.persistence.checkpoint_anchor import CheckpointAnchor
+    from bernstein.core.persistence.checkpoint_witness import WitnessClaim
+    from bernstein.core.persistence.lineage_signer import LineageVerifier
 
 AUDIT_DIR = Path(".sdd/audit")
 MERKLE_DIR = AUDIT_DIR / "merkle"
@@ -270,12 +273,36 @@ def seal_cmd(anchor_git: bool, allow_broken_chain: bool) -> None:
         "the issuing TSA is not authenticated."
     ),
 )
+@click.option(
+    "--witness-key",
+    "witness_key",
+    default=None,
+    type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+    help=(
+        "Path to the witness's Ed25519 public key (PEM or raw 32 bytes). "
+        "Authenticates recorded checkpoint co-signatures. Without it a "
+        "co-signature is reported as present but unauthenticated and drives "
+        "no verdict."
+    ),
+)
+@click.option(
+    "--witness-state",
+    "witness_state",
+    default=None,
+    type=click.Path(file_okay=False, exists=True, resolve_path=True),
+    help=(
+        "Path to the witness's own state directory. Reading it directly "
+        "survives a rollback that deleted the local co-signature file."
+    ),
+)
 def verify_cmd(
     merkle_only: bool,
     hmac_only: bool,
     receipt_path: str | None,
     payload_path: str | None,
     rfc3161_trust_bundle: str | None,
+    witness_key: str | None,
+    witness_state: str | None,
 ) -> None:
     """Verify audit log integrity (HMAC chain per RFC 2104 + Merkle tree).
 
@@ -294,6 +321,9 @@ def verify_cmd(
                                           Also authenticate the TSA that
                                           signed each recorded checkpoint
                                           anchor
+      bernstein audit verify --witness-key w.pub
+                                          Also check the local history against
+                                          the checkpoints a witness co-signed
 
     Exits non-zero on any chain break, missing record, or HMAC mismatch.
     Run from cron and fail the run on non-zero exit (cite: docs/security/audit-log.md).
@@ -339,6 +369,15 @@ def verify_cmd(
     # for the same reason the checkpoint pillar does.
     if not _verify_anchors(rfc3161_trust_bundle):
         failed_pillars.append("External Anchors")
+
+    # Witness co-signatures are the other half of that pillar: an anchor says
+    # a history of a given size existed at a point in time, a witness says it
+    # already accepted a tree this one has to extend. With one honest witness,
+    # rewinding the chain and the checkpoints together no longer verifies
+    # clean. Runs regardless of --hmac-only / --merkle-only for the same
+    # reason the checkpoint and anchor pillars do.
+    if not _verify_witness(witness_key, witness_state):
+        failed_pillars.append("Witness Co-signatures")
 
     # Evidence bundles are a third integrity pillar: a tampered evidence file
     # must fail verify exactly like a tampered chain entry (#2362). This runs
@@ -868,11 +907,18 @@ def _verify_grant_chains() -> bool:
         return True
 
     failures: list[tuple[str, list[str]]] = []
+    sweep_findings: list[str] = []
     for path in run_files:
         run_id = path.stem
         result = grants.verify_grant_chain(root=AUDIT_DIR, run_id=run_id, key=key)
         if not result.valid:
             failures.append((run_id, result.errors))
+        else:
+            from bernstein.core.identity.grant_sweep import sweep_grants
+
+            finding = sweep_grants(result)
+            if finding is not None:
+                sweep_findings.append(f"run {run_id}: {finding['summary']}")
 
     console.print()
     if not failures:
@@ -890,6 +936,10 @@ def _verify_grant_chains() -> bool:
     for run_id, errors in failures:
         for err in errors:
             console.print(f"  [red]![/red] run {run_id}: {err}")
+    if sweep_findings:
+        console.print()
+        for finding_summary in sweep_findings:
+            console.print(f"  [red]![/red] {finding_summary}")
     return False
 
 
@@ -997,6 +1047,7 @@ def _verify_checkpoints() -> bool:
         CheckpointFileError,
         authorize_divergence,
         check_extension,
+        check_pointer,
         find_divergence_acks,
         load_checkpoints,
     )
@@ -1021,6 +1072,16 @@ def _verify_checkpoints() -> bool:
         console.print(Panel("[bold red]Checkpoint Verification FAILED[/bold red]", border_style="red", expand=False))
         for err in exc.errors:
             console.print(f"  [red]![/red] {err}")
+        return False
+
+    # The ledger is append-only, so truncating it back over a pin leaves a
+    # shorter file that still validates and an older pin the history still
+    # extends. The atomically-replaced pointer names the checkpoint that was
+    # actually published, which is what makes that regression visible.
+    pointer_problem = check_pointer(AUDIT_DIR, state, key=key)
+    if pointer_problem is not None:
+        console.print(Panel("[bold red]Checkpoint Verification FAILED[/bold red]", border_style="red", expand=False))
+        console.print(f"  [red]![/red] {pointer_problem}")
         return False
 
     last = state.last
@@ -1406,6 +1467,371 @@ def _decode_tsa_response(raw: bytes) -> bytes:
     except (UnicodeDecodeError, binascii.Error, ValueError) as exc:
         msg = f"token file is neither DER nor base64: {exc}"
         raise click.ClickException(msg) from None
+
+
+@audit_group.group("witness")
+def witness_group() -> None:
+    """Co-sign checkpoints from a second party that remembers (#3161).
+
+    A checkpoint proves the audit history did not shrink relative to material
+    on this disk, and an actor who can rewrite the chain can rewrite that
+    material too. A witness is the party that cannot be rewritten from here:
+    another host, a separate unix user, or an operator laptop holding
+    per-origin monotonic state and an Ed25519 key. It co-signs a checkpoint
+    only when the tree is a consistent extension of the last one it accepted.
+
+    \b
+      bernstein audit witness export --out cp.json
+                                          On the log host: write the newest
+                                          checkpoint payload for transport
+      bernstein audit witness cosign --checkpoint cp.json --key w.key \\
+          --state-dir ~/.bernstein-witness --out cosig.json
+                                          On the witness: check and co-sign
+      bernstein audit witness record --cosignature cosig.json \\
+          --witness-key w.pub
+                                          On the log host: store the signature
+      bernstein audit verify --witness-key w.pub
+                                          Fail when the local history
+                                          contradicts what the witness signed
+
+    See docs/security/audit-log.md.
+    """
+
+
+def _newest_checkpoint() -> dict[str, object]:
+    """Return the newest local checkpoint payload, or raise for the operator."""
+    from bernstein.core.persistence.chain_checkpoint import (
+        CheckpointFileError,
+        load_checkpoints,
+    )
+    from bernstein.core.security.audit import AuditKeyMissingError, load_audit_key
+
+    if not AUDIT_DIR.is_dir():
+        raise click.ClickException(f"audit directory not found: {AUDIT_DIR}")
+    try:
+        key = load_audit_key()
+    except AuditKeyMissingError as exc:
+        raise click.ClickException(f"{exc} (checkpoints are signed with the audit key)") from None
+    try:
+        checkpoint = load_checkpoints(AUDIT_DIR, key).last
+    except CheckpointFileError as exc:
+        raise click.ClickException(str(exc)) from None
+    if checkpoint is None:
+        raise click.ClickException("no checkpoint recorded yet; run 'bernstein audit seal' first")
+    return checkpoint
+
+
+@witness_group.command("export")
+@click.option(
+    "--out",
+    "out_path",
+    default=None,
+    type=click.Path(dir_okay=False, resolve_path=True),
+    help="Write the checkpoint payload here instead of printing it.",
+)
+def witness_export_cmd(out_path: str | None) -> None:
+    """Write the newest checkpoint payload for a witness to check.
+
+    The payload carries the chain origin, the record count, the Merkle root
+    and the per-segment lengths and hashes - everything a witness needs, and
+    nothing that would let it read the log. It carries no secret: the audit
+    HMAC key never leaves this host.
+    """
+    import json as _json
+
+    checkpoint = _newest_checkpoint()
+    body = _json.dumps(checkpoint, sort_keys=True, separators=(",", ":"))
+    if out_path is None:
+        console.print(body)
+        return
+    Path(out_path).write_text(body + "\n", encoding="utf-8")
+    console.print(f"[green]Wrote[/green] checkpoint payload to {out_path}")
+    console.print(f"[dim]Pinned entries:[/dim] {checkpoint.get('entry_count', '-')}")
+
+
+@witness_group.command("cosign")
+@click.option(
+    "--checkpoint",
+    "checkpoint_path",
+    required=True,
+    type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+    help="Checkpoint payload from 'bernstein audit witness export'.",
+)
+@click.option(
+    "--key",
+    "key_path",
+    required=True,
+    type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+    help="The witness's Ed25519 private key (PEM PKCS#8 or raw 32 bytes).",
+)
+@click.option(
+    "--state-dir",
+    "state_dir",
+    required=True,
+    type=click.Path(file_okay=False, resolve_path=True),
+    help="The witness's own state directory: one pin per chain origin.",
+)
+@click.option("--witness-id", "witness_id", default="", help="Label recorded with the signature.")
+@click.option(
+    "--out",
+    "out_path",
+    default=None,
+    type=click.Path(dir_okay=False, resolve_path=True),
+    help="Write the co-signature here instead of printing it.",
+)
+def witness_cosign_cmd(
+    checkpoint_path: str,
+    key_path: str,
+    state_dir: str,
+    witness_id: str,
+    out_path: str | None,
+) -> None:
+    """Check a submitted checkpoint against witness state and co-sign it.
+
+    Exits non-zero, naming the cause, when the submission is not a consistent
+    extension of what this witness last accepted: a smaller tree, a second
+    tree at the size it already pinned, or a pinned segment that shrank or
+    changed under a length it was pinned at.
+
+    A witness holding no state for this chain co-signs and says so: a first
+    acceptance proves nothing about history before it, and neither does one
+    taken after the state was lost.
+    """
+    import json as _json
+
+    from bernstein.core.persistence.checkpoint_witness import (
+        WitnessRefusal,
+        cosign_checkpoint,
+    )
+    from bernstein.core.persistence.lineage_signer import (
+        Ed25519FileKeySigner,
+        LineageSignerError,
+    )
+
+    try:
+        checkpoint = _json.loads(Path(checkpoint_path).read_bytes())
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(f"cannot read checkpoint payload: {exc}") from None
+    if not isinstance(checkpoint, dict):
+        raise click.ClickException("checkpoint payload is not a JSON object")
+    checkpoint = cast("dict[str, Any]", checkpoint)
+
+    try:
+        signer = Ed25519FileKeySigner.from_path(Path(key_path))
+    except LineageSignerError as exc:
+        raise click.ClickException(str(exc)) from None
+
+    try:
+        result = cosign_checkpoint(Path(state_dir), checkpoint, signer, witness_id=witness_id)
+    except WitnessRefusal as exc:
+        console.print(Panel("[bold red]Witness refused to co-sign[/bold red]", border_style="red", expand=False))
+        console.print(f"  [red]![/red] cause: {exc.reason}")
+        console.print(f"  [red]![/red] {exc.detail}")
+        raise SystemExit(1) from None
+
+    if result.bootstrapped:
+        console.print(
+            "[yellow]This witness held no state for this chain[/yellow] "
+            "[dim](first acceptance, or the state was lost). The co-signature says what "
+            "the tree looks like from now on; it says nothing about history before it.[/dim]"
+        )
+    body = _json.dumps(result.cosignature.to_document(), sort_keys=True, separators=(",", ":"))
+    if out_path is None:
+        console.print(body)
+    else:
+        Path(out_path).write_text(body + "\n", encoding="utf-8")
+        console.print(f"[green]Co-signed[/green] {result.cosignature.describe()}")
+        console.print(f"[dim]Wrote {out_path}[/dim]")
+
+
+@witness_group.command("record")
+@click.option(
+    "--cosignature",
+    "cosignature_path",
+    required=True,
+    type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+    help="Co-signature document from 'bernstein audit witness cosign'.",
+)
+@click.option(
+    "--witness-key",
+    "witness_key_path",
+    required=True,
+    type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+    help="The witness's Ed25519 public key (PEM or raw 32 bytes), pinned by the operator.",
+)
+def witness_record_cmd(cosignature_path: str, witness_key_path: str) -> None:
+    """Store a witness co-signature beside the checkpoints.
+
+    The signature is checked under the public key you pin here before anything
+    is written: a record filed under a key you do not trust is a claim with no
+    witness behind it.
+    """
+    import json as _json
+
+    from bernstein.core.persistence.checkpoint_witness import (
+        cosignatures_path,
+        parse_cosignature,
+        record_cosignature,
+    )
+
+    if not AUDIT_DIR.is_dir():
+        raise click.ClickException(f"audit directory not found: {AUDIT_DIR}")
+    try:
+        doc = _json.loads(Path(cosignature_path).read_bytes())
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(f"cannot read co-signature: {exc}") from None
+    if not isinstance(doc, dict):
+        raise click.ClickException("co-signature is not a JSON object")
+    try:
+        cosignature = parse_cosignature(cast("dict[str, Any]", doc))
+    except ValueError as exc:
+        raise click.ClickException(f"malformed co-signature: {exc}") from None
+
+    verifier = _load_witness_verifier(witness_key_path)
+    try:
+        record_cosignature(AUDIT_DIR, cosignature, verifier)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from None
+
+    console.print(f"[green]Recorded[/green] {cosignature.describe()}")
+    console.print(f"[dim]Stored in {cosignatures_path(AUDIT_DIR)}[/dim]")
+    console.print(
+        "[dim]Keep the witness state off this machine: a co-signature deleted with "
+        "the history it contradicts protects nothing, and the witness's own pin is "
+        "what 'bernstein audit verify --witness-state' reads.[/dim]"
+    )
+
+
+def _load_witness_verifier(witness_key_path: str) -> LineageVerifier:
+    """Load the operator-pinned witness public key, or fail with their message."""
+    from bernstein.core.persistence.lineage_signer import (
+        Ed25519PublicKeyVerifier,
+        LineageSignerError,
+    )
+
+    try:
+        return Ed25519PublicKeyVerifier.from_path(Path(witness_key_path))
+    except LineageSignerError as exc:
+        raise click.ClickException(f"witness public key: {exc}") from None
+
+
+def _witness_claims(witness_key: str | None, witness_state: str | None) -> tuple[list[WitnessClaim], list[str], bool]:
+    """Return ``(claims, errors, unauthenticated)`` for the witness pillar.
+
+    Co-signatures only become claims once they verify under the operator's
+    pinned witness key. Without that key they are reported as present but
+    unauthenticated and drive no verdict: a signature that vouches for itself
+    vouches for nothing. The witness's own state directory, when the operator
+    can read it, is folded in under the same origins.
+    """
+    from bernstein.core.persistence.checkpoint_witness import (
+        CosignatureFileError,
+        load_cosignatures,
+        verify_cosignature,
+        witness_claims_from_state,
+    )
+
+    try:
+        cosignatures = load_cosignatures(AUDIT_DIR)
+    except CosignatureFileError as exc:
+        return [], list(exc.errors), False
+    if witness_key is None:
+        return [], [], bool(cosignatures)
+
+    verifier = _load_witness_verifier(witness_key)
+    claims: list[WitnessClaim] = []
+    errors: list[str] = []
+    for cosignature in cosignatures:
+        problems = verify_cosignature(cosignature, verifier)
+        if problems:
+            errors.extend(f"{cosignature.describe()}: {problem}" for problem in problems)
+            continue
+        claims.append(cosignature.claim())
+    if errors:
+        return [], errors, False
+
+    if witness_state is not None:
+        from bernstein.core.persistence.chain_checkpoint import compute_origin
+
+        origins = {claim.origin for claim in claims}
+        local_origin = compute_origin(AUDIT_DIR)
+        if local_origin is not None:
+            origins.add(local_origin)
+        claims.extend(witness_claims_from_state(Path(witness_state), sorted(origins)))
+    return claims, [], False
+
+
+def _verify_witness(witness_key: str | None = None, witness_state: str | None = None) -> bool:
+    """Verify recorded witness co-signatures against the local audit history.
+
+    Three ways to fail, all loud: the co-signature file itself does not read,
+    a co-signature does not verify under the pinned witness key, or the local
+    history contradicts what a witness signed.
+
+    An install with no witness passes and says so. Witnessing is optional, and
+    a single-host install must be able to run without one; what it must not do
+    is stay quiet about being unwitnessed.
+    """
+    from bernstein.core.persistence.checkpoint_witness import check_witness_contradictions
+
+    console.print()
+    claims, errors, unauthenticated = _witness_claims(witness_key, witness_state)
+    if errors:
+        console.print(Panel("[bold red]Witness Verification FAILED[/bold red]", border_style="red", expand=False))
+        for err in errors:
+            console.print(f"  [red]![/red] {err}")
+        return False
+
+    if unauthenticated:
+        console.print(
+            "[yellow]Witness co-signatures are on record but not authenticated[/yellow] "
+            "[dim](pass --witness-key <the witness public key> to check them; an "
+            "unpinned key is a witness vouching for itself).[/dim]"
+        )
+        return True
+
+    if not claims:
+        console.print(
+            "[yellow]Audit history is not witness co-signed[/yellow] "
+            "[dim](no co-signature recorded; a rollback of the chain and the "
+            "checkpoints together would leave nothing to contradict it).[/dim]"
+        )
+        console.print("[dim]To witness: bernstein audit witness export --out cp.json[/dim]")
+        return True
+
+    conflicts = check_witness_contradictions(
+        AUDIT_DIR,
+        claims,
+        checkpoint_roots=_known_checkpoint_roots(),
+    )
+    if conflicts:
+        console.print(Panel("[bold red]Witness Contradiction[/bold red]", border_style="red", expand=False))
+        for claim in claims:
+            console.print(f"  [red]![/red] {claim.describe()}")
+        for conflict in conflicts:
+            console.print(f"  [red]![/red] {conflict.detail}")
+        console.print(
+            "  [dim]The local audit history contradicts a checkpoint a witness signed.\n"
+            "  This is not clearable with 'bernstein audit ack-tear': an acknowledgement\n"
+            "  records that an operator looked at local damage, and it cannot withdraw a\n"
+            "  second party's signature. Restore the missing history, or treat the\n"
+            "  witnessed range as unaccounted for.[/dim]"
+        )
+        return False
+
+    strongest = max(claims, key=lambda claim: claim.entry_count)
+    console.print(Panel("[bold green]Witness Verification Passed[/bold green]", border_style="green", expand=False))
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("Key", style="dim", no_wrap=True, min_width=16)
+    table.add_column("Value")
+    table.add_row("Witness claims", str(len(claims)))
+    table.add_row("Witnessed entries", str(strongest.entry_count))
+    table.add_row("Witnessed root", strongest.checkpoint_root)
+    table.add_row("Source", strongest.source)
+    if witness_state is None:
+        table.add_row("Note", "witness state not consulted (pass --witness-state)")
+    console.print(table)
+    return True
 
 
 def _verify_merkle_tree() -> bool:
@@ -1890,15 +2316,16 @@ def verify_hmac_cmd() -> None:
     "--standard",
     "standard",
     default=None,
-    type=click.Choice(["ai-act", "owasp-asi", "owasp-skills"]),
+    type=click.Choice(["ai-act", "owasp-asi", "owasp-skills", "iso-42001"]),
     help=(
         "Emit a one-command compliance evidence pack mapped to the chosen "
         "control catalogue, anchored on the operator's own HMAC-chained "
         "audit events. 'ai-act' maps EU AI Act Article 12/13/15; "
         "'owasp-asi' maps the OWASP Top 10 for Agentic Applications "
         "(ASI01-ASI10); 'owasp-skills' maps the Agentic Skills Top 10 "
-        "(AST01-AST10). DORA and FINOS AIGF are tracked under #1316 and "
-        "will be added once their clause maps are validated."
+        "(AST01-AST10); 'iso-42001' maps the records-derivable subset of "
+        "ISO/IEC 42001 Annex A controls. DORA and FINOS AIGF are tracked "
+        "under #1316 and will be added once their clause maps are validated."
     ),
 )
 @click.option(
@@ -2302,8 +2729,8 @@ def _run_standard_export(
     table.add_row("Lineage entries", str(pack.lineage_count))
     table.add_row("Cost snapshots", str(pack.cost_count))
     table.add_row(
-        "Controls mapped/partial/todo",
-        f"{pack.controls_mapped} / {pack.controls_partial} / {pack.controls_todo}",
+        "Controls mapped/partial/todo/organisational",
+        f"{pack.controls_mapped} / {pack.controls_partial} / {pack.controls_todo} / {pack.controls_organisational}",
     )
     table.add_row("SHA-256", pack.sha256[:16] + "...")
     if pack.archive_path is not None:
@@ -3681,6 +4108,109 @@ def receipt_verify_cmd(
     if proc.returncode != 0 and proc.stderr:
         console.print(f"[red]{proc.stderr.rstrip()}[/red]")
     raise SystemExit(proc.returncode)
+
+
+@receipt_group.command("conform")
+@click.argument(
+    "receipt_path",
+    required=False,
+    type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+)
+@click.option(
+    "--verifier",
+    "verifier_path",
+    default=None,
+    type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+    help="Verifier implementation to check (default: this repo's own tools/verify_audit_receipt.py).",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit a machine-readable report.")
+def receipt_conform_cmd(receipt_path: str | None, verifier_path: str | None, as_json: bool) -> None:
+    """Check conformance to the numbered audit-receipt requirements (#4987).
+
+    \b
+      bernstein audit receipt conform
+          Run the executable corpus against a verifier implementation
+          (default: our own standalone verifier) and report, per numbered
+          requirement, whether it reaches the corpus's expected verdict.
+          Our own verifier gets no privileged path: point --verifier at any
+          other implementation that speaks the same --receipt/--format
+          convention and it is checked the same way.
+
+    \b
+      bernstein audit receipt conform RECEIPT.json
+          Check one already-built receipt (of unknown provenance) against
+          every requirement and name whichever one(s) it violates, instead
+          of a single pass/fail bit.
+
+    \b
+    Exit codes: 0 fully conformant, 1 at least one requirement violated,
+    2 could not locate a verifier to run.
+    """
+    import json
+    import tempfile
+
+    from bernstein.core.security.audit_receipt_conformance import (
+        REQUIREMENTS,
+        build_corpus,
+        default_verifier_path,
+        evaluate_receipt,
+        run_corpus,
+    )
+
+    resolved_verifier = Path(verifier_path) if verifier_path else (_find_receipt_verifier() or default_verifier_path())
+    if not resolved_verifier.is_file():
+        console.print(
+            "[red]Could not locate tools/verify_audit_receipt.py.[/red] "
+            "Pass --verifier PATH, set BERNSTEIN_AUDIT_RECEIPT_VERIFIER, or "
+            "run from a bernstein source checkout.",
+        )
+        raise SystemExit(2)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        if receipt_path:
+            receipt = json.loads(Path(receipt_path).read_text(encoding="utf-8"))
+            case_results = evaluate_receipt(receipt, verifier_path=resolved_verifier, tmp_dir=tmp_dir)
+            ok = all(r.conformant for r in case_results)
+            rows = [(r.requirement_id, r.conformant, r.detail) for r in case_results]
+            subject = receipt_path
+        else:
+            corpus = build_corpus()
+            run = run_corpus(corpus, verifier_path=resolved_verifier, tmp_dir=tmp_dir)
+            ok = run.ok
+            rows = [
+                (
+                    v.requirement_id,
+                    v.conformant,
+                    "; ".join(f"{c.case_id}: {c.detail}" for c in v.case_results if not c.conformant),
+                )
+                for v in run.verdicts
+            ]
+            subject = f"corpus ({len(REQUIREMENTS)} requirements, {len(corpus)} cases)"
+
+    if as_json:
+        console.print_json(
+            data={
+                "ok": ok,
+                "verifier": str(resolved_verifier),
+                "subject": subject,
+                "requirements": [
+                    {"id": rid, "conformant": conformant, "detail": detail} for rid, conformant, detail in rows
+                ],
+            },
+        )
+    else:
+        table = Table(title=f"Audit receipt conformance -- {subject}")
+        table.add_column("requirement")
+        table.add_column("verdict")
+        table.add_column("detail")
+        for rid, conformant, detail in rows:
+            table.add_row(rid, "[green]PASS[/green]" if conformant else "[red]FAIL[/red]", detail)
+        console.print(table)
+        console.print(f"verifier: {resolved_verifier}")
+        console.print(f"OVERALL: {'[green]PASS[/green]' if ok else '[red]FAIL[/red]'}")
+
+    raise SystemExit(0 if ok else 1)
 
 
 # ---------------------------------------------------------------------------

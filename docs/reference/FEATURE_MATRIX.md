@@ -126,7 +126,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | Intent capsules | Full | 3 | Approval compiles the goal into a signed capsule; a deterministic drift monitor escalates divergence, verified by `intent verify` (`core/security/intent_capsule.py`) |
 | Query receipts (datasources) | Full | 3 | Read-only SQL results become content-addressed signed receipts; `datasource verify --re-execute` reports MATCH or DRIFT (`core/datasources/`) |
 | Compaction receipts | Full | 3 | Context and template compaction is recorded as a chain-anchored, reversible receipt (`core/tokens/compaction_receipt.py`) |
-| Tamper-evident memory | Full | 4 | Memory entries are hash-chained with provenance; `memory verify/why/forget` proves authorship, traces origin, and tombstones (`core/memory/chain.py`) |
+| Tamper-evident memory | Full | 4 | Memory entries are hash-chained with provenance; `memory verify/why/forget` proves authorship, traces origin, and tombstones, and `memory show` folds the chain to its current state (`core/memory/chain.py`) |
 | [Review / autofix / escalation / consent / webhook-node receipts](../operations/review-receipts.md) | Full | 3 | Signed, journal-anchored receipts verified offline (`review-receipt verify`, `escalation verify`, `webhook verify`) |
 | Result receipt bundles | Brief | 3 | A worker submission's patch, gate logs, task ref, and sandbox selection sealed into one DSSE / in-toto envelope; `receipt verify` recomputes it offline and names the field that diverged (`core/security/result_receipt_bundle.py`) |
 | [Stall escalation receipts](../operations/stall-escalation.md) | Full | 3 | A stalled worker produces a signed escalation receipt embedding the last audit entries and a deterministic recommended action (`supervisor escalate`) |
@@ -301,6 +301,8 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein mandate emit/verify/revoke`](../operations/spending-mandates.md) | Full | 3 | Bind, prove, and revoke authorized-action mandates |
 | `bernstein payment-mandate issue/show/spend` | Full | 3 | Issue and spend against authorized-spend mandates with signed receipts |
 | [`bernstein govern verify`](../operations/governance.md) | Full | 3 | Recompute access and budget verdicts for a run. `bernstein governance` is a deprecated alias, removed in v4.0.0 (#5010) |
+| [`bernstein govern reconcile`](../operations/governance.md) | Full | 3 | Diff the adapter / lane / schedule / capability surface against a desired-state document and record it |
+| [`bernstein govern inventory --render`](../operations/govern-inventory.md) | Full | 3 | Topology graph from the inventory store; mermaid is the CI-gated render |
 | [`bernstein webhook verify`](../operations/webhook-node.md) | Full | 3 | Recompute inbound-event and outbound webhook-node hashes |
 | [`bernstein review-receipt emit/verify`](../operations/review-receipts.md) | Full | 3 | Bind and offline-verify PR review receipts (issue + plan + tool calls + diff) |
 | `bernstein review-annotation derive/resolve` | Partial | 2 | Bind an operator comment to the diff bytes it targets and resolve it against a file's current bytes, reporting `orphaned` rather than re-anchoring to the recorded line numbers |
@@ -315,7 +317,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein trace project/verify-projection`](../observability/otel-span-projection.md) | Full | 3 | Project a run journal into signed OTel GenAI spans and verify the projection |
 | `bernstein telemetry export-otel/verify-span` | Full | 3 | Stream the span projection to an OTLP collector and verify a single span offline |
 | [`bernstein thread verify`](../operations/deterministic-replay.md) | Full | 3 | Prove a streamed TUI thread equals its executed journal |
-| `bernstein memory verify/why/forget` | Full | 4 | Prove authorship, trace origin, and tombstone a memory entry |
+| `bernstein memory verify/why/forget/show` | Full | 4 | Prove authorship, trace origin, tombstone a memory entry, and print the folded current state of a namespace |
 | [`bernstein replay --verify/--from-step`](../operations/deterministic-replay.md) | Full | 3 | Recompute the journal head or rebuild state to a step |
 | [`bernstein lineage verify/walk/chain/replay/export`](../lineage.md) | Full | 4 | Per-artifact lineage spine: recompute a run's Merkle chain and HMAC tags, walk an artifact back to its producer, replay the spine in append order, and export a run's chain as a regulator artefact (`tracker-audit`, `forks`, `conflicts`, `resolve`, `merge`, `reindex`, `gate`, and `v2` complete the group) |
 | `bernstein intent show/verify` | Full | 3 | Project and recompute an intent capsule's conformance offline |

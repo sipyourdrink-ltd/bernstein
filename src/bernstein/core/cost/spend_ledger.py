@@ -34,7 +34,12 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path  # noqa: TC003 - runtime use in dataclass field default
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+from bernstein.core.cost.principal_attribution import ATTRIBUTION_DIMENSIONS, PrincipalAttribution
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +93,13 @@ class CallTags:
     # ``"subscription"`` so existing callers keep the legacy
     # single-envelope rollup.
     quota_envelope: str = "subscription"
+    # Per-principal attribution (issue #4985). The principal that incurred
+    # the cost, the grant that authorized it, and the identity that signed
+    # that grant. Empty means "not recorded" -- never "assume the default
+    # principal"; the rollup reports such a row as unattributed.
+    principal_id: str = ""
+    grant_id: str = ""
+    authorizing_identity: str = ""
     extra: dict[str, str] = field(default_factory=dict)
 
     def merged(self) -> dict[str, str]:
@@ -112,6 +124,12 @@ class CallTags:
         # single-envelope callers.
         if self.quota_envelope and self.quota_envelope != "subscription":
             out["quota_envelope"] = self.quota_envelope
+        if self.principal_id:
+            out["principal_id"] = self.principal_id
+        if self.grant_id:
+            out["grant_id"] = self.grant_id
+        if self.authorizing_identity:
+            out["authorizing_identity"] = self.authorizing_identity
         for k, v in self.extra.items():
             if v:
                 out[k] = v
@@ -145,11 +163,25 @@ class LedgerEntry:
     # ``"subscription"`` so older ledgers that lack the field deserialise
     # cleanly via :meth:`from_dict`.
     quota_envelope: str = "subscription"
+    # Per-principal attribution (issue #4985). Rows written before the
+    # columns existed deserialise to empty strings and are reported as
+    # unattributed rather than backfilled onto a principal.
+    principal_id: str = ""
+    grant_id: str = ""
+    authorizing_identity: str = ""
     tags: dict[str, str] = field(default_factory=dict)
 
     def to_json(self) -> str:
         """Return a stable single-line JSON encoding."""
         return json.dumps(asdict(self), sort_keys=False, separators=(",", ":"))
+
+    def attribution(self) -> PrincipalAttribution:
+        """Return this row's attribution tuple (issue #4985)."""
+        return PrincipalAttribution(
+            principal_id=self.principal_id,
+            grant_id=self.grant_id,
+            authorizing_identity=self.authorizing_identity,
+        )
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> LedgerEntry:
@@ -171,6 +203,9 @@ class LedgerEntry:
             cache_write_tokens=int(d.get("cache_write_tokens", 0) or 0),
             cost_usd=float(d.get("cost_usd", 0.0) or 0.0),
             quota_envelope=str(d.get("quota_envelope") or tags.get("quota_envelope") or "subscription"),
+            principal_id=str(d.get("principal_id") or tags.get("principal_id") or ""),
+            grant_id=str(d.get("grant_id") or tags.get("grant_id") or ""),
+            authorizing_identity=str(d.get("authorizing_identity") or tags.get("authorizing_identity") or ""),
             tags=tags,
         )
 
@@ -200,6 +235,11 @@ class SpendLedger:
     run_id: str = "default"
     budget_usd: float = 0.0
     hard_budget_usd: float = 0.0
+    #: Optional audit chain. When attached, the first soft and the first
+    #: hard cap transition each append a ``cost.budget_halt`` event, so a
+    #: budget halt is reconstructable from the chain rather than only from
+    #: stderr. Unattached ledgers behave exactly as they did before.
+    chain: AuditChainStore | None = None
 
     # Internal state
     _spent_usd: float = field(default=0.0, init=False, repr=False)
@@ -213,6 +253,9 @@ class SpendLedger:
     _soft_warned: bool = field(default=False, init=False, repr=False)
     _soft_halted_at: float | None = field(default=None, init=False, repr=False)
     _hard_halted_at: float | None = field(default=None, init=False, repr=False)
+    # Separate from ``_lock`` so emitting a transition (logging, and the
+    # chain append) never blocks a concurrent ``record``'s totals update.
+    _halt_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # Normalise non-positive caps to 0 so "no cap" semantics are
@@ -269,6 +312,9 @@ class SpendLedger:
             cache_write_tokens=cache_write_tokens,
             cost_usd=cost,
             quota_envelope=envelope,
+            principal_id=tags.principal_id,
+            grant_id=tags.grant_id,
+            authorizing_identity=tags.authorizing_identity,
             tags=merged,
         )
 
@@ -281,6 +327,8 @@ class SpendLedger:
             self._spent_by["role"][tags.role or "unknown"] += cost
             self._spent_by["model"][model or "unknown"] += cost
             self._spent_by["envelope"][envelope] += cost
+            for dimension in ATTRIBUTION_DIMENSIONS:
+                self._spent_by[dimension][entry.attribution().key(dimension)] += cost
             if tags.feature_label:
                 self._spent_by["feature_label"][tags.feature_label] += cost
             status = self._status_locked()
@@ -320,7 +368,7 @@ class SpendLedger:
         )
 
     def totals_by(self, dimension: str) -> dict[str, float]:
-        """Return cost-by-dimension totals (``task|agent|role|model|feature_label``).
+        """Return cost-by-dimension totals (``task|agent|role|model|feature_label|principal|grant``).
 
         Unknown dimensions return an empty dict so callers can probe
         without raising. ``task|agent|role|model`` are always populated
@@ -373,26 +421,42 @@ class SpendLedger:
             logger.warning("SpendLedger: failed to append entry: %s", exc)
 
     def _emit_threshold_events(self, status: LedgerStatus) -> None:
-        """Log + stamp soft/hard threshold transitions exactly once each."""
+        """Log + stamp soft/hard threshold transitions exactly once each.
+
+        The stamps are claimed under ``_halt_lock`` so two threads that
+        cross the same cap in the same instant do not both report the
+        transition - the halt receipt appended below must be one event,
+        not one per racing writer.
+        """
         now = time.time()
-        if status.hard_halt and self._hard_halted_at is None:
-            self._hard_halted_at = now
+        with self._halt_lock:
+            first_hard = status.hard_halt and self._hard_halted_at is None
+            if first_hard:
+                self._hard_halted_at = now
+            first_soft = status.soft_halt and self._soft_halted_at is None
+            if first_soft:
+                self._soft_halted_at = now
+            first_warn = not first_soft and status.soft_warn and not self._soft_warned
+            if first_warn:
+                self._soft_warned = True
+
+        if first_hard:
             logger.warning(
                 "SpendLedger HARD CAP HIT: spent=$%.4f hard_cap=$%.4f run_id=%s",
                 status.spent_usd,
                 status.hard_budget_usd,
                 self.run_id,
             )
-        if status.soft_halt and self._soft_halted_at is None:
-            self._soft_halted_at = now
+            self._record_halt_receipt("hard", status.spent_usd, status.hard_budget_usd)
+        if first_soft:
             logger.warning(
                 "SpendLedger SOFT CAP HIT (100%%): spent=$%.4f budget=$%.4f run_id=%s",
                 status.spent_usd,
                 status.budget_usd,
                 self.run_id,
             )
-        elif status.soft_warn and not self._soft_warned:
-            self._soft_warned = True
+            self._record_halt_receipt("soft", status.spent_usd, status.budget_usd)
+        elif first_warn:
             logger.warning(
                 "SpendLedger SOFT CAP WARN (>=80%%): spent=$%.4f budget=$%.4f run_id=%s - "
                 "calls will be rerouted to cheaper models",
@@ -400,6 +464,35 @@ class SpendLedger:
                 status.budget_usd,
                 self.run_id,
             )
+
+    def _record_halt_receipt(self, band: Literal["soft", "hard"], spent_usd: float, cap_usd: float) -> None:
+        """Append the ``cost.budget_halt`` event for one cap transition.
+
+        Money crosses into the chain as integer nano-USD: the signed
+        payload must carry no float, and the sum of exact integers is
+        independent of aggregation order.
+
+        The append is best-effort in the same sense as the JSONL write -
+        the ledger is not allowed to take the orchestrator down - but the
+        failure is logged, never swallowed silently.
+        """
+        chain = self.chain
+        if chain is None:
+            return
+        from bernstein.core.cost.showback_canonical import nano_usd_from_float
+        from bernstein.core.security.audit_chain import record_budget_halt
+
+        try:
+            record_budget_halt(
+                chain=chain,
+                run_id=self.run_id,
+                band=band,
+                spent_nano_usd=nano_usd_from_float(spent_usd),
+                cap_nano_usd=nano_usd_from_float(cap_usd),
+                ledger_entries_written=self._entries_written,
+            )
+        except Exception as exc:  # intentional-broad-except: the halt receipt must never block the ledger
+            logger.warning("SpendLedger: failed to append %s cap halt receipt: %s", band, type(exc).__name__)
 
     # ------------------------------------------------------------------ load
 
@@ -471,7 +564,9 @@ def aggregate_entries(
     """Group ledger entries by *dimension*; return per-bucket totals.
 
     Supported dimensions: ``task``, ``agent``, ``role``, ``model``,
-    ``feature_label``, ``day``. Unknown dimensions return ``{}``.
+    ``feature_label``, ``envelope``, ``day``, plus the attribution
+    dimensions ``principal``, ``grant`` and ``authorizing_identity``
+    (issue #4985). Unknown dimensions return ``{}``.
 
     Each bucket contains ``cost_usd``, ``calls``, ``input_tokens``,
     ``output_tokens``. Buckets are not pre-sorted - that's the
@@ -493,11 +588,13 @@ def aggregate_entries(
             return e.feature_label or "unknown"
         if dimension == "envelope":
             return e.quota_envelope or "subscription"
+        if dimension in ATTRIBUTION_DIMENSIONS:
+            return e.attribution().key(dimension)
         if dimension == "day":
             return datetime.fromtimestamp(e.ts, tz=UTC).strftime("%Y-%m-%d") if e.ts > 0 else "unknown"
         return ""
 
-    if dimension not in {"task", "agent", "role", "model", "feature_label", "envelope", "day"}:
+    if dimension not in {"task", "agent", "role", "model", "feature_label", "envelope", "day", *ATTRIBUTION_DIMENSIONS}:
         return {}
 
     out: dict[str, dict[str, Any]] = defaultdict(

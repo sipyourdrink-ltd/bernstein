@@ -19,11 +19,16 @@ class FakeEntry:
 
     artefact_path: str
     artefact_kind: str
+    content_hash: str = ""
 
 
 def _make_lineage_entry(artefact_path: str, artefact_kind: str = "lineage-entry") -> FakeEntry:
     """Create a mock lineage entry."""
-    return FakeEntry(artefact_path=artefact_path, artefact_kind=artefact_kind)
+    return FakeEntry(
+        artefact_path=artefact_path,
+        artefact_kind=artefact_kind,
+        content_hash=f"sha256:{artefact_path}",
+    )
 
 
 # Test get_required_events
@@ -62,6 +67,20 @@ class TestAssessControlCoverage:
         # SOC2 CC8.1 should be evidenced (has config/ entries)
         assert results_by_policy["soc2-cc8-1"].status == ControlCoverageStatus.EVIDENCED
         assert "change-management" in results_by_policy["soc2-cc8-1"].evidence_summary
+
+    def test_evidenced_control_names_the_entries_that_evidenced_it(self) -> None:
+        """An evidenced control names the chain events that satisfied it."""
+        entries = [
+            _make_lineage_entry("task/some-task-id"),
+            _make_lineage_entry("auth/login-event"),
+            _make_lineage_entry("docs/unrelated"),
+        ]
+        results_by_policy = {r.policy_id: r for r in assess_control_coverage(entries)}
+
+        assert results_by_policy["eu-ai-act-art-12"].evidence_refs == ("sha256:task/some-task-id",)
+        assert results_by_policy["soc2-cc6-1"].evidence_refs == ("sha256:auth/login-event",)
+        # A control with no evidence names none.
+        assert results_by_policy["eu-ai-act-art-73"].evidence_refs == ()
 
     def test_partially_evidenced_wrong_artifact_kind(self) -> None:
         """Test controls where artifact kind is present but wrong behaviour."""
