@@ -32,6 +32,7 @@ returns every registered source, wrapping broken entry points in a clear
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from importlib.metadata import EntryPoint, entry_points
 from typing import TYPE_CHECKING
 
@@ -75,6 +76,109 @@ class PluginSkillSource(SkillSource):
         return self._inner.iter_skills()
 
 
+@dataclass(frozen=True, slots=True)
+class SkillSourceResolution:
+    """What one declared ``bernstein.skill_sources`` entry point resolved to.
+
+    A pack that fails to import is dropped from the returned sources so a
+    third-party bug cannot take down the orchestrator. Dropping it silently
+    is what makes "declared" and "loaded" indistinguishable downstream, so
+    every declared entry point produces one of these either way.
+
+    Attributes:
+        name:     Entry-point name.
+        source:   Entry-point group the declaration lives in.
+        declared: The declared import target (``module:attr``).
+        version:  Version of the distribution that declared it, ``""``
+            when the distribution is unknown.
+        loaded:   Whether a usable source came back.
+        failure:  Error text when it did not, else ``""``.
+    """
+
+    name: str
+    source: str
+    declared: str
+    version: str
+    loaded: bool
+    failure: str
+
+
+@dataclass(frozen=True, slots=True)
+class PluginSourceScan:
+    """The result of one entry-point scan: what loaded and what did not."""
+
+    sources: tuple[SkillSource, ...]
+    resolutions: tuple[SkillSourceResolution, ...]
+
+
+def scan_plugin_sources(
+    *,
+    entry_point_group: str = PLUGIN_ENTRY_POINT_GROUP,
+) -> PluginSourceScan:
+    """Enumerate skill-source entry points, keeping the failures.
+
+    Args:
+        entry_point_group: Override the default group (used by tests).
+
+    Returns:
+        A :class:`PluginSourceScan` carrying one
+        :class:`PluginSkillSource` per successfully loaded plugin plus a
+        :class:`SkillSourceResolution` for every declared entry point,
+        loaded or not.
+    """
+    try:
+        eps: tuple[EntryPoint, ...] = tuple(
+            entry_points(group=entry_point_group)  # type: ignore[arg-type]
+        )
+    except TypeError:
+        # Python 3.9/3.10 returned a SelectableGroups object - we target 3.12+,
+        # but keep the fallback defensive for tooling on older interpreters.
+        eps = tuple(entry_points().get(entry_point_group, ()))  # type: ignore[attr-defined]
+
+    sources: list[SkillSource] = []
+    resolutions: list[SkillSourceResolution] = []
+    for ep in eps:
+        version = _entry_point_version(ep)
+
+        def _resolution(*, loaded: bool, failure: str, ep: EntryPoint = ep, version: str = version) -> None:
+            resolutions.append(
+                SkillSourceResolution(
+                    name=ep.name,
+                    source=entry_point_group,
+                    declared=ep.value,
+                    version=version,
+                    loaded=loaded,
+                    failure=failure,
+                )
+            )
+
+        try:
+            factory = ep.load()
+        except Exception as exc:
+            logger.warning("Failed to load skill-source entry point %s: %s", ep.name, exc)
+            _resolution(loaded=False, failure=f"{type(exc).__name__}: {exc}")
+            continue
+
+        source = _invoke_factory(ep.name, factory)
+        if source is None:
+            _resolution(loaded=False, failure=f"factory for {ep.value} did not return a SkillSource")
+            continue
+        sources.append(PluginSkillSource(ep_name=ep.name, inner=source))
+        _resolution(loaded=True, failure="")
+    return PluginSourceScan(sources=tuple(sources), resolutions=tuple(resolutions))
+
+
+def _entry_point_version(ep: EntryPoint) -> str:
+    """Return the declaring distribution's version, ``""`` when unknown."""
+    try:
+        dist = ep.dist
+    except Exception:  # pragma: no cover - metadata backends vary
+        return ""
+    if dist is None:
+        return ""
+    return str(dist.version or "")
+
+
 def load_plugin_sources(
     *,
     entry_point_group: str = PLUGIN_ENTRY_POINT_GROUP,
@@ -88,29 +192,9 @@ def load_plugin_sources(
         One :class:`PluginSkillSource` per successfully loaded plugin.
         Plugins that fail to import are logged but do not abort startup -
         a noisy third-party bug should not take down the orchestrator.
+        Callers that need the failures too use :func:`scan_plugin_sources`.
     """
-    try:
-        eps: tuple[EntryPoint, ...] = tuple(
-            entry_points(group=entry_point_group)  # type: ignore[arg-type]
-        )
-    except TypeError:
-        # Python 3.9/3.10 returned a SelectableGroups object - we target 3.12+,
-        # but keep the fallback defensive for tooling on older interpreters.
-        eps = tuple(entry_points().get(entry_point_group, ()))  # type: ignore[attr-defined]
-
-    sources: list[SkillSource] = []
-    for ep in eps:
-        try:
-            factory = ep.load()
-        except Exception as exc:
-            logger.warning("Failed to load skill-source entry point %s: %s", ep.name, exc)
-            continue
-
-        source = _invoke_factory(ep.name, factory)
-        if source is None:
-            continue
-        sources.append(PluginSkillSource(ep_name=ep.name, inner=source))
-    return sources
+    return list(scan_plugin_sources(entry_point_group=entry_point_group).sources)
 
 
 def _invoke_factory(ep_name: str, factory: object) -> SkillSource | None:

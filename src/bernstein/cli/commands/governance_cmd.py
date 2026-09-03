@@ -776,6 +776,33 @@ def governance_ingest_cmd(
     console.print(f"  [dim]{receipt.coverage_detail}[/dim]")
 
 
+@govern_group.command("audit")
+def governance_audit_cmd() -> None:
+    """Check whether verifier keys are stale relative to the install identity.
+
+    Exit codes: 0 = up to date or no verifier files, 1 = keystore or verifier
+    file unreadable, 2 = stale verifier key detected.
+    """
+    from bernstein.core.govern.audit_sweep import CheckVerdict, check_verifier_key_staleness
+    from bernstein.core.identity.http_signing import default_keystore
+
+    try:
+        outcomes = check_verifier_key_staleness(default_keystore=default_keystore())
+    except (OSError, PermissionError, TypeError, ValueError) as exc:
+        click.echo(f"keystore failure: {exc}", err=True)
+        raise SystemExit(1) from exc
+
+    for outcome in outcomes:
+        if outcome.verdict is CheckVerdict.NOT_MEASURABLE:
+            click.echo(f"{outcome.check_id}: {outcome.summary}")
+            raise SystemExit(1)
+        if outcome.verdict is CheckVerdict.MEASURED and outcome.passed is False:
+            click.echo(f"{outcome.check_id}: {outcome.summary}")
+            raise SystemExit(2)
+
+    click.echo("verifier keys up to date")
+
+
 # Desired-state reconcile diff over the governed surface (#5085). Registered
 # here, before the alias mirror below, so the subcommand sets stay identical.
 govern_group.add_command(govern_reconcile_cmd, "reconcile")
