@@ -1655,7 +1655,10 @@ class AgentSpawner:
         # receive the host-isolation declaration here too -- otherwise the
         # later cache hit in _get_adapter_by_name skips applying it, and a
         # declared container tier never reaches this adapter (#5341, #5314).
-        if getattr(adapter, "consumes_host_isolation", False):
+        # `is True`, not truthiness: test doubles built on MagicMock answer
+        # every attribute with a truthy mock and would record a declaration
+        # for an adapter that owns no vendor sandbox.
+        if getattr(adapter, "consumes_host_isolation", False) is True:
             self._apply_host_isolation(adapter.name(), adapter)
         if enable_caching:
             from bernstein.adapters.caching_adapter import CachingAdapter
