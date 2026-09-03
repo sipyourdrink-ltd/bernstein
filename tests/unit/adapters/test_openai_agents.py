@@ -2362,6 +2362,9 @@ class TestBug13CostMetering:
         """A model with no pricing-table entry must not vanish from cost
         totals: cost is an explicit $0, a WARNING is logged, and the token
         counts still flow through to the usage event and the sidecar."""
+        from bernstein.core.cost import model_prices as _mp
+
+        _mp._WARNED_UNPRICED_MODELS.clear()
         heartbeat_dir = tmp_path / ".sdd" / "runtime" / "heartbeats"
         manifest = self._manifest(model="totally-unknown-model-xyz", heartbeat_dir=str(heartbeat_dir))
 

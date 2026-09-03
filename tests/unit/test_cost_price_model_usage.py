@@ -148,3 +148,118 @@ class TestPriceModelUsage:
             assert result.cost_usd >= 0.0
             if pricing.get("input", 0.0) > 0 or pricing.get("output", 0.0) > 0:
                 assert result.cost_usd > 0.0, f"{key} priced to exactly zero"
+
+
+class TestPriceModelUsageDedup:
+    """Dedup: warning once per distinct model name per process (issue #5337)."""
+
+    def test_price_model_usage_warns_once_per_model_name(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from bernstein.core.cost import model_prices as mp
+
+        mp._WARNED_UNPRICED_MODELS.clear()
+        try:
+            with caplog.at_level("WARNING"):
+                mp.price_model_usage("fleet-live", input_tokens=1, output_tokens=1)
+                mp.price_model_usage("fleet-live", input_tokens=1, output_tokens=1)
+            records = [r for r in caplog.records if "fleet-live" in r.message]
+            assert len(records) == 1
+            # priced False and tokens still visible
+            result = mp.price_model_usage("fleet-live", input_tokens=2, output_tokens=3)
+            assert result.priced is False
+            assert result.input_tokens == 2
+            assert result.output_tokens == 3
+            assert result.cost_usd == 0.0
+        finally:
+            mp._WARNED_UNPRICED_MODELS.clear()
+
+    def test_price_model_usage_warns_once_per_distinct_model_name(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from bernstein.core.cost import model_prices as mp
+
+        mp._WARNED_UNPRICED_MODELS.clear()
+        try:
+            with caplog.at_level("WARNING"):
+                mp.price_model_usage("fleet-alpha", input_tokens=1, output_tokens=1)
+                mp.price_model_usage("fleet-beta", input_tokens=1, output_tokens=1)
+            records = [r for r in caplog.records if "no pricing-table entry" in r.message]
+            assert len(records) == 2
+            assert any("fleet-alpha" in r.message for r in records)
+            assert any("fleet-beta" in r.message for r in records)
+        finally:
+            mp._WARNED_UNPRICED_MODELS.clear()
+
+
+class TestCostEstimateUnpricedDisplay:
+    """Cost-estimate lines for an unpriced model say 'unpriced', not '$0.00'."""
+
+    def test_describe_cost_estimate_unpriced_says_unpriced(self) -> None:
+        from bernstein.core.cost import model_prices as mp
+        from bernstein.core.orchestration.bootstrap import _describe_cost_estimate
+
+        mp._WARNED_UNPRICED_MODELS.clear()
+        try:
+            out = _describe_cost_estimate(3, "fleet-live")
+            assert "unpriced" in out.lower()
+            assert "$0.00" not in out
+            assert "fleet-live" in out
+        finally:
+            mp._WARNED_UNPRICED_MODELS.clear()
+
+    def test_describe_cost_estimate_priced_still_shows_dollars(self) -> None:
+        from bernstein.core.orchestration.bootstrap import _describe_cost_estimate
+
+        out = _describe_cost_estimate(3, "sonnet")
+        assert "$" in out
+        assert "unpriced" not in out.lower()
+
+    def test_run_preflight_unpriced_banner_says_unpriced(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+
+        from bernstein.cli.run_preflight import _emit_preflight_runtime_warnings, _estimate_run_preview, console
+        from bernstein.core.cost import model_prices as mp
+
+        mp._WARNED_UNPRICED_MODELS.clear()
+        try:
+            estimate = _estimate_run_preview(
+                workdir=tmp_path,
+                plan_file=None,
+                goal=None,
+                seed_file=None,
+                model_override="fleet-live",
+            )
+            assert estimate.free_route is True
+            with console.capture() as cap:
+                _emit_preflight_runtime_warnings(
+                    workdir=tmp_path,
+                    estimate=estimate,
+                    auto_approve=True,
+                    quiet=False,
+                )
+            out = cap.get()
+            assert "unpriced" in out.lower()
+            assert "$0.00" not in out
+        finally:
+            mp._WARNED_UNPRICED_MODELS.clear()
+
+    def test_run_preflight_priced_banner_unaffected(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        from bernstein.cli.run_preflight import _emit_preflight_runtime_warnings, _estimate_run_preview, console
+
+        estimate = _estimate_run_preview(
+            workdir=tmp_path,
+            plan_file=None,
+            goal=None,
+            seed_file=None,
+            model_override="sonnet",
+        )
+        with console.capture() as cap:
+            _emit_preflight_runtime_warnings(
+                workdir=tmp_path,
+                estimate=estimate,
+                auto_approve=True,
+                quiet=False,
+            )
+        out = cap.get()
+        assert "$" in out
+        assert "unpriced" not in out.lower()

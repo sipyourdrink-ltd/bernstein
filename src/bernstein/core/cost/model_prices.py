@@ -14,6 +14,8 @@ from typing import TypedDict
 
 logger = logging.getLogger(__name__)
 
+_WARNED_UNPRICED_MODELS: set[str] = set()
+
 
 # Model name constants (used across pricing tables and cache tiers)
 MODEL_GPT_5_4 = "gpt-5.4"
@@ -196,15 +198,17 @@ def price_model_usage(
                 priced=True,
                 model_call_id=model_call_id,
             )
-    logger.warning(
-        "price_model_usage: no pricing-table entry for model %r - metering at "
-        "$0/token so this call's tokens stay visible instead of vanishing from "
-        "cost totals (input_tokens=%d, output_tokens=%d). Add an entry to "
-        "MODEL_COSTS_PER_1M_TOKENS to price this model.",
-        model,
-        input_tokens,
-        output_tokens,
-    )
+    if model not in _WARNED_UNPRICED_MODELS:
+        logger.warning(
+            "price_model_usage: no pricing-table entry for model %r - metering at "
+            "$0/token so this call's tokens stay visible instead of vanishing from "
+            "cost totals (input_tokens=%d, output_tokens=%d). Add an entry to "
+            "MODEL_COSTS_PER_1M_TOKENS to price this model.",
+            model,
+            input_tokens,
+            output_tokens,
+        )
+        _WARNED_UNPRICED_MODELS.add(model)
     return UsagePriceResult(
         model=model,
         input_tokens=input_tokens,

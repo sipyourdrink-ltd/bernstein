@@ -563,6 +563,20 @@ def _sync_and_plan_tasks(
     return backlog_count, manager_task_id, prior_session
 
 
+def _is_model_unpriced(model: str | None) -> bool:
+    """Return True when *model* has no pricing-table entry.
+
+    A ``:free`` suffix is treated as genuinely free, not unpriced.
+    """
+    if not model:
+        return False
+    if model.strip().lower().endswith(":free"):
+        return False
+    from bernstein.core.cost.model_prices import price_model_usage
+
+    return not price_model_usage(model.strip(), 1, 1).priced
+
+
 def _describe_cost_estimate(backlog_count: int, model: str | None) -> str:
     """Build the startup cost-estimate fragment from the synced task count.
 
@@ -584,10 +598,14 @@ def _describe_cost_estimate(backlog_count: int, model: str | None) -> str:
 
     if backlog_count > 0:
         if model:
+            if _is_model_unpriced(model):
+                return f"unpriced ({backlog_count} task(s), {model})"
             low, high = estimate_run_cost(backlog_count, model)
             return f"~${low:.2f}-${high:.2f} ({backlog_count} task(s), {model})"
         return f"unknown (no model configured, {backlog_count} task(s))"
     if model:
+        if _is_model_unpriced(model):
+            return f"unpriced per task ({model}, task count pending planning)"
         low, high = estimate_run_cost(1, model)
         return f"~${low:.2f}-${high:.2f} per task ({model}, task count pending planning)"
     return "unknown (no model configured, task count pending planning)"

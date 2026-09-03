@@ -390,6 +390,29 @@ def _resolve_model_and_cli(
 _FREE_ADAPTERS = frozenset(("qwen", "gemini", "ollama"))
 
 
+def _is_unpriced_model(display_model: str) -> bool:
+    """Return True when *display_model* has no pricing-table entry (priced=False).
+
+    ``display_model`` may be ``"adapter/model"`` or just ``"model"``.
+    A ``:free`` suffix or a free adapter (qwen/gemini/ollama) is treated as
+    genuinely free, not unpriced, so it still displays ``$0.00``.
+    """
+    model_part = display_model.split("/")[-1] if "/" in display_model else display_model
+    model_part = model_part.strip()
+    if not model_part:
+        return False
+    if model_part.lower().endswith(":free"):
+        return False
+    lower_disp = display_model.lower()
+    for adapter in _FREE_ADAPTERS:
+        if lower_disp == adapter or lower_disp.startswith(adapter + "/"):
+            return False
+    from bernstein.core.cost.model_prices import price_model_usage
+
+    probe = price_model_usage(model_part, 1, 1)
+    return not probe.priced
+
+
 def _estimate_run_preview(
     *,
     workdir: Path,
@@ -507,12 +530,22 @@ def _emit_preflight_runtime_warnings(
         if estimate.free_route:
             # A zero-cost route (:free / unpriced) must not be quoted a
             # phantom rate: the real run meters it at $0 (issue #3013).
-            if estimate.task_count is not None:
+            # For an *unpriced* gateway alias (e.g. fleet-live) the cost is
+            # unknown, not free — show "unpriced" instead of $0.00 (issue #5337).
+            if _is_unpriced_model(estimate.model):
+                if estimate.task_count is not None:
+                    basis = f"unpriced ({estimate.model}), based on {estimate.task_count} task(s)"
+                else:
+                    basis = f"unpriced ({estimate.model}), task count not yet planned"
+            elif estimate.task_count is not None:
                 basis = f"free route - no cost ({estimate.model}), based on {estimate.task_count} task(s)"
             else:
                 basis = f"free route - no cost ({estimate.model}), task count not yet planned"
         if band is not None:
-            console.print(f"[bold yellow]{format_band(band)}[/bold yellow]")
+            if _is_unpriced_model(estimate.model):
+                console.print("[bold yellow]Estimated cost: unpriced[/bold yellow]")
+            else:
+                console.print(f"[bold yellow]{format_band(band)}[/bold yellow]")
             if estimate.free_route:
                 console.print(f"[dim]{basis}[/dim]")
             else:
@@ -523,9 +556,15 @@ def _emit_preflight_runtime_warnings(
                 )
                 console.print(f"[dim]{basis}, {samples_note}[/dim]")
         else:
-            console.print(
-                f"[bold yellow]Estimated cost:[/bold yellow] ${estimate.low_usd:.2f}-${estimate.high_usd:.2f} {basis}"
-            )
+            if _is_unpriced_model(estimate.model):
+                console.print(
+                    f"[bold yellow]Estimated cost:[/bold yellow] unpriced {basis}"
+                )
+            else:
+                console.print(
+                    f"[bold yellow]Estimated cost:[/bold yellow] "
+                    f"${estimate.low_usd:.2f}-${estimate.high_usd:.2f} {basis}"
+                )
         if disk_usage_gb >= 1.0:
             console.print(
                 "[yellow]Warning:[/yellow] "
