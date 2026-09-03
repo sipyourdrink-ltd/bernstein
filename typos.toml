@@ -106,6 +106,15 @@ extend-exclude = [
     # excluded; the human-authored builder script beside them stays in scope.
     "tests/fixtures/trust-record-vectors/*.json",
     "tests/fixtures/trust-record-vectors/*.pem",
+    # Evidence-envelope golden vector - same content profile again: a real
+    # Ed25519 detached JWS plus sha256 digests, in a file whose bytes are
+    # its own canonical form. Editing one character both invalidates the
+    # signature the offline test checks and falsifies the committed
+    # digest sidecar, so a spelling fix here is not possible. The
+    # human-authored builder and README beside them stay in scope.
+    "tests/fixtures/evidence-envelope-vectors/*.json",
+    "tests/fixtures/evidence-envelope-vectors/*.pem",
+    "tests/fixtures/evidence-envelope-vectors/*.sha256",
     # Auditor conformance fixture - the recorded run's exported bundle.
     # Same content profile as the vectors above: the receipts carry a
     # base64url Ed25519 JWK and detached signatures, and the scanner reads

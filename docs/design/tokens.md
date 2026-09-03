@@ -10,11 +10,12 @@ not defined rather than filled in with a neighbour.
 ## Decision — the canonical accent (2026-09-02)
 
 The canonical accent is the website's terracotta, `oklch(55% 0.10 35)` /
-`#A35B48`. The operator UI keeps its deep teal until it migrates, tracked
-separately. Light values below come from the website, dark from the operator
-UI. Where the two disagree on a non-accent token, dark takes the operator UI's
-value — gated against WCAG AA by `tests/unit/test_webui_contrast.py` — and
-light takes the website's, the surface they were tuned on.
+`#A35B48`. The operator UI migrates its dark accent to the same hue, lightness
+lifted to pass WCAG AA on dark backdrops. Light values below come from the
+website, dark from the operator UI. Where the two disagree on a non-accent
+token, dark takes the operator UI's value — gated against WCAG AA by
+`tests/unit/test_webui_contrast.py` — and light takes the website's, the
+surface they were tuned on.
 
 ## Colour tokens
 
@@ -25,16 +26,15 @@ light takes the website's, the surface they were tuned on.
 | `text` | `oklch(20% 0.005 60)` | `#181614` | `hsl(45 31.6% 92.5%)` | `#F2EFE6` |
 | `muted` | `oklch(45% 0.005 60)` | `#575552` | `hsl(44.3 11.1% 59.4%)` | `#A39D8C` |
 | `border` | `oklch(85% 0.01 75)` | `#D2CDC7` | `hsl(60 8.5% 18.4%)` | `#33332B` |
-| `accent` | `oklch(55% 0.10 35)` | `#A35B48` | `hsl(175.1 38.2% 62.5%)` | `#7BC4BE` |
+| `accent` | `oklch(55% 0.10 35)` | `#A35B48` | `hsl(12 38.6% 72%)` | `#DB8E7A` |
 | `success` | `oklch(45% 0.08 145)` | `#376139` | `hsl(129.4 37.6% 63.5%)` | `#7FC58A` |
 | `warning` | `oklch(55% 0.10 60)` | `#9C622F` | `hsl(38.7 59.1% 63.5%)` | `#D9B26B` |
 | `danger` | `oklch(50% 0.12 25)` | `#9C433F` | `hsl(6.5 65.9% 70%)` | `#E58B80` |
 | `info` | not defined | — | not defined | — |
 
-The dark `accent` row is the operator UI's current value, not the canonical
-one; both are recorded so the migration has a before and an after. No surface
-defines `info` — the terminal UI's `secondary` is the only role that behaves
-like one, and a screen needing one today reuses `accent` or `muted`.
+No surface defines `info` — the terminal UI's `secondary` is the only role
+that behaves like one, and a screen needing one today reuses `accent` or
+`muted`.
 
 ### Contrast, text on `bg`
 
@@ -50,11 +50,12 @@ is 4.5:1 for normal text, 3:1 for large text; AAA is 7:1.
 | `warning` on `bg` | 4.44:1 | AA large only | 9.32:1 | AAA |
 | `danger` on `bg` | 5.67:1 | AA | 7.38:1 | AAA |
 
-Two results constrain use. Light `warning` measures 4.44:1, under the body-text
-threshold — large text, icons, and fills only. The canonical accent measures
-4.51:1 on `bg` but 4.25:1 on `surface`, so accent body text belongs on `bg`,
-not on a raised card. Operator UI pairs including tinted pills, where a
-15%-opacity fill composites to a different ratio than the solid token, are in
+Two results constrain use. Light `warning` measures 4.44:1, under the
+body-text threshold — large text, icons, and fills only. The
+canonical accent measures 4.51:1 on `bg` and 4.25:1 on `surface`, so
+accent body text belongs on `bg`, not on a raised card. Operator UI
+pairs including tinted pills, where a 15%-opacity fill composites to a
+different ratio than the solid token, are in
 [web-ui-inventory.md](web-ui-inventory.md) and gated in CI.
 
 ## Type ramp

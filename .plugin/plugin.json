@@ -1,6 +1,6 @@
 {
   "name": "bernstein",
-  "version": "3.19.0",
+  "version": "3.19.1",
   "description": "The open-source governance layer for AI agents. Spawn parallel agents in per-task git worktrees, verify their work, and merge results; no model in the coordination loop, so replaying a plan reproduces its task graph byte-identically.",
   "author": {
     "name": "chernistry",

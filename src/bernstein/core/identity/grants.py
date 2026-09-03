@@ -91,6 +91,7 @@ __all__ = [
     "GrantLedger",
     "GrantReceipt",
     "GrantSigner",
+    "compute_grant_sets",
     "default_ledger",
     "digest_secret_name",
     "find_active_grant",
@@ -874,6 +875,39 @@ def find_active_grant(
         if best is None or candidate.record_index > best.record_index:
             best = candidate
     return best
+
+
+def compute_grant_sets(
+    result: GrantChainResult,
+    *,
+    now: float | None = None,
+) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
+    """Derive revoked and approved grant sets from a verified ``GrantChainResult``.
+
+    - **revoked set**: grants where ``lifecycles()[grant_id]["revoked"]`` is
+      ``True``, keyed by ``(task_id, secret_name)``.
+    - **approved set**: grants that are issued, not revoked, and not expired
+      (``expiry == 0`` or ``expiry > now``), keyed by ``(task_id, secret_name)``.
+
+    Returns: a ``(revoked, approved)`` tuple of ``set[tuple[str, str]]``.
+    """
+    if not result.valid:
+        return (set(), set())
+    current = now if now is not None else time.time()
+    life = result.lifecycles()
+    revoked: set[tuple[str, str]] = set()
+    approved: set[tuple[str, str]] = set()
+    for _grant_id, state in life.items():
+        if not state["issued"]:
+            continue
+        key = (state["task_id"], state["secret_name"])
+        if state["revoked"]:
+            revoked.add(key)
+        else:
+            expiry = int(state["expiry"])
+            if not expiry or expiry > current:
+                approved.add(key)
+    return (revoked, approved)
 
 
 # ---------------------------------------------------------------------------

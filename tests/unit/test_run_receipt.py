@@ -319,6 +319,38 @@ def test_audit_range_round_trip_and_strip_collapse(tmp_path: Path) -> None:
     assert result_mut.status == "tampered"
 
 
+def test_audit_range_since_until_hmac_relabel_fails(tmp_path: Path) -> None:
+    """Relabelling the declared audit window is tamper, not a silent pass.
+
+    since/until/head_hmac describe which window the embedded audit events
+    were claimed to come from. Before this fix only the recomputed content
+    head (audit_range_head_sha256) was bound into the signed subject, so
+    these three fields could be edited post-signing with no effect on
+    verification.
+    """
+    sdd = tmp_path / ".sdd"
+    _seed_run(sdd)
+    _seed_audit(sdd)
+    receipt = build_run_receipt(
+        _RUN_ID,
+        sdd,
+        _kms(tmp_path),
+        include_audit_range=True,
+        audit_hmac_key=_HMAC_KEY,
+        audit_since="2020-01-01T00:00:00.000000Z",
+        audit_until="2100-01-01T00:00:00.000000Z",
+        write=False,
+    )
+    assert verify_run_receipt(receipt.receipt_bytes).ok
+
+    for field in ("since", "until", "head_hmac"):
+        doc = json.loads(receipt.receipt_bytes)
+        doc["audit_range"][field] = "forged"
+        result = verify_run_receipt(_reserialize(doc))
+        assert not result.ok, f"relabelling audit_range.{field} should fail verification"
+        assert result.status == "tampered"
+
+
 def test_audit_range_requires_build_inputs(tmp_path: Path) -> None:
     """include_audit_range without key/window is refused, never half-built."""
     sdd = tmp_path / ".sdd"
