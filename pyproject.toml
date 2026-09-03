@@ -464,6 +464,10 @@ artifacts = [
     # it on each release. Loader:
     # bernstein.cli.doctor.suggest_docs.load_unanswered_topics.
     "src/bernstein/_default_templates/docs/*.json",
+    # Tracker ingest event-type catalogue (#5132). Schema-validated YAML of
+    # canonical event names; GitHub/GitLab parsers map through it only.
+    # Loader: bernstein.core.trackers.event_catalogue.load_event_catalogue.
+    "src/bernstein/core/trackers/event_catalogue.yaml",
 ]
 
 [tool.hatch.build.targets.wheel.force-include]
