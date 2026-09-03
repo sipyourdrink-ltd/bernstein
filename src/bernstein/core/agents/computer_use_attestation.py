@@ -447,11 +447,11 @@ def replay_run(
     # 2. Replay manifest from the audit chain, keyed by action index.
     manifest: dict[int, dict[str, object]] = {}
     for ev in audit_chain.query(event_type=EVENT_COMPUTER_USE_ACTION):
-        details = ev.details
-        if details.get("run_id") != run_id:
+        ev_details = ev.details
+        if ev_details.get("run_id") != run_id:
             continue
         try:
-            manifest[int(details["action_index"])] = details  # type: ignore[arg-type]
+            manifest[int(ev_details["action_index"])] = ev_details  # type: ignore[arg-type]
         except (KeyError, TypeError, ValueError):
             continue
 

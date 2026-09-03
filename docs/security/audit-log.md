@@ -476,10 +476,77 @@ nothing - which is why `bernstein doctor` reports the anchoring state
 (`never anchored` / `anchored at N entries, last at T`) rather than
 letting an unanchored install look as strong as an anchored one.
 
-still open, and deliberately not shipped here: a witness
-co-signature protocol between two installs, and operator-supplied
+still open, and deliberately not shipped here: operator-supplied
 external sinks (object lock, append-only bucket) for checkpoint
 retention.
+
+### Witness co-signatures: a second party that remembers
+
+an anchor says a history of a given size existed at a point in time.
+a **witness** says something the local host cannot say about itself:
+that it already accepted a tree this one has to extend. a witness is
+a minimal second party - another host, a separate unix user, or an
+operator laptop - holding per-origin monotonic state (the newest
+checkpoint it accepted for a chain origin) and an ed25519 key.
+
+the witness co-signs only when the submitted checkpoint is a
+consistent extension of its pin. it refuses otherwise, and the cause
+is named:
+
+| cause | what it means |
+| --- | --- |
+| `size_regression` | the submitted tree holds fewer records than the pinned one |
+| `state_mismatch` | a second tree at the size the witness already pinned, or a different origin |
+| `inconsistent_extension` | a pinned segment is gone, shrank, or changed under a length it was pinned at; or the submitted leaves do not rebuild the submitted root |
+
+three commands, one per host:
+
+```bash
+# on the log host: the checkpoint payload, no secrets in it
+bernstein audit witness export --out cp.json
+
+# on the witness: check against its own state, then co-sign
+bernstein audit witness cosign --checkpoint cp.json --key witness.key \
+    --state-dir ~/.bernstein-witness --out cosig.json
+
+# on the log host: store it, checked under the key you pin
+bernstein audit witness record --cosignature cosig.json --witness-key witness.pub
+```
+
+co-signatures live in `.sdd/audit/checkpoints/cosignatures.jsonl`,
+append-only and fsynced, beside `checkpoints.jsonl` and never inside
+it - same reason as anchors. witness state lives in the witness's own
+directory, one file per chain origin, written temp-file + rename +
+fsync so a crash leaves the old pin rather than a truncated one.
+
+`bernstein audit verify` then runs a **witness co-signatures** pillar:
+
+- pass `--witness-key <witness.pub>` to authenticate the recorded
+  co-signatures. without it they are reported as present but
+  unauthenticated and drive no verdict: a witness key taken from the
+  record itself is a witness vouching for itself.
+- pass `--witness-state <dir>` as well to read the witness's own pins
+  directly. that is the copy an actor who rewinds the local history
+  cannot delete.
+- a local history shorter than the newest witnessed record count, a
+  different chain origin, or a witnessed checkpoint that is no longer
+  on record are all **contradictions**, and each exits non-zero naming
+  the witnessed checkpoint.
+
+what the witness does *not* check: it never sees the audit key or the
+chain segments, so it cannot re-hash a segment prefix. a pinned
+segment that grew is accepted on the strength of the local gate, which
+does hold the bytes. what the witness adds is the memory.
+
+a witness holding no state for a chain co-signs and says so - a first
+acceptance, or one taken after the state was lost, proves nothing
+about history before it. that is the local-only guarantee again, and
+`witness cosign` prints it rather than passing silently. keep the
+state directory backed up for the same reason you keep
+`anchors.jsonl` off the writing machine.
+
+a witness contradiction is **not** clearable with `audit ack-tear`,
+for the same reason an anchor contradiction is not.
 
 ## Replaying a log
 

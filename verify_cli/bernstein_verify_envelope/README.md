@@ -11,10 +11,27 @@ produced it. This verifier is the proof: it imports only `cryptography` and
 
 ```bash
 pip install bernstein-verify-envelope
+
+# Checked against the key the envelope carries: reported as trust-on-first-use.
 bernstein-verify-envelope verify ./authority-envelope.json --verbose
+
+# Checked against a key you obtained out of band: an envelope re-signed by
+# anyone else is rejected.
+bernstein-verify-envelope verify ./authority-envelope.json --jwk ./operator.jwk
+bernstein-verify-envelope verify ./authority-envelope.json --public-key ./operator.pem
 ```
 
-Exit codes: `0` verified, `1` a check failed, `2` bad arguments.
+Exit codes: `0` verified, `1` a check failed, `2` bad arguments. Pass at most one
+of `--jwk` / `--public-key`: two pins are refused rather than one being ignored.
+
+Every run ends with a `TRUST:` line and the machine-readable result on stderr
+carries a `trust` member, so a pass against a pinned key is never confused with
+a pass against the key the file supplies:
+
+| `trust` | What the pass means |
+|---|---|
+| `pinned-jwk` / `pinned-public-key` | The signature verifies under a key supplied out of band. |
+| `trust-on-first-use` | Nothing was edited after signing. It is *not* evidence the signer is who the envelope names. |
 
 ## What it checks
 
@@ -22,7 +39,7 @@ Exit codes: `0` verified, `1` a check failed, `2` bad arguments.
 |---|---|
 | `envelope_type` | The file declares the schema version and type this verifier implements. |
 | `coverage` (gate) | The envelope states what it does not cover. An envelope with no `coverage` section is refused outright — silence is not read as full coverage. |
-| `signature` | The detached EdDSA JWS verifies over the RFC 8785 canonical bytes of the envelope body. |
+| `signature` | The detached EdDSA JWS verifies over the RFC 8785 canonical bytes of the envelope body, under the pinned key when one is given and otherwise under the key the envelope carries. |
 | `section:<name>` | Each section's recorded digest recomputes, so a failure names the section that moved rather than only reporting a broken signature. |
 | `principal` | The principal identifier is bound to its key material by a recomputed hash. |
 | `grants` | The chain hashes recompute and every link attenuates: subset scope, no later expiry, issuer equal to the previous subject, terminating at the principal. |
@@ -32,9 +49,12 @@ Exit codes: `0` verified, `1` a check failed, `2` bad arguments.
 
 ## What a passing envelope does *not* prove
 
-- **That the key is trusted.** Verifying against the key the envelope carries is
-  trust-on-first-use, and is reported as such. Pinning a key out of band is not
-  implemented yet.
+- **That the key is trusted, unless you pinned one.** Verifying against the key
+  the envelope carries is trust-on-first-use, and is reported as such: an
+  attacker who can replace the whole file can also replace the key inside it.
+  Pin the signer's key with `--jwk` or `--public-key` and that stops being true
+  — but where the pinned key comes from is still your problem, not the
+  envelope's.
 - **That the grants were unrevoked** at the time they were used. The envelope
   carries expiries, not revocation state.
 - **That the artefacts exist.** Evidence entries are hashes; matching them to

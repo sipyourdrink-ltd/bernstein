@@ -16,7 +16,10 @@ This module provides that checklist:
   each source into a path or sha256 reference, and records freshness so
   the markdown can flag stale evidence (last-modified > N days).
 * :func:`generate_audit_pack` - renders the checklist as Markdown,
-  one row per (control, source).
+  one row per (control, source), plus a JSON manifest. The pair is
+  assembled in a scratch directory and promoted onto the published
+  path only once both files are durable, so a run that dies partway
+  through never leaves a consumer reading a half-built pack.
 
 The markdown is self-contained so it can be uploaded as a CI artifact
 or pasted into an external GRC tool without further processing.
@@ -30,10 +33,14 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import shutil
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
+
+from bernstein.core.persistence.atomic_write import promote_atomic, write_atomic_text
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -63,6 +70,18 @@ EvidenceStatus = Literal["OK", "PENDING", "STALE"]
 STATUS_OK: EvidenceStatus = "OK"
 STATUS_PENDING: EvidenceStatus = "PENDING"
 STATUS_STALE: EvidenceStatus = "STALE"
+
+#: Name prefix of the scratch directory where a pack is assembled before
+#: promotion. The directory lives inside the published output directory so
+#: promotion is a same-filesystem rename; it is removed once the run ends,
+#: whether the run succeeded or failed.
+STAGING_PREFIX: str = ".staging-"
+
+#: Mode the published pack files carry. ``write_atomic_text`` stages at
+#: owner-only 0o600, which is right for runtime state but would silently
+#: narrow who can read an evidence pack that used to be created with the
+#: ordinary default; the staged files are chmod-ed back before promotion.
+_PUBLISHED_FILE_MODE: int = 0o644
 
 #: Default freshness window in days. Anything older flips a source to
 #: ``STALE``. Operators tune via :func:`generate_audit_pack(stale_after_days=N)`.
@@ -570,6 +589,61 @@ def _build_manifest(
     }
 
 
+def _publish_pack(
+    *,
+    target_dir: Path,
+    markdown: str,
+    md_path: Path,
+    manifest: dict[str, Any],
+    manifest_path: Path,
+) -> None:
+    """Stage the whole pack, then promote both files onto the published path.
+
+    The pack is two files that only make sense together: the markdown
+    checklist and the manifest that indexes it. Writing them straight to
+    ``target_dir`` gives a consumer two ways to read a half-built pack -
+    a torn file while a single ``write`` is in flight, and a new markdown
+    beside a stale manifest if the run dies between the two.
+
+    So both files are written under a content-addressed scratch directory
+    inside ``target_dir`` first (same filesystem, so promotion is a plain
+    rename), each one durable via :func:`write_atomic_text`. Only once the
+    complete pack is on disk is anything promoted. A failure at any earlier
+    stage - evidence resolution, rendering, manifest serialisation, either
+    staged write - leaves the published path byte-for-byte as it was.
+
+    Staging writes owner-only, so both files are chmod-ed to
+    ``_PUBLISHED_FILE_MODE`` before promotion: staging must not change who
+    can read the published pack.
+
+    Args:
+        target_dir: Published evidence directory (already created).
+        markdown: Rendered checklist body.
+        md_path: Published path for the markdown.
+        manifest: Manifest payload.
+        manifest_path: Published path for the manifest.
+
+    Raises:
+        OSError: Propagated from the staged writes or the promotion.
+    """
+    manifest_text = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    digest = hashlib.sha256(markdown.encode("utf-8") + manifest_text.encode("utf-8")).hexdigest()
+    # Content digest names the pack; pid + randomness keep two concurrent
+    # writers of different generations from sharing a scratch directory.
+    staging_dir = target_dir / f"{STAGING_PREFIX}{digest[:16]}.{os.getpid()}.{os.urandom(4).hex()}"
+    staged_md = staging_dir / md_path.name
+    staged_manifest = staging_dir / manifest_path.name
+    try:
+        write_atomic_text(staged_md, markdown)
+        write_atomic_text(staged_manifest, manifest_text)
+        staged_md.chmod(_PUBLISHED_FILE_MODE)
+        staged_manifest.chmod(_PUBLISHED_FILE_MODE)
+        promote_atomic(staged_md, md_path)
+        promote_atomic(staged_manifest, manifest_path)
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+
+
 def generate_audit_pack(
     *,
     workdir: Path | None = None,
@@ -593,6 +667,8 @@ def generate_audit_pack(
         stale_after_days: Threshold for the ``STALE`` flag.
         now: Override clock for tests.
         write: When False, return rendered content without touching disk.
+            When True, the pack is staged in full and then promoted onto
+            ``output_dir`` so a failed run never publishes a partial pack.
 
     Returns:
         :class:`AuditPackResult`.
@@ -616,10 +692,12 @@ def generate_audit_pack(
         target_dir.mkdir(parents=True, exist_ok=True)
         md_path = target_dir / f"soc2-evidence-{period_label}.md"
         manifest_path = target_dir / f"soc2-evidence-{period_label}.json"
-        md_path.write_text(markdown, encoding="utf-8")
-        manifest_path.write_text(
-            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
+        _publish_pack(
+            target_dir=target_dir,
+            markdown=markdown,
+            md_path=md_path,
+            manifest=manifest,
+            manifest_path=manifest_path,
         )
         logger.info("SOC 2 evidence pack written: %s", md_path)
 
@@ -636,6 +714,7 @@ __all__ = [
     "DEFAULT_EVIDENCE_SOURCES",
     "DEFAULT_STALE_AFTER_DAYS",
     "PENDING_EVIDENCE",
+    "STAGING_PREFIX",
     "STATUS_OK",
     "STATUS_PENDING",
     "STATUS_STALE",

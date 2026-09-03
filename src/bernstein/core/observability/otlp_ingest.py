@@ -40,7 +40,10 @@ plumbed by the calling context.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from bernstein.core.observability.ingest_contract import IngestAdapterDeclaration
 
 __all__ = [
     "GenAIActivity",
@@ -315,6 +318,38 @@ class OTLPIngestAdapter:
 
     def __init__(self, *, source_label: str = "otlp_ingest") -> None:
         self._source = source_label
+
+    @property
+    def declared_event_types(self) -> tuple[str, ...]:
+        """Return the event types this adapter declares it can receive."""
+        return ("gen_ai_activity", "untyped_activity")
+
+    def validate_declaration(self, declaration: IngestAdapterDeclaration) -> None:
+        """Validate a plugin's ingest adapter declaration.
+
+        The declaration must name every event type this adapter can
+        produce: an adapter may not quietly narrow its declared surface
+        below what it emits (issue #4963).
+
+        Raises:
+            ValueError: When the declaration names an event type this
+                adapter does not support, or omits one it does.
+        """
+        from bernstein.core.observability.ingest_contract import VALID_INGEST_EVENT_TYPES
+
+        valid = set(VALID_INGEST_EVENT_TYPES)
+        for et in declaration.declared_event_types:
+            if et not in valid:
+                raise ValueError(
+                    f"adapter {declaration.name!r} declared unsupported event type {et!r}; "
+                    f"supported types are {sorted(valid)}"
+                )
+        missing = set(self.declared_event_types) - set(declaration.declared_event_types)
+        if missing:
+            raise ValueError(
+                f"adapter {declaration.name!r} does not declare event types {sorted(missing)} "
+                f"which this adapter can produce; supported types are {sorted(valid)}"
+            )
 
     def ingest_span(self, raw: dict[str, Any]) -> IngestSpanResult:
         """Ingest one OTLP/JSON span dict.

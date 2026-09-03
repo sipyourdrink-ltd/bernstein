@@ -31,7 +31,14 @@ from bernstein.core.security.audit_receipt import (
     rebuild_receipt_range,
     receipt_events_head,
 )
-from bernstein.core.security.run_closure import RunClosureProjection, RunClosureStatus, derive_run_closure
+from bernstein.core.security.run_closure import (
+    CoverageStatement,
+    CoverageStatementError,
+    RunClosureProjection,
+    RunClosureStatus,
+    derive_coverage_statement,
+    derive_run_closure,
+)
 from bernstein.core.security.toolcall_interlock import AttestationVerdict, derive_attestation_verdict
 
 if TYPE_CHECKING:
@@ -76,6 +83,7 @@ class RunAttestationReceipt:
     through_hmac: str
     dispatch_evidence_verdict: AttestationVerdict
     whole_run_verdict: AttestationVerdict
+    coverage: CoverageStatement
     audit_receipt: AuditReceipt
 
     @property
@@ -112,6 +120,7 @@ class RunAttestationProjectionVerification:
     run_id: str
     dispatch_evidence_verdict: AttestationVerdict
     whole_run_verdict: AttestationVerdict
+    coverage: CoverageStatement
     errors: tuple[str, ...]
 
 
@@ -223,6 +232,10 @@ def build_run_attestation_receipt(
     retained_source = source_events[anchor_index : boundary_index + 1]
     rebuilt, head_hmac, head_sha256 = rebuild_receipt_range(retained_source, key)
     dispatch_verdict = derive_attestation_verdict(_run_verdict_events(rebuilt, resolved_run_id), witnessed=True)
+    try:
+        coverage = derive_coverage_statement(rebuilt)
+    except CoverageStatementError as exc:
+        raise RunAttestationReceiptError(str(exc)) from exc
     closure = derive_run_closure(rebuilt, resolved_run_id, witnessed=True)
     closure_completes_run = _closure_completes_identity_run(closure)
     if closure_completes_run and boundary_index != len(source_events) - 1:
@@ -244,6 +257,7 @@ def build_run_attestation_receipt(
         "provisional": not closure_completes_run,
         "dispatch_evidence_verdict": dispatch_verdict.value,
         "whole_run_verdict": whole_run_verdict.value,
+        "coverage": coverage.to_dict(),
     }
     if not closure_completes_run:
         projection["limitation"] = (
@@ -279,6 +293,7 @@ def build_run_attestation_receipt(
         through_hmac=boundary_hmac,
         dispatch_evidence_verdict=dispatch_verdict,
         whole_run_verdict=whole_run_verdict,
+        coverage=coverage,
         audit_receipt=audit_receipt,
     )
 
@@ -300,6 +315,7 @@ def verify_run_attestation_projection(
             "",
             AttestationVerdict.OBSERVED,
             AttestationVerdict.OBSERVED,
+            CoverageStatement(0, 0, ()),
             ("receipt carries no retained event range",),
         )
     raw_events = cast("list[object]", raw_events_value)
@@ -315,6 +331,7 @@ def verify_run_attestation_projection(
             "",
             AttestationVerdict.OBSERVED,
             AttestationVerdict.OBSERVED,
+            CoverageStatement(0, 0, ()),
             tuple(errors or ["receipt carries no object events"]),
         )
 
@@ -388,11 +405,21 @@ def verify_run_attestation_projection(
     ):
         errors.append("serialized whole-run verdict was not derived from retained closure evidence")
 
+    try:
+        coverage = derive_coverage_statement(events)
+    except CoverageStatementError as exc:
+        coverage = CoverageStatement(0, 0, ())
+        errors.append(f"retained range carries an unstated coverage gap: {exc}")
+    else:
+        if projection.get("coverage") != coverage.to_dict():
+            errors.append("serialized coverage statement was not derived from the retained evidence")
+
     return RunAttestationProjectionVerification(
         ok=not errors,
         run_id=run_id,
         dispatch_evidence_verdict=dispatch_verdict,
         whole_run_verdict=whole_run_verdict,
+        coverage=coverage,
         errors=tuple(errors),
     )
 
