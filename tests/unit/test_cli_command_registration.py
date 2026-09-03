@@ -23,6 +23,29 @@ from click.testing import CliRunner
 
 from bernstein.cli.main import cli
 
+_MAIN_PY = Path(__file__).resolve().parents[2] / "src" / "bernstein" / "cli" / "main.py"
+# Explicit name form only: ``receiver.add_command(obj, "name")``. Derived-name
+# calls like ``cli.add_command(cancel)`` are out of scope (#5101).
+_EXPLICIT_ADD_COMMAND = re.compile(
+    r"""(?P<receiver>\w+)\.add_command\(\s*[^,\n]+,\s*['"](?P<name>[^'"]+)['"]"""
+)
+
+
+def _explicit_add_command_pairs() -> list[tuple[str, str]]:
+    """``(receiver, name)`` for every explicitly-named ``add_command`` in main.py."""
+    return [(m.group("receiver"), m.group("name")) for m in _EXPLICIT_ADD_COMMAND.finditer(_MAIN_PY.read_text(encoding="utf-8"))]
+
+
+def test_no_command_registered_twice_on_the_same_group() -> None:
+    """No explicit name may be registered twice on the same Click group.
+
+    Parses ``main.py`` source rather than the live ``cli`` object: Click keeps
+    only the last registration, so a live-dict check is blind to overwrites.
+    """
+    pairs = _explicit_add_command_pairs()
+    duplicates = sorted({pair for pair in pairs if pairs.count(pair) > 1})
+    assert duplicates == [], f"add_command registered the same (receiver, name) more than once: {duplicates}"
+
 
 def _command_names() -> list[str]:
     return sorted(cli.commands)
