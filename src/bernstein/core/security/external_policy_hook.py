@@ -134,15 +134,15 @@ class HookRequest:
         """
         stray_subject = sorted(set(request.subject.properties) - _CARRIED_SUBJECT_PROPERTIES)
         if stray_subject:
-            raise AuthZenError(f"subject propert(ies) an internal request cannot carry: {', '.join(stray_subject)}")
+            raise AuthZenError(f"subject properties an internal request cannot carry: {', '.join(stray_subject)}")
         if request.resource.properties:
             raise AuthZenError(
-                f"resource propert(ies) an internal request cannot carry: "
+                f"resource properties an internal request cannot carry: "
                 f"{', '.join(sorted(request.resource.properties))}",
             )
         if request.action.properties:
             raise AuthZenError(
-                f"action propert(ies) an internal request cannot carry: {', '.join(sorted(request.action.properties))}",
+                f"action properties an internal request cannot carry: {', '.join(sorted(request.action.properties))}",
             )
         role = request.subject.properties.get("role", "")
         if not isinstance(role, str):
