@@ -411,6 +411,7 @@ class RunActor:
         *,
         replay_capacity: int = 1024,
         initial_state: RunState | None = None,
+        on_refusal: TerminalRefusalHook | None = None,
     ) -> None:
         self._state: RunState = initial_state or RunState(session_id=session_id)
         if self._state.session_id != session_id:
@@ -424,6 +425,7 @@ class RunActor:
         self._lock = asyncio.Lock()
         self._stopped = asyncio.Event()
         self._started = False
+        self._on_refusal = on_refusal
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -493,6 +495,16 @@ class RunActor:
                     if new_state is self._state:
                         if refusal is not None:
                             from_status, to_status = refusal
+                            if self._on_refusal is not None:
+                                try:
+                                    self._on_refusal(
+                                        session_id=self._state.session_id,
+                                        from_status=from_status,
+                                        to_status=to_status,
+                                        source=stamped.source,
+                                    )
+                                except Exception as hook_exc:
+                                    logger.exception("RunActor: on_refusal failed: %s", hook_exc)
                             for hook in _REFUSAL_HOOKS:
                                 try:
                                     hook(
