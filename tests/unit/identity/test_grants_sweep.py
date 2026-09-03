@@ -187,6 +187,7 @@ class TestComputeGrantSets:
         path = ledger.receipt_path("run-1")
         raw = path.read_text(encoding="utf-8").splitlines()
         import json
+
         obj = json.loads(raw[0])
         obj["tampered_field"] = "BAD"
         path.write_text(json.dumps(obj, sort_keys=True) + "\n", encoding="utf-8")

@@ -58,9 +58,7 @@ def sweep_grants(
     # Each violation is a (task_id, secret_name) tuple.
     violation_summaries: list[str] = []
     for task_id, secret_name in sorted(violations):
-        violation_summaries.append(
-            f"task_id={task_id}, secret_name={secret_name}"
-        )
+        violation_summaries.append(f"task_id={task_id}, secret_name={secret_name}")
 
     summary = (
         f"Revoked grant(s) found present in the active set: "

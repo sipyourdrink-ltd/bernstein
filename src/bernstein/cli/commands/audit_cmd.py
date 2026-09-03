@@ -915,11 +915,10 @@ def _verify_grant_chains() -> bool:
             failures.append((run_id, result.errors))
         else:
             from bernstein.core.identity.grant_sweep import sweep_grants
+
             finding = sweep_grants(result)
             if finding is not None:
-                sweep_findings.append(
-                    f"run {run_id}: {finding['summary']}"
-                )
+                sweep_findings.append(f"run {run_id}: {finding['summary']}")
 
     console.print()
     if not failures:
