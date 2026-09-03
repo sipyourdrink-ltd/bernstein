@@ -229,13 +229,19 @@ def test_list_board_runs_empty_when_no_runs(tmp_path: Path) -> None:
 def test_record_task_merged_appends_journal_event(tmp_path: Path) -> None:
     """The helper appends a chained task_merged event to the run journal."""
     journal = EventJournal("run-m", tmp_path / ".sdd")
-    record_task_merged(journal, task_id="t-7", agent_id="agent-m")
+    record_task_merged(
+        journal,
+        task_id="t-7",
+        agent_id="agent-m",
+        merge_commit="0123456789abcdef0123456789abcdef01234567",
+    )
 
     events = load_events(journal.path).events
     assert len(events) == 1
     assert events[0]["event"] == EVENT_TASK_MERGED
     assert events[0]["task_id"] == "t-7"
     assert events[0]["agent_id"] == "agent-m"
+    assert events[0]["merge_commit"] == "0123456789abcdef0123456789abcdef01234567"
     assert journal.verify().chain_consistent
 
 
@@ -254,7 +260,7 @@ def test_reap_and_cleanup_records_task_merged(tmp_path: Path, monkeypatch: Any) 
     monkeypatch.setattr(task_lifecycle, "seal_evidence_on_completion", lambda *_a, **_k: None)
 
     recorder = EventJournal("run-seam", tmp_path / ".sdd")
-    merge_result = SimpleNamespace(success=True, conflicting_files=[])
+    merge_result = SimpleNamespace(success=True, conflicting_files=[], merge_commit="abc123")
     spawner = SimpleNamespace(
         reap_completed_agent=lambda *_a, **_k: merge_result,
         cleanup_worktree=lambda _sid: None,
@@ -284,6 +290,7 @@ def test_reap_and_cleanup_records_task_merged(tmp_path: Path, monkeypatch: Any) 
     assert len(merged) == 1
     assert merged[0]["task_id"] == "t-42"
     assert merged[0]["agent_id"] == "sess-1"
+    assert merged[0]["merge_commit"] == "abc123"
 
 
 def test_reap_and_cleanup_skips_merge_receipt_when_merge_skipped(tmp_path: Path, monkeypatch: Any) -> None:
