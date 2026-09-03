@@ -41,7 +41,12 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+if TYPE_CHECKING:
+    # `SLAStore.list` shadows the builtin inside the class body, so
+    # annotations below name it explicitly.
+    import builtins
 
 logger = logging.getLogger(__name__)
 
@@ -430,7 +435,7 @@ class SLAStore:
         out.sort(key=lambda c: c.id)
         return out
 
-    def for_subject(self, subject_type: str, subject_id: str) -> list[SLAContract]:
+    def for_subject(self, subject_type: str, subject_id: str) -> builtins.list[SLAContract]:
         """Return every contract bound to ``(subject_type, subject_id)``."""
         return [c for c in self.list() if c.subject_type == subject_type and c.subject_id == subject_id]
 

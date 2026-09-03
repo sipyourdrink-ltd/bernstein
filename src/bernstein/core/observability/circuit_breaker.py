@@ -27,11 +27,19 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lifecycle import transition_agent
 from bernstein.core.models import KillReason
+from bernstein.core.observability.guard_registry import default_registry
 
 if TYPE_CHECKING:
     from bernstein.core.models import Task
 
 logger = logging.getLogger(__name__)
+
+# Guard id for the scope-violation check in check_scope_violations(). Every
+# session whose scope precondition is met (owned_files defined, worktree
+# present, changed files readable) evaluates this guard exactly once per
+# check, with outcome "clean" or "violation" - see guard_registry.py.
+SCOPE_VIOLATION_GUARD_ID = "circuit_breaker.scope_violation"
+default_registry.register(SCOPE_VIOLATION_GUARD_ID)
 
 # ---------------------------------------------------------------------------
 # Kill audit log
@@ -321,7 +329,10 @@ def check_scope_violations(orch: Any, result: Any) -> None:
 
         out_of_scope = _files_outside_scope(changed_files, owned_files)
         if not out_of_scope:
+            default_registry.record_evaluation(SCOPE_VIOLATION_GUARD_ID, "clean")
             continue
+
+        default_registry.record_evaluation(SCOPE_VIOLATION_GUARD_ID, "violation")
 
         detail = (
             f"{len(out_of_scope)} file(s) modified outside task scope: "

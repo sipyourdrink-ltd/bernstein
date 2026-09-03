@@ -30,7 +30,7 @@ import hashlib
 import json
 import threading
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Mapping, Sequence
@@ -84,6 +84,14 @@ EVENT_COMPACTION_RECEIPT = "compaction.receipt"
 #: holding the ledger can recompute the report byte-identically and
 #: check it against the chain.
 EVENT_COST_PROFILE_REPORT = "cost.profile_report"
+
+#: Issue #2918 -- emitted the first time a run's spend ledger crosses its
+#: soft or hard budget cap. Until this event existed the halt survived
+#: only as a ``logger.warning`` line, so "this run stopped because of its
+#: budget" was not reconstructable from the tamper-evident chain. The
+#: event records the band that tripped, the spend and the cap as integer
+#: nano-USD, and the previous chain digest.
+EVENT_BUDGET_HALT = "cost.budget_halt"
 
 #: Issue #2247 -- emitted whenever ``bernstein eval ab`` writes a
 #: content-addressed profile comparison artifact. The event records the
@@ -502,6 +510,16 @@ EVENT_ADAPTER_CAPABILITY_SELECTION = "adapter.capability_selection"
 #: ``error`` marker is recorded when the classifier raises at the call site.
 EVENT_TASK_TIER_DECISION = "task.tier_decision"
 
+#: Issue #5341 -- emitted when an operator's host-isolation declaration reaches
+#: an adapter that owns a vendor sandbox. Records the declared tier, the
+#: operator's evidence for it, the config layer the declaration came from, and
+#: whether the adapter consequently dropped its vendor sandbox. Dropping a
+#: sandbox is a posture change, so it belongs on the record as a statement
+#: somebody made from a named source rather than as an unexplained flag flip:
+#: a reader reconstructing a run can prove offline which declaration was in
+#: force and what it was based on.
+EVENT_HOST_ISOLATION_DECLARED = "sandbox.host_isolation_declared"
+
 #: Issue #2663 -- emitted when capability-aware routing refuses a task because
 #: no candidate adapter's declared profile satisfied its requirements. The event
 #: anchors the content-addressed refusal receipt (its hash, the unmet axes, and
@@ -588,6 +606,20 @@ EVENT_MCP_TASK_HANDLE = "mcp.task_handle"
 #: public key can prove after the fact that a card was bound to exactly this
 #: SVID and that neither has been altered since.
 EVENT_SPIFFE_SVID_BINDING = "spiffe.svid_binding"
+
+#: Issue #5030 -- emitted when a token bound to an X.509-SVID is presented by
+#: something that could not prove it holds that SVID. The event pins the
+#: content-addressed refusal receipt together with the code naming *which*
+#: proof failed (no certificate presented, wrong thumbprint, expired leaf,
+#: unparseable leaf, or an audience that requires a binding the token lacks),
+#: the SPIFFE ID of the SVID that should have been used, and the expected and
+#: presented thumbprints. A gateway that rejects a replayed token says the
+#: request was denied; this says a token issued to one workload was presented
+#: by something that could not prove it was that workload, at a named chain
+#: position, and the statement verifies offline after the incident. Records
+#: identifiers, thumbprints, and the verdict only -- never the token or the
+#: certificate.
+EVENT_TOKEN_BINDING_REFUSAL = "identity.token_binding_refusal"
 
 #: Issue #2361 -- emitted when an operator approves (or rejects) the
 #: requirement set drafted from a spec, before the deterministic compiler
@@ -1539,6 +1571,74 @@ def record_cost_profile_report(
         actor=actor,
         resource_type="cost_profile_report",
         resource_id=report_sha256,
+        details=payload,
+    )
+
+
+@dataclass(frozen=True)
+class BudgetHaltDetails:
+    """Structured payload for the ``cost.budget_halt`` event."""
+
+    run_id: str
+    band: Literal["soft", "hard"]
+    spent_nano_usd: int
+    cap_nano_usd: int
+    ledger_entries_written: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "band": self.band,
+            "spent_nano_usd": self.spent_nano_usd,
+            "cap_nano_usd": self.cap_nano_usd,
+            "ledger_entries_written": self.ledger_entries_written,
+        }
+
+
+def record_budget_halt(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    band: Literal["soft", "hard"],
+    spent_nano_usd: int,
+    cap_nano_usd: int,
+    ledger_entries_written: int,
+    actor: str = "cost",
+) -> AuditEvent:
+    """Append a ``cost.budget_halt`` event into *chain*.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: Run whose ledger tripped the cap.
+        band: Which cap tripped -- ``"soft"`` or ``"hard"``. The two
+            bands are the closed vocabulary of this event; a reader
+            never has to interpret free text to know what stopped.
+        spent_nano_usd: Cumulative spend at the halt, in integer
+            nano-USD (never a float -- see
+            :func:`bernstein.core.cost.showback_canonical.nano_usd_from_float`).
+        cap_nano_usd: The cap that was crossed, in integer nano-USD.
+        ledger_entries_written: Rows the halting ledger instance had
+            appended when the cap tripped, so an operator can locate the
+            boundary row in ``.sdd/cost/ledger.jsonl``.
+        actor: Recorded actor; defaults to ``"cost"``.
+
+    Returns:
+        The recorded :class:`AuditEvent`. The event details payload
+        carries every input plus ``prev_chain_digest`` (set to the
+        chain head at write time).
+    """
+    payload = BudgetHaltDetails(
+        run_id=run_id,
+        band=band,
+        spent_nano_usd=spent_nano_usd,
+        cap_nano_usd=cap_nano_usd,
+        ledger_entries_written=ledger_entries_written,
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_BUDGET_HALT,
+        actor=actor,
+        resource_type="budget_halt",
+        resource_id=run_id,
         details=payload,
     )
 
@@ -5400,6 +5500,61 @@ def record_task_tier_decision(
     )
 
 
+def record_host_isolation_declaration(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    adapter: str,
+    tier: str,
+    evidence: str,
+    source: str,
+    vendor_sandbox_dropped: bool,
+    actor: str = "host_isolation",
+) -> AuditEvent:
+    """Append a ``sandbox.host_isolation_declared`` event into *chain* (#5341).
+
+    Anchors one operator declaration at the dispatch seam
+    :func:`record_capability_selection` already uses. An adapter that ships its
+    own sandbox drops it when the host is declared to isolate the process
+    already; without this record the drop is invisible after the fact, and the
+    difference between "the operator declared a container" and "somebody
+    escalated the adapter" cannot be reconstructed.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run the declaration was resolved for.
+        adapter: Adapter the declaration was injected into.
+        tier: Declared isolation tier (a ``SandboxTier`` value).
+        evidence: The operator's description of the isolation, verbatim. Free
+            text, recorded so a reader can judge the claim rather than take the
+            tier on faith.
+        source: Config layer the tier resolved from (``session``, ``project``,
+            ``global``, ``default``, ...), so the declaration names where it
+            was made and not only what it said.
+        vendor_sandbox_dropped: Whether the adapter consequently spawned
+            without its own sandbox. ``False`` for a tier that does not replace
+            it, which keeps the weak-tier declarations on the record too.
+        actor: Recorded actor; defaults to ``"host_isolation"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_HOST_ISOLATION_DECLARED,
+        actor=actor,
+        resource_type="sandbox",
+        resource_id=adapter,
+        details={
+            "run_id": run_id,
+            "adapter": adapter,
+            "tier": tier,
+            "evidence": evidence,
+            "source": source,
+            "vendor_sandbox_dropped": vendor_sandbox_dropped,
+        },
+    )
+
+
 def record_capability_refusal(
     *,
     chain: AuditChainStore,
@@ -6214,6 +6369,66 @@ def record_spiffe_svid_binding(
             "svid_sha256": svid_sha256,
             "binding_hash": binding_hash,
             "trust_domain": trust_domain,
+        },
+    )
+
+
+def record_token_binding_refusal(
+    *,
+    chain: AuditChainStore,
+    refusal_hash: str,
+    refusal_code: str,
+    audience: str,
+    spiffe_id: str,
+    expected_thumbprint: str,
+    presented_thumbprint: str,
+    session_id: str,
+    detail: str,
+    actor: str = "token_binding",
+) -> AuditEvent:
+    """Append an ``identity.token_binding_refusal`` event into *chain* (#5030).
+
+    Anchors one refused proof of possession: a token carrying an RFC 8705
+    confirmation claim was presented on a connection that could not prove it
+    holds the bound X.509-SVID. The event mirrors the content-addressed
+    :class:`~bernstein.core.security.token_binding.BindingRefusal` -- its hash,
+    the code naming which check failed, the SVID that should have been used,
+    and the expected and presented thumbprints -- into the HMAC chain. A
+    verifier holding the refusal recomputes its hash and checks it against the
+    chain, so a replayed credential leaves a record that survives the incident
+    instead of a 401 that leaves none.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        refusal_hash: Content address of the refusal receipt.
+        refusal_code: Which proof failed, from
+            :class:`~bernstein.core.security.token_binding.BindingRefusalCode`.
+        audience: The audience the refused token was minted for.
+        spiffe_id: SPIFFE ID of the SVID the token was bound to.
+        expected_thumbprint: The ``x5t#S256`` the token confirmed.
+        presented_thumbprint: The ``x5t#S256`` actually presented, if any.
+        session_id: The session the token named, for correlation.
+        detail: Human-readable reason, safe to record.
+        actor: Recorded actor; defaults to ``"token_binding"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_TOKEN_BINDING_REFUSAL,
+        actor=actor,
+        resource_type="token_binding_refusal",
+        resource_id=refusal_hash,
+        details={
+            "refusal_hash": refusal_hash,
+            "refusal_code": refusal_code,
+            "audience": audience,
+            "spiffe_id": spiffe_id,
+            "expected_thumbprint": expected_thumbprint,
+            "presented_thumbprint": presented_thumbprint,
+            "session_id": session_id,
+            "detail": detail,
         },
     )
 
@@ -9045,6 +9260,22 @@ EVENT_CAPABILITY_DELTA = "capability.delta_recorded"
 #: flipping any byte of the entry changes the chain HMAC.
 EVENT_CAPABILITY_AUTHORIZATION = "capability.authorization"
 
+#: Issue #5038 -- emitted whenever an operator admits a model for use by this
+#: installation. The event carries the canonical model key, the provider,
+#: model name and pinned version, the task classes the admission covers, the
+#: admitting identity, the expiry the admission lapses at, and an optional
+#: reference to the evidence the operator relied on. The model registry is a
+#: replay of these events and their withdrawals -- see
+#: :mod:`bernstein.core.routing.model_registry`.
+EVENT_MODEL_ADMITTED = "model.admitted"
+
+#: Issue #5038 -- emitted whenever an operator withdraws a previously admitted
+#: model. The event carries the same canonical model key plus the withdrawing
+#: identity and the stated reason. Withdrawal appends; it never edits or
+#: removes the admission it supersedes, so the state that held before it
+#: stays reconstructible.
+EVENT_MODEL_WITHDRAWN = "model.withdrawn"
+
 #: Issue #4975 -- emitted whenever an MCP server's advertised capability set
 #: changes between connections. The event carries the run id, the server name,
 #: previous capability digest (None for first contact), the current capability
@@ -9364,6 +9595,124 @@ def record_external_policy_decision(
     )
 
 
+#: Issue #5041 -- emitted once per model drift probe. The event carries the
+#: signed observation's hash, the model reference the probe ran against, the
+#: fixed suite it ran, the content hash of the baseline it was compared
+#: against, the comparison status and aggregate delta, and the declared
+#: coverage (how many of the suite's cases ran, and why a subset ran when one
+#: did). The observation itself is the artefact; this event is what makes the
+#: series ordered and an after-the-fact edit visible.
+EVENT_MODEL_DRIFT_OBSERVATION = "model.drift_observation"
+
+
+@dataclass(frozen=True)
+class ModelDriftObservationDetails:
+    """Structured payload for the ``model.drift_observation`` event."""
+
+    observation_hash: str
+    model_provider: str
+    model_requested: str
+    model_reported: str
+    suite_hash: str
+    suite_version: str
+    baseline_hash: str
+    comparison_status: str
+    aggregate_delta: float | None
+    coverage: str
+    cases_declared_count: int
+    cases_ran_count: int
+    sampling_reason: str
+    signer_fingerprint: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "observation_hash": self.observation_hash,
+            "model_provider": self.model_provider,
+            "model_requested": self.model_requested,
+            "model_reported": self.model_reported,
+            "suite_hash": self.suite_hash,
+            "suite_version": self.suite_version,
+            "baseline_hash": self.baseline_hash,
+            "comparison_status": self.comparison_status,
+            "aggregate_delta": self.aggregate_delta,
+            "coverage": self.coverage,
+            "cases_declared_count": self.cases_declared_count,
+            "cases_ran_count": self.cases_ran_count,
+            "sampling_reason": self.sampling_reason,
+            "signer_fingerprint": self.signer_fingerprint,
+        }
+
+
+def record_model_drift_observation(
+    chain: AuditChainStore,
+    *,
+    observation_hash: str,
+    model_provider: str,
+    model_requested: str,
+    model_reported: str,
+    suite_hash: str,
+    suite_version: str,
+    baseline_hash: str,
+    comparison_status: str,
+    aggregate_delta: float | None,
+    coverage: str,
+    cases_declared_count: int,
+    cases_ran_count: int,
+    sampling_reason: str,
+    signer_fingerprint: str,
+    actor: str = "eval",
+) -> AuditEvent:
+    """Append a ``model.drift_observation`` event into *chain*.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        observation_hash: Content hash of the signed drift observation.
+        model_provider: Provider of the probed model.
+        model_requested: Model alias the probe asked for.
+        model_reported: Model the provider said it served (empty when it said
+            nothing -- the gap the observation exists to record).
+        suite_hash: Content hash of the fixed suite that was run.
+        suite_version: Version label of that suite.
+        baseline_hash: Content hash of the baseline the run was compared to.
+        comparison_status: ``comparable`` or ``incomparable``.
+        aggregate_delta: Mean movement against the baseline over the cases
+            that ran, or ``None`` when the comparison was incomparable.
+        coverage: ``full`` or ``partial``.
+        cases_declared_count: How many cases the suite declares.
+        cases_ran_count: How many of them the probe ran.
+        sampling_reason: Why a subset ran; empty for a full run.
+        signer_fingerprint: Identity that signed the observation.
+        actor: Recorded actor; defaults to ``"eval"`` (the probe surface).
+
+    Returns:
+        The recorded :class:`AuditEvent`. The details payload carries every
+        input plus ``prev_chain_digest`` (the chain head at write time).
+    """
+    payload = ModelDriftObservationDetails(
+        observation_hash=observation_hash,
+        model_provider=model_provider,
+        model_requested=model_requested,
+        model_reported=model_reported,
+        suite_hash=suite_hash,
+        suite_version=suite_version,
+        baseline_hash=baseline_hash,
+        comparison_status=comparison_status,
+        aggregate_delta=aggregate_delta,
+        coverage=coverage,
+        cases_declared_count=cases_declared_count,
+        cases_ran_count=cases_ran_count,
+        sampling_reason=sampling_reason,
+        signer_fingerprint=signer_fingerprint,
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_MODEL_DRIFT_OBSERVATION,
+        actor=actor,
+        resource_type="model_drift_observation",
+        resource_id=observation_hash,
+        details=payload,
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -9380,6 +9729,7 @@ __all__ = [
     "EVENT_APPROVAL_CARD_RESOLVED",
     "EVENT_AUDIT_RECEIPT_EXPORT",
     "EVENT_AUTOMATION_ACTION",
+    "EVENT_BUDGET_HALT",
     "EVENT_CACHE_DEDUP_CLAIM",
     "EVENT_CACHE_EVICTION",
     "EVENT_CACHE_HIT",
@@ -9423,6 +9773,7 @@ __all__ = [
     "EVENT_FORK_SNAPSHOT",
     "EVENT_GATE_ADJUDICATION",
     "EVENT_GOVERNANCE_DECISION",
+    "EVENT_HOST_ISOLATION_DECLARED",
     "EVENT_IDENTITY_REVOKED",
     "EVENT_INPUT_REFUSAL",
     "EVENT_INTENT_CAPSULE",
@@ -9435,6 +9786,7 @@ __all__ = [
     "EVENT_MEMORY_WRITE",
     "EVENT_MISSION_DIGEST_RECEIPT",
     "EVENT_MISSION_PHASE_RECEIPT",
+    "EVENT_MODEL_DRIFT_OBSERVATION",
     "EVENT_MULTIMODAL_ATTACH",
     "EVENT_ODATA_WRITEBACK",
     "EVENT_OTEL_PROJECTION",
@@ -9499,6 +9851,7 @@ __all__ = [
     "EVENT_TEMPLATE_COMPRESSION_RECEIPT",
     "EVENT_TEMPLATE_COMPRESSION_RESTORE",
     "EVENT_THREAD_APPROVAL",
+    "EVENT_TOKEN_BINDING_REFUSAL",
     "EVENT_TOURNAMENT_SELECTION",
     "EVENT_TRACKER_PIPELINE_SWEEP",
     "EVENT_TRAJECTORY_RECEIPT",
@@ -9511,6 +9864,7 @@ __all__ = [
     "GATE_TERMINAL_RESOLUTIONS",
     "UNRELEASED_CLAIM_PATHS",
     "AuditChainStore",
+    "BudgetHaltDetails",
     "CapabilityAuthorizationDetails",
     "CapabilityDeltaDetails",
     "ClearanceResolutionRefusal",
@@ -9521,6 +9875,7 @@ __all__ = [
     "MCPCapabilityDriftDetails",
     "MandateConsentReceiptDetails",
     "MemoryWriteDetails",
+    "ModelDriftObservationDetails",
     "MultimodalAttachDetails",
     "PaymentReceiptDetails",
     "SkillInstallReceiptDetails",
@@ -9537,6 +9892,7 @@ __all__ = [
     "record_adapter_version_posture_receipt",
     "record_audit_receipt_export",
     "record_automation_action",
+    "record_budget_halt",
     "record_cache_dedup_claim",
     "record_cache_eviction",
     "record_cache_hit",
@@ -9578,6 +9934,7 @@ __all__ = [
     "record_fork_snapshot",
     "record_gate_adjudication",
     "record_governance_decision",
+    "record_host_isolation_declaration",
     "record_input_refusal",
     "record_intent_capsule",
     "record_intent_drift",
@@ -9589,6 +9946,7 @@ __all__ = [
     "record_memory_write",
     "record_mission_digest_receipt",
     "record_mission_phase_receipt",
+    "record_model_drift_observation",
     "record_multimodal_attach",
     "record_odata_writeback",
     "record_otel_projection",
@@ -9651,6 +10009,7 @@ __all__ = [
     "record_task_suspension",
     "record_task_tier_decision",
     "record_thread_approval",
+    "record_token_binding_refusal",
     "record_tournament_selection",
     "record_tracker_pipeline_sweep",
     "record_trajectory_receipt",

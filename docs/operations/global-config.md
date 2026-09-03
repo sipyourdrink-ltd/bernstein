@@ -99,7 +99,8 @@ highest to lowest precedence:
 1. **seed** — the run-seed (`bernstein.yaml`) value actually enforced by the
    orchestrator, when present.
 2. **session** — environment overrides (`BERNSTEIN_CLI`, `BERNSTEIN_BUDGET`,
-   `BERNSTEIN_MAX_AGENTS`, `BERNSTEIN_EFFORT`, `BERNSTEIN_MODEL`) or
+   `BERNSTEIN_MAX_AGENTS`, `BERNSTEIN_EFFORT`, `BERNSTEIN_MODEL`,
+   `BERNSTEIN_HOST_ISOLATION_TIER`, `BERNSTEIN_HOST_ISOLATION_EVIDENCE`) or
    caller-provided session overrides.
 3. **project** — `<project>/.sdd/config.yaml`.
 4. **context** — the active operating context, when one is selected (see
@@ -107,7 +108,8 @@ highest to lowest precedence:
 5. **global** — `~/.bernstein/config.yaml`, the file `bernstein config set`
    writes to.
 6. **default** — built-in defaults (`cli=claude`, `budget=None`,
-   `max_agents=6`, `effort=max`, `model=None`).
+   `max_agents=6`, `effort=max`, `model=None`,
+   `host_isolation_tier=none`, `host_isolation_evidence=""`).
 
 Only `bernstein config set`/`get`/`list`/`conflicts`/`view-mode` operate on
 this precedence chain. `bernstein config diff` is a separate, narrower tool
@@ -122,6 +124,16 @@ that only compares the project seed file to built-in defaults.
 | `max_agents` | `6` | Default max concurrent agents. |
 | `effort` | `max` | Default effort level (`max`/`medium`/`low`). |
 | `model` | `null` | Default model override (`null` = adapter default). |
+| `host_isolation_tier` | `none` | Isolation the host already applies to this process (`none`, `process`, `container`, `vm`). Env: `BERNSTEIN_HOST_ISOLATION_TIER`. |
+| `host_isolation_evidence` | `""` | Free-text description of that isolation, recorded verbatim in the audit chain. Env: `BERNSTEIN_HOST_ISOLATION_EVIDENCE`. |
+
+`host_isolation_tier` is read by adapters that ship a sandbox of their own. An
+operator running the CLI inside a container or VM they control declares the
+tier once; `container` and `vm` make the agent's own sandbox redundant and it
+is dropped, `process` and `none` keep it. A value outside the four is rejected
+and the sandbox stays on. Each declaration reaching an adapter is written to
+the audit chain as `sandbox.host_isolation_declared`. See
+[the sandbox architecture note](../architecture/sandbox.md#declared-host-isolation).
 
 ## Source
 
@@ -129,6 +141,8 @@ that only compares the project seed file to built-in defaults.
   subcommands.
 - `src/bernstein/core/config/home.py` — `BernsteinHome`, `resolve_config`,
   `resolve_config_bundle`, `explain_conflicts`, `check_source_policies`.
+- `src/bernstein/core/config/host_isolation.py` — `resolve_host_isolation`,
+  the closed tier vocabulary for `host_isolation_tier`.
 - `src/bernstein/cli/config_diff_cli.py` — `bernstein config diff`.
 
 ## Related

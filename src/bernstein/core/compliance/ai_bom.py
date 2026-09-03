@@ -31,12 +31,16 @@ validator accepts the document.
 
 from __future__ import annotations
 
+import datetime as _dt
 import hashlib
 import json
 import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass, field
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from bernstein.core.lineage.spine import LineageSpine
 
 __all__ = [
     "AIBOM",
@@ -52,6 +56,7 @@ __all__ = [
     "ToolEntry",
     "encode_bom",
     "generate_bom",
+    "snapshot_from_spine",
     "verify_bom",
 ]
 
@@ -259,6 +264,112 @@ def generate_bom(snapshot: Mapping[str, Any]) -> AIBOM:
         tools=tools,
         data_sources=data_sources,
     )
+
+
+# ---------------------------------------------------------------------------
+# Snapshot projection from the lineage spine
+# ---------------------------------------------------------------------------
+
+#: ``LineageSpine.record`` documents ``timestamp`` as "ns or s; caller-chosen",
+#: and the tree uses both: ``core/evidence/run_artifacts.py`` stamps
+#: ``int(time.time())`` while ``core/tasks/task_lifecycle.py`` stamps
+#: ``time.time_ns()``. The BOM window is an ISO-8601 UTC instant (the SPDX
+#: encoder puts ``finished_at`` in ``created``), so the unit is recovered from
+#: the magnitude: anything at or above a threshold is divided down to seconds.
+#: The thresholds sit far from any plausible wall-clock second value, so the
+#: mapping is total and deterministic rather than a per-run guess.
+_TIMESTAMP_UNIT_DIVISORS: tuple[tuple[int, int], ...] = (
+    (10**17, 1_000_000_000),  # nanoseconds
+    (10**14, 1_000_000),  # microseconds
+    (10**11, 1_000),  # milliseconds
+)
+
+
+def _spine_timestamp_to_iso(timestamp: int, *, label: str) -> str:
+    """Render a spine ``timestamp`` as an ISO-8601 UTC second."""
+    seconds = timestamp
+    for threshold, divisor in _TIMESTAMP_UNIT_DIVISORS:
+        if abs(timestamp) >= threshold:
+            seconds = timestamp // divisor
+            break
+    try:
+        moment = _dt.datetime.fromtimestamp(seconds, tz=_dt.UTC)
+    except (OSError, OverflowError, ValueError) as exc:
+        raise BOMError(f"{label} is not a representable timestamp: {timestamp!r} ({exc})") from None
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def snapshot_from_spine(spine: LineageSpine) -> dict[str, Any]:
+    """Project a run's lineage spine into a :func:`generate_bom` snapshot.
+
+    The BOM is a projection over state the run already produced, so its
+    input is derived from the chain rather than hand-assembled: without
+    this, ``bernstein bom emit --run`` only worked when an operator wrote
+    ``.sdd/runs/<run>/bom_snapshot.json`` themselves, and no code path in
+    the tree ever wrote that file.
+
+    Every emitted model entry carries the ``entry_hash`` of the lineage
+    record it was drawn from -- the first entry in append order that named
+    that model -- so a line item resolves back into the chain instead of
+    asserting a component out of nowhere. ``invocation_count`` is the number
+    of spine entries naming the model, and ``lineage_root_hash`` is the
+    chain head that anchors them all.
+
+    Entries that recorded no model (``model=""``, the shape every non-model
+    artifact write uses) contribute no component: an artifact write that
+    named no model did not invoke one.
+
+    Args:
+        spine: The run's :class:`~bernstein.core.lineage.spine.LineageSpine`.
+
+    Returns:
+        A snapshot dict accepted by :func:`generate_bom`. ``provider`` and
+        ``version`` are empty strings: the spine records the model string
+        only, and parsing a provider out of it would be a fresh claim rather
+        than a projection.
+
+    Raises:
+        BOMError: When the run has no lineage entries, or the chain head
+            cannot be read. An empty run has nothing to attest, and letting
+            the empty head reach :class:`AIBOM` would surface as a confusing
+            ``lineage_root_hash`` format error instead.
+    """
+    run_id = spine.run_dir.name
+    entries = list(spine.iter_entries())
+    if not entries:
+        raise BOMError(
+            f"run {run_id!r} has no lineage spine entries at {spine.spine_path}: nothing to project into a BOM",
+        )
+    head = spine.head_hash()
+    if not head:
+        raise BOMError(
+            f"run {run_id!r} has lineage entries but no readable chain head at {spine.spine_path}",
+        )
+
+    models: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        if not entry.model:
+            continue
+        known = models.get(entry.model)
+        if known is None:
+            models[entry.model] = {
+                "name": entry.model,
+                "provider": "",
+                "version": "",
+                "sha256": entry.entry_hash,
+                "invocation_count": 1,
+            }
+        else:
+            known["invocation_count"] = int(known["invocation_count"]) + 1
+
+    timestamps = [entry.timestamp for entry in entries]
+    return {
+        "run_id": run_id,
+        "started_at": _spine_timestamp_to_iso(min(timestamps), label=f"run {run_id!r} started_at"),
+        "finished_at": _spine_timestamp_to_iso(max(timestamps), label=f"run {run_id!r} finished_at"),
+        "lineage_root_hash": head,
+        "models": list(models.values()),
+    }
 
 
 # ---------------------------------------------------------------------------

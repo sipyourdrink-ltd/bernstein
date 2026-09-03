@@ -85,6 +85,35 @@ The signed payload is the canonical JSON of the entry, deliberately
 excluding the `signature` and `verified` fields so the signature is
 neither self-referential nor sensitive to operator-side flags.
 
+## Trust gate on install
+
+A skill body is prompt-space code: whatever it says steers the agent that
+loads it. Catalog content is third-party, so the install path promotes a
+fetched entry only after `lint_skill()` clears it. Promotion runs under
+strict lint, so any ERROR finding refuses the install:
+
+| Finding code         | What it catches                                                                 |
+|----------------------|---------------------------------------------------------------------------------|
+| `prompt-space-risk`  | Exfiltration-shaped instructions, credential-file asks, approval-bypass phrasing |
+| `invalid-manifest`   | Frontmatter that does not validate against the skill manifest schema             |
+| `unsafe-reference-path` / `missing-reference` | Declared bucket paths that escape the skill root or do not exist |
+| `sensitive-pattern`  | Invisible Unicode codepoints (a likely prompt-injection payload)                 |
+
+The gate runs against the staging copy, before the atomic swap into
+`.bernstein/skills/<name>/`. A refused entry therefore leaves nothing on
+disk: no skill directory, no `skills.lock` row, no install receipt. An
+already-installed clean version of the same skill is untouched.
+
+Each refusal appends a `skill.verification_refusal` event to the audit
+chain with `stage="install"`, the skill id and version, the offending
+lint findings in `detail`, and a `reason_code` of `prompt_space_risk`
+when a `prompt-space-risk` finding is present or `lint_error` otherwise.
+"Why was this skill refused?" is answerable offline from the chain.
+
+Local installs (`bernstein skills install <path>`) keep their existing
+posture: lint is advisory unless the operator passes `--strict`. The
+strictness is tied to the content being third-party, not to the command.
+
 ## Audit chain integration
 
 Every install / upgrade / uninstall appends an HMAC-chained event under

@@ -26,7 +26,7 @@ from bernstein.adapters.plugin_sdk import (
 from bernstein.adapters.registry import adapter_name_for_provider, get_adapter
 from bernstein.adapters.skills_injector import inject_skills
 from bernstein.agents.registry import AgentRegistry, get_registry
-from bernstein.bridges.base import AgentState, BridgeError, RuntimeBridge, SpawnRequest
+from bernstein.bridges.base import AgentState, AgentStatus, BridgeError, RuntimeBridge, SpawnRequest
 from bernstein.core.agents import project_context as _project_context
 from bernstein.core.agents.adapter_health import AdapterHealthMonitor
 from bernstein.core.agents.attachment_dispatch import (
@@ -380,6 +380,13 @@ def extract_error_aware_reason(log_text: str, max_chars: int = _FAILURE_REASON_M
 # text is not a boundary: an ungated CLI adapter that ignores the rule writes
 # straight into its cwd (issue #2793).
 _WRITE_BOUNDARY_ROLES = frozenset({"manager"})
+
+# Why a token recorded in a spawn-capability manifest was not part of the
+# chain handed to ``CapabilityRegistry.evaluate_chain``.  The manifest is
+# the artefact an auditor reads, so the held-out set carries its reason
+# rather than leaving it to be inferred from absence (issue #5052).
+_HELD_OUT_OUTER_ENVELOPE = "outer-envelope"
+_HELD_OUT_UNDECLARED = "undeclared-tool"
 
 
 def manager_write_boundary_error(
@@ -1289,6 +1296,18 @@ def _render_prompt_with_receipt(
         named_sections.append(("rich_context", f"\n{rich_context}\n"))
     if file_scope_context:
         named_sections.append(("file_scope", deduplicate_section(f"\n## File-scope context\n{file_scope_context}\n")))
+    # Task context pack (#4522): what this repository's own history already
+    # records about the files this task owns - co-change neighbours, the tests
+    # that landed with them, the nearest AGENTS.md, and the tests the gate has
+    # quarantined. Off unless the operator sets the flag, and an empty pack
+    # renders to nothing, so the prompt is byte-identical without it. The
+    # section's content hash in the receipt below is the run record for the
+    # pack this spawn consumed.
+    from bernstein.core.tasks.context_pack import PACK_SECTION_LABEL, render_pack_section
+
+    context_pack_section = render_pack_section(workdir, [path for task in tasks for path in task.owned_files])
+    if context_pack_section:
+        named_sections.append((PACK_SECTION_LABEL, context_pack_section))
     # Parent context inheritance: inject parent's context summary
     # when a task was created from decomposing a larger parent task.
     parent_ctx_parts = [t.parent_context for t in tasks if t.parent_context]
@@ -2258,6 +2277,27 @@ class AgentSpawner:
         declared_only = [t for t in catalog_tools if t in registry.tools]
         decision = registry.evaluate_chain(declared_only)
 
+        # The recorded chain is wider than the evaluated one: the adapter
+        # envelope is never fed to the gate (every adapter row carries all
+        # three capabilities, so it would deny every spawn) and undeclared
+        # catalog tools are dropped for the reason above.  Both omissions
+        # are deliberate, but a reader of the manifest must not have to
+        # infer them from absence - record each held-out token with why it
+        # was held out, and keep the evaluated set byte-equal to the chain
+        # the decision actually saw.
+        held_out: list[dict[str, str]] = []
+        accounted: set[str] = set(declared_only)
+        for token in chain:
+            if token in accounted:
+                continue
+            accounted.add(token)
+            held_out.append(
+                {
+                    "tool": token,
+                    "reason": (_HELD_OUT_OUTER_ENVELOPE if token == adapter_token else _HELD_OUT_UNDECLARED),
+                }
+            )
+
         runtime_dir = self._workdir / ".sdd" / "runtime" / "spawn_capabilities"
         try:
             runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -2266,7 +2306,8 @@ class AgentSpawner:
                 "role": role,
                 "timestamp": datetime.now(UTC).isoformat(),
                 "tools": chain,
-                "evaluated": catalog_tools,
+                "evaluated": list(declared_only),
+                "held_out": held_out,
                 "triggered": sorted(c.value for c in decision.triggered),
                 "allowed": decision.allowed,
                 "reason": decision.reason,
@@ -2681,12 +2722,70 @@ class AgentSpawner:
             return cached
 
         adapter = get_adapter(adapter_name)
+        if getattr(adapter, "consumes_host_isolation", False):
+            self._apply_host_isolation(adapter_name, adapter)
         if self._enable_caching:
             from bernstein.adapters.caching_adapter import CachingAdapter
 
             adapter = CachingAdapter(adapter, self._workdir)
         self._adapter_cache[adapter_name] = adapter
         return adapter
+
+    def _apply_host_isolation(self, adapter_name: str, adapter: CLIAdapter) -> None:
+        """Hand the operator's host-isolation declaration to *adapter* (#5341).
+
+        Only adapters that own a vendor sandbox advertise
+        ``consumes_host_isolation``; everything else is left untouched, so an
+        adapter with nothing to drop neither gains an attribute nor produces a
+        record.
+
+        Runs before the :class:`CachingAdapter` wrap so the attributes land on
+        the adapter that actually builds the argv, and behind the adapter cache
+        so one run records the declaration once per adapter rather than once
+        per spawn.
+
+        A misdeclared tier is reported and then dropped: the resolver raises
+        rather than guess, and the safe interpretation of "we could not read
+        the declaration" is that no isolation was declared, which leaves the
+        vendor sandbox on. Wedging every spawn over a typo in a config key
+        would be the worse failure.
+        """
+        from bernstein.core.config.host_isolation import resolve_host_isolation
+
+        try:
+            declaration = resolve_host_isolation(self._workdir)
+        except ValueError as exc:
+            logger.warning(
+                "host isolation declaration ignored for %s: %s; the vendor sandbox stays on",
+                adapter_name,
+                exc,
+            )
+            return
+
+        adapter.host_isolation = declaration.tier  # type: ignore[attr-defined]
+        adapter.host_isolation_evidence = declaration.evidence  # type: ignore[attr-defined]
+
+        try:
+            from bernstein.core.security.audit_chain import (
+                AuditChainStore,
+                record_host_isolation_declaration,
+            )
+
+            record_host_isolation_declaration(
+                chain=AuditChainStore(self._workdir / ".sdd" / "audit"),
+                run_id=getattr(self, "_run_id", ""),
+                adapter=adapter_name,
+                tier=str(declaration.tier),
+                evidence=declaration.evidence,
+                source=str(declaration.source),
+                vendor_sandbox_dropped=bool(adapter.host_isolation_drops_vendor_sandbox()),  # type: ignore[attr-defined]
+            )
+        except Exception as exc:
+            logger.warning(
+                "host isolation recording failed for %s: %s",
+                adapter_name,
+                type(exc).__name__,
+            )
 
     def _run_bridge_call(self, awaitable: Any) -> Any:
         """Run a bridge coroutine from the sync orchestration path."""
@@ -3070,7 +3169,7 @@ class AgentSpawner:
         """
         if self._runtime_bridge is None:
             return False
-        bridge_status = self._run_bridge_call(
+        bridge_status: AgentStatus = self._run_bridge_call(
             self._runtime_bridge.spawn(
                 SpawnRequest(
                     agent_id=session.id,
@@ -3478,7 +3577,7 @@ class AgentSpawner:
 
         profile = PROFILES.get(adapter_name)
         tier_decision = getattr(self, "_pending_tier_decision", None)
-        self._pending_tier_decision = None
+        self._pending_tier_decision: dict[str, Any] | None = None
         if profile is None:
             # Untracked adapter: still record an opt-in tier decision if present.
             if tier_decision is not None:
@@ -4427,9 +4526,23 @@ class AgentSpawner:
             # state baked into a pre-warmed worktree (cached prompt prefixes,
             # half-installed deps, leftover indexes) cannot leak across the
             # restart boundary.
-            warm_entry = (
-                self._warm_pool.claim_slot(role) if self._warm_pool is not None and not fresh_restart_on_retry else None
-            )
+            warm_pool = self._warm_pool
+            warm_entry = warm_pool.claim_slot(role) if warm_pool is not None and not fresh_restart_on_retry else None
+            # A slot with no worktree is not provisioned. `prepare_speculative_warm_pool`
+            # (core/tasks/task_lifecycle.py) adds slots with `worktree_path=""`, and
+            # `Path("")` is the orchestrator's cwd, i.e. the repository root: the agent
+            # then runs at the root, switches the operator checkout to `agent/<session>`
+            # and merges back into whatever branch that leaves checked out. Release the
+            # slot and take the cold path, which the warm-pool design calls the safe
+            # default.
+            if warm_pool is not None and warm_entry is not None and not warm_entry.worktree_path:
+                logger.warning(
+                    "Warm pool slot %s for role=%s has no worktree; releasing it and spawning cold",
+                    warm_entry.slot_id,
+                    role,
+                )
+                warm_pool.release_slot(warm_entry.slot_id)
+                warm_entry = None
             if warm_entry is not None:
                 spawn_cwd = Path(warm_entry.worktree_path)
                 self._worktree_paths[session_id] = spawn_cwd

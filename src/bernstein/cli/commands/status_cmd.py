@@ -1119,28 +1119,12 @@ def _doctor_check_schedule_supervisor(checks: list[dict[str, Any]], workdir: Pat
 
 def _doctor_check_compliance(checks: list[dict[str, Any]], workdir: Path) -> None:
     """Check compliance mode prerequisites."""
-    from bernstein.core.compliance import load_compliance_config
+    from bernstein.core.compliance import compliance_prerequisite_summary
 
-    compliance_cfg = load_compliance_config(workdir / ".sdd")
-    compliance_env = os.environ.get("BERNSTEIN_COMPLIANCE")
-    if compliance_env:
-        from bernstein.core.compliance import ComplianceConfig, CompliancePreset
-
-        compliance_cfg = ComplianceConfig.from_preset(CompliancePreset(compliance_env.lower()))
-
-    if compliance_cfg is not None:
-        preset_label = compliance_cfg.preset.value if compliance_cfg.preset else "custom"
-        prereq_warnings = compliance_cfg.check_prerequisites()
-        if prereq_warnings:
-            _add_check(
-                checks,
-                f"Compliance ({preset_label})",
-                False,
-                f"{len(prereq_warnings)} issue(s): {prereq_warnings[0]}",
-                "; ".join(prereq_warnings),
-            )
-        else:
-            _add_check(checks, f"Compliance ({preset_label})", True, "all prerequisites met")
+    summary = compliance_prerequisite_summary(workdir)
+    if summary is not None:
+        name, ok, detail, fix = summary
+        _add_check(checks, name, ok, detail, fix)
 
 
 def _doctor_print_fix_summary(auto_fix: bool, fixed: list[str], manual_needed: list[str]) -> None:

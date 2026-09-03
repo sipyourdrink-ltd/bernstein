@@ -130,7 +130,11 @@ class TrivyAdapter(ScannerAdapter):
             findings = parse_trivy_sarif(report_path.read_bytes(), target_root=resolved_target)
         finally:
             report_path.unlink(missing_ok=True)
-        return ScanResult(findings=findings, feed_digest=db_identity)
+        return ScanResult(
+            findings=findings,
+            feed_digest=db_identity,
+            invocation_digest=self.last_invocation.argv_hash,
+        )
 
 
 def _validate_scope(target: Path, scope: ScanScope) -> str:

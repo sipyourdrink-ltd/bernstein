@@ -1,367 +1,328 @@
-"""Tests for evolve run --dry-run and failure-pattern draft GitHub sync."""
+"""Tests for ``evolve run --dry-run`` and failure-pattern draft GitHub sync.
+
+The drafts an operator sees under ``--dry-run`` are the run-ledger failure
+patterns from :mod:`bernstein.core.persistence.runs_report` -- the same rows
+``bernstein runs report`` classifies -- not a second signal derived from live
+task metrics. A pattern's identity on GitHub is its fingerprint, carried as a
+label, so a recurring failure whose occurrence count grows updates one issue
+instead of filing a new one every cycle.
+"""
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from click.testing import CliRunner
 
 from bernstein.cli.commands.evolve_cmd import (
     _generate_failure_drafts,
     _show_failure_drafts,
     _sync_failure_drafts_to_github,
+    evolve_run,
+)
+from bernstein.cli.helpers import console as cli_console
+from bernstein.core.persistence.runs_report import (
+    FailurePatternDraft,
+    RunWrapUp,
+)
+from bernstein.core.persistence.work_ledger import (
+    KIND_RUN_CLOSED,
+    KIND_RUN_OPEN,
+    KIND_TASK_COMPLETED,
+    KIND_TASK_SCHEDULED,
+    KIND_TASK_STARTED,
+    WorkLedger,
+    run_ledger_dir,
 )
 from bernstein.evolution.aggregator import FileMetricsCollector, TaskMetrics
 
 # ---------------------------------------------------------------------------
-# _generate_failure_drafts
+# Fixtures: real ledger directories on disk (same shape as tests/unit/test_runs_report.py)
 # ---------------------------------------------------------------------------
 
 
-def test_generate_failure_drafts_empty(tmp_path: Path) -> None:
-    """No failure patterns produces empty drafts list."""
-    (tmp_path / ".sdd").mkdir(parents=True, exist_ok=True)
-    drafts = _generate_failure_drafts(tmp_path / ".sdd")
-    assert drafts == []
+@pytest.fixture(autouse=True)
+def _pinned_render_width(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the console width so table assertions do not depend on the runner.
+
+    Drafts render through a Rich table, which wraps every cell to the console's
+    width. That width is resolved once, when the shared console is built at
+    import time, so setting ``COLUMNS`` here would be too late -- the width has
+    to be set on the console itself. Without the pin, an assertion on a
+    rendered title passes on a wide runner and fails on a narrow one.
+    """
+    monkeypatch.setattr(cli_console, "_width", 200)
 
 
-def test_generate_failure_drafts_below_threshold(tmp_path: Path) -> None:
-    """Fewer than 3 failures for a role produces empty drafts."""
-    state_dir = tmp_path / ".sdd"
-    state_dir.mkdir(parents=True, exist_ok=True)
+def _seed_closed_run(root: Path, run_id: str, *, wrapup: RunWrapUp) -> None:
+    """Write a real closed-run ledger under ``root/.sdd``."""
+    ledger = WorkLedger.open(run_ledger_dir(root / ".sdd", run_id))
+    ledger.append(kind=KIND_RUN_OPEN, payload={"run_id": run_id})
+    ledger.append(kind=KIND_TASK_SCHEDULED, task_id="t1")
+    ledger.append(kind=KIND_TASK_STARTED, task_id="t1")
+    ledger.append(kind=KIND_TASK_COMPLETED, task_id="t1")
+    payload: dict[str, object] = {"run_id": run_id}
+    payload.update(wrapup.to_payload())
+    ledger.append(kind=KIND_RUN_CLOSED, payload=payload)
+    ledger.close()
+
+
+def _seed_failing_task_metrics(state_dir: Path, *, role: str, count: int) -> None:
+    """Record enough failing task metrics to trip the live-metric detector."""
     collector = FileMetricsCollector(state_dir)
-
-    now = time.time()
-    for i in range(2):
+    for i in range(count):
         collector.record_task_metrics(
             TaskMetrics(
-                timestamp=now - i,
-                task_id=f"t-{i}",
-                role="backend",
+                timestamp=1_000.0 + i,
+                task_id=f"{role}-{i}",
+                role=role,
                 model="sonnet",
                 cost_usd=0.10,
                 janitor_passed=False,
             )
         )
 
-    drafts = _generate_failure_drafts(state_dir)
-    assert drafts == []
+
+# ---------------------------------------------------------------------------
+# 1-3, 8: the draft source is the run ledger
+# ---------------------------------------------------------------------------
 
 
-def test_generate_failure_drafts_at_threshold(tmp_path: Path) -> None:
-    """3 failures for a role generates one draft."""
-    state_dir = tmp_path / ".sdd"
-    state_dir.mkdir(parents=True, exist_ok=True)
-    collector = FileMetricsCollector(state_dir)
+class TestDraftsComeFromRunLedgers:
+    """``_generate_failure_drafts`` reads classified runs, not live metrics."""
 
-    now = time.time()
-    for i in range(3):
-        collector.record_task_metrics(
-            TaskMetrics(
-                timestamp=now - i,
-                task_id=f"t-{i}",
-                role="backend",
-                model="sonnet",
-                cost_usd=0.10,
-                janitor_passed=False,
-            )
-        )
+    def test_drafts_come_from_run_ledgers_not_live_task_metrics(self, tmp_path: Path) -> None:
+        """A failing ledger produces a draft; failing task metrics alone do not."""
+        state_dir = tmp_path / ".sdd"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        # Live task metrics that the old detector would have turned into a draft.
+        _seed_failing_task_metrics(state_dir, role="backend", count=5)
+        # One real gate failure in the ledger.
+        _seed_closed_run(tmp_path, "run-gate", wrapup=RunWrapUp(gate_name="lint", failing_check="ruff check ."))
 
-    drafts = _generate_failure_drafts(state_dir)
-    assert len(drafts) == 1
-    draft = drafts[0]
-    assert draft["role"] == "backend"
-    assert draft["failure_count"] == 3
-    assert draft["failure_rate"] == pytest.approx(1.0, abs=1e-9)
-    assert "sonnet" in draft["models_involved"]
-    assert "title" in draft
-    assert "body" in draft
+        drafts = _generate_failure_drafts(state_dir)
 
+        assert [type(d) for d in drafts] == [FailurePatternDraft]
+        draft = drafts[0]
+        assert draft.fingerprint
+        assert draft.contributing_run_ids == ["run-gate"]
+        assert "ruff check ." in draft.title
+        # The role name from the live-metric source never reaches a draft.
+        assert "backend" not in draft.title
+        assert "backend" not in draft.body
 
-def test_generate_failure_drafts_multiple_roles(tmp_path: Path) -> None:
-    """Multiple roles with >= 3 failures generate multiple drafts."""
-    state_dir = tmp_path / ".sdd"
-    state_dir.mkdir(parents=True, exist_ok=True)
-    collector = FileMetricsCollector(state_dir)
+    def test_repeated_scan_of_unchanged_ledgers_yields_identical_fingerprints(self, tmp_path: Path) -> None:
+        """A second pass over the same ledgers produces zero new fingerprints."""
+        state_dir = tmp_path / ".sdd"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        _seed_closed_run(tmp_path, "run-a", wrapup=RunWrapUp(gate_name="lint", failing_check="ruff check ."))
+        _seed_closed_run(tmp_path, "run-b", wrapup=RunWrapUp(error_kind="adapter", error_message="exited 137"))
 
-    now = time.time()
-    # 3 backend failures
-    for i in range(3):
-        collector.record_task_metrics(
-            TaskMetrics(
-                timestamp=now - i,
-                task_id=f"b-{i}",
-                role="backend",
-                model="sonnet",
-                cost_usd=0.10,
-                janitor_passed=False,
-            )
-        )
+        first = {d.fingerprint for d in _generate_failure_drafts(state_dir)}
+        second = {d.fingerprint for d in _generate_failure_drafts(state_dir)}
 
-    # 4 security failures
-    for i in range(4):
-        collector.record_task_metrics(
-            TaskMetrics(
-                timestamp=now - 100 - i,
-                task_id=f"s-{i}",
-                role="security",
-                model="opus",
-                cost_usd=0.20,
-                janitor_passed=False,
-            )
-        )
+        assert first == second
+        assert second - first == set()
 
-    drafts = _generate_failure_drafts(state_dir)
-    assert len(drafts) == 2
-    roles = {d["role"] for d in drafts}
-    assert "backend" in roles
-    assert "security" in roles
+    def test_successful_runs_never_contribute_to_a_draft(self, tmp_path: Path) -> None:
+        """PR_OPENED and NO_CHANGES runs are absent from every draft."""
+        state_dir = tmp_path / ".sdd"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        _seed_closed_run(tmp_path, "run-pr", wrapup=RunWrapUp(branch="fix/thing", pr_number=7))
+        _seed_closed_run(tmp_path, "run-nochange", wrapup=RunWrapUp(commits_over_base=0))
+        _seed_closed_run(tmp_path, "run-gate", wrapup=RunWrapUp(gate_name="lint", failing_check="ruff check ."))
 
+        drafts = _generate_failure_drafts(state_dir)
 
-def test_generate_failure_drafts_body_contains_role(tmp_path: Path) -> None:
-    """Draft body includes the role name."""
-    state_dir = tmp_path / ".sdd"
-    state_dir.mkdir(parents=True, exist_ok=True)
-    collector = FileMetricsCollector(state_dir)
+        contributing = {rid for d in drafts for rid in d.contributing_run_ids}
+        assert contributing == {"run-gate"}
 
-    now = time.time()
-    for i in range(3):
-        collector.record_task_metrics(
-            TaskMetrics(
-                timestamp=now - i,
-                task_id=f"t-{i}",
-                role="qa",
-                model="haiku",
-                cost_usd=0.05,
-                janitor_passed=False,
-            )
-        )
+    def test_draft_body_states_occurrence_count_and_most_recent_run_id(self, tmp_path: Path) -> None:
+        """The body an operator reads names how often and which run last hit it."""
+        state_dir = tmp_path / ".sdd"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        for run_id in ("run-1", "run-2", "run-3"):
+            _seed_closed_run(tmp_path, run_id, wrapup=RunWrapUp(gate_name="lint", failing_check="ruff check ."))
 
-    drafts = _generate_failure_drafts(state_dir)
-    assert len(drafts) == 1
-    assert "qa" in drafts[0]["body"]
+        drafts = _generate_failure_drafts(state_dir)
+
+        assert len(drafts) == 1
+        draft = drafts[0]
+        assert draft.occurrence_count == 3
+        assert "3" in draft.body
+        assert draft.most_recent_run_id in draft.body
+
+    def test_initialised_workspace_with_no_finished_runs_produces_no_drafts(self, tmp_path: Path) -> None:
+        """An initialised workspace nothing has run in yields an empty list, not an error."""
+        state_dir = tmp_path / ".sdd"
+        state_dir.mkdir(parents=True, exist_ok=True)
+
+        assert _generate_failure_drafts(state_dir) == []
 
 
 # ---------------------------------------------------------------------------
-# _sync_failure_drafts_to_github - mocked
+# 4-5: GitHub identity is the fingerprint
 # ---------------------------------------------------------------------------
+
+
+def _draft(
+    *,
+    fingerprint: str,
+    title: str,
+    occurrence_count: int = 1,
+    run_id: str = "run-1",
+) -> FailurePatternDraft:
+    return FailurePatternDraft(
+        fingerprint=fingerprint,
+        title=title,
+        body="body",
+        occurrence_count=occurrence_count,
+        most_recent_run_id=run_id,
+        contributing_run_ids=[run_id],
+        sample_evidence="lint: ruff check .",
+    )
 
 
 class TestSyncFailureDraftsToGithub:
-    """Tests for syncing failure drafts to GitHub with mocked GitHubClient."""
+    """Fingerprint -> issue identity, with the ``gh`` CLI mocked out."""
 
-    def test_creates_new_issue(self, tmp_path: Path) -> None:
-        """When find_by_hash returns None, creates a new issue."""
+    def test_recurring_pattern_comments_on_one_issue_as_occurrence_count_grows(self) -> None:
+        """Same fingerprint, a title that changed: comment, never a second issue.
+
+        This is the load-bearing property. Title-derived identity files a new
+        issue on every cycle a recurring failure recurs, because the title
+        carries the occurrence count.
+        """
+        fingerprint = "a" * 64
+        first_pass = [_draft(fingerprint=fingerprint, title="GATE_FAILED: lint (3 runs)", occurrence_count=3)]
+        second_pass = [_draft(fingerprint=fingerprint, title="GATE_FAILED: lint (4 runs)", occurrence_count=4)]
+
+        mock_gh = MagicMock()
+        mock_gh.available = True
+        existing = MagicMock()
+        existing.number = 501
+        mock_gh.find_by_fingerprint.side_effect = [None, existing]
+        mock_gh.create_issue.return_value = MagicMock(number=501)
+        mock_gh.comment_on_issue.return_value = True
+
+        with patch("bernstein.core.git.github.GitHubClient", return_value=mock_gh):
+            _sync_failure_drafts_to_github(first_pass, "owner/repo")
+            _sync_failure_drafts_to_github(second_pass, "owner/repo")
+
+        assert mock_gh.create_issue.call_count == 1
+        assert mock_gh.create_issue.call_args.kwargs["fingerprint"] == fingerprint
+        assert mock_gh.comment_on_issue.call_count == 1
+        assert mock_gh.comment_on_issue.call_args[0][0] == 501
+
+    def test_each_new_fingerprint_creates_exactly_one_issue(self) -> None:
+        """One create per new fingerprint, no comments."""
         drafts = [
-            {
-                "title": "Failure pattern: backend (3 failures, 100% rate)",
-                "body": "Test body",
-                "role": "backend",
-                "failure_count": 3,
-                "failure_rate": 1.0,
-                "models_involved": ["sonnet"],
-            }
+            _draft(fingerprint="a" * 64, title="GATE_FAILED: lint"),
+            _draft(fingerprint="b" * 64, title="INFRA_ERROR: adapter"),
         ]
 
         mock_gh = MagicMock()
         mock_gh.available = True
-        mock_gh.find_by_hash.return_value = None
-        mock_issue = MagicMock()
-        mock_issue.number = 42
-        mock_gh.create_issue.return_value = mock_issue
+        mock_gh.find_by_fingerprint.return_value = None
+        mock_gh.create_issue.return_value = MagicMock(number=1)
 
         with patch("bernstein.core.git.github.GitHubClient", return_value=mock_gh):
             _sync_failure_drafts_to_github(drafts, "owner/repo")
 
-        mock_gh.find_by_hash.assert_called_once_with(drafts[0]["title"])
-        mock_gh.create_issue.assert_called_once_with(
-            title=drafts[0]["title"],
-            body=drafts[0]["body"],
-        )
-        mock_gh._post_comment.assert_not_called()
+        assert mock_gh.create_issue.call_count == 2
+        created = {call.kwargs["fingerprint"] for call in mock_gh.create_issue.call_args_list}
+        assert created == {"a" * 64, "b" * 64}
+        mock_gh.comment_on_issue.assert_not_called()
 
-    def test_adds_comment_to_existing_issue(self, tmp_path: Path) -> None:
-        """When find_by_hash returns an issue, adds a comment instead."""
-        drafts = [
-            {
-                "title": "Failure pattern: qa (5 failures, 83% rate)",
-                "body": "Test body",
-                "role": "qa",
-                "failure_count": 5,
-                "failure_rate": 0.83,
-                "models_involved": ["haiku", "sonnet"],
-            }
-        ]
-
-        mock_gh = MagicMock()
-        mock_gh.available = True
-        existing_issue = MagicMock()
-        existing_issue.number = 99
-        mock_gh.find_by_hash.return_value = existing_issue
-        mock_gh._post_comment.return_value = True
-
-        with patch("bernstein.core.git.github.GitHubClient", return_value=mock_gh):
-            _sync_failure_drafts_to_github(drafts, "owner/repo")
-
-        mock_gh.find_by_hash.assert_called_once_with(drafts[0]["title"])
-        mock_gh._post_comment.assert_called_once()
-        call_args = mock_gh._post_comment.call_args
-        assert call_args[0][0] == 99
-        assert "Updated failure pattern analysis" in call_args[0][1]
-        mock_gh.create_issue.assert_not_called()
-
-    def test_skips_when_gh_unavailable(self, tmp_path: Path) -> None:
-        """When gh CLI is unavailable, sync is skipped."""
-        drafts = [
-            {
-                "title": "Test draft",
-                "body": "Body",
-                "role": "backend",
-                "failure_count": 3,
-                "failure_rate": 1.0,
-                "models_involved": ["sonnet"],
-            }
-        ]
-
+    def test_skips_when_gh_unavailable(self) -> None:
+        """No ``gh`` CLI means no lookups and no writes."""
         mock_gh = MagicMock()
         mock_gh.available = False
 
         with patch("bernstein.core.git.github.GitHubClient", return_value=mock_gh):
-            _sync_failure_drafts_to_github(drafts, "owner/repo")
+            _sync_failure_drafts_to_github([_draft(fingerprint="a" * 64, title="t")], "owner/repo")
 
-        mock_gh.find_by_hash.assert_not_called()
+        mock_gh.find_by_fingerprint.assert_not_called()
         mock_gh.create_issue.assert_not_called()
-
-    def test_mixed_creates_and_comments(self, tmp_path: Path) -> None:
-        """Multiple drafts: some create new issues, some add comments."""
-        drafts = [
-            {
-                "title": "Draft A",
-                "body": "Body A",
-                "role": "backend",
-                "failure_count": 3,
-                "failure_rate": 1.0,
-                "models_involved": ["sonnet"],
-            },
-            {
-                "title": "Draft B",
-                "body": "Body B",
-                "role": "qa",
-                "failure_count": 4,
-                "failure_rate": 0.8,
-                "models_involved": ["haiku"],
-            },
-        ]
-
-        mock_gh = MagicMock()
-        mock_gh.available = True
-
-        # Draft A: new issue
-        mock_gh.find_by_hash.side_effect = [None, MagicMock(number=77)]
-        mock_issue = MagicMock()
-        mock_issue.number = 42
-        mock_gh.create_issue.return_value = mock_issue
-        mock_gh._post_comment.return_value = True
-
-        with patch("bernstein.core.git.github.GitHubClient", return_value=mock_gh):
-            _sync_failure_drafts_to_github(drafts, "owner/repo")
-
-        assert mock_gh.create_issue.call_count == 1
-        assert mock_gh._post_comment.call_count == 1
 
 
 # ---------------------------------------------------------------------------
-# _show_failure_drafts - mocked
+# 6: --dry-run does not reach the network
+# ---------------------------------------------------------------------------
+
+
+def test_dry_run_without_github_makes_no_subprocess_calls(tmp_path: Path) -> None:
+    """``evolve run --dry-run`` prints drafts and shells out to nothing."""
+    state_dir = tmp_path / ".sdd"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    _seed_closed_run(tmp_path, "run-gate", wrapup=RunWrapUp(gate_name="lint", failing_check="ruff check ."))
+
+    runner = CliRunner()
+    with patch("bernstein.core.git.github.subprocess.run") as mock_run:
+        result = runner.invoke(evolve_run, ["--dry-run", "--dir", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    mock_run.assert_not_called()
+    assert "ruff check ." in result.output
+
+
+# ---------------------------------------------------------------------------
+# _show_failure_drafts routing
 # ---------------------------------------------------------------------------
 
 
 class TestShowFailureDrafts:
-    """Tests for _show_failure_drafts output."""
+    """Drafts render, and only reach GitHub when the operator asked."""
 
     def test_no_drafts_prints_message(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """When no drafts exist, prints a dim message."""
+        """An empty draft list says so instead of printing an empty table."""
         state_dir = tmp_path / ".sdd"
         state_dir.mkdir(parents=True, exist_ok=True)
-
         with patch("bernstein.cli.commands.evolve_cmd._generate_failure_drafts", return_value=[]):
             _show_failure_drafts(tmp_path, state_dir, github_sync=False, github_repo=None)
 
-        # The console output goes to Rich, so we just verify no exception
-        # and that the function returned without error.
+        out = capsys.readouterr().out
+        assert "No failure-pattern drafts found." in out
+        assert "Failure-Pattern Drafts" not in out
 
-    def test_drafts_printed(self, tmp_path: Path) -> None:
-        """When drafts exist, prints a table."""
+    def test_draft_rows_reach_the_operator(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Every rendered row carries the identity, the count and the last run."""
         state_dir = tmp_path / ".sdd"
         state_dir.mkdir(parents=True, exist_ok=True)
+        fingerprint = "abcdef12" + "0" * 56
+        drafts = [_draft(fingerprint=fingerprint, title="GATE_FAILED: lint", occurrence_count=4, run_id="run-7")]
 
-        mock_drafts = [
-            {
-                "title": "Test",
-                "body": "Body",
-                "role": "backend",
-                "failure_count": 3,
-                "failure_rate": 1.0,
-                "models_involved": ["sonnet"],
-            }
-        ]
-
-        with patch(
-            "bernstein.cli.commands.evolve_cmd._generate_failure_drafts",
-            return_value=mock_drafts,
-        ):
-            # Should not raise
+        with patch("bernstein.cli.commands.evolve_cmd._generate_failure_drafts", return_value=drafts):
             _show_failure_drafts(tmp_path, state_dir, github_sync=False, github_repo=None)
 
+        out = capsys.readouterr().out
+        assert "abcdef12" in out
+        assert "GATE_FAILED: lint" in out
+        assert "4" in out
+        assert "run-7" in out
+
     def test_github_sync_called_when_enabled(self, tmp_path: Path) -> None:
-        """When github_sync=True, calls _sync_failure_drafts_to_github."""
         state_dir = tmp_path / ".sdd"
         state_dir.mkdir(parents=True, exist_ok=True)
-
-        mock_drafts = [
-            {
-                "title": "Test",
-                "body": "Body",
-                "role": "backend",
-                "failure_count": 3,
-                "failure_rate": 1.0,
-                "models_involved": ["sonnet"],
-            }
-        ]
+        drafts = [_draft(fingerprint="a" * 64, title="GATE_FAILED: lint")]
 
         with (
-            patch(
-                "bernstein.cli.commands.evolve_cmd._generate_failure_drafts",
-                return_value=mock_drafts,
-            ),
+            patch("bernstein.cli.commands.evolve_cmd._generate_failure_drafts", return_value=drafts),
             patch("bernstein.cli.commands.evolve_cmd._sync_failure_drafts_to_github") as mock_sync,
         ):
             _show_failure_drafts(tmp_path, state_dir, github_sync=True, github_repo="owner/repo")
 
-        mock_sync.assert_called_once_with(mock_drafts, "owner/repo")
+        mock_sync.assert_called_once_with(drafts, "owner/repo")
 
     def test_github_sync_not_called_when_disabled(self, tmp_path: Path) -> None:
-        """When github_sync=False, does not call _sync_failure_drafts_to_github."""
         state_dir = tmp_path / ".sdd"
         state_dir.mkdir(parents=True, exist_ok=True)
-
-        mock_drafts = [
-            {
-                "title": "Test",
-                "body": "Body",
-                "role": "backend",
-                "failure_count": 3,
-                "failure_rate": 1.0,
-                "models_involved": ["sonnet"],
-            }
-        ]
+        drafts = [_draft(fingerprint="a" * 64, title="GATE_FAILED: lint")]
 
         with (
-            patch(
-                "bernstein.cli.commands.evolve_cmd._generate_failure_drafts",
-                return_value=mock_drafts,
-            ),
+            patch("bernstein.cli.commands.evolve_cmd._generate_failure_drafts", return_value=drafts),
             patch("bernstein.cli.commands.evolve_cmd._sync_failure_drafts_to_github") as mock_sync,
         ):
             _show_failure_drafts(tmp_path, state_dir, github_sync=False, github_repo=None)

@@ -20,6 +20,7 @@ entry via ``source_hash``. These tests pin the five acceptance criteria:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -451,3 +452,110 @@ def test_namespace_rejects_path_traversal(tmp_path: Path) -> None:
             model="claude",
             timestamp=1,
         )
+
+
+# ---------------------------------------------------------------------------
+# Deterministic fold -- the current state of a namespace (issue #2914)
+# ---------------------------------------------------------------------------
+
+
+def test_memory_fold_is_byte_identical_across_readers(tmp_path: Path) -> None:
+    """Two independent readers must project the same chain into identical bytes.
+
+    The fold is the answer to "what does this namespace currently say".
+    If it is not byte-identical across readers it cannot be diffed,
+    hashed, or attested, and an operator comparing two reads of the same
+    chain would see spurious drift.
+    """
+    source = _anchor(tmp_path)
+    writer = _make_chain(tmp_path)
+    for i, claim in enumerate(("prefers dark mode", "ships on fridays", "uses tabs")):
+        writer.write(
+            scope=MemoryScope.USER,
+            namespace="alex",
+            claim=claim,
+            actor="agent:worker",
+            source_hash=source,
+            run_id="run-1",
+            step_id=f"s{i}",
+            model="claude",
+            timestamp=i,
+        )
+
+    reader_a = _make_chain(tmp_path)
+    reader_b = _make_chain(tmp_path)
+    bytes_a = reader_a.fold_bytes(MemoryScope.USER, "alex")
+    bytes_b = reader_b.fold_bytes(MemoryScope.USER, "alex")
+
+    assert bytes_a == bytes_b
+    assert bytes_a  # a non-empty chain folds to non-empty bytes
+    # The fold carries the live claims in append order.
+    folded = reader_a.fold(MemoryScope.USER, "alex")
+    assert [e.claim for e in folded] == ["prefers dark mode", "ships on fridays", "uses tabs"]
+
+
+def test_tombstoned_claim_is_absent_from_fold_but_still_in_chain(tmp_path: Path) -> None:
+    """Retention-as-append: forgetting removes a claim from the current
+    state without removing it from the record.
+
+    The tombstoned write must disappear from ``fold`` (it no longer
+    describes what the namespace says) while ``iter_entries`` still
+    yields it and ``verify`` still returns OK, so the audit trail of
+    what was known-and-when survives the forget.
+    """
+    source = _anchor(tmp_path)
+    chain = _make_chain(tmp_path)
+    kept = chain.write(
+        scope=MemoryScope.USER,
+        namespace="alex",
+        claim="ships on fridays",
+        actor="agent:worker",
+        source_hash=source,
+        run_id="run-1",
+        step_id="s1",
+        model="claude",
+        timestamp=1,
+    )
+    dropped = chain.write(
+        scope=MemoryScope.USER,
+        namespace="alex",
+        claim="prefers dark mode",
+        actor="agent:worker",
+        source_hash=source,
+        run_id="run-1",
+        step_id="s2",
+        model="claude",
+        timestamp=2,
+    )
+    chain.forget(
+        dropped.entry_hash,
+        scope=MemoryScope.USER,
+        namespace="alex",
+        actor="agent:worker",
+        source_hash=source,
+        run_id="run-1",
+        step_id="s3",
+        model="claude",
+        timestamp=3,
+    )
+
+    folded = chain.fold(MemoryScope.USER, "alex")
+    assert [e.entry_hash for e in folded] == [kept.entry_hash]
+    assert dropped.claim not in [e.claim for e in folded]
+
+    # The record itself is untouched: both writes and the tombstone remain.
+    entries = list(chain.iter_entries(MemoryScope.USER, "alex"))
+    assert len(entries) == 3
+    assert dropped.entry_hash in {e.entry_hash for e in entries}
+    result = chain.verify(MemoryScope.USER, "alex", spine_root=tmp_path / ".sdd" / "lineage")
+    assert result.status is MemoryChainStatus.OK
+    assert result.count == 3
+
+
+def test_fold_of_an_empty_namespace_is_empty_and_still_canonical(tmp_path: Path) -> None:
+    """A namespace that stored nothing folds to an empty, still-parseable
+    projection rather than raising -- the no-memory regression path."""
+    chain = _make_chain(tmp_path)
+    assert chain.fold(MemoryScope.USER, "nobody") == ()
+    raw = chain.fold_bytes(MemoryScope.USER, "nobody")
+    assert json.loads(raw)["entries"] == []

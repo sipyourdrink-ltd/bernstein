@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://bernstein.alexchernysh.com/schemas/authority-envelope-v1.json",
+  "$id": "https://bernstein.run/schemas/authority-envelope-v1.json",
   "title": "Bernstein Authority Envelope (v1)",
   "description": "A portable, self-describing record of who acted, under which delegated authority, and which policy decision allowed it. The envelope is not run-scoped: nothing in it references a run identifier or a lineage root, so activity Bernstein did not schedule can be carried in the same shape. Canonical form is RFC 8785 JCS; the signature is a detached EdDSA JWS (RFC 7515 Appendix F) over the JCS bytes of the envelope body, where the body is every top-level member except `signature`. Every hash the envelope carries is recomputable from material the envelope itself records: `principal.id_binding` binds the principal identifier to its key, each `grants[].grant_hash` chains to its parent, each `decisions[].inputs_hash` covers the decision's policy inputs and the grant it cites, and `section_digests` lets a verifier name which section diverged rather than reporting only a broken signature. A signature says who asserted the envelope; the recomputation says the assertion follows from its own inputs.",
   "type": "object",

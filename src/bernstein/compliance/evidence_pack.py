@@ -17,12 +17,12 @@ the audit chain. The output zip is byte-deterministic for a given input
 so an auditor can re-derive the SHA-256 of the bundle and compare.
 
 The mapping from regulatory ``control_id`` to a record selector is
-declarative and lives inside this module (see ``_STANDARD_MAPS``). At
-MVP only the EU AI Act mapping is fleshed out. DORA and FINOS AIGF
-control maps are tracked under issue #1316 and are not selectable
-until the underlying clause mappings are reviewed by subject-matter
-experts; attempting to build a pack for an unsupported standard
-raises ``ValueError``.
+declarative and lives inside this module (see ``_STANDARD_MAPS``) or,
+for ``owasp-asi``, ``owasp-skills`` and ``iso-42001``, in a dedicated
+module registered below. DORA and FINOS AIGF control maps are tracked
+under issue #1316 and are not selectable until the underlying clause
+mappings are reviewed by subject-matter experts; attempting to build a
+pack for an unsupported standard raises ``ValueError``.
 
 Usage:
 
@@ -66,13 +66,14 @@ SCHEMA_VERSION: str = "1.0.0"
 #: Supported standards. ``ai-act`` maps the EU AI Act Article 12/13/15
 #: clauses; ``owasp-asi`` and ``owasp-skills`` map the OWASP Top 10 for
 #: Agentic Applications (ASI01-ASI10) and the Agentic Skills Top 10
-#: (AST01-AST10) onto the same audit-chain artefacts. DORA and FINOS
-#: AIGF are tracked under #1316 and are not selectable until their
+#: (AST01-AST10) onto the same audit-chain artefacts; ``iso-42001`` maps
+#: a records-derivable subset of ISO/IEC 42001 Annex A controls. DORA and
+#: FINOS AIGF are tracked under #1316 and are not selectable until their
 #: clause maps are reviewed by subject-matter experts; emitting
 #: TODO-only bundles would mislead operators.
-Standard = Literal["ai-act", "owasp-asi", "owasp-skills"]
+Standard = Literal["ai-act", "owasp-asi", "owasp-skills", "iso-42001"]
 
-SUPPORTED_STANDARDS: tuple[str, ...] = ("ai-act", "owasp-asi", "owasp-skills")
+SUPPORTED_STANDARDS: tuple[str, ...] = ("ai-act", "owasp-asi", "owasp-skills", "iso-42001")
 
 #: Fixed mtime for every entry in the produced zip - required for
 #: byte-deterministic output. Zip cannot store dates before 1980.
@@ -160,11 +161,13 @@ _STANDARD_MAPS: dict[str, dict[str, Any]] = {
 # same way it reads ``ai-act``. Registration is a plain assignment - the
 # modules only depend on stdlib, so importing them at module load is cheap
 # and side-effect free.
+from bernstein.compliance import iso42001 as _iso42001  # noqa: E402
 from bernstein.compliance import owasp_asi as _owasp_asi  # noqa: E402
 from bernstein.compliance import owasp_skills as _owasp_skills  # noqa: E402
 
 _STANDARD_MAPS[_owasp_asi.STANDARD_ID] = _owasp_asi.control_map()
 _STANDARD_MAPS[_owasp_skills.STANDARD_ID] = _owasp_skills.control_map()
+_STANDARD_MAPS[_iso42001.STANDARD_ID] = _iso42001.control_map()
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +190,10 @@ class EvidencePack:
         controls_mapped: How many controls have ``status == "mapped"``.
         controls_partial: How many controls have ``status == "partial"``.
         controls_todo: How many controls remain TODO for the standard.
+        controls_organisational: How many controls have ``status ==
+            "organisational"`` - out of a tool's reach by design (policy,
+            training, governance), named explicitly rather than silently
+            dropped from the summary.
         archive_path: On-disk path to the written zip (``None`` for dry-run).
         sha256: SHA-256 of the produced zip bytes.
     """
@@ -201,6 +208,7 @@ class EvidencePack:
     controls_mapped: int
     controls_partial: int
     controls_todo: int
+    controls_organisational: int
     archive_path: Path | None
     sha256: str
 
@@ -218,6 +226,7 @@ class EvidencePack:
             "controls_mapped": self.controls_mapped,
             "controls_partial": self.controls_partial,
             "controls_todo": self.controls_todo,
+            "controls_organisational": self.controls_organisational,
             "sha256": self.sha256,
         }
 
@@ -616,6 +625,7 @@ def build_evidence_pack(
     controls_mapped = sum(1 for c in controls if c.get("status") == "mapped")
     controls_partial = sum(1 for c in controls if c.get("status") == "partial")
     controls_todo = sum(1 for c in controls if c.get("status") == "todo")
+    controls_organisational = sum(1 for c in controls if c.get("status") == "organisational")
 
     bundle_id = _bundle_id(standard, since, task)
     manifest = {
@@ -631,6 +641,7 @@ def build_evidence_pack(
         "controls_mapped": controls_mapped,
         "controls_partial": controls_partial,
         "controls_todo": controls_todo,
+        "controls_organisational": controls_organisational,
         "generated_at_utc": "1970-01-01T00:00:00+00:00",  # deterministic, see note below
         "artefacts": dict(sorted(artefact_hashes.items())),
     }
@@ -666,6 +677,7 @@ def build_evidence_pack(
         controls_mapped=controls_mapped,
         controls_partial=controls_partial,
         controls_todo=controls_todo,
+        controls_organisational=controls_organisational,
         archive_path=archive_path,
         sha256=archive_sha256,
     )

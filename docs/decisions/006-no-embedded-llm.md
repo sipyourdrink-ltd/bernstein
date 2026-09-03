@@ -1,8 +1,14 @@
 # ADR-006: No Embedded LLM in the Orchestrator
 
-**Status**: Accepted  
+**Status**: Superseded by ADR-011  
 **Date**: 2026-03-22  
 **Context**: Bernstein multi-agent orchestration system
+
+> Superseded on 2026-09-02 by
+> [ADR-011](011-model-drafts-human-signs.md), which keeps the decision
+> below intact and adds the case it does not cover: a model that drafts an
+> artefact a human must sign. The coordination boundary this record sets is
+> unchanged. The body is left as written.
 
 ---
 

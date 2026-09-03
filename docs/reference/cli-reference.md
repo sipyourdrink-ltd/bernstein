@@ -727,11 +727,11 @@ See [`operations/cluster-mode.md`](../operations/cluster-mode.md) for the full s
 
 > **Preview:** `bernstein evolve run` is not a zero-workspace first-run path. In a clean directory it exits before starting the evolution loop because `.sdd/` is missing. Initialise a Bernstein workspace first, then run the command from that workspace.
 
-Group: self-evolution proposals and their review lifecycle.
+Group: self-evolution proposals and their review lifecycle. See [Evolve CLI](cli/evolve.md) for the run-ledger to draft to issue contour and the dry-run flow.
 
 | Subcommand | Purpose |
 |---|---|
-| `run` | Run evolution cycles (`--window`, `--max-proposals`, `--cycle`, `--dir`, `--github`, `--github-repo`); reads evolve config from `bernstein.yaml` for flags not set. |
+| `run` | Run evolution cycles (`--window`, `--max-proposals`, `--cycle`, `--dir`, `--github`, `--github-repo`); reads evolve config from `bernstein.yaml` for flags not set. `--dry-run` prints the failure-pattern drafts and makes no remote writes. |
 | `review` | Show upgrade proposals pending human review (`--dir`). |
 | `approve PROPOSAL_ID` | Approve an upgrade proposal (`--reviewer`, `--dir`). |
 | `export OUTPUT` | Export a static evolution report, HTML or Markdown (`--format`, `--dir`). |
@@ -906,7 +906,7 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `bernstein policy` | Policy mgmt (group). | `cli/commands/policy_cmd.py:12` |
 | `bernstein compliance` | Compliance reports (group). | `cli/commands/compliance_cmd.py:26` |
 | `bernstein audit` | Audit-log ops (group). | `cli/commands/audit_cmd.py:25` |
-| `bernstein identity` | Install-identity ops (group): fingerprint helpers plus `keydir`. | `cli/commands/identity_cmd.py:identity_group` |
+| `bernstein identity` | Install-identity ops (group): fingerprint helpers, `keydir`, plus `agents` (the agent-principal registry projected from the chain). | `cli/commands/identity_cmd.py:identity_group` |
 | `bernstein delegation` | Delegation-receipt verification (group). | `cli/commands/delegation_cmd.py:delegation_group` |
 | `bernstein lineage` | Artifact-provenance lineage-spine ops (group). | `cli/commands/lineage_cmd.py` |
 | `bernstein credential` | C2PA content credentials projected from the lineage spine (group). | `cli/commands/credential_cmd.py` |
@@ -916,10 +916,18 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `bernstein approve-tool` | Approve a tool-call request (alias; flag form `approve --tool <id>`). | `cli/commands/approval_cmd.py:approve_tool_cmd` |
 | `bernstein reject-tool` | Reject a tool-call request (alias; flag form `reject --tool <id>`). | `cli/commands/approval_cmd.py:reject_tool_cmd` |
 | `bernstein review-receipt` | Attested PR review receipts binding issue / plan / tool calls / diff (group): `emit` / `verify`. | `cli/commands/review_receipt_cmd.py` |
+| `bernstein review-annotation` | Content-addressed anchors for operator review annotations (group, read-only): `derive` binds a comment digest to the blob hash and the target lines' digest; `resolve` reports the range those bytes occupy now, or exits 1 with an `orphaned` reason code when they are gone rather than re-anchoring to the recorded line numbers. | `cli/commands/review_annotation_cmd.py` |
 | `bernstein receipt` | Result receipt bundles binding a worker submission's patch / gate logs / task ref / sandbox selection into one DSSE-signed envelope, verifiable offline (group): `create` / `verify`. | `cli/commands/receipt_cmd.py` |
 | `bernstein volunteer` | Volunteer-worker surfaces for opt-in projects (group): `verify` validates a project's `.bernstein/volunteer.json` through the same loader a donor's worker uses and prints the manifest digest a receipt binds to as `manifest_sha256`. | `cli/commands/volunteer_cmd.py` |
 | `bernstein gate verify <run>` | Verify a maker-checker / judge-panel gate's signed adjudication record: recompute `inputs_hash` from `--inputs` and confirm the panel saw exactly those inputs, then confirm the spine anchor still verifies. Exit 1 when no record, 2 on mismatch. | `cli/commands/gate_cmd.py` |
-| `bernstein governance verify <run>` | Recompute every RBAC access and per-subject budget decision recorded for a run from the signed spine and confirm the recorded verdicts: re-resolve roles from the signed `--bindings`, re-project spend from the `--ledger`, and match. Exit 1 when no records, 2 on mismatch. | `cli/commands/governance_cmd.py` |
+| `bernstein govern verify <run>` | Recompute every RBAC access and per-subject budget decision recorded for a run from the signed spine and confirm the recorded verdicts: re-resolve roles from the signed `--bindings`, re-project spend from the `--ledger`, and match. Exit 1 when no records, 2 on mismatch. | `cli/commands/governance_cmd.py` |
+| `bernstein govern plan` | Generate a signed, lineage-bearing govern plan representing the diff between declared posture (playbook) and enumerated environment (inventory). | `cli/commands/governance_cmd.py` |
+| `bernstein govern ingest` | Anchor OTLP spans reported by a runtime Bernstein did not schedule. | `cli/commands/governance_cmd.py` |
+| `bernstein govern discover` | Run governance discovery and optionally draft a playbook. | `cli/commands/governance_cmd.py` |
+| `bernstein govern posture` | Score the install's governance posture from chain-evidenced facts only: per-control coverage over the lineage log, no configuration read. Names every contributing chain event, the weights version, and its own denominator (the weight that was measurable). Signed with the audit-chain key; `--json-output` prints the canonical document. | `cli/commands/governance_cmd.py` |
+| `bernstein govern inventory --render` | Emit the inventory topology graph from a store as mermaid or dot. Same store, same bytes. | `cli/commands/govern_cmd.py` |
+| `bernstein govern reconcile` | Diff the adapter / lane / schedule / capability surface against a desired-state document and record it. | `cli/commands/govern_cmd.py` |
+| `bernstein governance ...` | Deprecated alias for `bernstein govern`, removed in v4.0.0 (#5010). | `cli/commands/governance_cmd.py` |
 | `bernstein pool` | Named sandbox pool ops (group): `register`, `list`, `show`, `verify`. Projected from audit chain. Distinct from `bernstein limits pool`. | `cli/commands/pool_cmd.py` |
 | `bernstein limits` | Lease-backed admission and concurrency limits (group): `pool`, `tag`, `rate`, `queue`, `status`, `verify`. Projected from admission ledger. Distinct from `bernstein pool`. | `cli/commands/limits_cmd.py` |
 
@@ -934,11 +942,17 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `verify TOKEN [--nonce HEX]` | Full HMAC-strength verify when the operator holds the install nonce. |
 | `keydir` | Print the install-identity key directory (JWKS) used to verify outbound HTTP Message Signatures. Mirrors `/.well-known/http-message-signatures-directory`. |
 | `disable` | Print the env line that suppresses every fingerprint emit site. |
+| `agents` | List the agent principals the grant and delegation chains establish: derived SPIFFE ID, the capability ceiling in force at `--as-of`, the grants issued to each, the delegations each made, and the chain events behind every entry. `--root DIR`, `--json`, `--trust-domain` + `--install-key` for id derivation. `--verify FILE` recomputes a stored projection from the chain and refuses any entry no chain event establishes (exit 0 verified, 2 mismatch). Read-only. |
 
 Outbound agent-facing requests (A2A card fetch, browser/research rendering)
 carry an RFC 9421 Ed25519 signature keyed to the install-identity thumbprint.
 `BERNSTEIN_HTTP_SIGNING_REQUIRED=1` turns an unsigned outbound path into a hard
 error. `BERNSTEIN_AGENT_CARD_KEY_DIR` overrides the key directory location.
+
+`identity agents` is a projection, not a directory: deleting the rendered
+output and rebuilding it from the same chain at the same `--as-of` instant
+reproduces identical bytes, and a run whose chain does not verify contributes
+no principals at all.
 
 #### `bernstein delegation`
 
@@ -1392,6 +1406,7 @@ A branch with no `--run-id` is reported as unresolved, not as failing: it was no
 | `verify --scope SCOPE --namespace NS` | Prove every fact in a scope/namespace chain was written by its actor and never edited; recomputes the hash chain, every HMAC tag, and each `source_hash` anchor against the lineage spine. Exit 0 = OK, 1 = no entries, 2 = tamper. |
 | `why FACT --scope SCOPE --namespace NS` | Return the originating run id and step for a stored fact (only when its `source_hash` resolves to a real lineage-spine entry). |
 | `forget ENTRY_HASH --scope SCOPE --namespace NS` | Append a signed tombstone for a memory-chain entry without deleting it; the original entry and chain stay verifiable. |
+| `show --scope SCOPE --namespace NS` | Print what a scope/namespace currently says: every live claim in append order with the run, step, actor and `entry_hash` it came from. `--json` emits the canonical fold bytes, which are byte-identical across readers. Exit 0 = live claims, 1 = nothing live. |
 
 #### `bernstein cache`
 
@@ -1627,6 +1642,21 @@ verify` recomputes both and rejects a description whose diff has since changed.
 |---|---|
 | `tasks` | Render the current task dependency graph as ASCII or Mermaid. |
 | `impact FILE_QUERY` | Print downstream files impacted by changing FILE_QUERY. |
+
+#### `bernstein govern`
+
+| Subcommand | Purpose |
+|---|---|
+| `inventory` | Emit the inventory topology from a store (`--render mermaid` or `dot`). |
+
+#### `bernstein govern inventory`
+
+See [govern inventory --render](../operations/govern-inventory.md).
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--render {mermaid\|dot}` | required | Graph format. Nodes and edges are sorted so the same store produces the same bytes. |
+| `--store PATH` | required | Inventory graph JSON (`nodes` + `edges`). |
 
 #### `bernstein listen`
 

@@ -17,14 +17,18 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `instrumentation.py`        | Wave-3 per-agent instrumentation: LLM calls, tool calls, and conversation history |
 | `parallel_admission.py`     | Parallel-execution admission from a code graph (#3237, scope step 3) |
 | `path_scope.py`             | Which repository-relative paths fall outside a set of globs |
+| `registry_guard.py`         | Shared duplicate-registration guard for the registry classes under ``bernstein`` |
 | `run_auth_token.py`         | Persist and read the auto-generated run Bearer token (issue #2794) |
 | `streaming_merge.py`        | Streaming task results for long-running agents (incremental merge) |
+| `verify_dispatch.py`        | Kind-detecting dispatcher for a single ``bernstein verify <artefact>`` entry point (#5103) |
+| `verify_result.py`          | The one shape an offline verification answers in |
 | `admission/`                | Named resource pools with lease-backed admission (#2544) |
 | `agents/`                   | agents sub-package |
 | `approval/`                 | Interactive tool-call approval (op-002) |
 | `autofix/`                  | Bernstein autofix daemon - auto-repair CI failures on Bernstein PRs |
 | `autoheal/`                 | Auto-heal v2 subpackage |
 | `chat/`                     | Chat-control bridges for driving Bernstein agents from messaging apps |
+| `checks/`                   | Audit check contract, registry, and producer adapters (#5072) |
 | `communication/`            | communication sub-package |
 | `compliance/`               | Compliance subpackage |
 | `config/`                   | Config: seed parsing, config management, settings, feature gates |
@@ -59,6 +63,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `preview/`                  | ``bernstein preview`` - sandboxed dev-server with public tunnel link |
 | `protocols/`                | protocols sub-package |
 | `quality/`                  | quality sub-package |
+| `receipts/`                 | One receipt protocol for every receipt kind the project emits |
 | `replay/`                   | Deterministic replay package for Bernstein agent runs |
 | `review/`                   | Per-adapter perspective assignment and chain coordination for reviews |
 | `review_responder/`         | PR review responder - react to inline review comments on Bernstein PRs |
@@ -181,6 +186,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `scanner_finding.py`        | Scanner Finding dataclass |
 | `scanner_registry.py`       | Scanner registry - look up scanner adapters by name |
 | `security_floor.py`         | Adapter security-floor spawn preflight with signed refusal receipts (#2515) |
+| `semgrep.py`                | Deterministic Semgrep scanner adapter and SARIF normalization |
 | `session_id.py`             | Deterministic session-id binding for adapter replay isolation |
 | `skills_injector.py`        | Inject per-task Claude Code skills into the worktree before spawn |
 | `skyvern.py`                | Skyvern adapter: drives an existing Skyvern server over HTTP |
@@ -189,6 +195,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `use_cases.py`              | Per-adapter metadata for the ``bernstein integrations list`` command |
 | `ci/`                       | CI system adapters for log parsing and failure extraction |
 | `digest/`                   | Tool output digesters registry and ruleset models |
+| `directory/`                | Directory provisioning adapters |
 
 ### `src/bernstein/agents/` - agent catalog & discovery
 
@@ -285,6 +292,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `incident_synthesizer.py`          | Convert dead-letter and post-mortem incidents into regression eval cases |
 | `judge.py`                         | LLM judge - evaluate code quality of agent-produced changes |
 | `metrics.py`                       | Custom eval metrics - each metric is a dataclass with a compute method |
+| `model_drift.py`                   | Model drift probe: signed, chain-anchored observations (issue #5041) |
 | `pentest_consensus.py`             | Consensus aggregation for the multi-adapter pentest fan-out |
 | `pentest_runner.py`                | Driver that runs the ``security-pentest`` scenario end-to-end |
 | `pentest_scorer.py`                | Precision and recall scorer for security pentest eval scenario |
