@@ -75,6 +75,7 @@ class RemediationAction:
             value=None if value is None else str(value),
         )
 
+
 #: The three kinds a clause may declare. Anything else is a typo, not a
 #: looser schema -- rejected at construction, not carried through as an
 #: opaque string.
