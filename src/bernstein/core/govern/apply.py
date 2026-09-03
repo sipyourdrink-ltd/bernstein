@@ -433,49 +433,50 @@ def apply_plan(
     )
 
     chain = AuditChainStore(audit_dir, key=key)
-    opened = chain.log(
-        event_type=EVENT_GOVERN_APPLY_OPENED,
-        actor=GOVERN_APPLY_ACTOR,
-        resource_type=_RESOURCE_TYPE,
-        resource_id=apply_id,
-        details={
-            "apply_id": apply_id,
-            "approver": resolved_approver,
-            "change_count": len(plan.entries),
-            "environment_digest": environment_digest,
-            "plan_digest": plan_digest,
-            "plan_journal_entry_hash": plan.journal_entry_hash,
-            "playbook_digest": playbook_digest,
-            "removal_approval_id": removal_approval_id,
-        },
-    )
-
-    recorded = _run_change_set(plan, applier)
-    for _entry, result in recorded:
-        chain.log(
-            event_type=EVENT_GOVERN_APPLY_CHANGE,
+    with chain.chain_transaction():
+        opened = chain.log(
+            event_type=EVENT_GOVERN_APPLY_OPENED,
             actor=GOVERN_APPLY_ACTOR,
             resource_type=_RESOURCE_TYPE,
             resource_id=apply_id,
-            details={"apply_id": apply_id, **result.to_dict()},
+            details={
+                "apply_id": apply_id,
+                "approver": resolved_approver,
+                "change_count": len(plan.entries),
+                "environment_digest": environment_digest,
+                "plan_digest": plan_digest,
+                "plan_journal_entry_hash": plan.journal_entry_hash,
+                "playbook_digest": playbook_digest,
+                "removal_approval_id": removal_approval_id,
+            },
         )
 
-    results = tuple(result for _entry, result in recorded)
-    status = derive_apply_status(results)
-    closed = chain.log(
-        event_type=EVENT_GOVERN_APPLY_CLOSED,
-        actor=GOVERN_APPLY_ACTOR,
-        resource_type=_RESOURCE_TYPE,
-        resource_id=apply_id,
-        details={
-            "apply_id": apply_id,
-            "applied_count": sum(1 for r in results if r.status is ChangeStatus.APPLIED),
-            "failed_count": sum(1 for r in results if r.status is ChangeStatus.FAILED),
-            "last_applied_surface": _last_applied_surface(results),
-            "not_attempted_count": sum(1 for r in results if r.status is ChangeStatus.NOT_ATTEMPTED),
-            "status": status.value,
-        },
-    )
+        recorded = _run_change_set(plan, applier)
+        for _entry, result in recorded:
+            chain.log(
+                event_type=EVENT_GOVERN_APPLY_CHANGE,
+                actor=GOVERN_APPLY_ACTOR,
+                resource_type=_RESOURCE_TYPE,
+                resource_id=apply_id,
+                details={"apply_id": apply_id, **result.to_dict()},
+            )
+
+        results = tuple(result for _entry, result in recorded)
+        status = derive_apply_status(results)
+        closed = chain.log(
+            event_type=EVENT_GOVERN_APPLY_CLOSED,
+            actor=GOVERN_APPLY_ACTOR,
+            resource_type=_RESOURCE_TYPE,
+            resource_id=apply_id,
+            details={
+                "apply_id": apply_id,
+                "applied_count": sum(1 for r in results if r.status is ChangeStatus.APPLIED),
+                "failed_count": sum(1 for r in results if r.status is ChangeStatus.FAILED),
+                "last_applied_surface": _last_applied_surface(results),
+                "not_attempted_count": sum(1 for r in results if r.status is ChangeStatus.NOT_ATTEMPTED),
+                "status": status.value,
+            },
+        )
 
     receipt = _materialize_apply_receipt(
         audit_dir,
