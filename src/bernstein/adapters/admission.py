@@ -1305,7 +1305,12 @@ def preflight_admission(
         AdapterAdmissionRefusal: Under :data:`POLICY_ENFORCE`, when admission
             cannot be proved.
     """
-    if policy == POLICY_OFF or adapter in ADMISSION_EXEMPT:
+    from bernstein.adapters.registry import canonical_adapter_name
+
+    canonical_adapter = canonical_adapter_name(adapter) if isinstance(adapter, str) else None
+    effective_adapter = canonical_adapter or adapter
+
+    if policy == POLICY_OFF or adapter in ADMISSION_EXEMPT or effective_adapter in ADMISSION_EXEMPT:
         return None
 
     # Every field of the receipt is serialised into the audit chain, so a
@@ -1322,7 +1327,7 @@ def preflight_admission(
     stamp = generated_at if generated_at is not None else clock.isoformat()
 
     evidence = gather_admission_evidence(
-        adapter,
+        effective_adapter,
         contracts_dir=contracts_dir,
         golden_dir=golden_dir,
         last_green_path=last_green_path,
@@ -1330,7 +1335,7 @@ def preflight_admission(
         version_probe=version_probe,
         canary_verdict=canary_verdict,
     )
-    stored, problem = load_admission_receipt(receipts_dir, adapter)
+    stored, problem = load_admission_receipt(receipts_dir, effective_adapter)
     decision = gate_decision(
         evidence,
         stored,

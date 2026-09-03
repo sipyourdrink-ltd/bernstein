@@ -115,10 +115,16 @@ class ContractSpec:
     @classmethod
     def load(cls, name: str, contracts_dir: Path | None = None) -> ContractSpec:
         """Load a contract by adapter name."""
+        from bernstein.adapters.registry import canonical_adapter_name
+
         base = contracts_dir if contracts_dir is not None else CONTRACTS_DIR
-        path = base / f"{name}.yaml"
+        canonical = canonical_adapter_name(name) or name
+        path = base / f"{canonical}.yaml"
+        if not path.exists() and (base / f"{name}.yaml").exists():
+            path = base / f"{name}.yaml"
+            canonical = name
         if not path.exists():
-            raise FileNotFoundError(f"No contract found for adapter {name!r} at {path}")
+            raise FileNotFoundError(f"No contract found for adapter {canonical!r} at {path}")
         with path.open("r", encoding="utf-8") as fh:
             data: dict[str, Any] = yaml.safe_load(fh) or {}
 
