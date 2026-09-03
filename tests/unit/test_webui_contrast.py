@@ -469,3 +469,31 @@ def test_the_post_fix_accent_values_pass_wcag_aa() -> None:
     # Tinted accent pill on surface-raised (dark theme)
     dark_accent_on_sr = alpha_composite(dark_accent_rgb, dark_sr_rgb, PILL_TINT_ALPHA)
     assert contrast_ratio(dark_accent_rgb, dark_accent_on_sr) >= WCAG_AA_TEXT_THRESHOLD
+
+
+def test_the_post_fix_accent_foreground_on_new_accent_pair_passes_wcag_aa() -> None:
+    """Prove the new accent-foreground/accent pairs satisfy WCAG AA.
+
+    Post-migration accent values must work with accent-foreground text:
+    - Light: accent-foreground --accent-foreground (40 37.5% 96.9%) on new
+      light accent --accent (12 38.6% 42.0%) must be >= 4.5:1
+    - Dark: accent-foreground --accent-foreground (60 14.3% 4.1%) on new
+      dark accent --accent (12.4 57.4% 66.9%) must be >= 4.5:1
+    """
+    # Light theme: new accent-foreground on new light accent (PASSES)
+    light_af_rgb = hsl_to_srgb(40, 37.5, 96.9)
+    light_accent_rgb = hsl_to_srgb(12, 38.6, 42.0)
+    light_ratio = contrast_ratio(light_af_rgb, light_accent_rgb)
+    assert light_ratio >= WCAG_AA_TEXT_THRESHOLD, (
+        f"Expected light accent-foreground on new light accent to pass WCAG AA, got {light_ratio:.2f}:1"
+    )
+    # Document the actual contrast ratio for reference
+
+    # Dark theme: new dark accent-foreground on new dark accent (PASSES)
+    dark_af_rgb = hsl_to_srgb(60, 14.3, 4.1)
+    dark_accent_rgb = hsl_to_srgb(12.4, 57.4, 66.9)
+    dark_ratio = contrast_ratio(dark_af_rgb, dark_accent_rgb)
+    assert dark_ratio >= WCAG_AA_TEXT_THRESHOLD, (
+        f"Expected dark accent-foreground on new dark accent to pass WCAG AA, got {dark_ratio:.2f}:1"
+    )
+    # Document the actual contrast ratio for reference
