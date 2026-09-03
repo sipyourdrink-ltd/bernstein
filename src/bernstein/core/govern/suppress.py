@@ -103,6 +103,7 @@ def anchor_suppress_decision(
     reason: str,
     expiry: str,
     timestamp: int,
+    actor: str = SUPPRESS_ACTOR,
 ) -> GovernanceDecision:
     """Anchor a suppression decision for *finding_id* and persist it.
 
@@ -120,6 +121,10 @@ def anchor_suppress_decision(
         reason: Human-readable justification for the suppression.
         expiry: ``YYYY-MM-DD`` date string after which the suppression lapses.
         timestamp: Integer timestamp for the decision and spine entry.
+        actor: The identity that ran the suppression, recorded on the spine
+            entry (issue #5078: "the actor comes from the identity that ran
+            it"). Defaults to :data:`SUPPRESS_ACTOR` for callers that have no
+            operator identity.
 
     Returns:
         The anchored :class:`~bernstein.core.security.governance.GovernanceDecision`.
@@ -145,7 +150,7 @@ def anchor_suppress_decision(
     anchor = LineageSpine(lineage_root, run_id=_SUPPRESS_RUN_ID, hmac_key=hmac_key).record(
         artifact_path=artifact_path,
         content=decision.to_canonical_bytes(),
-        actor=SUPPRESS_ACTOR,
+        actor=actor,
         step_id=decision.inputs_hash,
         model=_SUPPRESS_MODEL,
         timestamp=timestamp,
@@ -172,7 +177,7 @@ def anchor_suppress_decision(
         "suppressed finding %s until %s (actor=%s, anchor=%s)",
         finding_id,
         expiry,
-        SUPPRESS_ACTOR,
+        actor,
         anchor,
     )
 

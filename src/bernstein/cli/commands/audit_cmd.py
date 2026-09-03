@@ -4265,6 +4265,7 @@ def suppress_cmd(finding_id: str, reason: str, expiry: str, actor: str | None) -
         reason=reason,
         expiry=expiry,
         timestamp=now,
+        actor=effective_actor,
     )
 
     console.print()
