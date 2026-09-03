@@ -173,6 +173,10 @@ def record_hmac(key: bytes, prev_hmac: str, body: dict[str, Any]) -> str:
     return _hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
 
 
+#: Pre-rename name, kept importable for external callers written against it.
+_compute_hmac = record_hmac
+
+
 #: Salted-reference format written to new records. ``sha256:`` (unsalted) is
 #: the legacy format older releases wrote; it is still matched on read so
 #: pre-existing chains stay usable, but it is never written anymore.

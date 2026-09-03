@@ -22,6 +22,7 @@ from bernstein.core.security.grant_precondition import (
     GrantPreconditionIndex,
     GrantRefusedError,
     RedecisionOutcome,
+    tool_call_capability,
 )
 from bernstein.core.security.toolcall_interlock import (
     AttestationMode,
@@ -107,6 +108,19 @@ def _interlock(
 def _records(ledger: grants.GrantLedger) -> list[dict[str, Any]]:
     path = ledger.receipt_path(RUN_ID)
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def test_tool_call_capability_is_the_default_capability_resolver(ledger: grants.GrantLedger) -> None:
+    """Every _gate() above wires capability_of only implicitly, through this default.
+
+    A grant's capability_ceiling holds tool names, so the default projection from an
+    about-to-dispatch intent to a capability is just the intent's own tool_name.
+    """
+    gate = _gate(ledger, "unused-grant-id")
+    assert gate.capability_of is tool_call_capability
+
+    intent = _intent("read_file")
+    assert tool_call_capability(intent) == intent.tool_name
 
 
 @pytest.mark.asyncio
