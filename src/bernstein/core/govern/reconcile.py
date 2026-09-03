@@ -351,6 +351,19 @@ def propose_reconcile(
     for entry in diff.entries:
         counts[entry.status.value] = counts.get(entry.status.value, 0) + 1
 
+    # Import here to avoid circular imports
+    from bernstein.core.identity.grant_sweep import sweep_grants
+    from bernstein.core.identity import grants
+
+    # Perform grant sweep check
+    grant_finding = None
+    grant_records_path = lineage_root / "audit" / "grants" / f"{run_id}.jsonl"
+    if grant_records_path.is_file():
+        # Read the grant records from the audit directory
+        result = grants.verify_grant_chain(root=lineage_root.parent / "audit", run_id=run_id, key=hmac_key)
+        if result.valid:
+            grant_finding = sweep_grants(result, now=now)
+
     decision = GovernanceDecision(
         run_id=run_id,
         subject=RECONCILE_SUBJECT,
@@ -363,6 +376,7 @@ def propose_reconcile(
             "diff": diff.to_dict(),
             "observed_at": snapshot.observed_at,
             "observed_state": snapshot.as_state_map(),
+            "grant_finding": grant_finding,
         },
     )
     anchored = anchor_decision(lineage_root=lineage_root, hmac_key=hmac_key, decision=decision)

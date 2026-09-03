@@ -907,11 +907,19 @@ def _verify_grant_chains() -> bool:
         return True
 
     failures: list[tuple[str, list[str]]] = []
+    sweep_findings: list[str] = []
     for path in run_files:
         run_id = path.stem
         result = grants.verify_grant_chain(root=AUDIT_DIR, run_id=run_id, key=key)
         if not result.valid:
             failures.append((run_id, result.errors))
+        else:
+            from bernstein.core.identity.grant_sweep import sweep_grants
+            finding = sweep_grants(result)
+            if finding is not None:
+                sweep_findings.append(
+                    f"run {run_id}: {finding['summary']}"
+                )
 
     console.print()
     if not failures:
@@ -929,6 +937,10 @@ def _verify_grant_chains() -> bool:
     for run_id, errors in failures:
         for err in errors:
             console.print(f"  [red]![/red] run {run_id}: {err}")
+    if sweep_findings:
+        console.print()
+        for finding_summary in sweep_findings:
+            console.print(f"  [red]![/red] {finding_summary}")
     return False
 
 
