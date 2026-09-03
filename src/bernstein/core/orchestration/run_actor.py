@@ -38,7 +38,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import deque
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from itertools import count
 from typing import Any, Literal
@@ -47,6 +47,44 @@ from bernstein.core.dataclass_helpers import typed_replace as _typed_replace
 from bernstein.core.orchestration import run_actor_registry
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Refusal journaling hook (pluggable; module stays in-memory / import-free)
+# ---------------------------------------------------------------------------
+
+
+#: Signature of a callback invoked when the actor refuses a terminal-status
+#: transition. Receives keyword args: ``session_id``, ``from_status``,
+#: ``to_status``, ``source``.
+TerminalRefusalHook = Callable[..., None]
+
+#: Module-level registry of refusal hooks. The actor module is in-memory only
+#: and must not import the audit chain (circular import; reducer purity), so
+#: components that journal refusals as governance events register a hook here.
+_REFUSAL_HOOKS: list[TerminalRefusalHook] = []
+
+
+def register_terminal_refusal_hook(hook: TerminalRefusalHook) -> None:
+    """Register ``hook`` to be called on every terminal-transition refusal."""
+    _REFUSAL_HOOKS.append(hook)
+
+
+def _terminal_refusal_target(state: RunState, event: Event) -> tuple[str, str] | None:
+    """Return ``(from_status, to_status)`` if ``event`` would be refused as an
+    invalid terminal-status transition, else ``None``.
+
+    Mirrors the terminal guard in :func:`apply_event` so the actor can journal
+    refusals without the reducer growing side effects.
+    """
+    if event.kind == "session_started" and state.status in {"running", "done", "failed"}:
+        return (state.status, "running")
+    if event.kind == "session_ended" and state.status in {"done", "failed"}:
+        end_status = event.payload.get("status", "done")
+        if end_status not in {"done", "failed"}:
+            end_status = "done"
+        return (state.status, str(end_status))
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -446,16 +484,40 @@ class RunActor:
                     source=event.source,
                 )
                 async with self._lock:
+                    # Journal terminal-status refusals (distinct from
+                    # out-of-order rejection) through the pluggable hook. The
+                    # refusal must not change state, advance last_seq, or enter
+                    # the replay buffer.
+                    refusal = _terminal_refusal_target(self._state, stamped)
                     new_state = apply_event(self._state, stamped)
-                    # The reducer drops out-of-order events; the actor
-                    # never produces them, so this branch is purely
-                    # defensive.
                     if new_state is self._state:
-                        logger.error(
-                            "RunActor: reducer rejected stamped event seq=%d kind=%s",
-                            seq,
-                            stamped.kind,
-                        )
+                        if refusal is not None:
+                            from_status, to_status = refusal
+                            for hook in _REFUSAL_HOOKS:
+                                try:
+                                    hook(
+                                        session_id=self._state.session_id,
+                                        from_status=from_status,
+                                        to_status=to_status,
+                                        source=stamped.source,
+                                    )
+                                except Exception as hook_exc:
+                                    logger.exception("RunActor: refusal hook failed: %s", hook_exc)
+                            logger.warning(
+                                "RunActor: terminal transition refused session=%s %s->%s source=%s",
+                                self._state.session_id,
+                                from_status,
+                                to_status,
+                                stamped.source,
+                            )
+                        else:
+                            # Out-of-order: the actor never produces these;
+                            # defensive branch for external callers.
+                            logger.error(
+                                "RunActor: reducer rejected stamped event seq=%d kind=%s",
+                                seq,
+                                stamped.kind,
+                            )
                     else:
                         self._state = new_state
                         self._buffer.append(stamped)
@@ -540,6 +602,8 @@ __all__ = [
     "ReplayItem",
     "RunActor",
     "RunState",
+    "TerminalRefusalHook",
     "apply_event",
     "fold",
+    "register_terminal_refusal_hook",
 ]
