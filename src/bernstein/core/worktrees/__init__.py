@@ -20,13 +20,21 @@ from bernstein.core.worktrees.classifier import (
     reap_worktree,
     worktrees_root,
 )
+from bernstein.core.worktrees.run_helpers import (
+    RunHelper,
+    capture_run_helpers,
+    classify_run_helpers,
+)
 
 __all__ = [
     "GC_LOCK_RELPATH",
     "STALE_TRACE_AGE_S",
     "WORKTREE_GC_LIFECYCLE_EVENT",
     "ClassifiedWorktree",
+    "RunHelper",
     "WorktreeState",
+    "capture_run_helpers",
+    "classify_run_helpers",
     "classify_worktrees",
     "format_size",
     "iter_worktree_dirs",
