@@ -27,6 +27,7 @@ from bernstein.core.webhook_signatures import verify_hmac_sha256
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.core.orchestration.trigger_manager import TriggerGateResult, TriggerManager
     from bernstein.core.trigger_sources.receipt import TriggerAdmission
 
 logger = logging.getLogger(__name__)
@@ -447,22 +448,116 @@ def _handle_workflow_run(event: Any, store: TaskStore, tenant_id: str) -> list[d
     return list(workflow_run_to_task(event, retry_count=retry_count))
 
 
-def _dispatch_github_event(event: Any, store: TaskStore, tenant_id: str) -> list[dict[str, Any]] | JSONResponse:
-    """Route a parsed GitHub webhook event to the appropriate handler."""
+def _get_trigger_manager(request: Request) -> TriggerManager | None:
+    """Return a ``TriggerManager`` scoped to this install's ``.sdd`` dir.
+
+    Returns ``None`` when there is nowhere to load ``triggers.yaml`` from (no
+    ``.sdd`` layout on ``request.app.state``, mirroring ``_bridge_paths``
+    above) or when no ``triggers.yaml`` is configured - the transparent
+    pass-through case must not create ``TriggerManager``'s runtime state
+    directory for installs that never opted into trigger rules, the same way
+    ``bernstein triggers list`` skips construction when the file is absent.
+    """
+    from bernstein.core.orchestration.trigger_manager import TriggerManager
+
+    sdd_dir = getattr(request.app.state, "sdd_dir", None)
+    if sdd_dir is None or not (sdd_dir / "config" / "triggers.yaml").exists():
+        return None
+    return TriggerManager(sdd_dir)
+
+
+def _push_trigger_event(event: Any) -> Any:
+    """Normalize a parsed GitHub ``push`` webhook event into a ``TriggerEvent``.
+
+    Carries the fields the ``github_push`` filters and dedup key in
+    ``trigger_manager`` read: branch (from ``ref``), sha (``after``), sender,
+    and the union of changed files across every commit in the push.
+    """
+    from bernstein.core.models import TriggerEvent
+
+    payload: dict[str, Any] = event.payload
+    commits: list[dict[str, Any]] = payload.get("commits", [])
+    changed_files: set[str] = set()
+    for commit in commits:
+        changed_files.update(commit.get("added", []))
+        changed_files.update(commit.get("modified", []))
+        changed_files.update(commit.get("removed", []))
+    ref: str = payload.get("ref", "")
+    branch = ref.rsplit("/", 1)[-1] if ref else ""
+    head_message = commits[-1].get("message", "") if commits else ""
+    return TriggerEvent(
+        source="github_push",
+        raw_payload=payload,
+        repo=event.repo_full_name,
+        branch=branch,
+        sha=payload.get("after", ""),
+        sender=event.sender,
+        changed_files=tuple(changed_files),
+        message=head_message,
+    )
+
+
+def _handle_push(event: Any, request: Request) -> tuple[list[dict[str, Any]], TriggerGateResult | None] | JSONResponse:
+    """Map a GitHub ``push`` event to task payloads, governed by ``triggers.yaml``.
+
+    ``triggers.yaml`` cooldown/dedup/filter rules for ``source: github_push``
+    decide whether this push's verification task gets created; the mapper
+    (``push_to_tasks``) still builds the task's title/description. With no
+    enabled trigger matching this event - including no ``triggers.yaml`` at
+    all - this is a transparent pass-through: a task is created for every
+    push, exactly as before this gate existed.
+
+    Returns ``(task_payloads, gate)`` where ``gate`` is the
+    :class:`TriggerGateResult` to record a fire against once the task is
+    created, or ``None`` when no trigger governs this event. Returns a
+    ``JSONResponse`` directly when a matching trigger suppresses the push.
+    """
     from bernstein.github_app.mapper import push_to_tasks
 
+    task_payloads = list(push_to_tasks(event))
+    if not task_payloads:
+        return task_payloads, None
+
+    mgr = _get_trigger_manager(request)
+    if mgr is None:
+        return task_payloads, None
+
+    gate = mgr.gate_direct_task(_push_trigger_event(event))
+    if gate.trigger_name is None:
+        return task_payloads, None
+    if gate.suppressed:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "event_type": event.event_type,
+                "action": event.action,
+                "tasks_created": 0,
+                "task_ids": [],
+                "skipped_reason": f"trigger_suppressed ({gate.trigger_name}: {gate.reason})",
+            },
+        )
+    return task_payloads, gate
+
+
+def _dispatch_github_event(
+    event: Any, store: TaskStore, tenant_id: str, request: Request
+) -> tuple[list[dict[str, Any]], TriggerGateResult | None] | JSONResponse:
+    """Route a parsed GitHub webhook event to the appropriate handler."""
     match (event.event_type, event.action):
         case ("issues", "opened"):
-            return _handle_issue_opened(event)
+            return _handle_issue_opened(event), None
         case ("issues", "labeled"):
-            return _handle_issue_labeled(event)
+            return _handle_issue_labeled(event), None
         case ("pull_request_review_comment", _) | ("issue_comment", _):
-            return _handle_comment(event)
+            return _handle_comment(event), None
         case ("push", _):
-            return list(push_to_tasks(event))
+            return _handle_push(event, request)
         case ("workflow_run", "completed"):
-            return _handle_workflow_run(event, store, tenant_id)
-    return []
+            result = _handle_workflow_run(event, store, tenant_id)
+            if isinstance(result, JSONResponse):
+                return result
+            return result, None
+    return [], None
 
 
 @router.post("/webhooks/github", status_code=200)
@@ -544,10 +639,10 @@ async def github_webhook(request: Request) -> JSONResponse:
             content={"detail": "Bad webhook payload"},
         )
 
-    result = _dispatch_github_event(event, store, tenant_id)
+    result = _dispatch_github_event(event, store, tenant_id, request)
     if isinstance(result, JSONResponse):
         return result
-    task_payloads = result
+    task_payloads, gate = result
 
     # Create tasks in the store
     created_ids: list[str] = []
@@ -555,6 +650,22 @@ async def github_webhook(request: Request) -> JSONResponse:
     for payload in task_payloads:
         task = await store.create(TaskCreate(**payload, tenant_id=tenant_id))
         created_ids.append(task.id)
+
+    if gate is not None and created_ids:
+        # A triggers.yaml rule matched and passed conditions for this push
+        # (see _handle_push) - record the fire so the next push's cooldown
+        # and dedup checks see it via gate_direct_task.
+        assert gate.trigger_name is not None
+        assert gate.dedup_key is not None
+        mgr = _get_trigger_manager(request)
+        if mgr is not None:
+            mgr.record_fire(
+                trigger_name=gate.trigger_name,
+                source="github_push",
+                task_id=created_ids[0],
+                dedup_key=gate.dedup_key,
+                summary=f"push to {event.payload.get('ref', '')} by {event.sender}",
+            )
 
     return JSONResponse(
         status_code=200,

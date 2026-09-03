@@ -437,6 +437,7 @@ nav:
           - Security operations: operations/security.md
           - Hardening: security/security-hardening.md
           - Governance: operations/governance.md
+          - Inventory topology: operations/govern-inventory.md
           - Govern ingest: operations/govern-ingest.md
           - Secrets & creds: operations/secrets.md
           - Secrets broker: security/secrets-broker.md
@@ -601,6 +602,7 @@ nav:
           - Task lifecycle: architecture/LIFECYCLE.md
           - Agent lifecycle diagram: diagrams/agent_lifecycle.md
           - Task lifecycle diagram: diagrams/task_lifecycle.md
+          - Inventory topology diagram: diagrams/inventory_topology.md
           - Graphs: architecture/graphs.md
           - Dependency resolver: architecture/DEPENDENCY_RESOLVER.md
           - Quality pipeline: architecture/quality-pipeline.md
@@ -661,6 +663,7 @@ nav:
       - Decisions (ADRs):
           - Index: decisions/index.md
           - Agent lifecycle: decisions/001-agent-lifecycle.md
+          - ADR-002 (withdrawn): decisions/002-withdrawn.md
           - Self-evolution: decisions/003-self-evolution.md
           - File-based state: decisions/004-file-based-state.md
           - Short-lived agents: decisions/005-short-lived-agents.md
@@ -669,6 +672,7 @@ nav:
           - Click for CLI: decisions/008-click-for-cli.md
           - Lineage v1: decisions/009-lineage-v1.md
           - Audit-chain default cost: decisions/010-audit-chain-default-cost.md
+          - A model drafts, a human signs: decisions/011-model-drafts-human-signs.md
   - Contribute:
       - contributing/index.md
       - Project pulse: project-pulse.md

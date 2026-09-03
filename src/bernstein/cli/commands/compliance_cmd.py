@@ -35,6 +35,8 @@ from bernstein.core.compliance_policies import (
     PolicySeverity,
     evaluate_all,
     evaluate_framework,
+    observe_audit_retention_days,
+    summarise_evidence_coverage,
 )
 from bernstein.core.eu_ai_act import summarize_assessments
 
@@ -415,10 +417,14 @@ def check_policies(
     """Evaluate compliance policies against the current runtime configuration.
 
     Pass --<flag> / --no-<flag> options to describe the current state of your
-    deployment.  The command exits non-zero if any failing policy meets the
-    severity threshold set by --fail-on (default: critical).
+    deployment.  Those flags are operator declarations: results resting on
+    them are reported as declared, not as evidenced.  Audit retention is not a
+    flag - it is read off the audit segments under WORKDIR.  The command exits
+    non-zero if any failing policy meets the severity threshold set by
+    --fail-on (default: critical).
     """
     inp = PolicyInput(
+        audit_retention_days=observe_audit_retention_days(workdir / ".sdd" / "audit"),
         audit_logging=audit_logging,
         audit_hmac_chain=audit_hmac_chain,
         sandbox_enabled=sandbox_enabled,
@@ -459,6 +465,8 @@ def check_policies(
         "none": 99,
     }
 
+    coverage = summarise_evidence_coverage(results)
+
     if as_json:
         click.echo(
             json.dumps(
@@ -467,6 +475,7 @@ def check_policies(
                         "total": len(results),
                         "passing": len(passing),
                         "failing": len(failing),
+                        "evidence": coverage.to_dict(),
                     },
                     "results": [r.to_dict() for r in results],
                 },
@@ -476,6 +485,7 @@ def check_policies(
     else:
         click.echo(f"Compliance check: {len(results)} policies evaluated")
         click.echo(f"  Passing: {len(passing)}   Failing: {len(failing)}")
+        click.echo(f"  Evidenced: {coverage.evidenced}   Operator-declared: {coverage.operator_asserted}")
         click.echo("")
         if failing:
             click.echo("FAILURES:")

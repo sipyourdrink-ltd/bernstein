@@ -62,6 +62,7 @@ For session monitoring commands (`live`, `dashboard`, `status`, `ps`, `cost`, `d
 | `bernstein bench run <suite>\|bench verify <bundle>` | Runs a content-addressed benchmark suite and emits a signed submission bundle in which every task carries the replay receipt its score was derived from. `bench verify` replays those receipts offline with no access to the submitter's machine, recomputes each score, and reports MATCH or names the exact task whose replay diverged. A flipped verdict or a corrupted receipt fails verification, so a published number is only worth the bundle a third party can re-verify. See [bench](../eval/bench.md). |
 | `bernstein pool register\|list\|show\|verify` | Define and govern named sandbox pools (manifests, capability ceilings, backend allowlists) projected from the HMAC audit chain. Distinct from `bernstein limits pool`. |
 | `bernstein limits pool\|tag\|rate\|queue\|status\|verify` | Govern lease-backed admission slot pools, task tag ceilings, rate limits, and priority queues projected from the admission work ledger. Distinct from `bernstein pool`. |
+| `bernstein govern inventory --render mermaid\|dot --store PATH` | Emit the inventory topology graph from the store. Same store, same bytes. See [govern-inventory.md](govern-inventory.md). |
 
 ## Monitoring
 
