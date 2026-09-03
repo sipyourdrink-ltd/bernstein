@@ -32,6 +32,7 @@ Per-directory context files for agents working inside a subtree. Each covers: wh
 | `src/bernstein/adapters/AGENTS.md`           | CLI agent adapters |
 | `src/bernstein/cli/AGENTS.md`                | Click CLI |
 | `src/bernstein/core/lineage/AGENTS.md`       | Lineage: artifact provenance |
+| `src/bernstein/core/observability/`          | Observability: ingest contract (`ingest_contract.py`) and [docs/adapters/ingest_contract.md](../docs/adapters/ingest_contract.md) |
 | `src/bernstein/core/orchestration/AGENTS.md` | Orchestration engine |
 | `src/bernstein/core/quality/AGENTS.md`       | Quality gates and verification |
 | `src/bernstein/core/security/AGENTS.md`      | Security: audit chain, identity, policy |
