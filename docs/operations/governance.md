@@ -194,3 +194,44 @@ unchanged environment reports nothing. By default only drifted entities print;
 `--full` prints one line per entity.
 
 Exit codes: `0` no drift, `1` unreadable desired state, `2` drift.
+
+## govern audit
+
+`bernstein audit run` executes the registered check set and emits a signed,
+chain-anchored audit report. Each finding carries a stable namespaced ID, a
+three-state verdict (`pass`, `fail`, `not_measurable`), and evidence pairs whose
+canonical JSON hash is recomputed at verify time. The check contract and ID
+scheme are defined in issue #5072.
+
+### Skip vs. suppress
+
+Two mechanisms remove a finding from a clean report, but they are different
+operations with different governance semantics and different records:
+
+| | `--skip ID` (check exclusion) | `bernstein audit suppress ID --reason ... --until DATE` |
+|---|---|---|
+| **What it means** | The check was excluded from the run before it ran. The finding was **never raised**. | A finding **was raised**; the operator has recorded a bounded-time decision to accept it as known-risk. |
+| **When it applies** | At **plan / pre-check time**: the check does not appear in the run at all. | At **post-finding time**: the finding exists; the operator explicitly accepts it. |
+| **Governance record** | No finding, no record. The exclusion itself is recorded by the mechanism that performed it (e.g., `--skip` on the audit run command, or the check registry's skip list). | A `GovernanceDecision` with `verdict=accepted`, `subject=<finding_id>`, `action=suppress`, and `context={reason, expiry}`. Anchored in the govern-audit spine. |
+| **Finding in report** | Not present — the check never ran. | Present in the report as accepted, annotated with the suppression decision anchor and expiry. |
+| **Expiry behaviour** | N/A — no record to expire. | After `--until DATE` the finding reverts to its normal verdict on the next audit run. The suppression record is read at report-generation time to determine whether to annotate a finding as accepted. |
+
+**They produce different governance records.** `skip` produces no finding and no
+decision artefact. `suppress` produces a chain-anchored `GovernanceDecision`
+that binds the finding ID, the operator's reason, and the expiry date — so a
+future verifier can recompute whether the finding was accepted at the time of
+the audit, and whether the acceptance window had lapsed.
+
+**Suppressed findings appear in the report as accepted.** The report generator
+consults the suppression records when building the finding list. A finding
+with a live (unexpired) suppression is emitted with the suppression decision's
+journal anchor and the expiry date, so the record is self-describing.
+
+**Past `--until` the finding reverts to its normal verdict.** There is no
+active enforcement in `suppress` itself; downstream consumers — the audit report
+generator, the posture scorer — consult the suppression record's `expiry` field
+and treat the finding as accepted only while the current date is within the
+window.
+
+For `--skip` (check exclusion), see the audit check contract defined in
+issue #5072.

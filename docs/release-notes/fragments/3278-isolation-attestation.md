@@ -1,0 +1,3 @@
+## Signed isolation attestation body
+
+`bernstein sandbox attest` mints an Ed25519-signed isolation attestation for the current host. The attestation records, per registered backend, which capabilities this host was observed to deliver and outputs either a summary or the canonical signed JSON body. The command supports `--host-facts` to attest over additional host facts beyond the basic os/arch facts, and `--json` to print the canonical signed attestation JSON instead of a summary (#3278).

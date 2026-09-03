@@ -444,6 +444,7 @@ nav:
           - Env isolation: operations/env-isolation.md
           - Credential scoping: security/credential-scoping.md
           - Capability matrix: security/capability-matrix.md
+          - Admission policy: operations/admission-policy.md
           - Manager auth: security/manager-auth.md
           - Agent-card keystore: security/keystore.md
           - JCS canonicalization: security/jcs-canonicalization.md

@@ -24,6 +24,7 @@ from bernstein.core.approval.models import (
     ApprovalTimeoutError,
     PendingApproval,
     ResolvedApproval,
+    internal_principal,
 )
 from bernstein.core.approval.queue import (
     DEFAULT_TTL_SECONDS,
@@ -53,6 +54,16 @@ from bernstein.core.security.policy_engine import DecisionType
 
 if TYPE_CHECKING:
     from bernstein.core.lineage.provenance import TrustClass
+
+#: Principal recorded when the policy profile denies a call outright. The
+#: decision is the policy engine's; recording it as a person's would make a
+#: rule look like an operator who reviewed the call.
+POLICY_PRINCIPAL = internal_principal("approval-gate/policy")
+
+#: Principal recorded when the auto-approve classifier decides. This is the
+#: resolution most easily mistaken for human oversight -- it allows or denies
+#: a call with nobody present -- so it names itself explicitly.
+CLASSIFIER_PRINCIPAL = internal_principal("approval-gate/classifier")
 
 logger = logging.getLogger(__name__)
 
@@ -241,6 +252,7 @@ def _policy_reject(
         return ResolvedApproval(
             approval_id=f"policy-deny:{effective.name}",
             decision=ApprovalDecision.REJECT,
+            principal=POLICY_PRINCIPAL,
             reason=decision.reason,
         )
     return None
@@ -371,6 +383,7 @@ def _smart_classifier_decision(
         return ResolvedApproval(
             approval_id=f"auto-approve-deny:{tool_name}",
             decision=ApprovalDecision.REJECT,
+            principal=CLASSIFIER_PRINCIPAL,
             reason=classification.reason,
         )
 
@@ -386,6 +399,7 @@ def _smart_classifier_decision(
         return ResolvedApproval(
             approval_id=f"auto-approve-allow:{tool_name}",
             decision=ApprovalDecision.ALLOW,
+            principal=CLASSIFIER_PRINCIPAL,
             reason=classification.reason,
         )
 

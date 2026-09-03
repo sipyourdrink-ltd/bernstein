@@ -1677,7 +1677,12 @@ class TestRunStop:
         stream.finalize.side_effect = finalize_with_run_event
         orch.run()
 
-        assert [row["event"] for row in rows] == ["run_started", "tick_start", "run_completed"]
+        assert [row["event"] for row in rows] == [
+            "run_started",
+            "loaded_extension_set",
+            "tick_start",
+            "run_completed",
+        ]
         stream.finalize.assert_called_once_with()
         chain = AuditChainStore(tmp_path / ".sdd" / "audit")
         closure = project_run_closure(chain, orch._run_id)
