@@ -876,6 +876,8 @@ class Orchestrator:
         # orchestrator, so the hook is applied here via a setter.
         if hasattr(self._spawner, "set_merge_queue"):
             self._spawner.set_merge_queue(self._merge_queue)
+        if hasattr(self._spawner, "set_file_ownership_provider"):
+            self._spawner.set_file_ownership_provider(lambda: dict(self._file_ownership))
         if hasattr(self._spawner, "set_quality_gate_config"):
             self._spawner.set_quality_gate_config(self._quality_gate_config)
         if hasattr(self._spawner, "set_run_id"):
