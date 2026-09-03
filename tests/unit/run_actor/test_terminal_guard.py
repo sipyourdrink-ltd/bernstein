@@ -17,6 +17,7 @@ from bernstein.core.orchestration.run_actor import (
     RunActor,
     RunState,
     apply_event,
+    register_terminal_refusal_hook,
 )
 
 
@@ -117,7 +118,7 @@ class TestTerminalRefusalJournaling:
     @pytest.mark.asyncio
     async def test_replay_completion_produces_one_refusal_no_state_change(self, _clear_refusal_hooks: None) -> None:
         records: list[dict[str, Any]] = []
-        ra.register_terminal_refusal_hook(lambda **kw: records.append(dict(kw)))
+        register_terminal_refusal_hook(lambda **kw: records.append(dict(kw)))
 
         actor = RunActor("sess-gov")
         await actor.start()
@@ -140,7 +141,7 @@ class TestTerminalRefusalJournaling:
 
     @pytest.mark.asyncio
     async def test_refusal_does_not_append_to_replay_buffer(self, _clear_refusal_hooks: None) -> None:
-        ra.register_terminal_refusal_hook(lambda **kw: None)
+        register_terminal_refusal_hook(lambda **kw: None)
         actor = RunActor("sess-gov-buf")
         await actor.start()
         try:
