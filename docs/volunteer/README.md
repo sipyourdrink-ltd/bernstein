@@ -53,4 +53,20 @@ bernstein volunteer browse            # list issues open to volunteers
 | `bernstein volunteer browse` | List issues labeled for volunteers. |
 | `bernstein volunteer budget` | Set or inspect persistent donor limits and usage. |
 | `bernstein volunteer run <url>` | Execute a claimed task and produce a receipt. |
-| `bernstein volunteer hub` | Serve the lease store over HTTP (see [issue #4037]). |
+| `bernstein volunteer hub` | Serve the lease store and the hub's own task board over HTTP. |
+
+## Hub task board
+
+A hub can offer work that has no git-forge issue behind it. `POST
+/volunteer/tasks` publishes one (operator scope `volunteer:publish`) and `GET
+/volunteer/tasks` lists the board to a caller holding `volunteer:claim`; a
+donor then claims, heartbeats, and submits through the endpoints it already
+uses. The board's log is a sibling of the lease log, so a hub that is torn down
+and brought back still offers what it offered.
+
+A hub-native task id is `hub:` followed by the sha256 of the task's content.
+The prefix is reserved, so an id mirrored from a git forge can never be
+mistaken for a board one, and a donor can recompute the digest from the content
+it was handed to confirm it matches the id it holds a lease on. Republishing
+identical content lands on the id that already exists rather than doubling the
+board.
