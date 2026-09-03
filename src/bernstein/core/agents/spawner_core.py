@@ -13,6 +13,7 @@ import shutil
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, cast
@@ -1107,6 +1108,7 @@ def _render_prompt_with_receipt(
     meta_messages: list[str] | None = None,
     max_turns: int | None = None,
     mailbox_section: str = "",
+    file_ownership: dict[str, str] | None = None,
     model: str = "",
     context_policy: Any = None,
 ) -> tuple[str, ContextReceipt]:
@@ -1340,6 +1342,16 @@ def _render_prompt_with_receipt(
     # every adapter type receives byte-identical context.
     if mailbox_section and mailbox_section.strip():
         named_sections.append(("mailbox", deduplicate_section(mailbox_section)))
+    file_ownership_section = ""
+    if file_ownership:
+        other_files = {path: owner for path, owner in file_ownership.items() if owner != session_id}
+        if other_files:
+            lines = ["\n## Files currently being edited by other agents (do NOT modify):"]
+            lines.extend(f"- {path} (by {owner})" for path, owner in sorted(other_files.items()))
+            lines.append(
+                "\nIf you need changes in these files, post a bulletin requesting the owning agent to make them.\n"
+            )
+            file_ownership_section = "\n".join(lines)
     try:
         rec_engine = RecommendationEngine(workdir)
         rec_engine.build()
@@ -1490,6 +1502,9 @@ def _render_prompt_with_receipt(
             policy = policy_dict
     else:
         policy = {}
+
+    if file_ownership_section:
+        named_sections.append(("file ownership", file_ownership_section))
 
     receipt = build_context_receipt(named_sections, policy=policy)
 
@@ -1676,6 +1691,7 @@ class AgentSpawner:
         self._workspace = workspace
         self._bulletin = bulletin
         self._context_builder = TaskContextBuilder(workdir)
+        self._file_ownership_provider: Callable[[], dict[str, str]] | None = None
         self._procs: dict[str, subprocess.Popen[bytes] | None] = {}
         # Per-session baseline of operator-checkout untracked paths, captured
         # at manager/planning spawn so the reap-time sweep can quarantine any
@@ -2055,6 +2071,10 @@ class AgentSpawner:
         per-repo lock dict -- fixing.
         """
         self._merge_queue = merge_queue
+
+    def set_file_ownership_provider(self, provider: Callable[[], dict[str, str]]) -> None:
+        """Provide the lock-manager ownership snapshot used in spawn prompts."""
+        self._file_ownership_provider = provider
 
     def set_quality_gate_config(self, config: Any) -> None:
         """Wire in the orchestrator's :class:`QualityGatesConfig` (#4393)."""
@@ -4330,6 +4350,7 @@ class AgentSpawner:
                 tasks[0].id,
             )
         else:
+            file_ownership = self._file_ownership_provider() if self._file_ownership_provider is not None else None
             prompt, receipt = _render_prompt_with_receipt(
                 tasks,
                 self._templates_dir,
@@ -4344,6 +4365,7 @@ class AgentSpawner:
                 meta_messages=meta_messages,
                 max_turns=_effective_max_turns,
                 mailbox_section=mailbox_section,
+                file_ownership=file_ownership,
                 model=model_config.model,
                 context_policy=self._context_policy,
             )
@@ -4526,9 +4548,23 @@ class AgentSpawner:
             # state baked into a pre-warmed worktree (cached prompt prefixes,
             # half-installed deps, leftover indexes) cannot leak across the
             # restart boundary.
-            warm_entry = (
-                self._warm_pool.claim_slot(role) if self._warm_pool is not None and not fresh_restart_on_retry else None
-            )
+            warm_pool = self._warm_pool
+            warm_entry = warm_pool.claim_slot(role) if warm_pool is not None and not fresh_restart_on_retry else None
+            # A slot with no worktree is not provisioned. `prepare_speculative_warm_pool`
+            # (core/tasks/task_lifecycle.py) adds slots with `worktree_path=""`, and
+            # `Path("")` is the orchestrator's cwd, i.e. the repository root: the agent
+            # then runs at the root, switches the operator checkout to `agent/<session>`
+            # and merges back into whatever branch that leaves checked out. Release the
+            # slot and take the cold path, which the warm-pool design calls the safe
+            # default.
+            if warm_pool is not None and warm_entry is not None and not warm_entry.worktree_path:
+                logger.warning(
+                    "Warm pool slot %s for role=%s has no worktree; releasing it and spawning cold",
+                    warm_entry.slot_id,
+                    role,
+                )
+                warm_pool.release_slot(warm_entry.slot_id)
+                warm_entry = None
             if warm_entry is not None:
                 spawn_cwd = Path(warm_entry.worktree_path)
                 self._worktree_paths[session_id] = spawn_cwd
