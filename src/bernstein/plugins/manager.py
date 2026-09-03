@@ -1043,6 +1043,25 @@ class PluginManager:
             log.warning("collect_plugin_tracker_adapters failed: %s", exc)
             return 0
 
+    def collect_plugin_ingest_adapters(self) -> int:
+        """Collect ingest adapter declarations from registered plugins.
+
+        Iterates over every loaded plugin that implements
+        ``provide_ingest_adapter`` and registers its returned declarations
+        on the process-wide ingest registry. Mirrors
+        :meth:`collect_plugin_tracker_adapters`.
+
+        Returns:
+            Number of declarations newly registered.
+        """
+        from bernstein.core.trackers.registry import discover_plugin_ingest_adapters
+
+        try:
+            return discover_plugin_ingest_adapters(self)
+        except Exception as exc:  # pragma: no cover - defensive
+            log.warning("collect_plugin_ingest_adapters failed: %s", exc)
+            return 0
+
     def discover_entry_points(self) -> None:
         """Load all plugins registered via the ``bernstein.plugins`` entry-point group."""
         eps = entry_points(group="bernstein.plugins")

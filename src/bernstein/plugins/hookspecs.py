@@ -631,6 +631,35 @@ class BernsteinSpec:
         """
 
     @hookspec
+    def provide_ingest_adapter(self) -> Any:
+        """Provide one or more ingest adapter registrations.
+
+        Ingest adapters are external observability integrations that receive
+        structured activity events (gen_ai_activity, untyped_activity) from
+        the Bernstein audit chain. Each adapter declares the event types
+        it can consume via
+        :class:`bernstein.core.observability.ingest_contract.IngestAdapterDeclaration`.
+
+        Plugins implementing this hook return one of:
+
+        * ``None`` -- opt out for this call.
+        * A single :class:`IngestAdapterDeclaration`.
+        * A ``(name, version, declared_event_types, summary)`` tuple where
+          *declared_event_types* is an iterable of event-type strings.
+        * A list containing any mix of the above.
+
+        The plugin manager collects declarations during plugin discovery.
+        Declarations are stored on the process-wide registry for observability
+        pipeline routing; actual event forwarding is handled by the ingest
+        subsystem.
+
+        Duplicate names are skipped with a warning; the first registration wins.
+
+        Returns:
+            A declaration, list of declarations, or ``None``.
+        """
+
+    @hookspec
     def provide_secret_store(self) -> Any:
         """Provide one or more external secret-store registrations.
 
