@@ -1,0 +1,14 @@
+id: inc-b2a872f12f41
+severity: P2
+source_incident: "dlq:bdeaaf1b02384d88"
+owner: backend
+created_at: 1788444888.646
+expected_outcome: "Agent should complete the task; flake-tolerant retry is acceptable. (root cause: max_retries_exceeded)"
+tags:
+  - max_retries_exceeded
+prompt: |
+  Reproduce and resolve the following terminal failure (role=backend).
+  Task: Record salvage merge of crashed agent as journal row before task_retried
+  Failure reason: max_retries_exceeded
+  Last error (trimmed):
+  Agent backend-1de552dc reaped (heartbeat timeout)
