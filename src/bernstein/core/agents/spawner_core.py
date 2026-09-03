@@ -24,7 +24,7 @@ from bernstein.adapters.plugin_sdk import (
     SamplingParamsRefusal,
     ensure_sampling_params_supported,
 )
-from bernstein.adapters.registry import adapter_name_for_provider, get_adapter
+from bernstein.adapters.registry import adapter_name_for_provider, get_adapter, registry_name_for
 from bernstein.adapters.skills_injector import inject_skills
 from bernstein.agents.registry import AgentRegistry, get_registry
 from bernstein.bridges.base import AgentState, AgentStatus, BridgeError, RuntimeBridge, SpawnRequest
@@ -2699,7 +2699,7 @@ class AgentSpawner:
                 resolved,
             )
             return resolved
-        fallback = self._adapter.name()
+        fallback = registry_name_for(self._adapter) or self._adapter.name()
         logger.info(
             "_infer_adapter_name_for_provider: no registry match for provider_name=%r model=%r; "
             "falling back to current adapter %r",
