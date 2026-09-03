@@ -78,7 +78,7 @@ EXCLUDED_FROM_SCAN = {SRC / "core" / "__init__.py"}
 # floor: a new orphan fails this test, and removing one of these fails it
 # too until the name is struck from the list. The list only ever shrinks -
 # each slice of #5098 that wires or deletes one of these four strikes it.
-KNOWN_ORPHANS = frozenset({"compliance_library", "hipaa", "soc2_report", "compliance_report"})
+KNOWN_ORPHANS = frozenset({"hipaa", "soc2_report", "compliance_report"})
 
 
 def _scanned_files() -> list[Path]:
@@ -167,9 +167,9 @@ def test_every_compliance_module_has_a_non_test_importer() -> None:
     """The set of caller-less compliance modules may shrink, never grow.
 
     Load-bearing: on an unmodified tree this fails without the allowlist,
-    because ``compliance_library`` (23 checks, 1,167 lines) has zero
-    non-test importers - only two trailing comments in
-    ``core/config/seed_parser.py`` name it. With ``KNOWN_ORPHANS`` in place
+    because three compliance modules had zero non-test importers when the
+    guard landed (``compliance_library`` was the fourth until the adapter
+    checks started importing it). With ``KNOWN_ORPHANS`` in place
     the assertion passes today, documenting the gap instead of hiding it,
     and fails again the moment a fifth compliance module goes dark.
     """
