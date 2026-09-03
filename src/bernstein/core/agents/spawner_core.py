@@ -1648,14 +1648,21 @@ class AgentSpawner:
         self._default_model = default_model
         self._resource_limits = resource_limits
         self._adapter_cache: dict[str, CLIAdapter] = {}
+        self._templates_dir = templates_dir
+        self._workdir = workdir
+        # The run-level adapter is seeded into the cache below without ever
+        # going through _get_adapter_by_name's cache-miss path, so it has to
+        # receive the host-isolation declaration here too -- otherwise the
+        # later cache hit in _get_adapter_by_name skips applying it, and a
+        # declared container tier never reaches this adapter (#5341, #5314).
+        if getattr(adapter, "consumes_host_isolation", False):
+            self._apply_host_isolation(adapter.name(), adapter)
         if enable_caching:
             from bernstein.adapters.caching_adapter import CachingAdapter
 
             adapter = CachingAdapter(adapter, workdir)
         self._adapter = adapter
         self._adapter_cache[self._adapter.name()] = self._adapter
-        self._templates_dir = templates_dir
-        self._workdir = workdir
         self._registry = agent_registry or get_registry(
             definitions_dir=workdir / ".sdd" / "agents" / "definitions",
             auto_reload=True,
