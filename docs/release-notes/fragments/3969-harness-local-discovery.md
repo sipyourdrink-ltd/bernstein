@@ -1,2 +1,0 @@
-## Harness Local Discovery
-This PR adds a `--harness-local` CLI flag to `bernstein agents discover` that surfaces harness directory paths, status, and content digests, with a new `content_digest` field recording the digest of each harness-local directory read. #3969

@@ -1,0 +1,329 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://bernstein.run/schemas/evidence-envelope-v1.json",
+  "title": "Bernstein Evidence Envelope (v1)",
+  "description": "A portable, signed statement about a bounded set of actions: who acted (principal), under what authority (grants), what was authorised (decisions), what was recorded (evidence), and -- required, never optional -- what the envelope does not account for (coverage). The envelope proves that these sections were signed together by the key the principal names; it does not by itself prove that the actions happened, that the grant chain was ever valid, or that no action is missing. Coverage is where the last of those is stated explicitly rather than left to silence. Canonical form is JCS (RFC 8785); the signature is a detached JWS over every member except 'signature'.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "envelope_type",
+    "principal",
+    "grants",
+    "decisions",
+    "evidence",
+    "coverage",
+    "signature"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0.0"],
+      "description": "Pinned envelope schema version. A new version ships as a new schema file with a parallel reader; v1 is never edited in place."
+    },
+    "envelope_type": {
+      "type": "string",
+      "const": "https://bernstein.run/attestations/evidence-envelope/v1",
+      "description": "URL identifying the envelope type, so a reader that holds several attestation families can dispatch on one field."
+    },
+    "principal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "key"],
+      "description": "The acting identity: a stable reference plus the material a reader needs to check the signature against it.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable reference to the acting identity, as a URI. A SPIFFE URI under the fixed 'bernstein.run' trust domain is the form this installation mints, matching the Trust Record subject scheme."
+        },
+        "key": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kty", "crv", "x", "kid"],
+          "description": "Public JWK for the signing key. The reference above is a name; this is what makes it checkable. Two installations can mint the same 'id' and still be told apart by this key.",
+          "properties": {
+            "kty": {
+              "type": "string",
+              "const": "OKP",
+              "description": "Key type. Ed25519 keys are octet key pairs (RFC 8037)."
+            },
+            "crv": {
+              "type": "string",
+              "const": "Ed25519",
+              "description": "Curve. EdDSA over Ed25519 is the only signature suite v1 defines."
+            },
+            "x": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "description": "Base64url-encoded public key, unpadded (RFC 7515 section 2)."
+            },
+            "kid": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Key identifier. Must equal the 'kid' in the signature's protected header."
+            }
+          }
+        }
+      }
+    },
+    "grants": {
+      "type": "array",
+      "description": "The authority chain the principal acted under, root first. Each entry names its parent (null at the root), so a reader can walk the chain and check that each link attenuates the one above it. May be empty: the authority plane that populates it is not built yet, and an empty array states 'no grant chain was recorded' rather than implying unbounded authority -- the coverage section is where that limitation is written down.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "grant_id",
+          "parent_grant_id",
+          "issuer",
+          "subject",
+          "actions",
+          "not_after",
+          "constraints_hash"
+        ],
+        "properties": {
+          "grant_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Identifier of this grant, unique within the envelope. Referenced by decisions."
+          },
+          "parent_grant_id": {
+            "type": ["string", "null"],
+            "description": "The grant this one was delegated from, or null for the root of the chain. Present as an explicit null rather than omitted, so a root is distinguishable from a truncated chain."
+          },
+          "issuer": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Identity that issued the grant, in the same URI form as 'principal.id'."
+          },
+          "subject": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Identity the grant was issued to."
+          },
+          "actions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1},
+            "description": "Permission strings this grant conveys. A grant that conveys nothing is not a grant, so the list cannot be empty. Attenuation means a child's actions are a subset of its parent's; the schema carries the fields, a verifier checks the relation."
+          },
+          "not_after": {
+            "type": "integer",
+            "description": "Expiry, Unix seconds. Required: a grant with no expiry cannot be shown to have been live at decision time."
+          },
+          "constraints_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "description": "Digest over the grant's additional constraints (budget caps, resource scopes) in their canonical form. Carried as a digest so an envelope can be published without the constraint bodies."
+          }
+        }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "description": "One record per authorisation, in the order they were made. The field surface mirrors GovernanceDecision (src/bernstein/core/security/governance.py) so projecting a recorded decision into an envelope is a rename, not a re-interpretation.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "decision_id",
+          "run_id",
+          "subject",
+          "action",
+          "verdict",
+          "policy",
+          "inputs_hash",
+          "timestamp",
+          "grant_id",
+          "journal_entry_hash"
+        ],
+        "properties": {
+          "decision_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Identifier of this decision, unique within the envelope. Referenced by evidence entries."
+          },
+          "run_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The run whose lineage spine the decision is anchored in. Carried per decision, not per envelope: one envelope may span several runs."
+          },
+          "subject": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The subject the decision was about -- a seat, actor or user identifier."
+          },
+          "action": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The requested action: a permission string, or 'budget' for a spend decision."
+          },
+          "verdict": {
+            "type": "string",
+            "enum": ["allow", "deny", "refuse"],
+            "description": "The outcome. 'allow' and 'deny' are access verdicts; 'refuse' is the budget verdict. The same three values GovernanceDecision records."
+          },
+          "policy": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "version", "bundle_hash"],
+            "description": "The policy the decision was made under. Versioned: a verdict quoted without the version of the rule that produced it cannot be re-derived later, because the rule may have moved.",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Policy identifier."
+              },
+              "version": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Policy version, as the policy itself names it."
+              },
+              "bundle_hash": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "description": "Digest over the resolved policy bundle in its canonical form -- the same convention the Trust Record's policy.bundle_hash uses."
+              }
+            }
+          },
+          "inputs_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "description": "Digest over the decision inputs, so a verifier can confirm it is re-deriving the verdict from the same inputs the decision saw."
+          },
+          "timestamp": {
+            "type": "integer",
+            "description": "Decision time, Unix seconds. Integer so identical fixtures anchor byte-identically."
+          },
+          "grant_id": {
+            "type": ["string", "null"],
+            "description": "The grant in 'grants' this decision relied on, or null when the decision was made without a recorded grant. Explicitly null rather than omitted: 'no grant was recorded' is a fact a reader must see."
+          },
+          "journal_entry_hash": {
+            "type": "string",
+            "pattern": "^(sha256:[0-9a-f]{64})?$",
+            "description": "The lineage-spine entry hash anchoring the decision record, or the empty string when the decision was never anchored. An unanchored decision is a claim; an anchored one is chain-verifiable."
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "description": "Digests tying decisions to what was actually recorded. An entry is a pointer plus a hash, never the artefact: the envelope stays portable and the artefacts stay wherever the operator keeps them.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["decision_id", "kind", "digest", "locator"],
+        "properties": {
+          "decision_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The decision this evidence belongs to. Must match a 'decisions[].decision_id' in the same envelope."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["journal_entry", "spine_entry", "audit_range", "run_receipt", "artifact"],
+            "description": "What the digest is over, so a reader knows which verifier to point at it."
+          },
+          "digest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["alg", "value"],
+            "description": "Content digest of the referenced material.",
+            "properties": {
+              "alg": {
+                "type": "string",
+                "const": "sha256",
+                "description": "Digest algorithm. v1 defines sha256 only."
+              },
+              "value": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$",
+                "description": "Lowercase hex digest."
+              }
+            }
+          },
+          "locator": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Where the material can be fetched from, relative to the operator's own storage. Resolving it is out of scope for the envelope: a locator that no longer resolves does not make the digest wrong, it makes the evidence unavailable, and those are different findings."
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actions_declared", "actions_covered", "uncovered", "limitations"],
+      "description": "What the envelope does not account for. Required, because an envelope covering three of five actions and an envelope covering all five look identical to a reader unless the gap is stated. Every member is required for the same reason: an absent 'uncovered' member is silence wearing a section header.",
+      "properties": {
+        "actions_declared": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many actions the envelope's scope contains -- the denominator."
+        },
+        "actions_covered": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many of those actions carry a decision in this envelope -- the numerator. Equal to 'actions_declared' only when nothing is missing."
+        },
+        "uncovered": {
+          "type": "array",
+          "description": "One entry per action in scope with no decision in this envelope. Empty only when 'actions_covered' equals 'actions_declared'.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["action", "reason"],
+            "properties": {
+              "action": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Identifier of the uncovered action."
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Why it is uncovered, in the producer's own words -- 'no decision was recorded', 'the decision was recorded outside this window'. A reason is required so a gap cannot be listed and left unexplained."
+              }
+            }
+          }
+        },
+        "limitations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1},
+          "description": "What the envelope does not prove, stated in prose. At least one entry is required: every envelope this installation can mint is software evidence signed by an installation key, with no hardware root of trust, and that limitation always applies."
+        }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["alg", "typ", "kid", "jws"],
+      "description": "Detached JWS over every envelope member except this one. A reader rebuilds the binding from the members it can see, so adding, removing or editing any section changes the preimage and the signature stops verifying.",
+      "properties": {
+        "alg": {
+          "type": "string",
+          "const": "EdDSA",
+          "description": "Signature algorithm, matching the protected header."
+        },
+        "typ": {
+          "type": "string",
+          "const": "bernstein-evidence-envelope+jws",
+          "description": "Signature context. Distinct from the identity card's and the capability card's 'typ' values so the three can never be replayed into one another."
+        },
+        "kid": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Key identifier, equal to 'principal.key.kid' and to the 'kid' in the protected header."
+        },
+        "jws": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+\\.\\.[A-Za-z0-9_-]+$",
+          "description": "Compact detached JWS: '<protected-header-b64url>..<signature-b64url>'. The payload segment is empty because the payload is the envelope binding itself; a reader that finds a non-empty payload segment must refuse the envelope rather than verify the embedded copy."
+        }
+      }
+    }
+  }
+}

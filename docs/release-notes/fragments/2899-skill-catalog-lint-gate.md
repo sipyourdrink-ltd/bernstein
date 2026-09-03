@@ -1,3 +1,0 @@
-## `bernstein skills install` now gates catalog entries on strict lint
-
-Catalog-fetched skills are now checked with `lint_skill()` before promotion into `.bernstein/skills/<name>/`. A skill whose body contains hostile prompt-space patterns (exfiltration instructions, credential asks, approval-bypass phrasing) is refused before it lands on disk, and the refusal is recorded as a chain-anchored `skill.verification_refusal` event with a machine-readable `reason_code`. Installations that clear lint are unaffected. Fixes #2899.
