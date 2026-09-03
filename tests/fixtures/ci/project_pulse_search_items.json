@@ -1,0 +1,30 @@
+[
+  {
+    "number": 5001,
+    "html_url": "https://github.com/sipyourdrink-ltd/bernstein/pull/5001",
+    "user": { "login": "first-time-contributor", "type": "User" },
+    "created_at": "2026-08-20T10:00:00Z",
+    "pull_request": { "merged_at": "2026-08-20T15:00:00Z" }
+  },
+  {
+    "number": 5002,
+    "html_url": "https://github.com/sipyourdrink-ltd/bernstein/pull/5002",
+    "user": { "login": "chernistry", "type": "User" },
+    "created_at": "2026-08-25T09:00:00Z",
+    "pull_request": { "merged_at": "2026-08-25T10:00:00Z" }
+  },
+  {
+    "number": 5003,
+    "html_url": "https://github.com/sipyourdrink-ltd/bernstein/pull/5003",
+    "user": { "login": "dependabot[bot]", "type": "Bot" },
+    "created_at": "2026-08-27T00:00:00Z",
+    "pull_request": { "merged_at": "2026-08-27T02:00:00Z" }
+  },
+  {
+    "number": 5004,
+    "html_url": "https://github.com/sipyourdrink-ltd/bernstein/pull/5004",
+    "user": { "login": "second-contributor", "type": "User" },
+    "created_at": "2026-08-15T00:00:00Z",
+    "pull_request": { "merged_at": "2026-08-16T12:00:00Z" }
+  }
+]
