@@ -49,11 +49,12 @@ matched its declaration.
 
 ## Receipt naming
 
-Every ingested event records the adapter identity in its receipt. The receipt
-carries `ingest.source_kind` (the adapter `name`) and `ingest.source_profile`
-(the ingest profile name, e.g. `gen_ai_activity`) as attributes on the event,
-so an operator or verifier can attribute every event back to the specific
-adapter that produced it — without consulting the plugin code itself.
+Every ingested event records the source identity in its chain event attributes
+(`ingest.source_kind` carries the adapter name; `ingest.source_profile` carries
+the ingest profile name, e.g. `gen_ai_activity`). The `IngestReceipt` binding
+for the batch additionally carries both `adapter_name` and `adapter_version`,
+so an operator or verifier can attribute the receipt back to the specific
+adapter version that produced it — without consulting the plugin code itself.
 
 ## Static-manifest decision
 
@@ -62,8 +63,8 @@ type introspection. Two reasons:
 
 - **Offline auditability.** A verifier reading a receipt bundle has everything
   it needs to re-derive the declaration: the receipt bytes, the adapter name
-  and version recorded in the event attributes, and the constant allowlist. No
-  live import of the plugin is required.
+  and version from the `IngestReceipt`, and the constant allowlist. No live
+  import of the plugin is required.
 - **Verification runs without the plugin.** Because the verifier does not
   re-execute `provide_ingest_adapter`, it cannot be misled by a plugin that
   behaves differently at verification time than it did at ingest time.
