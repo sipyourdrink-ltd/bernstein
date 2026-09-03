@@ -264,24 +264,24 @@ class TestRotation:
         keys_dir = tmp_path / "keys"
         audit_dir = tmp_path / ".sdd" / "audit"
         audit_dir.mkdir(parents=True)
-        
+
         ks = AgentCardKeystore(keys_dir)
-        priv_a, pub_a = ks.load_or_generate()
-        
+        ks.load_or_generate()
+
         # Perform rotation
-        priv_b, pub_b = ks.rotate()
-        
+        ks.rotate()
+
         # Check that audit event was recorded
         audit_log = AuditLog(audit_dir)
-        events = audit_log.scan_verified()
-        identity_events = [e for e in events if e.event_type == "identity.rotation"]
+        scan = audit_log.scan_verified()
+        identity_events = [e for e in scan.events if e.event_type == "identity.rotation"]
         assert len(identity_events) == 1
-        
+
         event = identity_events[0]
         assert event.actor == "system"
         assert event.resource_type == "install_identity"
         assert event.resource_id == "key_rotation"
-        
+
         # Check details contain new_keyid and old_keyid
         details = event.details
         assert "new_keyid" in details

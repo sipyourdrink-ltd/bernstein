@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 import pytest
+
 from bernstein.core.govern.inventory_render import render_inventory
 
 FIXTURE_STORE = Path(__file__).resolve().parents[1] / "fixtures" / "govern" / "inventory-store.json"
