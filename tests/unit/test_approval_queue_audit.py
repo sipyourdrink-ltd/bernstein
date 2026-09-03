@@ -20,9 +20,13 @@ from pathlib import Path
 
 import pytest
 
-from bernstein.core.approval.models import ApprovalDecision, PendingApproval
+from bernstein.core.approval.models import ApprovalDecision, ApprovalPrincipal, PendingApproval
 from bernstein.core.approval.queue import ApprovalQueue
 from bernstein.core.security.audit import AuditLog
+
+#: Every resolve names the operator it is attributed to; the queue has no
+#: default principal to fall back on (#5035).
+_PRINCIPAL = ApprovalPrincipal(identifier="alice@example.test", auth_method="scoped-token")
 
 
 def _queue(root: Path) -> ApprovalQueue:
@@ -53,7 +57,7 @@ def test_human_allow_appends_audit_chain_event(tmp_path: Path) -> None:
     queue = _queue(tmp_path)
     approval_id, nonce = _enqueue(queue)
 
-    queue.resolve(approval_id, ApprovalDecision.ALLOW, nonce=nonce, channel="cli")
+    queue.resolve(approval_id, ApprovalDecision.ALLOW, nonce=nonce, channel="cli", principal=_PRINCIPAL)
 
     events = _events(tmp_path, "human_approval_decision")
     assert events, "a human allow left no chain entry"
@@ -67,7 +71,7 @@ def test_human_reject_is_recorded_too(tmp_path: Path) -> None:
     queue = _queue(tmp_path)
     approval_id, nonce = _enqueue(queue)
 
-    queue.resolve(approval_id, ApprovalDecision.REJECT, nonce=nonce, channel="http")
+    queue.resolve(approval_id, ApprovalDecision.REJECT, nonce=nonce, channel="http", principal=_PRINCIPAL)
 
     events = _events(tmp_path, "human_approval_decision")
     assert [e.details["decision"] for e in events] == ["reject"]
@@ -77,7 +81,7 @@ def test_the_chain_verifies_after_a_human_decision(tmp_path: Path) -> None:
     """The new entry must chain correctly, not merely be present."""
     queue = _queue(tmp_path)
     approval_id, nonce = _enqueue(queue)
-    queue.resolve(approval_id, ApprovalDecision.ALLOW, nonce=nonce)
+    queue.resolve(approval_id, ApprovalDecision.ALLOW, nonce=nonce, principal=_PRINCIPAL)
 
     valid, errors = _audit(tmp_path).verify()
 
@@ -88,14 +92,17 @@ def test_human_and_classifier_decisions_are_distinguishable(tmp_path: Path) -> N
     """An auditor must be able to separate 'a person allowed this' from 'a rule did'."""
     queue = _queue(tmp_path)
     approval_id, nonce = _enqueue(queue)
-    queue.resolve(approval_id, ApprovalDecision.ALLOW, nonce=nonce)
+    queue.resolve(approval_id, ApprovalDecision.ALLOW, nonce=nonce, principal=_PRINCIPAL)
 
     human = _events(tmp_path, "human_approval_decision")
     auto = _events(tmp_path, "auto_approve_decision")
 
     assert human and not auto
     assert human[0].details["decision_source"] == "human"
-    assert human[0].actor == "human"
+    # The actor is the principal that decided, not the literal word "human":
+    # separating a person's allow from a rule's now means naming the person.
+    assert human[0].actor == _PRINCIPAL.identifier
+    assert human[0].details["principal_kind"] == "human"
 
 
 def test_always_allow_promotion_is_its_own_event(tmp_path: Path) -> None:
@@ -107,7 +114,7 @@ def test_always_allow_promotion_is_its_own_event(tmp_path: Path) -> None:
     queue = _queue(tmp_path)
     approval_id, nonce = _enqueue(queue)
 
-    queue.resolve(approval_id, ApprovalDecision.ALWAYS, nonce=nonce)
+    queue.resolve(approval_id, ApprovalDecision.ALWAYS, nonce=nonce, principal=_PRINCIPAL)
 
     decisions = _events(tmp_path, "human_approval_decision")
     promotions = _events(tmp_path, "always_allow_promotion")
@@ -121,7 +128,7 @@ def test_a_plain_allow_creates_no_promotion_event(tmp_path: Path) -> None:
     queue = _queue(tmp_path)
     approval_id, nonce = _enqueue(queue)
 
-    queue.resolve(approval_id, ApprovalDecision.ALLOW, nonce=nonce)
+    queue.resolve(approval_id, ApprovalDecision.ALLOW, nonce=nonce, principal=_PRINCIPAL)
 
     assert _events(tmp_path, "always_allow_promotion") == []
 
@@ -132,7 +139,7 @@ def test_channel_is_unspecified_rather_than_invented(tmp_path: Path) -> None:
     queue = _queue(tmp_path)
     approval_id, nonce = _enqueue(queue)
 
-    queue.resolve(approval_id, ApprovalDecision.ALLOW, nonce=nonce)
+    queue.resolve(approval_id, ApprovalDecision.ALLOW, nonce=nonce, principal=_PRINCIPAL)
 
     details = _events(tmp_path, "human_approval_decision")[0].details
     assert details["channel"] == "unspecified"
@@ -157,7 +164,7 @@ def test_chain_write_failure_does_not_leave_queue_inconsistent(tmp_path: Path, m
 
     monkeypatch.setattr(audit_mod.AuditLog, "log", _boom)
 
-    resolution = queue.resolve(approval_id, ApprovalDecision.REJECT, nonce=nonce)
+    resolution = queue.resolve(approval_id, ApprovalDecision.REJECT, nonce=nonce, principal=_PRINCIPAL)
 
     # The decision still applied and is durable.
     assert resolution.decision is ApprovalDecision.REJECT

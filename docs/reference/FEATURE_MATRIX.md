@@ -95,6 +95,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | Rule enforcement (`.bernstein/rules.yaml`) | Full | 3 | Enforcement behavior documented |
 | [Log redaction (PII filter)](../security/log-redaction.md) | Full | 3 | Active |
 | Lethal-trifecta capability gate | Full | 3 | Taint-aware egress denial: a chain that unions private data, tainted input, and external comms is refused even when static tags would pass (`core/security/capability_matrix.py`) |
+| [Executor admission policy](../operations/admission-policy.md) | Full | 3 | Fail-closed allow/deny rules over the executor identity of every spawn — role, adapter, model, endpoint, sandbox tier, task type. An unmatched subject is refused, a refusal starts no process and appends an `admission_refusal` event to the audit chain, and both outcomes are recorded with the deciding rule id (`core/security/executor_admission.py`) |
 | Circuit breaker | Full | 3 | Halts misbehaving agents, writes SHUTDOWN signal |
 | [Token growth monitor](../operations/token-growth-monitor.md) | Full | 3 | Auto-intervention on runaway consumption |
 | [Cost anomaly detection](../operations/cost-anomaly-detection.md) | Full | 3 | Z-score based, acts via task completion |
@@ -126,7 +127,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | Intent capsules | Full | 3 | Approval compiles the goal into a signed capsule; a deterministic drift monitor escalates divergence, verified by `intent verify` (`core/security/intent_capsule.py`) |
 | Query receipts (datasources) | Full | 3 | Read-only SQL results become content-addressed signed receipts; `datasource verify --re-execute` reports MATCH or DRIFT (`core/datasources/`) |
 | Compaction receipts | Full | 3 | Context and template compaction is recorded as a chain-anchored, reversible receipt (`core/tokens/compaction_receipt.py`) |
-| Tamper-evident memory | Full | 4 | Memory entries are hash-chained with provenance; `memory verify/why/forget` proves authorship, traces origin, and tombstones (`core/memory/chain.py`) |
+| Tamper-evident memory | Full | 4 | Memory entries are hash-chained with provenance; `memory verify/why/forget` proves authorship, traces origin, and tombstones, and `memory show` folds the chain to its current state (`core/memory/chain.py`) |
 | [Review / autofix / escalation / consent / webhook-node receipts](../operations/review-receipts.md) | Full | 3 | Signed, journal-anchored receipts verified offline (`review-receipt verify`, `escalation verify`, `webhook verify`) |
 | Result receipt bundles | Brief | 3 | A worker submission's patch, gate logs, task ref, and sandbox selection sealed into one DSSE / in-toto envelope; `receipt verify` recomputes it offline and names the field that diverged (`core/security/result_receipt_bundle.py`) |
 | [Stall escalation receipts](../operations/stall-escalation.md) | Full | 3 | A stalled worker produces a signed escalation receipt embedding the last audit entries and a deterministic recommended action (`supervisor escalate`) |
@@ -300,9 +301,12 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein gate verify`](../operations/gate-adjudication.md) | Full | 3 | Recompute a gate panel's inputs hash and confirm the adjudication |
 | [`bernstein mandate emit/verify/revoke`](../operations/spending-mandates.md) | Full | 3 | Bind, prove, and revoke authorized-action mandates |
 | `bernstein payment-mandate issue/show/spend` | Full | 3 | Issue and spend against authorized-spend mandates with signed receipts |
-| [`bernstein governance verify`](../operations/governance.md) | Full | 3 | Recompute access and budget verdicts for a run |
+| [`bernstein govern verify`](../operations/governance.md) | Full | 3 | Recompute access and budget verdicts for a run. `bernstein governance` is a deprecated alias, removed in v4.0.0 (#5010) |
+| [`bernstein govern reconcile`](../operations/governance.md) | Full | 3 | Diff the adapter / lane / schedule / capability surface against a desired-state document and record it |
+| [`bernstein govern inventory --render`](../operations/govern-inventory.md) | Full | 3 | Topology graph from the inventory store; mermaid is the CI-gated render |
 | [`bernstein webhook verify`](../operations/webhook-node.md) | Full | 3 | Recompute inbound-event and outbound webhook-node hashes |
 | [`bernstein review-receipt emit/verify`](../operations/review-receipts.md) | Full | 3 | Bind and offline-verify PR review receipts (issue + plan + tool calls + diff) |
+| `bernstein review-annotation derive/resolve` | Partial | 2 | Bind an operator comment to the diff bytes it targets and resolve it against a file's current bytes, reporting `orphaned` rather than re-anchoring to the recorded line numbers |
 | [`bernstein receipt create/verify`](receipt.md) | Full | 3 | Sign a result receipt bundle from a JSON spec and verify one offline, naming the exact field that diverged |
 | [`bernstein escalation show/verify`](../operations/stall-escalation.md) | Full | 3 | Project and reconstruct escalation receipts from the journal |
 | [`bernstein supervisor status/escalate`](../api/supervisor.md) | Full | 3 | Supervise stalled workers and seal stall escalation receipts |
@@ -314,7 +318,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein trace project/verify-projection`](../observability/otel-span-projection.md) | Full | 3 | Project a run journal into signed OTel GenAI spans and verify the projection |
 | `bernstein telemetry export-otel/verify-span` | Full | 3 | Stream the span projection to an OTLP collector and verify a single span offline |
 | [`bernstein thread verify`](../operations/deterministic-replay.md) | Full | 3 | Prove a streamed TUI thread equals its executed journal |
-| `bernstein memory verify/why/forget` | Full | 4 | Prove authorship, trace origin, and tombstone a memory entry |
+| `bernstein memory verify/why/forget/show` | Full | 4 | Prove authorship, trace origin, tombstone a memory entry, and print the folded current state of a namespace |
 | [`bernstein replay --verify/--from-step`](../operations/deterministic-replay.md) | Full | 3 | Recompute the journal head or rebuild state to a step |
 | [`bernstein lineage verify/walk/chain/replay/export`](../lineage.md) | Full | 4 | Per-artifact lineage spine: recompute a run's Merkle chain and HMAC tags, walk an artifact back to its producer, replay the spine in append order, and export a run's chain as a regulator artefact (`tracker-audit`, `forks`, `conflicts`, `resolve`, `merge`, `reindex`, `gate`, and `v2` complete the group) |
 | `bernstein intent show/verify` | Full | 3 | Project and recompute an intent capsule's conformance offline |
@@ -325,6 +329,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein events query/verify`](../events/grammar.md) | Full | 3 | Query the unified event feed and verify its chain projection |
 | `bernstein endpoints certify/verify` | Full | 3 | Conformance-certify a local-model endpoint and verify its certification |
 | `bernstein ledger verify/anchor/fetch` | Full | 3 | Verify, anchor, and fetch work-ledger segments |
+| `bernstein seal publish/verify` | Full | 3 | Anchor a run's sealed journal head to an RFC 3161 timestamping authority and re-check the anchor offline against pinned TSA roots |
 | `bernstein mission define/status/verify` | Full | 3 | Define multi-phase missions and verify mission status (`mission digest verify` for digests) |
 | [`bernstein tournament show/verify`](../operations/tournament-runs.md) | Full | 3 | Inspect a tournament run and verify its selection receipt |
 | `bernstein spiffe id/verify-binding` | Full | 4 | Print the SPIFFE id and verify a workload-identity binding |
@@ -335,6 +340,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein pool register/list/show/verify`](../operations/sandbox-pools.md) | Full | 3 | Manage lease-backed named resource pools |
 | [`bernstein volunteer verify`](volunteer-manifest.md) | Full | 3 | Validate a project's `.bernstein/volunteer.json` and print the manifest digest a receipt binds to |
 | [`bernstein volunteer budget`](volunteer-budget.md) | Full | 3 | Set or inspect persistent donor limits and completed/in-flight usage |
+| [`bernstein admission check`](../operations/admission-policy.md) | Full | 3 | Evaluate the declared executor admission policy against the executor identity each configured role would spawn on, printing the decision and the deciding rule id without spawning; exits non-zero when a role is refused |
 
 ## Cloud / Cloudflare
 > **How a row graduates:** A row graduates out of Preview when its maturity score increases to ≥ 3 (or when a first-run smoke test lands and the marker is intentionally removed).

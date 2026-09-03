@@ -53,12 +53,14 @@ from bernstein.core.security.compliance import (
     CompliancePreset,
     SBOMEntry,
     ai_label_for_file,
+    compliance_prerequisite_summary,
     export_evidence_bundle,
     export_soc2_package,
     generate_sbom,
     load_compliance_config,
     parse_period,
     persist_compliance_config,
+    resolve_compliance_config,
 )
 
 __all__ = [
@@ -85,6 +87,7 @@ __all__ = [
     "ai_label_for_file",
     "bom_content_hash",
     "build_pack",
+    "compliance_prerequisite_summary",
     "encode_bom",
     "export_evidence_bundle",
     "export_soc2_package",
@@ -96,5 +99,6 @@ __all__ = [
     "persist_compliance_config",
     "render_csv",
     "render_pdf",
+    "resolve_compliance_config",
     "verify_bom",
 ]

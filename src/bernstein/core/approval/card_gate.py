@@ -67,6 +67,8 @@ __all__ = [
     "REFUSAL_REASON_EXPIRED",
     "REFUSAL_REASON_HASH_MISMATCH",
     "REFUSAL_REASON_INVALID_DECISION",
+    "REFUSAL_REASON_MISSING_APPROVER",
+    "UNATTRIBUTED_ACTOR",
     "ApprovalCardAlreadySettled",
     "ApprovalCardBindingMismatch",
     "ApprovalCardClockSkew",
@@ -74,6 +76,7 @@ __all__ = [
     "ApprovalCardGate",
     "ApprovalCardHashMismatch",
     "ApprovalCardInvalidDecision",
+    "ApprovalCardMissingApprover",
     "IssuedCard",
 ]
 
@@ -94,6 +97,15 @@ REFUSAL_REASON_CROSS_WORKTREE = "cross_worktree"
 
 #: Refusal reason recorded when a pinned card is resolved from another conversation.
 REFUSAL_REASON_CROSS_CONVERSATION = "cross_conversation"
+
+#: Refusal reason recorded when a decision arrives with no approver named.
+REFUSAL_REASON_MISSING_APPROVER = "missing_approver"
+
+#: Actor written on a refusal that has no approver to attribute. It is not a
+#: name and cannot be mistaken for one: the point of refusing an empty approver
+#: is that the chain must not carry a plausible-looking substitute, and the
+#: refusal event itself must not reintroduce one.
+UNATTRIBUTED_ACTOR = "unattributed"
 
 #: Refusal reason recorded when the decision clock predates the envelope's
 #: ``created_at``. The offline verifier requires
@@ -167,6 +179,19 @@ class ApprovalCardClockSkew(RuntimeError):
     Refusing here keeps the gate and the offline verifier symmetric: the gate
     cannot append a settlement that ``bernstein audit verify`` would then reject
     forever on an append-only chain.
+    """
+
+
+class ApprovalCardMissingApprover(RuntimeError):
+    """Raised when a resolve names no approver.
+
+    The gate previously substituted the literal ``"operator"`` for an empty
+    approver and signed it into the chain, so a settlement that identified
+    nobody was indistinguishable from one that identified a person. An
+    approval whose whole purpose is to record that a human decided cannot
+    record a placeholder in the human's place, so the decision is refused,
+    chain-recorded under :data:`UNATTRIBUTED_ACTOR`, and the card is left
+    unsettled for the real operator to decide.
     """
 
 
@@ -273,7 +298,7 @@ class ApprovalCardGate:
         *,
         card_hash: str,
         decision: str,
-        approver: str = "",
+        approver: str,
         worktree_id: str = "",
         thread_id: str = "",
         now: float | None = None,
@@ -287,13 +312,18 @@ class ApprovalCardGate:
 
         Checks, in order, each refused into the chain before raising:
 
-        1. the echoed hash names an issued envelope,
-        2. the card has not already reached a terminal state,
-        3. the decision is in :data:`ALLOWED_DECISIONS`,
-        4. the chain-side clock is at or after ``created_at``,
-        5. the chain-side clock is before ``not_after``,
-        6. the origin worktree matches, when the card was pinned to one,
-        7. the origin conversation matches, when the card was pinned to one.
+        1. the decision names an approver,
+        2. the echoed hash names an issued envelope,
+        3. the card has not already reached a terminal state,
+        4. the decision is in :data:`ALLOWED_DECISIONS`,
+        5. the chain-side clock is at or after ``created_at``,
+        6. the chain-side clock is before ``not_after``,
+        7. the origin worktree matches, when the card was pinned to one,
+        8. the origin conversation matches, when the card was pinned to one.
+
+        The approver check runs first, before the gate will say whether the
+        echoed hash names anything: a caller that cannot state who decided
+        learns nothing about the card it echoed.
 
         The settlement event records the origin the decision *arrived from*,
         keeping the issuing origin under ``issued_worktree_id`` /
@@ -304,7 +334,10 @@ class ApprovalCardGate:
             card_hash: The ``card_hash`` echoed by the decision. Must match an
                 issued envelope exactly.
             decision: ``approve`` or ``reject``.
-            approver: Identifier of the operator who decided.
+            approver: Identifier of the operator who decided. Required and
+                non-blank: this is the attribution the settlement event is
+                signed with, and a decision that names nobody is refused
+                rather than recorded under a substitute.
             worktree_id: Worktree the decision was made from. Compared against
                 the issuing worktree whenever the card was pinned to one, empty
                 value included, and recorded on the settlement event.
@@ -318,6 +351,7 @@ class ApprovalCardGate:
             The :class:`IssuedCard` that was resolved.
 
         Raises:
+            ApprovalCardMissingApprover: When *approver* is blank.
             ApprovalCardHashMismatch: When *card_hash* matches no issued card.
             ApprovalCardAlreadySettled: When the card is already terminal.
             ApprovalCardInvalidDecision: When *decision* is not allowed.
@@ -331,6 +365,7 @@ class ApprovalCardGate:
         current = time.time() if now is None else now
         echoed = card_hash
         with self._lock:
+            self._guard_approver(echoed, approver=approver, worktree_id=worktree_id, thread_id=thread_id)
             issued, settled = self._state_for(echoed)
             if issued is None:
                 self._refuse(
@@ -356,7 +391,7 @@ class ApprovalCardGate:
             )
             self._chain.log_with_prev_digest(
                 event_type=EVENT_APPROVAL_CARD_RESOLVED,
-                actor=approver or "operator",
+                actor=approver,
                 resource_type="approval_card",
                 resource_id=echoed,
                 details={
@@ -384,6 +419,36 @@ class ApprovalCardGate:
     # ------------------------------------------------------------------
     # Resolve guards
     # ------------------------------------------------------------------
+
+    def _guard_approver(
+        self,
+        echoed: str,
+        *,
+        approver: str,
+        worktree_id: str,
+        thread_id: str,
+    ) -> None:
+        """Refuse a decision that names no approver.
+
+        The refusal is chain-recorded like every other, but it is not terminal:
+        burning the card here would let anyone who can reach the surface deny
+        the legitimate operator their pending decision by echoing the hash with
+        an empty approver.
+        """
+        if approver.strip():
+            return
+        self._refuse(
+            card_hash=echoed,
+            reason=REFUSAL_REASON_MISSING_APPROVER,
+            approver="",
+            worktree_id=worktree_id,
+            thread_id=thread_id,
+            expected_card_hash="",
+        )
+        raise ApprovalCardMissingApprover(
+            f"a decision on approval card {echoed!r} named no approver; refusing to settle it "
+            f"rather than signing the settlement to a placeholder that identifies nobody",
+        )
 
     def _guard_settled(
         self,
@@ -654,7 +719,7 @@ class ApprovalCardGate:
         """Append a ``chat.approval_card.refused`` event."""
         self._chain.log_with_prev_digest(
             event_type=EVENT_APPROVAL_CARD_REFUSED,
-            actor=approver or "operator",
+            actor=approver or UNATTRIBUTED_ACTOR,
             resource_type="approval_card",
             resource_id=card_hash,
             details={

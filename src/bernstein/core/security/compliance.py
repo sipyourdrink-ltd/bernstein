@@ -25,6 +25,7 @@ import dataclasses
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -1045,3 +1046,53 @@ def load_compliance_config(sdd_dir: Path) -> ComplianceConfig | None:
     except (ValueError, KeyError):
         logger.warning("Failed to load compliance config from %s", path)
         return None
+
+
+def resolve_compliance_config(workdir: Path) -> ComplianceConfig | None:
+    """Resolve the effective compliance config for a workspace.
+
+    Reads ``<workdir>/.sdd/config/compliance.json`` and lets the
+    ``BERNSTEIN_COMPLIANCE`` environment variable override it with a named
+    preset.
+
+    Args:
+        workdir: Workspace root containing the ``.sdd`` directory.
+
+    Returns:
+        The effective ComplianceConfig, or None when compliance is not
+        configured for this workspace.
+
+    Raises:
+        ValueError: If ``BERNSTEIN_COMPLIANCE`` names an unknown preset.
+    """
+    config = load_compliance_config(workdir / ".sdd")
+    preset_env = os.environ.get("BERNSTEIN_COMPLIANCE")
+    if preset_env:
+        config = ComplianceConfig.from_preset(CompliancePreset(preset_env.lower()))
+    return config
+
+
+def compliance_prerequisite_summary(workdir: Path) -> tuple[str, bool, str, str] | None:
+    """Summarise unmet compliance prerequisites for a workspace.
+
+    Args:
+        workdir: Workspace root containing the ``.sdd`` directory.
+
+    Returns:
+        A ``(name, ok, detail, fix)`` tuple describing the active preset and
+        any unmet prerequisites, or None when compliance is not configured.
+    """
+    config = resolve_compliance_config(workdir)
+    if config is None:
+        return None
+
+    preset_label = config.preset.value if config.preset else "custom"
+    warnings = config.check_prerequisites()
+    if warnings:
+        return (
+            f"Compliance ({preset_label})",
+            False,
+            f"{len(warnings)} issue(s): {warnings[0]}",
+            "; ".join(warnings),
+        )
+    return (f"Compliance ({preset_label})", True, "all prerequisites met", "")

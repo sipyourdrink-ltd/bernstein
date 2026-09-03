@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import subprocess
 import threading
+import time
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
@@ -38,6 +39,7 @@ from bernstein.core.spawner import (
     _render_prompt,
     _select_batch_config,
 )
+from bernstein.core.warm_pool import PoolSlot, WarmPool, WarmPoolConfig
 from bernstein.core.worktree import WorktreeError
 
 from bernstein.adapters.base import SpawnError, SpawnResult
@@ -1298,6 +1300,47 @@ class TestWorktreeIntegration:
 
         # Warning was logged about the worktree failure
         assert any("falling back to main workdir" in r.message for r in caplog.records)
+
+    def test_warm_pool_slot_without_worktree_is_released_and_spawn_goes_cold(
+        self, tmp_path: Path, make_task, mock_adapter_factory, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A claimed slot carrying no worktree path must not become the spawn cwd.
+
+        ``prepare_speculative_warm_pool`` adds slots with ``worktree_path=""``;
+        ``Path("")`` is the orchestrator's own cwd, i.e. the operator checkout.
+        The slot has to be released and the spawn has to fall through to the
+        cold ``worktree_mgr.create`` path.
+        """
+        adapter = mock_adapter_factory(pid=350)
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+
+        pool = WarmPool(WarmPoolConfig(max_slots=1, roles=["backend"]))
+        pool.add_slot(PoolSlot(slot_id="slot-unprovisioned", role="backend", worktree_path="", created_at=time.time()))
+
+        cold_worktree = tmp_path / ".sdd" / "worktrees" / "session-cold"
+        cold_worktree.mkdir(parents=True)
+
+        spawner = AgentSpawner(
+            adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=True,
+            default_model="mock-model",
+            warm_pool=pool,
+        )
+        with patch.object(spawner._worktree_mgr, "create", return_value=cold_worktree) as mock_create:
+            session = spawner.spawn_for_tasks([make_task(role="backend")])
+
+        # Cold path ran: a worktree was created for this session and used as cwd.
+        mock_create.assert_called_once_with(session.id)
+        assert adapter.spawn.call_args.kwargs["workdir"] == cold_worktree
+        assert spawner._worktree_paths[session.id] == cold_worktree
+
+        # The unusable slot was released, not attached to the session.
+        assert session.id not in spawner._warm_pool_entries
+        assert pool.stats() == {"ready": 0, "claimed": 0, "expired": 1, "total": 1}
+        assert any("has no worktree" in r.message for r in caplog.records)
 
     def test_spawn_without_worktrees_uses_workdir(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory(pid=400)

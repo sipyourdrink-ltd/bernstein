@@ -9,6 +9,20 @@ Roles (highest to lowest privilege):
 - **operator**: Task/agent management, no config or user changes.
 - **viewer**: Read-only access to dashboards, status, and logs.
 
+Where enforcement actually happens
+----------------------------------
+Bernstein's own routes are **not** protected by the dependencies below.  Every
+request is gated by :mod:`bernstein.core.security.auth_middleware`, which maps
+path and method to a required permission (``_get_required_permission``) and
+checks it before the route runs.  That middleware is the enforcement point, and
+it applies whether or not a route declares a dependency.
+
+``require_permission`` and ``require_role`` are a per-route surface for
+embedders mounting Bernstein's routers inside their own application, where the
+middleware may not be installed.  They are deliberately uncalled in this
+repository; a reader who finds no uses should not conclude that RBAC is
+unenforced.
+
 Usage in FastAPI routes::
 
     from bernstein.core.security.rbac import require_role, require_permission
@@ -52,6 +66,15 @@ _PERM_AUTH_MANAGE = "auth:manage"
 
 _PATH_AUTH_USERS = "/auth/users"
 
+# SCIM 2.0 provisioning surface (RFC 7644).  Its permissions are its own so a
+# credential issued to an identity system for provisioning satisfies no other
+# route's requirement.
+_PATH_SCIM = "/scim"
+
+_PERM_SCIM_READ = "scim:read"
+
+_PERM_SCIM_WRITE = "scim:write"
+
 logger = logging.getLogger(__name__)
 
 
@@ -77,6 +100,11 @@ class RoutePermission:
 
 # Default route permission rules.  Order matters: first match wins.
 _DEFAULT_ROUTE_RULES: Final[list[RoutePermission]] = [
+    # SCIM provisioning - reads and writes are separately scoped, and the
+    # write rule is listed even though no write route is mounted yet so one
+    # added later cannot inherit the read permission.
+    RoutePermission(_PATH_SCIM, "GET", _PERM_SCIM_READ),
+    RoutePermission(_PATH_SCIM, "*", _PERM_SCIM_WRITE),
     # Auth management - admin only
     RoutePermission(_PATH_AUTH_USERS, "POST", _PERM_AUTH_MANAGE),
     RoutePermission(_PATH_AUTH_USERS, "DELETE", _PERM_AUTH_MANAGE),

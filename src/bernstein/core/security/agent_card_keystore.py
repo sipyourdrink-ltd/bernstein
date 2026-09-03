@@ -53,7 +53,10 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..identity.http_signing import install_identity_keyid
 from .agent_card_signer import generate_ed25519_keypair
+from .audit_chain import EVENT_IDENTITY_ROTATION
+from .key_custody import FileBasedKMSAdapter, KMSAdapter
 
 __all__ = [
     "DEFAULT_GRACE_SECONDS",
@@ -170,6 +173,16 @@ class AgentCardKeystore:
                 self._generate_atomic()
             return self._load_existing()
 
+    def signer(self) -> KMSAdapter:
+        """Return a custody-bounded signer over the active install-identity key.
+
+        Callers that need a signature never handle the private PEM: the adapter
+        reads the key file itself and only exposes ``sign`` and the public JWK.
+        The ``kid`` is the install-identity key id derived from the public key.
+        """
+        _, public_pem = self.load_or_generate()
+        return FileBasedKMSAdapter(self._private_path, kid=install_identity_keyid(public_pem))
+
     def list_archived(self) -> list[ArchivedKey]:
         """Return archived keys still inside the grace window.
 
@@ -207,11 +220,48 @@ class AgentCardKeystore:
         previous keypair is moved under ``archive/<isoformat>/`` together
         with a ``rotated_at.txt`` timestamp file so :meth:`list_archived`
         can read it deterministically.
+
+        Side effects:
+          Records an identity.rotation event to the audit chain with the
+          new keyid (and old keyid if available).
         """
         with self._lock:
+            # Get old keyid if available
+            old_keyid = None
+            try:
+                if self._private_path.exists() and self._public_path.exists():
+                    _, old_public_pem = self._load_existing()
+                    old_keyid = install_identity_keyid(old_public_pem)
+            except Exception:
+                # If we can't read the old key, continue anyway
+                pass
+
             if self._private_path.exists() or self._public_path.exists():
                 self._archive_existing()
             self._generate_atomic()
+
+            # Record rotation to audit chain
+            try:
+                _, new_public_pem = self._load_existing()
+                new_keyid = install_identity_keyid(new_public_pem)
+
+                from bernstein.core.security.audit import AuditLog
+
+                log = AuditLog(self._dir.parent / ".sdd" / "audit")
+                log.log(
+                    event_type=EVENT_IDENTITY_ROTATION,
+                    actor="system",
+                    resource_type="install_identity",
+                    resource_id="key_rotation",
+                    details={
+                        "new_keyid": new_keyid,
+                        **({"old_keyid": old_keyid} if old_keyid is not None else {}),
+                    },
+                )
+            except Exception:
+                # Best effort - audit failure shouldn't break key rotation
+                pass
+
             return self._load_existing()
 
     # ------------------------------------------------------------------

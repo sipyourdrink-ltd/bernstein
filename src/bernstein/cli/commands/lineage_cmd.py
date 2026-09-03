@@ -16,6 +16,11 @@ Two surfaces:
   above; preferred in scripts to avoid colliding with subcommand names.
 * ``bernstein lineage export <run_id> --format <csv|jsonld|html|openlineage>`` --
   produce a regulator-shaped artefact or OpenLineage JSONL projection (#4914).
+* ``bernstein lineage export-prov <artefact_path> --format <json|turtle>`` --
+  project an artefact's ``parent_hashes`` ancestry from the v1 log into
+  W3C PROV-O (#5039). A separate command from ``export`` above: this one
+  reads the content-addressed v1 log (``core/lineage/entry.py``) by
+  artefact path, not the run-id-keyed regulator store.
 * ``bernstein lineage verify <run_id>`` -- one-shot chain verification;
   exits 0 only when every record validates.
 * ``bernstein lineage sensitivity <artefact>`` -- effective data sensitivity
@@ -457,6 +462,71 @@ def sensitivity_cmd(target: str, log_path: Path, cards_dir: Path, as_json: bool)
     for hop in verdict.path:
         console.print(f"    - {paths_by_hash.get(hop, '?')}", soft_wrap=True)
         console.print(f"      {hop}", soft_wrap=True)
+
+
+@lineage_cmd.command(name="export-prov")
+@click.argument("artefact_path", required=True)
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["json", "turtle"], case_sensitive=False),
+    default="json",
+    show_default=True,
+    help="PROV-JSON or Turtle serialisation.",
+)
+@click.option(
+    "--log",
+    "log_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path(".sdd/lineage/log.jsonl"),
+    show_default=True,
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Write to file instead of stdout.",
+)
+def export_prov_cmd(artefact_path: str, fmt: str, log_path: Path, output_path: Path | None) -> None:
+    """Export ARTEFACT_PATH's ancestry as a PROV-O document (issue #5039).
+
+    Walks the open tip for ARTEFACT_PATH and projects its full
+    ``parent_hashes`` ancestry into W3C PROV-O -- PROV-JSON by default,
+    Turtle with ``--format turtle``. Deterministic: re-running against
+    the same log produces byte-identical output.
+    """
+    import sys
+
+    from bernstein.cli.commands._lineage_v1_helpers import read_entries
+    from bernstein.core.lineage.prov_export import canonical_prov_json_bytes, project_prov_ancestry, to_turtle
+    from bernstein.core.lineage.tips import compute_tips
+
+    if not log_path.exists():
+        console.print(f"[yellow]No log at {log_path}[/yellow]")
+        sys.exit(1)
+
+    entries = read_entries(log_path)
+    tip_set = compute_tips(entries).get(artefact_path)
+    if not tip_set or not tip_set["open"]:
+        console.print(f"[yellow]No open tip for {artefact_path}[/yellow]")
+        sys.exit(1)
+    if len(tip_set["open"]) > 1:
+        console.print(
+            f"[red]{artefact_path} has {len(tip_set['open'])} open tips (unresolved fork).[/red] "
+            "Resolve with `bernstein lineage resolve` before exporting."
+        )
+        sys.exit(1)
+
+    doc = project_prov_ancestry(entries, root_entry_hash=tip_set["open"][0])
+    payload = canonical_prov_json_bytes(doc).decode("utf-8") if fmt.lower() == "json" else to_turtle(doc)
+
+    if output_path is None:
+        click.echo(payload)
+    else:
+        output_path.write_text(payload, encoding="utf-8")
+        console.print(f"[green]Wrote[/green] {len(payload)} byte(s) -> {output_path} [{fmt.lower()}]")
 
 
 @lineage_cmd.command(name="reindex")

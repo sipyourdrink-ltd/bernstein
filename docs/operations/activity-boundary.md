@@ -97,10 +97,16 @@ role = "scout"
 ```
 
 <!-- scope:activity-boundary-reachability start - delete this note when the scheduler reads agent_kind -->
-The key is parsed, validated against the known modalities, and round-tripped
-into the canonical manifest. It is not yet read on the execution path: a role
-that declares `agent_kind = "research"` runs exactly as it would without the
-key. Treat it as a forward-compatible declaration, not a dispatch switch.
+The accepted values are `coding`, `research` and `browser` -- the modalities
+something in this tree runs. `data` and `ops` are activity kinds on the
+boundary but ship no worker driving them, so declaring one is refused at
+manifest load naming the kind and the role, rather than accepted and quietly
+run as `coding`.
+
+An accepted value is parsed and round-tripped into the canonical manifest, but
+is not yet read on the execution path: a role that declares
+`agent_kind = "research"` runs exactly as it would without the key. Treat it as
+a forward-compatible declaration, not a dispatch switch.
 <!-- scope:activity-boundary-reachability end -->
 
 ## How verify reconstructs a run

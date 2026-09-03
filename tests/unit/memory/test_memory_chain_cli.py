@@ -146,3 +146,64 @@ def test_forget_appends_tombstone_and_stays_verifiable(tmp_path: Path) -> None:
     assert verify.exit_code == 0
     chain = MemoryChain(tmp_path / ".sdd" / "memory" / "chain", hmac_key=_KEY)
     assert entry_hash in chain.forgotten_hashes(MemoryScope.USER, "alex")
+
+
+# ---------------------------------------------------------------------------
+# ``memory show`` -- the folded current state with per-claim provenance (#2914)
+# ---------------------------------------------------------------------------
+
+
+def test_show_prints_live_claims_with_their_provenance(tmp_path: Path) -> None:
+    """``show`` must answer "what does this namespace say, and where did
+    each line come from" without the operator reading the JSONL by hand."""
+    _seed(tmp_path)
+    result = _run(
+        ["show", "--scope", "user", "--namespace", "alex", "--workdir", str(tmp_path)],
+        tmp_path,
+    )
+    assert result.exit_code == 0
+    assert "prefers dark mode" in result.output
+    assert "run-42" in result.output
+    assert "step-7" in result.output
+    assert "agent:worker" in result.output
+
+
+def test_show_json_emits_the_canonical_fold_bytes_verbatim(tmp_path: Path) -> None:
+    """``--json`` must emit exactly the canonical fold bytes, so a caller
+    can hash or diff the projection instead of re-deriving it."""
+    _seed(tmp_path)
+    result = _run(
+        ["show", "--scope", "user", "--namespace", "alex", "--workdir", str(tmp_path), "--json"],
+        tmp_path,
+    )
+    assert result.exit_code == 0
+    chain = MemoryChain(tmp_path / ".sdd" / "memory" / "chain", hmac_key=_KEY)
+    expected = chain.fold_bytes(MemoryScope.USER, "alex")
+    assert result.output.strip().encode("utf-8") == expected
+
+
+def test_show_omits_a_tombstoned_claim(tmp_path: Path) -> None:
+    """A forgotten claim must leave the current state even though its
+    record stays in the chain."""
+    entry_hash = _seed(tmp_path)
+    forget = _run(
+        ["forget", entry_hash, "--scope", "user", "--namespace", "alex", "--workdir", str(tmp_path)],
+        tmp_path,
+    )
+    assert forget.exit_code == 0
+    result = _run(
+        ["show", "--scope", "user", "--namespace", "alex", "--workdir", str(tmp_path)],
+        tmp_path,
+    )
+    assert "prefers dark mode" not in result.output
+    assert result.exit_code == 1
+
+
+def test_show_on_an_empty_namespace_exits_one(tmp_path: Path) -> None:
+    """Nothing live is exit 1, matching ``verify``'s NO ENTRIES contract."""
+    (tmp_path / ".sdd").mkdir()
+    result = _run(
+        ["show", "--scope", "user", "--namespace", "nobody", "--workdir", str(tmp_path)],
+        tmp_path,
+    )
+    assert result.exit_code == 1

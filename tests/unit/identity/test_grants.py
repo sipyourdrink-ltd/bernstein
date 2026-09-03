@@ -287,3 +287,77 @@ class TestActiveGrantLookup:
         ledger.issue_grant(run_id="run-1", task_id="t-1", secret_name="K", audience="aud", expiry=1_000)
         result = grants.verify_grant_chain(root=ledger.root, run_id="run-1", key=b"k" * 32)
         assert grants.find_active_grant(result, task_id="t-1", secret_name="K", now=2_000) is None
+
+
+class TestComputeGrantSets:
+    """Tests for compute_grant_sets()."""
+
+    def _seed(self, ledger) -> dict[str, grants.GrantReceipt]:
+        g1 = ledger.issue_grant(run_id="run-1", task_id="t-1", secret_name="K", audience="aud", expiry=0)
+        g2 = ledger.issue_grant(run_id="run-1", task_id="t-2", secret_name="L", audience="aud", expiry=0)
+        g3 = ledger.issue_grant(run_id="run-1", task_id="t-3", secret_name="M", audience="aud", expiry=0)
+        g4 = ledger.issue_grant(run_id="run-1", task_id="t-4", secret_name="N", audience="aud", expiry=0)
+        ledger.revoke_grant(run_id="run-1", grant_id=g1.grant_id, reason="task-exit")
+        ledger.revoke_grant(run_id="run-1", grant_id=g2.grant_id, reason="task-exit")
+        return {"g1": g1, "g2": g2, "g3": g3, "g4": g4}
+
+    def test_all_revoked(self, ledger) -> None:
+        receipts = self._seed(ledger)
+        result = grants.verify_grant_chain(root=ledger.root, run_id="run-1", key=b"k" * 32)
+        revoked, approved = grants.compute_grant_sets(result, now=1_000_000_000)
+        assert revoked == {
+            (receipts["g1"].task_id, receipts["g1"].secret_name),
+            (receipts["g2"].task_id, receipts["g2"].secret_name),
+        }
+        assert approved == {
+            (receipts["g3"].task_id, receipts["g3"].secret_name),
+            (receipts["g4"].task_id, receipts["g4"].secret_name),
+        }
+
+    def test_all_approved(self, ledger) -> None:
+        g1 = ledger.issue_grant(run_id="run-1", task_id="t-1", secret_name="K", audience="aud", expiry=0)
+        g2 = ledger.issue_grant(run_id="run-1", task_id="t-2", secret_name="L", audience="aud", expiry=0)
+        ledger.revoke_grant(run_id="run-1", grant_id=g1.grant_id, reason="task-exit")
+        result = grants.verify_grant_chain(root=ledger.root, run_id="run-1", key=b"k" * 32)
+        revoked, approved = grants.compute_grant_sets(result, now=1_000_000_000)
+        assert revoked == {(g1.task_id, g1.secret_name)}
+        assert approved == {(g2.task_id, g2.secret_name)}
+
+    def test_mixed(self, ledger) -> None:
+        receipts = self._seed(ledger)
+        result = grants.verify_grant_chain(root=ledger.root, run_id="run-1", key=b"k" * 32)
+        revoked, approved = grants.compute_grant_sets(result, now=1_000_000_000)
+        assert revoked == {
+            (receipts["g1"].task_id, receipts["g1"].secret_name),
+            (receipts["g2"].task_id, receipts["g2"].secret_name),
+        }
+        assert approved == {
+            (receipts["g3"].task_id, receipts["g3"].secret_name),
+            (receipts["g4"].task_id, receipts["g4"].secret_name),
+        }
+
+    def test_expired_grant_not_in_approved(self, ledger) -> None:
+        g1 = ledger.issue_grant(run_id="run-1", task_id="t-1", secret_name="K", audience="aud", expiry=500)
+        g2 = ledger.issue_grant(run_id="run-1", task_id="t-2", secret_name="L", audience="aud", expiry=1_500)
+        result = grants.verify_grant_chain(root=ledger.root, run_id="run-1", key=b"k" * 32)
+        revoked, approved = grants.compute_grant_sets(result, now=1_000)
+        assert revoked == set()
+        assert approved == {(g2.task_id, g2.secret_name)}
+        assert (g1.task_id, g1.secret_name) not in approved
+
+    def test_revoked_grant_not_in_approved(self, ledger) -> None:
+        g = ledger.issue_grant(run_id="run-1", task_id="t-1", secret_name="K", audience="aud", expiry=0)
+        ledger.revoke_grant(run_id="run-1", grant_id=g.grant_id, reason="task-exit")
+        result = grants.verify_grant_chain(root=ledger.root, run_id="run-1", key=b"k" * 32)
+        revoked, approved = grants.compute_grant_sets(result, now=1_000_000_000)
+        assert revoked == {(g.task_id, g.secret_name)}
+        assert approved == set()
+
+    def test_invalid_chain_returns_empty_sets(self, ledger) -> None:
+        g = ledger.issue_grant(run_id="run-1", task_id="t-1", secret_name="K", audience="aud", expiry=0)
+        ledger.revoke_grant(run_id="run-1", grant_id=g.grant_id, reason="task-exit")
+        result = grants.verify_grant_chain(root=ledger.root, run_id="run-1", key=b"x" * 32)
+        assert not result.valid
+        revoked, approved = grants.compute_grant_sets(result)
+        assert revoked == set()
+        assert approved == set()
