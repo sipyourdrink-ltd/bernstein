@@ -531,9 +531,7 @@ def _emit_preflight_runtime_warnings(
                 console.print(f"[dim]{basis}, {samples_note}[/dim]")
         else:
             if is_unpriced_model(estimate.model):
-                console.print(
-                    f"[bold yellow]Estimated cost:[/bold yellow] unpriced {basis}"
-                )
+                console.print(f"[bold yellow]Estimated cost:[/bold yellow] unpriced {basis}")
             else:
                 console.print(
                     f"[bold yellow]Estimated cost:[/bold yellow] "
