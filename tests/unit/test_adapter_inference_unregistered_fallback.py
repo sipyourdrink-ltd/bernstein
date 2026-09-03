@@ -39,13 +39,10 @@ def test_unregistered_adapter_fallback_returns_adapter_name_and_logs_warning(
     fallback still returns self._adapter.name() but now also emits a warning
     so operators can distinguish 'no registry entry' from 'no match at all'."""
     spawner = _make_spawner(tmp_path)
-    result = spawner._infer_adapter_name_for_provider(
-        "unknown-provider", "unknown-model"
-    )
+    result = spawner._infer_adapter_name_for_provider("unknown-provider", "unknown-model")
     assert result == "unregistered-adapter"
     assert any(
-        "no registry match" in record.message and "not registered" in record.message
-        for record in caplog.records
+        "no registry match" in record.message and "not registered" in record.message for record in caplog.records
     ), "Expected a warning about the adapter not being registered in the registry"
 
 
@@ -68,15 +65,12 @@ def test_registered_adapter_fallback_uses_registry_name_not_self_name(
         "bernstein.core.agents.spawner_core.registry_name_for",
         return_value=custom_key,
     ):
-        result = spawner._infer_adapter_name_for_provider(
-            "totally-unknown-provider", "totally-unknown-model"
-        )
+        result = spawner._infer_adapter_name_for_provider("totally-unknown-provider", "totally-unknown-model")
     assert result == custom_key, (
         f"expected fallback to registry key {custom_key!r}, got {result!r}; "
         "if the spawner returned the public name, registry_name_for was "
         "not consulted on the registered-adapter path"
     )
-    assert not any(
-        "not registered" in record.message for record in caplog.records
-    ), "no 'not registered' warning expected when the adapter IS registered"
-
+    assert not any("not registered" in record.message for record in caplog.records), (
+        "no 'not registered' warning expected when the adapter IS registered"
+    )
