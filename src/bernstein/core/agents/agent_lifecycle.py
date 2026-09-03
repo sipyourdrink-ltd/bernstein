@@ -2189,6 +2189,27 @@ def handle_orphaned_task(
     if task_id in task_by_id:
         task = task_by_id[task_id]
         logger.debug("handle_orphaned_task %s: resolved from tick snapshot", task_id)
+        # The snapshot is fetched once at the top of the tick, so it can be
+        # seconds stale by the time an orphan is judged - long enough for the
+        # task to have reached done and had its branch merged. Acting on the
+        # stale copy reopens a finished task (2026-09-02: a task merged at
+        # 22:25:39 was resumed 33 s later). Re-read it live so the
+        # already-resolved check below sees the real status; the snapshot copy
+        # stays the fallback when the server cannot be reached.
+        try:
+            _fresh = orch._client.get(f"{base}/tasks/{task_id}")
+            _fresh.raise_for_status()
+            task = Task.from_dict(_fresh.json())
+        # Broad: the re-fetch is a freshness improvement over a copy we already
+        # hold, so ANY failure to obtain or parse it (transport, malformed body,
+        # a stubbed client) must degrade to the snapshot - the pre-patch
+        # behaviour - and never abort the orphan path.
+        except Exception as exc:
+            logger.warning(
+                "handle_orphaned_task %s: live re-fetch failed (%s); using the tick snapshot",
+                task_id,
+                exc,
+            )
     else:
         # Not in snapshot -- fall back to a live fetch
         try:
