@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from bernstein.core import heartbeat as heartbeat_protocol
+from bernstein.core import heartbeat as heartbeat_protocol  # type: ignore[attr-defined]  # meta-path redirect
 from bernstein.core.cost import price_model_usage
 from bernstein.core.lifecycle import transition_agent
 from bernstein.core.metrics import get_collector

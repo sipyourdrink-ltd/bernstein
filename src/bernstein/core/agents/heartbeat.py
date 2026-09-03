@@ -501,6 +501,63 @@ def _emit_stall_verdict(
         )
 
 
+def _write_stall_checkpoint(
+    orch: Any,
+    session: Any,
+    *,
+    stall_reason: StallReason,
+    detector: str,
+) -> None:
+    """Persist a resume checkpoint before a stall kill discards the agent's state (#3376).
+
+    A stall kill throws away everything the worker knew unless something
+    captures it first. This writes the same on-disk checkpoint
+    ``bernstein resume`` already reads (``task_lifecycle._write_task_resume_checkpoint``,
+    otherwise fired only after a normal step completion) so a killed worker
+    is resumable instead of a dead end -- with ``stall_reason`` set so the
+    checkpoint records *why* the prior attempt stopped.
+
+    Called at the moment the kill verdict is reached, before the kill signal
+    goes out, mirroring ``_emit_stall_verdict``'s ordering.
+
+    Fail-open by design, like the verdict and receipt emitters beside it: a
+    stuck worker must still die even when the checkpoint cannot be written.
+    Failure is logged as a warning naming the session so a missing
+    checkpoint stays observable rather than silent.
+    """
+    workdir = getattr(orch, "_workdir", None)
+    if not isinstance(workdir, Path):
+        return
+    task_ids = list(getattr(session, "task_ids", None) or [])
+    if not task_ids:
+        return
+    try:
+        from bernstein.adapters.registry import adapter_name_for_provider
+        from bernstein.core.tasks.task_lifecycle import _write_task_resume_checkpoint
+
+        worktree_path = orch._spawner.get_worktree_path(session.id)
+        adapter_name = adapter_name_for_provider(session.provider, session.model_config.model) or getattr(
+            orch._spawner, "default_adapter_name", None
+        )
+        for task_id in task_ids:
+            _write_task_resume_checkpoint(
+                workdir,
+                task_id,
+                session=session,
+                worktree_path=worktree_path,
+                adapter_name=adapter_name,
+                stall_reason=stall_reason.value,
+            )
+    except Exception as exc:  # a stuck worker must still die without a checkpoint
+        logger.warning(
+            "Could not write stall checkpoint for session %s (%s detector): %s: %s",
+            session.id,
+            detector,
+            type(exc).__name__,
+            exc,
+        )
+
+
 def _emit_escalation_receipt(
     orch: Any,
     session: Any,
@@ -659,6 +716,12 @@ def _escalate_heartbeat(
                 detector="heartbeat",
                 heartbeat_age_s=age,
                 threshold=kill_threshold,
+            )
+            _write_stall_checkpoint(
+                orch,
+                session,
+                stall_reason=StallReason.HEARTBEAT_STALE,
+                detector="heartbeat",
             )
             _terminate_stuck_agent(orch, session, age)
             if session.pid is None or not action.action_taken:
@@ -829,6 +892,12 @@ def _escalate_stall_simple(
             identical_snapshot_count=count,
             threshold=AGENT.escalation_kill_count,
         )
+        _write_stall_checkpoint(
+            orch,
+            session,
+            stall_reason=StallReason.NO_PROGRESS,
+            detector="stall_simple",
+        )
         with contextlib.suppress(Exception):
             orch._spawner.kill(session)
         _emit_escalation_receipt(
@@ -876,6 +945,12 @@ def _escalate_stall_profiled(
             task_id,
             count,
             profile.reason,
+        )
+        _write_stall_checkpoint(
+            orch,
+            session,
+            stall_reason=StallReason.NO_PROGRESS,
+            detector="stall_profiled",
         )
         with contextlib.suppress(Exception):
             orch._spawner.kill(session)

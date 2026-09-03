@@ -29,14 +29,24 @@ Design
   from :mod:`bernstein.core.trigger_sources.receipt`.
 * **Zero-data-loss**: every ingested span produces a receipt. Spans that
   cannot be parsed produce an error receipt rather than being silently dropped.
+* **Content-addressed, so a replay is a lookup** (#4962). Transports retry:
+  a collector that saw no acknowledgement replays its batch, and an operator
+  unsure whether a file was consumed runs the command again. Every chain
+  record ingest writes is therefore addressed by the SHA-256 of what was
+  reported, scoped to the identity that reported it -- see
+  :func:`_ingest_span_id` and :func:`_ingest_batch_id`. Re-reporting the same
+  bytes from the same source appends nothing and returns the receipt already
+  anchored; reporting different bytes is a different address and a new record.
+  The seen-set is a projection of the chain rather than a side index, so it
+  cannot drift from the chain it is meant to describe.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -101,6 +111,32 @@ def _sha256_bytes(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
+def _ingest_span_id(span: dict[str, Any], *, source_label: str, profile_name: str) -> str:
+    """Return the chain address of one reported span.
+
+    The address is the digest of the span exactly as reported, scoped to the
+    source and profile that reported it. Two consequences are deliberate:
+
+    * A span whose reported bytes differ -- a corrected model name, an added
+      attribute -- is a different address, so the chain keeps both reports
+      rather than silently collapsing a correction into the earlier claim.
+    * The same span reported by two sources is two addresses. Each receipt
+      binds its own source identity, and collapsing the two would erase which
+      source told us.
+    """
+    return _sha256_bytes(_canonical_bytes({"source_label": source_label, "profile_name": profile_name, "span": span}))
+
+
+def _ingest_batch_id(spans: list[dict[str, Any]], *, source_label: str, profile_name: str) -> str:
+    """Return the chain address of one reported batch.
+
+    Addresses the anchor event the same way :func:`_ingest_span_id` addresses
+    a span, so a replayed submission finds its own receipt instead of minting
+    a second one over the same bytes.
+    """
+    return _sha256_bytes(_canonical_bytes({"source_label": source_label, "profile_name": profile_name, "spans": spans}))
+
+
 # --------------------------------------------------------------------------- #
 # IngestReceipt data model                                                     #
 # --------------------------------------------------------------------------- #
@@ -130,6 +166,10 @@ class IngestReceipt:
         claimed_order: List of ``(trace_id, span_id)`` tuples as the source
             submitted them (empty when the source submitted unordered spans).
         trace_ids: Set of distinct trace ids present in the batch.
+        adapter_name: Stable identifier of the ingest adapter that produced
+            this batch (empty when no adapter declaration was supplied).
+        adapter_version: Version of the ingest adapter that produced this
+            batch (empty when no adapter declaration was supplied).
         chain_head: The audit-chain head read at receipt mint time.
         timestamp: Integer Unix timestamp at receipt mint time.
         signer_public_key_pem: The install's Ed25519 public key PEM.
@@ -147,6 +187,8 @@ class IngestReceipt:
     arrival_index: int
     claimed_order: tuple[tuple[str, str], ...] = ()
     trace_ids: tuple[str, ...] = ()
+    adapter_name: str = ""
+    adapter_version: str = ""
     chain_head: str = ""
     timestamp: int = 0
     signer_public_key_pem: str = ""
@@ -168,6 +210,8 @@ class IngestReceipt:
             "arrival_index": self.arrival_index,
             "claimed_order": [list(pair) for pair in self.claimed_order],
             "trace_ids": list(self.trace_ids),
+            "adapter_name": self.adapter_name,
+            "adapter_version": self.adapter_version,
             "chain_head": self.chain_head,
             "timestamp": self.timestamp,
         }
@@ -214,6 +258,8 @@ class IngestReceipt:
                 arrival_index=int(row.get("arrival_index", 0)),
                 claimed_order=tuple(claimed),
                 trace_ids=tuple(traces),
+                adapter_name=str(row.get("adapter_name", "")),
+                adapter_version=str(row.get("adapter_version", "")),
                 chain_head=str(row.get("chain_head", "")),
                 timestamp=int(row.get("timestamp", 0)),
                 signer_public_key_pem=str(row.get("signer_public_key_pem", "")),
@@ -408,6 +454,8 @@ class IngestOTLPReceipt:
     def ingest_batch(
         self,
         spans: list[dict[str, Any]],
+        *,
+        adapter_declaration: Any | None = None,
     ) -> tuple[IngestReceipt, list[Any]]:
         """Ingest a batch of OTLP/JSON spans and mint an anchored receipt.
 
@@ -420,8 +468,19 @@ class IngestOTLPReceipt:
         monotonically increasing sequence number — a verifier can compare the
         two to detect reordering by the transport.
 
+        Submitting a batch this source has already reported appends nothing and
+        returns the receipt that batch was anchored with, so a transport that
+        retries cannot turn one reported batch into several chain records. A
+        batch that overlaps an earlier one anchors only the spans the chain has
+        not already accepted from this source.
+
         Args:
             spans: List of OTLP/JSON span dicts from one source submission.
+            adapter_declaration: Optional :class:`IngestAdapterDeclaration`
+                provided by the ingest adapter that produced these spans.
+                When supplied, the receipt records the adapter's ``name`` and
+                ``version``. The declaration is not validated here; validation
+                is the caller's responsibility before passing it in.
 
         Returns:
             A ``(receipt, span_results)`` tuple. ``span_results`` is a list
@@ -450,7 +509,7 @@ class IngestOTLPReceipt:
                 seen_trace_ids.add(trace_id)
                 trace_ids.append(trace_id)
 
-        arrival_index = _next_arrival_index()
+        batch_id = _ingest_batch_id(spans, source_label=self._source_label, profile_name=self._profile_name)
 
         # Run per-span ingest if adapter is configured
         span_results: list[Any] = []
@@ -464,12 +523,19 @@ class IngestOTLPReceipt:
 
         import time
 
-        timestamp = int(time.time())
-
         chain = self._chain_store()
 
         # Chain transaction: read head, sign, append
         with chain.chain_transaction():
+            anchored = self._anchored_receipt(chain, batch_id)
+            if anchored is not None:
+                # This exact submission is already in the chain. Returning the
+                # receipt it was anchored with keeps a retrying transport from
+                # turning one reported batch into two chain records.
+                return anchored, span_results
+
+            arrival_index = _next_arrival_index()
+            timestamp = int(time.time())
             chain_head = chain.resync_head()
 
             unsigned = IngestReceipt(
@@ -483,14 +549,27 @@ class IngestOTLPReceipt:
                 arrival_index=arrival_index,
                 claimed_order=tuple(claimed_order),
                 trace_ids=tuple(trace_ids),
+                adapter_name=adapter_declaration.name if adapter_declaration else "",
+                adapter_version=adapter_declaration.version if adapter_declaration else "",
                 chain_head=chain_head,
                 timestamp=timestamp,
             )
 
-            signature = _sign_payload(unsigned.to_canonical_bytes(), self._load_private_key())
+            signed = replace(
+                unsigned,
+                signer_public_key_pem=self._load_public_key(),
+                signature=_sign_payload(unsigned.to_canonical_bytes(), self._load_private_key()),
+            )
 
-            # Record each span as a chain event
-            for idx, span in enumerate(spans):
+            # Record each span the chain has not already accepted from this source.
+            for span in spans:
+                span_id = _ingest_span_id(span, source_label=self._source_label, profile_name=self._profile_name)
+                if chain.query(
+                    event_type="otlp_ingest_receipt.foreign_span",
+                    resource_id=span_id,
+                    include_archived=True,
+                ):
+                    continue
                 event = chain_event_from_ingest_span(
                     span,
                     source_label=self._source_label,
@@ -502,16 +581,19 @@ class IngestOTLPReceipt:
                     event_type="otlp_ingest_receipt.foreign_span",
                     actor="otlp_ingest_receipt",
                     resource_type="otlp_span",
-                    resource_id=f"{arrival_index}:{idx}",
+                    resource_id=span_id,
                     details=event.get("attributes", {}),
                 )
 
-            # Record the receipt anchor event
+            # Record the receipt anchor event. The receipt travels inside the
+            # anchor's details so a replay can return the receipt this batch
+            # was anchored with rather than mint a second one, and so the
+            # chain HMAC covers the stored receipt bytes.
             anchor_event = chain.log_with_prev_digest(
                 event_type="otlp_ingest_receipt.minted",
                 actor="otlp_ingest_receipt",
                 resource_type="ingest_receipt",
-                resource_id=unsigned.binding_digest(),
+                resource_id=batch_id,
                 details={
                     "source_label": self._source_label,
                     "profile_name": self._profile_name,
@@ -520,29 +602,34 @@ class IngestOTLPReceipt:
                     "arrival_index": arrival_index,
                     "trace_ids": trace_ids,
                     "receipt_digest": unsigned.binding_digest(),
+                    "receipt": signed.to_dict(),
                 },
             )
 
-        return (
-            IngestReceipt(
-                source_label=unsigned.source_label,
-                profile_name=unsigned.profile_name,
-                source_kind=unsigned.source_kind,
-                coverage=unsigned.coverage,
-                coverage_detail=unsigned.coverage_detail,
-                batch_digest=unsigned.batch_digest,
-                span_count=unsigned.span_count,
-                arrival_index=unsigned.arrival_index,
-                claimed_order=unsigned.claimed_order,
-                trace_ids=unsigned.trace_ids,
-                chain_head=unsigned.chain_head,
-                timestamp=unsigned.timestamp,
-                signer_public_key_pem=self._load_public_key(),
-                signature=signature,
-                chain_entry_hash=anchor_event.hmac,
-            ),
-            span_results,
+        return replace(signed, chain_entry_hash=anchor_event.hmac), span_results
+
+    @staticmethod
+    def _anchored_receipt(chain: AuditChainStore, batch_id: str) -> IngestReceipt | None:
+        """Return the receipt this batch was already anchored with, if any.
+
+        The lookup is a query over the chain keyed by the batch's own address,
+        so the boundary never consults state the chain does not carry.
+        ``chain_entry_hash`` is taken from the anchor event itself: a record
+        cannot contain its own HMAC, so it is restored at read time.
+        """
+        events = chain.query(
+            event_type="otlp_ingest_receipt.minted",
+            resource_id=batch_id,
+            include_archived=True,
         )
+        for event in reversed(events):
+            stored = event.details.get("receipt")
+            if isinstance(stored, dict):
+                return replace(
+                    IngestReceipt.from_dict(cast("dict[str, Any]", stored)),
+                    chain_entry_hash=event.hmac,
+                )
+        return None
 
     def _load_private_key(self) -> str:
         from bernstein.core.lineage.identity import load_or_create_signing_identity

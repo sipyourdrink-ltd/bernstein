@@ -46,6 +46,158 @@ class ApprovalNonceExpired(RuntimeError):
     """
 
 
+class ApprovalPrincipalRequired(ValueError):
+    """Raised when a resolve path is given no usable principal.
+
+    Covers an absent principal, a blank identifier or authentication method,
+    and a principal whose identifier contradicts its :class:`PrincipalKind`.
+    Every case is the same defect: a decision about to be signed with nobody's
+    name on it, or with a name that misrepresents what made it.
+    """
+
+
+class PrincipalKind(StrEnum):
+    """Whether a resolution was made by a person or by the server itself.
+
+    Attributes:
+        HUMAN: A person, authenticated by some method, decided.
+        SYNTHETIC: The process decided on its own -- TTL eviction or the
+            sweeper. Recorded explicitly rather than omitted, because an
+            absent principal reads as an unrecorded human one.
+    """
+
+    HUMAN = "human"
+    SYNTHETIC = "synthetic"
+
+
+#: Namespace reserved for synthetic principals. A human principal may not use
+#: it and a synthetic one must: the prefix is what lets a reader who sees only
+#: the identifier string tell a sweeper's rejection from a person's.
+SYNTHETIC_IDENTIFIER_PREFIX = "system:"
+
+#: Authentication method recorded for a synthetic principal. It is not an
+#: authentication at all, and says so, rather than borrowing a method name a
+#: person could also have used.
+AUTH_METHOD_SERVER_INTERNAL = "server-internal"
+
+
+@dataclass(frozen=True)
+class ApprovalPrincipal:
+    """The party a resolution is attributed to.
+
+    Human oversight is the one fact in an approval record that cannot be
+    inferred from anything else the chain holds, so it is carried as a
+    structured value rather than a free-form string: who, how they proved they
+    were themselves, and under which session or grant they acted.
+
+    Attributes:
+        identifier: The person or component the decision is attributed to.
+            Must be non-blank; synthetic principals live under
+            :data:`SYNTHETIC_IDENTIFIER_PREFIX` and human ones may not.
+        auth_method: How the identifier was established (``scoped-token``,
+            ``oidc``, ``local-shell`` ...). Must be non-blank.
+        kind: Whether a person or the server itself decided.
+        grant: The session, token id, or grant the principal acted under.
+            Empty when the surface has none to name.
+    """
+
+    identifier: str
+    auth_method: str
+    kind: PrincipalKind = PrincipalKind.HUMAN
+    grant: str = ""
+
+    def __post_init__(self) -> None:
+        """Refuse a principal that names nobody, or misnames what it is."""
+        if not self.identifier.strip():
+            raise ApprovalPrincipalRequired("approval principal identifier must be non-blank")
+        if not self.auth_method.strip():
+            raise ApprovalPrincipalRequired(
+                f"approval principal {self.identifier!r} must state how it was authenticated",
+            )
+        reserved = self.identifier.startswith(SYNTHETIC_IDENTIFIER_PREFIX)
+        if self.kind is PrincipalKind.SYNTHETIC and not reserved:
+            raise ApprovalPrincipalRequired(
+                f"synthetic principal {self.identifier!r} must live under "
+                f"{SYNTHETIC_IDENTIFIER_PREFIX!r} so it cannot be read as a person",
+            )
+        if self.kind is PrincipalKind.HUMAN and reserved:
+            raise ApprovalPrincipalRequired(
+                f"human principal {self.identifier!r} may not claim the reserved "
+                f"{SYNTHETIC_IDENTIFIER_PREFIX!r} namespace",
+            )
+
+    @property
+    def is_human(self) -> bool:
+        """Return ``True`` when a person made this decision."""
+        return self.kind is PrincipalKind.HUMAN
+
+    def to_dict(self) -> dict[str, str]:
+        """Return a JSON-serialisable representation."""
+        return {
+            "identifier": self.identifier,
+            "auth_method": self.auth_method,
+            "kind": self.kind.value,
+            "grant": self.grant,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ApprovalPrincipal:
+        """Build a principal from a JSON-decoded mapping.
+
+        A record that cannot produce a valid principal raises rather than
+        rehydrating a blank one: a stored resolution whose principal did not
+        survive the round trip is not attributable, and pretending otherwise
+        is the defect this type exists to close.
+        """
+        return cls(
+            identifier=str(data.get("identifier", "")),
+            auth_method=str(data.get("auth_method", "")),
+            kind=PrincipalKind(str(data.get("kind", PrincipalKind.HUMAN.value))),
+            grant=str(data.get("grant", "")),
+        )
+
+
+def internal_principal(component: str) -> ApprovalPrincipal:
+    """Return the synthetic principal for a server-internal resolution.
+
+    Args:
+        component: The part of the server that decided, e.g.
+            ``approval-queue/sweeper``. Recorded under the reserved namespace
+            so an auditor can separate it from every human decision without
+            consulting anything outside the record.
+    """
+    return ApprovalPrincipal(
+        identifier=f"{SYNTHETIC_IDENTIFIER_PREFIX}{component}",
+        auth_method=AUTH_METHOD_SERVER_INTERNAL,
+        kind=PrincipalKind.SYNTHETIC,
+    )
+
+
+def local_shell_principal() -> ApprovalPrincipal:
+    """Return the principal for a decision made at a local shell or the TUI.
+
+    The operator's authority here is possession of the shell, so that is what
+    is recorded as the authentication method rather than a stronger-sounding
+    one. An environment that cannot name its own user raises instead of
+    falling back to a placeholder: an unattributable decision is the state
+    this type exists to refuse, and the CLI surfaces the error.
+
+    Raises:
+        ApprovalPrincipalRequired: When the OS provides no user name.
+    """
+    import getpass
+
+    try:
+        user = getpass.getuser()
+    except (OSError, KeyError):  # pragma: no cover - no passwd entry
+        user = ""
+    if not user.strip():  # pragma: no cover - no passwd entry
+        raise ApprovalPrincipalRequired(
+            "cannot attribute this approval: the operating system provides no user name",
+        )
+    return ApprovalPrincipal(identifier=f"os-user:{user}", auth_method="local-shell")
+
+
 class ApprovalDecision(StrEnum):
     """Operator verdict on a pending tool-call approval.
 
@@ -172,7 +324,7 @@ class PendingApproval:
             "ttl_seconds": int(data.get("ttl_seconds", 600)),
             "nonce": nonce,
         }
-        return cls(**known)
+        return cls(**known)  # type: ignore[arg-type]
 
 
 @dataclass(frozen=True)
@@ -182,11 +334,35 @@ class ResolvedApproval:
     Attributes:
         approval_id: Id of the pending approval this resolution refers to.
         decision: The operator verdict.
+        principal: The party the decision is attributed to. Required, and
+            keyword-only so it cannot be filled in positionally by accident.
+            A resolution that cannot name its decider is not a record of human
+            oversight, so there is no default to fall back to.
         reason: Optional free-form note supplied by the operator.
         resolved_at: Unix epoch seconds at which the decision was made.
     """
 
     approval_id: str
     decision: ApprovalDecision
+    principal: ApprovalPrincipal = field(kw_only=True)
     reason: str = ""
     resolved_at: float = field(default_factory=time.time)
+
+    def __post_init__(self) -> None:
+        """Refuse a resolution whose principal is absent or of the wrong type."""
+        # The annotation says this cannot happen; the check is for the
+        # dynamic call sites the annotation does not reach.
+        if not isinstance(self.principal, ApprovalPrincipal):  # pyright: ignore[reportUnnecessaryIsInstance]
+            raise ApprovalPrincipalRequired(
+                f"resolution of {self.approval_id!r} needs an ApprovalPrincipal, got {type(self.principal).__name__}",
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serialisable representation including the principal."""
+        return {
+            "approval_id": self.approval_id,
+            "decision": self.decision.value,
+            "reason": self.reason,
+            "resolved_at": self.resolved_at,
+            "principal": self.principal.to_dict(),
+        }

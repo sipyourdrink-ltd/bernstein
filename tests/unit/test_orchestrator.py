@@ -1677,7 +1677,12 @@ class TestRunStop:
         stream.finalize.side_effect = finalize_with_run_event
         orch.run()
 
-        assert [row["event"] for row in rows] == ["run_started", "tick_start", "run_completed"]
+        assert [row["event"] for row in rows] == [
+            "run_started",
+            "loaded_extension_set",
+            "tick_start",
+            "run_completed",
+        ]
         stream.finalize.assert_called_once_with()
         chain = AuditChainStore(tmp_path / ".sdd" / "audit")
         closure = project_run_closure(chain, orch._run_id)
@@ -2107,6 +2112,30 @@ class TestFileOwnership:
         orch.tick()
 
         assert "src/owned.py" not in orch._file_ownership
+        from bernstein.core.persistence.file_locks import FileLockManager
+
+        assert FileLockManager(tmp_path).all_locks() == []
+
+    def test_spawn_prompt_includes_file_lock_manager_ownership(self, tmp_path: Path) -> None:
+        """A prompt reads ownership from the orchestrator's lock manager."""
+        task = _make_task(id="T-spawn", role="backend")
+        adapter = _mock_adapter()
+        orch = _build_orchestrator(
+            tmp_path,
+            _mock_transport({"GET /tasks": httpx.Response(200, json=[_task_as_dict(task)])}),
+            adapter=adapter,
+        )
+        orch._lock_manager.acquire(
+            ["src/locked.py"],
+            agent_id="backend-owner",
+            task_id="T-owner",
+            task_title="Owns locked file",
+        )
+
+        orch.tick()
+
+        prompt = adapter.spawn.call_args.kwargs["prompt"]
+        assert "src/locked.py (by backend-owner)" in prompt
 
 
 # --- Feature 3: Metrics Emission ---

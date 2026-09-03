@@ -29,6 +29,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
+from bernstein.core.verify_result import VerifyResult
 from bernstein.eval.significance import PROMOTING_VERDICTS, Verdict
 
 if TYPE_CHECKING:
@@ -412,13 +413,8 @@ def read_revocation_receipt(workdir: Path, receipt_hash: str) -> RevocationRecei
         return None
 
 
-@dataclass(frozen=True, slots=True)
-class RevocationVerifyResult:
-    """Outcome of an offline revocation-receipt verification."""
-
-    ok: bool
-    reason: str
-    receipt: RevocationReceipt | None
+#: Outcome of an offline revocation-receipt verification.
+RevocationVerifyResult = VerifyResult[RevocationReceipt]
 
 
 def verify_revocation_receipt(

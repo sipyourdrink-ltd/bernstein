@@ -21,9 +21,14 @@ from bernstein.core.approval.models import (
     ApprovalDecision,
     ApprovalNonceExpired,
     ApprovalNonceMismatch,
+    ApprovalPrincipal,
     PendingApproval,
 )
 from bernstein.core.approval.queue import ApprovalQueue
+
+#: Every resolve names the operator it is attributed to; the queue has no
+#: default principal to fall back on (#5035).
+_PRINCIPAL = ApprovalPrincipal(identifier="alice@example.test", auth_method="scoped-token")
 
 
 def _push(queue: ApprovalQueue, *, tool: str = "shell", ttl: int = 30) -> PendingApproval:
@@ -62,6 +67,7 @@ def test_valid_nonce_resolves_the_gate(tmp_path: Path) -> None:
         ApprovalDecision.ALLOW,
         nonce=approval.nonce,
         reason="ok",
+        principal=_PRINCIPAL,
     )
 
     assert resolution.decision is ApprovalDecision.ALLOW
@@ -77,6 +83,7 @@ def test_hex_nonce_string_is_accepted(tmp_path: Path) -> None:
         approval.id,
         ApprovalDecision.ALLOW,
         nonce=approval.nonce_hex,
+        principal=_PRINCIPAL,
     )
 
     assert resolution.decision is ApprovalDecision.ALLOW
@@ -92,7 +99,7 @@ def test_missing_nonce_in_reply_is_rejected(tmp_path: Path) -> None:
     approval = _push(queue)
 
     with pytest.raises(ApprovalNonceMismatch):
-        queue.resolve(approval.id, ApprovalDecision.ALLOW, nonce="")
+        queue.resolve(approval.id, ApprovalDecision.ALLOW, nonce="", principal=_PRINCIPAL)
 
     # The approval is still pending : no resolution leaked through.
     assert queue.get(approval.id) is not None
@@ -108,7 +115,7 @@ def test_forged_nonce_is_rejected(tmp_path: Path) -> None:
     assert forged != approval.nonce
 
     with pytest.raises(ApprovalNonceMismatch):
-        queue.resolve(approval.id, ApprovalDecision.ALLOW, nonce=forged)
+        queue.resolve(approval.id, ApprovalDecision.ALLOW, nonce=forged, principal=_PRINCIPAL)
 
     assert queue.get(approval.id) is not None
     assert queue.get_resolution(approval.id) is None
@@ -120,7 +127,7 @@ def test_unparseable_hex_string_is_rejected(tmp_path: Path) -> None:
     approval = _push(queue)
 
     with pytest.raises(ApprovalNonceMismatch):
-        queue.resolve(approval.id, ApprovalDecision.ALLOW, nonce="not-hex-zz")
+        queue.resolve(approval.id, ApprovalDecision.ALLOW, nonce="not-hex-zz", principal=_PRINCIPAL)
 
     assert queue.get(approval.id) is not None
 
@@ -149,6 +156,7 @@ def test_stale_nonce_after_ttl_is_rejected(tmp_path: Path) -> None:
             approval.id,
             ApprovalDecision.ALLOW,
             nonce=approval.nonce,
+            principal=_PRINCIPAL,
         )
 
 
@@ -161,6 +169,7 @@ def test_replay_of_same_nonce_is_rejected(tmp_path: Path) -> None:
         approval.id,
         ApprovalDecision.ALLOW,
         nonce=approval.nonce,
+        principal=_PRINCIPAL,
     )
     assert first.decision is ApprovalDecision.ALLOW
 
@@ -169,6 +178,7 @@ def test_replay_of_same_nonce_is_rejected(tmp_path: Path) -> None:
             approval.id,
             ApprovalDecision.REJECT,
             nonce=approval.nonce,
+            principal=_PRINCIPAL,
         )
 
     # The original decision stands : replay cannot flip the verdict.
@@ -197,7 +207,7 @@ def test_superseded_approval_invalidates_nonce(tmp_path: Path) -> None:
     # Replaying the first nonce against the second approval is rejected
     # by id-bound mismatch.
     with pytest.raises(ApprovalNonceMismatch):
-        queue.resolve(second.id, ApprovalDecision.ALLOW, nonce=first.nonce)
+        queue.resolve(second.id, ApprovalDecision.ALLOW, nonce=first.nonce, principal=_PRINCIPAL)
 
     # The second approval is still pending.
     assert queue.get(second.id) is not None
@@ -246,6 +256,7 @@ def test_wait_for_resolves_normally_when_correct_nonce_is_supplied(tmp_path: Pat
                 approval.id,
                 ApprovalDecision.ALLOW,
                 nonce=approval.nonce,
+                principal=_PRINCIPAL,
             )
 
         task = asyncio.create_task(resolver())
@@ -268,5 +279,5 @@ def test_resolve_without_nonce_remains_back_compat_for_server_internals(tmp_path
 
     # Nonce omitted entirely: this is the back-compat / server-internal
     # path used by evict_expired and the wait_for timeout fallback.
-    resolution = queue.resolve(approval.id, ApprovalDecision.REJECT, reason="server-internal")
+    resolution = queue.resolve(approval.id, ApprovalDecision.REJECT, reason="server-internal", principal=_PRINCIPAL)
     assert resolution.decision is ApprovalDecision.REJECT

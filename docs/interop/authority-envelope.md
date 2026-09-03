@@ -16,15 +16,78 @@ Two artefacts define it today:
 | Schema (v1) | `schemas/authority-envelope-v1.json` |
 | Standalone verifier | `verify_cli/bernstein_verify_envelope/` |
 | Golden vectors | `tests/fixtures/authority-envelope-vectors/` |
+| Run-scoped producer | `src/bernstein/core/interop/authority_envelope.py` |
 
-There is no producer yet. This page describes the format and the verifier; an
-envelope is written by hand or by the vector builder until a producer lands.
+## Producing one from a run
+
+`build_run_authority_envelope` reads the `GovernanceDecision` records persisted
+under `lineage_root/<run_id>/` and renders the subset concerning one principal:
+
+```python
+from bernstein.core.interop.authority_envelope import build_run_authority_envelope
+from bernstein.core.security.key_custody import FileBasedKMSAdapter
+
+envelope = build_run_authority_envelope(
+    lineage_root=Path(".sdd/lineage"),
+    run_id="run-2026-09-02-a",
+    principal_id="urn:bernstein:principal:agent:reviewer-7",
+    principal_public_key_pem=principal_public_pem,
+    idp_groups=("eng-operators",),
+    bindings=signed_role_bindings,
+    grant_id="grant-role-operator",
+    grant_issuer="urn:bernstein:principal:operator:alex",
+    grant_not_after="2031-01-01T00:00:00Z",
+    signer=FileBasedKMSAdapter(Path("keys/envelope-signer.pem"), kid="envelope-signer-1"),
+    signing_kid="envelope-signer-1",
+)
+```
+
+The signer comes from the key-custody boundary (`bernstein.core.security.key_custody`):
+any `KMSAdapter` -- file, env or HSM backed -- works, the producer never handles
+private key material itself, and the envelope embeds the public key the adapter
+advertises.
+
+The authority the envelope records is the one the run resolved: the principal's
+IDP groups map to a role through the signed `RoleBindings`, and that role's
+permission set is the scope of the single grant link. The schema admits a
+multi-link chain; nothing writes delegation hops yet, so the producer emits one
+link.
+
+Every field is a pure function of the records on disk and the arguments above —
+no clock, no ordering by build time — so two builds over the same run are
+byte-identical and an envelope can be re-derived and diffed rather than trusted.
+
+### What the producer refuses to emit
+
+- A record claiming `allow` for an action outside the resolved role's permission
+  set. Signing it would assert authority the bindings never granted, so the
+  build raises `AuthorityEnvelopeError`.
+- A record timestamped after the grant expires.
+
+### What it leaves out, and says so
+
+`coverage` is computed from the records, never asserted:
+
+- Records about **other subjects** are not carried; `coverage.statement` gives
+  the count.
+- **Budget records** (`check_budget_decision`) draw authority from the spend
+  policy rather than from the role grant, so they are not carried under a role
+  grant either; the statement gives that count too.
+- A carried decision whose record has **no lineage-spine anchor** has no
+  evidence, and is listed in `coverage.uncovered` with the reason.
+
+Evidence entries are the decision records' lineage anchors, so a reader with the
+run's spine can match each decision to the entry that recorded it.
 
 ## Verifying one
 
 ```bash
 pip install bernstein-verify-envelope
 bernstein-verify-envelope verify ./authority-envelope.json --verbose
+
+# With a trust source obtained out of band (at most one of the two):
+bernstein-verify-envelope verify ./authority-envelope.json --jwk ./operator.jwk
+bernstein-verify-envelope verify ./authority-envelope.json --public-key ./operator.pem
 ```
 
 Exit codes: `0` verified, `1` a check failed, `2` bad arguments. The verifier
@@ -85,11 +148,12 @@ would prove nothing about an independent reader.
 
 ## What it does not prove
 
-- **That the signing key is trusted.** An envelope verified against the key it
-  carries is trust-on-first-use, and is reported as such. Pinning an external key
-  is not implemented yet, so today an attacker who can replace the whole file can
-  also replace the key it carries. Compare the key out of band until pinning
-  lands.
+- **That the signing key is trusted, when no key is pinned.** An envelope
+  verified against the key it carries is trust-on-first-use, and is reported as
+  such: an attacker who can replace the whole file can also replace the key it
+  carries. Pass `--jwk` or `--public-key` to verify against a key obtained out of
+  band; an envelope re-signed by any other key is then rejected. Where that key
+  comes from remains out of scope for the envelope.
 - **That the grants were unrevoked** when they were used. The envelope carries
   expiries, not revocation state.
 - **That the artefacts exist or say what they are claimed to say.** Evidence
