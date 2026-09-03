@@ -77,6 +77,8 @@ from typing import TYPE_CHECKING, Any, Final
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from bernstein.core.identity.principals import PrincipalChainResult
+
 __all__ = [
     "DEFAULT_ROOT",
     "GENESIS_HMAC",
@@ -89,11 +91,13 @@ __all__ = [
     "GrantLedger",
     "GrantReceipt",
     "GrantSigner",
+    "compute_grant_sets",
     "default_ledger",
     "digest_secret_name",
     "find_active_grant",
     "hash_secret_name",
     "install_grant_signer",
+    "record_hmac",
     "render_report",
     "secret_name_matches",
     "verify_grant_chain",
@@ -155,16 +159,25 @@ def _canonical(body: dict[str, Any]) -> str:
     return json.dumps(body, sort_keys=True, separators=(",", ":"))
 
 
-def _compute_hmac(key: bytes, prev_hmac: str, body: dict[str, Any]) -> str:
+def record_hmac(key: bytes, prev_hmac: str, body: dict[str, Any]) -> str:
     """HMAC-SHA256 over ``prev_hmac`` concatenated with the canonical record body.
 
     Identical construction to
     :func:`bernstein.core.identity.delegation._compute_hmac` and
     :func:`bernstein.core.security.audit._compute_hmac`, so the grant chain
     shares tamper-evidence semantics with the delegation and audit chains.
+
+    Public because a reader that authenticates the chain incrementally (see
+    :mod:`bernstein.core.security.grant_precondition`) must recompute the
+    *same* digest as the writer; a second copy of the construction elsewhere
+    could drift from this one and silently accept a re-chained record.
     """
     payload = prev_hmac + json.dumps(body, sort_keys=True)
     return _hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
+
+
+#: Pre-rename name, kept importable for external callers written against it.
+_compute_hmac = record_hmac
 
 
 #: Salted-reference format written to new records. ``sha256:`` (unsalted) is
@@ -344,6 +357,11 @@ class GrantReceipt:
     issuer: str
     issuer_pubkey: str
     created: int
+    #: The agent principal the grant is issued to. Empty on records written
+    #: before principals existed; a non-empty value binds the grant's validity
+    #: to that principal's lifecycle (see
+    #: :mod:`bernstein.core.identity.principals`).
+    principal: str = ""
     token_id: str = ""
     reason: str = ""
     prev_hmac: str = GENESIS_HMAC
@@ -364,6 +382,7 @@ class GrantReceipt:
             "capability_ceiling": list(self.capability_ceiling),
             "issuer": self.issuer,
             "issuer_pubkey": self.issuer_pubkey,
+            "principal": self.principal,
             "token_id": self.token_id,
             "reason": self.reason,
             "created": self.created,
@@ -398,6 +417,7 @@ class GrantReceipt:
             issuer=str(obj["issuer"]),
             issuer_pubkey=str(obj["issuer_pubkey"]),
             created=int(obj["created"]),
+            principal=str(obj.get("principal", "")),
             token_id=str(obj.get("token_id", "")),
             reason=str(obj.get("reason", "")),
             prev_hmac=str(obj.get("prev_hmac", GENESIS_HMAC)),
@@ -478,6 +498,7 @@ class GrantLedger:
         token_id: str,
         reason: str,
         created: int | None,
+        principal: str = "",
     ) -> GrantReceipt:
         if kind not in _KINDS:  # pragma: no cover - defensive
             raise GrantError(f"unknown grant record kind {kind!r}")
@@ -499,6 +520,7 @@ class GrantLedger:
             "capability_ceiling": sorted(capability_ceiling),
             "issuer": self._signer.issuer,
             "issuer_pubkey": self._signer.public_key_pem,
+            "principal": principal,
             "token_id": token_id,
             "reason": reason,
             "created": ts,
@@ -507,7 +529,7 @@ class GrantLedger:
         chain_body = signed.copy()
         chain_body["prev_hmac"] = prev_hmac
         chain_body["signature"] = signature
-        computed = _compute_hmac(self._key, prev_hmac, chain_body)
+        computed = record_hmac(self._key, prev_hmac, chain_body)
         entry = chain_body.copy()
         entry["hmac"] = computed
         path = self.receipt_path(run_id)
@@ -526,6 +548,7 @@ class GrantLedger:
         capability_ceiling: Sequence[str] = (),
         grant_id: str | None = None,
         created: int | None = None,
+        principal: str = "",
     ) -> GrantReceipt:
         """Issue a scoped grant and append it as a ``grant_issued`` record.
 
@@ -538,6 +561,9 @@ class GrantLedger:
             capability_ceiling: Symbolic capability names the grant caps.
             grant_id: Optional explicit id (defaults to a fresh uuid4 hex).
             created: Optional unix timestamp (exposed for deterministic tests).
+            principal: Optional agent principal the grant is issued to. When
+                set, the grant stays valid only while that principal is
+                provisioned (:mod:`bernstein.core.identity.principals`).
 
         Returns:
             The freshly-appended :class:`GrantReceipt`.
@@ -554,6 +580,7 @@ class GrantLedger:
             token_id="",
             reason="",
             created=created,
+            principal=principal,
         )
 
     def record_exchange(
@@ -657,6 +684,10 @@ class GrantChainResult:
     valid: bool
     records: list[GrantReceipt] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    #: The principal lifecycle chain rooted beside this run's grant chain.
+    #: :func:`verify_grant_chain` fills it in, so the validity path below
+    #: reads deprovisioning as a chain fact rather than an out-of-band flag.
+    principals: PrincipalChainResult | None = None
 
     def lifecycles(self) -> dict[str, dict[str, Any]]:
         """Reconstruct each grant's issue/exchange/revoke state from the records."""
@@ -671,6 +702,7 @@ class GrantChainResult:
                     "secret_name": "",
                     "audience": "",
                     "expiry": 0,
+                    "principal": "",
                     "issued": False,
                     "revoked": False,
                     "token_ids": [],
@@ -683,6 +715,7 @@ class GrantChainResult:
                 state["secret_name"] = r.secret_name
                 state["audience"] = r.audience
                 state["expiry"] = r.expiry
+                state["principal"] = r.principal
             elif r.kind == GRANT_EXCHANGED and r.token_id:
                 state["token_ids"].append(r.token_id)
             elif r.kind == GRANT_REVOKED:
@@ -708,13 +741,18 @@ def verify_grant_chain(*, root: Path, run_id: str, key: bytes) -> GrantChainResu
 
     Returns:
         A :class:`GrantChainResult`. ``valid`` is True only when at least one
-        record exists and the whole chain verifies from genesis to tail.
+        record exists and the whole chain verifies from genesis to tail. The
+        principal lifecycle chain rooted at ``root`` rides along on
+        :attr:`GrantChainResult.principals` so that
+        :func:`find_active_grant` can read deprovisioning off the chain.
     """
     ledger_dir = Path(root) / _SUBDIR
     safe = run_id.replace("/", "_").replace("\\", "_")
     path = ledger_dir / f"{safe}.jsonl"
     if not path.is_file():
         return GrantChainResult(valid=False, records=[], errors=["no grant records for run"])
+
+    principals = _principal_chain(root, key)
 
     records: list[GrantReceipt] = []
     errors: list[str] = []
@@ -734,7 +772,7 @@ def verify_grant_chain(*, root: Path, run_id: str, key: bytes) -> GrantChainResu
         if chain_body.get("prev_hmac") != prev_hmac:
             errors.append(f"record {idx}: broken linkage (prev_hmac does not match preceding record)")
             break
-        expected = _compute_hmac(key, prev_hmac, chain_body)
+        expected = record_hmac(key, prev_hmac, chain_body)
         if not _hmac.compare_digest(expected, stored_hmac):
             errors.append(f"record {idx}: HMAC mismatch (record tampered or wrong key)")
             break
@@ -746,7 +784,7 @@ def verify_grant_chain(*, root: Path, run_id: str, key: bytes) -> GrantChainResu
         prev_hmac = stored_hmac
 
     valid = not errors and len(records) > 0
-    return GrantChainResult(valid=valid, records=records, errors=errors)
+    return GrantChainResult(valid=valid, records=records, errors=errors, principals=principals)
 
 
 def render_report(result: GrantChainResult, *, run_id: str) -> str:
@@ -772,6 +810,7 @@ def render_report(result: GrantChainResult, *, run_id: str) -> str:
                 "expiry": r.expiry,
                 "capability_ceiling": list(r.capability_ceiling),
                 "issuer": r.issuer,
+                "principal": r.principal,
                 "token_id": r.token_id,
                 "reason": r.reason,
             }
@@ -779,6 +818,27 @@ def render_report(result: GrantChainResult, *, run_id: str) -> str:
         ],
     }
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def _principal_chain(root: Path, key: bytes) -> PrincipalChainResult:
+    """Return the principal lifecycle chain rooted beside the grant chain."""
+    from bernstein.core.identity.principals import verify_principal_chain
+
+    return verify_principal_chain(root=Path(root), key=key)
+
+
+def _principal_permits(principals: PrincipalChainResult | None, principal_id: str, now: float) -> bool:
+    """Return whether ``principal_id`` may back a grant at ``now``.
+
+    Fail-closed: a grant that names a principal is refused unless a verifying
+    chain says that principal was provisioned and not yet deprovisioned at
+    ``now``. Deleting the principal journal therefore denies the grant instead
+    of resurrecting it.
+    """
+    if principals is None or not principals.valid:
+        return False
+    state = principals.registry().get(principal_id)
+    return state is not None and state.active_at(now)
 
 
 def find_active_grant(
@@ -790,9 +850,11 @@ def find_active_grant(
 ) -> GrantReceipt | None:
     """Return the newest verified grant for ``(task_id, secret_name)`` still active.
 
-    A grant is active when it was issued, is not revoked in the chain, and has
-    either no expiry or an expiry in the future. Returns ``None`` if the chain
-    did not verify or no matching active grant exists.
+    A grant is active when it was issued, is not revoked in the chain, has
+    either no expiry or an expiry in the future, and -- when it names an agent
+    principal -- that principal is provisioned and not deprovisioned at
+    ``now`` according to :attr:`GrantChainResult.principals`. Returns ``None``
+    if the chain did not verify or no matching active grant exists.
     """
     if not result.valid:
         return None
@@ -815,9 +877,47 @@ def find_active_grant(
         candidate = issued.get(grant_id)
         if candidate is None:
             continue
+        # A grant bound to an agent principal is only as alive as the
+        # principal: a deprovision record at or before `current` ends it, and
+        # so does a principal the chain cannot account for.
+        if candidate.principal and not _principal_permits(result.principals, candidate.principal, current):
+            continue
         if best is None or candidate.record_index > best.record_index:
             best = candidate
     return best
+
+
+def compute_grant_sets(
+    result: GrantChainResult,
+    *,
+    now: float | None = None,
+) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
+    """Derive revoked and approved grant sets from a verified ``GrantChainResult``.
+
+    - **revoked set**: grants where ``lifecycles()[grant_id]["revoked"]`` is
+      ``True``, keyed by ``(task_id, secret_name)``.
+    - **approved set**: grants that are issued, not revoked, and not expired
+      (``expiry == 0`` or ``expiry > now``), keyed by ``(task_id, secret_name)``.
+
+    Returns: a ``(revoked, approved)`` tuple of ``set[tuple[str, str]]``.
+    """
+    if not result.valid:
+        return (set(), set())
+    current = now if now is not None else time.time()
+    life = result.lifecycles()
+    revoked: set[tuple[str, str]] = set()
+    approved: set[tuple[str, str]] = set()
+    for _grant_id, state in life.items():
+        if not state["issued"]:
+            continue
+        key = (state["task_id"], state["secret_name"])
+        if state["revoked"]:
+            revoked.add(key)
+        else:
+            expiry = int(state["expiry"])
+            if not expiry or expiry > current:
+                approved.add(key)
+    return (revoked, approved)
 
 
 # ---------------------------------------------------------------------------

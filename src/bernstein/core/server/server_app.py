@@ -1490,6 +1490,7 @@ def create_app(
     from bernstein.core.routes.provider_latency import router as provider_latency_router
     from bernstein.core.routes.review_board import router as review_board_router
     from bernstein.core.routes.sbom import router as sbom_router
+    from bernstein.core.routes.scim import router as scim_router
     from bernstein.core.routes.session_peek import router as session_peek_router
     from bernstein.core.routes.sla import router as sla_router
     from bernstein.core.routes.slo import router as slo_router
@@ -1539,6 +1540,7 @@ def create_app(
         sla_router,
         custom_metrics_router,
         sbom_router,
+        scim_router,
         hooks_router,
         ws_router,
         export_router,

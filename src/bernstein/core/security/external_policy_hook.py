@@ -15,6 +15,11 @@ Usage::
     registry = PolicyHookRegistry()
     registry.register(opa_hook)
     result = registry.evaluate(HookRequest(action="bash", resource="rm -rf /"))
+
+Requests and responses here are expressible in the AuthZEN 1.0 evaluation shape
+(:mod:`bernstein.core.security.authzen`), and the registry normalises every
+request through it before dispatch, so the decision boundary speaks one
+vocabulary whether the caller is internal or a foreign enforcement point.
 """
 
 from __future__ import annotations
@@ -37,7 +42,22 @@ from bernstein.core.security.agent_card_signer import canonicalize_jcs
 if TYPE_CHECKING:
     from bernstein.core.security.audit_chain import AuditChainStore
 
+from bernstein.core.security.authzen import (
+    RESOURCE_TYPE_OPAQUE,
+    SUBJECT_TYPE_AGENT,
+    AuthZenAction,
+    AuthZenError,
+    AuthZenRequest,
+    AuthZenResource,
+    AuthZenResponse,
+    AuthZenSubject,
+    Obligation,
+)
+
 logger = logging.getLogger(__name__)
+
+#: Subject properties an internal :class:`HookRequest` can carry.
+_CARRIED_SUBJECT_PROPERTIES = frozenset({"role"})
 
 
 def _sha256_hex(data: bytes) -> str:
@@ -79,6 +99,69 @@ class HookRequest:
     scope: str = ""
     metadata: dict[str, Any] = field(default_factory=dict[str, Any])
 
+    def to_authzen(self) -> AuthZenRequest:
+        """Return this request in the AuthZEN 1.0 evaluation shape.
+
+        Raises:
+            AuthZenError: If the request cannot be expressed in the standard
+                shape - an empty action, or metadata keyed in a way the
+                standard context cannot carry.
+        """
+        properties: dict[str, Any] = {"role": self.role} if self.role else {}
+        context: dict[str, Any] = {}
+        if self.scope:
+            context["scope"] = self.scope
+        if self.metadata:
+            context["metadata"] = dict(self.metadata)
+        return AuthZenRequest(
+            subject=AuthZenSubject(type=SUBJECT_TYPE_AGENT, id=self.agent_id, properties=properties),
+            resource=AuthZenResource(type=RESOURCE_TYPE_OPAQUE, id=self.resource),
+            action=AuthZenAction(name=self.action),
+            context=context,
+        )
+
+    @classmethod
+    def from_authzen(cls, request: AuthZenRequest) -> HookRequest:
+        """Build an internal request from the AuthZEN shape.
+
+        Entity properties this request cannot carry are refused rather than
+        dropped, for the same reason unknown context is refused: an engine
+        answering over fewer attributes than it was sent has answered a
+        different question.
+
+        Raises:
+            AuthZenError: If the payload carries attributes that would be lost.
+        """
+        stray_subject = sorted(set(request.subject.properties) - _CARRIED_SUBJECT_PROPERTIES)
+        if stray_subject:
+            raise AuthZenError(f"subject properties an internal request cannot carry: {', '.join(stray_subject)}")
+        if request.resource.properties:
+            raise AuthZenError(
+                f"resource properties an internal request cannot carry: "
+                f"{', '.join(sorted(request.resource.properties))}",
+            )
+        if request.action.properties:
+            raise AuthZenError(
+                f"action properties an internal request cannot carry: {', '.join(sorted(request.action.properties))}",
+            )
+        role = request.subject.properties.get("role", "")
+        if not isinstance(role, str):
+            raise AuthZenError("subject property 'role' must be a string")
+        metadata = request.context.get("metadata", {})
+        if not isinstance(metadata, dict):
+            raise AuthZenError("context field 'metadata' must be a JSON object")
+        scope = request.context.get("scope", "")
+        if not isinstance(scope, str):
+            raise AuthZenError("context field 'scope' must be a string")
+        return cls(
+            action=request.action.name,
+            resource=request.resource.id,
+            agent_id=request.subject.id,
+            role=role,
+            scope=scope,
+            metadata=dict(metadata),  # pyright: ignore[reportUnknownArgumentType]
+        )
+
 
 def _request_digest(request: HookRequest) -> str:
     """Return the SHA-256 digest of *request* in RFC 8785 canonical form.
@@ -114,6 +197,8 @@ class HookResponse:
         policy_digest: SHA-256 digest of the policy that produced this verdict --
             the policy text for Cedar, the policy file's bytes for OPA. Empty when
             the engine could not name a policy (an unreadable file, say).
+        obligations: Conditions attached to the verdict.  A permit carrying one
+            has not permitted the request as it was asked.
     """
 
     hook_name: str
@@ -122,6 +207,22 @@ class HookResponse:
     latency_ms: float = 0.0
     error: str = ""
     policy_digest: str = ""
+    obligations: tuple[Obligation, ...] = ()
+
+    def to_authzen(self) -> AuthZenResponse:
+        """Return this response in the AuthZEN 1.0 evaluation shape.
+
+        Only :attr:`HookVerdict.ALLOW` becomes a permit.  The bernstein verdict
+        travels alongside the boolean because AuthZEN's ``decision`` cannot tell
+        a denial apart from an abstention or an unreachable engine.
+        """
+        return AuthZenResponse(
+            decision=self.verdict is HookVerdict.ALLOW,
+            obligations=self.obligations,
+            reason=self.reason,
+            verdict=str(self.verdict),
+            hook_name=self.hook_name,
+        )
 
 
 class ExternalPolicyHook(ABC):
@@ -554,6 +655,11 @@ class PolicyHookRegistry:
     def evaluate(self, request: HookRequest) -> list[HookResponse]:
         """Evaluate a request against all registered hooks.
 
+        The request is normalised through the AuthZEN shape before any hook sees
+        it, so an internal decision and one arriving from a foreign enforcement
+        point are evaluated over the same bytes.  A request the standard shape
+        cannot express never reaches an engine.
+
         Each response is appended to the audit chain when one is configured, so
         the record set matches the evaluation set exactly. A failure to record is
         not swallowed: it propagates, because a decision boundary that keeps
@@ -565,7 +671,11 @@ class PolicyHookRegistry:
 
         Returns:
             List of responses from all hooks.
+
+        Raises:
+            AuthZenError: If the request cannot be expressed in the AuthZEN shape.
         """
+        request = HookRequest.from_authzen(request.to_authzen())
         responses: list[HookResponse] = []
         digest = _request_digest(request) if self._audit_chain is not None else ""
         for hook in self._hooks:
@@ -630,6 +740,9 @@ class PolicyHookRegistry:
 
         Returns:
             First decisive response, or a default ABSTAIN response.
+
+        Raises:
+            AuthZenError: If the request cannot be expressed in the AuthZEN shape.
         """
         responses = self.evaluate(request)
         for resp in responses:

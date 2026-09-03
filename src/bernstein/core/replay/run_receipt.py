@@ -70,6 +70,7 @@ from bernstein.core.security.key_derivation import (
     SCHEME_V2,
     domain_tag,
 )
+from bernstein.core.security.loaded_extension_set import extension_set_digest_from_events
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -151,6 +152,9 @@ class RunReceipt:
             recorded no spine entries).
         audit_head_sha256: Audit-range head when the opt-in block was
             included, else ``None``.
+        extension_set_digest: Content address of the skill and plugin set
+            the run loaded, recomputed from the journal rows, or ``None``
+            when the run recorded none.
         receipt: The serialisable receipt dict.
         receipt_bytes: Canonical JSON bytes (byte-deterministic).
         receipt_path: On-disk path when written, else ``None``.
@@ -163,6 +167,7 @@ class RunReceipt:
     receipt: dict[str, Any]
     receipt_bytes: bytes
     receipt_path: Path | None = field(default=None)
+    extension_set_digest: str | None = field(default=None)
 
     @property
     def sha256(self) -> str:
@@ -229,6 +234,10 @@ def _binding_block(
     spine_count: int,
     audit_head_sha256: str | None,
     endpoint_identities: list[dict[str, str]] | None = None,
+    extension_set_digest: str | None = None,
+    audit_since: str | None = None,
+    audit_until: str | None = None,
+    audit_head_hmac: str | None = None,
 ) -> dict[str, Any]:
     """The subject binding: one canonical block over every recomputed head.
 
@@ -239,12 +248,27 @@ def _binding_block(
     the opt-in audit block from a receipt that was signed with it changes
     the binding bytes and collapses verification.
 
+    ``audit_since``/``audit_until``/``audit_head_hmac`` describe the
+    declared audit window itself, not just its recomputed content head, and
+    are bound alongside it: the verifier cannot re-derive ``head_hmac``
+    without the operator's HMAC key, so it passes through the receipt's own
+    ``audit_range`` values here rather than recomputing them, which is
+    enough to make relabelling the window post-signing fail the signature
+    check the same way mutating the audit events does.
+
     When ``endpoint_identities`` is provided (non-empty), it is included in
     the binding block as an ``endpoints`` array. The verifier will only
     include it when present in journal events, keeping backwards
     compatibility with existing receipts that have no endpoint identity
     events (the field is simply absent, and the binding block is built
     without it).
+
+    ``extension_set_digest`` follows the same rule for the skill and plugin
+    set the run actually loaded. It is *recomputed* from the embedded
+    ``loaded_extension_set`` rows on both sides, so the receipt names the
+    resolved set rather than asserting a digest nothing re-derives; a run
+    that recorded no such event binds no field and older receipts keep
+    verifying unchanged.
     """
     block: dict[str, Any] = {
         "journal_event_count": journal_count,
@@ -255,8 +279,16 @@ def _binding_block(
     }
     if endpoint_identities is not None and len(endpoint_identities) > 0:
         block["endpoints"] = endpoint_identities
+    if extension_set_digest is not None:
+        block["extension_set_digest"] = extension_set_digest
     if audit_head_sha256 is not None:
         block["audit_range_head_sha256"] = audit_head_sha256
+        if audit_since is not None:
+            block["audit_range_since"] = audit_since
+        if audit_until is not None:
+            block["audit_range_until"] = audit_until
+        if audit_head_hmac is not None:
+            block["audit_range_head_hmac"] = audit_head_hmac
     return block
 
 
@@ -592,6 +624,7 @@ def build_run_receipt(
             "events": rebuilt,
         }
 
+    extension_set_digest = extension_set_digest_from_events(journal_rows)
     binding = _binding_block(
         run_id=run_id,
         journal_head=journal_head,
@@ -600,6 +633,10 @@ def build_run_receipt(
         spine_count=len(spine_rows),
         audit_head_sha256=audit_head,
         endpoint_identities=_extract_endpoint_identities(journal_rows),
+        extension_set_digest=extension_set_digest,
+        audit_since=audit_block["since"] if audit_block is not None else None,
+        audit_until=audit_block["until"] if audit_block is not None else None,
+        audit_head_hmac=audit_block["head_hmac"] if audit_block is not None else None,
     )
     binding_bytes = _canonical_json_bytes(binding)
     subject_sha256 = hashlib.sha256(binding_bytes).hexdigest()
@@ -658,6 +695,7 @@ def build_run_receipt(
         receipt=receipt,
         receipt_bytes=receipt_bytes,
         receipt_path=receipt_path,
+        extension_set_digest=extension_set_digest,
     )
 
 
@@ -817,6 +855,9 @@ def verify_run_receipt(
 
     # 3. Optional audit range: head recomputes from the embedded events.
     audit_head: str | None = None
+    audit_since: str | None = None
+    audit_until: str | None = None
+    audit_head_hmac: str | None = None
     audit_block = receipt.get("audit_range")
     if audit_block is not None:
         if not isinstance(audit_block, dict) or not isinstance(audit_block.get("events"), list):
@@ -830,6 +871,11 @@ def verify_run_receipt(
         if audit_block.get("event_count") != len(audit_events):
             return _tampered(["audit_range.event_count does not match the embedded events"])
         audit_head = recomputed_audit_head
+        # Cannot be recomputed here without the operator's HMAC key, so the
+        # receipt's own values are bound as-is (see _binding_block).
+        audit_since = audit_block.get("since")
+        audit_until = audit_block.get("until")
+        audit_head_hmac = audit_block.get("head_hmac")
 
     # 4. Subject binding: rebuilt from recomputed values only.
     endpoint_identities = _extract_endpoint_identities(events)
@@ -841,6 +887,10 @@ def verify_run_receipt(
         spine_count=len(entries),
         audit_head_sha256=audit_head,
         endpoint_identities=endpoint_identities if endpoint_identities else None,
+        extension_set_digest=extension_set_digest_from_events(events),
+        audit_since=audit_since,
+        audit_until=audit_until,
+        audit_head_hmac=audit_head_hmac,
     )
     binding_bytes = _canonical_json_bytes(binding)
     recomputed_subject = hashlib.sha256(binding_bytes).hexdigest()

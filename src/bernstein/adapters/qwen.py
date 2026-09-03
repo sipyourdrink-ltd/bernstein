@@ -6,7 +6,13 @@ import logging
 import subprocess
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
+from bernstein.adapters.base import (
+    DEFAULT_TIMEOUT_SECONDS,
+    CLIAdapter,
+    SpawnResult,
+    append_system_addendum,
+    build_worker_cmd,
+)
 from bernstein.adapters.env_isolation import build_filtered_env
 from bernstein.adapters.plugin_sdk import AdapterPluginInfo
 from bernstein.core.defaults import QWEN_INSTALL_HINT
@@ -208,9 +214,11 @@ class QwenAdapter(CLIAdapter):
         if settings.tavily_api_key:
             env["TAVILY_API_KEY"] = settings.tavily_api_key
 
-        # Pass the prompt as a positional argument (one-shot mode) instead of deprecated -p
+        # Pass the prompt as a positional argument (one-shot mode) instead of deprecated -p.
+        # No separate system-prompt channel -- graft any addendum onto the prompt so
+        # completion / heartbeat instructions still reach the agent. Empty addenda are no-ops.
         cmd = self._build_command(model_config.model, provider, settings, mcp_config=mcp_config)
-        cmd.append(prompt)
+        cmd.append(append_system_addendum(prompt, system_addendum))
 
         # Wrap with bernstein-worker for process visibility
         pid_dir = workdir / ".sdd" / "runtime" / "pids"

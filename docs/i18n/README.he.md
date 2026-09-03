@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### שכבת הגברנס בקוד פתוח לסוכני AI
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:739f0a7ad1af" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:9c87d303c594" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -38,7 +38,7 @@
 
 > **סטטוס: בטא.** מתוחזק על ידי אדם יחיד, בפיתוח פעיל. מספר הגרסה סופר שחרורים ולא בשלות — גרסאות משניות (minor) עשויות לשנות ממשקים. קבע גרסה עבור תלויות קריטיות; נסיגות (regressions) מתוקנות במהירות, [דווח עליהן](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein הוא שכבת הגברנס בקוד פתוח לסוכני AI. מתזמן דטרמיניסטי - בלי מודל בלולאת התיאום - מריץ סוכנים במקביל, מסנן את התוצרים בשערים ומתעד כל צעד, כך שאפשר לאמת ריצה בדיעבד, אופליין, מהארטיפקטים בלבד. סוכני CLI לקוד עובדים מהקופסה (Claude Code, Codex, Gemini CLI ועוד 40+), ואותה שכבה מנהלת כל עומס סוכני: התוצר יכול להיות diff, דוח מחקר, דאטהסט או חבילת ראיות ביקורת. פרופיל התקנה ל-air-gap כלול. Apache-2.0.
+Bernstein הוא שכבת הגברנס בקוד פתוח לסוכני AI. הוא פועל לפי policy as code: אתה כותב את המדיניות - מי רשאי לעשות מה, מה טעון אישור, מה חייב להירשם - ו-Bernstein אוכף אותה ומפיק רשומה שניתנת לאימות. מתזמן דטרמיניסטי - בלי מודל בלולאת התיאום - מריץ סוכנים במקביל, מסנן את התוצרים בשערים ומתעד כל צעד, כך שאפשר לאמת ריצה בדיעבד, אופליין, מהארטיפקטים בלבד. סוכני CLI לקוד עובדים מהקופסה (Claude Code, Codex, Gemini CLI ועוד 40+), ואותה שכבה מנהלת כל עומס סוכני: התוצר יכול להיות diff, דוח מחקר, דאטהסט או חבילת ראיות ביקורת. פרופיל התקנה ל-air-gap כלול. Apache-2.0.
 
 ### במבט חטוף
 <!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->

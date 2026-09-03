@@ -39,10 +39,12 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
+
+from bernstein.core.receipts.protocol import register_receipt_kind
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
     from bernstein.core.lineage.spine import LineageSpine
     from bernstein.core.quality.quality_gates import QualityGatesResult
@@ -419,12 +421,24 @@ def resolve_receipt_on_spine(
     )
 
 
-def verify_receipt(spine: LineageSpine, receipt: RecoveryReceipt) -> ReceiptResolution:
+def resolve_anchored_receipt(spine: LineageSpine, receipt: RecoveryReceipt) -> ReceiptResolution:
     """Resolve an anchored receipt against its spine using its own bytes.
 
-    Convenience wrapper: uses ``receipt.spine_entry_hash`` and
-    ``receipt.canonical_bytes()`` so a holder of the receipt object can verify
-    it end to end in one call.
+    Convenience wrapper over :func:`resolve_receipt_on_spine`: uses
+    ``receipt.spine_entry_hash`` and ``receipt.canonical_bytes()`` so a holder
+    of the receipt object can check its lineage anchor in one call.
+
+    The receipt payload itself is checked by the one shared verifier,
+    :func:`bernstein.core.receipts.protocol.verify_receipt`; this function
+    answers the separate question of whether the anchor still resolves on the
+    run's spine.
+
+    Args:
+        spine: The run's lineage spine.
+        receipt: The anchored receipt to resolve.
+
+    Returns:
+        A :class:`ReceiptResolution`.
 
     Raises:
         ValueError: The receipt has no anchored spine entry hash.
@@ -438,9 +452,74 @@ def verify_receipt(spine: LineageSpine, receipt: RecoveryReceipt) -> ReceiptReso
     )
 
 
+#: Kind string this receipt registers with the shared receipt protocol.
+RECEIPT_KIND = "planning.recovery"
+
+#: Payload fields a recovery receipt must carry as a string.
+_REQUIRED_STRING_FIELDS: tuple[str, ...] = (
+    "failing_node_id",
+    "recovery_node_id",
+    "source_status",
+)
+
+#: Payload fields a recovery receipt must carry as a list of objects.
+_REQUIRED_OBJECT_LIST_FIELDS: tuple[str, ...] = ("gate_report", "journal_tail")
+
+
+def recovery_receipt_payload_errors(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return the recovery receipt's semantic errors, empty when well-formed.
+
+    Registered as the ``planning.recovery`` payload check so a recovery receipt
+    verifies through the same function as every other kind. Envelope shape,
+    canonical bytes, payload digest and signature belong to the protocol; this
+    check covers only what is specific to a recovery receipt: the wire version,
+    the identity of the failure it recovers, and the shape of the captured
+    context.
+
+    Args:
+        payload: Parsed receipt payload (``RecoveryReceipt.canonical_payload``).
+
+    Returns:
+        Tuple of ``field: message`` errors, empty when the payload is valid.
+    """
+    errors: list[str] = []
+
+    version = payload.get("v")
+    if version != RECOVERY_RECEIPT_VERSION:
+        errors.append(f"v: expected {RECOVERY_RECEIPT_VERSION}, got {version!r}")
+
+    for name in _REQUIRED_STRING_FIELDS:
+        value = payload.get(name)
+        if value is None:
+            errors.append(f"{name}: missing required field")
+        elif not isinstance(value, str) or not value:
+            errors.append(f"{name}: expected a non-empty string, got {value!r}")
+
+    context = payload.get("condition_context")
+    if not isinstance(context, dict):
+        errors.append(f"condition_context: expected object, got {type(context).__name__}")
+
+    for name in _REQUIRED_OBJECT_LIST_FIELDS:
+        entries = payload.get(name)
+        if not isinstance(entries, list):
+            errors.append(f"{name}: expected list, got {type(entries).__name__}")
+            continue
+        errors.extend(
+            f"{name}[{index}]: expected object, got {type(entry).__name__}"
+            for index, entry in enumerate(cast("list[Any]", entries))
+            if not isinstance(entry, dict)
+        )
+
+    return tuple(errors)
+
+
+register_receipt_kind(RECEIPT_KIND, payload_check=recovery_receipt_payload_errors)
+
+
 __all__ = [
     "DEFAULT_JOURNAL_TAIL",
     "RECEIPT_ARTIFACT_DIR",
+    "RECEIPT_KIND",
     "RECOVERY_RECEIPT_VERSION",
     "ReceiptResolution",
     "RecoveryReceipt",
@@ -448,9 +527,10 @@ __all__ = [
     "gate_report_findings",
     "journal_tail_for_task",
     "record_receipt_on_spine",
+    "recovery_receipt_payload_errors",
     "recovery_step_id",
+    "resolve_anchored_receipt",
     "resolve_receipt_on_spine",
-    "verify_receipt",
 ]
 
 # Metadata keys the DAG executor stamps on a recovery Task so downstream

@@ -185,3 +185,86 @@ the number of checks that ran.
 (`policy_input_from_project`), so the snapshot the policy engine evaluates and
 the findings the audit reports are two projections of one read rather than two
 independent opinions about the same directory.
+
+Inventory topology is `bernstein govern inventory --render`.
+See [govern inventory --render](govern-inventory.md).
+
+## Reconciling the governed surface
+
+`bernstein govern reconcile --propose` answers a different question from
+`govern verify`: not "did these decisions recompute" but "is what is there
+still what was decided".
+
+```
+bernstein govern reconcile --propose --desired desired.json [--workdir w] [--full]
+```
+
+The run enumerates four entity kinds -- registered adapters, cost lanes,
+scheduled tasks, and declared capability entries -- into a snapshot stamped with
+one `observed_at`, diffs that against the desired-state document, and writes the
+result as one anchored governance decision record. Nothing else moves: no entity
+is added, removed, or mutated, so the diff stays a reviewable artefact an
+operator reads before anything executes.
+
+Stable ids, one scheme per kind: an adapter is its registry key, a lane its lane
+name, a scheduled task its schedule id, and a capability entry `<profile>/<axis>`
+-- the profile that declares the axis, then the axis.
+
+The desired-state document declares entities and per-kind defaults:
+
+```json
+{
+  "v": 1,
+  "defaults": {"scheduled_task": {"prune": false, "self_heal": true}},
+  "entities": [
+    {"kind": "lane", "id": "batch", "declared_value": "0.5", "self_heal": true}
+  ]
+}
+```
+
+Each entity classifies as `unchanged`, `new`, `changed`, `declared_but_absent`,
+or `present_but_undeclared`. `prune` and `self_heal` then decide what is
+proposed: an undesired entity under `prune: false` becomes a `hold` finding, never
+a queued removal, and a drifted entity under `self_heal: false` is likewise held
+rather than repaired.
+
+`new` is relative to the previous run's own record, so a second run over an
+unchanged environment reports nothing. By default only drifted entities print;
+`--full` prints one line per entity.
+
+Exit codes: `0` no drift, `1` unreadable desired state, `2` drift.
+
+## Skip vs. suppress
+
+`bernstein govern audit` is the compliance check set above. The check
+contract and ID scheme are defined in issue #5072. Two mechanisms remove a
+finding from a clean report, but they are different operations with different
+governance semantics and different records:
+
+| | `--skip ID` (check exclusion) | `bernstein audit suppress ID --reason ... --until DATE` |
+|---|---|---|
+| **What it means** | The check was excluded from the run before it ran. The finding was **never raised**. | A finding **was raised**; the operator has recorded a bounded-time decision to accept it as known-risk. |
+| **When it applies** | At **plan / pre-check time**: the check does not appear in the run at all. | At **post-finding time**: the finding exists; the operator explicitly accepts it. |
+| **Governance record** | No finding, no record. The exclusion itself is recorded by the mechanism that performed it (e.g., `--skip` on the audit run command, or the check registry's skip list). | A `GovernanceDecision` with `verdict=accepted`, `subject=<finding_id>`, `action=suppress`, and `context={reason, expiry}`. Anchored in the govern-audit spine. |
+| **Finding in report** | Not present — the check never ran. | Present in the report as accepted, annotated with the suppression decision anchor and expiry. |
+| **Expiry behaviour** | N/A — no record to expire. | After `--until DATE` the finding reverts to its normal verdict on the next audit run. The suppression record is read at report-generation time to determine whether to annotate a finding as accepted. |
+
+**They produce different governance records.** `skip` produces no finding and no
+decision artefact. `suppress` produces a chain-anchored `GovernanceDecision`
+that binds the finding ID, the operator's reason, and the expiry date — so a
+future verifier can recompute whether the finding was accepted at the time of
+the audit, and whether the acceptance window had lapsed.
+
+**Suppressed findings appear in the report as accepted.** The report generator
+consults the suppression records when building the finding list. A finding
+with a live (unexpired) suppression is emitted with the suppression decision's
+journal anchor and the expiry date, so the record is self-describing.
+
+**Past `--until` the finding reverts to its normal verdict.** There is no
+active enforcement in `suppress` itself; downstream consumers — the audit report
+generator, the posture scorer — consult the suppression record's `expiry` field
+and treat the finding as accepted only while the current date is within the
+window.
+
+For `--skip` (check exclusion), see the audit check contract defined in
+issue #5072.

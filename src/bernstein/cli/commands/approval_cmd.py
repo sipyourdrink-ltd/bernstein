@@ -13,7 +13,11 @@ from pathlib import Path
 import click
 from rich.console import Console
 
-from bernstein.core.approval.models import ApprovalDecision, PendingApproval
+from bernstein.core.approval.models import (
+    ApprovalDecision,
+    PendingApproval,
+    local_shell_principal,
+)
 from bernstein.core.approval.queue import ApprovalQueue, promote_to_always_allow
 
 console = Console()
@@ -121,7 +125,13 @@ def approve_tool(
     # The CLI is a human-channel surface: it reads the on-disk record
     # which carries the nonce, and threads it back so the gate enforces
     # the single-use binding uniformly across TUI, HTTP, and CLI paths.
-    queue.resolve(approval.id, decision, reason="cli", nonce=approval.nonce)
+    queue.resolve(
+        approval.id,
+        decision,
+        principal=local_shell_principal(),
+        reason="cli",
+        nonce=approval.nonce,
+    )
     if always:
         try:
             target = promote_to_always_allow(approval, workdir=Path(workdir))
@@ -181,7 +191,13 @@ def reject_tool(
         return
 
     console.print(_render(approval))
-    queue.resolve(approval.id, ApprovalDecision.REJECT, reason="cli", nonce=approval.nonce)
+    queue.resolve(
+        approval.id,
+        ApprovalDecision.REJECT,
+        principal=local_shell_principal(),
+        reason="cli",
+        nonce=approval.nonce,
+    )
     console.print(f"[red]Rejected {approval.id}[/]")
 
 

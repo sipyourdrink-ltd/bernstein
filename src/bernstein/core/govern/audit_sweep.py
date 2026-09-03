@@ -43,18 +43,23 @@ import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-    from pathlib import Path
+from bernstein.core.identity.http_signing import install_identity_keyid
 
+if TYPE_CHECKING:
     from bernstein.core.lineage.spine import LineageSpine
+    from bernstein.core.security.agent_card_keystore import AgentCardKeystore
 
 #: Summary recorded for every check of a target the executor could not reach.
 UNREACHABLE = "unreachable"
 
 #: Summary recorded for a requested check the executor returned no result for.
 NOT_REPORTED = "not_reported"
+
+#: The finding id for a verifier that holds a stale key id (predates latest rotation).
+FINDING_VERIFIER_KEY_STALE = "GOV-VERIFIER-STALE"
 
 #: Artifact path the per-sweep journal entry is anchored under.
 JOURNAL_ARTIFACT_PATH = "govern-audit-sweep.json"
@@ -288,6 +293,68 @@ class SweepReport:
     def content_hash(self) -> str:
         """Return the ``sha256:``-prefixed content address of this report."""
         return "sha256:" + hashlib.sha256(self.to_canonical_bytes()).hexdigest()
+
+
+def check_verifier_key_staleness(
+    *,
+    default_keystore: AgentCardKeystore,
+) -> list[CheckOutcome]:
+    """Check whether any verifier holds a key id that predates the latest rotation.
+
+    (1) Reads the current install identity keyid from *default_keystore*.
+    (2) Reads any verifier key files at the per-platform destinations
+        (``~/.config/bernstein/verifier/{local,server}.json``).
+    (3) Compares keyids and reports stale verifiers as a measured-failed finding.
+
+    Returns an empty list when everything is up to date.
+    """
+    current_keyid = install_identity_keyid(default_keystore.load_or_generate()[1])
+
+    verifier_paths = [
+        Path.home() / ".config" / "bernstein" / "verifier" / "local.json",
+        Path.home() / ".config" / "bernstein" / "verifier" / "server.json",
+    ]
+
+    outcomes: list[CheckOutcome] = []
+    found_any = False
+    current_keyid_found = False
+
+    for verifier_path in verifier_paths:
+        if not verifier_path.is_file():
+            continue
+        found_any = True
+        try:
+            with open(verifier_path) as fh:
+                verifier_data: dict[str, Any] = json.load(fh)
+            keys = verifier_data.get("keys", [])
+            for key in keys:
+                if key.get("kid") == current_keyid:
+                    current_keyid_found = True
+        except (json.JSONDecodeError, OSError, TypeError):
+            outcomes.append(
+                CheckOutcome(
+                    check_id=FINDING_VERIFIER_KEY_STALE,
+                    area="govern",
+                    verdict=CheckVerdict.NOT_MEASURABLE,
+                    passed=None,
+                    summary=f"unreadable verifier file: {verifier_path}",
+                    what_would_make_it_measurable="a valid verifier file",
+                )
+            )
+
+    if found_any and not current_keyid_found:
+        outcomes.append(
+            CheckOutcome(
+                check_id=FINDING_VERIFIER_KEY_STALE,
+                area="govern",
+                verdict=CheckVerdict.MEASURED,
+                passed=False,
+                summary="Verifier key predates latest rotation",
+                remediation="Run `bernstein identity export-verifier` to refresh verifier keys",
+                evidence=(),
+            )
+        )
+    return outcomes
 
 
 def audit_target(
@@ -684,6 +751,7 @@ def _canonical_bytes(payload: dict[str, Any]) -> bytes:
 
 
 __all__ = [
+    "FINDING_VERIFIER_KEY_STALE",
     "JOURNAL_ARTIFACT_PATH",
     "NOT_REPORTED",
     "UNREACHABLE",
@@ -700,6 +768,7 @@ __all__ = [
     "TargetProbe",
     "VersionSkew",
     "audit_target",
+    "check_verifier_key_staleness",
     "compute_version_skew",
     "escalate_repeat_failures",
     "record_sweep",
