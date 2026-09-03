@@ -92,6 +92,12 @@ BOARD_COLUMNS = ("queued", "running", "gated", "needs_review", "merged")
 #: :func:`record_task_merged`, projected here into the ``merged`` column.
 EVENT_TASK_MERGED = "task_merged"
 
+#: Journal event recorded when a crashed/orphaned agent's salvage worktree
+#: commit is merged back. It is distinct from :data:`EVENT_TASK_MERGED` because
+#: it records a crash-recovery action and carries its own reason, while both
+#: events move a review-board card into the ``merged`` column.
+EVENT_TASK_SALVAGE_MERGED = "task_salvage_merged"
+
 #: Journal event recorded when a task's git diff is captured as a
 #: content-addressed review artifact (see :func:`record_task_diff_captured`).
 #: The row carries only the diff's ``sha256`` and line/file counts; the diff
@@ -205,7 +211,7 @@ def _fold_event(cards: dict[str, dict[str, Any]], run: dict[str, Any], index: in
         cost = row.get("cost_usd")
         if isinstance(cost, (int, float)):
             card["cost_usd"] = float(cost)
-    elif event == EVENT_TASK_MERGED:
+    elif event in (EVENT_TASK_MERGED, EVENT_TASK_SALVAGE_MERGED):
         if card is None:
             card = cards[task_id] = _new_card(task_id)
         card["column"] = "merged"
@@ -467,6 +473,41 @@ def record_task_merged(
     recorder.record(EVENT_TASK_MERGED, **event_fields)
 
 
+def record_task_salvage_merged(
+    recorder: EventJournal | None,
+    *,
+    task_id: str,
+    agent_id: str | None,
+    merge_commit: str,
+    salvaged_commit: str,
+    reason: str,
+) -> None:
+    """Record a ``task_salvage_merged`` event into the run journal.
+
+    Called synchronously by crash/shutdown cleanup after a successful salvage
+    merge and before any later ``task_retried`` row for the same task. A
+    ``None`` *recorder* is a no-op for detached or minimal callers.
+
+    Args:
+        recorder: The run's :class:`EventJournal` (or ``None``).
+        task_id: The salvaged task's identifier.
+        agent_id: The agent session id whose work was salvaged.
+        merge_commit: The post-merge commit SHA.
+        salvaged_commit: The pre-merge ``[WIP]`` commit SHA.
+        reason: Machine-readable salvage trigger from the lifecycle.
+    """
+    if recorder is None:
+        return
+    recorder.record(
+        EVENT_TASK_SALVAGE_MERGED,
+        task_id=task_id,
+        agent_id=agent_id,
+        merge_commit=merge_commit,
+        salvaged_commit=salvaged_commit,
+        reason=reason,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Diff artifact: the bytes the reviewer inspects, content-addressed + chained
 # ---------------------------------------------------------------------------
@@ -641,6 +682,7 @@ __all__ = [
     "EVENT_TASK_DIFF_CAPTURED",
     "EVENT_TASK_MERGED",
     "EVENT_TASK_REVIEW_DECISION",
+    "EVENT_TASK_SALVAGE_MERGED",
     "REVIEW_DECISIONS",
     "REVIEW_DECISION_APPROVE",
     "REVIEW_DECISION_MERGE",
@@ -657,5 +699,6 @@ __all__ = [
     "record_review_decision",
     "record_task_diff_captured",
     "record_task_merged",
+    "record_task_salvage_merged",
     "store_task_diff",
 ]

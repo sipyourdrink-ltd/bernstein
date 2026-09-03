@@ -19,6 +19,7 @@ from bernstein.core.replay.review_board import (
     EVENT_TASK_DIFF_CAPTURED,
     EVENT_TASK_MERGED,
     EVENT_TASK_REVIEW_DECISION,
+    EVENT_TASK_SALVAGE_MERGED,
     REVIEW_DECISIONS,
     board_hash,
     canonical_board_bytes,
@@ -30,6 +31,7 @@ from bernstein.core.replay.review_board import (
     record_review_decision,
     record_task_diff_captured,
     record_task_merged,
+    record_task_salvage_merged,
     store_task_diff,
 )
 
@@ -245,9 +247,50 @@ def test_record_task_merged_appends_journal_event(tmp_path: Path) -> None:
     assert journal.verify().chain_consistent
 
 
-def test_record_task_merged_tolerates_missing_recorder(tmp_path: Path) -> None:
+def test_record_task_salvage_merged_appends_journal_event(tmp_path: Path) -> None:
+    """The salvage helper appends a chained crash-recovery merge event."""
+    journal = EventJournal("run-salvage", tmp_path / ".sdd")
+    record_task_salvage_merged(
+        journal,
+        task_id="t-6",
+        agent_id="agent-s",
+        merge_commit="1234567890abcdef1234567890abcdef12345678",
+        salvaged_commit="abcdef1234567890abcdef1234567890abcdef12",
+        reason="dead_agent",
+    )
+
+    events = load_events(journal.path).events
+    assert len(events) == 1
+    assert events[0]["event"] == EVENT_TASK_SALVAGE_MERGED
+    assert events[0]["task_id"] == "t-6"
+    assert events[0]["agent_id"] == "agent-s"
+    assert events[0]["merge_commit"] == "1234567890abcdef1234567890abcdef12345678"
+    assert events[0]["salvaged_commit"] == "abcdef1234567890abcdef1234567890abcdef12"
+    assert events[0]["reason"] == "dead_agent"
+    assert journal.verify().chain_consistent
+
+
+def test_record_task_salvage_merged_tolerates_missing_recorder(tmp_path: Path) -> None:
     """Callers without a live recorder (tests, detached tools) are a no-op."""
-    record_task_merged(None, task_id="t-8", agent_id=None)
+    record_task_salvage_merged(None, task_id="t-8", agent_id=None, merge_commit="", salvaged_commit="", reason="")
+
+
+def test_salvage_merge_projects_card_to_merged() -> None:
+    """A salvage merge moves a card into the merged column, like task_merged."""
+    events = [
+        {
+            "event": EVENT_TASK_SALVAGE_MERGED,
+            "task_id": "t-1",
+            "agent_id": "agent-s",
+            "merge_commit": "abc123",
+            "salvaged_commit": "def456",
+            "reason": "orphan_no_signals",
+        }
+    ]
+    board = project_board(events)
+    assert _column_of(board, "t-1") == "merged"
+    card = next(card for cards in board["columns"].values() for card in cards if card["task_id"] == "t-1")
+    assert card["agent_id"] == "agent-s"
 
 
 def test_reap_and_cleanup_records_task_merged(tmp_path: Path, monkeypatch: Any) -> None:
