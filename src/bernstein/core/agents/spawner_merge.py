@@ -11,9 +11,11 @@ import logging
 import subprocess
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
+from bernstein.core.git.git_basic import run_git
 from bernstein.core.git_ops import MergeResult, merge_with_conflict_detection
 from bernstein.core.models import AgentBackend, AgentSession
 from bernstein.core.prometheus import merge_duration
@@ -1034,6 +1036,8 @@ def merge_worktree_branch(
             message=f"Merge {branch_name}",
         )
         if result.success:
+            commit_result = run_git(["rev-parse", "HEAD"], cwd=merge_root)
+            result = replace(result, merge_commit=commit_result.stdout.strip() if commit_result.ok else "")
             logger.info("Merged worktree branch %s into current branch", branch_name)
         elif result.conflicting_files:
             logger.warning(

@@ -50,6 +50,7 @@ class MergeResult:
     success: bool
     conflicting_files: list[str]
     merge_diff: str = ""
+    merge_commit: str = ""
     error: str = ""
     refused_forbidden_files: list[str] = field(default_factory=list)
 

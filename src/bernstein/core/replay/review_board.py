@@ -439,7 +439,13 @@ def list_board_runs(sdd_dir: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def record_task_merged(recorder: EventJournal | None, *, task_id: str, agent_id: str | None) -> None:
+def record_task_merged(
+    recorder: EventJournal | None,
+    *,
+    task_id: str,
+    agent_id: str | None,
+    merge_commit: str | None = None,
+) -> None:
     """Record a ``task_merged`` event into the run journal.
 
     Called by the task lifecycle right after a verified task's work is
@@ -451,10 +457,14 @@ def record_task_merged(recorder: EventJournal | None, *, task_id: str, agent_id:
         recorder: The run's :class:`EventJournal` (or ``None``).
         task_id: The merged task's identifier.
         agent_id: The producing agent session id, when known.
+        merge_commit: The post-merge commit SHA, when known.
     """
     if recorder is None:
         return
-    recorder.record(EVENT_TASK_MERGED, task_id=task_id, agent_id=agent_id)
+    event_fields = {"task_id": task_id, "agent_id": agent_id}
+    if merge_commit:
+        event_fields["merge_commit"] = merge_commit
+    recorder.record(EVENT_TASK_MERGED, **event_fields)
 
 
 # ---------------------------------------------------------------------------
