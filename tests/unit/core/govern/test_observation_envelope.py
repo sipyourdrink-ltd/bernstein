@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import MutableMapping
+from typing import cast
+
 import pytest
 
-from bernstein.core.govern.identity_join import entity_id_for, normalise_hardware_id
+from bernstein.core.govern.identity_join import (
+    CanonicalField,
+    FieldMapTable,
+    SourceFieldMap,
+    join_sources,
+    normalise_hardware_id,
+)
 from bernstein.core.govern.inventory_models import Inventory, Surface
 from bernstein.core.govern.observation import ObservationEnvelope, ObservationLedger
 
@@ -29,6 +38,7 @@ def _envelope(
 def _for_entity(*, hostname: str, entity_class: str = "host") -> ObservationEnvelope:
     return ObservationEnvelope.for_entity(
         entity_class=entity_class,
+        key_field="hardware_id",
         normalised_key="AB12CD",
         payload={"hostname": hostname, "hardware_id": "AB-12-CD"},
         observed_at="2026-09-03T09:00:00Z",
@@ -88,6 +98,28 @@ class TestCollisionRule:
         assert ledger.key_for(only) == only.entity_id
         assert ledger.get(only.entity_id) is only
 
+    def test_byte_identical_envelopes_are_deduplicated(self) -> None:
+        envelope = _envelope()
+        ledger = ObservationLedger().ingest(envelope).ingest(ObservationEnvelope.from_dict(envelope.to_dict()))
+
+        assert ledger.envelopes == (envelope,)
+        assert ledger.keys_for(envelope.entity_id) == (envelope.entity_id,)
+        assert ledger.get(envelope.entity_id) is envelope
+
+    def test_issued_collision_key_stays_resolvable(self) -> None:
+        first = _envelope(payload={"hostname": "web-1"}, errors={"mcp.config": "EPERM"})
+        second = _envelope(payload={"hostname": "web-2"})
+        ledger = ObservationLedger().ingest(first).ingest(second)
+        key = ledger.key_for(first)
+
+        with pytest.raises(TypeError):
+            cast(MutableMapping[str, object], first.payload)["hostname"] = "changed"
+        with pytest.raises(TypeError):
+            cast(MutableMapping[str, str], first.errors)["mcp.config"] = "changed"
+
+        assert ledger.key_for(first) == key
+        assert ledger.get(key) is first
+
 
 class TestPartialIngestion:
     def test_envelope_with_partial_errors_is_ingested(self) -> None:
@@ -136,16 +168,35 @@ class TestStableEntityId:
         hosts = {ledger.get(k).payload["hostname"] for k in keys}  # type: ignore[union-attr]
         assert hosts == {"web-1", "web-1-renamed"}
 
-    def test_normalised_key_spellings_resolve_to_one_id(self) -> None:
-        assert entity_id_for("host", normalise_hardware_id("AB12CD")) == entity_id_for(
-            "host", normalise_hardware_id("ab-12-cd")
+    def test_envelope_id_matches_the_graph_node_for_the_same_key(self) -> None:
+        table = FieldMapTable(
+            fields=(CanonicalField(name="hardware_id", normaliser="hardware_id"),),
+            key="hardware_id",
+            sources={
+                "inventory": SourceFieldMap(
+                    source="inventory",
+                    fields={"hardware_id": "hardware_id"},
+                )
+            },
+        )
+        graph = join_sources(
+            table=table,
+            records={"inventory": [{"hardware_id": "ab-12-cd"}]},
+            observed_at="2026-09-03T09:00:00Z",
+            pass_id="discover-pass-7",
+        ).graph
+        node = graph.nodes[0]
+        envelope = ObservationEnvelope.for_entity(
+            entity_class="host",
+            key_field=node.key_field,
+            normalised_key=node.key,
+            payload={"hostname": "web-1"},
+            observed_at="2026-09-03T09:00:00Z",
+            evidence_ref="discover-pass-7",
         )
 
-    def test_two_classes_sharing_a_key_stay_distinct(self) -> None:
-        assert (
-            _for_entity(hostname="web-1").entity_id
-            != _for_entity(hostname="web-1", entity_class="model_endpoint").entity_id
-        )
+        assert envelope.entity_id == node.entity_id
+        assert node.key == normalise_hardware_id("ab-12-cd")
 
 
 class TestRoundTrip:

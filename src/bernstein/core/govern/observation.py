@@ -21,7 +21,11 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 from bernstein.core.govern.identity_join import entity_id_for
 
@@ -35,13 +39,12 @@ class ObservationEnvelope:
     """One collector's complete observation of one entity.
 
     Attributes:
-        entity_id: Stable id derived from the entity's normalised key via
-            ``identity_join.entity_id_for``, so the same entity observed
-            under two hostnames carries one id across passes.
+        entity_id: Stable id derived from the canonical join key field and
+            normalised key via ``identity_join.entity_id_for``, so the same
+            entity observed under two hostnames carries one id across passes.
         entity_class: What kind of entity this is (e.g. ``host``,
-            ``mcp_server``, ``model_endpoint``). The id derivation names
-            the class domain, so two entities of different classes that
-            share a key value stay distinct.
+            ``mcp_server``, ``model_endpoint``). It describes the envelope;
+            the canonical join key field names the entity-id domain.
         payload: The fields the collector did collect. A field absent here
             is "not collected"; "collected, value is empty" is a present
             field whose value is empty, and the two are never confused.
@@ -61,10 +64,10 @@ class ObservationEnvelope:
 
     entity_id: str
     entity_class: str
-    payload: dict[str, Any]
+    payload: Mapping[str, Any]
     observed_at: str
     evidence_ref: str
-    errors: dict[str, str] = field(default_factory=dict[str, str])
+    errors: Mapping[str, str] = field(default_factory=dict[str, str])
 
     def __post_init__(self) -> None:
         if not self.entity_id or not self.entity_id.strip():
@@ -77,27 +80,29 @@ class ObservationEnvelope:
                 raise ValueError(f"error for sub-probe {sub_probe!r} must be a non-empty reason string")
             if text.lower() in {"true", "false"}:
                 raise ValueError(f"error for sub-probe {sub_probe!r} must name the cause, not mark it")
+        object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
+        object.__setattr__(self, "errors", MappingProxyType(dict(self.errors)))
 
     @classmethod
     def for_entity(
         cls,
         *,
         entity_class: str,
+        key_field: str,
         normalised_key: str,
-        payload: dict[str, Any],
+        payload: Mapping[str, Any],
         observed_at: str,
         evidence_ref: str,
-        errors: dict[str, str] | None = None,
+        errors: Mapping[str, str] | None = None,
     ) -> ObservationEnvelope:
         """Build the envelope for an entity keyed on *normalised_key*.
 
-        The id is a pure function of the class domain and the normalised
-        key, so the same underlying entity observed under two hostnames --
-        a payload field, not the key -- resolves to one id without any
-        coordination between collectors.
+        The id is a pure function of the canonical join key field and the
+        normalised key, matching the identity graph. A hostname is a payload
+        field, not the key, so it can change without changing the entity id.
         """
         return cls(
-            entity_id=entity_id_for(entity_class, normalised_key),
+            entity_id=entity_id_for(key_field, normalised_key),
             entity_class=entity_class,
             payload=payload,
             observed_at=observed_at,
@@ -110,10 +115,10 @@ class ObservationEnvelope:
         return {
             "entity_id": self.entity_id,
             "entity_class": self.entity_class,
-            "payload": self.payload,
+            "payload": dict(self.payload),
             "observed_at": self.observed_at,
             "evidence_ref": self.evidence_ref,
-            "errors": self.errors,
+            "errors": dict(self.errors),
         }
 
     @classmethod
@@ -135,9 +140,9 @@ class ObservationLedger:
 
     The ledger is to envelopes what ``Inventory`` is to surfaces: a frozen
     snapshot a pass produced. Envelopes with a non-empty ``errors`` map are
-    ingested like any other -- partial data is stored, not rejected -- and
-    a collision between two envelopes sharing an entity id yields a
-    disambiguated key for each, never a silently-shadowed entry.
+    ingested like any other -- partial data is stored, not rejected.
+    Byte-identical repeats are deduplicated; distinct envelopes sharing an
+    entity id get disambiguated keys, never silently-shadowing one another.
     Persistence across runs is #5083's, not this one's.
     """
 
@@ -150,6 +155,8 @@ class ObservationLedger:
         the errors map is that a collector which failed on some probes
         still reports what it saw.
         """
+        if envelope in self.envelopes:
+            return self
         return ObservationLedger(envelopes=(*self.envelopes, envelope))
 
     def key_for(self, envelope: ObservationEnvelope) -> str:
