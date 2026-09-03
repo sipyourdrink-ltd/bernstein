@@ -179,7 +179,28 @@ def anchor_suppress_decision(
     return anchored
 
 
+def read_suppressions(lineage_root: Path) -> list[GovernanceDecision]:
+    """Load every persisted suppression decision (append order).
+
+    Suppressions are GovernanceDecision records with ``action=suppress``.
+    """
+    from bernstein.core.security.governance import GovernanceDecision
+
+    out_dir = suppressions_dir(lineage_root)
+    if not out_dir.is_dir():
+        return []
+    records: list[GovernanceDecision] = []
+    for path in sorted(out_dir.glob("*.json")):
+        try:
+            records.append(GovernanceDecision.from_dict(json.loads(path.read_bytes())))
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            logger.warning("govern audit suppress: malformed suppression record at %s", path)
+            continue
+    return records
+
+
 __all__ = [
     "anchor_suppress_decision",
+    "read_suppressions",
     "suppressions_dir",
 ]
