@@ -339,15 +339,17 @@ def _fold_grants(builders: dict[str, _Builder], *, root: Path, key: bytes, now: 
 
         issued = {r.grant_id: r for r in result.records if r.kind == grants.GRANT_ISSUED}
         for grant_id, state in result.lifecycles().items():
-            record = issued.get(grant_id)
-            if record is None or not state["issued"] or state["revoked"]:
+            issued_record = issued.get(grant_id)
+            if issued_record is None or not state["issued"] or state["revoked"]:
                 continue
             expiry = int(state["expiry"])
             if expiry and now >= expiry:
                 continue
-            builder = builders.get(record.audience)
+            if issued_record.audience is None:
+                continue
+            builder = builders.get(issued_record.audience)
             if builder is not None:
-                builder.ceiling |= _expand_ceiling(record.capability_ceiling)
+                builder.ceiling |= _expand_ceiling(issued_record.capability_ceiling)
 
 
 def _fold_delegation(builders: dict[str, _Builder], *, root: Path, key: bytes, now: int, errors: list[str]) -> None:
