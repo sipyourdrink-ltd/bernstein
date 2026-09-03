@@ -6,6 +6,10 @@ from dataclasses import dataclass
 
 INGEST_EVENT_TYPES = ("gen_ai_activity", "untyped_activity")
 
+#: Alias used by declaration validation and callers that need the set of
+#: event types an adapter may declare. Same tuple, more explicit name.
+VALID_INGEST_EVENT_TYPES = INGEST_EVENT_TYPES
+
 
 @dataclass(frozen=True, slots=True)
 class IngestAdapterDeclaration:
