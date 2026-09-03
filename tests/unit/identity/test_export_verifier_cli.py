@@ -56,9 +56,7 @@ class TestExportVerifierWritesToDocumentedLocationPerPlatform:
 
 
 class TestExportVerifierRerunWithUnchangedKeyWritesNothingAndSaysSo:
-    def test_rerun_is_a_noop_when_key_unchanged(
-        self, runner: CliRunner, tmp_path: Path, monkeypatch
-    ) -> None:
+    def test_rerun_is_a_noop_when_key_unchanged(self, runner: CliRunner, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.setenv(http_signing.ENV_KEY_DIR, str(tmp_path / "keys"))
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
@@ -80,9 +78,7 @@ class TestExportVerifierRerunWithUnchangedKeyWritesNothingAndSaysSo:
         assert dest.stat().st_mtime == mtime_before, "dest was rewritten"
         assert sidecar.stat().st_mtime == sidecar_mtime_before, "sidecar was rewritten"
 
-    def test_rerun_writes_when_key_changed(
-        self, runner: CliRunner, tmp_path: Path, monkeypatch
-    ) -> None:
+    def test_rerun_writes_when_key_changed(self, runner: CliRunner, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.setenv(http_signing.ENV_KEY_DIR, str(tmp_path / "keys"))
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
@@ -101,9 +97,7 @@ class TestExportVerifierRerunWithUnchangedKeyWritesNothingAndSaysSo:
 
 class TestExportVerifierDryRun:
     @pytest.mark.parametrize("target", ["local", "server"])
-    def test_dry_run_does_not_touch_disk(
-        self, runner: CliRunner, tmp_path: Path, monkeypatch, target: str
-    ) -> None:
+    def test_dry_run_does_not_touch_disk(self, runner: CliRunner, tmp_path: Path, monkeypatch, target: str) -> None:
         monkeypatch.setenv(http_signing.ENV_KEY_DIR, str(tmp_path / "keys"))
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         result = runner.invoke(identity_group, ["export-verifier", f"--target={target}", "--dry-run"])
@@ -113,9 +107,7 @@ class TestExportVerifierDryRun:
         dest = tmp_path / ".config" / "bernstein" / "verifier" / f"{target}.json"
         assert not dest.exists(), "dry-run wrote to disk"
 
-    def test_dry_run_then_real_run_writes(
-        self, runner: CliRunner, tmp_path: Path, monkeypatch
-    ) -> None:
+    def test_dry_run_then_real_run_writes(self, runner: CliRunner, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.setenv(http_signing.ENV_KEY_DIR, str(tmp_path / "keys"))
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         result_dry = runner.invoke(identity_group, ["export-verifier", "--dry-run"])

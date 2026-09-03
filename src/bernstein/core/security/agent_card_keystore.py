@@ -235,6 +235,7 @@ class AgentCardKeystore:
                 new_keyid = install_identity_keyid(new_public_pem)
 
                 from bernstein.core.security.audit import AuditLog
+
                 log = AuditLog(self._dir.parent / ".sdd" / "audit")
                 log.log(
                     event_type=EVENT_IDENTITY_ROTATION,
