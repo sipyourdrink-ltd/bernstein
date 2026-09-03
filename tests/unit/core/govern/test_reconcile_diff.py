@@ -321,13 +321,13 @@ def test_entity_absent_from_previous_report_classifies_as_new(project: Path) -> 
 def test_propose_reconcile_includes_sweep_when_grant_records_exist(project: Path) -> None:
     """When grant chain files exist, propose_reconcile runs sweep and stores the finding."""
     from bernstein.core.govern.reconcile import propose_reconcile, snapshot_surface
+    from bernstein.core.govern.reconcile_models import DesiredState
     from bernstein.core.identity.grants import (
         GRANT_ISSUED,
         GrantLedger,
         GrantSigner,
         _compute_hmac,
     )
-    from bernstein.core.govern.reconcile_models import DesiredState
 
     signer = GrantSigner.generate(issuer="manager:test")
     # Write grants under project/.sdd/audit/ so propose_reconcile finds them
@@ -373,7 +373,7 @@ def test_propose_reconcile_includes_sweep_when_grant_records_exist(project: Path
     snapshot = snapshot_surface(sdd_dir=project / ".sdd", observed_at=1_000_000_000)
     desired = DesiredState.from_dict({"v": 1, "entities": []})
 
-    diff, decision = propose_reconcile(
+    _, decision = propose_reconcile(
         run_id=RUN_ID,
         lineage_root=project / ".sdd" / "lineage",
         hmac_key=b"k" * 32,
@@ -402,7 +402,7 @@ def test_propose_reconcile_sweep_is_none_when_grants_absent(project: Path) -> No
     snapshot = snapshot_surface(sdd_dir=project / ".sdd", observed_at=1_000_000_000)
     desired = DesiredState.from_dict({"v": 1, "entities": []})
 
-    diff, decision = propose_reconcile(
+    _, decision = propose_reconcile(
         run_id=RUN_ID,
         lineage_root=lineage_root,
         hmac_key=b"k" * 32,
