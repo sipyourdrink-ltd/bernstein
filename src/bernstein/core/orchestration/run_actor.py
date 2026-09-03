@@ -197,6 +197,23 @@ def apply_event(state: RunState, event: Event) -> RunState:
     kind = event.kind
     payload = event.payload
 
+    # Terminal status guard: enforce pending->running->{done,failed} transition graph.
+    # session_started rejected when already running/done/failed (pending->running is valid).
+    # session_ended rejected when already done or failed.
+    if kind == "session_started" and state.status in {"running", "done", "failed"}:
+        logger.warning(
+            "apply_event: session_started rejected, status=%s; dropping",
+            state.status,
+        )
+        return state
+
+    if kind == "session_ended" and state.status in {"done", "failed"}:
+        logger.warning(
+            "apply_event: session_ended rejected, status=%s; dropping",
+            state.status,
+        )
+        return state
+
     if kind == "session_started":
         return _replace_state(state, status="running", last_seq=event.seq)
 
