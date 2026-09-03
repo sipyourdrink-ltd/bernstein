@@ -144,7 +144,7 @@ class LoadedExtensionSet:
 
     def to_canonical_bytes(self) -> bytes:
         """Return the deterministic JSON bytes the digest is taken over."""
-        return digest_preimage([entry.to_dict() for entry in self.entries])
+        return _digest_preimage([entry.to_dict() for entry in self.entries])
 
     def to_dict(self) -> dict[str, Any]:
         """Return the serialisable record, digest included."""
@@ -164,7 +164,7 @@ class LoadedExtensionSet:
         return tuple(entry for entry in self.entries if not entry.loaded)
 
 
-def digest_preimage(entry_dicts: list[dict[str, Any]]) -> bytes:
+def _digest_preimage(entry_dicts: list[dict[str, Any]]) -> bytes:
     """Return the canonical bytes a set digest is computed over.
 
     Exposed so a verifier holding only the recorded rows - the run receipt,
@@ -201,7 +201,7 @@ def _resolved_origin(origin: str) -> str:
     return origin
 
 
-def skill_entries(loader: SkillLoader) -> list[LoadedExtension]:
+def _skill_entries(loader: SkillLoader) -> list[LoadedExtension]:
     """Project a :class:`~bernstein.core.skills.loader.SkillLoader` onto entries.
 
     Loaded skills are digested over the body the loader holds. Skill-source
@@ -240,7 +240,7 @@ def skill_entries(loader: SkillLoader) -> list[LoadedExtension]:
     return entries
 
 
-def plugin_entries(plugin_manager: PluginManager) -> list[LoadedExtension]:
+def _plugin_entries(plugin_manager: PluginManager) -> list[LoadedExtension]:
     """Project a :class:`~bernstein.plugins.manager.PluginManager` onto entries.
 
     A loaded plugin is digested over the module file its registered object
@@ -287,9 +287,9 @@ def build_loaded_extension_set(
     """
     entries: list[LoadedExtension] = []
     if loader is not None:
-        entries.extend(skill_entries(loader))
+        entries.extend(_skill_entries(loader))
     if plugin_manager is not None:
-        entries.extend(plugin_entries(plugin_manager))
+        entries.extend(_plugin_entries(plugin_manager))
     entries.sort(key=lambda entry: entry.sort_key())
     return LoadedExtensionSet(entries=tuple(entries))
 
@@ -367,5 +367,5 @@ def extension_set_digest_from_events(events: list[dict[str, Any]]) -> str | None
         rows: list[dict[str, Any]] = [cast("dict[str, Any]", row) for row in items if isinstance(row, dict)]
         if len(rows) != len(items):
             continue
-        return content_digest(digest_preimage(rows))
+        return content_digest(_digest_preimage(rows))
     return None
