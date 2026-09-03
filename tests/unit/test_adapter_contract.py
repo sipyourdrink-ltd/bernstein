@@ -67,7 +67,7 @@ _CONTRACT_MODEL_CONFIG: dict[str, ModelConfig] = {
     # OpenCode resolves ``-m`` as ``provider/model``; the adapter refuses a bare
     # id it cannot qualify from the operator's config, and the contract suite
     # runs without one, so the case hands it an already-qualified id.
-    "opencode": ModelConfig(model="anthropic/sonnet", effort="high"),
+    "OpenCode": ModelConfig(model="anthropic/sonnet", effort="high"),
 }
 
 #: Extra keyword arguments forwarded to ``spawn()`` in the contract suite.
