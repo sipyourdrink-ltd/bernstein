@@ -21,7 +21,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.spawner import AgentSpawner
 
 
