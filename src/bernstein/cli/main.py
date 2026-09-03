@@ -28,7 +28,6 @@ from bernstein.cli.adapter_cmd import adapters_group, test_adapter
 
 # Import commands from decomposed modules (NEW)
 from bernstein.cli.advanced_cmd import (
-    completions,
     dashboard,
     doctor,
     github_group,
@@ -61,6 +60,7 @@ from bernstein.cli.commands.bom_cmd import bom_group
 from bernstein.cli.commands.bundle_cmd import bundle_group
 from bernstein.cli.commands.citation_cmd import quality_group as citation_quality_group
 from bernstein.cli.commands.compaction_cmd import compaction_group
+from bernstein.cli.commands.completions_cmd import completions_cmd
 from bernstein.cli.commands.criterion_profile_cmd import criterion_profile_group
 from bernstein.cli.commands.datasource_cmd import datasource_group
 from bernstein.cli.commands.decisions_cmd import decisions_group
@@ -202,7 +202,7 @@ __all__ = [
     "checkpoint_cmd",
     "cleanup_cmd",
     "cloud_group",
-    "completions",
+    "completions_cmd",
     # Groups and commands from workspace_cmd
     "config_group",
     "console",
@@ -1028,7 +1028,7 @@ cli.add_command(mcp_server, "mcp")
 from bernstein.cli.commands.mcp_catalog_cmd import catalog_group as _catalog_group  # noqa: E402
 
 mcp_server.add_command(_catalog_group, "catalog")
-cli.add_command(completions)
+cli.add_command(completions_cmd)
 cli.add_command(quarantine_group)
 cli.add_command(install_hooks, "install-hooks")
 cli.add_command(plugins_cmd, "plugins")
