@@ -64,13 +64,13 @@ from typing import IO, TYPE_CHECKING, Any, ClassVar, Final, Protocol, cast, runt
 
 from bernstein.core.lineage.tracker_audit import (
     GENESIS_PREV_HASH,
-    _canonical_bytes,
     _exclusive_lock,
 )
 from bernstein.core.security.audit_head_signature import (
     build_head_signature,
     verify_head_signature,
 )
+from bernstein.core.security.canonical import canonical_bytes as _canonical_bytes
 
 if TYPE_CHECKING:
     from bernstein.core.lifecycle.hooks import HookRegistry

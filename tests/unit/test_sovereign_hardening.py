@@ -690,8 +690,8 @@ def test_verify_rejects_a_drift_record_missing_its_refusal_vocabulary(tmp_path: 
     re-signing leaves the required-field check as the only thing that can
     reject the record. Without that check the record would verify clean.
     """
+    from bernstein.core.security.canonical import canonical_bytes as _canonical_bytes
     from bernstein.core.security.deployment_profile import (
-        _canonical_bytes,
         record_and_sign_drift,
         verify_sovereign_attestations,
     )
@@ -940,8 +940,8 @@ def test_verify_rejects_a_chain_record_signed_by_a_foreign_key(tmp_path: Path) -
     Without the anchor this is the shape that makes the Ed25519 layer useless
     under `--merkle-only` or a compromised HMAC key.
     """
+    from bernstein.core.security.canonical import canonical_bytes as _canonical_bytes
     from bernstein.core.security.deployment_profile import (
-        _canonical_bytes,
         _sha256_of,
         verify_sovereign_attestations,
     )
