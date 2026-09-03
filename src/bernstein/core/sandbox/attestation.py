@@ -51,10 +51,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-    Ed25519PrivateKey,
-    Ed25519PublicKey,
-)
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from bernstein.core.identity.http_signing import install_identity_keyid
 from bernstein.core.sandbox.backend import SandboxCapability
@@ -464,7 +461,7 @@ def build_isolation_attestation(
             a backend entry is self-contradictory, or two entries name the
             same backend.
     """
-    private_pem, public_pem = keystore.load_or_generate()
+    _, public_pem = keystore.load_or_generate()
     keyid = install_identity_keyid(public_pem)
     attestation = IsolationAttestation(
         host_facts=dict(host_facts),
@@ -473,10 +470,7 @@ def build_isolation_attestation(
         keyid=keyid,
         public_jwk=ed25519_public_jwk(public_pem, kid=keyid),
     )
-    private_key = serialization.load_pem_private_key(private_pem, password=None)
-    if not isinstance(private_key, Ed25519PrivateKey):  # pragma: no cover - keystore invariant
-        raise TypeError("install identity key is not Ed25519")
-    signature = private_key.sign(attestation.signing_bytes())
+    signature = keystore.signer().sign(attestation.signing_bytes())
     object.__setattr__(attestation, "signature", base64.b64encode(signature).decode("ascii"))
     return attestation
 

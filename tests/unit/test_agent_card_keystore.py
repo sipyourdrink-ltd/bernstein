@@ -11,7 +11,10 @@ import sys
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+from bernstein.core.identity.http_signing import install_identity_keyid
 from bernstein.core.security.agent_card_keystore import (
     DEFAULT_GRACE_SECONDS,
     AgentCardKeystore,
@@ -287,3 +290,22 @@ class TestRotation:
         assert "new_keyid" in details
         assert "old_keyid" in details
         assert details["new_keyid"] != details["old_keyid"]
+
+
+class TestSigner:
+    def test_signer_signs_under_the_install_identity_without_exposing_the_key(self, tmp_path: Path) -> None:
+        ks = AgentCardKeystore(tmp_path / "keys")
+        _, public_pem = ks.load_or_generate()
+
+        signer = ks.signer()
+
+        assert signer.kid == install_identity_keyid(public_pem)
+        assert signer.public_key_jwk()["kty"] == "OKP"
+        assert not any("pem" in name.lower() for name in dir(signer))
+        public_key = serialization.load_pem_public_key(public_pem)
+        assert isinstance(public_key, Ed25519PublicKey)
+        public_key.verify(signer.sign(b"attestation body"), b"attestation body")
+
+    def test_signer_is_deterministic_across_instances(self, tmp_path: Path) -> None:
+        ks = AgentCardKeystore(tmp_path / "keys")
+        assert ks.signer().sign(b"same body") == AgentCardKeystore(tmp_path / "keys").signer().sign(b"same body")

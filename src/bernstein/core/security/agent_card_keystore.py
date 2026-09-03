@@ -56,6 +56,7 @@ from pathlib import Path
 from ..identity.http_signing import install_identity_keyid
 from .agent_card_signer import generate_ed25519_keypair
 from .audit_chain import EVENT_IDENTITY_ROTATION
+from .key_custody import FileBasedKMSAdapter, KMSAdapter
 
 __all__ = [
     "DEFAULT_GRACE_SECONDS",
@@ -171,6 +172,16 @@ class AgentCardKeystore:
             if not self._private_path.exists() or not self._public_path.exists():
                 self._generate_atomic()
             return self._load_existing()
+
+    def signer(self) -> KMSAdapter:
+        """Return a custody-bounded signer over the active install-identity key.
+
+        Callers that need a signature never handle the private PEM: the adapter
+        reads the key file itself and only exposes ``sign`` and the public JWK.
+        The ``kid`` is the install-identity key id derived from the public key.
+        """
+        _, public_pem = self.load_or_generate()
+        return FileBasedKMSAdapter(self._private_path, kid=install_identity_keyid(public_pem))
 
     def list_archived(self) -> list[ArchivedKey]:
         """Return archived keys still inside the grace window.
