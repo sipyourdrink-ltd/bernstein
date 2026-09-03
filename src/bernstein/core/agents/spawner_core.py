@@ -2699,7 +2699,16 @@ class AgentSpawner:
                 resolved,
             )
             return resolved
-        fallback = registry_name_for(self._adapter) or self._adapter.name()
+        fallback = registry_name_for(self._adapter)
+        if fallback is None:
+            logger.warning(
+                "_infer_adapter_name_for_provider: no registry match for provider_name=%r model=%r; "
+                "adapter %r is not registered",
+                provider_name,
+                model,
+                self._adapter.name(),
+            )
+            return self._adapter.name()
         logger.info(
             "_infer_adapter_name_for_provider: no registry match for provider_name=%r model=%r; "
             "falling back to current adapter %r",
