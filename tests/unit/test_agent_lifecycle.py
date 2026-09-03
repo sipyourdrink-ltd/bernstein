@@ -13,6 +13,7 @@ from bernstein.core.agent_reaping import _has_git_commits_on_branch, handle_orph
 from bernstein.core.cascade import CascadeDecision, CascadeExhausted
 from bernstein.core.models import AgentSession, Complexity, ModelConfig, Scope, Task, TaskStatus, TaskType
 
+from bernstein.core.agents import agent_lifecycle
 from bernstein.core.agents.agent_lifecycle import _probe_fast_exit
 
 
@@ -137,6 +138,97 @@ def _make_orch_no_ratelimit(tmp_path: Path) -> SimpleNamespace:  # type: ignore[
     orch._spawner = MagicMock()
     orch._spawner.get_worktree_path.return_value = None
     return orch
+
+
+# ---------------------------------------------------------------------------
+# Salvage merge journaling
+# ---------------------------------------------------------------------------
+
+
+def test_save_partial_work_records_salvage_before_retry(tmp_path: Path) -> None:
+    """A successful salvage merge is journaled synchronously before task_retried."""
+    from bernstein.core.replay.journal import EventJournal, load_events
+    from bernstein.core.replay.review_board import EVENT_TASK_SALVAGE_MERGED
+
+    merge_result = SimpleNamespace(success=True, merge_commit="merge-sha")
+    recorder = EventJournal("run-salvage-order", tmp_path / ".sdd")
+    spawner = SimpleNamespace(
+        get_worktree_path=lambda _sid: tmp_path / "wt",
+        reap_completed_agent=lambda *_a, **_k: merge_result,
+        _recorder=recorder,
+    )
+    session = SimpleNamespace(id="sess-1", role="backend", task_ids=["t-1"], exit_code=1)
+    (tmp_path / "wt").mkdir()
+    subprocess.run(["git", "init", "-q", str(tmp_path / "wt")], check=True)
+    (tmp_path / "wt" / "work.txt").write_text("salvage", encoding="utf-8")
+
+    agent_lifecycle._save_partial_work(spawner, session, reason="dead_agent")
+    recorder.record("task_retried", task_id="t-1")
+
+    events = load_events(recorder.path).events
+    salvage_index = events.index(next(e for e in events if e.get("event") == EVENT_TASK_SALVAGE_MERGED))
+    retry_index = events.index(next(e for e in events if e.get("event") == "task_retried"))
+    assert salvage_index < retry_index
+    assert events[salvage_index]["task_id"] == "t-1"
+    assert events[salvage_index]["agent_id"] == "sess-1"
+    assert events[salvage_index]["merge_commit"] == "merge-sha"
+    assert events[salvage_index]["salvaged_commit"]
+    assert events[salvage_index]["reason"] == "dead_agent"
+
+
+def test_save_partial_work_records_committed_salvage_when_merge_is_none(tmp_path: Path) -> None:
+    """An already committed salvage branch is journaled even when merge is absent."""
+    from bernstein.core.replay.journal import EventJournal, load_events
+    from bernstein.core.replay.review_board import EVENT_TASK_SALVAGE_MERGED
+
+    spawner = SimpleNamespace(
+        get_worktree_path=lambda _sid: tmp_path / "wt",
+        reap_completed_agent=lambda *_a, **_k: None,
+        _recorder=EventJournal("run-committed", tmp_path / ".sdd"),
+    )
+    session = SimpleNamespace(id="sess-1", role="backend", task_ids=["t-1"], exit_code=1)
+    (tmp_path / "wt").mkdir()
+    subprocess.run(["git", "init", "-q", str(tmp_path / "wt")], check=True)
+    (tmp_path / "wt" / "work.txt").write_text("salvage", encoding="utf-8")
+
+    assert agent_lifecycle._save_partial_work(spawner, session, reason="shutdown") is True
+    events = load_events(spawner._recorder.path).events
+    assert [event["event"] for event in events] == [EVENT_TASK_SALVAGE_MERGED]
+    assert events[0]["salvaged_commit"]
+    assert events[0]["merge_commit"] == ""
+
+
+def test_save_partial_work_records_nothing_for_skip_merge(tmp_path: Path) -> None:
+    """skip_merge reaps do not fabricate salvage receipts."""
+    from bernstein.core.replay.journal import EventJournal, load_events
+
+    spawner = SimpleNamespace(
+        get_worktree_path=lambda _sid: tmp_path / "wt",
+        reap_completed_agent=lambda *_a, **_k: None,
+        _recorder=EventJournal("run-skip", tmp_path / ".sdd"),
+    )
+    session = SimpleNamespace(id="sess-1", role="backend", task_ids=["t-1"], exit_code=1)
+    (tmp_path / "wt").mkdir()
+
+    assert agent_lifecycle._save_partial_work(spawner, session, reason="dead_agent") is False
+    assert load_events(spawner._recorder.path).events == []
+
+
+def test_save_partial_work_records_nothing_for_failed_merge(tmp_path: Path) -> None:
+    """Failed merge reaps do not fabricate salvage receipts."""
+    from bernstein.core.replay.journal import EventJournal, load_events
+
+    merge_result = SimpleNamespace(success=False, merge_commit="should-not-record")
+    spawner = SimpleNamespace(
+        get_worktree_path=lambda _sid: tmp_path / "wt",
+        reap_completed_agent=lambda *_a, **_k: merge_result,
+        _recorder=EventJournal("run-failed", tmp_path / ".sdd"),
+    )
+    session = SimpleNamespace(id="sess-1", role="backend", task_ids=["t-1"], exit_code=1)
+    (tmp_path / "wt").mkdir()
+
+    assert agent_lifecycle._save_partial_work(spawner, session, reason="shutdown") is False
+    assert load_events(spawner._recorder.path).events == []
 
 
 # ---------------------------------------------------------------------------

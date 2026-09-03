@@ -61,6 +61,7 @@ _RUN_JOURNAL_FILENAME = "journal.jsonl"
 #: imports at module scope; the names are asserted against their source in
 #: ``tests/unit/test_pr_goal_and_run_identity.py``.
 _EVENT_TASK_MERGED = "task_merged"
+_EVENT_TASK_SALVAGE_MERGED = "task_salvage_merged"
 _EVENT_TASK_DIFF_CAPTURED = "task_diff_captured"
 
 
@@ -1559,7 +1560,7 @@ def _merged_changes_from_journal(run_dir: Path) -> tuple[MergedChange, ...]:
         if not isinstance(task_id, str) or not task_id:
             continue
         event = typed.get("event")
-        if event == _EVENT_TASK_MERGED and task_id not in merged_order:
+        if event in (_EVENT_TASK_MERGED, _EVENT_TASK_SALVAGE_MERGED) and task_id not in merged_order:
             merged_order.append(task_id)
         elif event == _EVENT_TASK_DIFF_CAPTURED:
             diffs[task_id] = (
