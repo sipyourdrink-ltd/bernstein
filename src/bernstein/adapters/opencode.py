@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -31,6 +32,7 @@ from bernstein.adapters._contract import DangerousModeStrategy
 from bernstein.adapters.base import (
     DEFAULT_TIMEOUT_SECONDS,
     CLIAdapter,
+    SpawnError,
     SpawnResult,
     append_system_addendum,
     build_worker_cmd,
@@ -44,6 +46,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _OPENCODE_AUTH_FILE = Path.home() / ".local" / "share" / "opencode" / "auth.json"
+_OPENCODE_CONFIG_FILE = Path.home() / ".config" / "opencode" / "opencode.jsonc"
 
 #: Env var carrying the permission policy. Preferred over the escalating CLI
 #: flags for the *floor* because it is the only surface that can express the
@@ -61,6 +64,106 @@ _ESCALATED_PERMISSION: dict[str, str] = {"edit": "allow", "bash": "allow", "webf
 #: Tool permissions for a run that is not. ``deny`` rather than ``ask`` so the
 #: run fails fast and legibly instead of blocking on a prompt nobody answers.
 _RESTRICTED_PERMISSION: dict[str, str] = {"edit": "deny", "bash": "deny", "webfetch": "deny"}
+
+#: Comment-stripping regex for opencode.jsonc files.
+_COMMENT_RE = re.compile(r"^\s*//.*$", re.MULTILINE)
+
+
+def _config_path() -> Path:
+    """Return the effective opencode config file path, honouring env vars."""
+    if os.environ.get("OPENCODE_CONFIG"):
+        return Path(os.environ["OPENCODE_CONFIG"])
+    if os.environ.get("OPENCODE_CONFIG_DIR"):
+        return Path(os.environ["OPENCODE_CONFIG_DIR"]) / "opencode.jsonc"
+    return _OPENCODE_CONFIG_FILE
+
+
+def _read_opencode_config(path: Path) -> dict[str, object]:
+    """Read and parse an opencode config file.
+
+    ``opencode.jsonc`` is JSON with ``//`` line comments stripped before parsing.
+    Unparseable content is treated as an absent file.
+    """
+    if not path.exists():
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8")
+        stripped = _COMMENT_RE.sub("", text)
+        return json.loads(stripped)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _qualify_model(model_id: str) -> str:
+    """Qualify a bare opencode model id using the operator's config.
+
+    If ``model_id`` already contains a ``/``, return it unchanged.
+
+    Otherwise look up ``provider.<name>.models`` in the opencode config file
+    (read-only, no network calls).  Exactly one matching provider -> qualify
+    to ``<provider>/<model_id>`` and log at INFO.  Zero or two-or-more matches
+    -> raise :class:`SpawnError` with the expected shape and config path.
+    A missing or unparseable config file is treated identically to zero matches.
+
+    The config schema is::
+
+        {
+          "provider": {
+            "<provider-name>": {
+              "models": { "<model-id>": { ... }, ... }
+            }
+          }
+        }
+
+    ``models`` may also be a list of model-id strings.
+
+    Args:
+        model_id: The model identifier from the task's ``ModelConfig``.
+
+    Returns:
+        The qualified model id (``provider/model``).
+
+    Raises:
+        SpawnError: When a bare id has no unique provider match, or when the
+            config file cannot be read.
+    """
+    if "/" in model_id:
+        return model_id
+
+    config = _read_opencode_config(_config_path())
+    provider_section: dict[str, object] = {}
+    if isinstance(config.get("provider"), dict):
+        provider_section = config["provider"]  # type: ignore[assignment]
+
+    matching: list[str] = []
+    for provider_name, provider_val in provider_section.items():
+        if not isinstance(provider_val, dict):
+            continue
+        raw_models = provider_val.get("models")
+        models: dict[str, object] = {}
+        if isinstance(raw_models, dict):
+            models = raw_models
+        elif isinstance(raw_models, list):
+            for item in raw_models:
+                if isinstance(item, str):
+                    models[item] = {}
+        if model_id in models:
+            matching.append(provider_name)
+
+    if len(matching) == 1:
+        qualified = f"{matching[0]}/{model_id}"
+        logger.info("OpenCodeAdapter qualified bare model id %r -> %r", model_id, qualified)
+        return qualified
+
+    # Zero or 2+ matches: refuse with a legible message.
+    config_path_str = str(_config_path())
+    raise SpawnError(
+        f"OpenCode adapter received bare model id {model_id!r} but no unique provider match "
+        f"was found in the opencode config at {config_path_str}. "
+        f"Expected shape: provider.<name>.models. "
+        f"Qualify the model as <provider>/{model_id} in bernstein.yaml, "
+        f"or configure exactly one provider listing {model_id!r} in {config_path_str}."
+    )
 
 
 class OpenCodeAdapter(CLIAdapter):
@@ -158,7 +261,10 @@ class OpenCodeAdapter(CLIAdapter):
 
         # No separate system-prompt channel -- graft any addendum onto the prompt so
         # completion / heartbeat instructions still reach the agent. Empty addenda are no-ops.
-        cmd = self._build_command(model=model_config.model, prompt=append_system_addendum(prompt, system_addendum))
+        cmd = self._build_command(
+            model=_qualify_model(model_config.model),
+            prompt=append_system_addendum(prompt, system_addendum),
+        )
 
         pid_dir = workdir / ".sdd" / "runtime" / "pids"
         wrapped_cmd = build_worker_cmd(

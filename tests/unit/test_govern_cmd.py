@@ -10,6 +10,8 @@ from click.testing import CliRunner
 
 from bernstein.cli.commands.governance_cmd import govern_group
 from bernstein.core.cost.spend_ledger import CallTags, SpendLedger
+from bernstein.core.identity import http_signing
+from bernstein.core.security.agent_card_keystore import AgentCardKeystore
 from bernstein.core.security.audit import load_or_create_audit_key
 from bernstein.core.security.governance import (
     RoleBindings,
@@ -146,3 +148,84 @@ def test_verify_tampered_exits_2(project: Path) -> None:
     )
     assert result.exit_code == 2
     assert "MISMATCH" in result.output
+
+
+def _verifier_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Return an isolated home directory for verifier files."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    return home
+
+
+@pytest.mark.parametrize("filename", ["local.json", "server.json"])
+def test_audit_no_verifier_files_exit_0(filename: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No verifier files means nothing to measure -> exit 0."""
+    _verifier_home(tmp_path, monkeypatch)
+    key_dir = tmp_path / "keys"
+    AgentCardKeystore(key_dir).load_or_generate()
+    monkeypatch.setenv(http_signing.ENV_KEY_DIR, str(key_dir))
+
+    runner = CliRunner()
+    result = runner.invoke(govern_group, ["audit"])
+    assert result.exit_code == 0, result.output
+    assert "up to date" in result.output
+
+
+@pytest.mark.parametrize("filename", ["local.json", "server.json"])
+def test_audit_current_keyid_exit_0(filename: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A verifier file containing the current keyid is up to date -> exit 0."""
+    home = _verifier_home(tmp_path, monkeypatch)
+    key_dir = tmp_path / "keys"
+    _priv, pub = AgentCardKeystore(key_dir).load_or_generate()
+    current_keyid = http_signing.install_identity_keyid(pub)
+    monkeypatch.setenv(http_signing.ENV_KEY_DIR, str(key_dir))
+
+    verifier_dir = home / ".config" / "bernstein" / "verifier"
+    verifier_dir.mkdir(parents=True)
+    verifier_dir.joinpath(filename).write_text(json.dumps({"keys": [{"kid": current_keyid}]}))
+
+    runner = CliRunner()
+    result = runner.invoke(govern_group, ["audit"])
+    assert result.exit_code == 0, result.output
+    assert "up to date" in result.output
+
+
+@pytest.mark.parametrize("filename", ["local.json", "server.json"])
+def test_audit_stale_keyid_exit_2(filename: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A verifier exported from one keystore is stale after rotation to another -> exit 2."""
+    home = _verifier_home(tmp_path, monkeypatch)
+    first_key_dir = tmp_path / "keys1"
+    _priv1, pub1 = AgentCardKeystore(first_key_dir).load_or_generate()
+    first_keyid = http_signing.install_identity_keyid(pub1)
+
+    verifier_dir = home / ".config" / "bernstein" / "verifier"
+    verifier_dir.mkdir(parents=True)
+    verifier_dir.joinpath(filename).write_text(json.dumps({"keys": [{"kid": first_keyid}]}))
+
+    second_key_dir = tmp_path / "keys2"
+    AgentCardKeystore(second_key_dir).load_or_generate()
+    monkeypatch.setenv(http_signing.ENV_KEY_DIR, str(second_key_dir))
+
+    runner = CliRunner()
+    result = runner.invoke(govern_group, ["audit"])
+    assert result.exit_code == 2, result.output
+    assert "stale" in result.output.lower() or "predates" in result.output.lower()
+
+
+@pytest.mark.parametrize("filename", ["local.json", "server.json"])
+def test_audit_unreadable_verifier_exit_1(filename: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unreadable verifier file is not measurable -> exit 1."""
+    home = _verifier_home(tmp_path, monkeypatch)
+    key_dir = tmp_path / "keys"
+    AgentCardKeystore(key_dir).load_or_generate()
+    monkeypatch.setenv(http_signing.ENV_KEY_DIR, str(key_dir))
+
+    verifier_dir = home / ".config" / "bernstein" / "verifier"
+    verifier_dir.mkdir(parents=True)
+    verifier_dir.joinpath(filename).write_text("not valid json")
+
+    runner = CliRunner()
+    result = runner.invoke(govern_group, ["audit"])
+    assert result.exit_code == 1, result.output
+    assert "unreadable" in result.output.lower()

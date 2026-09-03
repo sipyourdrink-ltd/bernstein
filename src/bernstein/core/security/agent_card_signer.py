@@ -29,7 +29,7 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 if TYPE_CHECKING:
     from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -42,12 +42,14 @@ __all__ = [
     "AGENT_CARD_V1_TYP",
     "JCS_CANONICALIZATION_VERSION",
     "AgentCardSignature",
+    "DetachedSigner",
     "canonicalize_jcs",
     "ed25519_pem_from_jwk",
     "ed25519_public_jwk",
     "generate_ed25519_keypair",
     "sign_agent_card",
     "sign_detached_jws_over_canonical",
+    "sign_detached_jws_with_signer",
     "verify_agent_card",
     "verify_detached_jws_over_canonical",
 ]
@@ -474,11 +476,53 @@ def sign_detached_jws_over_canonical(
     if not isinstance(private_key, Ed25519PrivateKey):
         msg = "sign_detached_jws_over_canonical requires an Ed25519 (EdDSA) private key"
         raise ValueError(msg)
+    return sign_detached_jws_with_signer(canonical_body, private_key, typ=typ, kid=kid)
+
+
+class DetachedSigner(Protocol):
+    """The signing half of :class:`bernstein.core.security.key_custody.KMSAdapter`.
+
+    Anything that returns a raw 64-byte Ed25519 signature over the bytes it is
+    handed satisfies this: a custody adapter (file, env, HSM) or a loaded
+    ``Ed25519PrivateKey``. Positional-only so both spellings of the parameter
+    name are accepted.
+    """
+
+    def sign(self, payload: bytes, /) -> bytes:
+        """Return a raw Ed25519 signature over *payload*."""
+        ...
+
+
+def sign_detached_jws_with_signer(
+    canonical_body: bytes,
+    signer: DetachedSigner,
+    *,
+    typ: str,
+    kid: str,
+) -> str:
+    """Sign pre-canonicalised body bytes as a detached JWS through a signer.
+
+    The framing is exactly that of :func:`sign_detached_jws_over_canonical` --
+    signing input ``base64url(header).base64url(canonical_body)``, empty payload
+    segment -- but the key never passes through this module: *signer* is the
+    custody boundary's :class:`~bernstein.core.security.key_custody.KMSAdapter`
+    (or anything with the same ``sign``), so a signing surface built on this
+    helper works unchanged when the operator moves the key to an HSM.
+
+    Args:
+        canonical_body: The JCS-canonical body bytes to attest to.
+        signer: Produces the raw Ed25519 signature over the signing input.
+        typ: The JWS ``typ`` header value binding the signature to its context.
+        kid: Key identifier stamped into the protected header.
+
+    Returns:
+        Compact detached JWS string ``base64url(header)..base64url(signature)``.
+    """
     header = {"alg": "EdDSA", "kid": kid, "typ": typ}
     header_b64 = _b64url(canonicalize_jcs(header))
     body_b64 = _b64url(canonical_body)
     signing_input = f"{header_b64}.{body_b64}".encode("ascii")
-    sig_b64 = _b64url(private_key.sign(signing_input))
+    sig_b64 = _b64url(signer.sign(signing_input))
     return f"{header_b64}..{sig_b64}"
 
 

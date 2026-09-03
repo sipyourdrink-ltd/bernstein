@@ -22,7 +22,7 @@ import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
@@ -30,9 +30,12 @@ from bernstein.core.approval.models import (
     ApprovalDecision,
     ApprovalNonceExpired,
     ApprovalNonceMismatch,
+    ApprovalPrincipal,
+    ApprovalPrincipalRequired,
     ApprovalTimeoutError,
     PendingApproval,
     ResolvedApproval,
+    internal_principal,
 )
 from bernstein.core.sanitize import sanitize_log
 
@@ -40,6 +43,23 @@ logger = logging.getLogger(__name__)
 
 #: Default time-to-live for a queued approval, in seconds.
 DEFAULT_TTL_SECONDS: int = 600
+
+#: Principal recorded when a queued approval times out with no decision. The
+#: rejection is the server's, not a person's, and the record says so rather
+#: than leaving the deciding party blank for a reader to guess at.
+TTL_EXPIRY_PRINCIPAL: ApprovalPrincipal = internal_principal("approval-queue/ttl-expiry")
+
+#: Principal recorded when :meth:`ApprovalQueue.evict_expired` sweeps a lapsed
+#: approval. Distinct from the wait-side expiry so the chain says which of the
+#: two server paths produced the rejection.
+SWEEPER_PRINCIPAL: ApprovalPrincipal = internal_principal("approval-queue/sweeper")
+
+#: Principal a resolution sentinel written before principals were captured
+#: rehydrates with. Such a record is genuinely unattributable, so it is loaded
+#: as synthetic rather than guessed at: the terminal state is preserved (an
+#: already-decided approval must not reopen) while the record says plainly that
+#: no principal was captured for it.
+LEGACY_RECORD_PRINCIPAL: ApprovalPrincipal = internal_principal("approval-queue/legacy-record")
 
 #: Relative directory used for on-disk persistence. All files live under
 #: ``<workdir>/.sdd/runtime/approvals/`` so a single workdir hosts one
@@ -208,9 +228,20 @@ class ApprovalQueue:
             approval_id = str(raw.get("approval_id", ""))
             if not approval_id:
                 continue
+            principal_raw: Any = raw.get("principal")
+            try:
+                principal = (
+                    ApprovalPrincipal.from_dict(cast("dict[str, Any]", principal_raw))
+                    if isinstance(principal_raw, dict)
+                    else LEGACY_RECORD_PRINCIPAL
+                )
+            except (ApprovalPrincipalRequired, ValueError) as exc:
+                logger.warning("Resolution %s has an unusable principal: %s", entry.name, exc)
+                principal = LEGACY_RECORD_PRINCIPAL
             self._resolved[approval_id] = ResolvedApproval(
                 approval_id=approval_id,
                 decision=decision,
+                principal=principal,
                 reason=str(raw.get("reason", "")),
                 resolved_at=float(raw.get("resolved_at", 0.0)),
             )
@@ -271,6 +302,7 @@ class ApprovalQueue:
         approval_id: str,
         decision: ApprovalDecision,
         *,
+        principal: ApprovalPrincipal | None,
         reason: str = "",
         nonce: bytes | str | None = None,
         source: str = "human",
@@ -286,6 +318,15 @@ class ApprovalQueue:
         Args:
             approval_id: Id of the pending approval to resolve.
             decision: Operator verdict.
+            principal: The party the decision is attributed to. Required:
+                ``source`` names the channel a decision arrived on, not who
+                made it, so without this the record of human oversight does
+                not exist and cannot be reconstructed afterwards. Annotated
+                as optional only so an explicit ``None`` from a dynamic call
+                site is refused here rather than accepted; there is no
+                default. Server-internal callers pass an explicit synthetic
+                principal (:data:`TTL_EXPIRY_PRINCIPAL`,
+                :data:`SWEEPER_PRINCIPAL`).
             reason: Optional free-form note included in the sentinel.
             nonce: Single-use token issued when the approval was queued.
                 Required for any human-channel reply path; only server-
@@ -300,6 +341,7 @@ class ApprovalQueue:
             The authoritative :class:`ResolvedApproval`.
 
         Raises:
+            ApprovalPrincipalRequired: When *principal* is ``None``.
             KeyError: When *approval_id* has neither a pending entry nor
                 an already-resolved record.
             ApprovalNonceMismatch: When *nonce* was supplied but does
@@ -308,6 +350,11 @@ class ApprovalQueue:
                 approval that has already been resolved or evicted, so
                 replaying the same nonce twice is rejected.
         """
+        if principal is None:
+            raise ApprovalPrincipalRequired(
+                f"resolving approval {approval_id!r} requires a principal; "
+                f"source={source!r} names a channel, not who decided",
+            )
         with self._lock:
             existing = self._resolved.get(approval_id)
             if existing is not None:
@@ -325,21 +372,17 @@ class ApprovalQueue:
                 supplied = _coerce_nonce(nonce)
                 if supplied is None or not _nonces_equal(supplied, pending.nonce):
                     raise ApprovalNonceMismatch(f"Approval {approval_id} nonce does not match; refusing to resolve.")
-            resolution = ResolvedApproval(approval_id=approval_id, decision=decision, reason=reason)
+            resolution = ResolvedApproval(
+                approval_id=approval_id,
+                decision=decision,
+                principal=principal,
+                reason=reason,
+            )
             self._resolved[approval_id] = resolution
             event = self._events.setdefault(approval_id, asyncio.Event())
             self._pending.pop(approval_id, None)
 
-        payload = json.dumps(
-            {
-                "approval_id": resolution.approval_id,
-                "decision": resolution.decision.value,
-                "reason": resolution.reason,
-                "resolved_at": resolution.resolved_at,
-            },
-            indent=2,
-            sort_keys=True,
-        )
+        payload = json.dumps(resolution.to_dict(), indent=2, sort_keys=True)
         _atomic_write(self._resolved_path(approval_id), payload)
         # Remove the pending sentinel so list_pending() on re-open is clean.
         try:
@@ -352,6 +395,7 @@ class ApprovalQueue:
             self._audit_dir,
             approval=pending,
             decision=decision,
+            principal=principal,
             reason=reason,
             source=source,
             channel=channel,
@@ -423,7 +467,12 @@ class ApprovalQueue:
             # Already-resolved in a race is fine - fall through and
             # return whichever resolution landed first.
             with contextlib.suppress(KeyError):
-                self.resolve(approval_id, ApprovalDecision.REJECT, reason=reason)
+                self.resolve(
+                    approval_id,
+                    ApprovalDecision.REJECT,
+                    principal=TTL_EXPIRY_PRINCIPAL,
+                    reason=reason,
+                )
             resolved = self.get_resolution(approval_id)
             if resolved is not None and resolved.decision is not ApprovalDecision.REJECT:
                 return resolved
@@ -455,6 +504,7 @@ class ApprovalQueue:
                 self.resolve(
                     approval_id,
                     ApprovalDecision.REJECT,
+                    principal=SWEEPER_PRINCIPAL,
                     reason="expired",
                 )
             except KeyError:
@@ -586,6 +636,7 @@ def _record_human_approval_decision(
     *,
     approval: PendingApproval,
     decision: ApprovalDecision,
+    principal: ApprovalPrincipal,
     reason: str = "",
     source: str = "human",
     channel: str | None = None,
@@ -612,6 +663,13 @@ def _record_human_approval_decision(
         "tool": approval.tool_name,
         "reason": reason,
         "decision_source": source,
+        # The principal is the attribution; ``decision_source`` is only the
+        # surface it arrived on. Both are recorded because a channel that
+        # cannot name a person is exactly the gap this event closes.
+        "principal": principal.identifier,
+        "principal_auth_method": principal.auth_method,
+        "principal_kind": principal.kind.value,
+        "principal_grant": principal.grant,
         # An unnamed surface is recorded as unknown rather than defaulted to a
         # plausible one: an audit entry that guesses where a decision came from
         # is worse than one that says it does not know.
@@ -625,7 +683,7 @@ def _record_human_approval_decision(
         log = AuditLog(audit_dir=audit_dir)
         log.log(
             event_type="human_approval_decision",
-            actor=source or "human",
+            actor=principal.identifier,
             resource_type="tool_call",
             resource_id=approval.tool_name,
             details=details,
@@ -633,7 +691,7 @@ def _record_human_approval_decision(
         if decision is ApprovalDecision.ALWAYS:
             log.log(
                 event_type="always_allow_promotion",
-                actor=source or "human",
+                actor=principal.identifier,
                 resource_type="always_allow_rule",
                 resource_id=approval.tool_name,
                 details={
@@ -641,7 +699,8 @@ def _record_human_approval_decision(
                     "tool": approval.tool_name,
                     "session_id": approval.session_id,
                     "agent_role": approval.agent_role,
-                    "promoted_by": source,
+                    "promoted_by": principal.identifier,
+                    "promoted_via": source,
                 },
             )
     except Exception as exc:  # pragma: no cover - filesystem/permission error
