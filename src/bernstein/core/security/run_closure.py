@@ -14,6 +14,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, cast
 
+from bernstein.core.observability.otlp_ingest_receipt import (
+    ATTR_COVERAGE,
+    ATTR_COVERAGE_DETAIL,
+    ATTR_INGEST_RECEIPT,
+    ATTR_SOURCE_KIND,
+    ATTR_SOURCE_PROFILE,
+)
 from bernstein.core.security.audit import AuditEvent
 from bernstein.core.security.audit_chain import (
     EVENT_RUN_CLOSURE,
@@ -65,6 +72,122 @@ class RunClosureProjection:
     def complete_range(self) -> bool:
         """Whether the walked range ends at a still-valid closure marker."""
         return self.status is RunClosureStatus.CLOSED
+
+
+class CoverageStatementError(RuntimeError):
+    """Raised when a range's coverage gap cannot be honestly stated.
+
+    Raised rather than silently dropping the offending source: a receipt
+    that omits a known coverage gap would report an unmonitored surface as
+    a clean one (#4968).
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class CoverageSource:
+    """One reporting adapter's declared coverage over its portion of a range.
+
+    ``profile_name`` and ``source_kind`` identify the adapter that reported
+    the events (see ``bernstein.core.observability.ingest_profiles``);
+    ``coverage`` and ``coverage_detail`` are the adapter's own declaration of
+    what it does -- and does not -- observe, copied verbatim from the chain
+    event rather than re-derived here.
+    """
+
+    profile_name: str
+    source_kind: str
+    coverage: str
+    coverage_detail: str
+    reported_count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "profile_name": self.profile_name,
+            "source_kind": self.source_kind,
+            "coverage": self.coverage,
+            "coverage_detail": self.coverage_detail,
+            "reported_count": self.reported_count,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CoverageStatement:
+    """The executed/reported split for one authenticated event range.
+
+    Every event in the range was either executed under Bernstein's own
+    scheduler (``executed_count``) or reported to us through the ingest
+    boundary (``reported_count``, #4962). ``sources`` names, for every
+    distinct adapter that reported into the range, the coverage gap that
+    adapter declared -- so a verifier reads the gap explicitly rather than
+    inferring it from a count that does not add up.
+    """
+
+    executed_count: int
+    reported_count: int
+    sources: tuple[CoverageSource, ...] = ()
+
+    @property
+    def has_reported_activity(self) -> bool:
+        return self.reported_count > 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "executed_count": self.executed_count,
+            "reported_count": self.reported_count,
+            "sources": [source.to_dict() for source in self.sources],
+        }
+
+
+def derive_coverage_statement(events: Sequence[AuditEvent | Mapping[str, Any]]) -> CoverageStatement:
+    """Split an authenticated event range into executed vs. reported portions.
+
+    An event is "reported" when its details carry the ingest boundary's
+    ``ATTR_INGEST_RECEIPT`` marker (set by every foreign span the ingest
+    boundary anchors, #4962); every other event in the range was produced by
+    Bernstein's own scheduler and counts as "executed". Reported events are
+    grouped by the ``(profile_name, source_kind)`` pair that reported them,
+    since that pair is the adapter identity the coverage declaration binds to.
+
+    Raises:
+        CoverageStatementError: A reported event carries no coverage detail --
+            an adapter or a malformed record declared nothing about what it
+            cannot observe, so the gap cannot be honestly named. Refusing to
+            summarize such a range is the fail-closed half of this function;
+            callers must not catch this to paper over it.
+    """
+    executed = 0
+    buckets: dict[tuple[str, str], dict[str, Any]] = {}
+    for event in events:
+        details = _details(event)
+        if details.get(ATTR_INGEST_RECEIPT) is not True:
+            executed += 1
+            continue
+        profile_name = str(details.get(ATTR_SOURCE_PROFILE, "")).strip()
+        source_kind = str(details.get(ATTR_SOURCE_KIND, "")).strip()
+        coverage = str(details.get(ATTR_COVERAGE, "")).strip()
+        coverage_detail = str(details.get(ATTR_COVERAGE_DETAIL, "")).strip()
+        if not coverage_detail:
+            raise CoverageStatementError(
+                f"reported event from profile {profile_name!r} carries no coverage detail; "
+                "refusing to issue a coverage statement that would omit a known gap"
+            )
+        bucket = buckets.setdefault(
+            (profile_name, source_kind),
+            {"coverage": coverage, "coverage_detail": coverage_detail, "count": 0},
+        )
+        bucket["count"] += 1
+    sources = tuple(
+        CoverageSource(
+            profile_name=profile_name,
+            source_kind=source_kind,
+            coverage=str(bucket["coverage"]),
+            coverage_detail=str(bucket["coverage_detail"]),
+            reported_count=int(bucket["count"]),
+        )
+        for (profile_name, source_kind), bucket in sorted(buckets.items())
+    )
+    reported = sum(source.reported_count for source in sources)
+    return CoverageStatement(executed_count=executed, reported_count=reported, sources=sources)
 
 
 def _details(event: AuditEvent | Mapping[str, Any]) -> Mapping[str, Any]:
@@ -270,11 +393,15 @@ def project_run_closure(chain: AuditChainStore, run_id: str) -> RunClosureProjec
 
 
 __all__ = [
+    "CoverageSource",
+    "CoverageStatement",
+    "CoverageStatementError",
     "RunClosureError",
     "RunClosureOutcome",
     "RunClosureProjection",
     "RunClosureStatus",
     "close_run",
+    "derive_coverage_statement",
     "derive_run_closure",
     "project_run_closure",
 ]

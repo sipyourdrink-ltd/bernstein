@@ -1211,6 +1211,50 @@ def record_dispatch_knob_selection(
     )
 
 
+def read_sealed_journal_head(*, run_id: str, sdd_dir: Path | str) -> str | None:
+    """Look up the run's journal-head seal from the lineage spine, if any.
+
+    The read counterpart of :func:`seal_journal_into_spine`: a finalized run
+    carries its head in a spine entry's ``step_id``, and this recovers it.
+
+    Returns ``None`` - "no seal to check against", never an error - when the
+    run has no spine, when the spine's HMAC chain does not verify (so nothing
+    it carries can be trusted), or when the audit key needed to check that
+    chain is not configured. Callers distinguish that from a seal that
+    disagrees with the artifacts on disk, which is a loud mismatch.
+
+    Args:
+        run_id: The run whose seal to read.
+        sdd_dir: The ``.sdd`` directory holding ``lineage/<run_id>/``.
+
+    Returns:
+        The sealed head hash, or ``None`` when there is no trustworthy seal.
+    """
+    from pathlib import Path as _Path
+
+    from bernstein.core.lineage.spine import JOURNAL_SEAL_STEP_PREFIX, LineageSpine, SpineStatus
+    from bernstein.core.security.audit import AuditKeyMissingError, load_audit_key
+
+    lineage_root = _Path(sdd_dir) / "lineage"
+    spine_path = lineage_root / run_id / "spine.jsonl"
+    if not spine_path.exists():
+        return None
+    try:
+        hmac_key = load_audit_key()
+    except AuditKeyMissingError:
+        return None
+
+    spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=hmac_key)
+    if spine.verify().status is SpineStatus.TAMPERED:
+        return None
+
+    head = ""
+    for entry in spine.iter_entries():
+        if entry.step_id.startswith(JOURNAL_SEAL_STEP_PREFIX):
+            head = entry.step_id.removeprefix(JOURNAL_SEAL_STEP_PREFIX)
+    return head or None
+
+
 def seal_journal_into_spine(
     journal: EventJournal,
     *,
@@ -1322,6 +1366,7 @@ __all__ = [
     "compute_event_hash",
     "contained_run_journal",
     "load_events",
+    "read_sealed_journal_head",
     "rebuild_state",
     "record_dispatch_knob_selection",
     "seal_journal_into_spine",

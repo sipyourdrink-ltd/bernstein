@@ -288,6 +288,25 @@ The build side is strict too: an unparseable journal or spine row refuses the
 whole build with the physical line named - a receipt is never signed over the
 parseable subset of a corrupted store.
 
+**What the run could actually do.** At run start, before the first agent is
+spawned, the orchestrator appends one `loaded_extension_set` row naming every
+skill and plugin resolution *produced*: its source, resolved version, the
+origin the bytes came from, and a SHA-256 digest of those bytes. A declared
+entry that failed to import is present with `loaded: false` and the error
+text, not absent - `bernstein skills` and `bernstein plugins` report the
+declaration, and the declaration is the question nobody needs answered months
+later. Origins are recorded as resolved, so a pack symlinked into
+`templates/skills` records the path it really resolves to rather than the
+declared root. Deciding whether such an origin is acceptable is admission's
+job, not the record's.
+
+The receipt binds that set the same way it binds every other head: the
+verifier recomputes the set digest from the embedded rows and only then checks
+the signature, so `extension_set_digest` in the subject block names a set that
+is re-derivable rather than asserted. Edit one recorded entry and the receipt
+stops verifying. A run that recorded no such row binds no field, so receipts
+built before this row existed keep verifying unchanged.
+
 Exit codes for `bernstein verify receipt`:
 
 | Exit code | Tier / condition |
