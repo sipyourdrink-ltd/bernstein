@@ -1,6 +1,11 @@
 """bernstein-bench: runnable, reproducibility-gated evaluation harness."""
 
 from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult
+from bernstein.eval.bench.ci import (
+    BenchScorecard,
+    generate_bench_sarif,
+    validate_sarif_log,
+)
 from bernstein.eval.bench.golden_suite import build_golden_suite_v1
 from bernstein.eval.bench.leaderboard import Leaderboard, LeaderboardEntry
 from bernstein.eval.bench.reliability import (
@@ -36,6 +41,7 @@ from bernstein.eval.bench.verifier import (
 
 __all__ = [
     "BenchRunner",
+    "BenchScorecard",
     "BenchSuite",
     "BenchTask",
     "BenchVerifier",
@@ -63,6 +69,8 @@ __all__ = [
     "coordination_hash",
     "coordination_projection",
     "first_divergent_coordination_field",
+    "generate_bench_sarif",
     "reliability_check",
     "validate_run_receipt",
+    "validate_sarif_log",
 ]

@@ -68,6 +68,7 @@ class BenchSuite:
 
     version: str
     tasks: list[BenchTask] = field(default_factory=list)
+    controls: list[str] = field(default_factory=list)
 
     # Computed lazily and cached.
     _suite_hash: str | None = field(default=None, init=False, repr=False, compare=False)
@@ -80,8 +81,11 @@ class BenchSuite:
 
     def _compute_hash(self) -> str:
         task_hashes = [t.content_hash() for t in self.tasks]
+        payload_dict: dict[str, Any] = {"version": self.version, "task_hashes": task_hashes}
+        if self.controls:
+            payload_dict["controls"] = sorted(self.controls)
         payload = json.dumps(
-            {"version": self.version, "task_hashes": task_hashes},
+            payload_dict,
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -92,7 +96,7 @@ class BenchSuite:
     # ------------------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "version": self.version,
             "suite_hash": self.suite_hash,
             "tasks": [
@@ -107,6 +111,9 @@ class BenchSuite:
                 for t in self.tasks
             ],
         }
+        if self.controls:
+            d["controls"] = self.controls
+        return d
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -118,6 +125,10 @@ class BenchSuite:
     @classmethod
     def load(cls, path: Path) -> BenchSuite:
         raw = json.loads(path.read_text(encoding="utf-8"))
+        return cls.from_dict(raw)
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> BenchSuite:
         tasks = [
             BenchTask(
                 id=t["id"],
@@ -128,9 +139,12 @@ class BenchSuite:
             )
             for t in raw["tasks"]
         ]
-        suite = cls(version=raw["version"], tasks=tasks)
-        # Integrity check: stored hash must match recomputed hash.
-        if suite.suite_hash != raw["suite_hash"]:
+        suite = cls(
+            version=raw["version"],
+            tasks=tasks,
+            controls=raw.get("controls", []),
+        )
+        if "suite_hash" in raw and suite.suite_hash != raw["suite_hash"]:
             raise ValueError(
                 f"Suite hash mismatch: stored {raw['suite_hash']!r} "
                 f"!= recomputed {suite.suite_hash!r}. "

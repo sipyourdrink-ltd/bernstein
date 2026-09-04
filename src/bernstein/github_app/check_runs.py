@@ -31,6 +31,8 @@ logger = logging.getLogger(__name__)
 _CHECK_RUN_NAME = "bernstein / agent verification"
 # Check run name for volunteer receipt verification
 _VERIFICATION_CHECK_RUN_NAME = "bernstein / volunteer receipt verification"
+# Check run name for benchmark evaluation scorecard
+_BENCH_CHECK_RUN_NAME = "bernstein / bench scorecard"
 
 
 @dataclass
@@ -232,6 +234,102 @@ class CheckRunClient:
                 "title": f"Volunteer receipt verification: {conclusion}",
                 "summary": summary,
                 "details": details,
+            },
+        }
+        if details_url:
+            body["details_url"] = details_url
+
+        result = self._api_patch(f"/repos/{self._repo}/check-runs/{check_run_id}", body)
+        if result is None:
+            return None
+
+        return ComparisonCheckRunResult(
+            check_run_id=result.check_run_id,
+            html_url=result.html_url,
+        )
+
+    def create_bench_check_run(
+        self,
+        head_sha: str,
+        summary: str,
+        scorecard_md: str = "",
+        conclusion: str = "neutral",
+        details_url: str = "",
+    ) -> ComparisonCheckRunResult | None:
+        """Create a check run for a benchmark evaluation scorecard.
+
+        Args:
+            head_sha: Git SHA of the commit being checked.
+            summary: Short summary text shown in the GitHub UI.
+            scorecard_md: Markdown scorecard table shown in the check run details.
+            conclusion: One of ``"success"``, ``"failure"``, ``"neutral"``,
+                ``"cancelled"``, ``"timed_out"``, ``"action_required"``.
+            details_url: Optional URL linking back to the Bernstein dashboard.
+
+        Returns:
+            ``ComparisonCheckRunResult`` on success, ``None`` on error.
+        """
+        if not self._configured:
+            logger.debug("CheckRunClient not configured - skipping bench check run create")
+            return None
+
+        body: dict[str, Any] = {
+            "name": _BENCH_CHECK_RUN_NAME,
+            "head_sha": head_sha,
+            "status": "completed",
+            "conclusion": conclusion,
+            "completed_at": _iso_now(),
+            "output": {
+                "title": f"Bench scorecard: {conclusion}",
+                "summary": summary,
+                "text": scorecard_md,
+            },
+        }
+        if details_url:
+            body["details_url"] = details_url
+
+        result = self._api_post(f"/repos/{self._repo}/check-runs", body)
+        if result is None:
+            return None
+
+        return ComparisonCheckRunResult(
+            check_run_id=result.check_run_id,
+            html_url=result.html_url,
+        )
+
+    def update_bench_check_run(
+        self,
+        check_run_id: int,
+        summary: str,
+        scorecard_md: str = "",
+        conclusion: str = "neutral",
+        details_url: str = "",
+    ) -> ComparisonCheckRunResult | None:
+        """Update an existing benchmark evaluation scorecard check run.
+
+        Args:
+            check_run_id: GitHub check run ID.
+            summary: Short summary text shown in the GitHub UI.
+            scorecard_md: Markdown scorecard table shown in the check run details.
+            conclusion: One of ``"success"``, ``"failure"``, ``"neutral"``,
+                ``"cancelled"``, ``"timed_out"``, ``"action_required"``.
+            details_url: Optional URL linking back to the Bernstein dashboard.
+
+        Returns:
+            ``ComparisonCheckRunResult`` on success, ``None`` on error.
+        """
+        if not self._configured:
+            logger.debug("CheckRunClient not configured - skipping bench check run update")
+            return None
+
+        body: dict[str, Any] = {
+            "status": "completed",
+            "conclusion": conclusion,
+            "completed_at": _iso_now(),
+            "output": {
+                "title": f"Bench scorecard: {conclusion}",
+                "summary": summary,
+                "text": scorecard_md,
             },
         }
         if details_url:

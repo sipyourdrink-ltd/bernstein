@@ -96,7 +96,53 @@ def bench_group() -> None:
         "pass^k reliability receipt instead of a submission bundle."
     ),
 )
-def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliability_k: int | None) -> None:
+@click.option(
+    "--ci",
+    is_flag=True,
+    default=False,
+    help="Enable CI mode: generate SARIF output, compare against baseline bundle, and post check run.",
+)
+@click.option(
+    "--sarif-out",
+    default="bench.sarif",
+    show_default=True,
+    help="Path to write SARIF 2.1.0 output when running with --ci.",
+)
+@click.option(
+    "--baseline",
+    default=None,
+    help="Path to baseline submission bundle JSON file for regression comparison.",
+)
+@click.option(
+    "--threshold",
+    type=float,
+    default=0.0,
+    show_default=True,
+    help="Allowed pass rate regression threshold (0.0 means any regression fails).",
+)
+@click.option(
+    "--repo",
+    default="",
+    help="GitHub repository slug (owner/repo) for posting check runs.",
+)
+@click.option(
+    "--head-sha",
+    default="",
+    help="Commit SHA for posting check runs.",
+)
+def bench_run(
+    suite: str,
+    out: str,
+    scheduler: str,
+    stub_signer: bool,
+    reliability_k: int | None,
+    ci: bool,
+    sarif_out: str,
+    baseline: str | None,
+    threshold: float,
+    repo: str,
+    head_sha: str,
+) -> None:
     """Execute a suite and emit a signed submission bundle.
 
     SUITE is a built-in suite name (e.g. golden-v1) or a path to a .json
@@ -106,7 +152,13 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
     config held byte-identical across attempts, and the output is a signed
     reliability receipt reporting pass@1 (any attempt passed) and pass^k
     (all K attempts passed — the headline floor).
+
+    With --ci, generates SARIF 2.1.0 output with rule IDs mapped to compliance
+    control IDs, computes pass rate scorecard delta against baseline, and posts
+    a GitHub check run.
     """
+    import os
+
     from bernstein.eval.bench.runner import BenchRunner, MockReplayAdapter
     from bernstein.eval.bench.signer import AgentCardSigner, StubSigner
 
@@ -141,6 +193,57 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
     click.echo(f"Bundle hash : {bundle.bundle_hash()}")
     click.echo(f"Signed by   : {bundle.signer_fingerprint or '(unsigned)'}")
     click.echo(f"\nBundle written to: {out_path}")
+
+    if ci:
+        from bernstein.eval.bench.bundle import SubmissionBundle
+        from bernstein.eval.bench.ci import BenchScorecard, generate_bench_sarif
+        from bernstein.github_app.check_runs import CheckRunClient
+
+        sarif_file = Path(sarif_out)
+        generate_bench_sarif(suite_obj, bundle, sarif_path=sarif_file)
+        click.echo(f"SARIF written to : {sarif_file}")
+
+        baseline_bundle = None
+        if baseline:
+            base_path = Path(baseline)
+            if base_path.exists():
+                baseline_bundle = SubmissionBundle.load(base_path)
+            else:
+                click.echo(f"Warning: Baseline bundle {baseline} not found.")
+
+        scorecard = BenchScorecard.compute(
+            current_bundle=bundle,
+            baseline_bundle=baseline_bundle,
+            suite=suite_obj,
+            adapter=adapter,
+            threshold=threshold,
+        )
+
+        click.echo("\n" + scorecard.to_markdown() + "\n")
+
+        target_repo = repo or os.getenv("GITHUB_REPOSITORY", "")
+        target_sha = head_sha or os.getenv("GITHUB_SHA", "")
+        if not target_sha:
+            try:
+                import subprocess
+
+                res = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5)
+                if res.returncode == 0:
+                    target_sha = res.stdout.strip()
+            except Exception:
+                pass
+
+        if target_repo and target_sha:
+            client = CheckRunClient(repo=target_repo)
+            client.create_bench_check_run(
+                head_sha=target_sha,
+                summary=scorecard.summary,
+                scorecard_md=scorecard.to_markdown(),
+                conclusion=scorecard.conclusion,
+            )
+
+        if scorecard.conclusion == "failure":
+            sys.exit(1)
 
 
 # ---------------------------------------------------------------------------

@@ -142,6 +142,37 @@ Full details: [reliability.md](reliability.md).
 
 ---
 
+## CI surface and scorecard delta (`--ci`)
+
+In automated workflows (e.g. GitHub Actions pull requests), runs can emit
+native GitHub check runs, SARIF 2.1.0 findings for code scanning, and
+scorecard deltas against verified baseline bundles:
+
+```bash
+# Run benchmark in CI mode comparing against the last signed baseline
+bernstein bench run golden-v1 --ci --baseline path/to/baseline-bundle.json --sarif-out bench.sarif
+```
+
+### SARIF findings
+Every failed task generates a SARIF 2.1.0 result:
+- **Rule ID**: Mapped to the suite's compliance control IDs (e.g. `CTRL-AUDIT-TRAIL`, `ASI02`).
+- **Level**: `error`.
+- **Message**: Expected vs observed pass/fail and task score.
+- **Location**: Points to the task definition / fixture URI.
+
+### Baseline comparison invariants
+1. **Verifiable baseline**: The baseline bundle is verified offline with `BenchVerifier` and must have a valid signature.
+2. **Never green on unverifiable baseline**: A missing, tampered, or unsigned baseline yields a `neutral` conclusion with an explanatory note, never `success`.
+3. **Regression gating**: If the pass rate drops below `baseline_pass_rate - threshold` (default threshold `0.0`), the run fails with a non-zero exit code and `failure` check run conclusion.
+
+Example scorecard table rendered in check runs and PR summaries:
+
+| Suite | Pass Rate | Baseline Pass Rate | Delta | Bundle Hash | Status |
+|---|---:|---:|---:|---|---|
+| golden-v1 | 100.0% | 100.0% | +0.0% | `3f9a2c1d…` | PASS |
+
+---
+
 ## Suite format
 
 Suites are content-addressed JSON files:
