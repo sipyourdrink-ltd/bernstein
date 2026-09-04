@@ -28,6 +28,7 @@ from bernstein.adapters.registry import adapter_name_for_provider, get_adapter
 from bernstein.adapters.skills_injector import inject_skills
 from bernstein.agents.registry import AgentRegistry, get_registry
 from bernstein.bridges.base import AgentState, AgentStatus, BridgeError, RuntimeBridge, SpawnRequest
+from bernstein.core import defaults as _defaults
 from bernstein.core.agents import project_context as _project_context
 from bernstein.core.agents.adapter_health import AdapterHealthMonitor
 from bernstein.core.agents.attachment_dispatch import (
@@ -1653,6 +1654,10 @@ class AgentSpawner:
         # understands - see ``_coerce_model_for_non_claude_adapter``.
         self._default_model = default_model
         self._resource_limits = resource_limits
+        # Bare spawners (for example worker-only entry points) start from the
+        # current tuning-backed orchestrator value. Orchestrator owners wire
+        # their concrete config after construction via set_max_agent_runtime_s.
+        self._max_agent_runtime_s = int(_defaults.ORCHESTRATOR.max_agent_runtime_s)
         self._adapter_cache: dict[str, CLIAdapter] = {}
         self._templates_dir = templates_dir
         self._workdir = workdir
@@ -2095,6 +2100,10 @@ class AgentSpawner:
     def set_quality_gate_config(self, config: Any) -> None:
         """Wire in the orchestrator's :class:`QualityGatesConfig` (#4393)."""
         self._quality_gate_config = config
+
+    def set_max_agent_runtime_s(self, max_agent_runtime_s: int) -> None:
+        """Wire in the orchestrator's upward-only runtime floor."""
+        self._max_agent_runtime_s = int(max_agent_runtime_s)
 
     def set_run_id(self, run_id: str) -> None:
         """Wire in the orchestrator's run id.
@@ -3348,7 +3357,7 @@ class AgentSpawner:
                     command=[],
                     prompt=prompt,
                     workdir=str(spawn_cwd),
-                    timeout_seconds=session.timeout_s or 1800,
+                    timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
                     log_path=str(preferred_log_path),
                     role=session.role,
                     model=model_config.model,
@@ -3424,8 +3433,7 @@ class AgentSpawner:
                 else:
                     os.environ[_k] = _prev
 
-    @staticmethod
-    def _resolve_spawn_timeout(tasks: list[Task]) -> int:
+    def _resolve_spawn_timeout(self, tasks: list[Task]) -> int:
         """Resolve the wall-clock timeout bucket for a task batch (#4571).
 
         Delegates to ``_batch_timeout_seconds`` so the value armed on the
@@ -3434,7 +3442,7 @@ class AgentSpawner:
         """
         from bernstein.core.tasks.task_lifecycle import _batch_timeout_seconds
 
-        return _batch_timeout_seconds(tasks)
+        return _batch_timeout_seconds(tasks, self._max_agent_runtime_s)
 
     def _apply_provider_availability(
         self,
@@ -5101,6 +5109,7 @@ class AgentSpawner:
                                 model_config=model_config,
                                 session_id=session_id,
                                 mcp_config=attempt_mcp,
+                                timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
                             )
                             result = SpawnResult(pid=fake_pid, log_path=actual_log_path)
                         elif self._sandbox_session_routing_active():
@@ -5706,6 +5715,7 @@ class AgentSpawner:
             task_ids=[t.id for t in tasks],
             model_config=model_config,
             status="starting",
+            timeout_s=self._resolve_spawn_timeout(tasks),
             context_receipt=receipt.to_dict()["entries"],
             # Endpoint identity fields (issue #4908) - resume resolves the
             # same way the primary spawn path does: role policy overrides
@@ -5946,6 +5956,7 @@ class AgentSpawner:
                 model_config=model_config,
                 session_id=session_id,
                 mcp_config=mcp_config,
+                timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
                 task_scope=task_scope,
                 system_addendum=system_addendum,
             )
@@ -6066,6 +6077,7 @@ class AgentSpawner:
                 model_config=model_config,
                 session_id=session_id,
                 mcp_config=mcp_config,
+                timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
                 task_scope=task_scope,
                 system_addendum=system_addendum,
             )
@@ -6190,6 +6202,7 @@ class AgentSpawner:
                     model_config=model_config,
                     session_id=session_id,
                     mcp_config=mcp_config,
+                    timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
                     system_addendum=system_addendum,
                 )
             owned = True

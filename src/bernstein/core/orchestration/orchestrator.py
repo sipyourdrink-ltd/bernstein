@@ -882,6 +882,8 @@ class Orchestrator:
             self._spawner.set_quality_gate_config(self._quality_gate_config)
         if hasattr(self._spawner, "set_run_id"):
             self._spawner.set_run_id(self._run_id)
+        if hasattr(self._spawner, "set_max_agent_runtime_s"):
+            self._spawner.set_max_agent_runtime_s(config.max_agent_runtime_s)
 
         # Convergence guard: blocks spawn waves when merge queue, active
         # agent count, error rate, or spawn rate exceed safe thresholds.
