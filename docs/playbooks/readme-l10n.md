@@ -68,7 +68,9 @@ Adding a language is a data change, not a code change:
    ```
 
    The owner entry is the handoff: it makes future drift reports reach
-   the person responsible for updating that language.
+   the person responsible for updating that language. After changing it,
+   run the `sync` and `verify` commands from step 4 to confirm the adopted
+   translation is current.
 
 A binding line for a section that does not exist in `README.md`
 makes `sync` warn; a translated section without a binding line makes
