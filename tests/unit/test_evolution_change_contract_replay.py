@@ -1,4 +1,4 @@
-"""Tests for change_contract_replay and ChangeContract/ReplayVerdict types.
+"""Tests for change_contract_replay and ReplayContract/ReplayVerdict types.
 
 Covers:
     - ThinCorpusError / ReceiptMismatch exceptions
@@ -42,9 +42,9 @@ from bernstein.evolution.change_contract_replay import (
     write_verdict_receipt,
 )
 from bernstein.evolution.types import (
-    ChangeContract,
     ContractInvariant,
     PredictedDecisionChange,
+    ReplayContract,
     ReplayServiceResult,
     ReplayVerdict,
     RunVerdict,
@@ -132,7 +132,7 @@ def test_register_invariant_overwrites_existing() -> None:
 
 
 def test_contract_canonical_bytes_deterministic() -> None:
-    contract = ChangeContract(
+    contract = ReplayContract(
         target_fingerprint="sha256:deadbeef",
         predicted_changes=(
             PredictedDecisionChange(
@@ -155,7 +155,7 @@ def test_contract_canonical_bytes_deterministic() -> None:
 
 
 def test_contract_fingerprint_stable_hex() -> None:
-    contract = ChangeContract(
+    contract = ReplayContract(
         target_fingerprint="sha256:deadbeef",
         predicted_changes=(),
         invariants=(),
@@ -167,12 +167,12 @@ def test_contract_fingerprint_stable_hex() -> None:
 
 
 def test_contract_fingerprint_differs_for_different_contracts() -> None:
-    c1 = ChangeContract(
+    c1 = ReplayContract(
         target_fingerprint="sha256:aaaa",
         predicted_changes=(),
         invariants=(),
     )
-    c2 = ChangeContract(
+    c2 = ReplayContract(
         target_fingerprint="sha256:bbbb",
         predicted_changes=(),
         invariants=(),
@@ -181,7 +181,7 @@ def test_contract_fingerprint_differs_for_different_contracts() -> None:
 
 
 def test_contract_from_canonical_roundtrip() -> None:
-    original = ChangeContract(
+    original = ReplayContract(
         target_fingerprint="sha256:c0ffee",
         predicted_changes=(
             PredictedDecisionChange(
@@ -326,7 +326,7 @@ def _make_decision(
 
 def _run_verdict(
     decisions: list[GovernanceDecision],
-    contract: ChangeContract,
+    contract: ReplayContract,
     run_id: str = "run-1",
 ) -> RunVerdict:
     import tempfile
@@ -342,7 +342,7 @@ def _run_verdict(
 
 def test_verdict_unchanged_no_decisions() -> None:
     PREDICATE_REGISTRY.clear()
-    contract = ChangeContract(
+    contract = ReplayContract(
         target_fingerprint="sha256:x",
         predicted_changes=(),
         invariants=(),
@@ -353,7 +353,7 @@ def test_verdict_unchanged_no_decisions() -> None:
 
 def test_verdict_changed_as_predicted() -> None:
     PREDICATE_REGISTRY.clear()
-    contract = ChangeContract(
+    contract = ReplayContract(
         target_fingerprint="sha256:x",
         predicted_changes=(PredictedDecisionChange(subject="role:backend", action="budget", expected_verdict="allow"),),
         invariants=(),
@@ -367,7 +367,7 @@ def test_verdict_changed_as_predicted() -> None:
 
 def test_verdict_changed_unexpectedly_unpredicted_decision() -> None:
     PREDICATE_REGISTRY.clear()
-    contract = ChangeContract(
+    contract = ReplayContract(
         target_fingerprint="sha256:x",
         predicted_changes=(),  # no predictions
         invariants=(),
@@ -381,7 +381,7 @@ def test_verdict_changed_unexpectedly_unpredicted_decision() -> None:
 
 def test_verdict_changed_unexpectedly_wrong_verdict() -> None:
     PREDICATE_REGISTRY.clear()
-    contract = ChangeContract(
+    contract = ReplayContract(
         target_fingerprint="sha256:x",
         predicted_changes=(PredictedDecisionChange(subject="role:backend", action="budget", expected_verdict="allow"),),
         invariants=(),
@@ -396,7 +396,7 @@ def test_verdict_changed_unexpectedly_wrong_verdict() -> None:
 
 def test_verdict_changed_unexpectedly_predicted_missing() -> None:
     PREDICATE_REGISTRY.clear()
-    contract = ChangeContract(
+    contract = ReplayContract(
         target_fingerprint="sha256:x",
         predicted_changes=(PredictedDecisionChange(subject="role:backend", action="budget", expected_verdict="allow"),),
         invariants=(),
@@ -410,7 +410,7 @@ def test_verdict_invariant_violated() -> None:
     PREDICATE_REGISTRY.clear()
     pred_hash = "invariant-hash-violated"
     PREDICATE_REGISTRY[pred_hash] = lambda decisions: False  # fails
-    contract = ChangeContract(
+    contract = ReplayContract(
         target_fingerprint="sha256:x",
         predicted_changes=(),
         invariants=(ContractInvariant(name="always-true", predicate_hash=pred_hash),),
@@ -423,7 +423,7 @@ def test_verdict_invariant_violated() -> None:
 
 def test_verdict_inconclusive_unregistered_predicate() -> None:
     PREDICATE_REGISTRY.clear()
-    contract = ChangeContract(
+    contract = ReplayContract(
         target_fingerprint="sha256:x",
         predicted_changes=(),
         invariants=(ContractInvariant(name="unknown-invariant", predicate_hash="not-registered-hash"),),
@@ -438,7 +438,7 @@ def test_verdict_inconclusive_predicate_raises() -> None:
     PREDICATE_REGISTRY.clear()
     pred_hash = "raises-hash"
     PREDICATE_REGISTRY[pred_hash] = lambda decisions: (_ for _ in ()).throw(RuntimeError("boom"))
-    contract = ChangeContract(
+    contract = ReplayContract(
         target_fingerprint="sha256:x",
         predicted_changes=(),
         invariants=(ContractInvariant(name="boom-invariant", predicate_hash=pred_hash),),
@@ -459,7 +459,7 @@ def test_replay_contract_aggregates_invariant_violated(tmp_path: Path) -> None:
     pred_hash = "agg-violated-hash"
     PREDICATE_REGISTRY[pred_hash] = lambda decisions: False
 
-    contract = ChangeContract(
+    contract = ReplayContract(
         target_fingerprint="sha256:abcdef12",
         predicted_changes=(PredictedDecisionChange(subject="role:backend", action="budget", expected_verdict="allow"),),
         invariants=(ContractInvariant(name="fail", predicate_hash=pred_hash),),
@@ -479,7 +479,7 @@ def test_replay_contract_aggregates_changed_unexpectedly(tmp_path: Path) -> None
     """CHANGED_UNEXPECTEDLY dominates over CHANGED_AS_PREDICTED."""
     PREDICATE_REGISTRY.clear()
 
-    contract = ChangeContract(
+    contract = ReplayContract(
         target_fingerprint="sha256:abcdef12",
         predicted_changes=(PredictedDecisionChange(subject="role:backend", action="budget", expected_verdict="allow"),),
         invariants=(),
@@ -499,7 +499,7 @@ def test_replay_contract_all_changed_as_predicted(tmp_path: Path) -> None:
     """All CHANGED_AS_PREDICTED → CHANGED_AS_PREDICTED aggregate."""
     PREDICATE_REGISTRY.clear()
 
-    contract = ChangeContract(
+    contract = ReplayContract(
         target_fingerprint="sha256:abcdef12",
         predicted_changes=(PredictedDecisionChange(subject="role:backend", action="budget", expected_verdict="allow"),),
         invariants=(),
@@ -525,7 +525,7 @@ def test_replay_contract_unchanged(tmp_path: Path) -> None:
     """No decisions and no predictions → UNCHANGED."""
     PREDICATE_REGISTRY.clear()
 
-    contract = ChangeContract(
+    contract = ReplayContract(
         target_fingerprint="sha256:abcdef12",
         predicted_changes=(),
         invariants=(),
@@ -547,7 +547,7 @@ def test_replay_contract_unchanged(tmp_path: Path) -> None:
 
 def test_receipt_body_contains_expected_keys() -> None:
     PREDICATE_REGISTRY.clear()
-    contract = ChangeContract(
+    contract = ReplayContract(
         target_fingerprint="sha256:x",
         predicted_changes=(),
         invariants=(),
@@ -595,7 +595,7 @@ def test_receipt_hash_differs_for_different_body() -> None:
 
 def test_write_verdict_receipt_writes_valid_json(tmp_path: Path) -> None:
     PREDICATE_REGISTRY.clear()
-    contract = ChangeContract(
+    contract = ReplayContract(
         target_fingerprint="sha256:x",
         predicted_changes=(),
         invariants=(),
@@ -626,7 +626,7 @@ def test_write_verdict_receipt_writes_valid_json(tmp_path: Path) -> None:
 def test_write_verdict_receipt_roundtrips_through_verify(tmp_path: Path) -> None:
     """write_verdict_receipt output passes verify when lineage matches."""
     PREDICATE_REGISTRY.clear()
-    contract = ChangeContract(
+    contract = ReplayContract(
         target_fingerprint="sha256:abcdef12",
         predicted_changes=(),
         invariants=(),
@@ -697,7 +697,7 @@ def test_verify_receipt_bad_hex_raises(tmp_path: Path) -> None:
 
 def test_verify_receipt_fingerprint_mismatch(tmp_path: Path) -> None:
     # Write a receipt whose stored fingerprint doesn't match recomputed
-    contract = ChangeContract(
+    contract = ReplayContract(
         target_fingerprint="sha256:abcdef12",
         predicted_changes=(),
         invariants=(),
@@ -737,7 +737,7 @@ def test_verify_receipt_fingerprint_mismatch(tmp_path: Path) -> None:
 
 def test_verify_receipt_selected_run_ids_mismatch(tmp_path: Path) -> None:
     PREDICATE_REGISTRY.clear()
-    contract = ChangeContract(
+    contract = ReplayContract(
         target_fingerprint="sha256:abcdef12",
         predicted_changes=(),
         invariants=(),
@@ -776,7 +776,7 @@ def test_verify_receipt_selected_run_ids_mismatch(tmp_path: Path) -> None:
 
 def test_verify_receipt_service_receipt_hash_tampered(tmp_path: Path) -> None:
     PREDICATE_REGISTRY.clear()
-    contract = ChangeContract(
+    contract = ReplayContract(
         target_fingerprint="sha256:abcdef12",
         predicted_changes=(),
         invariants=(),

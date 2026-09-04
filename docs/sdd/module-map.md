@@ -256,7 +256,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `aggregator.py`             | Metrics aggregation with EWMA, CUSUM, BOCPD, and Goodhart defenses |
 | `applicator.py`             | Change applicator - execute upgrades via file modification |
 | `benchmark.py`              | Tiered benchmark runner for evolution validation |
-| `change_contract_replay.py` | Replay service for ChangeContract — verifiable offline replay of governance decisions |
+| `change_contract_replay.py` | Replay service for ReplayContract — verifiable offline replay of governance decisions |
 | `circuit.py`                | CircuitBreaker - halt evolution when safety conditions are violated |
 | `creative.py`               | Creative evolution pipeline - visionary → analyst → production gate |
 | `data_collector.py`         | Metric record types and file-based metrics collection for the evolution system |

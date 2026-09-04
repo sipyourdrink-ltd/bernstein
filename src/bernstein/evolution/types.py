@@ -340,13 +340,13 @@ class RollbackError(EvolutionError):
 
 
 # ---------------------------------------------------------------------------
-# Replay service types — ChangeContract and verdict enums
+# Replay service types — ReplayContract and verdict enums
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class PredictedDecisionChange:
-    """A single predicted change within a ChangeContract.
+    """A single predicted change within a ReplayContract.
 
     The contract claims that the subject will undergo the specified action,
     producing the expected_verdict.
@@ -371,7 +371,7 @@ class ContractInvariant:
 
 
 @dataclass
-class ChangeContract:
+class ReplayContract:
     """A self-contained specification for the replay service.
 
     The contract encodes what a proposer claims will happen: which subjects

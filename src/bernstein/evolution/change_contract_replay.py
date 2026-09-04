@@ -1,4 +1,4 @@
-"""Replay service for ChangeContract — verifiable offline replay of governance decisions.
+"""Replay service for ReplayContract — verifiable offline replay of governance decisions.
 
 Issue #5406 sibling to the types task.  This module is hermetic: no network,
 no subprocess, no LLM.  All data is read from disk; all results are returned
@@ -22,9 +22,9 @@ from bernstein.core.security.governance import (
     read_decisions,
 )
 from bernstein.evolution.types import (
-    ChangeContract,
     ContractInvariant,
     PredictedDecisionChange,
+    ReplayContract,
     ReplayServiceResult,
     ReplayVerdict,
     RunVerdict,
@@ -92,7 +92,7 @@ def register_invariant(
 # --------------------------------------------------------------------------
 
 
-def _contract_to_dict(contract: ChangeContract) -> dict[str, Any]:
+def _contract_to_dict(contract: ReplayContract) -> dict[str, Any]:
     """Project a contract onto its canonical JSON-able dict."""
     return {
         "target_fingerprint": contract.target_fingerprint,
@@ -109,7 +109,7 @@ def _contract_to_dict(contract: ChangeContract) -> dict[str, Any]:
     }
 
 
-def contract_canonical_bytes(contract: ChangeContract) -> bytes:
+def contract_canonical_bytes(contract: ReplayContract) -> bytes:
     """Return the contract's canonical bytes (sorted-key minimal JSON, UTF-8).
 
     These bytes are what :func:`contract_fingerprint` hashes and what a
@@ -119,14 +119,14 @@ def contract_canonical_bytes(contract: ChangeContract) -> bytes:
     return json.dumps(_contract_to_dict(contract), sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def contract_fingerprint(contract: ChangeContract) -> str:
+def contract_fingerprint(contract: ReplayContract) -> str:
     """Return the SHA-256 hex digest of the contract's canonical bytes."""
     return hashlib.sha256(contract_canonical_bytes(contract)).hexdigest()
 
 
-def _contract_from_canonical(raw: dict[str, Any]) -> ChangeContract:
-    """Rebuild a :class:`ChangeContract` from its canonical dict projection."""
-    return ChangeContract(
+def _contract_from_canonical(raw: dict[str, Any]) -> ReplayContract:
+    """Rebuild a :class:`ReplayContract` from its canonical dict projection."""
+    return ReplayContract(
         target_fingerprint=str(raw["target_fingerprint"]),
         predicted_changes=tuple(
             PredictedDecisionChange(
@@ -217,7 +217,7 @@ def _replay_one_run(
     *,
     run_id: str,
     lineage_root: Path,
-    contract: ChangeContract,
+    contract: ReplayContract,
 ) -> RunVerdict:
     """Replay the contract against one run's recorded governance decisions."""
     decisions = read_decisions(lineage_root=lineage_root, run_id=run_id)
@@ -295,7 +295,7 @@ def _replay_one_run(
 def replay_contract(
     *,
     sdd_dir: Path,
-    contract: ChangeContract,
+    contract: ReplayContract,
 ) -> ReplayServiceResult:
     """Replay a contract against the recorded corpus. Pure; no state mutated.
 
@@ -352,7 +352,7 @@ def replay_contract(
 # --------------------------------------------------------------------------
 
 
-def _receipt_body(result: ReplayServiceResult, contract: ChangeContract) -> dict[str, Any]:
+def _receipt_body(result: ReplayServiceResult, contract: ReplayContract) -> dict[str, Any]:
     """Return the receipt body (everything before ``service_receipt_hash``)."""
     return {
         "contract_fingerprint": result.contract_fingerprint,
@@ -380,7 +380,7 @@ def _receipt_hash(body: dict[str, Any]) -> str:
 def write_verdict_receipt(
     *,
     result: ReplayServiceResult,
-    contract: ChangeContract,
+    contract: ReplayContract,
     out_path: Path,
 ) -> Path:
     """Write a self-contained verdict receipt for the replay to ``out_path``.
