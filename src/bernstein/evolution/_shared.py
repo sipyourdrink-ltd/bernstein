@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from bernstein.evolution.types import RiskLevel, SandboxResult
+from bernstein.evolution.types import RiskLevel
 from bernstein.evolution.types import UpgradeProposal as TypesUpgradeProposal
 
 if TYPE_CHECKING:
@@ -127,36 +127,6 @@ def to_types_proposal(
         rationale=proposal.description,
         expected_impact=proposal.expected_improvement,
         confidence=proposal.confidence,
-    )
-
-
-def make_fast_track_sandbox_result(
-    proposal_id: str,
-    baseline_score: float,
-) -> SandboxResult:
-    """Return a synthetic passed SandboxResult for fast-tracked proposals.
-
-    Fast-tracked proposals (composite_risk < 0.3) skip sandbox validation.
-    We create a neutral result so the apply path can proceed normally.
-
-    Args:
-        proposal_id: ID of the fast-tracked proposal.
-        baseline_score: Current baseline benchmark score.
-
-    Returns:
-        A ``SandboxResult`` marked as passed with no test data.
-    """
-    return SandboxResult(
-        proposal_id=proposal_id,
-        passed=True,
-        tests_passed=0,
-        tests_failed=0,
-        tests_total=0,
-        baseline_score=baseline_score,
-        candidate_score=baseline_score,
-        delta=0.0,
-        duration_seconds=0.0,
-        log_path="",
     )
 
 

@@ -17,11 +17,11 @@ from bernstein.core.models import (
     UpgradeProposalDetails,
 )
 from bernstein.evolution.detector import ImprovementOpportunity, UpgradeCategory
+from bernstein.evolution.types import ReplayVerdict
 from bernstein.evolution.upgrade_targets import upgrade_owned_files
 
 if TYPE_CHECKING:
     from bernstein.evolution.aggregator import AnomalyDetection
-    from bernstein.evolution.types import ReplayVerdict
 
 
 class AnalysisTrigger(Enum):
@@ -77,7 +77,7 @@ class UpgradeProposal:
     #: proposer; ``to_task`` below sets ``role="manager"`` for routing, which
     #: identifies the executor and is deliberately not the same thing.
     produced_by: str = ""
-    replay_verdict: ReplayVerdict | None = None
+    replay_verdict: ReplayVerdict | None = ReplayVerdict.ACCEPT
 
     def to_task(self) -> Task:
         """Convert upgrade proposal to a Task."""
