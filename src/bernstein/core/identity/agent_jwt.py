@@ -773,9 +773,19 @@ class AgentIdentityStore:
                 audience=f"sub-agent:{child.role}",
                 act="task.spawn",
                 root=root,
+                # ``allowed_files`` is recorded on its own axis, not translated
+                # into ``path_prefixes``: the two answer different questions.
+                # ``path_prefixes`` narrows by ancestry and shares its subset
+                # primitive with signed capability tokens, while these patterns
+                # are globs read by the merge gate, where a pattern is not a
+                # prefix.  Carrying one into the other would make a single field
+                # name mean two things depending on which surface read it, and
+                # would report a narrowing that only part of the axis supports
+                # (#5351).  Nothing here declares path prefixes, so that axis
+                # stays ``None`` - the widest value, and the only honest one.
                 scope=DelegationScope(
                     task_ids=frozenset(child.task_ids) if child.task_ids else None,
-                    path_prefixes=frozenset(child.allowed_files) if child.allowed_files else None,
+                    allowed_files=frozenset(child.allowed_files) if child.allowed_files else None,
                 ),
                 parent_ref=parent_ref,
             )

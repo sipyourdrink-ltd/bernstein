@@ -181,27 +181,48 @@ class DelegationScope:
 
     ``permissions`` and ``duties`` are plain sets: an empty set is the
     narrowest possible grant, never the widest.
+
+    ``allowed_files`` is recorded and deliberately not graded.  It is a glob
+    field, and a glob is not a path prefix: ``path_prefixes`` narrows by
+    ancestry, where ``src`` covers ``src/core``, while ``src`` as a pattern
+    admits the path ``src`` and nothing under it.  Comparing one with the
+    other primitive would report "narrowing checked and held" for an axis
+    where only the patterns that happened to have a prefix form were checked,
+    so the axis is carried verbatim and grades
+    :data:`REASON_COMPARISON_AXIS_UNSUPPORTED` until a glob-subsumption
+    primitive exists to decide it (#5351, follow-up #5418).
     """
 
     permissions: frozenset[str] = frozenset()
     duties: frozenset[str] = frozenset()
     task_ids: frozenset[str] | None = None
     path_prefixes: frozenset[str] | None = None
+    allowed_files: frozenset[str] | None = None
     not_after: float | None = None
     max_uses: int | None = None
     max_depth: int | None = None
 
     def to_body(self) -> dict[str, Any]:
-        """Return the JCS-ready dict (sets rendered as sorted lists)."""
-        return {
-            "duties": sorted(self.duties),
-            "max_depth": self.max_depth,
-            "max_uses": self.max_uses,
-            "not_after": self.not_after,
-            "path_prefixes": sorted(self.path_prefixes) if self.path_prefixes is not None else None,
-            "permissions": sorted(self.permissions),
-            "task_ids": sorted(self.task_ids) if self.task_ids is not None else None,
-        }
+        """Return the JCS-ready dict (sets rendered as sorted lists).
+
+        ``allowed_files`` is the one conditional key, emitted only when the
+        axis is used.  :meth:`scope_ref` digests these bytes, so emitting it
+        unconditionally as ``null`` would re-address every scope written before
+        the axis existed and stop sealed records from replaying byte-identically.
+        """
+        body: dict[str, Any] = {} if self.allowed_files is None else {"allowed_files": sorted(self.allowed_files)}
+        body.update(
+            {
+                "duties": sorted(self.duties),
+                "max_depth": self.max_depth,
+                "max_uses": self.max_uses,
+                "not_after": self.not_after,
+                "path_prefixes": sorted(self.path_prefixes) if self.path_prefixes is not None else None,
+                "permissions": sorted(self.permissions),
+                "task_ids": sorted(self.task_ids) if self.task_ids is not None else None,
+            }
+        )
+        return body
 
     @classmethod
     def from_body(cls, body: dict[str, Any]) -> DelegationScope:
@@ -211,6 +232,7 @@ class DelegationScope:
             duties=frozenset(body.get("duties") or ()),
             task_ids=_frozen(body.get("task_ids")),
             path_prefixes=_frozen(body.get("path_prefixes")),
+            allowed_files=_frozen(body.get("allowed_files")),
             not_after=None if body.get("not_after") is None else float(body["not_after"]),
             max_uses=None if body.get("max_uses") is None else int(body["max_uses"]),
             max_depth=None if body.get("max_depth") is None else int(body["max_depth"]),
@@ -240,6 +262,11 @@ def narrowing_violations(child: DelegationScope, parent: DelegationScope) -> tup
     An empty tuple means the child is a strict subset of the parent's grant.
     Axis names are stable identifiers so a verifier can report *which* axis was
     widened instead of a bare pass/fail.
+
+    ``allowed_files`` is deliberately absent: no primitive here decides whether
+    one glob is contained in another, and a comparison this function cannot
+    make is not one it reports as held.  A hop recording that axis is graded
+    unproven on it instead, by the unsupported-axis rule below.
     """
     axes: list[str] = []
     if not child.permissions <= parent.permissions:
@@ -806,10 +833,15 @@ DIAGNOSTIC_SCOPE_REF_UNRESOLVED: str = "scope_ref_unresolved_inline_governs"
 DIAGNOSTIC_SCOPE_REF_ONLY_RESOLVED: str = "scope_ref_only_resolved"
 VERDICT_DIAGNOSTICS: frozenset[str] = frozenset({DIAGNOSTIC_SCOPE_REF_ONLY_RESOLVED, DIAGNOSTIC_SCOPE_REF_UNRESOLVED})
 
-#: Keys :meth:`DelegationScope.from_body` interprets. A body carrying anything
-#: else is not something the comparator can reason about: the unreadable key
-#: records ``comparison_axis_unsupported``. Readable axes are still compared,
-#: and a widening found on one of them fails the hop, fail dominating unproven.
+#: Keys the comparator can reason about. A body carrying anything else records
+#: ``comparison_axis_unsupported`` for that key. Readable axes are still
+#: compared, and a widening found on one of them fails the hop, fail dominating
+#: unproven.
+#:
+#: ``allowed_files`` is a first-party axis deliberately outside this set:
+#: :meth:`DelegationScope.from_body` reads it, but nothing here can decide glob
+#: containment, so it is recorded and graded unproven by the same rule that
+#: covers a key from a future version (#5351, follow-up #5418).
 SCOPE_BODY_KEYS: frozenset[str] = frozenset(
     {
         "duties",

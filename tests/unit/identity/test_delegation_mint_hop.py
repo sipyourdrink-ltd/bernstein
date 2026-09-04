@@ -23,7 +23,11 @@ from click.testing import CliRunner
 from bernstein.cli.commands.delegation_cmd import delegation_group
 from bernstein.core.identity.agent_jwt import AgentIdentityStore, DelegationWriteError
 from bernstein.core.identity import delegation
-from bernstein.core.identity.delegation_scope import VERDICT_PASS, grade_chain
+from bernstein.core.identity.delegation_scope import (
+    REASON_COMPARISON_AXIS_UNSUPPORTED,
+    VERDICT_UNPROVEN,
+    grade_chain,
+)
 
 KEY = b"k" * 32
 RUN = "run-5047"
@@ -95,19 +99,27 @@ def test_chain_over_several_spawned_agents_passes_with_one_hop_per_mint(store, a
 
 
 def test_narrowing_grades_from_the_receipt_with_the_store_deleted(store, tmp_path, audit_root):
-    """AC3: the scope rides on the receipt, so narrowing grades without the store.
+    """AC3: the scope rides on the receipt, so it grades without the store.
 
     The identity store directory is deleted before grading, so the test cannot
     reach it even by accident, and ``grade_chain`` is called with no
-    ``scope_resolver``: the receipts are the only input.
+    ``scope_resolver``: the receipts are the only input.  ``task_ids`` narrowing
+    is proven from those receipts alone; the file scope is recorded and not
+    graded, which is what the chain verdict says.
     """
     parent = _mint_orchestrator(store)
-    # Directory prefixes, not globs: ``prefixes_narrow`` decides ``path_prefixes``
-    # by component-wise path ancestry, so "src" covers "src/core" while "src/**"
-    # does not cover "src/a/**".  The helper it calls is deliberately not named
-    # here: tests/unit/test_security_controls_are_wired.py greps bare identifiers
+    # ``allowed_files`` rides on the receipt verbatim and is deliberately not
+    # graded: it is a glob field, and a glob is not a path prefix, so it cannot
+    # be decided by the ancestry primitive ``path_prefixes`` uses.  The hop
+    # grades ``unproven`` on that axis with a named reason rather than reporting
+    # a narrowing nothing checked (#5351; the grading primitive is #5418).  The
+    # helper that decides ``path_prefixes`` is deliberately not named here:
+    # tests/unit/test_security_controls_are_wired.py greps bare identifiers
     # across tests/, and naming it would retire an unrelated security exemption.
-    child = _mint_child(store, "child-1", parent, task_ids=["t1", "t2"], allowed_files=["src"])
+    # The parent scope is the tree ``src/**`` because the mint-time check reads
+    # these patterns the way the merge gate does, where ``src`` admits the path
+    # ``src`` and nothing under it.
+    child = _mint_child(store, "child-1", parent, task_ids=["t1", "t2"], allowed_files=["src/**"])
     _mint_child(store, "grand-1", child, task_ids=["t1"], allowed_files=["src/core"])
 
     shutil.rmtree(tmp_path / "auth")
@@ -117,13 +129,18 @@ def test_narrowing_grades_from_the_receipt_with_the_store_deleted(store, tmp_pat
     assert len(receipts) == 2
     assert receipts[0].scope is not None
     assert receipts[0].scope["task_ids"] == ["t1", "t2"]
-    assert receipts[0].scope["path_prefixes"] == ["src"]
+    assert receipts[0].scope["allowed_files"] == ["src/**"]
+    assert receipts[0].scope["path_prefixes"] is None
     assert receipts[1].scope["task_ids"] == ["t1"]
-    assert receipts[1].scope["path_prefixes"] == ["src/core"]
+    assert receipts[1].scope["allowed_files"] == ["src/core"]
+    assert receipts[1].scope["path_prefixes"] is None
 
     verdict = grade_chain(receipts)
-    assert verdict.verdict == VERDICT_PASS, verdict.reasons
-    assert verdict.unproven_hops == 0
+    assert verdict.verdict == VERDICT_UNPROVEN, verdict.reasons
+    assert verdict.unproven_hops == 2
+    rows = {row.hop_index: row for row in verdict.hops}
+    assert rows[1].axes == ("allowed_files",)
+    assert REASON_COMPARISON_AXIS_UNSUPPORTED in rows[1].reasons
 
 
 def test_removing_the_tail_receipt_yields_valid_true_and_one_fewer_hop(store, audit_root):
