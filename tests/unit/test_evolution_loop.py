@@ -1283,6 +1283,4 @@ def test_classify_risk_route_matches_proposal_scorer(composite_risk: float) -> N
     """
     from bernstein.evolution.proposal_scorer import ProposalScorer
 
-    assert EvolutionLoop._classify_risk_route(composite_risk) == ProposalScorer().classify_risk_route(
-        composite_risk
-    )
+    assert EvolutionLoop._classify_risk_route(composite_risk) == ProposalScorer().classify_risk_route(composite_risk)
