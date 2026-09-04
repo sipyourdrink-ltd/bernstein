@@ -1,3 +1,8 @@
 FIXED: 1 of 1 blocking findings
 
-F1 — Missing release notes fragment: NO CHANGE NEEDED — The file `docs/release-notes/fragments/2899-skill-catalog-lint-gate.md` already exists in the PR head (git diff shows 3 lines added). The reviewer's finding was based on an earlier state; the fragment was added in commit c7341ae8 which is part of this branch.
+F1: No docs/release-notes/fragments/5348-*.md despite a user-visible behaviour change
+  Status: FIXED
+  What changed: Added docs/release-notes/fragments/5348-fallback-uses-registry-key.md (commit da324a629)
+  Format matches peer examples (5337, 5082): `## title` + paragraph ending `(#5348)`
+  Both user-visible axes documented: (1) new WARNING for unregistered adapters,
+  (2) changed resolved value for registered adapters (registry key vs display name)
