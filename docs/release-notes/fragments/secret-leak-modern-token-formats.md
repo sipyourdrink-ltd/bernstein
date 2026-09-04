@@ -1,0 +1,3 @@
+## Secret-leak guardrail knows the current token formats
+
+`SecretLeakGuardrail` scanned agent output for `sk-`/`sk_`, `ghp_`, `AKIA` and an RSA PEM header. Every credential format minted since those patterns were written passed through: OpenAI project keys (`sk-proj-`), Anthropic keys (`sk-ant-api03-`), GitHub fine-grained personal access tokens (`github_pat_`), the rest of the classic GitHub token family (`gho_`, `ghu_`, `ghs_`, `ghr_`), and any PEM private key that is not RSA, including the Ed25519 keys this project mints for lineage signing. All of them are now recognised. The legacy patterns are unchanged, since a provider adding a prefix does not retire the old one.

@@ -20,7 +20,7 @@ Fail-closed allowlists
 ``targets`` and ``categories`` are allowlists that authorize *only* what
 they list. An empty allowlist authorizes **nothing**. This is deliberately
 the opposite of the neighbouring
-:meth:`~bernstein.core.security.agent_identity.AgentIdentityCard.in_scope`
+:meth:`~bernstein.core.identity.agent_card.AgentIdentityCard.in_scope`
 convention, where an empty scope means *unrestricted*: a scope grant whose
 fields silently widen when a field is omitted cannot be the foundation of a
 compliance-sensitive deliverable.
@@ -240,7 +240,7 @@ def check_scope(
 
     An **empty** ``targets`` or ``categories`` authorizes nothing. This is
     the opposite of :meth:`AgentIdentityCard.in_scope
-    <bernstein.core.security.agent_identity.AgentIdentityCard.in_scope>`,
+    <bernstein.core.identity.agent_card.AgentIdentityCard.in_scope>`,
     where an empty scope means unrestricted.
 
     Pure and total: it reads no clock and no filesystem, and every failure

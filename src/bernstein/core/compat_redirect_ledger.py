@@ -39,7 +39,11 @@ REDIRECT_LEDGER_POLICY: Final[RedirectLedgerPolicy] = RedirectLedgerPolicy(
     ),
 )
 
-REVIEWED_REDIRECT_MAP_DIGEST: Final[str] = "525e1506639410ef20b6039192c0ab2dd590d6064d27759400148cc5b0443fe7"
+#: Bumped when the ``agent_identity`` entry was retargeted from
+#: ``bernstein.core.agents.agent_identity`` to ``bernstein.core.identity.agent_jwt``
+#: after the identity modules were consolidated (#5097). The legacy
+#: ``bernstein.core.agent_identity`` path keeps resolving; only its destination moved.
+REVIEWED_REDIRECT_MAP_DIGEST: Final[str] = "06963f10e4de5deea456719b1924082ed0604b8664911ee72bcee3cff729dc01"
 
 
 def redirect_map_digest(redirects: Mapping[str, str]) -> str:

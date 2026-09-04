@@ -180,3 +180,67 @@ accepted/rejected/defaulted table for plan fields).
   `multimodal.attach` event type and the `AuditChainStore` facade.
 * `src/bernstein/core/lineage/entry.py` -- `attachment_digests` on the
   signed lineage entry.
+
+## Per-run scorecard (`bernstein runs scorecard`)
+
+> Distinct from [`tournament-runs.md`](tournament-runs.md): a scorecard
+> is the deterministic, content-addressed projection of one run's
+> *work ledger*. A tournament receipt records the selection across
+> sibling attempts; a scorecard records what one run actually did.
+
+`bernstein runs scorecard <run-id>` derives a content-addressed
+scorecard from the run's work ledger and writes the artifact to
+`.sdd/runs/<run-id>/scorecard/<sha256>.json`. The artifact name is the
+SHA-256 of the canonical scorecard content, so re-running over the
+same ledger overwrites the identical file -- the operation is
+idempotent by construction.
+
+The scorecard schema (`SCORECARD_KIND = "run_scorecard"`,
+`SCORECARD_VERSION = 1`):
+
+| Field              | Type    | Source                                           |
+|--------------------|---------|--------------------------------------------------|
+| `kind`             | string  | Always `run_scorecard` (discriminator)           |
+| `version`          | int     | Schema version; the hash covers it               |
+| `scorecard_version`| int     | Same as `version`, kept for clarity              |
+| `run_id`           | string  | From `run.open` payload or ledger directory name |
+| `branch`           | string  | From `run.closed` payload, else `run.*` entries  |
+| `outcome`          | string  | `pr-opened` / `gate-failed` / `no-changes` / `infra-error` / `wedged` |
+| `evidence`         | string  | One-line rationale, mirroring `bernstein runs report` |
+| `started_at`       | float   | First ledger entry timestamp                     |
+| `ended_at`         | float   | Last ledger entry timestamp                      |
+| `elapsed_seconds`  | float   | `ended_at - started_at`                          |
+| `host`             | string  | From the last `run.*` entry that carries `host`  |
+| `parent_run_id`    | string  | From the last `run.*` entry that carries `parent_run_id` |
+| `attempt_count`    | int     | Sum of `attempts` across replayed task state     |
+| `steps`            | int     | Count of distinct task ids that touched the ledger |
+| `tasks_total`      | int     | Count of distinct task ids                       |
+| `tasks_started`    | int     | Count of `task.started` entries                  |
+| `tasks_completed`  | int     | Count of `task.completed` entries                |
+| `tasks_failed`     | int     | Count of `task.failed` entries                   |
+| `cost_usd`         | float   | Summed from `.sdd/cost/ledger.jsonl` for this run, rounded to 6 dp |
+
+The on-disk envelope is `{"content": <the fields above>, "sha256":
+<hex>}`. The embedded `sha256` equals `SHA-256(canonical_json_bytes(content))`;
+`canonical_json_bytes` uses sorted keys, compact separators, and ASCII
+escapes, so the same ledger always produces the same bytes on every
+machine.
+
+### Modes
+
+```
+bernstein runs scorecard <run-id>                   # build and write the artifact
+bernstein runs scorecard <run-id> --verify          # re-derive and compare to the on-disk artifact
+bernstein runs scorecard <run-id> --json            # print the scorecard content as JSON
+```
+
+`--verify` exits `0` when the on-disk artifact matches the live
+ledger, `1` otherwise; on mismatch it names the diverging field(s)
+in the human-readable description (the JSON payload exposes the same
+information under `description`). It exits non-zero with a
+`ClickException` when the work ledger for the run is missing, or
+when no scorecard artifact exists yet.
+
+`--json` prints `{artifact, sha256, content}` (default mode) or
+`{ok, artifact_sha256, recomputed_sha256, description, artifact_path}`
+(`--verify --json`).

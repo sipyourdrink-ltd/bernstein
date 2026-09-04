@@ -57,6 +57,17 @@ from bernstein.cli.commands.govern_cmd import govern_inventory_cmd, govern_recon
 from bernstein.cli.helpers import console
 from bernstein.core.govern import collect_remediation as _collect_remediation
 from bernstein.core.govern import compute_plan as _compute_plan
+from bernstein.core.govern.audit_sweep import CheckVerdict
+from bernstein.core.govern.compliance_checks import (
+    CMP_AREA,
+    ComplianceCheckSpec,
+    ComplianceFramework,
+    count_by_outcome,
+    iter_compliance_checks,
+    required_check_ids,
+    run_compliance_checks,
+    select_check_ids,
+)
 from bernstein.core.lineage.spine import LineageSpine
 
 if TYPE_CHECKING:
@@ -83,6 +94,8 @@ def govern_group() -> None:
       bernstein govern ingest --spans spans.json --source otel-collector-prod
       bernstein govern posture [--workdir w] [--json-output]
       bernstein govern inventory --render mermaid|dot --store PATH
+      bernstein govern audit-compliance [--workdir .] [--only CMP] [--skip ID] [--profile soc2]
+      bernstein govern audit-keys
     """
 
 
@@ -847,13 +860,140 @@ def governance_ingest_cmd(
     console.print(f"  [dim]{receipt.coverage_detail}[/dim]")
 
 
-@govern_group.command("audit")
-def governance_audit_cmd() -> None:
-    """Check whether verifier keys are stale relative to the install identity.
+@govern_group.command("audit-compliance")
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True, path_type=Path),
+    default=".",
+    show_default=True,
+    help="Project root the checks read.",
+)
+@click.option(
+    "--only",
+    "only",
+    multiple=True,
+    metavar="ID|NAMESPACE|AREA",
+    help="Run only the checks matching this id, id namespace (CMP) or area.",
+)
+@click.option(
+    "--skip",
+    "skip",
+    multiple=True,
+    metavar="ID",
+    help="Do not run this check id. Skipping selects what runs; it suppresses no finding.",
+)
+@click.option(
+    "--profile",
+    "profile",
+    default=None,
+    type=click.Choice([f.value for f in ComplianceFramework], case_sensitive=False),
+    help="Mark which check ids this framework requires. Selects ids only; asserts nothing.",
+)
+@click.option("--list", "list_only", is_flag=True, help="Print the registered check ids and exit.")
+@click.option("--json-output", "as_json", is_flag=True, help="Print the report as JSON and nothing else.")
+def govern_audit_cmd(
+    workdir: Path,
+    only: tuple[str, ...],
+    skip: tuple[str, ...],
+    profile: str | None,
+    list_only: bool,
+    as_json: bool,
+) -> None:
+    """Run every registered check over this install and report one finding each.
 
-    Exit codes: 0 = up to date or no verifier files, 1 = keystore or verifier
-    file unreadable, 2 = stale verifier key detected.
+    Each finding carries a stable id, one of three verdicts -- measured,
+    declared, or not measurable -- and the evidence it read. A check that only
+    tests whether a key is present in a configuration file reports *declared*:
+    the operator asserted the control and nothing was read that confirms it.
+
+    There is no score and no grade. Every count names its denominator, and
+    --profile selects which ids a framework requires without asserting anything
+    about the result.
     """
+    required: frozenset[str] = required_check_ids(ComplianceFramework(profile.lower())) if profile else frozenset()
+
+    try:
+        selected = select_check_ids(only=only, skip=skip)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    specs = {spec.check_id: spec for spec in iter_compliance_checks()}
+
+    if list_only:
+        _print_audit_catalogue([specs[cid] for cid in selected], required, as_json=as_json)
+        return
+
+    outcomes = run_compliance_checks(workdir, only=only, skip=skip)
+    counts = count_by_outcome(outcomes)
+
+    if as_json:
+        click.echo(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "area": CMP_AREA,
+                    "profile": profile.lower() if profile else None,
+                    "checks_run": len(outcomes),
+                    "checks": [outcome.to_dict() | {"required": outcome.check_id in required} for outcome in outcomes],
+                    "counts": counts,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+
+    click.echo(f"govern audit-compliance -- area {CMP_AREA}, {len(outcomes)} checks over {workdir}")
+    click.echo("")
+    for outcome in outcomes:
+        marker = "*" if outcome.check_id in required else " "
+        state = "pass" if outcome.passed else "fail"
+        verdict = outcome.verdict.value if outcome.verdict is not CheckVerdict.MEASURED else f"measured {state}"
+        click.echo(f"  {marker}{outcome.check_id}  {verdict:<14}  {outcome.summary}")
+    click.echo("")
+    total = len(outcomes)
+    for label, count in counts.items():
+        click.echo(f"  {label.replace('_', ' ')}: {count} of {total} checks")
+    if profile:
+        click.echo("")
+        click.echo(
+            f"  required by profile {profile.lower()}: "
+            f"{len(required & {o.check_id for o in outcomes})} of {total} ids "
+            "(marked *; the profile selects ids and states nothing about the result)"
+        )
+
+
+def _print_audit_catalogue(
+    specs: list[ComplianceCheckSpec],
+    required: frozenset[str],
+    *,
+    as_json: bool,
+) -> None:
+    """Print the registered check ids without running any of them."""
+    if as_json:
+        click.echo(
+            json.dumps(
+                [
+                    {
+                        "check_id": spec.check_id,
+                        "area": spec.area,
+                        "asserts": spec.asserts,
+                        "required": spec.check_id in required,
+                    }
+                    for spec in specs
+                ],
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+    for spec in specs:
+        marker = "*" if spec.check_id in required else " "
+        click.echo(f"  {marker}{spec.check_id}  {spec.area:<12}  {spec.asserts}")
+
+
+def _run_verifier_key_staleness_check() -> None:
     from bernstein.core.govern.audit_sweep import CheckVerdict, check_verifier_key_staleness
     from bernstein.core.identity.http_signing import default_keystore
 
@@ -872,6 +1012,32 @@ def governance_audit_cmd() -> None:
             raise SystemExit(2)
 
     click.echo("verifier keys up to date")
+
+
+@govern_group.command("audit")
+def governance_audit_cmd() -> None:
+    """[Deprecated] Use ``bernstein govern audit-keys`` instead.
+
+    The compliance policy library moved to ``bernstein govern audit-compliance``
+    in #5075; this alias preserves the prior verifier-key staleness behaviour
+    for one release and prints a deprecation notice on every invocation.
+    """
+    click.echo(
+        "WARNING: 'bernstein govern audit' is deprecated and will be removed in v3.0.0 (#5075): "
+        "use 'bernstein govern audit-keys' instead.",
+        err=True,
+    )
+    _run_verifier_key_staleness_check()
+
+
+@govern_group.command("audit-keys")
+def governance_audit_keys_cmd() -> None:
+    """Check whether verifier keys are stale relative to the install identity.
+
+    Exit codes: 0 = up to date or no verifier files, 1 = keystore or verifier
+    file unreadable, 2 = stale verifier key detected.
+    """
+    _run_verifier_key_staleness_check()
 
 
 # Desired-state reconcile diff over the governed surface (#5085). Registered

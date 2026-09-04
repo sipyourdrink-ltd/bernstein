@@ -164,7 +164,7 @@ if TYPE_CHECKING:
     from fastapi import Request
     from starlette.responses import Response as StarletteResponse
 
-    from bernstein.core.agents.agent_identity import AgentIdentityStore
+    from bernstein.core.identity.agent_jwt import AgentIdentityStore
     from bernstein.core.security.auth import AuthService
 
 _PERM_TASKS_WRITE = "tasks:write"

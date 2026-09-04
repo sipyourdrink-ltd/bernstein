@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 
 # Runtime import (not type-only): FastAPI resolves this annotation at
 # route-registration time to build the query-param validator.
-from bernstein.core.agent_identity import AgentIdentityStatus  # noqa: TC001
+from bernstein.core.identity.agent_jwt import AgentIdentityStatus  # noqa: TC001
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -24,7 +24,7 @@ def identity_store_for_request(request: Request) -> Any:
     Shared with :mod:`bernstein.core.routes.scim`: the SCIM surface projects the
     same principals this router serves, so both must read one store.
     """
-    from bernstein.core.agent_identity import AgentIdentityStore
+    from bernstein.core.identity.agent_jwt import AgentIdentityStore
 
     store = getattr(request.app.state, "identity_store", None)
     if store is None:

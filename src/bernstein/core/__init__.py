@@ -35,7 +35,7 @@ _REDIRECT_MAP: dict[str, str] = {
     "agent_cache": "bernstein.core.agents.agent_cache",
     "agent_cost_ledger": "bernstein.core.agents.agent_cost_ledger",
     "agent_discovery": "bernstein.core.agents.agent_discovery",
-    "agent_identity": "bernstein.core.agents.agent_identity",
+    "agent_identity": "bernstein.core.identity.agent_jwt",
     "agent_ipc": "bernstein.core.agents.agent_ipc",
     "agent_lifecycle": "bernstein.core.agents.agent_lifecycle",
     "agent_log_aggregator": "bernstein.core.agents.agent_log_aggregator",
@@ -586,6 +586,75 @@ _REDIRECT_MAP: dict[str, str] = {
 }
 
 
+#: Module paths that no longer exist and must not resolve to anything.
+#:
+#: ``agent_identity.py`` existed twice - once under ``core/agents/`` holding the
+#: JWT-backed identity, once under ``core/security/`` holding the Ed25519 card -
+#: with unrelated types that both answered "who is this agent". Both moved into
+#: ``core/identity/`` (issue #5097). A redirect entry would have forwarded the
+#: old paths silently and left callers straddling two namespaces indefinitely,
+#: so these fail the import and name where the contents went. Every production
+#: caller is migrated in the same change, so the tombstone period starts at
+#: v3.19.0: this map and the finder below are deleted together one release later.
+_TOMBSTONE_MAP: dict[str, str] = {
+    "agents.agent_identity": "bernstein.core.identity.agent_jwt",
+    "security.agent_identity": "bernstein.core.identity.agent_card",
+}
+
+
+class _CoreTombstoneFinder(MetaPathFinder):
+    """Serve a retired ``bernstein.core`` module a spec that refuses to load.
+
+    Registered after the standard path finder, so it only ever sees names that
+    no file on disk answers. Without it a retired module surfaces as a bare
+    ``ModuleNotFoundError`` that says nothing about where the code went.
+
+    The refusal is raised by the loader rather than by ``find_spec``, because
+    ``find_spec`` is also how unrelated tooling *asks* whether a name resolves:
+    raising there makes every import-system walk over these names blow up
+    instead of getting an answer. Importing the name still fails, with the
+    successor named.
+    """
+
+    _PREFIX = "bernstein.core."
+
+    def find_spec(
+        self,
+        fullname: str,
+        path: object = None,
+        target: object = None,
+    ) -> ModuleSpec | None:
+        """Return a spec whose loader refuses; defer on every other name."""
+        if not fullname.startswith(self._PREFIX):
+            return None
+        if fullname[len(self._PREFIX) :] not in _TOMBSTONE_MAP:
+            return None
+        return ModuleSpec(fullname, _CoreTombstoneLoader())
+
+
+class _CoreTombstoneLoader:
+    """Refuse to execute a retired module, naming where its contents went."""
+
+    def create_module(self, _spec: ModuleSpec) -> ModuleType | None:
+        """Use default module creation; the refusal happens at exec time."""
+        return None
+
+    def exec_module(self, module: ModuleType) -> None:
+        """Raise ImportError naming the module that now owns this one's contents."""
+        fullname = module.__name__
+        successor = _TOMBSTONE_MAP[fullname[len(_CoreTombstoneFinder._PREFIX) :]]
+        msg = (
+            f"{fullname} was removed; import {successor} instead. Agent identity now has "
+            "one type, bernstein.core.identity.principal.AgentPrincipal, that both credential "
+            "formats resolve to."
+        )
+        raise ImportError(msg, name=fullname)
+
+    def get_code(self, _fullname: str) -> None:
+        """Return None - a tombstone has no code object."""
+        return None
+
+
 class _CoreRedirectFinder(MetaPathFinder):
     """Redirect ``bernstein.core.<old_name>`` to ``bernstein.core.<subpkg>.<old_name>``.
 
@@ -640,6 +709,9 @@ class _CoreRedirectLoader:
         return None
 
 
-# Register the finder once at import time
+# Register the finders once at import time. The tombstone finder goes first of
+# the two so a retired name can never be served by a stale redirect entry.
+if not any(isinstance(f, _CoreTombstoneFinder) for f in sys.meta_path):
+    sys.meta_path.append(_CoreTombstoneFinder())
 if not any(isinstance(f, _CoreRedirectFinder) for f in sys.meta_path):
     sys.meta_path.append(_CoreRedirectFinder())
