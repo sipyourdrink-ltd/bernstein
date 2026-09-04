@@ -1577,7 +1577,7 @@ def verify_coverage_cmd(head_sha: str, workdir: str, as_json: bool) -> None:
     receipt = read_merge_receipt(root, head_sha)
 
     if receipt is None:
-        console.print(f"[red]![/red] No merge receipt found for {head_sha}[/red]")
+        console.print(f"[red]![/red] No merge receipt found for {head_sha}")
         raise SystemExit(1)
 
     # Build the unverified remainder from the receipt's own fields.
@@ -1694,7 +1694,7 @@ def verify_coverage_cmd(head_sha: str, workdir: str, as_json: bool) -> None:
     if exit_code == 0:
         console.print("[dim]Coverage is consistent; no unverified remainder.[/dim]")
     else:
-        console.print(f"[red]![/red] Exit 3: {reason}[/red]")
+        console.print(f"[red]![/red] Exit 3: {reason}")
 
     raise SystemExit(exit_code)
 
