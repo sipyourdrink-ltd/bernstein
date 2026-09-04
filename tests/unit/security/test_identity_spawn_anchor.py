@@ -7,8 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
+from bernstein.core.identity.agent_card import AgentIdentityCard
 from bernstein.core.security.agent_card_signer import generate_ed25519_keypair, sign_agent_card
-from bernstein.core.security.agent_identity import AgentIdentityCard
 from bernstein.core.security.audit_chain import AuditChainStore
 from bernstein.core.security.identity_spawn_anchor import IdentitySpawnAnchor, IdentitySpawnAnchorError
 

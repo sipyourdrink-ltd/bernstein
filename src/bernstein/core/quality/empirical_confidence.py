@@ -29,6 +29,10 @@ Schema (single table, ``agent_outcomes``):
 
 Indexes are created on ``(agent_type, decision_key)`` for fast aggregate
 queries.
+
+Databases written before ``sampled_at`` was named that way carry a
+``recorded_at`` column instead. They are upgraded in place on connect; see
+:meth:`_OutcomeStore._rename_legacy_timestamp_column`.
 """
 
 from __future__ import annotations
@@ -166,6 +170,15 @@ CREATE INDEX IF NOT EXISTS idx_agent_outcomes_lookup
 """
 
 
+_TABLE = "agent_outcomes"
+
+_TIMESTAMP_COLUMN = "sampled_at"
+"""Current name of the outcome timestamp column."""
+
+_LEGACY_TIMESTAMP_COLUMN = "recorded_at"
+"""Name the timestamp column carried before it was renamed to ``sampled_at``."""
+
+
 class _OutcomeStore:
     """Thin SQLite wrapper around the ``agent_outcomes`` table.
 
@@ -186,7 +199,56 @@ class _OutcomeStore:
     def _migrate(self) -> None:
         with self._migration_lock, self._connect() as conn:
             conn.executescript(_SCHEMA)
+            self._rename_legacy_timestamp_column(conn)
             conn.commit()
+
+    @staticmethod
+    def _column_names(conn: sqlite3.Connection) -> set[str]:
+        return {row[1] for row in conn.execute(f"PRAGMA table_info({_TABLE})")}
+
+    @classmethod
+    def _rename_legacy_timestamp_column(cls, conn: sqlite3.Connection) -> None:
+        """Upgrade a pre-``sampled_at`` table in place.
+
+        ``CREATE TABLE IF NOT EXISTS`` leaves an existing table alone, so an
+        install created before the timestamp column was renamed keeps
+        ``recorded_at`` forever and every append fails against it. Renaming
+        preserves rows, row ids, and the lookup index. The resulting column
+        order differs from a freshly created table, which is immaterial
+        because every statement here names the columns it touches.
+        """
+        columns = cls._column_names(conn)
+        if _TIMESTAMP_COLUMN in columns:
+            return
+        if _LEGACY_TIMESTAMP_COLUMN not in columns:
+            # Neither name present: not a schema this module wrote. Leave it
+            # untouched so the failure surfaces at the query that needs it.
+            logger.warning(
+                "Table %s has neither %s nor %s; leaving schema untouched",
+                _TABLE,
+                _TIMESTAMP_COLUMN,
+                _LEGACY_TIMESTAMP_COLUMN,
+            )
+            return
+        # The module lock only covers threads; ``BEGIN IMMEDIATE`` serialises
+        # the rename against other processes holding the same file open.
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            if _TIMESTAMP_COLUMN not in cls._column_names(conn):
+                conn.execute(f"ALTER TABLE {_TABLE} RENAME COLUMN {_LEGACY_TIMESTAMP_COLUMN} TO {_TIMESTAMP_COLUMN}")
+        except BaseException:
+            # Never let a failed rollback mask why the rename failed.
+            with suppress(sqlite3.DatabaseError):
+                conn.execute("ROLLBACK")
+            raise
+        else:
+            conn.execute("COMMIT")
+            logger.info(
+                "Migrated %s: renamed %s to %s",
+                _TABLE,
+                _LEGACY_TIMESTAMP_COLUMN,
+                _TIMESTAMP_COLUMN,
+            )
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:

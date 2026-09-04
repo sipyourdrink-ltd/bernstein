@@ -584,7 +584,7 @@ def test_agent_jwt_token_accepted_under_default_on_auth(monkeypatch: pytest.Monk
     """An agent identity JWT remains a valid authenticator when auth is default-on."""
     monkeypatch.delenv("BERNSTEIN_AUTH_DISABLED", raising=False)
 
-    from bernstein.core.agent_identity import AgentIdentityStore
+    from bernstein.core.identity.agent_jwt import AgentIdentityStore
 
     store = AgentIdentityStore(tmp_path)
     _, token = store.create_identity("agent-1", "backend", task_ids=[])
