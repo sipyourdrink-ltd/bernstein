@@ -127,26 +127,19 @@ def test_unicode_zerowidth_or_whitespace_suffix_default_denies(suffix: str) -> N
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Bug: ScopeGuardrail uses str.startswith() for scope membership, which "
-        "accepts both prefix-collision (`src` matches `src_evil/`) and traversal "
-        "(`src/../etc/passwd`). Class affected: ScopeGuardrail. Severity: HIGH."
-    ),
-)
 def test_scope_guardrail_rejects_prefix_collision_and_traversal() -> None:
-    """Bug: ``ScopeGuardrail`` is bypassable.
+    """``ScopeGuardrail`` decides membership on path segments (FIXED).
 
-    Root cause: ``check_output`` uses ``f.startswith(s)`` to test scope
-    membership.  ``"src_evil/foo.py".startswith("src")`` is True, and
-    ``"src/../etc/passwd".startswith("src/")`` is also True.
+    This was an ``xfail(strict=True)`` recording a HIGH-severity bypass:
+    ``check_output`` used ``f.startswith(s)`` for scope membership, so
+    ``"src_evil/foo.py".startswith("src")`` was True and
+    ``"src/../etc/passwd".startswith("src/")`` was True as well.
 
     Attacker model: an agent that can choose its own ``modified_files``
-    list (any task that returns a file manifest after Claude finishes).
-    The fix is path-segment matching: split on ``/`` and check the
-    first ``len(scope)`` segments equal the scope, *and* normalise the
-    path with ``os.path.normpath`` to collapse ``..`` segments.
+    list (any task that returns a file manifest after the agent
+    finishes). Membership is now decided on whole path segments, and a
+    path that is absolute or carries a ``..`` component is refused by
+    ``validate_relative_path`` before any comparison happens.
     """
     g = ScopeGuardrail()
     # Prefix collision: scope without trailing slash matches longer dirs.

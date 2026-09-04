@@ -12,6 +12,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Protocol, runtime_checkable
 
+from bernstein.core.security.path_containment import (
+    PathContainmentError,
+    validate_relative_path,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -77,8 +82,63 @@ class PromptInjectionGuardrail:
         return GuardrailResult(passed=True, guardrail_name=self.name)
 
 
+#: Splits a path on either separator. A file manifest is written on one host
+#: and read on another, so ``src\evil`` has to segment the same way on POSIX as
+#: it does on Windows.
+_PATH_SEPARATOR_RE = re.compile(r"[\\/]+")
+
+
+def _path_segments(candidate: str) -> tuple[str, ...] | None:
+    """Return *candidate* as path segments, or ``None`` if it is not containable.
+
+    ``None`` means the value cannot sit under any relative scope at all: it is
+    absolute, carries a ``..`` component, or names no component. The caller
+    treats that as out of scope rather than trying to repair it, so a path
+    that escapes its base is a violation instead of a comparison.
+
+    Args:
+        candidate: A path from the agent's modified-file manifest, or one
+            entry of the declared scope.
+
+    Returns:
+        The non-empty path segments, or ``None`` when the value is not a safe
+        relative path.
+    """
+    try:
+        validate_relative_path(candidate, label="scope path")
+    except PathContainmentError:
+        return None
+    return tuple(part for part in _PATH_SEPARATOR_RE.split(candidate) if part not in ("", "."))
+
+
+def _within_scope(path: str, allowed: list[tuple[str, ...]]) -> bool:
+    """Return True when *path* sits under one of the *allowed* scope prefixes.
+
+    Args:
+        path: One entry from the agent's modified-file manifest.
+        allowed: Segment tuples of the declared scope, already validated.
+
+    Returns:
+        True when the path's leading segments equal some scope entry's
+        segments; False when it is elsewhere in the tree, or is not a safe
+        relative path.
+    """
+    segments = _path_segments(path)
+    if segments is None:
+        return False
+    return any(segments[: len(entry)] == entry for entry in allowed)
+
+
 class ScopeGuardrail:
-    """Verify agent only modifies files within its scope."""
+    """Verify agent only modifies files within its scope.
+
+    Membership is decided on whole path segments, not on the raw string. A
+    prefix test answers the wrong question twice: ``"src_evil/foo.py"`` starts
+    with ``"src"`` while sitting in a different directory, and
+    ``"src/../etc/passwd"`` starts with ``"src/"`` while pointing outside the
+    tree entirely. An agent that chooses its own ``modified_files`` list can
+    spell either one, so both are refused here.
+    """
 
     name = "scope"
 
@@ -90,10 +150,13 @@ class ScopeGuardrail:
         modified_files: list[str] = context.get("modified_files", [])
         if not scope or not modified_files:
             return GuardrailResult(passed=True, guardrail_name=self.name)
+        # A scope entry that is not itself a safe relative path contains
+        # nothing, so it is dropped rather than matched loosely. A scope list
+        # made entirely of such entries admits no file at all, which is the
+        # fail-closed direction.
+        allowed = [segments for segments in (_path_segments(entry) for entry in scope) if segments is not None]
         violations = [
-            f"File {f} is outside allowed scope {scope}"
-            for f in modified_files
-            if not any(f.startswith(s) for s in scope)
+            f"File {f} is outside allowed scope {scope}" for f in modified_files if not _within_scope(f, allowed)
         ]
         return GuardrailResult(
             passed=len(violations) == 0,
