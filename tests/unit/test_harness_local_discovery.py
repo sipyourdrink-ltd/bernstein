@@ -126,3 +126,82 @@ def test_unusable_lockfile_refuses_the_directory(tmp_path: Path, case: str, payl
     assert harness_entry is not None, case
     assert harness_entry.enabled is False, case
     assert harness_entry.agents == 0, case
+
+
+# ---------------------------------------------------------------------- #
+# Recorded provenance: "at what digest" (#3969 P5)                        #
+# ---------------------------------------------------------------------- #
+
+
+def test_admitted_harness_directory_records_its_content_digest(tmp_path: Path) -> None:
+    """An admitted directory carries the digest of the content it admitted.
+
+    A harness directory with no lockfile is the common case - nobody ships
+    ``agents.lock`` inside ``~/.claude/agents``. Admitting it without
+    recording a digest leaves the registry unable to say what was loaded,
+    which is the one question the discovery pass exists to answer.
+    """
+    claude_agents = _harness_dir_with_agent(tmp_path)
+
+    entries = _discover(tmp_path)
+
+    harness_entry = next((e for e in entries if "harness:agents" in e.name), None)
+    assert harness_entry is not None
+    assert harness_entry.enabled is True
+    assert harness_entry.content_digest == compute_catalog_digest(claude_agents)
+
+
+def test_refused_harness_directory_records_the_digest_found_on_disk(tmp_path: Path) -> None:
+    """A refused directory reports the digest actually present, not the pin.
+
+    Recording only the pinned digest would tell the operator what was
+    expected; recording the on-disk digest tells them what they have, which
+    is what a refusal has to be diagnosed from.
+    """
+    claude_agents = _harness_dir_with_agent(tmp_path)
+    (claude_agents / "agents.lock").write_text(json.dumps({"content_digest": "invalid_digest_0000"}), encoding="utf-8")
+    on_disk = compute_catalog_digest(claude_agents)
+
+    entries = _discover(tmp_path)
+
+    harness_entry = next((e for e in entries if "harness:agents" in e.name), None)
+    assert harness_entry is not None
+    assert harness_entry.enabled is False
+    assert harness_entry.content_digest == on_disk
+    assert harness_entry.content_digest != "invalid_digest_0000"
+
+
+def test_registry_round_trip_preserves_the_recorded_digest(tmp_path: Path) -> None:
+    """The digest survives save/load, so a later run reads the same answer."""
+    _harness_dir_with_agent(tmp_path)
+    registry_path = tmp_path / "registry.json"
+    discovery = AgentDiscovery(registry_path=registry_path, project_dir=tmp_path)
+    with patch("pathlib.Path.home", return_value=tmp_path):
+        discovery.discover_harness_local(enabled=True)
+    discovery.save()
+
+    reloaded = AgentDiscovery.load(registry_path)
+
+    harness_entry = next((e for e in reloaded.directories if "harness:agents" in e.name), None)
+    assert harness_entry is not None
+    assert harness_entry.content_digest == compute_catalog_digest(tmp_path / ".claude" / "agents")
+
+
+def test_registry_written_before_digests_still_loads(tmp_path: Path) -> None:
+    """A registry file predating the digest field loads with an empty digest."""
+    registry_path = tmp_path / "registry.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "directories": [{"name": "harness:agents", "source_type": "local", "path": "/somewhere", "agents": 1}],
+                "metrics": {},
+                "total_agents": 1,
+                "last_full_sync": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    reloaded = AgentDiscovery.load(registry_path)
+
+    assert reloaded.directories[0].content_digest == ""

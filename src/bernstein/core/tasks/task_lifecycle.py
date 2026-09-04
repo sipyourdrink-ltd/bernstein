@@ -3576,7 +3576,19 @@ def _evaluate_approval_gate(
             timeout_s=timeout_s,
         )
         if approval_result.rejected:
-            logger.warning("Approval gate: task %s rejected -- skipping merge for agent %s", task.id, session.id)
+            if approval_result.resolution == "timed_out":
+                logger.warning(
+                    "Approval gate: task %s rejected on timeout (no decision within the review window) "
+                    "-- skipping merge for agent %s",
+                    task.id,
+                    session.id,
+                )
+            else:
+                logger.warning(
+                    "Approval gate: task %s rejected -- skipping merge for agent %s",
+                    task.id,
+                    session.id,
+                )
             return True
         if not approval_result.approved:
             _create_approval_pr(orch, task, session, completion_data)
@@ -3686,8 +3698,9 @@ def _write_task_resume_checkpoint(
     session: AgentSession | None,
     worktree_path: Path | None,
     adapter_name: str | None = None,
+    stall_reason: str | None = None,
 ) -> None:
-    """Write a task resume checkpoint for a completed task.
+    """Write a task resume checkpoint for a completed or stall-killed task.
 
     This checkpoint captures the state after a successful step transition
     (agent spawn -> task completion) so the task can be resumed later if
@@ -3705,6 +3718,10 @@ def _write_task_resume_checkpoint(
         adapter_name: Adapter that ran the session. ``bernstein resume`` reads
             its resume strategy off this name (``resume_cmd.py``), so a
             checkpoint written without one is readable but not resumable.
+        stall_reason: When set, this checkpoint was written at an automatic
+            stall-kill boundary (issue #3376) rather than after a normal step
+            completion. Passed straight through onto the checkpoint's own
+            ``stall_reason`` field.
     """
     adapter = adapter_name or ""
     adapter_session_id = session.id if session is not None else ""
@@ -3737,6 +3754,7 @@ def _write_task_resume_checkpoint(
         worktree_path=str(worktree_path) if worktree_path is not None else None,
         scratchpad_path=scratchpad_path,
         scratchpad_sha256=scratchpad_sha,
+        stall_reason=stall_reason,
         meta=({"adapter_name": adapter} if adapter else {}),
     )
     save_checkpoint(workdir, checkpoint)

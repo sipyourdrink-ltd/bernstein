@@ -68,7 +68,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
-from bernstein.core.identity.agent import AgentPrincipal, principal_ref
 from bernstein.core.identity.delegation_scope import (
     AuthorityReport,
     ChainVerdict,
@@ -78,6 +77,7 @@ from bernstein.core.identity.delegation_scope import (
     grade_chain,
     verify_authority,
 )
+from bernstein.core.identity.principal import AgentPrincipal, principal_ref
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -174,7 +174,7 @@ class DelegationReceipt:
         """Return ``(issuer, subject)`` as :class:`AgentPrincipal` ids.
 
         Both fields are values of the one agent id space defined by
-        :mod:`bernstein.core.identity.agent`, so a hop read back off disk joins
+        :mod:`bernstein.core.identity.principal`, so a hop read back off disk joins
         directly to the principal a JWT or a signed card authenticated. Before
         the identity types were consolidated the two sides shared no id space
         and the join could not be stated, let alone made.

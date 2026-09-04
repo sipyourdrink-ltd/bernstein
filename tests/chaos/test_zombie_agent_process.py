@@ -30,9 +30,9 @@ async def test_zombie_agent_process(test_client: TestClient, orchestrator_factor
     orch._incident_manager.auto_pause = False
 
     # Speed up recycling
-    import bernstein.core.agent_lifecycle
+    import bernstein.core.agents.agent_recycling
 
-    monkeypatch.setattr(bernstein.core.agent_lifecycle, "_IDLE_GRACE_S", 1.0)
+    monkeypatch.setattr(bernstein.core.agents.agent_recycling, "_IDLE_GRACE_S", 1.0)
 
     # WORKAROUND: Monkeypatch adapter.kill to avoid killing the test process group
     from bernstein.adapters.registry import get_adapter

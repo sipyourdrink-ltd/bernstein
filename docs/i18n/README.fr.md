@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### la couche de gouvernance open source pour agents IA
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:739f0a7ad1af" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:9c87d303c594" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -38,7 +38,7 @@
 
 > **Statut : bêta.** Maintenu par une seule personne, en développement actif. Le numéro de version compte les releases, pas la maturité — les versions mineures peuvent modifier les interfaces. Épinglez la version pour tout usage critique ; les régressions sont corrigées rapidement, [signalez-les](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein est la couche de gouvernance open source pour agents IA. Un ordonnanceur déterministe - aucun modèle dans la boucle de coordination - exécute les agents en parallèle, filtre ce qu'ils produisent derrière des gates et consigne chaque étape, si bien qu'une exécution se vérifie après coup, hors ligne, à partir des seuls artefacts. Les agents CLI de code fonctionnent d'emblée (Claude Code, Codex, Gemini CLI et 40+ autres), et la même couche gouverne toute charge agentique : le livrable peut être un diff, un rapport de recherche, un dataset ou un dossier de preuves d'audit. Profil d'installation air-gap inclus. Apache-2.0.
+Bernstein est la couche de gouvernance open source pour agents IA. Il fonctionne en policy as code : vous écrivez la politique - qui a le droit de faire quoi, ce qui exige une approbation, ce qui doit être consigné - et Bernstein l'applique et produit l'enregistrement vérifiable. Un ordonnanceur déterministe - aucun modèle dans la boucle de coordination - exécute les agents en parallèle, filtre ce qu'ils produisent derrière des gates et consigne chaque étape, si bien qu'une exécution se vérifie après coup, hors ligne, à partir des seuls artefacts. Les agents CLI de code fonctionnent d'emblée (Claude Code, Codex, Gemini CLI et 40+ autres), et la même couche gouverne toute charge agentique : le livrable peut être un diff, un rapport de recherche, un dataset ou un dossier de preuves d'audit. Profil d'installation air-gap inclus. Apache-2.0.
 
 ### en un coup d'œil
 <!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->

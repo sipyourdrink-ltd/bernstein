@@ -486,6 +486,8 @@ _RESOURCE_MALFORMED_CHALLENGE = 'Bearer error="invalid_token", error_description
 # Operator-sensitive endpoints (``/shutdown``, ``/broadcast``, ``/drain``,
 # ``/config``) require ``admin:manage``, which is only granted to the
 # ``admin`` role - operator and agent tokens cannot reach them.
+_PERM_SCIM_WRITE = "scim:write"
+
 _ROUTE_PERMISSIONS: dict[str, str] = {
     "/tasks": _PERM_TASKS_WRITE,
     "/agents": "agents:write",
@@ -497,6 +499,11 @@ _ROUTE_PERMISSIONS: dict[str, str] = {
     "/shutdown": _PERM_ADMIN_MANAGE,
     "/broadcast": _PERM_ADMIN_MANAGE,
     "/drain": _PERM_ADMIN_MANAGE,
+    # SCIM 2.0 provisioning surface.  Writes need ``scim:write``; the read
+    # derivation below turns this into ``scim:read`` for GET, which keeps
+    # ``/scim/v2/Users`` out of reach of a plain ``status:read`` viewer.
+    "/scim": _PERM_SCIM_WRITE,
+    "/api/v1/scim": _PERM_SCIM_WRITE,
 }
 
 
@@ -528,6 +535,32 @@ def _normalise_expected_resource(raw: _ExpectedResourceConfig) -> tuple[str, ...
 def expected_resource_from_env() -> tuple[str, ...]:
     """Resolve the env-var override for the configured resource indicator."""
     return _normalise_expected_resource(os.environ.get(AUTH_EXPECTED_RESOURCE_ENV, ""))
+
+
+def peer_certificate_pem(request: Request) -> bytes | None:
+    """Return the leaf client certificate this connection presented, if any.
+
+    Reads the ASGI TLS extension (``scope["extensions"]["tls"]``), whose
+    ``client_cert_chain`` is a leaf-first list of PEM strings. A server that
+    terminates plain HTTP, or one whose TLS layer publishes no chain, yields
+    ``None`` -- which is exactly the input a proof-of-possession check needs to
+    refuse a bound token (#5030).
+    """
+    extensions: Any = request.scope.get("extensions")
+    if not isinstance(extensions, dict):
+        return None
+    tls: Any = cast("dict[str, Any]", extensions).get("tls")
+    if not isinstance(tls, dict):
+        return None
+    chain: Any = cast("dict[str, Any]", tls).get("client_cert_chain")
+    if not isinstance(chain, list) or not chain:
+        return None
+    leaf: Any = cast("list[Any]", chain)[0]
+    if isinstance(leaf, bytes):
+        return leaf or None
+    if isinstance(leaf, str) and leaf.strip():
+        return leaf.encode()
+    return None
 
 
 def _resource_indicator_check(
@@ -999,11 +1032,26 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
     ) -> JSONResponse | bool | None:
         """Validate SSO JWT. Returns JSONResponse on RBAC fail, True on success, None on miss."""
         assert self._auth_service is not None
-        result = self._auth_service.validate_token(token)
+        # The client certificate is part of the credential when the token is
+        # bound to one (#5030): a bound token presented on a connection that
+        # cannot show the same SVID leaf is refused here, and the refusal is
+        # anchored in the audit chain naming which proof failed.
+        result = self._auth_service.validate_token(token, presented_cert_pem=peer_certificate_pem(request))
         if result is None:
             return None
 
         user, claims = result
+
+        # Revocation acknowledgement: if the session is revoked, record that
+        # this enforcement point observed the revocation at its chain position.
+        # Sessions revoked past the staleness window are already rejected by
+        # ``validate_token`` (via ``is_valid``), so we reach here only for
+        # sessions revoked within the staleness window that are still valid.
+        session_id = claims.get("session_id", "")
+        if session_id:
+            session = self._auth_service.store.get_session(session_id)
+            if session is not None and session.revoked:
+                session.acknowledge_revocation(session.revocation_chain_position)
 
         # RFC 8707: reject SSO tokens minted for a different audience before
         # the request reaches its handler. Skipped when ``expected_resource``

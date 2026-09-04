@@ -133,6 +133,35 @@ def write_atomic_text(path: Path, data: str, *, encoding: str = "utf-8") -> None
     write_atomic_bytes(path, data.encode(encoding))
 
 
+def promote_atomic(staged_path: Path, path: Path) -> None:
+    """Atomically move an already-written staged file onto *path*.
+
+    Companion to :func:`write_atomic_bytes` for producers that emit a
+    *set* of files which must become visible together: write every file
+    of the set into a scratch directory on the same filesystem with
+    :func:`write_atomic_text` / :func:`write_atomic_bytes`, and only once
+    the whole set is durable call this for each file. A failure at any
+    point before the first promote leaves the published location exactly
+    as it was, so a consumer reading it sees the previous complete set.
+
+    ``os.replace`` swaps the directory entry, so a reader holding *path*
+    sees either the previous file or the new one - never a truncated or
+    half-written mix.
+
+    Args:
+        staged_path: Fully written source file. Must live on the same
+            filesystem as *path*, otherwise ``os.replace`` raises.
+        path: Final destination. Parent directory is created if missing.
+
+    Raises:
+        OSError: Propagated from ``os.replace`` (e.g. a cross-device
+            staging path, or a destination that is a directory).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(str(staged_path), str(path))
+    _fsync_dir(path.parent)
+
+
 def write_atomic_json(
     path: Path,
     payload: Any,
@@ -156,6 +185,7 @@ def write_atomic_json(
 
 
 __all__ = [
+    "promote_atomic",
     "write_atomic_bytes",
     "write_atomic_json",
     "write_atomic_text",

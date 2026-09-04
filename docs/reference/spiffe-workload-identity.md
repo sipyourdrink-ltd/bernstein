@@ -117,6 +117,66 @@ default Ed25519 manager identity and the regression suite is unchanged. See
 [the secrets broker guide](../security/secrets-broker.md#scoped-per-task-grants)
 for the full grant lifecycle.
 
+## Tokens bound to the SVID that holds them
+
+A bearer token is a password with a shorter life: whoever holds the bytes is
+the principal. In an agent system those bytes end up in prompt logs, crash
+dumps, shared traces, and artefacts the agent itself wrote.
+
+`AuthService.issue_bound_token` binds a token to an X.509-SVID. The token
+carries an RFC 8705 `cnf` confirmation claim holding the leaf's `x5t#S256`
+thumbprint -- the same digest the SVID reference content-addresses, re-encoded
+base64url -- alongside the SPIFFE ID it was bound to:
+
+```python
+token = auth_service.issue_bound_token(
+    user,
+    audience="https://tasks.internal",
+    svid_reference=svid_reference_from_x509(svid),
+)
+```
+
+On every request the auth middleware reads the leaf client certificate from
+the ASGI TLS extension and validation recomputes its thumbprint. A token
+replayed from anywhere that cannot present the same leaf is refused.
+
+Binding is opt-in per audience. `BERNSTEIN_AUTH_BOUND_AUDIENCES` (or
+`auth.bound_audiences`) lists the audiences whose tokens *must* carry a
+confirmation; an audience absent from the list is unaffected, so existing
+deployments are unchanged on upgrade. Issuing an unbound token for a listed
+audience is refused at issuance rather than at first use.
+
+The list only decides which audiences must be bound. A token that already
+carries a confirmation claim is checked whatever the list says -- the binding
+lives in the credential, so clearing the configuration cannot downgrade an
+issued token back to a bearer token.
+
+### The refusal is the artefact
+
+Every refused proof appends an `identity.token_binding_refusal` event to the
+HMAC chain, pinning a content-addressed receipt that names **which** proof
+failed:
+
+| `refusal_code` | Meaning |
+|---|---|
+| `binding_required` | The audience requires a confirmation the token lacks. |
+| `proof_absent` | The token is bound; the connection presented no certificate. |
+| `thumbprint_mismatch` | A certificate was presented and is not the bound one. |
+| `binding_expired` | The bound certificate is outside its validity window. |
+| `malformed_certificate` | The presented bytes are not a parseable certificate. |
+| `malformed_confirmation` | The token's `cnf` claim is not a usable confirmation. |
+
+The event also records the SPIFFE ID of the SVID that should have been
+presented, the expected and presented thumbprints, and the session id -- never
+the token, the certificate, or any key material. A gateway that rejects a
+replayed token tells you the request was denied; this receipt says a token
+issued to one workload was presented by something that could not prove it was
+that workload, at a named chain position, and it verifies offline after the
+incident.
+
+DPoP (RFC 9449), for clients that hold no certificate, is a separate surface
+and is not implemented.
+
 ## Threat model notes
 
 - **Determinism is the trust root.** The SPIFFE ID is a pure function of the

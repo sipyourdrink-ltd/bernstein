@@ -45,10 +45,11 @@ PACKAGE = REPO_ROOT / "src" / "bernstein" / "core" / "security"
 SEARCHED = ("src", "tests", "scripts")
 SELF = Path(__file__).resolve()
 
-#: The PROVED uncalled when this guard landed: each name appears nowhere outside its
-#: own module, in any file, in any form. Pre-existing debt, deliberately not fixed here -
-#: each needs its own judgement about wiring versus deleting, and two of them
-#: (post_tool_enforcement) are the subject of #4992 and labelled P0.
+#: The 20 still PROVED uncalled: each name appears nowhere outside its own module, in
+#: any file, in any form. Pre-existing debt, deliberately not fixed here - each needs
+#: its own judgement about wiring versus deleting. The two `post_tool_enforcement`
+#: entries the list started with are gone: #4992 wired them into the hook receiver's
+#: `PostToolUse` branch, which is what `test_no_stale_exemptions` is for.
 #:
 #: Every entry was sampled against an independent bare-name grep before being written
 #: down. The first version of this guard was not, and reported forty live functions dead.
@@ -70,12 +71,9 @@ KNOWN_UNCALLED: frozenset[str] = frozenset(
         "intent_capsule.py:normalise_tool_name",
         "permission_matrix.py:log_resolution",
         "permission_policy.py:load_permissions_config",
-        "post_tool_enforcement.py:redact_tool_output",
-        "post_tool_enforcement.py:run_post_tool_enforcement",
         "promptware_ingest.py:get_default_detector",
         "rbac.py:require_permission",
         "rbac.py:require_role",
-        "secrets_broker.py:register_secret_for_redaction",
         "secrets_broker.py:unregister_secret_for_redaction",
         "socket_guard.py:collect_unmonitored_destinations",
         "tenanting.py:build_tenant_registry",

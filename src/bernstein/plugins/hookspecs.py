@@ -631,6 +631,102 @@ class BernsteinSpec:
         """
 
     @hookspec
+    def provide_directory_adapter(self) -> Any:
+        """Provide one or more external-directory adapter registrations.
+
+        A directory adapter answers "who is this principal and what is it a
+        member of" against an identity directory an operator already runs.
+        Each adapter satisfies
+        :class:`bernstein.core.security.directory_bridge.DirectoryAdapter`,
+        which is a structural protocol: an adapter needs no Bernstein base
+        class, only the three operations and a ``name`` and ``version``.
+
+        The vendor client belongs in the adapter and nowhere else --
+        ``bernstein.core`` never imports a directory SDK -- so this hook is
+        how a directory is added without a core change.
+
+        Plugins implementing this hook return one of:
+
+        * ``None`` -- opt out for this call.
+        * A single
+          :class:`bernstein.core.security.directory_registry.DirectoryAdapterRegistration`.
+        * A ``(name, factory)`` tuple where ``factory`` constructs the
+          adapter when called with keyword arguments.
+        * A list containing any mix of the above.
+
+        Registration happens on the process-wide directory registry under
+        ``source="plugin"`` with the plugin name recorded as provenance.
+        Duplicate names are skipped with a warning; the first wins. Adapter
+        construction is deferred until a caller resolves the adapter by name,
+        so factories may open connections at construction time.
+
+        Returns:
+            A registration, list of registrations, or ``None``.
+        """
+
+    @hookspec
+    def provide_ingest_adapter(self) -> Any:
+        """Provide one or more ingest adapter registrations.
+
+        Ingest adapters are external observability integrations that receive
+        structured activity events (gen_ai_activity, untyped_activity) from
+        the Bernstein audit chain. Each adapter declares the event types
+        it can consume via
+        :class:`bernstein.core.observability.ingest_contract.IngestAdapterDeclaration`.
+
+        Plugins implementing this hook return one of:
+
+        * ``None`` -- opt out for this call.
+        * A single :class:`IngestAdapterDeclaration`.
+        * A ``(name, version, declared_event_types, summary)`` tuple where
+          *declared_event_types* is an iterable of event-type strings.
+        * A list containing any mix of the above.
+
+        The plugin manager collects declarations during plugin discovery.
+        Declarations are stored on the process-wide registry for observability
+        pipeline routing; actual event forwarding is handled by the ingest
+        subsystem.
+
+        Duplicate names are skipped with a warning; the first registration wins.
+
+        Returns:
+            A declaration, list of declarations, or ``None``.
+        """
+
+    @hookspec
+    def provide_secret_store(self) -> Any:
+        """Provide one or more external secret-store registrations.
+
+        An external secret store is the operator's own store -- their Vault,
+        their cloud secret manager, their credential broker -- used as a
+        backend behind
+        :class:`bernstein.core.security.external_secret_store.ExternalSecretStore`.
+        The store resolves a named secret, mints a short-lived credential, and
+        reports a revocation; the credential value never enters the audit
+        chain, only the grant, the store identity, the audience and the expiry.
+
+        Stores ship as plugins so a vendor SDK import stays out of
+        ``bernstein.core``. Plugins implementing this hook return one of:
+
+        * ``None`` -- opt out for this call.
+        * A single
+          :class:`bernstein.core.security.secret_store_registry.SecretStoreRegistration`.
+        * A ``(name, factory)`` tuple where ``factory`` constructs the store
+          when called with keyword arguments.
+        * A list containing any mix of the above.
+
+        The registered name is the store half of a secret reference, so a
+        store registered as ``"acme"`` serves ``secret_name="acme:db/password"``.
+        Duplicate names are skipped with a warning; the first wins.
+
+        Construction is deferred until the broker resolves the store by name,
+        so factories may do non-trivial work (TLS handshake, auth login).
+
+        Returns:
+            A registration, list of registrations, or ``None``.
+        """
+
+    @hookspec
     def on_metric_record(
         self,
         metric_type: str,

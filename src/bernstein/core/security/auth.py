@@ -35,12 +35,17 @@ from typing import TYPE_CHECKING, Any, cast
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from bernstein.core.security.audit_chain import AuditChainStore
+from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.security.tenanting import DEFAULT_TENANT_ID, normalize_tenant_id
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from signxml import VerifyResult
+
+    from bernstein.core.identity.spiffe.svid import SvidReference
+    from bernstein.core.security.token_binding import BindingRefusal
 
 _PERM_BULLETIN_READ = "bulletin:read"
 
@@ -114,6 +119,10 @@ _ROLE_PERMISSIONS: dict[AuthRole, frozenset[str]] = {
             # config writer - held only by ADMIN.  OPERATOR and VIEWER must
             # NOT have this permission or they could SIGTERM the server.
             "admin:manage",
+            # Reading the SCIM provisioning surface is an identity-admin
+            # task.  ``scim:write`` is deliberately absent: no write route
+            # is mounted, so nothing may hold the authority to reach one.
+            "scim:read",
         }
     ),
     AuthRole.OPERATOR: frozenset(
@@ -229,8 +238,12 @@ class AuthSession:
     created_at: float = field(default_factory=time.time)
     expires_at: float = 0.0  # Unix timestamp
     revoked: bool = False
+    revoked_at: float = 0.0  # Unix timestamp when revocation was issued
+    revocation_chain_position: str = ""  # chain position of the revocation event
+    revocation_acknowledgements: dict[str, float] = field(default_factory=dict)
     ip_address: str = ""
     user_agent: str = ""
+    _staleness_window_s: float = 300.0  # 5 minutes bounded staleness
 
     @property
     def is_expired(self) -> bool:
@@ -238,7 +251,36 @@ class AuthSession:
 
     @property
     def is_valid(self) -> bool:
-        return not self.revoked and not self.is_expired
+        """Check if this session is valid (not revoked, not expired).
+
+        A session is considered invalid if it's revoked past the staleness window.
+        This implements fail-closed semantics - past the staleness window, the
+        session is treated as if it was never valid.
+        """
+        return not self.revoked and not self.is_expired and not self.is_revoked_past_staleness()
+
+    def is_revoked_past_staleness(self, staleness_window_s: float | None = None) -> bool:
+        """Check if the revocation is past the staleness window.
+
+        Past the staleness window, an enforcement point that has not
+        re-read the revocation list must fail closed.
+        """
+        if not self.revoked:
+            return False
+        if not self.revoked_at:
+            return False
+        window = staleness_window_s if staleness_window_s is not None else self._staleness_window_s
+        return (time.time() - self.revoked_at) > window
+
+    def acknowledge_revocation(self, chain_position: str) -> None:
+        """Record that this enforcement point has acknowledged a revocation at a given chain position."""
+        self.revocation_acknowledgements[chain_position] = time.time()
+
+    def max_acknowledgement_lag(self) -> float | None:
+        """Return the maximum observed acknowledgement lag in seconds, or None if no acknowledgements."""
+        if not self.revocation_acknowledgements:
+            return None
+        return max(time.time() - ts for ts in self.revocation_acknowledgements.values())
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -247,6 +289,9 @@ class AuthSession:
             "created_at": self.created_at,
             "expires_at": self.expires_at,
             "revoked": self.revoked,
+            "revoked_at": self.revoked_at,
+            "revocation_chain_position": self.revocation_chain_position,
+            "revocation_acknowledgements": self.revocation_acknowledgements,
             "ip_address": self.ip_address,
             "user_agent": self.user_agent,
         }
@@ -259,6 +304,9 @@ class AuthSession:
             created_at=float(d.get("created_at", 0)),
             expires_at=float(d.get("expires_at", 0)),
             revoked=bool(d.get("revoked", False)),
+            revoked_at=float(d.get("revoked_at", 0)),
+            revocation_chain_position=str(d.get("revocation_chain_position", "")),
+            revocation_acknowledgements={str(k): float(v) for k, v in d.get("revocation_acknowledgements", {}).items()},
             ip_address=str(d.get("ip_address", "")),
             user_agent=str(d.get("user_agent", "")),
         )
@@ -371,6 +419,18 @@ class SSOConfig(BaseSettings):
     # or as a single string. Any-match semantics - the token only has to
     # match one entry in the list.
     expected_resource: str = ""
+
+    # Issue #5030 -- audiences whose tokens must carry a proof of possession
+    # (RFC 8705: an ``x5t#S256`` confirmation naming the X.509-SVID leaf the
+    # holder must present).  Comma-separated, supplied as
+    # ``BERNSTEIN_AUTH_BOUND_AUDIENCES``.  Binding is opt-in per audience, so
+    # an audience absent from this list keeps working unchanged on upgrade.
+    #
+    # This list only decides which audiences *must* be bound.  A token that
+    # already carries a confirmation claim is checked whatever this says: the
+    # binding lives in the credential, so clearing the list cannot downgrade
+    # an issued token back to a bearer token.
+    bound_audiences: str = ""
 
     # Sub-configs
     oidc: OIDCConfig = Field(default_factory=OIDCConfig)
@@ -597,6 +657,7 @@ class AuthStore:
         self._users_dir = self._base / "users"
         self._sessions_dir = self._base / "sessions"
         self._devices_dir = self._base / "devices"
+        self._audit_chain = AuditChainStore(sdd_dir / "audit")
         self._ensure_dirs()
 
     def _ensure_dirs(self) -> None:
@@ -668,6 +729,19 @@ class AuthStore:
         if session is None:
             return False
         session.revoked = True
+        session.revoked_at = time.time()
+        try:
+            from bernstein.core.security.audit_chain import record_identity_revoked
+
+            record = record_identity_revoked(
+                chain=self._audit_chain,
+                session_id=session.id,
+                user_id=session.user_id,
+                revoked_at=session.revoked_at,
+            )
+            session.revocation_chain_position = record.details.get("prev_chain_digest", "")
+        except Exception:
+            logger.warning("Could not record revocation chain event for session %s", session_id)
         self.save_session(session)
         return True
 
@@ -678,7 +752,20 @@ class AuthStore:
                 data = json.loads(path.read_text())
                 if data.get("user_id") == user_id and not data.get("revoked", False):
                     data["revoked"] = True
-                    path.write_text(json.dumps(data, indent=2))
+                    data["revoked_at"] = time.time()
+                    try:
+                        from bernstein.core.security.audit_chain import record_identity_revoked
+
+                        record = record_identity_revoked(
+                            chain=self._audit_chain,
+                            session_id=data["id"],
+                            user_id=user_id,
+                            revoked_at=data["revoked_at"],
+                        )
+                        data["revocation_chain_position"] = record.details.get("prev_chain_digest", "")
+                    except Exception:
+                        logger.warning("Could not record revocation chain event for session %s", data.get("id"))
+                    self.save_session(AuthSession.from_dict(data))
                     count += 1
             except (json.JSONDecodeError, KeyError):
                 continue
@@ -959,9 +1046,19 @@ class AuthService:
     and user lifecycle.
     """
 
-    def __init__(self, config: SSOConfig, store: AuthStore) -> None:
+    def __init__(
+        self,
+        config: SSOConfig,
+        store: AuthStore,
+        audit_chain: AuditChainStore | None = None,
+    ) -> None:
         self.config = config
         self.store = store
+        # Issue #5030 -- where proof-of-possession refusals are anchored. A
+        # deployment without a chain still refuses the token; it just cannot
+        # prove afterwards which proof failed, so wire one wherever the
+        # service is constructed.
+        self._audit_chain = audit_chain
         self._group_role_map: dict[str, AuthRole] = {}
         self._oidc_discovery: dict[str, Any] | None = None
         self._load_group_mappings()
@@ -1278,11 +1375,61 @@ class AuthService:
 
     # -- Token issuance --
 
+    def bound_audiences(self) -> frozenset[str]:
+        """Return the audiences whose tokens must carry a proof of possession."""
+        from bernstein.core.security.token_binding import parse_bound_audiences
+
+        return parse_bound_audiences(self.config.bound_audiences)
+
+    def issue_bound_token(
+        self,
+        user: AuthUser,
+        *,
+        audience: str = "",
+        svid_reference: SvidReference | None = None,
+        ip_address: str = "",
+        user_agent: str = "",
+    ) -> str:
+        """Issue a token for *user*, optionally bound to an X.509-SVID (#5030).
+
+        With *svid_reference* the token carries an RFC 8705 ``cnf`` claim
+        holding the SVID leaf's ``x5t#S256`` thumbprint: it is then usable only
+        on a connection that presents that same leaf, so a copy lifted out of a
+        log, a trace, or a model context is inert.
+
+        Args:
+            user: The principal the token speaks for.
+            audience: The audience the token is minted for, recorded as ``aud``.
+            svid_reference: The SVID the holder must present. Required when
+                *audience* is one of :meth:`bound_audiences`.
+            ip_address: Recorded on the session.
+            user_agent: Recorded on the session.
+
+        Raises:
+            AuthenticationError: If *audience* requires a binding and no SVID
+                reference was supplied. Issuing an unbound token for a bound
+                audience would hand out exactly the credential the audience
+                refuses to accept.
+        """
+        if not svid_reference and audience and audience in self.bound_audiences():
+            msg = f"audience {audience!r} requires proof-of-possession binding; no SVID reference supplied"
+            raise AuthenticationError(msg)
+        return self._issue_token(
+            user,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            audience=audience,
+            svid_reference=svid_reference,
+        )
+
     def _issue_token(
         self,
         user: AuthUser,
         ip_address: str = "",
         user_agent: str = "",
+        *,
+        audience: str = "",
+        svid_reference: SvidReference | None = None,
     ) -> str:
         """Issue a JWT token for a user and create a session."""
         session = AuthSession(
@@ -1292,6 +1439,20 @@ class AuthService:
             user_agent=user_agent,
         )
         self.store.save_session(session)
+
+        binding_claims: dict[str, Any] = {}
+        if audience:
+            binding_claims["aud"] = audience
+        if svid_reference is not None:
+            from bernstein.core.security.token_binding import (
+                CNF_CLAIM,
+                SVID_ID_CLAIM,
+                confirmation_claim,
+                x5t_s256_from_svid_reference,
+            )
+
+            binding_claims[CNF_CLAIM] = confirmation_claim(x5t_s256_from_svid_reference(svid_reference))
+            binding_claims[SVID_ID_CLAIM] = svid_reference.spiffe_id
 
         return create_jwt(
             claims={
@@ -1304,14 +1465,27 @@ class AuthService:
                 # the persisted user record, never from the login request, so
                 # a caller cannot influence which tenant their token carries.
                 "tenant_id": normalize_tenant_id(user.tenant_id),
-            },
+            }
+            | binding_claims,
             secret=self.config.jwt_secret,
             algorithm=self.config.jwt_algorithm,
             expiry_seconds=self.config.jwt_expiry_seconds,
         )
 
-    def validate_token(self, token: str) -> tuple[AuthUser, dict[str, Any]] | None:
-        """Validate a JWT token and return (user, claims) or None."""
+    def validate_token(
+        self,
+        token: str,
+        *,
+        presented_cert_pem: bytes | None = None,
+    ) -> tuple[AuthUser, dict[str, Any]] | None:
+        """Validate a JWT token and return (user, claims) or None.
+
+        *presented_cert_pem* is the client certificate the caller presented on
+        this connection, when the transport supplied one. A token carrying an
+        RFC 8705 confirmation claim is usable only on a connection presenting
+        the certificate it names (#5030); the refusal is anchored in the audit
+        chain and names which proof failed.
+        """
         claims = verify_jwt(token, self.config.jwt_secret, self.config.jwt_algorithm)
         if not claims:
             return None
@@ -1328,7 +1502,62 @@ class AuthService:
         if not user:
             return None
 
+        # Proof of possession last: the checks above establish that the bytes
+        # are a genuine, unexpired, still-authorised credential.  Recording a
+        # refusal for anything weaker would let an unauthenticated caller
+        # append to the audit chain at will.
+        if self.check_token_binding(claims, presented_cert_pem=presented_cert_pem) is not None:
+            return None
+
         return user, claims
+
+    def check_token_binding(
+        self,
+        claims: dict[str, Any],
+        *,
+        presented_cert_pem: bytes | None = None,
+    ) -> BindingRefusal | None:
+        """Check a validated token's proof of possession, recording refusals (#5030).
+
+        Returns ``None`` when the token may be used on this connection, or the
+        :class:`~bernstein.core.security.token_binding.BindingRefusal` naming
+        the failed check. Every refusal is appended to the audit chain when one
+        is configured, so a replayed credential leaves a record that names the
+        SVID that should have been presented and verifies offline.
+        """
+        from bernstein.core.security.token_binding import verify_token_binding
+
+        refusal = verify_token_binding(
+            claims,
+            presented_cert_pem=presented_cert_pem,
+            bound_audiences=self.bound_audiences(),
+        )
+        if refusal is None:
+            return None
+
+        # Only the verdict and the identifiers it names are logged; the token
+        # and the certificate never reach a log line.
+        logger.warning(
+            "Token binding refused: %s (audience=%s, spiffe_id=%s)",
+            refusal.code.value,
+            sanitize_log(refusal.audience),
+            sanitize_log(refusal.spiffe_id),
+        )
+        if self._audit_chain is not None:
+            from bernstein.core.security.audit_chain import record_token_binding_refusal
+
+            record_token_binding_refusal(
+                chain=self._audit_chain,
+                refusal_hash=refusal.content_hash(),
+                refusal_code=refusal.code.value,
+                audience=refusal.audience,
+                spiffe_id=refusal.spiffe_id,
+                expected_thumbprint=refusal.expected_thumbprint,
+                presented_thumbprint=refusal.presented_thumbprint,
+                session_id=refusal.session_id,
+                detail=refusal.detail,
+            )
+        return refusal
 
     def validate_legacy_token(self, token: str) -> bool:
         """Check if a token matches the legacy bearer token."""

@@ -71,6 +71,11 @@ logger = logging.getLogger(__name__)
 #: wire-format change; ``verify`` rejects unknown versions.
 MEMORY_CHAIN_ENTRY_VERSION = 1
 
+#: Version stamped into the canonical fold envelope produced by
+#: :meth:`MemoryChain.fold_bytes`. Separate from the entry version so the
+#: projection's shape can move without rewriting stored rows.
+MEMORY_FOLD_VERSION = 1
+
 #: Entry kinds. A write asserts a claim; a tombstone marks a prior
 #: write's claim as forgotten without deleting it.
 KIND_WRITE = "write"
@@ -576,6 +581,44 @@ class MemoryChain:
         """Return the set of entry hashes marked forgotten by a tombstone."""
         return {e.tombstone_of for e in self.iter_entries(scope, namespace) if e.kind == KIND_TOMBSTONE}
 
+    def fold(self, scope: MemoryScope, namespace: str) -> tuple[MemoryChainEntry, ...]:
+        """Return the live claims of ``scope``/``namespace`` in append order.
+
+        The current state of a namespace is a pure fold of its record
+        chain: every ``write`` entry, in the order it was appended,
+        minus the ones a tombstone has forgotten. Nothing is read from
+        outside the chain file, so the projection depends only on the
+        records and is reproducible by any reader.
+        """
+        forgotten = self.forgotten_hashes(scope, namespace)
+        return tuple(
+            entry
+            for entry in self.iter_entries(scope, namespace)
+            if entry.kind == KIND_WRITE and entry.entry_hash not in forgotten
+        )
+
+    def fold_bytes(self, scope: MemoryScope, namespace: str) -> bytes:
+        """Return the canonical byte encoding of :meth:`fold`.
+
+        The envelope names the scope and namespace it projects, so the
+        bytes are self-describing and two namespaces that happen to be
+        empty do not encode identically. Entry bodies are reused
+        verbatim -- the same canonical JSON that is HMAC-covered on
+        disk -- so the projection carries each claim's ``entry_hash``
+        and cannot silently disagree with the record it folds.
+
+        Two readers over the same chain file produce identical bytes,
+        which makes the projection diffable and hashable.
+        """
+        return _canonical_body_bytes(
+            {
+                "v": MEMORY_FOLD_VERSION,
+                "scope": scope.value,
+                "namespace": _validate_namespace(namespace),
+                "entries": [entry.body() for entry in self.fold(scope, namespace)],
+            }
+        )
+
     def why(
         self,
         claim: str,
@@ -721,6 +764,7 @@ __all__ = [
     "KIND_TOMBSTONE",
     "KIND_WRITE",
     "MEMORY_CHAIN_ENTRY_VERSION",
+    "MEMORY_FOLD_VERSION",
     "MemoryChain",
     "MemoryChainEntry",
     "MemoryChainStatus",

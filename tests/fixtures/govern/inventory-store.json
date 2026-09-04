@@ -1,0 +1,15 @@
+{
+  "nodes": [
+    {"id": "skill_review", "label": "Review skill"},
+    {"id": "mcp_github", "label": "GitHub MCP"},
+    {"id": "agent_codex", "label": "Codex"},
+    {"id": "agent_claude", "label": "Claude Code"},
+    {"id": "host_dev", "label": "developer machine"}
+  ],
+  "edges": [
+    {"from": "agent_claude", "to": "skill_review"},
+    {"from": "host_dev", "to": "agent_codex"},
+    {"from": "agent_claude", "to": "mcp_github"},
+    {"from": "host_dev", "to": "agent_claude"}
+  ]
+}

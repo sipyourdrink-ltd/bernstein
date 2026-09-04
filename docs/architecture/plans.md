@@ -117,6 +117,7 @@ keys depend on `type`:
 | `file_contains` | `path`, `contains` | File must exist and include the substring. |
 | `llm_review` | `value` (criteria) | LLM judge applies the given criteria. |
 | `llm_judge` | `value` | Free-form LLM judgement. |
+| `absence_verified` | `value` (tool_call_id) | The named tool call reported "nothing found" and its anchored coverage record proves what it searched. |
 
 Source: `plan_schema.py:49-77`, `plan_loader.py:70-97`.
 

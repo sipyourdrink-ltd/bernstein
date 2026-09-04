@@ -6,9 +6,59 @@ import hashlib
 import json
 from typing import Any
 
+from bernstein.core.govern.findings import Finding, FindingsDocument
+from bernstein.core.govern.freshness_gate import (
+    FreshnessGate,
+    FreshnessResult,
+    ProducerState,
+    freshness_gated_read,
+)
 from bernstein.core.govern.inventory_models import Inventory, Surface
+from bernstein.core.govern.observation import ObservationEnvelope, ObservationLedger
+from bernstein.core.govern.observation_store import (
+    ObservationRecord,
+    ObservationStore,
+    ObservationStoreError,
+    RecordState,
+    observation_store_root,
+)
 from bernstein.core.govern.plan_models import GovernPlan, PlanEntry, PlanEntryKind
-from bernstein.core.govern.playbook_models import Playbook, PlaybookClause
+from bernstein.core.govern.playbook_models import (
+    Playbook,
+    PlaybookClause,
+    PlaybookValidationError,
+    RemediationAction,
+)
+from bernstein.core.govern.proposal import DraftProposal, ProposalStatus
+from bernstein.core.govern.reconcile import (
+    compute_reconcile_diff,
+    propose_reconcile,
+    snapshot_surface,
+)
+from bernstein.core.govern.reconcile_models import (
+    DesiredEntity,
+    DesiredState,
+    DiffAction,
+    EntityKind,
+    EntityPolicy,
+    EntityStatus,
+    ReconcileDiff,
+    ReconcileEntry,
+    Snapshot,
+    SnapshotEntity,
+)
+from bernstein.core.govern.remediation import (
+    RemediationProposal,
+    RemediationStep,
+    UnremediatedFinding,
+    collect_remediation,
+)
+from bernstein.core.govern.restore import (
+    RestoreEntry,
+    RestorePlan,
+    RestoreRefusal,
+    build_restore_plan,
+)
 
 
 def compute_plan(
@@ -184,12 +234,50 @@ def _compare_values(observed: str, ceiling: str) -> int:
 
 
 __all__ = [
+    "DesiredEntity",
+    "DesiredState",
+    "DiffAction",
+    "DraftProposal",
+    "EntityKind",
+    "EntityPolicy",
+    "EntityStatus",
+    "Finding",
+    "FindingsDocument",
+    "FreshnessGate",
+    "FreshnessResult",
     "GovernPlan",
     "Inventory",
+    "ObservationEnvelope",
+    "ObservationLedger",
+    "ObservationRecord",
+    "ObservationStore",
+    "ObservationStoreError",
     "PlanEntry",
     "PlanEntryKind",
     "Playbook",
     "PlaybookClause",
+    "PlaybookValidationError",
+    "ProducerState",
+    "ProposalStatus",
+    "ReconcileDiff",
+    "ReconcileEntry",
+    "RecordState",
+    "RemediationAction",
+    "RemediationProposal",
+    "RemediationStep",
+    "RestoreEntry",
+    "RestorePlan",
+    "RestoreRefusal",
+    "Snapshot",
+    "SnapshotEntity",
     "Surface",
+    "UnremediatedFinding",
+    "build_restore_plan",
+    "collect_remediation",
     "compute_plan",
+    "compute_reconcile_diff",
+    "freshness_gated_read",
+    "observation_store_root",
+    "propose_reconcile",
+    "snapshot_surface",
 ]

@@ -316,6 +316,76 @@ Same three providers, different lifecycle. The injector is for
 Use the injector when you want an agent to have a database password
 or a cloud role for the lifetime of one task and never see it again.
 
+### Broker-side stores: `core/security/external_secret_store.py`
+
+Both integration points above copy a value out of the operator's store
+and into Bernstein. The broker
+(`core/security/secrets_broker.py`) takes the opposite approach: the
+operator's store stays the only place the value lives, and Bernstein
+keeps the authorization record.
+
+Configure it as a broker backend:
+
+```yaml
+secrets_broker:
+  backend: external
+  backend_settings:
+    store_name: acme       # a registered store
+    # any further keys are forwarded to that store's factory
+```
+
+A spec then names a secret by opaque reference, never by value:
+
+```yaml
+secret_name: acme:prod/db-password
+```
+
+The `acme` half selects the store; the rest is store-native (a Vault
+path, an ARN, a resource id) and Bernstein never interprets it.
+
+On every mint the broker asks the store three things, in order:
+
+1. `resolve(path)` - non-secret facts: which store holds it, its
+   store-native version or lease id, whether it is revoked, and any
+   store-imposed expiry.
+2. `report_revocation(path, upstream_id=...)` - revoking in your own
+   store is what stops Bernstein minting. There is no separate
+   revocation list to keep in step.
+3. `mint_credential(path, audience=..., ttl_seconds=...)` - a
+   short-lived credential. A store may return a shorter expiry than
+   asked for and the broker caps the token to it, so a broker token
+   never outlives the credential behind it.
+
+What reaches the grant chain is the grant, the store identity, the
+audience and the expiry. The credential value is held in the broker's
+in-process registry for the token's lifetime and is dropped on
+revocation. Grant enforcement is unchanged: without a verifying grant
+the broker refuses, and the store is never called.
+
+Binding a credential for one step:
+
+```python
+with broker.bind_scoped(
+    secret_name="acme:prod/db-password",
+    task_id=task.id,
+    env_var="DATABASE_PASSWORD",
+    grant=grant,
+) as token:
+    run_step(token)
+# DATABASE_PASSWORD is gone here - or back to whatever you had set
+# under that name - and the token is revoked.
+```
+
+#### Registering a store
+
+No concrete store ships built in. A store implements
+`ExternalSecretStore` and registers under a name, either through the
+`provide_secret_store` plugin hook or, in-process, through
+`register_secret_store()`. Because stores register from outside,
+`bernstein.core` never imports a vendor SDK -
+`tests/unit/security/test_core_vendor_sdk_imports.py` fails the build
+if it gains one.
+
 ---
 
 ## `.env` file conventions
@@ -443,6 +513,9 @@ blast radius.
 | HMAC audit log                | `src/bernstein/core/security/vault/audit.py`                       |
 | Startup secret-manager loader | `src/bernstein/core/security/secrets.py`                           |
 | Spawn-time injector           | `src/bernstein/core/security/vault_injector.py`                    |
+| Secrets broker                | `src/bernstein/core/security/secrets_broker.py`                    |
+| External-store contract       | `src/bernstein/core/security/external_secret_store.py`             |
+| External-store registry       | `src/bernstein/core/security/secret_store_registry.py`             |
 | Env-var filter for spawns     | `src/bernstein/adapters/env_isolation.py` (see `env-isolation.md`) |
 
 ---

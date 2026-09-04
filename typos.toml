@@ -40,6 +40,7 @@ abd = "abd"          # deterministic 3-byte hash fixture b"abd" (test_computer_u
 continu = "continu"  # intentional substring match for "continue"/"continuity" in error text (test_capability_tokens.py)
 reprot = "reprot"    # intentionally malformed artifact-kind fixture (test_artifact_spec_declaration.py)
 critera = "critera"  # intentionally malformed artifact_spec key fixture (test_artifact_spec_declaration.py)
+Pn = "Pn"            # `-Pn` is a valid Nmap flag
 
 # Technical terms used consistently in the codebase
 unparseable = "unparseable"
@@ -105,6 +106,26 @@ extend-exclude = [
     # excluded; the human-authored builder script beside them stays in scope.
     "tests/fixtures/trust-record-vectors/*.json",
     "tests/fixtures/trust-record-vectors/*.pem",
+    # Evidence-envelope golden vector - same content profile again: a real
+    # Ed25519 detached JWS plus sha256 digests, in a file whose bytes are
+    # its own canonical form. Editing one character both invalidates the
+    # signature the offline test checks and falsifies the committed
+    # digest sidecar, so a spelling fix here is not possible. The
+    # human-authored builder and README beside them stay in scope.
+    "tests/fixtures/evidence-envelope-vectors/*.json",
+    "tests/fixtures/evidence-envelope-vectors/*.pem",
+    "tests/fixtures/evidence-envelope-vectors/*.sha256",
+    # Auditor conformance fixture - the recorded run's exported bundle.
+    # Same content profile as the vectors above: the receipts carry a
+    # base64url Ed25519 JWK and detached signatures, and the scanner reads
+    # slices of the key ("Ahd" inside the public key's x coordinate) as
+    # words. The bytes are a signature over the run, so a spelling fix is
+    # not possible: editing one character invalidates the receipt the
+    # offline verification vector checks. The whole tree is machine-made -
+    # `scripts/auditor_conformance.py regenerate` rewrites it by re-running
+    # the scenario - so an edit here would be reverted by the next
+    # regeneration. The human-authored README beside it stays in scope.
+    "tests/conformance/auditor/fixture/**",
     # Vite-built SPA bundle - minified JS / sourcemaps mangle identifiers to
     # 1–2 chars (``ue``, ``ot``, ``Iy``, ``Archtype``, etc.) that trigger
     # thousands of false-positive typo errors and bury real findings. Human-
@@ -120,6 +141,14 @@ extend-exclude = [
     # contradiction (the scanner sees its own denylist as a typo).
     "scripts/auto_heal_typos.py",
     "tests/unit/test_auto_heal_typos.py",
+    # Auditor conformance fixtures are deterministic base64-encoded
+    # Ed25519 public keys, signatures, and receipts. The base64
+    # content contains dictionary near-misses like "Ahd" inside
+    # the key "dufXbAhdZ7XxqcjErH9nfLA7A2fC8oVHaCmEn1gHBm0=".
+    # Editing these would invalidate the cryptographic content the
+    # offline verification tests check. Path-exclude the entire
+    # fixture tree; human-authored builder scripts beside them stay in scope.
+    "tests/conformance/auditor/fixture/**",
 ]
 
 [type.md]

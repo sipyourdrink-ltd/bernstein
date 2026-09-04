@@ -645,7 +645,7 @@ class _CoreTombstoneLoader:
         successor = _TOMBSTONE_MAP[fullname[len(_CoreTombstoneFinder._PREFIX) :]]
         msg = (
             f"{fullname} was removed; import {successor} instead. Agent identity now has "
-            "one type, bernstein.core.identity.agent.AgentPrincipal, that both credential "
+            "one type, bernstein.core.identity.principal.AgentPrincipal, that both credential "
             "formats resolve to."
         )
         raise ImportError(msg, name=fullname)

@@ -43,7 +43,7 @@ from bernstein.cli.run_preflight import (
     _show_run_summary,
     validate_seed_or_exit,
 )
-from bernstein.core.cost import estimate_run_cost
+from bernstein.core.cost import estimate_run_cost, model_cost_is_known
 from bernstein.core.errors import BernsteinFirstRunError
 from bernstein.core.manager_parsing import _resolve_depends_on  # pyright: ignore[reportPrivateUsage]
 from bernstein.core.orchestration.process_utils import (
@@ -750,9 +750,13 @@ def _show_dry_run_plan(
             console.print(f"  {task.title} -> [{dep_str}]")
 
     est_model = model_override or "sonnet"
-    low_usd, high_usd = estimate_run_cost(len(tasks), est_model)
     console.print(f"\n  Total tasks: {len(tasks)}")
-    console.print(f"  Estimated cost: ${(low_usd + high_usd) / 2:.2f} (${low_usd:.2f}-${high_usd:.2f})")
+    if not model_cost_is_known(est_model):
+        # No pricing-table entry: meters at $0 but is not free (issue #5337).
+        console.print(f"  Estimated cost: unpriced ({est_model} not in pricing table)")
+    else:
+        low_usd, high_usd = estimate_run_cost(len(tasks), est_model)
+        console.print(f"  Estimated cost: ${(low_usd + high_usd) / 2:.2f} (${low_usd:.2f}-${high_usd:.2f})")
 
     console.print("\n[green]Dry run complete. No agents were spawned.[/green]")
 

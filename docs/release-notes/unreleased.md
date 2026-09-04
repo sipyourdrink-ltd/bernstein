@@ -9,4 +9,3 @@ version's page in the release PR itself. `tests/unit/test_unreleased_notes_rotat
 holds the page to that — an entry naming an issue or PR a tagged release page
 already documents fails the build. An entry that cites released work as context
 rather than as its own attribution is exempted by hand there, with the reason.
-
