@@ -43,9 +43,14 @@ def test_a_well_formed_document_loads() -> None:
 
 
 def test_an_unknown_key_is_rejected_not_dropped() -> None:
-    """Silently dropping it would load a rule that is not the one written."""
+    """Silently dropping it would load a rule that is not the one written.
+
+    The stray key is a near-miss of a real one -- ``contacts`` for ``contact`` --
+    because that is the realistic mistake, and the one whose silent acceptance
+    would leave a rule that looks right and derives nothing.
+    """
     with pytest.raises(DerivationRuleError, match="unknown key"):
-        DerivationRules.from_dict({"rules": [{"kind": "owner_contact", "match": "a", "value": "b", "contct": "typo"}]})
+        DerivationRules.from_dict({"rules": [{"kind": "owner_contact", "match": "a", "value": "b", "contacts": "x@y"}]})
 
 
 def test_an_unknown_key_on_the_document_is_rejected() -> None:
