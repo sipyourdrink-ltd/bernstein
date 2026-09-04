@@ -376,6 +376,7 @@ nav:
           - Token growth monitor: operations/token-growth-monitor.md
           - Payment mandates: operations/payment-mandates.md
           - Showback canonicalization: cost/showback-canonical.md
+          - Budget halt receipts: cost/budget-halt-receipts.md
       - Observability:
           - Overview: operations/observability-overview.md
           - Instrumentation: operations/INSTRUMENTATION.md
@@ -436,12 +437,14 @@ nav:
           - Security operations: operations/security.md
           - Hardening: security/security-hardening.md
           - Governance: operations/governance.md
+          - Inventory topology: operations/govern-inventory.md
           - Govern ingest: operations/govern-ingest.md
           - Secrets & creds: operations/secrets.md
           - Secrets broker: security/secrets-broker.md
           - Env isolation: operations/env-isolation.md
           - Credential scoping: security/credential-scoping.md
           - Capability matrix: security/capability-matrix.md
+          - Admission policy: operations/admission-policy.md
           - Manager auth: security/manager-auth.md
           - Agent-card keystore: security/keystore.md
           - JCS canonicalization: security/jcs-canonicalization.md
@@ -451,9 +454,11 @@ nav:
           - Lethal trifecta: security/lethal-trifecta.md
           - Coordinated disclosure: security/bug-bounty.md
           - Log redaction: security/log-redaction.md
+          - Tool-output redaction: security/tool-output-redaction.md
           - PII scan gate: security/pii-scan-gate.md
       - Compliance & audit:
           - Compliance overview: operations/compliance.md
+          - AI bill of materials: operations/run-bom.md
           - SOC 2 audit: security/AUDIT.md
           - Audit log: security/audit-log.md
           - Multi-tenant audit export: security/audit-multitenant.md
@@ -463,6 +468,7 @@ nav:
           - EU residency setup: compliance/eu-residency-customer-setup.md
           - Regulator-mapped compliance packs: compliance/regulator-mapped-packs.md
           - FINOS AIGF mapping: compliance/finos-aigf-mapping.md
+          - ISO/IEC 42001 mapping: compliance/iso42001-mapping.md
           - Regulator-class lineage: compliance/regulatory-lineage.md
           - Lineage export: compliance/lineage-export.md
           - Lineage v1 (user reference): lineage.md
@@ -475,6 +481,7 @@ nav:
           - A2A JSON-RPC server surface: operations/a2a-server.md
           - Datasources & query receipts: operations/datasources.md
           - Verifiable audit receipts: security/audit-receipt.md
+          - Evidence envelope: security/evidence-envelope.md
           - Gate adjudication records: operations/gate-adjudication.md
           - Agent run manifest: operations/run-manifest.md
           - Verification evidence bundles: operations/evidence-bundles.md
@@ -488,6 +495,7 @@ nav:
           - Task lifecycle CLI: reference/cli/task-lifecycle.md
           - Replay CLI: reference/cli/replay.md
           - Verify CLI: reference/cli/verify.md
+          - Evolve CLI: reference/cli/evolve.md
           - Receipt CLI: reference/receipt.md
       - Configuration & schemas:
           - Configuration: operations/CONFIG.md
@@ -532,6 +540,7 @@ nav:
       - Release notes:
           - Changelog: CHANGELOG.md
           - Unreleased: release-notes/unreleased.md
+          - v3.19.1: release-notes/v3.19.1.md
           - v3.19.0: release-notes/v3.19.0.md
           - v3.18.2: release-notes/v3.18.2.md
           - v3.18.1: release-notes/v3.18.1.md
@@ -595,6 +604,7 @@ nav:
           - Task lifecycle: architecture/LIFECYCLE.md
           - Agent lifecycle diagram: diagrams/agent_lifecycle.md
           - Task lifecycle diagram: diagrams/task_lifecycle.md
+          - Inventory topology diagram: diagrams/inventory_topology.md
           - Graphs: architecture/graphs.md
           - Dependency resolver: architecture/DEPENDENCY_RESOLVER.md
           - Quality pipeline: architecture/quality-pipeline.md
@@ -655,6 +665,7 @@ nav:
       - Decisions (ADRs):
           - Index: decisions/index.md
           - Agent lifecycle: decisions/001-agent-lifecycle.md
+          - ADR-002 (withdrawn): decisions/002-withdrawn.md
           - Self-evolution: decisions/003-self-evolution.md
           - File-based state: decisions/004-file-based-state.md
           - Short-lived agents: decisions/005-short-lived-agents.md
@@ -663,8 +674,10 @@ nav:
           - Click for CLI: decisions/008-click-for-cli.md
           - Lineage v1: decisions/009-lineage-v1.md
           - Audit-chain default cost: decisions/010-audit-chain-default-cost.md
+          - A model drafts, a human signs: decisions/011-model-drafts-human-signs.md
   - Contribute:
       - contributing/index.md
+      - Project pulse: project-pulse.md
       - Code review process: CODE_REVIEW.md
       - Testing & CI hardening: contributing/testing.md
       - Lifecycle hooks contract: contributing/hooks.md

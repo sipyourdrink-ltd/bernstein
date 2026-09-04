@@ -9,8 +9,3 @@ version's page in the release PR itself. `tests/unit/test_unreleased_notes_rotat
 holds the page to that — an entry naming an issue or PR a tagged release page
 already documents fails the build. An entry that cites released work as context
 rather than as its own attribution is exempted by hand there, with the reason.
-
-
-## Lineage
-
-- Lineage entries carry an additive optional `sensitivity` classification, and the effective sensitivity of an artefact is the maximum class over its lineage closure — so a summary of a confidential document is confidential. Absence fails closed to the highest class, and the verdict names the closure member that raised the level and the path through the graph that reaches it. An entry without the field canonicalises byte-identically to the pre-change schema, so every historical signature and HMAC is untouched (#5042).

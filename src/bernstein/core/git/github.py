@@ -64,6 +64,12 @@ _LABEL_MAINTAINER_APPROVED = "maintainer-approved"
 # Prefix for per-proposal dedup labels.
 _HASH_LABEL_PREFIX = "evolve-hash-"
 
+# Prefix for per-failure-pattern dedup labels.  A failure pattern's identity is
+# its fingerprint, not its title: the title carries the occurrence count, which
+# grows every time the pattern recurs, so title-derived identity would file a
+# fresh issue on each cycle instead of updating the one that already tracks it.
+_FINGERPRINT_LABEL_PREFIX = "evolve-fingerprint-"
+
 # Community issue scanning labels - either of these qualifies.
 _COMMUNITY_LABELS: tuple[str, ...] = (_LABEL_EVOLVE_CANDIDATE, _LABEL_FEATURE_REQUEST)
 
@@ -138,6 +144,23 @@ def _hash_title(title: str) -> str:
         lowercased, stripped title.
     """
     return hashlib.sha256(title.lower().strip().encode()).hexdigest()[:8]
+
+
+def _short_fingerprint(fingerprint: str) -> str:
+    """Shorten a failure-pattern fingerprint to a label-sized suffix.
+
+    Args:
+        fingerprint: Full fingerprint string (a SHA-256 hex digest).
+
+    Returns:
+        8-character lowercase hex string. Already-hex fingerprints are
+        truncated rather than re-hashed, so the label stays readable back to
+        the digest it came from.
+    """
+    stripped = fingerprint.strip().lower()
+    if len(stripped) >= 8 and all(c in "0123456789abcdef" for c in stripped):
+        return stripped[:8]
+    return hashlib.sha256(stripped.encode()).hexdigest()[:8]
 
 
 @dataclass
@@ -315,7 +338,24 @@ class GitHubClient:
                 return issue
         return None
 
-    def create_issue(self, title: str, body: str) -> GitHubIssue | None:
+    def find_by_fingerprint(self, fingerprint: str) -> GitHubIssue | None:
+        """Find the open issue already tracking a failure-pattern fingerprint.
+
+        Args:
+            fingerprint: Failure-pattern fingerprint to look up.
+
+        Returns:
+            First open issue carrying the matching
+            ``evolve-fingerprint-<hex>`` label, or ``None`` if the pattern is
+            not tracked yet.
+        """
+        label = _FINGERPRINT_LABEL_PREFIX + _short_fingerprint(fingerprint)
+        for issue in self.fetch_open_evolve_issues():
+            if label in issue.labels:
+                return issue
+        return None
+
+    def create_issue(self, title: str, body: str, *, fingerprint: str | None = None) -> GitHubIssue | None:
         """Create a new GitHub issue for an evolution proposal.
 
         Applies labels: ``bernstein-evolve``, ``auto-generated``, and
@@ -324,6 +364,10 @@ class GitHubClient:
         Args:
             title: Issue title (proposal title).
             body: Markdown body describing the proposal.
+            fingerprint: When given, also applies an
+                ``evolve-fingerprint-<hex>`` label so
+                :meth:`find_by_fingerprint` can find this issue again after
+                its title has changed.
 
         Returns:
             Created ``GitHubIssue``, or ``None`` on error.
@@ -331,10 +375,12 @@ class GitHubClient:
         if not self.available:
             return None
 
-        hash_label = _HASH_LABEL_PREFIX + _hash_title(title)
-        label_str = ",".join([_LABEL_EVOLVE, _LABEL_AUTO, hash_label])
+        labels = [_LABEL_EVOLVE, _LABEL_AUTO, _HASH_LABEL_PREFIX + _hash_title(title)]
+        if fingerprint:
+            labels.append(_FINGERPRINT_LABEL_PREFIX + _short_fingerprint(fingerprint))
+        label_str = ",".join(labels)
 
-        self._ensure_labels([_LABEL_EVOLVE, _LABEL_AUTO, hash_label])
+        self._ensure_labels(labels)
 
         args = [
             "gh",
@@ -367,7 +413,7 @@ class GitHubClient:
             number=number,
             title=title,
             url=url,
-            labels=[_LABEL_EVOLVE, _LABEL_AUTO, hash_label],
+            labels=labels,
             state="open",
         )
 
@@ -709,6 +755,20 @@ class GitHubClient:
             logger.debug("gh command error: %s", exc)
             return None
 
+    def comment_on_issue(self, issue_number: int, body: str) -> bool:
+        """Add a comment to an issue without changing its state.
+
+        Args:
+            issue_number: GitHub issue number.
+            body: Markdown comment body.
+
+        Returns:
+            ``True`` if the comment was posted successfully.
+        """
+        if not self.available:
+            return False
+        return self._post_comment(issue_number, body)
+
     def _post_comment(self, issue_number: int, body: str) -> bool:
         """Post a comment on a GitHub issue.
 
@@ -777,6 +837,8 @@ def _label_color(name: str) -> str:
     if name in _colors:
         return _colors[name]
     if name.startswith(_HASH_LABEL_PREFIX):
+        return "d4edda"  # light green - dedup key
+    if name.startswith(_FINGERPRINT_LABEL_PREFIX):
         return "d4edda"  # light green - dedup key
     return "ededed"
 

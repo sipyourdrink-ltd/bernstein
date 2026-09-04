@@ -6,7 +6,8 @@ import time
 from typing import TYPE_CHECKING, get_args, get_type_hints
 
 import pytest
-from bernstein.core.agent_identity import (
+
+from bernstein.core.identity.agent_jwt import (
     _CREDENTIAL_TOKEN_TYPES,
     AgentCredential,
     AgentIdentity,
@@ -253,11 +254,15 @@ class TestAgentIdentityStore:
         store.create_identity("backend-abc", "backend")
         store.create_identity("backend-def", "backend")
 
-        with caplog.at_level("INFO", logger="bernstein.core.agents.agent_identity"):
+        logger_name = "bernstein.core.identity.agent_jwt"
+        with caplog.at_level("INFO", logger=logger_name):
             assert store.revoke("backend-abc", reason="line1\nline2")
             assert store.suspend("backend-def", reason="line3\rline4")
 
-        messages = [record.getMessage() for record in caplog.records if "agent_identity" in record.name]
+        messages = [record.getMessage() for record in caplog.records if record.name == logger_name]
+        # Without this the four assertions below all pass vacuously on an empty list,
+        # which is how a renamed logger slipped past them once already.
+        assert messages, f"no records from {logger_name}; captured {[r.name for r in caplog.records]}"
         assert any("line1\\nline2" in message for message in messages)
         assert any("line3\\rline4" in message for message in messages)
         assert all("line1\nline2" not in message for message in messages)
@@ -1020,3 +1025,180 @@ class TestSignedClaimsAreComparedWithoutCoercion:
 
         assert store._validate_jwt_claims(self._claims_for(identity), identity, token) is True
         assert AgentIdentityStore(tmp_path).authenticate(token) is not None
+
+
+# ---------------------------------------------------------------------------
+# Child scope must narrow the parent's, never widen it
+# ---------------------------------------------------------------------------
+
+
+class TestChildScopeMustNarrowTheParents:
+    """A child identity may not hold a scope its parent never held.
+
+    ``parent_identity_id`` was recorded on the identity, serialised, audited
+    and displayed, but never compared against anything: a caller naming a
+    parent could mint a child scoped to tasks and files the parent itself was
+    refused.  ``create_identity`` now refuses that at declaration, before a
+    token is signed, so a widened scope cannot become a credential.
+
+    An empty scope means *unrestricted* on both sides of the comparison. An
+    unrestricted parent may mint anything; a restricted parent may not mint an
+    unrestricted child.
+    """
+
+    @pytest.fixture()
+    def store(self, tmp_path: Path) -> AgentIdentityStore:
+        return AgentIdentityStore(tmp_path)
+
+    # -- task_ids ---------------------------------------------------------
+
+    def test_a_task_the_parent_does_not_hold_is_refused(self, store: AgentIdentityStore) -> None:
+        """The refusal names the axis and both sides of the comparison."""
+        parent, _ = store.create_identity("parent-1", "manager", task_ids=["t-1", "t-2"])
+        with pytest.raises(
+            ValueError,
+            match=r"child task_ids \['t-1', 't-2', 't-9'\] are not a subset of parent task_ids \['t-1', 't-2'\]",
+        ):
+            store.create_identity("child-1", "backend", parent_identity_id=parent.id, task_ids=["t-1", "t-2", "t-9"])
+
+    def test_a_narrower_task_set_is_accepted(self, store: AgentIdentityStore) -> None:
+        parent, _ = store.create_identity("parent-1", "manager", task_ids=["t-1", "t-2", "t-3"])
+        child, _ = store.create_identity("child-1", "backend", parent_identity_id=parent.id, task_ids=["t-1", "t-2"])
+        assert child.task_ids == ["t-1", "t-2"]
+
+    def test_the_same_task_set_is_accepted(self, store: AgentIdentityStore) -> None:
+        parent, _ = store.create_identity("parent-1", "manager", task_ids=["t-1", "t-2"])
+        child, _ = store.create_identity("child-1", "backend", parent_identity_id=parent.id, task_ids=["t-1", "t-2"])
+        assert child.task_ids == ["t-1", "t-2"]
+
+    def test_an_unrestricted_parent_may_mint_any_task_scope(self, store: AgentIdentityStore) -> None:
+        """Empty parent ``task_ids`` means unrestricted, so nothing is narrowed."""
+        parent, _ = store.create_identity("parent-1", "manager", task_ids=[])
+        child, _ = store.create_identity("child-1", "backend", parent_identity_id=parent.id, task_ids=["t-1"])
+        assert child.task_ids == ["t-1"]
+
+    def test_a_restricted_parent_may_mint_an_empty_task_scope(self, store: AgentIdentityStore) -> None:
+        """No task scope narrows to nothing, which is not a widening."""
+        parent, _ = store.create_identity("parent-1", "manager", task_ids=["t-1"])
+        child, _ = store.create_identity("child-1", "backend", parent_identity_id=parent.id, task_ids=[])
+        assert child.task_ids == []
+
+    # -- allowed_files ----------------------------------------------------
+
+    def test_a_file_the_parent_does_not_hold_is_refused(self, store: AgentIdentityStore) -> None:
+        """The refusal names the axis and both sides of the comparison."""
+        parent, _ = store.create_identity("parent-1", "manager", allowed_files=["src/a.py", "src/b.py"])
+        with pytest.raises(
+            ValueError,
+            match=(
+                r"child allowed_files \['src/a.py', 'src/b.py', 'src/c.py'\] are not a subset of "
+                r"parent allowed_files \['src/a.py', 'src/b.py'\]"
+            ),
+        ):
+            store.create_identity(
+                "child-1", "backend", parent_identity_id=parent.id, allowed_files=["src/a.py", "src/b.py", "src/c.py"]
+            )
+
+    def test_a_narrower_file_scope_is_accepted(self, store: AgentIdentityStore) -> None:
+        parent, _ = store.create_identity("parent-1", "manager", allowed_files=["src/a.py", "src/b.py", "src/c.py"])
+        child, _ = store.create_identity(
+            "child-1", "backend", parent_identity_id=parent.id, allowed_files=["src/a.py", "src/b.py"]
+        )
+        assert child.allowed_files == ["src/a.py", "src/b.py"]
+
+    def test_the_same_file_scope_is_accepted(self, store: AgentIdentityStore) -> None:
+        parent, _ = store.create_identity("parent-1", "manager", allowed_files=["src/a.py", "src/b.py"])
+        child, _ = store.create_identity(
+            "child-1", "backend", parent_identity_id=parent.id, allowed_files=["src/a.py", "src/b.py"]
+        )
+        assert child.allowed_files == ["src/a.py", "src/b.py"]
+
+    def test_a_file_outside_the_parents_tree_is_refused(self, store: AgentIdentityStore) -> None:
+        parent, _ = store.create_identity("parent-1", "manager", allowed_files=["src/**"])
+        with pytest.raises(ValueError, match="child allowed_files .* are not a subset of"):
+            store.create_identity("child-1", "backend", parent_identity_id=parent.id, allowed_files=["tests/a.py"])
+
+    def test_an_empty_file_scope_under_a_restricted_parent_is_refused(self, store: AgentIdentityStore) -> None:
+        """Empty means unrestricted, so it widens rather than narrows."""
+        parent, _ = store.create_identity("parent-1", "manager", allowed_files=["src/a.py"])
+        with pytest.raises(
+            ValueError, match=r"child allowed_files \[\] are not a subset of parent allowed_files \['src/a.py'\]"
+        ):
+            store.create_identity("child-1", "backend", parent_identity_id=parent.id, allowed_files=[])
+
+    def test_an_unrestricted_parent_may_mint_an_unrestricted_child(self, store: AgentIdentityStore) -> None:
+        parent, _ = store.create_identity("parent-1", "manager", allowed_files=[])
+        child, _ = store.create_identity("child-1", "backend", parent_identity_id=parent.id, allowed_files=[])
+        assert child.allowed_files == []
+
+    # -- coverage is decided by the merge gate's matcher, not by string prefix
+
+    def test_a_tree_glob_covers_the_files_beneath_it(self, store: AgentIdentityStore) -> None:
+        """``src/**`` is how a tree is admitted, so files under it narrow it."""
+        parent, _ = store.create_identity("parent-1", "manager", allowed_files=["src/**"])
+        child, _ = store.create_identity(
+            "child-1", "backend", parent_identity_id=parent.id, allowed_files=["src/a.py", "src/b/c.py"]
+        )
+        assert child.allowed_files == ["src/a.py", "src/b/c.py"]
+
+    def test_a_bare_directory_does_not_cover_the_files_beneath_it(self, store: AgentIdentityStore) -> None:
+        """``src`` admits the path ``src`` and nothing under it.
+
+        Read as a string prefix instead, a parent scoped to ``src`` would mint a
+        child scoped to ``src/secret.py`` -- a file the merge gate never admits
+        for the parent.  The two surfaces have to answer this the same way.
+        """
+        parent, _ = store.create_identity("parent-1", "manager", allowed_files=["src"])
+        with pytest.raises(ValueError, match="child allowed_files .* are not a subset of"):
+            store.create_identity("child-1", "backend", parent_identity_id=parent.id, allowed_files=["src/secret.py"])
+
+    def test_a_single_star_covers_one_segment_only(self, store: AgentIdentityStore) -> None:
+        """``src/*`` admits ``src/a.py`` but not ``src/a/b.py``."""
+        parent, _ = store.create_identity("parent-1", "manager", allowed_files=["src/*"])
+        child, _ = store.create_identity("child-1", "backend", parent_identity_id=parent.id, allowed_files=["src/a.py"])
+        assert child.allowed_files == ["src/a.py"]
+
+        with pytest.raises(ValueError, match="child allowed_files .* are not a subset of"):
+            store.create_identity("child-2", "backend", parent_identity_id=parent.id, allowed_files=["src/a/b.py"])
+
+    def test_a_sibling_directory_sharing_a_prefix_is_not_covered(self, store: AgentIdentityStore) -> None:
+        """``src/b`` must not cover ``src/bc.py``: coverage is by segment."""
+        parent, _ = store.create_identity("parent-1", "manager", allowed_files=["src/b/**"])
+        with pytest.raises(ValueError, match="child allowed_files .* are not a subset of"):
+            store.create_identity("child-1", "backend", parent_identity_id=parent.id, allowed_files=["src/bc.py"])
+
+    def test_a_child_glob_the_parent_did_not_declare_is_refused(self, store: AgentIdentityStore) -> None:
+        """A child that is itself a glob is only admitted when the parent declared it.
+
+        ``src/**`` names files ``src/*`` does not, so accepting it under that
+        parent would widen the scope.  Containment between two globs is not
+        decided here; the refusal is the direction that cannot widen.
+        """
+        parent, _ = store.create_identity("parent-1", "manager", allowed_files=["src/*"])
+        with pytest.raises(ValueError, match="child allowed_files .* are not a subset of"):
+            store.create_identity("child-1", "backend", parent_identity_id=parent.id, allowed_files=["src/**"])
+
+    def test_a_glob_the_parent_declared_is_accepted(self, store: AgentIdentityStore) -> None:
+        parent, _ = store.create_identity("parent-1", "manager", allowed_files=["src/**", "docs/**"])
+        child, _ = store.create_identity("child-1", "backend", parent_identity_id=parent.id, allowed_files=["src/**"])
+        assert child.allowed_files == ["src/**"]
+
+    # -- the surrounding contract ----------------------------------------
+
+    def test_a_parent_that_does_not_exist_is_refused(self, store: AgentIdentityStore) -> None:
+        """The scope cannot be compared, so no token is signed."""
+        with pytest.raises(ValueError, match="parent identity no-such-parent not found"):
+            store.create_identity("child-1", "backend", parent_identity_id="no-such-parent", task_ids=["t-1"])
+
+    def test_an_identity_with_no_parent_is_unaffected(self, store: AgentIdentityStore) -> None:
+        identity, _ = store.create_identity("solo-1", "backend", task_ids=["t-1"], allowed_files=["src/a.py"])
+        assert identity.parent_identity_id is None
+        assert identity.task_ids == ["t-1"]
+
+    def test_a_refused_child_leaves_no_identity_behind(self, store: AgentIdentityStore) -> None:
+        """Refused at declaration, so nothing is persisted and no token exists."""
+        parent, _ = store.create_identity("parent-1", "manager", task_ids=["t-1"])
+        with pytest.raises(ValueError, match="are not a subset of"):
+            store.create_identity("child-1", "backend", parent_identity_id=parent.id, task_ids=["t-9"])
+
+        assert store.get("child-1") is None

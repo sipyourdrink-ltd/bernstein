@@ -271,7 +271,7 @@ def build_sink(config: dict[str, Any]) -> NotificationSink:
         raise ValueError(f"notification sink {sink_id!r} requires a non-empty 'kind'")
     factory = _default_registry_instance.get_driver_factory(kind)
     if inspect.isclass(factory):
-        return factory(config)  # type: ignore[no-any-return]
+        return factory(config)  # type: ignore[call-arg, return-value]  # dynamic dispatch
     return factory(config)  # type: ignore[no-any-return]
 
 

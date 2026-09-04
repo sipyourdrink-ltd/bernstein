@@ -1237,7 +1237,7 @@ def create_app(
     # Auth middleware - supports SSO JWTs, agent identity JWTs (zero-trust),
     # and legacy bearer tokens.  The agent identity store is shared with
     # application state so spawned agents can authenticate per-request.
-    from bernstein.core.agent_identity import AgentIdentityStore
+    from bernstein.core.identity.agent_jwt import AgentIdentityStore
 
     _auth_dir = sdd_dir / "auth"
     _agent_identity_store = AgentIdentityStore(_auth_dir)
@@ -1490,6 +1490,7 @@ def create_app(
     from bernstein.core.routes.provider_latency import router as provider_latency_router
     from bernstein.core.routes.review_board import router as review_board_router
     from bernstein.core.routes.sbom import router as sbom_router
+    from bernstein.core.routes.scim import router as scim_router
     from bernstein.core.routes.session_peek import router as session_peek_router
     from bernstein.core.routes.sla import router as sla_router
     from bernstein.core.routes.slo import router as slo_router
@@ -1539,6 +1540,7 @@ def create_app(
         sla_router,
         custom_metrics_router,
         sbom_router,
+        scim_router,
         hooks_router,
         ws_router,
         export_router,

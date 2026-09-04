@@ -71,13 +71,13 @@ populates today:
 
 | Key | Purpose |
 |-----|---------|
-| `prompt` | User / system prompt, scanned by ASI01 + ASI05 |
+| `prompt` | User / system prompt, scanned by ASI01 + ASI05. `bytes` is decoded, not skipped |
 | `retrieved_content` | RAG context, scanned by ASI01 + ASI06 |
 | `system_prompt` | System message, scanned by ASI01 |
 | `tool_name` | Tool about to be invoked |
-| `tool_args` | Tool argument dict, scanned by ASI02 + ASI05 |
+| `tool_args` | Tool arguments, scanned by ASI02 + ASI05. A mapping, a positional sequence and a bare scalar are all read |
 | `tool_descriptions` | Map of tool name to description text (for ASI02) |
-| `loaded_components` | List of `{name, signed}` dicts (for ASI04) |
+| `loaded_components` | List of `{name, signed}` dicts, or a mapping of name to that dict (for ASI04) |
 | `capability_violation` / `capability_violation_reason` | ASI03 delegation |
 | `code_safe_tools` | Whitelist for ASI05 (lint / format tools) |
 | `audit_log_present` | ASI09 - whether the call landed in the chain |
@@ -86,6 +86,11 @@ populates today:
 Detectors that don't see their keys return `INFO` (passed). The
 heuristic surface is wide on purpose so a caller that only populates
 two keys still gets eight passing detectors out of ten.
+
+A key that is *present* in an unreadable shape is a different case from
+one that is absent, and is not a pass. `loaded_components` that is not a
+component manifest is reported by ASI04, because no component in it was
+checked for a signature.
 
 ---
 

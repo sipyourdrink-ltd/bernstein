@@ -303,7 +303,14 @@ class TestRecoverFromWALRetriesOrphans:
 
 
 def _make_git_worktree(path: Path, *, dirty: bool = True) -> None:
-    """Initialise a git repo at *path* and optionally leave a dirty file."""
+    """Initialise a git repo at *path* and optionally leave a dirty file.
+
+    Checked out on ``agent/<dir-name>``, the branch naming
+    :meth:`WorktreeManager.create` uses for every real worktree
+    (``core/git/worktree.py``), so this fixture matches what the salvage
+    branch guard (``_AGENT_BRANCH_PREFIX`` in ``core/git/salvage.py``) sees
+    for an actual stale worktree instead of the ``git init`` default branch.
+    """
     path.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init", "-q"], cwd=path, check=True)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=path, check=True)
@@ -312,6 +319,7 @@ def _make_git_worktree(path: Path, *, dirty: bool = True) -> None:
     (path / ".gitkeep").write_text("")
     subprocess.run(["git", "add", ".gitkeep"], cwd=path, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=path, check=True)
+    subprocess.run(["git", "checkout", "-q", "-b", f"agent/{path.name}"], cwd=path, check=True)
     if dirty:
         (path / "wip.txt").write_text("unsaved work")
 

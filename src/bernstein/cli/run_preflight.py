@@ -22,7 +22,7 @@ from bernstein.cli.helpers import (
 from bernstein.cli.run import render_run_summary_from_dict
 from bernstein.cli.ui import make_console
 from bernstein.core.cost import estimate_run_cost
-from bernstein.core.cost.model_prices import is_free_route
+from bernstein.core.cost.model_prices import is_free_route, model_cost_is_known
 from bernstein.core.cost.preflight import CostBand, compute_band, format_band
 from bernstein.core.plan_loader import load_plan_from_yaml
 from bernstein.core.runtime_state import directory_size_bytes
@@ -271,10 +271,12 @@ class RunCostEstimate:
         high_usd: Legacy single-point high estimate (kept for back-compat).
         band: Optional calibrated p50/p90 band. Populated for new callers;
             legacy callers can leave it unset.
-        free_route: True when the resolved model is a zero-cost route (a
-            ``:free`` id or a model the run's own metering prices at $0). The
-            estimate is then a hard $0 rather than a phantom fixed rate
-            (issue #3013).
+        free_route: True when the resolved model is a genuinely zero-cost
+            route (a ``:free`` id or a $0 local adapter). The estimate is
+            then a hard $0 rather than a phantom fixed rate (issue #3013).
+        unpriced: True when the resolved model has no pricing-table entry -
+            it meters at $0 but that is a missing price, not a free run. The
+            banner then reads ``unpriced`` instead of ``$0.00`` (issue #5337).
     """
 
     task_count: int | None
@@ -283,6 +285,7 @@ class RunCostEstimate:
     high_usd: float
     band: CostBand | None = None
     free_route: bool = False
+    unpriced: bool = False
 
 
 def _estimate_task_count(workdir: Path, plan_file: Path | None, goal: str | None) -> int | None:
@@ -434,8 +437,14 @@ def _estimate_run_preview(
     # resolved model, not a fixed Anthropic rate, keeps the pre-run banner
     # and the final ``total_cost`` drawn from the same pricing source, so a
     # free route is never quoted a phantom estimate (issue #3013).
-    free_route = est_cli in _FREE_ADAPTERS or is_free_route(est_model)
-    if free_route:
+    # A run is free when a $0 local adapter or a ``:free`` id resolves; it is
+    # merely *unpriced* when the model has no pricing-table entry - the same
+    # $0 estimate, but the banner must say "unpriced" rather than quote
+    # "$0.00" as if the run cost nothing (issue #5337).
+    zero_cost = est_cli in _FREE_ADAPTERS or is_free_route(est_model)
+    unpriced = zero_cost and est_cli not in _FREE_ADAPTERS and not model_cost_is_known(est_model)
+    free_route = zero_cost and not unpriced
+    if zero_cost:
         low_usd, high_usd = 0.0, 0.0
         band = CostBand(
             p50=0.0,
@@ -463,6 +472,7 @@ def _estimate_run_preview(
         high_usd=high_usd,
         band=band,
         free_route=free_route,
+        unpriced=unpriced,
     )
 
 
@@ -505,15 +515,28 @@ def _emit_preflight_runtime_warnings(
         else:
             basis = f"per task at {estimate.model} pricing, task count not yet planned"
         if estimate.free_route:
-            # A zero-cost route (:free / unpriced) must not be quoted a
-            # phantom rate: the real run meters it at $0 (issue #3013).
+            # A genuinely zero-cost route (:free id / $0 local adapter) must
+            # not be quoted a phantom rate: the real run meters it at $0
+            # (issue #3013).
             if estimate.task_count is not None:
                 basis = f"free route - no cost ({estimate.model}), based on {estimate.task_count} task(s)"
             else:
                 basis = f"free route - no cost ({estimate.model}), task count not yet planned"
+        elif estimate.unpriced:
+            # No pricing-table entry: meters at $0, but that is a missing
+            # price, not a free run - say so instead of quoting $0.00
+            # (issue #5337).
+            not_priced = f"unpriced - {estimate.model} is not in the pricing table"
+            if estimate.task_count is not None:
+                basis = f"{not_priced}, based on {estimate.task_count} task(s)"
+            else:
+                basis = f"{not_priced}, task count not yet planned"
         if band is not None:
-            console.print(f"[bold yellow]{format_band(band)}[/bold yellow]")
-            if estimate.free_route:
+            if estimate.unpriced:
+                console.print("[bold yellow]Estimated cost:[/bold yellow] unpriced")
+            else:
+                console.print(f"[bold yellow]{format_band(band)}[/bold yellow]")
+            if estimate.free_route or estimate.unpriced:
                 console.print(f"[dim]{basis}[/dim]")
             else:
                 samples_note = (
@@ -522,6 +545,8 @@ def _emit_preflight_runtime_warnings(
                     else "no history yet - using heuristic"
                 )
                 console.print(f"[dim]{basis}, {samples_note}[/dim]")
+        elif estimate.unpriced:
+            console.print(f"[bold yellow]Estimated cost:[/bold yellow] unpriced {basis}")
         else:
             console.print(
                 f"[bold yellow]Estimated cost:[/bold yellow] ${estimate.low_usd:.2f}-${estimate.high_usd:.2f} {basis}"

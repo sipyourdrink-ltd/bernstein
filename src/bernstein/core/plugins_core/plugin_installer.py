@@ -199,7 +199,7 @@ def _fetch_github_release_asset_url(repo: str, tag: str, asset: str | None) -> s
     with urllib.request.urlopen(req, timeout=30) as resp:
         data: dict[str, object] = json.loads(resp.read())
 
-    assets: list[dict[str, object]] = list(data.get("assets", []))  # type: ignore[arg-type]
+    assets: list[dict[str, object]] = list(data.get("assets", []))  # type: ignore[call-overload]  # dynamic parse
     if not assets:
         raise RuntimeError(f"GitHub release '{tag}' for '{repo}' has no assets")
 

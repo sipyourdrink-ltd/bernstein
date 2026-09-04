@@ -1353,7 +1353,7 @@ def retry_or_fail_task(
         elif adapter_is_claude_compatible:
             retry_model = tier_model
         else:
-            retry_model = pinned_model or task.model
+            retry_model = pinned_model or task.model  # type: ignore[assignment]  # dynamic status
 
         logger.info(
             "Retry model decision for task %s (role=%s, retry_count=%s, scope=%s): "
@@ -3698,8 +3698,9 @@ def _write_task_resume_checkpoint(
     session: AgentSession | None,
     worktree_path: Path | None,
     adapter_name: str | None = None,
+    stall_reason: str | None = None,
 ) -> None:
-    """Write a task resume checkpoint for a completed task.
+    """Write a task resume checkpoint for a completed or stall-killed task.
 
     This checkpoint captures the state after a successful step transition
     (agent spawn -> task completion) so the task can be resumed later if
@@ -3717,6 +3718,10 @@ def _write_task_resume_checkpoint(
         adapter_name: Adapter that ran the session. ``bernstein resume`` reads
             its resume strategy off this name (``resume_cmd.py``), so a
             checkpoint written without one is readable but not resumable.
+        stall_reason: When set, this checkpoint was written at an automatic
+            stall-kill boundary (issue #3376) rather than after a normal step
+            completion. Passed straight through onto the checkpoint's own
+            ``stall_reason`` field.
     """
     adapter = adapter_name or ""
     adapter_session_id = session.id if session is not None else ""
@@ -3749,6 +3754,7 @@ def _write_task_resume_checkpoint(
         worktree_path=str(worktree_path) if worktree_path is not None else None,
         scratchpad_path=scratchpad_path,
         scratchpad_sha256=scratchpad_sha,
+        stall_reason=stall_reason,
         meta=({"adapter_name": adapter} if adapter else {}),
     )
     save_checkpoint(workdir, checkpoint)

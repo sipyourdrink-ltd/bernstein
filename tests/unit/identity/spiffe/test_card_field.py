@@ -11,7 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from bernstein.core.security.agent_identity import (
+from bernstein.core.identity.agent_card import (
     AgentIdentityCard,
     issue_identity_card,
     load_identity_card,

@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 # Shared cast-type constants to avoid string duplication (Sonar S1192).
 type _CAST_DICT_STR_ANY = dict[str, Any]
 type _CAST_DICT_STR_OBJ = dict[str, object]
+type _CAST_ROLE = Literal["assistant", "user", "system", "tool"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,16 +183,16 @@ def _normalize_legacy_json(data: dict[str, Any]) -> NormalizedMessage | None:
     if isinstance(content_raw, list):
         text_parts, tool_use = _parse_legacy_content_blocks(cast("list[object]", content_raw))
         return NormalizedMessage(
-            role=role if role in _VALID_ROLES else "assistant",
+            role=cast(_CAST_ROLE, role) if role in _VALID_ROLES else "assistant",
             content="\n".join(text_parts),
             tool_use=tool_use,
             raw_type="legacy",
         )
 
     if isinstance(content_raw, str):
-        normalized_role: Literal["assistant", "user", "system", "tool"] = "assistant"
+        normalized_role: _CAST_ROLE = "assistant"
         if role in _VALID_ROLES:
-            normalized_role = role  # type: ignore[assignment]
+            normalized_role = cast(_CAST_ROLE, role)
         return NormalizedMessage(
             role=normalized_role,
             content=content_raw,

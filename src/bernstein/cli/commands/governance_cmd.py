@@ -18,6 +18,12 @@ declared posture (playbook) and enumerated environment (inventory). The plan
 contains one entry per mismatch (FORBIDDEN, ABSENT, WIDER_CEILING, UNKNOWN)
 and is anchored in the lineage spine for offline verification.
 
+    bernstein govern plan ... --remediation-plan <file>
+
+Collect the remedies the playbook declares for those findings into one unsigned
+proposal, anchored the same way. A finding whose clause declares no remedy is
+listed in the proposal as unremediated rather than dropped.
+
     bernstein govern ingest --spans <file|-> --source <label> [--profile <name>]
 
 Anchor OTLP spans reported by a runtime Bernstein did not schedule (#4962).
@@ -26,6 +32,12 @@ produces no chain events and no receipt can mention it. This is the first
 transport into the ingest boundary: a file or stdin. A payload the boundary
 rejects appends nothing, and a submission already anchored returns the receipt
 it was anchored with instead of a second one.
+
+    bernstein govern posture [--workdir <path>] [--json-output]
+
+Score the install's posture from chain-evidenced facts only. The number is a
+projection of the lineage log; no configuration file is read, so switching a
+control on cannot move it.
 """
 
 from __future__ import annotations
@@ -36,15 +48,31 @@ import json
 import time
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, NoReturn, cast
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 import click
 from rich.console import Console
 from rich.table import Table
 
+from bernstein.cli.commands.govern_cmd import govern_inventory_cmd, govern_reconcile_cmd
 from bernstein.cli.helpers import console
+from bernstein.core.govern import collect_remediation as _collect_remediation
 from bernstein.core.govern import compute_plan as _compute_plan
+from bernstein.core.govern.audit_sweep import CheckVerdict
+from bernstein.core.govern.compliance_checks import (
+    CMP_AREA,
+    ComplianceCheckSpec,
+    ComplianceFramework,
+    count_by_outcome,
+    iter_compliance_checks,
+    required_check_ids,
+    run_compliance_checks,
+    select_check_ids,
+)
 from bernstein.core.lineage.spine import LineageSpine
+
+if TYPE_CHECKING:
+    from bernstein.core.govern.plan_models import GovernPlan
 
 
 def _load_hmac_key() -> bytes:
@@ -65,6 +93,10 @@ def govern_group() -> None:
       bernstein govern verify <run> --bindings b.json --ledger ledger.jsonl
       bernstein govern plan --playbook p.json --inventory i.json [--workdir w]
       bernstein govern ingest --spans spans.json --source otel-collector-prod
+      bernstein govern posture [--workdir w] [--json-output]
+      bernstein govern inventory --render mermaid|dot --store PATH
+      bernstein govern audit-compliance [--workdir .] [--only CMP] [--skip ID] [--profile soc2]
+      bernstein govern audit-keys
     """
 
 
@@ -147,7 +179,19 @@ def governance_verify_cmd(run_id: str, bindings_file: str, ledger_file: str | No
     show_default=True,
     help="Project root containing .sdd/.",
 )
-def governance_plan_cmd(playbook_file: str, inventory_file: str, workdir: str) -> None:
+@click.option(
+    "--remediation-plan",
+    "remediation_out",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Collect the remedies the playbook declares for these findings into one unsigned proposal here.",
+)
+def governance_plan_cmd(
+    playbook_file: str,
+    inventory_file: str,
+    workdir: str,
+    remediation_out: str | None,
+) -> None:
     """Generate a signed, lineage-bearing govern plan.
 
     Exit 0 always (a signed empty plan is valid).
@@ -226,6 +270,98 @@ def governance_plan_cmd(playbook_file: str, inventory_file: str, workdir: str) -
         )
 
     console_obj.print(table)
+
+    if remediation_out is not None:
+        _write_remediation_proposal(
+            plan=plan,
+            playbook=playbook,
+            timestamp=timestamp,
+            out_path=Path(remediation_out),
+            spine=spine,
+            console_obj=console_obj,
+        )
+
+    raise SystemExit(0)
+
+
+def _write_remediation_proposal(
+    *,
+    plan: GovernPlan,
+    playbook: dict[str, object],
+    timestamp: int,
+    out_path: Path,
+    spine: LineageSpine,
+    console_obj: Console,
+) -> None:
+    """Collect the declared remedies, anchor the proposal, and write it out."""
+    proposal = _collect_remediation(plan=plan, playbook=playbook, timestamp=timestamp)
+
+    spine.record(
+        artifact_path=f"govern-plan/remediation-{proposal.content_hash()[:16]}.json",
+        content=proposal.to_canonical_bytes(),
+        actor="bernstein.govern.plan",
+        step_id=proposal.plan_hash,
+        model="none",
+        timestamp=timestamp,
+    )
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps(proposal.to_dict(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    console_obj.print()
+    console_obj.print("[bold]Remediation proposal[/bold] (unsigned draft)")
+    console_obj.print(f"  Steps: {len(proposal.steps)}")
+    console_obj.print(f"  Without a declared remedy: {len(proposal.unremediated)} finding(s)")
+    for finding in proposal.unremediated:
+        console_obj.print(f"    [yellow]{finding.finding_kind}[/yellow] {finding.surface} -- {finding.reason}")
+    console_obj.print(f"  Proposal hash: {proposal.content_hash()}")
+    console_obj.print(f"  Proposal: {out_path}")
+    console_obj.print("[dim]Not applied: sign the proposal before anything executes it.[/dim]")
+
+
+@govern_group.command("posture")
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option(
+    "--json-output",
+    "as_json",
+    is_flag=True,
+    help="Print the signed canonical document instead of a table.",
+)
+def governance_posture_cmd(workdir: str, as_json: bool) -> None:
+    """Score this install's posture from chain-evidenced facts only.
+
+    The score consumes the per-control coverage report over the lineage log and
+    reads no configuration, so enabling a control cannot raise it; producing
+    evidence for that control can. The document names every contributing chain
+    event, the weights version, and its own denominator -- the weight that was
+    measurable, not the weight that exists.
+
+    Exit 0 always. A score is a measurement, not a gate.
+    """
+    from bernstein.core.security.security_posture import (
+        collect_evidenced_posture,
+        evidenced_posture_json,
+        format_evidenced_posture,
+    )
+
+    root = Path(workdir).resolve()
+
+    if as_json:
+        click.echo(evidenced_posture_json(root, hmac_key=_load_hmac_key()))
+        raise SystemExit(0)
+
+    console.print()
+    console.print(format_evidenced_posture(collect_evidenced_posture(root)))
     raise SystemExit(0)
 
 
@@ -727,6 +863,193 @@ def governance_ingest_cmd(
     console.print(f"  chain entry        {receipt.chain_entry_hash}")
     console.print(f"  coverage           {receipt.coverage}")
     console.print(f"  [dim]{receipt.coverage_detail}[/dim]")
+
+
+@govern_group.command("audit-compliance")
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True, path_type=Path),
+    default=".",
+    show_default=True,
+    help="Project root the checks read.",
+)
+@click.option(
+    "--only",
+    "only",
+    multiple=True,
+    metavar="ID|NAMESPACE|AREA",
+    help="Run only the checks matching this id, id namespace (CMP) or area.",
+)
+@click.option(
+    "--skip",
+    "skip",
+    multiple=True,
+    metavar="ID",
+    help="Do not run this check id. Skipping selects what runs; it suppresses no finding.",
+)
+@click.option(
+    "--profile",
+    "profile",
+    default=None,
+    type=click.Choice([f.value for f in ComplianceFramework], case_sensitive=False),
+    help="Mark which check ids this framework requires. Selects ids only; asserts nothing.",
+)
+@click.option("--list", "list_only", is_flag=True, help="Print the registered check ids and exit.")
+@click.option("--json-output", "as_json", is_flag=True, help="Print the report as JSON and nothing else.")
+def govern_audit_cmd(
+    workdir: Path,
+    only: tuple[str, ...],
+    skip: tuple[str, ...],
+    profile: str | None,
+    list_only: bool,
+    as_json: bool,
+) -> None:
+    """Run every registered check over this install and report one finding each.
+
+    Each finding carries a stable id, one of three verdicts -- measured,
+    declared, or not measurable -- and the evidence it read. A check that only
+    tests whether a key is present in a configuration file reports *declared*:
+    the operator asserted the control and nothing was read that confirms it.
+
+    There is no score and no grade. Every count names its denominator, and
+    --profile selects which ids a framework requires without asserting anything
+    about the result.
+    """
+    required: frozenset[str] = required_check_ids(ComplianceFramework(profile.lower())) if profile else frozenset()
+
+    try:
+        selected = select_check_ids(only=only, skip=skip)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    specs = {spec.check_id: spec for spec in iter_compliance_checks()}
+
+    if list_only:
+        _print_audit_catalogue([specs[cid] for cid in selected], required, as_json=as_json)
+        return
+
+    outcomes = run_compliance_checks(workdir, only=only, skip=skip)
+    counts = count_by_outcome(outcomes)
+
+    if as_json:
+        click.echo(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "area": CMP_AREA,
+                    "profile": profile.lower() if profile else None,
+                    "checks_run": len(outcomes),
+                    "checks": [outcome.to_dict() | {"required": outcome.check_id in required} for outcome in outcomes],
+                    "counts": counts,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+
+    click.echo(f"govern audit-compliance -- area {CMP_AREA}, {len(outcomes)} checks over {workdir}")
+    click.echo("")
+    for outcome in outcomes:
+        marker = "*" if outcome.check_id in required else " "
+        state = "pass" if outcome.passed else "fail"
+        verdict = outcome.verdict.value if outcome.verdict is not CheckVerdict.MEASURED else f"measured {state}"
+        click.echo(f"  {marker}{outcome.check_id}  {verdict:<14}  {outcome.summary}")
+    click.echo("")
+    total = len(outcomes)
+    for label, count in counts.items():
+        click.echo(f"  {label.replace('_', ' ')}: {count} of {total} checks")
+    if profile:
+        click.echo("")
+        click.echo(
+            f"  required by profile {profile.lower()}: "
+            f"{len(required & {o.check_id for o in outcomes})} of {total} ids "
+            "(marked *; the profile selects ids and states nothing about the result)"
+        )
+
+
+def _print_audit_catalogue(
+    specs: list[ComplianceCheckSpec],
+    required: frozenset[str],
+    *,
+    as_json: bool,
+) -> None:
+    """Print the registered check ids without running any of them."""
+    if as_json:
+        click.echo(
+            json.dumps(
+                [
+                    {
+                        "check_id": spec.check_id,
+                        "area": spec.area,
+                        "asserts": spec.asserts,
+                        "required": spec.check_id in required,
+                    }
+                    for spec in specs
+                ],
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+    for spec in specs:
+        marker = "*" if spec.check_id in required else " "
+        click.echo(f"  {marker}{spec.check_id}  {spec.area:<12}  {spec.asserts}")
+
+
+def _run_verifier_key_staleness_check() -> None:
+    from bernstein.core.govern.audit_sweep import CheckVerdict, check_verifier_key_staleness
+    from bernstein.core.identity.http_signing import default_keystore
+
+    try:
+        outcomes = check_verifier_key_staleness(default_keystore=default_keystore())
+    except (OSError, PermissionError, TypeError, ValueError) as exc:
+        click.echo(f"keystore failure: {exc}", err=True)
+        raise SystemExit(1) from exc
+
+    for outcome in outcomes:
+        if outcome.verdict is CheckVerdict.NOT_MEASURABLE:
+            click.echo(f"{outcome.check_id}: {outcome.summary}")
+            raise SystemExit(1)
+        if outcome.verdict is CheckVerdict.MEASURED and outcome.passed is False:
+            click.echo(f"{outcome.check_id}: {outcome.summary}")
+            raise SystemExit(2)
+
+    click.echo("verifier keys up to date")
+
+
+@govern_group.command("audit")
+def governance_audit_cmd() -> None:
+    """[Deprecated] Use ``bernstein govern audit-keys`` instead.
+
+    The compliance policy library moved to ``bernstein govern audit-compliance``
+    in #5075; this alias preserves the prior verifier-key staleness behaviour
+    for one release and prints a deprecation notice on every invocation.
+    """
+    click.echo(
+        "WARNING: 'bernstein govern audit' is deprecated and will be removed in v3.0.0 (#5075): "
+        "use 'bernstein govern audit-keys' instead.",
+        err=True,
+    )
+    _run_verifier_key_staleness_check()
+
+
+@govern_group.command("audit-keys")
+def governance_audit_keys_cmd() -> None:
+    """Check whether verifier keys are stale relative to the install identity.
+
+    Exit codes: 0 = up to date or no verifier files, 1 = keystore or verifier
+    file unreadable, 2 = stale verifier key detected.
+    """
+    _run_verifier_key_staleness_check()
+
+
+# Desired-state reconcile diff over the governed surface (#5085). Registered
+# here, before the alias mirror below, so the subcommand sets stay identical.
+govern_group.add_command(govern_reconcile_cmd, "reconcile")
+# Inventory topology graph from the store (#5133).
+govern_group.add_command(govern_inventory_cmd, "inventory")
 
 
 @click.group("governance")

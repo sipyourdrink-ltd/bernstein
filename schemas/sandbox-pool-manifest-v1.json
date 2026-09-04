@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://bernstein.alexchernysh.com/schemas/sandbox-pool-manifest-v1.json",
+  "$id": "https://bernstein.run/schemas/sandbox-pool-manifest-v1.json",
   "title": "Bernstein Named Sandbox Pool Manifest (v1)",
   "description": "A frozen, canonicalized named sandbox pool (#2547). Its identity is its pool_hash: a sha256 over the canonical JSON of every other field. Pools are registered, updated, and retired only by appending pool.* events to the HMAC audit chain; the runtime pool registry is a deterministic projection rebuilt by replaying those events, and the manifest body is held content-addressed so a tampered body no longer recomputes to its pool_hash.",
   "type": "object",

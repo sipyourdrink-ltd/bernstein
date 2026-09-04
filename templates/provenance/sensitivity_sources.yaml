@@ -1,0 +1,64 @@
+# Source-to-sensitivity-class map for data classification (issue #5042).
+#
+# The mirror of trust_sources.yaml on the opposite axis. trust_class says how
+# much a source's results can be trusted; sensitivity says how sensitive they
+# are. The two propagate in opposite directions: the effective trust of a
+# derived artefact is the *minimum* trust class over its lineage closure, and
+# its effective sensitivity is the *maximum* sensitivity class over the same
+# closure. A summary of a confidential document is confidential.
+#
+# Sensitivity classes, least to most sensitive:
+#   public < internal < confidential < restricted
+#
+# An unlisted source fails closed to the highest class (restricted), the
+# opposite end from the trust map's fail-closed-to-public. Absence of a
+# classification is not a claim that something is harmless.
+#
+# This table is reviewed data an operator is expected to edit. A project-local
+# copy at <workdir>/templates/provenance/sensitivity_sources.yaml replaces this
+# one entirely rather than merging into it, so an operator's table is exactly
+# what they wrote.
+sources:
+  # --- Operator-authored input ------------------------------------------
+  # A prompt is what the operator chose to type into their own run; an
+  # attachment is a document they handed the run, which is the case this
+  # issue exists for.
+  - name: operator.prompt
+    sensitivity: internal
+  - name: operator.attachment
+    sensitivity: confidential
+
+  # --- Workspace / first-party repository state -------------------------
+  # Company-internal by default: repository contents are not public merely
+  # because the process reading them is local.
+  - name: fs.read
+    sensitivity: internal
+  - name: git.read
+    sensitivity: internal
+  - name: repo.file
+    sensitivity: internal
+
+  # --- Web research and browser activity --------------------------------
+  # Already public by construction; reading it adds no confidentiality duty.
+  - name: web.fetch
+    sensitivity: public
+  - name: web.search
+    sensitivity: public
+
+  # --- Tracker issue / PR bodies feeding the issue-to-PR pipeline -------
+  # A public tracker is public; the classification says nothing about how
+  # far the content can be trusted, which is trust_sources.yaml's job.
+  - name: github.fetch_issue
+    sensitivity: public
+  - name: github.fetch_pr
+    sensitivity: public
+  - name: github.fetch_comment
+    sensitivity: public
+
+  # --- Third-party MCP servers proxied through the gateway --------------
+  # A gateway result carries whatever the operator's own systems handed the
+  # server, so it is internal until an operator classifies it otherwise.
+  - name: mcp.gateway_result
+    sensitivity: internal
+  - name: mcp.third_party
+    sensitivity: internal

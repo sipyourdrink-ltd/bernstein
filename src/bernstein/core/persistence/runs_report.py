@@ -586,10 +586,16 @@ def detect_failure_patterns(runs: list[FinishedRun]) -> list[FailurePatternDraft
         sorted_runs = sorted(group_runs, key=lambda r: (-r.started_at, r.run_id))
         most_recent = sorted_runs[0]
 
-        # Build title and body
+        # Build title and body.  The body is what an operator reads on the
+        # tracked issue, so it names how often the pattern recurred and which
+        # run last hit it -- not just the sample the title already carries.
         title = f"{most_recent.outcome.value.upper()}: {most_recent.evidence}"
         body = (
-            f"Failure type: {most_recent.outcome.value}\nEvidence: {most_recent.evidence}\nBranch: {most_recent.branch}"
+            f"Failure type: {most_recent.outcome.value}\n"
+            f"Evidence: {most_recent.evidence}\n"
+            f"Branch: {most_recent.branch}\n"
+            f"Occurrences: {len(group_runs)}\n"
+            f"Most recent run: {most_recent.run_id}"
         )
 
         draft = FailurePatternDraft(

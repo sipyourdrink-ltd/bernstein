@@ -332,7 +332,7 @@ def read_decisions(lineage_root: Path, run_id: str) -> list[GovernanceDecision]:
     return records
 
 
-def _anchor_decision(
+def anchor_decision(
     *,
     lineage_root: Path,
     hmac_key: bytes,
@@ -343,6 +343,10 @@ def _anchor_decision(
     The decision's canonical bytes are what the spine hashes, so the returned
     record's ``journal_entry_hash`` is the spine entry hash over exactly those
     bytes (AC1).
+
+    Public so decision-emitting surfaces outside this module (the govern
+    reconcile diff, #5085) anchor through the same path rather than growing a
+    second, divergent journal writer.
     """
     out_dir = decisions_dir(lineage_root, decision.run_id)
     seq = _next_seq(out_dir)
@@ -439,7 +443,7 @@ def decide_access(
         inputs_hash=inputs_hash,
         timestamp=now,
     )
-    return _anchor_decision(lineage_root=lineage_root, hmac_key=hmac_key, decision=decision)
+    return anchor_decision(lineage_root=lineage_root, hmac_key=hmac_key, decision=decision)
 
 
 # ---------------------------------------------------------------------------
@@ -576,7 +580,7 @@ def check_budget_decision(
             "dimension": dimension,
         },
     )
-    anchored = _anchor_decision(lineage_root=lineage_root, hmac_key=hmac_key, decision=decision)
+    anchored = anchor_decision(lineage_root=lineage_root, hmac_key=hmac_key, decision=decision)
     if verdict == "refuse":
         raise BudgetRefused(
             f"budget cap breach for {subject!r}: spend ${prior:.4f} + ${next_cost:.4f} exceeds cap ${cap:.4f}"
@@ -772,6 +776,7 @@ __all__ = [
     "GovernanceDecision",
     "GovernanceVerifyResult",
     "RoleBindings",
+    "anchor_decision",
     "check_budget_decision",
     "decide_access",
     "decisions_dir",
