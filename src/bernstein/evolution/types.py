@@ -36,6 +36,14 @@ class CircuitState(Enum):
     HALF_OPEN = "half_open"  # Testing single low-risk change
 
 
+class ReplayVerdict(Enum):
+    """Verdict from replaying a proposal's effects against recorded invariants."""
+
+    ACCEPT = "accept"  # Replay matched expected outcome
+    INVARIANT_VIOLATED = "invariant_violated"  # Replay broke a recorded invariant
+    CHANGED_UNEXPECTEDLY = "changed_unexpectedly"  # Replay produced unexpected diff
+
+
 @dataclass
 class MetricsRecord:
     """14-field standardized metrics per agent run.

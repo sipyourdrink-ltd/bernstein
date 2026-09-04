@@ -80,6 +80,7 @@ from bernstein.evolution.sandbox import SandboxValidator
 from bernstein.evolution.types import (
     ApplyError,
     ProposalGenerationError,
+    ReplayVerdict,
     RiskLevel,
     RollbackError,
     SandboxResult,
@@ -993,6 +994,18 @@ class EvolutionLoop:
         Returns:
             True if the proposal was applied successfully.
         """
+        if (
+            proposal.replay_verdict is None
+            or proposal.replay_verdict is ReplayVerdict.INVARIANT_VIOLATED
+            or proposal.replay_verdict is ReplayVerdict.CHANGED_UNEXPECTEDLY
+        ):
+            logger.info(
+                "Proposal %s gated: replay_verdict=%s",
+                proposal.id,
+                proposal.replay_verdict,
+            )
+            return False
+
         risk_level = self._infer_risk_level(proposal)
 
         success = self._executor.execute_upgrade(proposal)
