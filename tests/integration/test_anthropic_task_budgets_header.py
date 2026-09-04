@@ -20,7 +20,7 @@ from bernstein.core.models import ModelConfig
 
 from bernstein.adapters.claude import ClaudeCodeAdapter
 from bernstein.core.cost.budget_countdown import TASK_BUDGETS_OPT_IN_ENV
-from bernstein.core.security.agent_identity import TASK_BUDGETS_BETA_HEADER
+from bernstein.core.identity.agent_card import TASK_BUDGETS_BETA_HEADER
 
 
 def _make_popen_mock(pid: int) -> MagicMock:

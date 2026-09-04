@@ -1,0 +1,3 @@
+## Residency guard returns a verdict for a URL it cannot parse
+
+Under the `eu-residency` profile, `OllamaAdapter` refuses to spawn against an endpoint it cannot prove is self-hosted. The check read the hostname with `urllib.parse.urlparse`, which raises `ValueError` on a bracketed-IPv6 netloc carrying userinfo (`http://[::1]@evil.com:8000`) and on a stray or unclosed bracket (`http://a]b`, `http://[::1`). The guard did not catch it, so those URLs left `spawn()` as a traceback instead of the residency refusal the docstring promises. A URL the parser refuses is now False, alongside the empty and unrecognised ones. Well-formed bracketed IPv6 literals such as `http://[::1]:11434` are unaffected.

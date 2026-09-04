@@ -5,7 +5,7 @@ This module contains advanced/specialized commands (excluding eval/benchmark whi
   github_group (setup, test-webhook)
   mcp_server
   quarantine_group (list, clear)
-  completions, live, dashboard
+  live, dashboard
   install_hooks, plugins_cmd, doctor, recap, help_all, retro
 
 All commands and groups are registered with the main CLI group in main.py.
@@ -2717,50 +2717,6 @@ def _github_setup() -> None:  # type: ignore[reportUnusedFunction]
 def _github_test_webhook() -> None:  # type: ignore[reportUnusedFunction]
     """Test GitHub webhook configuration."""
     console.print("[green]Webhook configured.[/green]")
-
-
-# ---------------------------------------------------------------------------
-# completions
-# ---------------------------------------------------------------------------
-
-
-@click.command("completions")
-@click.option(
-    "--shell",
-    type=click.Choice(["bash", "zsh", "fish"]),
-    default="bash",
-    show_default=True,
-    help="Shell type.",
-)
-@click.pass_context
-def completions(ctx: click.Context, shell: str) -> None:
-    """Generate shell completion scripts.
-
-    \b
-    For bash, add to ~/.bashrc:
-      eval "$(bernstein completions --shell bash)"
-
-    \b
-    For zsh, add to ~/.zshrc:
-      eval "$(bernstein completions --shell zsh)"
-
-    \b
-    For fish, add to ~/.config/fish/completions/bernstein.fish:
-      bernstein completions --shell fish | source
-    """
-    from click.shell_completion import BashComplete, FishComplete, ZshComplete
-
-    _complete_var = "_BERNSTEIN_COMPLETE"
-    _prog_name = "bernstein"
-
-    shell_cls = {"bash": BashComplete, "zsh": ZshComplete, "fish": FishComplete}[shell]
-    # Walk up to the root CLI group so completions cover all subcommands.
-    root_ctx = ctx
-    while root_ctx.parent is not None:
-        root_ctx = root_ctx.parent
-
-    completer = shell_cls(root_ctx.command, {}, _prog_name, _complete_var)
-    click.echo(completer.source())
 
 
 # ---------------------------------------------------------------------------

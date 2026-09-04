@@ -18,10 +18,14 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final, Literal, cast, get_args
 
-from bernstein.core.auth import create_jwt, verify_jwt
-from bernstein.core.path_scope import ScopePatternError, paths_outside_scope, validate_repo_relative_pattern
-from bernstein.core.sanitize import sanitize_log
-from bernstein.core.tenanting import (
+from bernstein.core.path_scope import (
+    ScopePatternError,
+    paths_outside_scope,
+    validate_repo_relative_pattern,
+)
+from bernstein.core.security.auth import create_jwt, verify_jwt
+from bernstein.core.security.sanitize import sanitize_log
+from bernstein.core.security.tenanting import (
     DEFAULT_TENANT_ID,
     InvalidTenantIdError,
     normalize_tenant_id,

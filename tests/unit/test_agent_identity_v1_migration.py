@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from bernstein.core.security.agent_identity import (
+from bernstein.core.identity.agent_card import (
     A2A_PROTOCOL_VERSION_V1_0,
     AGENT_CARD_V1_0_HASH_ENV,
     AgentIdentityCard,

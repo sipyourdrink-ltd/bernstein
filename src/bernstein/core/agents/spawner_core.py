@@ -1852,7 +1852,7 @@ class AgentSpawner:
     def _identity_store(self) -> Any:
         """Return the AgentIdentityStore, creating it on first access."""
         if self._identity_store_instance is None:
-            from bernstein.core.agents.agent_identity import AgentIdentityStore
+            from bernstein.core.identity.agent_jwt import AgentIdentityStore
 
             auth_dir = self._workdir / ".sdd" / "auth"
             self._identity_store_instance = AgentIdentityStore(auth_dir)

@@ -6,6 +6,12 @@ import hashlib
 import json
 from typing import Any
 
+from bernstein.core.govern.duplication_audit import (
+    DuplicationFinding,
+    DuplicationReport,
+    Verdict,
+    collect_duplication,
+)
 from bernstein.core.govern.findings import Finding, FindingsDocument
 from bernstein.core.govern.freshness_gate import (
     FreshnessGate,
@@ -14,7 +20,22 @@ from bernstein.core.govern.freshness_gate import (
     freshness_gated_read,
 )
 from bernstein.core.govern.inventory_models import Inventory, Surface
+from bernstein.core.govern.lanes import (
+    Barrier,
+    LaneAction,
+    LaneError,
+    LaneManifest,
+    load_lane_set,
+    reconcile_lanes,
+)
 from bernstein.core.govern.observation import ObservationEnvelope, ObservationLedger
+from bernstein.core.govern.observation_store import (
+    ObservationRecord,
+    ObservationStore,
+    ObservationStoreError,
+    RecordState,
+    observation_store_root,
+)
 from bernstein.core.govern.plan_models import GovernPlan, PlanEntry, PlanEntryKind
 from bernstein.core.govern.playbook_models import (
     Playbook,
@@ -45,6 +66,12 @@ from bernstein.core.govern.remediation import (
     RemediationStep,
     UnremediatedFinding,
     collect_remediation,
+)
+from bernstein.core.govern.restore import (
+    RestoreEntry,
+    RestorePlan,
+    RestoreRefusal,
+    build_restore_plan,
 )
 
 
@@ -221,10 +248,13 @@ def _compare_values(observed: str, ceiling: str) -> int:
 
 
 __all__ = [
+    "Barrier",
     "DesiredEntity",
     "DesiredState",
     "DiffAction",
     "DraftProposal",
+    "DuplicationFinding",
+    "DuplicationReport",
     "EntityKind",
     "EntityPolicy",
     "EntityStatus",
@@ -234,8 +264,14 @@ __all__ = [
     "FreshnessResult",
     "GovernPlan",
     "Inventory",
+    "LaneAction",
+    "LaneError",
+    "LaneManifest",
     "ObservationEnvelope",
     "ObservationLedger",
+    "ObservationRecord",
+    "ObservationStore",
+    "ObservationStoreError",
     "PlanEntry",
     "PlanEntryKind",
     "Playbook",
@@ -245,17 +281,27 @@ __all__ = [
     "ProposalStatus",
     "ReconcileDiff",
     "ReconcileEntry",
+    "RecordState",
     "RemediationAction",
     "RemediationProposal",
     "RemediationStep",
+    "RestoreEntry",
+    "RestorePlan",
+    "RestoreRefusal",
     "Snapshot",
     "SnapshotEntity",
     "Surface",
     "UnremediatedFinding",
+    "Verdict",
+    "build_restore_plan",
+    "collect_duplication",
     "collect_remediation",
     "compute_plan",
     "compute_reconcile_diff",
     "freshness_gated_read",
+    "load_lane_set",
+    "observation_store_root",
     "propose_reconcile",
+    "reconcile_lanes",
     "snapshot_surface",
 ]
