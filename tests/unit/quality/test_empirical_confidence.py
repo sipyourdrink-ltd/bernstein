@@ -9,6 +9,7 @@ Covers:
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -236,3 +237,107 @@ def test_router_falls_back_to_tier_without_sample(db_path: Path, monkeypatch: py
     # Falls back to the heuristic tier confidence, not 1.0.
     assert haiku.confidence != pytest.approx(1.0)
     assert haiku.confidence in (0.4, 0.6, 0.8)
+
+
+# ---------------------------------------------------------------------------
+# Schema migration from the pre-``sampled_at`` layout
+# ---------------------------------------------------------------------------
+
+
+_LEGACY_SCHEMA = """
+CREATE TABLE agent_outcomes (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_type    TEXT NOT NULL,
+    decision_key  TEXT NOT NULL,
+    outcome       INTEGER NOT NULL CHECK (outcome IN (0, 1)),
+    evidence_uri  TEXT,
+    recorded_at   REAL NOT NULL
+);
+CREATE INDEX idx_agent_outcomes_lookup
+    ON agent_outcomes (agent_type, decision_key);
+"""
+
+
+def _make_legacy_db(path: Path, rows: list[tuple[str, str, int, str | None, float]]) -> None:
+    """Write a database using the pre-``sampled_at`` column layout."""
+    conn = sqlite3.connect(path)
+    try:
+        conn.executescript(_LEGACY_SCHEMA)
+        conn.executemany(
+            "INSERT INTO agent_outcomes "
+            "(agent_type, decision_key, outcome, evidence_uri, recorded_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            rows,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _columns(path: Path) -> list[str]:
+    conn = sqlite3.connect(path)
+    try:
+        return [row[1] for row in conn.execute("PRAGMA table_info(agent_outcomes)")]
+    finally:
+        conn.close()
+
+
+def test_legacy_database_is_migrated_and_stays_usable(db_path: Path) -> None:
+    """An install carrying the old ``recorded_at`` column keeps working."""
+    _make_legacy_db(
+        db_path,
+        [
+            ("router", "decision-a", 1, "run://1", 100.0),
+            ("router", "decision-a", 0, None, 200.0),
+        ],
+    )
+
+    query = ConfidenceQuery(db_path=db_path, min_samples=1)
+
+    assert "sampled_at" in _columns(db_path)
+    assert "recorded_at" not in _columns(db_path)
+
+    # Pre-existing rows survive the rename, timestamps included.
+    conn = sqlite3.connect(db_path)
+    try:
+        preserved = conn.execute(
+            "SELECT agent_type, decision_key, outcome, evidence_uri, sampled_at FROM agent_outcomes ORDER BY id"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert preserved == [
+        ("router", "decision-a", 1, "run://1", 100.0),
+        ("router", "decision-a", 0, None, 200.0),
+    ]
+
+    # And the ledger accepts new writes on the migrated table.
+    query.record("router", "decision-a", 1, evidence_uri="run://3")
+
+    result = query.get("router", "decision-a")
+    assert result.samples == 3
+    assert result.value == pytest.approx(2 / 3)
+
+
+def test_migration_is_idempotent_across_reopens(db_path: Path) -> None:
+    """Re-opening a migrated database neither re-renames nor loses rows."""
+    _make_legacy_db(db_path, [("router", "k", 1, None, 100.0)])
+
+    ConfidenceQuery(db_path=db_path, min_samples=1).record("router", "k", 0)
+    reopened = ConfidenceQuery(db_path=db_path, min_samples=1)
+    reopened.record("router", "k", 1)
+
+    assert _columns(db_path).count("sampled_at") == 1
+    result = reopened.get("router", "k")
+    assert result.samples == 3
+    assert result.value == pytest.approx(2 / 3)
+
+
+def test_fresh_database_is_unaffected_by_the_migration(db_path: Path) -> None:
+    """A database created from scratch still gets the current schema."""
+    query = ConfidenceQuery(db_path=db_path, min_samples=1)
+    query.record("router", "k", 1)
+
+    columns = _columns(db_path)
+    assert "sampled_at" in columns
+    assert "recorded_at" not in columns
+    assert query.get("router", "k").samples == 1

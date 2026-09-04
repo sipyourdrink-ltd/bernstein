@@ -28,7 +28,9 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 if TYPE_CHECKING:
@@ -68,8 +70,16 @@ AGENT_CARD_V1_TYP: str = "agent-card+jws"
 #: differ only for an object carrying a supplementary-plane name (above
 #: U+FFFF) alongside a name in U+E000..U+FFFF.
 #:
+#: ``3`` serialises JSON numbers per RFC 8785 §3.2.2.3 (the ECMAScript
+#: ``Number::toString`` rule) instead of through Python's ``repr``. It differs
+#: from ``2`` for any payload carrying a float that is integer-valued (``10.0``
+#: becomes ``10``), that falls on the other side of ES6's scientific-notation
+#: thresholds (``1e-07`` becomes ``1e-7``, ``1e+20`` becomes
+#: ``100000000000000000000``), or that is negative zero (``-0.0`` becomes
+#: ``0``). Integers are unaffected, and so is every payload holding no float.
+#:
 #: See ``docs/security/jcs-canonicalization.md`` for what to re-sign.
-JCS_CANONICALIZATION_VERSION: int = 2
+JCS_CANONICALIZATION_VERSION: int = 3
 
 
 # ---------------------------------------------------------------------------
@@ -117,12 +127,116 @@ def _sorted_by_code_units(value: Any) -> Any:
     return value
 
 
+def _es6_number(value: float) -> str:
+    """Return *value* as RFC 8785 §3.2.2.3 requires: the ES6 ``Number::toString``.
+
+    Python's ``repr`` generates the same shortest-round-trip digits ES6
+    specifies, but lays them out differently in three places: it keeps a
+    trailing ``.0`` on an integer-valued float, it pads the exponent
+    (``1e-07``), and it crosses into scientific notation at different
+    magnitudes than ES6's ``-6 < n <= 21`` window. A conformant third-party
+    verifier recomputing the canonical bytes therefore disagrees with the
+    signer on any payload holding such a value, which is the failure this
+    function exists to remove.
+
+    Args:
+        value: A finite float. ``-0.0`` returns ``"0"``, as the spec's
+            number rule requires.
+
+    Returns:
+        The canonical decimal text for *value*.
+
+    Raises:
+        ValueError: If *value* is NaN or an infinity. RFC 8785 has no
+            encoding for either, so refusing is the only available answer.
+    """
+    if math.isnan(value) or math.isinf(value):
+        msg = "Out of range float values are not JSON compliant"
+        raise ValueError(msg)
+    if value == 0.0:
+        return "0"
+    if value < 0:
+        return "-" + _es6_number(-value)
+
+    # ``repr`` yields the shortest digit string that round-trips, which is the
+    # (s, k) pair ES6 7.1.12.1 step 5 asks for once trailing zeros are dropped.
+    # ``n`` is then where the decimal point sits: the value is s * 10**(n - k).
+    as_tuple = Decimal(repr(value)).as_tuple()
+    exponent = int(as_tuple.exponent)
+    digits = list(as_tuple.digits)
+    while len(digits) > 1 and digits[-1] == 0:
+        digits.pop()
+        exponent += 1
+    text = "".join(str(digit) for digit in digits)
+    k = len(text)
+    n = exponent + k
+
+    if k <= n <= 21:
+        return text + "0" * (n - k)
+    if 0 < n <= 21:
+        return text[:n] + "." + text[n:]
+    if -6 < n <= 0:
+        return "0." + "0" * -n + text
+    mantissa = text if k == 1 else text[0] + "." + text[1:]
+    sign = "+" if n > 0 else "-"
+    return f"{mantissa}e{sign}{abs(n - 1)}"
+
+
+def _encode_canonical(value: Any) -> str:
+    """Return the RFC 8785 encoding of one already-ordered node.
+
+    Strings and integers are handed to :mod:`json`, so their bytes stay
+    exactly what this module produced before. String escaping is not what
+    changed, and re-implementing it would move bytes that every existing
+    signature covers.
+
+    Args:
+        value: A node of the structure :func:`_sorted_by_code_units`
+            returned, so every object's property names are already strings
+            in RFC 8785 order.
+
+    Returns:
+        The canonical JSON text for that node.
+
+    Raises:
+        TypeError: If the node is not a JSON type.
+        ValueError: If it is NaN or an infinity.
+    """
+    if value is None:
+        return "null"
+    # bool subclasses int, so it has to be answered before the int arm.
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, int):
+        # Integers are emitted exactly rather than through the double path. A
+        # value outside IEEE-754's exactly-representable range is outside RFC
+        # 8785's number model to begin with, and rounding it here would change
+        # a count the caller signed.
+        return json.dumps(value)
+    if isinstance(value, float):
+        return _es6_number(value)
+    if isinstance(value, (list, tuple)):
+        elements = cast("list[Any] | tuple[Any, ...]", value)
+        return "[" + ",".join(_encode_canonical(item) for item in elements) + "]"
+    if isinstance(value, dict):
+        # _sorted_by_code_units has already coerced every property name to the
+        # string json.dumps would emit for it, in RFC 8785 order.
+        members = cast("dict[str, Any]", value)
+        pairs = (f"{json.dumps(name, ensure_ascii=False)}:{_encode_canonical(item)}" for name, item in members.items())
+        return "{" + ",".join(pairs) + "}"
+    msg = f"Object of type {type(value).__name__} is not JSON serializable"
+    raise TypeError(msg)
+
+
 def canonicalize_jcs(value: Any) -> bytes:
     """Return the RFC 8785 canonical JSON encoding of ``value`` as UTF-8 bytes.
 
-    Implements the spec's deterministic encoding rules sufficient for the
-    AgentIdentityCard surface (strings, ints, floats from ``time.time()``,
-    booleans, lists, and dicts):
+    Implements the spec's deterministic encoding rules for the JSON types
+    this codebase signs (strings, ints, floats, booleans, lists, dicts):
 
     - Object property names sorted as arrays of UTF-16 code units
       (RFC 8785 §3.2.3), not by code point. The two orders agree for every
@@ -131,22 +245,26 @@ def canonicalize_jcs(value: Any) -> bytes:
       with a high surrogate in U+D800..U+DBFF.
     - No insignificant whitespace; ``,`` and ``:`` separators only.
     - Strings emitted with UTF-8, escaping ``"``, ``\\``, and control chars.
-    - Numbers via Python's ``json.dumps`` (which matches IEEE 754 double
-      shortest round-trip for the typed values we use).
+    - Numbers per RFC 8785 §3.2.2.3, the ECMAScript ``Number::toString``
+      rule: ``10.0`` serialises as ``10``, ``1e-7`` carries no padded
+      exponent, and ``-0.0`` is ``0``. See :func:`_es6_number`.
 
-    Note:
-        For card bodies that include arbitrary numeric edge cases (NaN,
-        ±Infinity, integers past 2**53), upgrade the number serializer
-        per RFC 8785 §3.2.2.3 before adopting this for those payloads.
-        The cards we sign do not produce those values today.
+    Integers are the one deliberate departure from the double model: they
+    are emitted exactly, so a count past ``2**53`` keeps the value the
+    caller signed instead of being silently rounded.
+
+    Args:
+        value: The payload to canonicalise.
+
+    Returns:
+        The canonical UTF-8 bytes.
+
+    Raises:
+        TypeError: If the payload holds a value that is not a JSON type.
+        ValueError: If it holds NaN or an infinity, which RFC 8785 cannot
+            encode.
     """
-    return json.dumps(
-        _sorted_by_code_units(value),
-        sort_keys=False,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    ).encode("utf-8")
+    return _encode_canonical(_sorted_by_code_units(value)).encode("utf-8")
 
 
 def _b64url(data: bytes) -> str:

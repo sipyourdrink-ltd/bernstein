@@ -77,6 +77,7 @@ from bernstein.core.identity.delegation_scope import (
     grade_chain,
     verify_authority,
 )
+from bernstein.core.identity.principal import AgentPrincipal, principal_ref
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -89,6 +90,7 @@ else:
 __all__ = [
     "DEFAULT_ROOT",
     "GENESIS_HMAC",
+    "AgentPrincipal",
     "AuthorityReport",
     "ChainResult",
     "ChainVerdict",
@@ -167,6 +169,17 @@ class DelegationReceipt:
     scope: dict[str, Any] | None = None
     #: Charter hash / tenant-certificate version in force at decision time.
     binding: dict[str, Any] | None = None
+
+    def principal_ids(self) -> tuple[str, str]:
+        """Return ``(issuer, subject)`` as :class:`AgentPrincipal` ids.
+
+        Both fields are values of the one agent id space defined by
+        :mod:`bernstein.core.identity.principal`, so a hop read back off disk joins
+        directly to the principal a JWT or a signed card authenticated. Before
+        the identity types were consolidated the two sides shared no id space
+        and the join could not be stated, let alone made.
+        """
+        return (self.issuer, self.subject)
 
     def body(self) -> dict[str, Any]:
         """Return the signed body (all fields except ``hmac``).
@@ -310,8 +323,8 @@ class DelegationLedger:
         self,
         *,
         run_id: str,
-        issuer: str,
-        subject: str,
+        issuer: AgentPrincipal | str,
+        subject: AgentPrincipal | str,
         audience: str,
         act: str,
         created: int | None = None,
@@ -324,8 +337,13 @@ class DelegationLedger:
 
         Args:
             run_id: Run the delegation belongs to.
-            issuer: The delegating party (RFC 8693 subject principal).
-            subject: The acting party being authorized.
+            issuer: The delegating party (RFC 8693 subject principal). An
+                :class:`AgentPrincipal` is recorded by its id, so a hop written
+                from an authenticated agent lands in the same id space the
+                receipt is later read back in; a bare string is recorded as-is
+                for principals that are not agents ("operator", "cli").
+            subject: The acting party being authorized. Same handling as
+                ``issuer``.
             audience: The target the delegated token is minted for.
             act: Symbolic name of the delegated action.
             created: Optional unix timestamp; defaults to now (exposed for
@@ -356,8 +374,8 @@ class DelegationLedger:
             body: dict[str, Any] = {
                 "run_id": run_id,
                 "hop_index": hop_index,
-                "issuer": issuer,
-                "subject": subject,
+                "issuer": principal_ref(issuer),
+                "subject": principal_ref(subject),
                 "audience": audience,
                 "act": act,
                 "created": ts,
@@ -505,8 +523,8 @@ def default_ledger(root: Path | None = None) -> DelegationLedger:
 def record_delegation_hop(
     *,
     run_id: str,
-    issuer: str,
-    subject: str,
+    issuer: AgentPrincipal | str,
+    subject: AgentPrincipal | str,
     audience: str,
     act: str,
     root: Path | None = None,

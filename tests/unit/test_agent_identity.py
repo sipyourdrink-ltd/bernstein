@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, get_args, get_type_hints
 
 import pytest
 
-from bernstein.core.agents.agent_identity import (
+from bernstein.core.identity.agent_jwt import (
     _CREDENTIAL_TOKEN_TYPES,
     AgentCredential,
     AgentIdentity,
@@ -254,11 +254,15 @@ class TestAgentIdentityStore:
         store.create_identity("backend-abc", "backend")
         store.create_identity("backend-def", "backend")
 
-        with caplog.at_level("INFO", logger="bernstein.core.agents.agent_identity"):
+        logger_name = "bernstein.core.identity.agent_jwt"
+        with caplog.at_level("INFO", logger=logger_name):
             assert store.revoke("backend-abc", reason="line1\nline2")
             assert store.suspend("backend-def", reason="line3\rline4")
 
-        messages = [record.getMessage() for record in caplog.records if "agent_identity" in record.name]
+        messages = [record.getMessage() for record in caplog.records if record.name == logger_name]
+        # Without this the four assertions below all pass vacuously on an empty list,
+        # which is how a renamed logger slipped past them once already.
+        assert messages, f"no records from {logger_name}; captured {[r.name for r in caplog.records]}"
         assert any("line1\\nline2" in message for message in messages)
         assert any("line3\\rline4" in message for message in messages)
         assert all("line1\nline2" not in message for message in messages)

@@ -65,7 +65,11 @@ class TagContract:
             if pure.is_absolute() or ".." in pure.parts:
                 offenders.append(path)
                 continue
-            norm = path.lstrip("./")
+            # ``as_posix`` on the parsed path drops the redundant ``.`` and
+            # ``//`` components a diff may carry, and leaves a leading dot in
+            # a name alone: ``.github/`` is a directory called ``.github``,
+            # not ``github``.
+            norm = pure.as_posix()
             if any(norm.startswith(bad) for bad in self.forbidden_prefixes):
                 offenders.append(path)
                 continue

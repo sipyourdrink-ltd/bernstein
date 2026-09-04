@@ -183,6 +183,19 @@ class QualityGatesConfig:
         comment_quality_docstyle: Expected docstring style for the comment-quality
             gate. One of ``"google"``, ``"numpy"``, ``"rest"``, or ``"auto"``
             (auto-detect per docstring).
+        behavior_probe: Execute the callables the diff changed against boundary
+            inputs derived from their own signatures. Crash-level only: it
+            reports undocumented exceptions, return values contradicting the
+            return annotation, and calls that do not return inside the budget.
+            It never asserts what a callable should have computed. Off by
+            default - it starts one interpreter per probe.
+        behavior_probe_python_command: Command that starts the interpreter a
+            probe runs in. Empty means the interpreter running the gate.
+        behavior_probe_per_callable_timeout_s: Wall-clock budget for one probe.
+        behavior_probe_gate_timeout_s: Wall-clock budget for the whole gate.
+        behavior_probe_max_callables: Cap on probed callables per run; the rest
+            are recorded ``cap-exceeded`` in the receipt.
+        behavior_probe_max_probes_per_callable: Cap on probes per callable.
     """
 
     enabled: bool = True
@@ -272,6 +285,12 @@ class QualityGatesConfig:
     agent_test_mutation: bool = False
     agent_test_mutation_threshold: float = 0.70
     agent_test_mutation_timeout_s: int = 300
+    behavior_probe: bool = False
+    behavior_probe_python_command: str = ""
+    behavior_probe_per_callable_timeout_s: int = 15
+    behavior_probe_gate_timeout_s: int = 300
+    behavior_probe_max_callables: int = 12
+    behavior_probe_max_probes_per_callable: int = 6
 
 
 @dataclass
