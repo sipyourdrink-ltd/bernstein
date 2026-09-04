@@ -1926,6 +1926,12 @@ def _parse_quality_gates(raw: object) -> QualityGatesConfig | None:
         auto_format_python_command=_qg_str("auto_format_python_command", "ruff format"),
         auto_format_js_command=_qg_str("auto_format_js_command", "prettier --write"),
         auto_format_rust_command=_qg_str("auto_format_rust_command", "rustfmt"),
+        behavior_probe=_qg_bool("behavior_probe", False),
+        behavior_probe_python_command=_qg_str("behavior_probe_python_command", ""),
+        behavior_probe_per_callable_timeout_s=_qg_int("behavior_probe_per_callable_timeout_s", 15),
+        behavior_probe_gate_timeout_s=_qg_int("behavior_probe_gate_timeout_s", 300),
+        behavior_probe_max_callables=_qg_int("behavior_probe_max_callables", 12),
+        behavior_probe_max_probes_per_callable=_qg_int("behavior_probe_max_probes_per_callable", 6),
         benchmark=benchmark_cfg,
     )
 
