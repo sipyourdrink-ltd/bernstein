@@ -276,7 +276,7 @@ def _app_with_agent_identity_store(tmp_path: Any) -> tuple[TestClient, Any]:
     """Build a test app with an AgentIdentityStore for zero-trust JWT tests."""
     from pathlib import Path
 
-    from bernstein.core.agent_identity import AgentIdentityStore
+    from bernstein.core.identity.agent_jwt import AgentIdentityStore
 
     auth_dir = Path(str(tmp_path))
     store = AgentIdentityStore(auth_dir)
@@ -392,7 +392,7 @@ def test_agent_jwt_denied_on_shutdown_route(tmp_path: Any) -> None:
     """
     from pathlib import Path
 
-    from bernstein.core.agent_identity import AgentIdentityStore
+    from bernstein.core.identity.agent_jwt import AgentIdentityStore
 
     store = AgentIdentityStore(Path(str(tmp_path)))
     _, token = store.create_identity("manager-1", "manager", task_ids=[])
@@ -415,7 +415,7 @@ def test_agent_jwt_denied_on_broadcast_and_drain(tmp_path: Any) -> None:
     """Agent identity JWTs are blocked from /broadcast and /drain (audit-119)."""
     from pathlib import Path
 
-    from bernstein.core.agent_identity import AgentIdentityStore
+    from bernstein.core.identity.agent_jwt import AgentIdentityStore
 
     store = AgentIdentityStore(Path(str(tmp_path)))
     _, token = store.create_identity("mgr-2", "manager", task_ids=[])

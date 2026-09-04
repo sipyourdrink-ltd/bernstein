@@ -143,3 +143,15 @@ off/unset by default.
   and verification.
 - `src/bernstein/cli/commands/tournament_cmd.py` - `bernstein tournament
   show` / `verify`.
+
+## Not the same as the per-run scorecard
+
+A tournament receipt records *which sibling attempt won* a fan-out
+and the evaluator outputs that decided it. A per-run **scorecard**
+(`bernstein runs scorecard <run-id>`, documented in
+[`run.md`](run.md)) records *what one run actually did* -- the
+deterministic, content-addressed projection of its work ledger, with
+task counts, `cost_usd`, host, branch and outcome. The two share the
+word "score" and nothing else: a tournament receipt is a signed
+selection across attempts, a scorecard is an idempotent artifact
+keyed by the hash of its own canonical content.

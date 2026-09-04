@@ -1237,7 +1237,7 @@ def create_app(
     # Auth middleware - supports SSO JWTs, agent identity JWTs (zero-trust),
     # and legacy bearer tokens.  The agent identity store is shared with
     # application state so spawned agents can authenticate per-request.
-    from bernstein.core.agent_identity import AgentIdentityStore
+    from bernstein.core.identity.agent_jwt import AgentIdentityStore
 
     _auth_dir = sdd_dir / "auth"
     _agent_identity_store = AgentIdentityStore(_auth_dir)

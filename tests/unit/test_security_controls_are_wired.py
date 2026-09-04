@@ -45,7 +45,7 @@ PACKAGE = REPO_ROOT / "src" / "bernstein" / "core" / "security"
 SEARCHED = ("src", "tests", "scripts")
 SELF = Path(__file__).resolve()
 
-#: The 22 still PROVED uncalled: each name appears nowhere outside its own module, in
+#: The 20 still PROVED uncalled: each name appears nowhere outside its own module, in
 #: any file, in any form. Pre-existing debt, deliberately not fixed here - each needs
 #: its own judgement about wiring versus deleting. The two `post_tool_enforcement`
 #: entries the list started with are gone: #4992 wired them into the hook receiver's
@@ -57,7 +57,6 @@ SELF = Path(__file__).resolve()
 #: SHRINK ONLY - `test_no_stale_exemptions` fails once one gains a reference.
 KNOWN_UNCALLED: frozenset[str] = frozenset(
     {
-        "agent_identity.py:v1_0_hash_enabled",
         "audit_chain.py:record_expectation_expired",
         "audit_chain.py:record_pool_claim_receipt",
         "audit_chain.py:record_pool_retired",
