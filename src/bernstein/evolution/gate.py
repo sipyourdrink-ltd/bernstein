@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from bernstein.core.security.audit_chain import AuditChainStore
     from bernstein.eval.gate_receipt import VerdictReceipt
 
+from bernstein.evolution.invariants import check_proposal_targets
 from bernstein.evolution.oscillation_guard import (
     OscillationGuard,
     OscillationResult,
@@ -290,6 +291,29 @@ class ApprovalGate:
         Returns:
             ApprovalDecision describing the routing outcome.
         """
+        target_files = getattr(proposal, "target_files", []) or []
+        safe, violations = check_proposal_targets(target_files)
+        if not safe:
+            risk_level = getattr(proposal, "risk_level", None)
+            if risk_level is None or not isinstance(risk_level, RiskLevel):
+                risk_level = self._classifier.classify(target_files)
+            reason = f"Proposal targets constraint layer / locked file(s): {', '.join(sorted(violations))}"
+            decision = ApprovalDecision(
+                proposal_id=proposal.id,
+                risk_level=risk_level,
+                confidence=proposal.confidence,
+                outcome=ApprovalOutcome.BLOCKED,
+                reason=reason,
+                requires_human=True,
+            )
+            self._log_decision(decision)
+            logger.warning(
+                "Proposal %s refused by constraint manifest: %s",
+                proposal.id,
+                reason,
+            )
+            return decision
+
         risk_level = self._classifier.classify(proposal.target_files)
         outcome, reason, requires_human = self._decide(risk_level, proposal.confidence)
 
