@@ -14,6 +14,7 @@ configurable gate pipeline plus the janitor's claim verification.
 | `absence_coverage.py` | Absence-claim coverage verification: classifies a completion built on an absence claim (`glob_exists`/`file_contains` "not found", or a journal read) as `unverified` unless a coverage record backs it (#3650/#3769/#3770/#3771) |
 | `verifier_ladder.py` | Multi-tier verifier ladder with signed, re-derivable per-tier receipts (#2927) |
 | `review_pipeline/` | Fresh-context cross-model review gate, the ruleset a verdict is produced under (`review_pipeline/ruleset.py`), and the bounded review -> fix -> re-check contour with one chained receipt per pass (`review_pipeline/contour.py`, #4481) |
+| `behavior_probe.py` | The one gate that executes the diff: boundary inputs derived from the changed callables' signatures, no model and no randomness, crash-level claim, replayable probe receipt (#3377) |
 | `formal_verification.py` | Z3/Lean4 checks over scalar task metadata |
 
 ## Invariants
@@ -25,6 +26,10 @@ configurable gate pipeline plus the janitor's claim verification.
   a side effect. `run_config` is a safety invariant (`../config/run_overlay.py`).
 - Blocking vs advisory semantics are per-gate; a new gate declares which. No
   package-level `__getattr__` re-export magic here (`__init__.py` explains why).
+- `behavior_probe` claims crashes, not semantics: undocumented exception,
+  return type contradicting the annotation, or no return inside the budget.
+  Widening it to semantic assertions would make its verdict a matter of
+  opinion (`behavior_probe.py`).
 - Absence-claim coverage fails closed: a coverage record that cannot be read back
   classifies as no-coverage, never as a fabricated pass (`absence_coverage.py`).
 - The review contour fails closed too: a spent budget, a missing fix runner, or a

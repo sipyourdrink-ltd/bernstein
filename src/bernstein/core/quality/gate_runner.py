@@ -482,6 +482,7 @@ class GateRunner:
             "dep_audit": self._execute_dep_audit_gate,
             "integration_test_gen": lambda s, t, rd, _cf: self._run_integration_test_gen_gate(s, t, rd),
             "review_rubric": lambda s, t, rd, _cf: self._run_review_rubric_gate(s, t, rd),
+            "behavior_probe": lambda s, _t, rd, cf: self._run_behavior_probe_gate(s, rd, cf),
         }
         async_fn = _async_gates.get(step.name)
         if async_fn is not None:
@@ -1147,6 +1148,55 @@ class GateRunner:
             duration_ms=total_duration_ms,
             details=". ".join(parts),
             metadata={"formatted_langs": [r.split(":")[0] for r in formatted]},
+        )
+
+    async def _run_behavior_probe_gate(
+        self,
+        step: GatePipelineStep,
+        run_dir: Path,
+        changed_files: list[str],
+    ) -> GateResult:
+        """Run the behaviour-probe gate and attach its receipt to the result.
+
+        The receipt (probe-set hash, per-probe outcomes, the minimal failing
+        input) rides on ``metadata`` so a later reader can answer "what was
+        this diff probed with" without re-deriving the plan.
+        """
+        from bernstein.core.quality.behavior_probe import (
+            config_from_quality_gates,
+            probe_changed_surface,
+        )
+
+        probe_config = config_from_quality_gates(self._config)
+        try:
+            result = await probe_changed_surface(run_dir, changed_files, probe_config)
+        except Exception as exc:
+            # The probe runner died before producing a verdict. Neither "pass"
+            # (a bypass) nor "fail" (a lie) is honest here - issue #4181.
+            logger.warning("behavior_probe gate failed: %s", exc)
+            return GateResult(
+                name=step.name,
+                status="inconclusive",
+                required=step.required,
+                blocked=step.required,
+                cached=False,
+                duration_ms=0,
+                details=f"Behaviour probe gate failed: {exc}",
+                metadata={},
+                reason="runner-died-before-output",
+            )
+        status: GateStatus = "pass" if result.passed else ("inconclusive" if result.reason else "fail")
+        blocked = step.required and status in {"fail", "inconclusive"}
+        return GateResult(
+            name=step.name,
+            status=status,
+            required=step.required,
+            blocked=blocked,
+            cached=False,
+            duration_ms=0,
+            details=result.detail,
+            metadata={"probe_receipt": result.receipt.to_dict()},
+            reason=result.reason,
         )
 
     async def _run_integration_test_gen_gate(
