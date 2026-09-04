@@ -631,6 +631,40 @@ class BernsteinSpec:
         """
 
     @hookspec
+    def provide_directory_adapter(self) -> Any:
+        """Provide one or more external-directory adapter registrations.
+
+        A directory adapter answers "who is this principal and what is it a
+        member of" against an identity directory an operator already runs.
+        Each adapter satisfies
+        :class:`bernstein.core.security.directory_bridge.DirectoryAdapter`,
+        which is a structural protocol: an adapter needs no Bernstein base
+        class, only the three operations and a ``name`` and ``version``.
+
+        The vendor client belongs in the adapter and nowhere else --
+        ``bernstein.core`` never imports a directory SDK -- so this hook is
+        how a directory is added without a core change.
+
+        Plugins implementing this hook return one of:
+
+        * ``None`` -- opt out for this call.
+        * A single
+          :class:`bernstein.core.security.directory_registry.DirectoryAdapterRegistration`.
+        * A ``(name, factory)`` tuple where ``factory`` constructs the
+          adapter when called with keyword arguments.
+        * A list containing any mix of the above.
+
+        Registration happens on the process-wide directory registry under
+        ``source="plugin"`` with the plugin name recorded as provenance.
+        Duplicate names are skipped with a warning; the first wins. Adapter
+        construction is deferred until a caller resolves the adapter by name,
+        so factories may open connections at construction time.
+
+        Returns:
+            A registration, list of registrations, or ``None``.
+        """
+
+    @hookspec
     def provide_ingest_adapter(self) -> Any:
         """Provide one or more ingest adapter registrations.
 
