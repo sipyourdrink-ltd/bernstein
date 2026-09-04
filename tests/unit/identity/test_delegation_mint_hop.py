@@ -69,7 +69,7 @@ def _mint_orchestrator(store):
     return identity
 
 
-def _mint_child(store, name, parent, *, task_ids, allowed_files):
+def _mint_child(store, name, parent, *, task_ids, allowed_files=None):
     identity, _ = store.create_identity(
         name,
         "backend",
@@ -232,11 +232,42 @@ def test_cli_verify_exits_zero_and_prints_the_hop_count(store, audit_root, monke
     """AC6: `bernstein delegation verify <run>` exits 0 and prints the hop count."""
     monkeypatch.setattr(delegation, "_audit_key", lambda: KEY)
     parent = _mint_orchestrator(store)
-    _mint_child(store, "child-0", parent, task_ids=["t0"], allowed_files=["src"])
+    # The production shape: the spawner mints with ``task_ids`` and no file
+    # scope, and every axis on that receipt is one the comparator reads.  A
+    # recorded ``allowed_files`` is graded unproven and exits 3, which is
+    # pinned separately below rather than folded into this criterion.
+    _mint_child(store, "child-0", parent, task_ids=["t0"])
 
     result = CliRunner().invoke(delegation_group, ["verify", RUN, "--root", str(audit_root)])
     assert result.exit_code == 0, result.output
     assert "1 hop(s)" in result.output
+
+
+def test_a_recorded_file_scope_is_unproven_and_the_cli_exits_three(store, audit_root, monkeypatch):
+    """A recorded ``allowed_files`` is not graded, so the chain is unproven.
+
+    The axis is carried verbatim and grades ``comparison_axis_unsupported``: a
+    glob is not a path prefix, and no primitive here decides whether one glob
+    contains another (#5351, follow-up #5418).  The CLI's exit map is the one it
+    already had - 0 pass, 1 fail, 3 unproven - so a chain that records a file
+    scope reports 3 until that axis can be graded.
+    """
+    monkeypatch.setattr(delegation, "_audit_key", lambda: KEY)
+    parent = _mint_orchestrator(store)
+    _mint_child(store, "child-0", parent, task_ids=["t0"], allowed_files=["src/**"])
+
+    receipts = delegation.verify_run_chain(root=audit_root, run_id=RUN, key=KEY).receipts
+    assert receipts[0].scope["allowed_files"] == ["src/**"]
+
+    verdict = grade_chain(receipts)
+    assert verdict.verdict == VERDICT_UNPROVEN
+    assert verdict.unproven_hops == 1
+    assert verdict.hops[0].axes == ("allowed_files",)
+    assert REASON_COMPARISON_AXIS_UNSUPPORTED in verdict.hops[0].reasons
+
+    result = CliRunner().invoke(delegation_group, ["verify", RUN, "--root", str(audit_root)])
+    assert result.exit_code == 3, result.output
+    assert "comparison_axis_unsupported" in result.output
 
 
 def test_siblings_grade_when_the_manifest_declares_the_run_root(store, tmp_path, audit_root, monkeypatch):
@@ -263,7 +294,6 @@ def test_siblings_grade_when_the_manifest_declares_the_run_root(store, tmp_path,
             "backend",
             parent_identity_id=root_identity.id,
             task_ids=[f"t{index}"],
-            allowed_files=["src"],
             metadata={"run_id": RUN},
         )
 
