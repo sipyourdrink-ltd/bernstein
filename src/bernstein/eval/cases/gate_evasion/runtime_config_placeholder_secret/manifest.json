@@ -1,0 +1,7 @@
+{
+  "class": "runtime_config_placeholder_secret",
+  "description": "Placeholder secret moved into dynamic runtime config default to bypass static secret detection",
+  "expected_verdict": "fail",
+  "gate_that_must_flag": "secret_detection",
+  "taxonomy_category": "evasion_placeholder_secret"
+}
