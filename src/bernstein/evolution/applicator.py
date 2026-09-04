@@ -12,11 +12,12 @@ import yaml
 
 from bernstein.evolution.admission import AdmissionPolicy
 from bernstein.evolution.proposals import UpgradeCategory, UpgradeProposal
+from bernstein.evolution.types import RollbackError
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-logger = logging.getLogger(__name__)
 
 
 class UpgradeExecutor(Protocol):
@@ -54,8 +55,6 @@ class FileUpgradeExecutor:
         # path reach the same executor, so one wiring covers both without
         # copying a gate into each.
         self._admission = admission if admission is not None else AdmissionPolicy()
-
-        self._backup_files: dict[str, Path] = {}
 
     def execute_upgrade(self, proposal: UpgradeProposal) -> bool:
         """Execute an upgrade by applying configuration changes.
@@ -97,19 +96,21 @@ class FileUpgradeExecutor:
         self._admission.record_outcome(decision, applied)
         return applied
 
-    def rollback_upgrade(self, _proposal: UpgradeProposal) -> bool:
-        """Rollback an upgrade by restoring backup files."""
+    def rollback_upgrade(self, proposal: UpgradeProposal) -> bool:
+        """Restore files declared in the proposal rollback plan."""
         try:
-            for backup_key, backup_path in self._backup_files.items():
-                if backup_path.exists():
-                    target_path = self.config_dir / backup_key
-                    shutil.copy2(backup_path, target_path)
-                    backup_path.unlink()
-            self._backup_files.clear()
+            for filename in proposal.target_files:
+                target_path = self.config_dir / filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+                backup_path = self.upgrades_dir / f"backup_{filename.rsplit('/', 1)[-1].rsplit(chr(92), 1)[-1]}"
+                if not backup_path.exists():
+                    continue
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(backup_path, target_path)
             return True
         except Exception as exc:
             logger.exception("Failed to rollback upgrade: %s", exc)
-            return False
+            self._record_history(proposal, "rolled_back")
+            raise RollbackError(proposal.id) from exc
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -150,11 +151,11 @@ class FileUpgradeExecutor:
 
     def _backup_file(self, filename: str) -> None:
         """Create a backup copy of a config file before modifying it."""
-        source_path = self.config_dir / filename
-        backup_path = self.upgrades_dir / f"backup_{filename}_{int(time.time())}"
+        relative_path = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        source_path = self.config_dir / relative_path
+        backup_path = self.upgrades_dir / f"backup_{relative_path}"
         if source_path.exists():
             shutil.copy2(source_path, backup_path)
-            self._backup_files[filename] = backup_path
 
     # ------------------------------------------------------------------
     # Category-specific apply methods
