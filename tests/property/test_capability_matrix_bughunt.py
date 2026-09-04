@@ -303,26 +303,17 @@ def test_asi06_scans_trusted_content_for_hijack_patterns() -> None:
     assert detect_asi06_memory_poisoning(ctx).passed is False
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Bug: SecretLeakGuardrail patterns predate the new OpenAI sk-proj-, "
-        "GitHub fine-grained github_pat_, and Anthropic sk-ant- tokens. "
-        "Class affected: SecretLeakGuardrail. Severity: HIGH."
-    ),
-)
 def test_secret_leak_catches_modern_token_formats() -> None:
-    """Bug: SecretLeakGuardrail signature pack is out of date.
+    """SecretLeakGuardrail carries the current token signatures (FIXED).
 
-    Root cause: regex set still targets ``sk-/sk_`` (legacy OpenAI),
-    ``ghp_`` (legacy classic PAT), and ``AKIA`` only. Modern tokens -
-    ``sk-proj-XXXX`` (OpenAI projects), ``github_pat_XXXX`` (GitHub
-    fine-grained PAT), ``sk-ant-api03-XXXX`` (Anthropic) - sail past.
+    This was an ``xfail(strict=True)`` recording a HIGH-severity gap: the
+    regex set targeted ``sk-``/``sk_`` (legacy OpenAI), ``ghp_`` (legacy
+    classic PAT) and ``AKIA`` only, so ``sk-proj-XXXX`` (OpenAI projects),
+    ``github_pat_XXXX`` (GitHub fine-grained PAT) and ``sk-ant-api03-XXXX``
+    (Anthropic) all sailed past.
 
-    Attacker model: secret-exfiltration via agent output. Severity is
+    Attacker model: secret exfiltration through agent output. Severity is
     HIGH because every successful exfil is a credential takeover.
-    Pattern improvement: extend ``PATTERNS`` with the three new
-    canonical prefixes.
     """
     g = SecretLeakGuardrail()
     payload = "leak: sk-proj-" + "A" * 40

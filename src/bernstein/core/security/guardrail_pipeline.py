@@ -128,10 +128,27 @@ class SecretLeakGuardrail:
 
     name = "secret_leak"
 
+    #: One signature per credential shape a provider documents as fixed.
+    #: A provider that adds a prefix does not retire the old one, so the
+    #: legacy forms stay alongside the current ones. Order is cosmetic:
+    #: every pattern is searched and each hit is reported separately.
     PATTERNS: ClassVar[list[str]] = [
+        # OpenAI project keys. The legacy ``sk-``/``sk_`` body below stops
+        # at the first hyphen, so it never covers this one.
+        r"sk-proj-[A-Za-z0-9_-]{20,}",
+        # Anthropic API and admin keys: sk-ant-api03-xxx, sk-ant-admin01-xxx.
+        r"sk-ant-[a-z]+[0-9]*-[A-Za-z0-9_-]{20,}",
         r"(?:sk-|sk_)[a-zA-Z0-9]{20,}",
-        r"ghp_[a-zA-Z0-9]{36}",
-        r"-----BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY-----",
+        # GitHub fine-grained personal access token.
+        r"github_pat_[A-Za-z0-9_]{22,}",
+        # Classic GitHub tokens, which share one 36-character body:
+        # ghp_ personal, gho_ OAuth, ghu_ user-to-server,
+        # ghs_ server-to-server, ghr_ refresh.
+        r"gh[pousr]_[a-zA-Z0-9]{36}",
+        # Any PEM private key, not only RSA. This project mints Ed25519
+        # signing keys of its own, and an OPENSSH, EC, DSA or ENCRYPTED
+        # body is the same disclosure as an RSA one.
+        r"-----BEGIN\s+(?:[A-Z0-9]+\s+)?PRIVATE\s+KEY-----",
         r"AKIA[0-9A-Z]{16}",
     ]
 

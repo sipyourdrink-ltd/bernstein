@@ -131,6 +131,39 @@ class TestSecretLeakGuardrail:
         result = g.check_output("-----BEGIN RSA PRIVATE KEY-----\nMIIE...", {})
         assert not result.passed
 
+    def test_catches_openai_project_key(self) -> None:
+        g = SecretLeakGuardrail()
+        assert not g.check_output("leak: sk-proj-" + "A" * 40, {}).passed
+
+    def test_catches_anthropic_key(self) -> None:
+        g = SecretLeakGuardrail()
+        assert not g.check_output("leak: sk-ant-api03-" + "A" * 95, {}).passed
+
+    def test_catches_github_fine_grained_pat(self) -> None:
+        g = SecretLeakGuardrail()
+        assert not g.check_output("leak: github_pat_" + "A" * 82, {}).passed
+
+    @pytest.mark.parametrize("prefix", ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"])
+    def test_catches_every_classic_github_token_prefix(self, prefix: str) -> None:
+        """The classic family shares one body; only ``ghp_`` was listed."""
+        g = SecretLeakGuardrail()
+        assert not g.check_output(f"token: {prefix}{'a' * 36}", {}).passed
+
+    @pytest.mark.parametrize("label", ["", "RSA ", "EC ", "DSA ", "OPENSSH ", "ENCRYPTED "])
+    def test_catches_every_pem_private_key_label(self, label: str) -> None:
+        """This project mints Ed25519 keys, so RSA is not the only PEM to catch."""
+        g = SecretLeakGuardrail()
+        assert not g.check_output(f"-----BEGIN {label}PRIVATE KEY-----\nMIIE...", {}).passed
+
+    def test_passes_public_key_header(self) -> None:
+        """A public key is not a secret and must not trip the guardrail."""
+        g = SecretLeakGuardrail()
+        assert g.check_output("-----BEGIN PUBLIC KEY-----\nMCow...", {}).passed
+
+    def test_passes_prose_that_merely_mentions_a_prefix(self) -> None:
+        g = SecretLeakGuardrail()
+        assert g.check_output("Rotate the sk-proj- key and the github_pat_ token.", {}).passed
+
     def test_catches_aws_key(self) -> None:
         g = SecretLeakGuardrail()
         result = g.check_output("AKIAIOSFODNN7EXAMPLE", {})
