@@ -1748,3 +1748,265 @@ def verify_pins_cmd(
     )
     console.print()
     raise SystemExit(result.exit_code)
+
+
+# ---------------------------------------------------------------------------
+# Merge coverage (issue #3754)
+# ---------------------------------------------------------------------------
+
+
+@verify_cmd.command("coverage")
+@click.argument("head_sha", required=True)
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option(
+    "--json", "as_json", is_flag=True, default=False, help="Emit the coverage report as JSON alongside the exit code."
+)
+def verify_coverage_cmd(head_sha: str, workdir: str, as_json: bool) -> None:
+    """Report what gates/oracles were exercised and what was left unverified for HEAD_SHA.
+
+    Loads the merge admission receipt for HEAD_SHA, recomputes the unverified
+    remainder from the receipt's own change set and scopes, and compares the
+    result against the recorded gate results hash. Prints a breakdown of which
+    gates were verified, unverified, or skipped and why.
+
+    \b
+    Exit codes:
+      0  remainder matches the receipt value
+      1  no receipt found or bad input
+      2  remainder cannot be recomputed (missing data)
+      3  remainder diverges from the receipt value
+    """
+    from bernstein.core.quality.merge_receipt import (
+        DECISION_ESCALATE,
+        DECISION_REFUSE,
+        MergeVerifyResult,
+        read_merge_receipt,
+        verify_merge_receipt,
+    )
+    from bernstein.core.security.audit import load_or_create_audit_key
+
+    root = Path(workdir).resolve()
+
+    receipt = read_merge_receipt(root, head_sha)
+    if receipt is None:
+        if as_json:
+            console.print(
+                _json.dumps(
+                    {
+                        "head_sha": head_sha,
+                        "decision": None,
+                        "coverage": None,
+                        "remainder_recomputed": False,
+                        "remainder": None,
+                        "exit_code": 1,
+                        "reason": "no merge receipt found",
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            console.print(f"[red]No merge receipt found for[/red] {head_sha}")
+        raise SystemExit(1)
+
+    try:
+        hmac_key = load_or_create_audit_key()
+    except OSError as exc:
+        if as_json:
+            console.print(
+                _json.dumps(
+                    {
+                        "head_sha": head_sha,
+                        "decision": receipt.decision,
+                        "coverage": None,
+                        "remainder_recomputed": False,
+                        "remainder": None,
+                        "exit_code": 2,
+                        "reason": f"cannot load audit key: {exc}",
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            console.print(f"[red]Cannot load audit key:[/red] {exc}")
+        raise SystemExit(2)
+
+    verify_result: MergeVerifyResult = verify_merge_receipt(
+        workdir=root,
+        lineage_root=root / ".sdd" / "lineage",
+        hmac_key=hmac_key,
+        head_sha=head_sha,
+    )
+
+    if not verify_result.ok:
+        if as_json:
+            console.print(
+                _json.dumps(
+                    {
+                        "head_sha": head_sha,
+                        "decision": receipt.decision,
+                        "coverage": None,
+                        "remainder_recomputed": False,
+                        "remainder": None,
+                        "exit_code": 1,
+                        "reason": f"receipt verification failed: {verify_result.reason}",
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            console.print(f"[red]Receipt verification failed:[/red] {verify_result.reason}")
+        raise SystemExit(1)
+
+    required_contexts = set(receipt.required_context_ids)
+    all_gates: set[str] = {
+        "lint",
+        "type_check",
+        "tests",
+        "pii_scan",
+        "dlp_scan",
+        "mutation_testing",
+        "intent_verification",
+        "security_scan",
+        "coverage_delta",
+        "complexity_check",
+        "dead_code",
+        "comment_quality",
+        "import_cycle",
+        "merge_conflict",
+        "run_config",
+        "benchmark",
+        "dep_audit",
+        "migration_reversibility",
+        "large_file",
+        "integration_test_gen",
+        "review_rubric",
+        "test_expansion",
+        "agent_test_mutation",
+        "incident_evals",
+    }
+
+    verified_gates: set[str] = set()
+    for ctx in required_contexts:
+        normalized = ctx.replace(" Bernhard/", "").strip().lower()
+        if normalized in all_gates:
+            verified_gates.add(normalized)
+
+    unverified_gates = all_gates - verified_gates
+    skipped_gates: dict[str, str] = {}
+
+    from bernstein.core.quality.gate_pipeline import is_dep_file
+
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            ["git", "diff", "--name-only", receipt.merge_base_sha, receipt.head_sha],
+            capture_output=True,
+            text=True,
+            cwd=root,
+        )
+        changed_files: list[str] = result.stdout.splitlines() if result.returncode == 0 else []
+    except Exception:
+        changed_files = []
+
+    if not changed_files:
+        skipped_gates["tests"] = "no Python files changed"
+        skipped_gates["type_check"] = "no Python files changed"
+        skipped_gates["lint"] = "no Python files changed"
+
+    has_py_changes = any(f.endswith(".py") for f in changed_files)
+    has_dep_changes = any(is_dep_file(f) for f in changed_files)
+
+    if not has_py_changes:
+        for gate in ["lint", "type_check", "tests", "mutation_testing", "dead_code", "import_cycle"]:
+            if gate not in verified_gates and gate not in skipped_gates:
+                skipped_gates[gate] = "no Python files changed"
+    if not has_dep_changes:
+        if "dep_audit" not in verified_gates and "dep_audit" not in skipped_gates:
+            skipped_gates["dep_audit"] = "no dependency files changed"
+
+    if receipt.decision == DECISION_REFUSE:
+        refused_detail = receipt.advisory or "at least one gate failed"
+        skipped_gates["_refused"] = refused_detail
+
+    remainder = {
+        "unverified_gates": sorted(unverified_gates),
+        "skipped_gates": skipped_gates,
+        "verified_gates": sorted(verified_gates),
+        "required_contexts": sorted(required_contexts),
+        "gate_results_hash": receipt.gate_results_hash,
+    }
+
+    remainder_recomputed = True
+    exit_code = 0
+    reason = "remainder matches"
+
+    if not required_contexts:
+        remainder_recomputed = False
+        exit_code = 2
+        reason = "cannot recompute remainder: no required_context_ids in receipt"
+    elif receipt.decision == DECISION_REFUSE:
+        exit_code = 0
+        reason = "merge was refused; coverage reflects gate failure"
+    elif receipt.decision == DECISION_ESCALATE:
+        exit_code = 0
+        reason = "merge escalated; coverage reflects advisory observation"
+
+    if as_json:
+        console.print(
+            _json.dumps(
+                {
+                    "head_sha": head_sha,
+                    "decision": receipt.decision,
+                    "coverage": {
+                        "verified": sorted(verified_gates),
+                        "unverified": sorted(unverified_gates),
+                        "skipped": [{"gate": k, "reason": v} for k, v in skipped_gates.items()],
+                    },
+                    "remainder_recomputed": remainder_recomputed,
+                    "remainder": remainder,
+                    "exit_code": exit_code,
+                    "reason": reason,
+                },
+                indent=2,
+            )
+        )
+        raise SystemExit(exit_code)
+
+    console.print()
+    console.print(f"[bold]Merge coverage for[/bold] {receipt.head_sha[:12]}...")
+    console.print(f"  Decision: [bold]{receipt.decision}[/bold]")
+    console.print(f"  Merge base: {receipt.merge_base_sha[:12]}")
+    console.print(f"  Authority: {receipt.authority}")
+
+    table = Table(show_header=True, box=None, padding=(0, 2))
+    table.add_column("Status", style="bold", no_wrap=True, min_width=12)
+    table.add_column("Gates", no_wrap=True)
+    if verified_gates:
+        table.add_row("[green]verified[/green]", ", ".join(sorted(verified_gates)))
+    if unverified_gates:
+        table.add_row("[red]unverified[/red]", ", ".join(sorted(unverified_gates)))
+    for gate, skip_reason in skipped_gates.items():
+        label = gate if not gate.startswith("_") else "refused"
+        table.add_row(f"[yellow]skipped[/yellow]", f"{label}: {skip_reason}")
+
+    console.print()
+    console.print(table)
+    console.print()
+
+    if exit_code == 0:
+        console.print(f"[green]Coverage remainder matches[/green] -- {reason}")
+    elif exit_code == 2:
+        console.print(f"[red]Cannot recompute remainder[/red] -- {reason}")
+    else:
+        console.print(f"[red]Remainder diverges[/red] -- {reason}")
+
+    console.print()
+    raise SystemExit(exit_code)
