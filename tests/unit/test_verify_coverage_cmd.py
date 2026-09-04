@@ -19,7 +19,6 @@ from click.testing import CliRunner
 
 from bernstein.cli.commands.verify_cmd import verify_cmd
 from bernstein.core.quality.merge_receipt import (
-    compute_gate_results_hash,
     compute_ruleset_hash,
     merge_receipt_path,
 )
@@ -114,25 +113,21 @@ def test_coverage_receipt_not_found(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
 
 def test_coverage_remainder_matches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fixture receipt where remainder recomputes and matches -> exit 0.
+    """Fixture receipt with all four coverage fields populated -> exit 0.
 
-    gate_results_hash is computed by the same routine the verifier uses
-    (blast_radius=None, review_verdict=decision, required_contexts=...) so
-    the recomputation matches and all items are verified or skipped.
+    The verifier grades structural coverage only: presence of each of the
+    four receipt fields that anchor the admission decision.  ``review_receipt_id``
+    is intentionally empty (autonomous mode, no review) which classifies as
+    ``skipped`` -- the receipt is still structurally consistent.
     """
     head_sha = "abc123" + "0" * 34
     journal_head = "j" * 64
     required_context_ids = ("ci/build", "ci/lint")
-    gate_results_hash = compute_gate_results_hash(
-        blast_radius=None,
-        review_verdict="admit",
-        required_contexts=required_context_ids,
-    )
     ruleset_hash = compute_ruleset_hash(required_contexts=required_context_ids)
 
     receipt_data = _make_full_receipt(
         head_sha=head_sha,
-        gate_results_hash=gate_results_hash,
+        gate_results_hash="sha256:" + "a" * 64,  # any non-empty hash; not recomputed
         ruleset_hash=ruleset_hash,
         required_context_ids=required_context_ids,
         review_receipt_id="",  # empty -> skipped (autonomous, no review)
@@ -150,46 +145,35 @@ def test_coverage_remainder_matches(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert head_sha[:12] in result.output
     assert "admit" in result.output
     assert "autonomous" in result.output
-    # gate_results is verified (match); review_receipt is skipped (empty).
+    # gate_results, ruleset, context_ids are verified (present);
+    # review_receipt is skipped (empty).
     assert "Verified" in result.output
     assert "Skipped" in result.output
 
 
 # ---------------------------------------------------------------------------
-# 4. test_coverage_remainder_cannot_be_recomputed
+# 4. test_coverage_malformed_admission_shape
 # ---------------------------------------------------------------------------
 
 
-def test_coverage_remainder_cannot_be_recomputed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Receipt whose gate_results_hash does not match recomputation.
+def test_coverage_malformed_admission_shape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Receipt with all four coverage fields empty -> exit 2 (malformed).
 
-    The verifier recomputes gate_results_hash with blast_radius=None; a hash
-    computed with a non-empty blast_radius cannot be reproduced, so the
-    remainder has a named reason and the exit code reflects divergence.
-
-    Per the docstring contract: ``2  remainder cannot be recomputed
-    (missing required fields)`` and ``3  remainder diverges from receipt
-    value (inconsistent)``. The current implementation folds both into
-    "unverified" + exit 3, with a named reason in the output. We assert
-    the named reason is present and the receipt is flagged as unverified.
+    A merge admission receipt must carry at least one of
+    ``gate_results_hash`` / ``ruleset_hash`` / ``required_context_ids`` /
+    ``review_receipt_id`` to be gradeable. A receipt that has ``head_sha``
+    but none of those fields populated is an unknown admission shape: the
+    verifier cannot tell what the receipt was for, so it exits 2.
     """
     head_sha = "def456" + "0" * 34
     journal_head = "j" * 64
 
-    # Hash computed with a non-empty blast_radius; verifier uses None.
-    # Recomputation will diverge -> named reason emitted.
-    gate_results_hash_with_blast = compute_gate_results_hash(
-        blast_radius={"changed_files": 3, "modules": ["src"]},
-        review_verdict="admit",
-        required_contexts=("ci/build",),
-    )
-
     receipt_data = _make_full_receipt(
         head_sha=head_sha,
-        gate_results_hash=gate_results_hash_with_blast,
-        ruleset_hash=compute_ruleset_hash(required_contexts=("ci/build",)),
-        required_context_ids=("ci/build",),
-        review_receipt_id="review-entry-hash",
+        gate_results_hash="",  # empty
+        ruleset_hash="",  # empty
+        required_context_ids=(),  # empty
+        review_receipt_id="",  # empty
         journal_head=journal_head,
         decision="admit",
     )
@@ -198,32 +182,34 @@ def test_coverage_remainder_cannot_be_recomputed(tmp_path: Path, monkeypatch: py
     _write_merge_receipt(tmp_path, head_sha, receipt_data)
 
     result = CliRunner().invoke(verify_cmd, ["coverage", head_sha])
-    # The recomputed hash (blast_radius=None) cannot reproduce the receipt's
-    # recorded hash (computed with a blast-radius dict), so the remainder is
-    # named unverified and exits non-zero per the documented contract.
-    assert result.exit_code == 3
-    assert "unverified" in result.output.lower()
-    assert "gate_results" in result.output
-    assert "mismatch" in result.output.lower()
+    # No coverage field populated -> malformed admission shape -> exit 2.
+    assert result.exit_code == 2
+    assert "malformed" in result.output.lower() or "exit 2" in result.output.lower()
+    assert head_sha[:12] in result.output
 
 
 # ---------------------------------------------------------------------------
-# 5. test_coverage_remainder_diverges
+# 5. test_coverage_unverified_field
 # ---------------------------------------------------------------------------
 
 
-def test_coverage_remainder_diverges(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Receipt with empty gate_results_hash (unverified remainder) -> exit 3."""
+def test_coverage_unverified_field(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Receipt with one required coverage field missing -> exit 3 (unverified).
+
+    ``ruleset_hash`` and ``required_context_ids`` are populated (operator
+    review recorded a ruleset), but ``gate_results_hash`` is empty -- the
+    admission did not record gate outputs. The receipt is gradeable (not
+    exit 2) but has an unverified remainder, so the verifier exits 3.
+    """
     head_sha = "div789" + "0" * 34
     journal_head = "j" * 64
 
-    # gate_results_hash is empty => unverified remainder => exit 3
     receipt_data = _make_full_receipt(
         head_sha=head_sha,
-        gate_results_hash="",  # empty -> unverified
-        ruleset_hash="",  # empty -> skipped
-        required_context_ids=(),  # empty -> skipped
-        review_receipt_id="",  # empty -> skipped
+        gate_results_hash="",  # empty -> unverified -> exit 3
+        ruleset_hash=compute_ruleset_hash(required_contexts=("ci/lint",)),
+        required_context_ids=("ci/lint",),
+        review_receipt_id="",
         journal_head=journal_head,
         decision="refuse",
         authority="operator_review",
@@ -250,15 +236,10 @@ def test_coverage_json_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     head_sha = "json99" + "0" * 34
     journal_head = "j" * 64
     required_context_ids = ("ci/test",)
-    gate_results_hash = compute_gate_results_hash(
-        blast_radius=None,
-        review_verdict="admit",
-        required_contexts=required_context_ids,
-    )
 
     receipt_data = _make_full_receipt(
         head_sha=head_sha,
-        gate_results_hash=gate_results_hash,
+        gate_results_hash="sha256:" + "a" * 64,  # any non-empty hash; not recomputed
         ruleset_hash=compute_ruleset_hash(required_contexts=required_context_ids),
         required_context_ids=required_context_ids,
         review_receipt_id="",
