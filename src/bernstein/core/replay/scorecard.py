@@ -223,8 +223,7 @@ def build_scorecard(
     events = _load_journal_rows_strict(journal_path, run_id)
     if not events:
         raise ScorecardError(
-            f"no journal events for run {run_id!r} at {journal_path}; "
-            "a scorecard requires a non-empty journal",
+            f"no journal events for run {run_id!r} at {journal_path}; a scorecard requires a non-empty journal",
         )
 
     journal_check = verify_events(events)
