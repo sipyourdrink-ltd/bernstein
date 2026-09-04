@@ -287,6 +287,7 @@ from bernstein.cli.commands.remote_cmd import remote_group
 from bernstein.cli.commands.review_responder_cmd import review_responder_group
 from bernstein.cli.commands.sandbox_cmd import sandbox_group
 from bernstein.cli.commands.schedule_cmd import schedule_group
+from bernstein.cli.commands.seal_cmd import seal_group
 from bernstein.cli.commands.security_review_cmd import security_review_cmd
 from bernstein.cli.commands.ticket_cmd import from_ticket, ticket_group
 from bernstein.cli.commands.tunnel_cmd import tunnel_group
@@ -1066,6 +1067,7 @@ cli.add_command(tunnel_group, "tunnel")
 cli.add_command(preview_group, "preview")
 cli.add_command(sandbox_group, "sandbox")
 cli.add_command(security_review_cmd, "security-review")
+cli.add_command(seal_group, "seal")
 cli.add_command(daemon_group, "daemon")
 cli.add_command(autofix_group, "autofix")
 cli.add_command(pipeline_group, "pipeline")
@@ -1116,7 +1118,6 @@ cli.add_command(trackers_group, "trackers")
 cli.add_command(run, "run")  # visible: `bernstein run [plan.yaml]`
 cli.add_command(cook, "cook")
 cli.add_command(init)
-cli.add_command(run, "run")
 cli.add_command(start)
 cli.add_command(serve)  # foreground task server for containers / central node (#2803)
 cli.add_command(demo)
@@ -1434,6 +1435,12 @@ cli.add_command(artifacts_group, "artifacts")
 from bernstein.cli.commands.artifact_cmd import artifact_group  # noqa: E402
 
 cli.add_command(artifact_group, "artifact")
+
+# Executor admission policy: which adapters, models, endpoints and sandbox
+# tiers this repository may spawn on, checked without running anything (#4907).
+from bernstein.cli.commands.admission_cmd import admission_group  # noqa: E402
+
+cli.add_command(admission_group, "admission")
 
 # In-process verification gate driven by worker hooks: blocks a failing
 # completion or an out-of-scope write in-session, sealing gate receipts (#2360).

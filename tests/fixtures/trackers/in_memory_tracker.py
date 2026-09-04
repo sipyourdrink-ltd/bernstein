@@ -39,9 +39,11 @@ from bernstein.core.trackers.contract import (
     OptimisticConcurrencyError,
     RateLimited,
     Ticket,
+    TrackerError,
     TrackerUnavailable,
     TransitionResult,
 )
+from bernstein.core.trackers.synthetic import probe_body, probe_title
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -237,6 +239,28 @@ class InMemoryTracker(AbstractTrackerAdapter):
                 "sha": _digest(blob),
             }
         return AttachResult(attachment_id=attachment_id, ticket_id=ticket_id)
+
+    # ---- Synthetic-transaction probe -------------------------------------
+
+    def create_probe_ticket(self, marker: str) -> str:
+        """Create a throwaway ticket titled with ``marker``; return its id."""
+        return self.seed(probe_title(marker), probe_body(marker)).id
+
+    def find_probe_tickets(self, marker: str) -> tuple[str, ...]:
+        """Return the ids of every ticket whose title carries ``marker``.
+
+        Scans every status, not just ``open``: the probe transitions its
+        entity before deleting it.
+        """
+        return tuple(t.id for t in self._tickets.values() if marker in t.title)
+
+    def delete_probe_ticket(self, ticket_id: str, marker: str) -> None:
+        """Delete ``ticket_id``, refusing any ticket whose title lacks ``marker``."""
+        ticket = self._require_ticket(ticket_id)
+        if marker not in ticket.title:
+            msg = f"Ticket {ticket_id} does not carry the synthetic marker {marker!r}; refusing to delete it."
+            raise TrackerError(msg)
+        del self._tickets[ticket_id]
 
     # ---- Internals -------------------------------------------------------
 

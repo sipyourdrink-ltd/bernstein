@@ -144,12 +144,37 @@ only when at least one *critical* policy fails. Use `--fail-on high`
 in CI to fail builds on `high`-severity findings as well.
 
 The full `PolicyInput` schema covers ~30 fields including
-`audit_retention_days`, `network_isolation`, `read_only_rootfs`,
-`sbom_enabled`, `phi_detection`, `data_residency_enforced`,
-`backup_encryption`, `dr_rto_hours`, and others (see
+`network_isolation`, `read_only_rootfs`, `sbom_enabled`,
+`phi_detection`, `data_residency_enforced`, `backup_encryption`,
+`dr_rto_hours`, and others (see
 `core/security/compliance_policies.py:79-160`). Many are not yet
 exposed as flags; pipe `--json-output` and use the embedded library
 when richer snapshots are needed.
+
+#### Observed inputs versus operator declarations
+
+Every `PolicyInput` field declares a `PolicyInputKind`:
+
+- **asserted** - the operator supplies the value and nothing in
+  Bernstein checked it. Most flags are of this kind.
+- **observed** - Bernstein derives the value itself and names what it
+  was read off (`evidence_ref`).
+
+`audit_retention_days` is observed: it is *not* a flag. The CLI reads
+it off the retained audit segments under `<workdir>/.sdd/audit` via
+`observe_audit_retention_days()`, so an install whose oldest segment is
+40 days old reports 40 days of retention regardless of what the
+configured `RetentionPolicy` intends to keep.
+
+A policy result is `evidenced` only when every input its Rego rule
+reads is observed; one asserted input makes the whole result
+`operator_asserted`. That status drives how the control is rendered -
+an asserted control reads *"The operator declares, unevidenced: ..."*
+rather than as a statement about what the system enforces - and it
+drives the `summary.evidence` block in `--json-output`, whose
+`evidenced` count excludes every result resting on a declaration.
+Passing is therefore not the same as evidenced, and the two numbers are
+reported separately.
 
 ### `rego` - export OPA / Rego rules
 

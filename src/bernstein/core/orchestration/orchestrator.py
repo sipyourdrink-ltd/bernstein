@@ -53,6 +53,7 @@ from bernstein.core.approval import ApprovalGate, ApprovalMode
 from bernstein.core.bandit_router import BanditRouter
 from bernstein.core.batch_api import ProviderBatchManager
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage, SignalActionFailure
+from bernstein.core.circuit_breaker import check_budget_violations
 from bernstein.core.cluster import NodeHeartbeatClient
 from bernstein.core.config.run_overlay import effective_mtime
 from bernstein.core.context import refresh_knowledge_base
@@ -875,6 +876,8 @@ class Orchestrator:
         # orchestrator, so the hook is applied here via a setter.
         if hasattr(self._spawner, "set_merge_queue"):
             self._spawner.set_merge_queue(self._merge_queue)
+        if hasattr(self._spawner, "set_file_ownership_provider"):
+            self._spawner.set_file_ownership_provider(lambda: dict(self._file_ownership))
         if hasattr(self._spawner, "set_quality_gate_config"):
             self._spawner.set_quality_gate_config(self._quality_gate_config)
         if hasattr(self._spawner, "set_run_id"):
@@ -2160,6 +2163,12 @@ class Orchestrator:
         # 4d-ii. Token growth monitor: alert on quadratic growth, kill runaway agents
         check_token_growth(self)
 
+        # 4d-ii.a Per-task token budget kill switch: hard-kill agents that
+        # blow through 2x their configured `max_tokens_per_task` budget
+        # (issue #3374). `token_budget` defaults to 0 (disabled) so this is
+        # a no-op for sessions spawned without a scope budget configured.
+        check_budget_violations(self, result)
+
         # 4d-ii.5 Loop and deadlock detection: kill looping agents, break lock cycles
         check_loops_and_deadlocks(self)
 
@@ -3111,6 +3120,27 @@ class Orchestrator:
             config_hash=self._replay_metadata.config_hash,
             **_run_started_extra,
         )
+        # Record the skill and plugin set this install actually resolved,
+        # once per run and before the first agent spawns. `bernstein skills`
+        # and `bernstein plugins` report the declaration; a path override, a
+        # stale cache or an import that raised makes the loaded set differ,
+        # and the difference is what "what could this agent do?" needs months
+        # later. The run receipt recomputes the set digest from these rows
+        # and binds it into its signed subject. A resolution surface that
+        # cannot answer must not take the run down, so failure is logged.
+        try:
+            from bernstein.core.security.loaded_extension_set import record_run_extension_set
+
+            _extension_set = record_run_extension_set(self._recorder, self._workdir)
+            logger.debug(
+                "Recorded loaded extension set %s (%d loaded, %d not loaded)",
+                _extension_set.digest[:23],
+                len(_extension_set.loaded()),
+                len(_extension_set.not_loaded()),
+            )
+        except Exception:
+            logger.exception("Loaded extension set not recorded (non-fatal) - continuing startup")
+
         try:
             from bernstein.core.orchestration.run_closure_owner import write_spawner_run_owner
 

@@ -28,16 +28,17 @@ receipts serialised without them still verify, so the schema version is
 unchanged.
 
 All of that is serialized to canonical JSON (sorted keys, compact separators) and
-hashed to produce the receipt digest. The receipt can be signed with an Ed25519
-key and wrapped in a DSSE envelope for offline verification, following the same
-pattern as :mod:`bernstein.core.security.result_receipt_bundle`.
+hashed to produce the receipt digest. The receipt is signed and carried in the
+shared receipt envelope (:mod:`bernstein.core.receipts.protocol`), which binds
+the kind to the payload so an offline holder can check it with one command.
 
-:func:`verify_receipt` checks:
-
-1. The digest field matches the canonical bytes of the receipt content;
-2. All required fields are present and well-typed;
-3. Change outcomes are valid (success, failure, or skipped);
-4. The final_status is consistent with the change outcomes.
+The receipt is verified through the one shared verifier,
+:func:`bernstein.core.receipts.protocol.verify_receipt`: this module registers
+the ``security.change`` kind and contributes only the payload check that is
+specific to it -- required fields and their types, valid change outcomes, and
+an allowed final status. Envelope shape, canonical bytes, payload digest and
+signature are the protocol's, identical for every receipt kind, so a holder of
+a change receipt does not need to know which module produced it.
 
 The receipt is deliberately self-contained: it does not verify the playbook,
 plan, or environment digests against external sources -- that is the caller's
@@ -49,7 +50,12 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+from bernstein.core.receipts.protocol import register_receipt_kind
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 #: Schema version for the change receipt format.
 CHANGE_RECEIPT_SCHEMA_VERSION: str = "1.0.0"
@@ -73,9 +79,10 @@ def _sha256_hex(data: bytes) -> str:
 def _sort_recursive(value: Any) -> Any:
     """Recursively reorder dict keys so canonical JSON is byte-stable."""
     if isinstance(value, dict):
-        return {k: _sort_recursive(value[k]) for k in sorted(value.keys())}
+        typed = cast("dict[str, Any]", value)
+        return {key: _sort_recursive(typed[key]) for key in sorted(typed)}
     if isinstance(value, list):
-        return [_sort_recursive(v) for v in value]
+        return [_sort_recursive(item) for item in cast("list[Any]", value)]
     return value
 
 
@@ -197,18 +204,144 @@ class ChangeReceipt:
 
 
 # ---------------------------------------------------------------------------
-# Verify
+# Kind registration: the payload check the shared verifier calls
 # ---------------------------------------------------------------------------
+
+#: Kind string this receipt registers with the shared protocol.
+RECEIPT_KIND = "security.change"
+
+#: Fields every change receipt must carry as a string.
+_REQUIRED_STRING_FIELDS: tuple[str, ...] = (
+    "plan_id",
+    "plan_digest",
+    "playbook_digest",
+    "environment_digest",
+    "approver_identity",
+    "timestamp",
+)
+
+#: Fields every change attempt must carry as a string.
+_CHANGE_STRING_FIELDS: tuple[str, ...] = (
+    "change_id",
+    "change_type",
+    "target",
+    "attempted_at",
+    "error_message",
+)
+
+
+def _required_string_errors(payload: Mapping[str, Any]) -> list[str]:
+    """Return errors for missing or non-string top-level string fields."""
+    errors: list[str] = []
+    for name in _REQUIRED_STRING_FIELDS:
+        value = payload.get(name)
+        if value is None:
+            errors.append(f"{name}: missing required field")
+        elif not isinstance(value, str):
+            errors.append(f"{name}: expected string, got {type(value).__name__}")
+    return errors
+
+
+def _change_entry_errors(index: int, change: Any) -> list[str]:
+    """Return errors for one entry of the ``changes`` list."""
+    if not isinstance(change, dict):
+        return [f"changes[{index}]: expected object, got {type(change).__name__}"]
+
+    errors: list[str] = []
+    entry = cast("dict[str, Any]", change)
+    for name in _CHANGE_STRING_FIELDS:
+        value = entry.get(name, "")
+        if not isinstance(value, str):
+            errors.append(f"changes[{index}].{name}: expected string, got {type(value).__name__}")
+
+    outcome = entry.get("outcome", "")
+    if not isinstance(outcome, str):
+        errors.append(f"changes[{index}].outcome: expected string, got {type(outcome).__name__}")
+    elif outcome not in ("success", "failure", "skipped"):
+        errors.append(f"changes[{index}].outcome: invalid outcome {outcome!r}")
+
+    # The value replaced and the value written. Optional so that receipts
+    # serialised before these fields existed still verify; type-checked so a
+    # restore never reads a non-string.
+    prior_value = entry.get("prior_value", "")
+    if not isinstance(prior_value, str):
+        errors.append(
+            f"changes[{index}].prior_value: expected string, got {type(prior_value).__name__}",
+        )
+
+    written_value = entry.get("written_value", "")
+    if not isinstance(written_value, str):
+        errors.append(
+            f"changes[{index}].written_value: expected string, got {type(written_value).__name__}",
+        )
+
+    return errors
+
+
+def change_receipt_payload_errors(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return the change receipt's semantic errors, empty when well-formed.
+
+    Registered as the ``security.change`` payload check, so a change receipt is
+    verified by :func:`bernstein.core.receipts.protocol.verify_receipt` like
+    every other kind: schema version, required fields and their types, valid
+    change outcomes, and a final status the schema allows.
+
+    The receipt stays deliberately self-contained: the plan, playbook and
+    environment digests are not checked against external sources, which is the
+    caller's job when comparing against expected values.
+
+    Args:
+        payload: Parsed receipt payload (typically from a receipt document).
+
+    Returns:
+        Tuple of ``field: message`` errors, empty when the payload is valid.
+    """
+    errors: list[str] = []
+
+    schema_version = payload.get("schema_version", "")
+    if not isinstance(schema_version, str):
+        errors.append(f"schema_version: expected string, got {type(schema_version).__name__}")
+    elif schema_version != CHANGE_RECEIPT_SCHEMA_VERSION:
+        errors.append(f"schema_version: expected {CHANGE_RECEIPT_SCHEMA_VERSION}, got {schema_version!r}")
+
+    errors.extend(_required_string_errors(payload))
+
+    final_status = payload.get("final_status")
+    if final_status is None:
+        errors.append("final_status: missing required field")
+    elif not isinstance(final_status, str):
+        errors.append(f"final_status: expected string, got {type(final_status).__name__}")
+    elif final_status not in ("complete", "partial", "failed"):
+        errors.append(f"final_status: invalid status {final_status!r}")
+
+    # Optional: the digest of the receipt this one inverts. Absent on an
+    # ordinary apply receipt, so it is type-checked but never required.
+    restores_receipt_digest = payload.get("restores_receipt_digest", "")
+    if not isinstance(restores_receipt_digest, str):
+        errors.append(
+            f"restores_receipt_digest: expected string, got {type(restores_receipt_digest).__name__}",
+        )
+
+    raw_changes = payload.get("changes")
+    if raw_changes is None:
+        errors.append("changes: missing required field")
+    elif not isinstance(raw_changes, list):
+        errors.append(f"changes: expected list, got {type(raw_changes).__name__}")
+    else:
+        for index, change in enumerate(cast("list[Any]", raw_changes)):
+            errors.extend(_change_entry_errors(index, change))
+
+    return tuple(errors)
 
 
 @dataclass(frozen=True, slots=True)
 class FieldError:
-    """A field-level verification failure."""
+    """A field-level verification failure -- which field, and why."""
 
     field: str
     message: str
 
-    def __str__(self) -> str:  # pragma: no cover
+    def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.field}: {self.message}"
 
 
@@ -227,6 +360,15 @@ class ReceiptVerification:
     digest: str = ""
     receipt: dict[str, Any] = field(default_factory=dict)
     errors: tuple[FieldError, ...] = ()
+
+
+def _parse_field_errors(messages: tuple[str, ...]) -> tuple[FieldError, ...]:
+    """Translate ``"field: message"`` strings into :class:`FieldError` pairs."""
+    parsed: list[FieldError] = []
+    for message in messages:
+        field_name, _, rest = message.partition(":")
+        parsed.append(FieldError(field=field_name, message=rest.strip() or message))
+    return tuple(parsed)
 
 
 def verify_receipt(data: dict[str, Any]) -> ReceiptVerification:
@@ -251,173 +393,31 @@ def verify_receipt(data: dict[str, Any]) -> ReceiptVerification:
     Returns:
         :class:`ReceiptVerification` with ok flag and field-level errors.
     """
-    errors: list[FieldError] = []
-
     if not isinstance(data, dict):
         return ReceiptVerification(
             ok=False,
-            errors=(FieldError("root", f"expected an object, got {type(data).__name__}"),),
+            errors=(FieldError(field="root", message=f"expected an object, got {type(data).__name__}"),),
         )
 
-    # (1) Schema version
-    schema_version = data.get("schema_version", "")
-    if not isinstance(schema_version, str):
-        errors.append(FieldError("schema_version", f"expected string, got {type(schema_version).__name__}"))
-    elif schema_version != CHANGE_RECEIPT_SCHEMA_VERSION:
-        errors.append(
-            FieldError("schema_version", f"expected {CHANGE_RECEIPT_SCHEMA_VERSION}, got {schema_version!r}"),
-        )
-
-    # (2) & (3) Required fields and their types
-    plan_id = data.get("plan_id")
-    if plan_id is None:
-        errors.append(FieldError("plan_id", "missing required field"))
-    elif not isinstance(plan_id, str):
-        errors.append(FieldError("plan_id", f"expected string, got {type(plan_id).__name__}"))
-
-    plan_digest = data.get("plan_digest")
-    if plan_digest is None:
-        errors.append(FieldError("plan_digest", "missing required field"))
-    elif not isinstance(plan_digest, str):
-        errors.append(FieldError("plan_digest", f"expected string, got {type(plan_digest).__name__}"))
-
-    playbook_digest = data.get("playbook_digest")
-    if playbook_digest is None:
-        errors.append(FieldError("playbook_digest", "missing required field"))
-    elif not isinstance(playbook_digest, str):
-        errors.append(FieldError("playbook_digest", f"expected string, got {type(playbook_digest).__name__}"))
-
-    environment_digest = data.get("environment_digest")
-    if environment_digest is None:
-        errors.append(FieldError("environment_digest", "missing required field"))
-    elif not isinstance(environment_digest, str):
-        errors.append(FieldError("environment_digest", f"expected string, got {type(environment_digest).__name__}"))
-
-    approver_identity = data.get("approver_identity")
-    if approver_identity is None:
-        errors.append(FieldError("approver_identity", "missing required field"))
-    elif not isinstance(approver_identity, str):
-        errors.append(FieldError("approver_identity", f"expected string, got {type(approver_identity).__name__}"))
-
-    timestamp = data.get("timestamp")
-    if timestamp is None:
-        errors.append(FieldError("timestamp", "missing required field"))
-    elif not isinstance(timestamp, str):
-        errors.append(FieldError("timestamp", f"expected string, got {type(timestamp).__name__}"))
-
-    final_status = data.get("final_status")
-    if final_status is None:
-        errors.append(FieldError("final_status", "missing required field"))
-    elif not isinstance(final_status, str):
-        errors.append(FieldError("final_status", f"expected string, got {type(final_status).__name__}"))
-    elif final_status not in ("complete", "partial", "failed"):
-        errors.append(FieldError("final_status", f"invalid status {final_status!r}"))
-
-    # Optional: the digest of the receipt this one inverts. Absent on an
-    # ordinary apply receipt, so it is type-checked but never required.
-    restores_receipt_digest = data.get("restores_receipt_digest", "")
-    if not isinstance(restores_receipt_digest, str):
-        errors.append(
-            FieldError(
-                "restores_receipt_digest",
-                f"expected string, got {type(restores_receipt_digest).__name__}",
-            ),
-        )
-
-    # (4) Changes list and each change's structure
-    raw_changes = data.get("changes")
-    if raw_changes is None:
-        errors.append(FieldError("changes", "missing required field"))
-    elif not isinstance(raw_changes, list):
-        errors.append(FieldError("changes", f"expected list, got {type(raw_changes).__name__}"))
-    else:
-        for idx, change in enumerate(raw_changes):
-            if not isinstance(change, dict):
-                errors.append(FieldError(f"changes[{idx}]", f"expected object, got {type(change).__name__}"))
-            else:
-                change_id = change.get("change_id", "")
-                if not isinstance(change_id, str):
-                    errors.append(
-                        FieldError(f"changes[{idx}].change_id", f"expected string, got {type(change_id).__name__}"),
-                    )
-
-                change_type = change.get("change_type", "")
-                if not isinstance(change_type, str):
-                    errors.append(
-                        FieldError(
-                            f"changes[{idx}].change_type",
-                            f"expected string, got {type(change_type).__name__}",
-                        ),
-                    )
-
-                target = change.get("target", "")
-                if not isinstance(target, str):
-                    errors.append(
-                        FieldError(f"changes[{idx}].target", f"expected string, got {type(target).__name__}"),
-                    )
-
-                attempted_at = change.get("attempted_at", "")
-                if not isinstance(attempted_at, str):
-                    errors.append(
-                        FieldError(
-                            f"changes[{idx}].attempted_at",
-                            f"expected string, got {type(attempted_at).__name__}",
-                        ),
-                    )
-
-                outcome = change.get("outcome", "")
-                if not isinstance(outcome, str):
-                    errors.append(
-                        FieldError(f"changes[{idx}].outcome", f"expected string, got {type(outcome).__name__}"),
-                    )
-                elif outcome not in ("success", "failure", "skipped"):
-                    errors.append(FieldError(f"changes[{idx}].outcome", f"invalid outcome {outcome!r}"))
-
-                error_message = change.get("error_message", "")
-                if not isinstance(error_message, str):
-                    errors.append(
-                        FieldError(
-                            f"changes[{idx}].error_message",
-                            f"expected string, got {type(error_message).__name__}",
-                        ),
-                    )
-
-                # The value replaced and the value written. Optional so that
-                # receipts serialised before these fields existed still
-                # verify; type-checked so a restore never reads a non-string.
-                prior_value = change.get("prior_value", "")
-                if not isinstance(prior_value, str):
-                    errors.append(
-                        FieldError(
-                            f"changes[{idx}].prior_value",
-                            f"expected string, got {type(prior_value).__name__}",
-                        ),
-                    )
-
-                written_value = change.get("written_value", "")
-                if not isinstance(written_value, str):
-                    errors.append(
-                        FieldError(
-                            f"changes[{idx}].written_value",
-                            f"expected string, got {type(written_value).__name__}",
-                        ),
-                    )
-
-    # If we have structural errors, stop here before computing digest
+    payload = cast("dict[str, Any]", data)
+    string_errors = change_receipt_payload_errors(payload)
+    errors = _parse_field_errors(string_errors)
     if errors:
-        return ReceiptVerification(ok=False, receipt=data, errors=tuple(errors))
+        return ReceiptVerification(ok=False, receipt=payload, errors=errors)
 
-    # (6) Digest consistency: the receipt must hash to its attested value
-    recomputed = _sha256_hex(canonical_bytes(data))
-    # Note: we do NOT check a 'digest' field in the receipt dict itself.
-    # The digest is a derived property computed from the canonical bytes.
-    # Callers use the computed digest to anchor the receipt in chains or
-    # to sign it in an envelope. This mirrors result_receipt_bundle.py
-    # where digest is a @property, not a stored field.
+    # (6) Digest consistency: the receipt must hash to its attested value.
+    # The digest is a derived property computed from the canonical bytes;
+    # callers use it to anchor the receipt in chains or to sign it in an
+    # envelope. This mirrors result_receipt_bundle.py where digest is a
+    # @property, not a stored field.
+    recomputed = _sha256_hex(canonical_bytes(payload))
 
     return ReceiptVerification(
-        ok=not errors,
+        ok=True,
         digest=recomputed,
-        receipt=data,
-        errors=tuple(errors),
+        receipt=payload,
+        errors=(),
     )
+
+
+register_receipt_kind(RECEIPT_KIND, payload_check=change_receipt_payload_errors)

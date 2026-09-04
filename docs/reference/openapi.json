@@ -6260,7 +6260,7 @@
           "approvals"
         ],
         "summary": "Resolve Queued Approval",
-        "description": "Resolve a queued approval with ``allow``, ``reject``, or ``always``.\n\nThe request body must echo the ``nonce`` the gate issued when the\napproval was queued. Mismatches return ``409 NONCE_MISMATCH``; a\nnonce replayed against an already-resolved or evicted approval\nreturns ``410 NONCE_EXPIRED``.",
+        "description": "Resolve a queued approval with ``allow``, ``reject``, or ``always``.\n\nThe request body must echo the ``nonce`` the gate issued when the\napproval was queued. Mismatches return ``409 NONCE_MISMATCH``; a\nnonce replayed against an already-resolved or evicted approval\nreturns ``410 NONCE_EXPIRED``. The resolution is attributed to the\nprincipal the request authenticated as. When scoped tokens are\nconfigured and the request presents none, the call is refused with\n``401`` rather than recorded against an unnamed caller; when no scoped\ntokens are configured the server is in its loopback posture and the\ndecision is attributed to the loopback operator.",
         "operationId": "resolve_queued_approval_approvals__approval_id__resolve_post",
         "parameters": [
           {
@@ -6300,6 +6300,9 @@
           },
           "400": {
             "description": "Invalid approval id or decision"
+          },
+          "401": {
+            "description": "No authenticated principal to attribute the decision to"
           },
           "404": {
             "description": "No pending approval with that id"
@@ -6947,6 +6950,275 @@
           },
           "503": {
             "description": "Server workdir not configured"
+          }
+        }
+      }
+    },
+    "/scim/v2/ServiceProviderConfig": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "SCIM 2.0 service provider configuration",
+        "description": "Return the RFC 7643 §5 discovery document for this service provider.\n\nEverything reported here is what the mounted surface actually does. The\nwrite operations are absent rather than advertised-and-unimplemented, and\nthe deletion semantics a client will eventually meet are stated now.",
+        "operationId": "service_provider_config_scim_v2_ServiceProviderConfig_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scim/v2/Schemas": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "SCIM 2.0 schema resources",
+        "description": "List the schema resources this server serves (RFC 7643 §7).",
+        "operationId": "list_schemas_scim_v2_Schemas_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scim/v2/Schemas/{schema_id}": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "Fetch a single SCIM schema resource",
+        "description": "Fetch one schema resource by its URN.",
+        "operationId": "get_schema_scim_v2_Schemas__schema_id__get",
+        "parameters": [
+          {
+            "name": "schema_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Schema Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown schema URN"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scim/v2/ResourceTypes": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "SCIM 2.0 resource types",
+        "description": "List the resource types this server serves (RFC 7643 §6).",
+        "operationId": "list_resource_types_scim_v2_ResourceTypes_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scim/v2/ResourceTypes/{resource_type_id}": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "Fetch a single SCIM resource type",
+        "description": "Fetch one resource type by id.",
+        "operationId": "get_resource_type_scim_v2_ResourceTypes__resource_type_id__get",
+        "parameters": [
+          {
+            "name": "resource_type_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Resource Type Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown resource type"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scim/v2/Users": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "List agent principals as SCIM users",
+        "description": "Return the agent principals this orchestrator knows about.\n\n``ServiceProviderConfig`` reports ``filter.supported = false``, so a\n``filter`` query is refused rather than ignored: silently returning the\nunfiltered list would hand a client more principals than it asked for and\nlook like a successful narrow query.",
+        "operationId": "list_users_scim_v2_Users_get",
+        "parameters": [
+          {
+            "name": "startIndex",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Startindex"
+            }
+          },
+          {
+            "name": "count",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Count"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Filter"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "501": {
+            "description": "Filtering is not supported by this provider"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scim/v2/Users/{user_id}": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "Fetch one agent principal as a SCIM user",
+        "description": "Fetch a single agent principal by its SCIM ``id``.",
+        "operationId": "get_user_scim_v2_Users__user_id__get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown principal"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -15059,7 +15331,7 @@
           "approvals"
         ],
         "summary": "Resolve Queued Approval",
-        "description": "Resolve a queued approval with ``allow``, ``reject``, or ``always``.\n\nThe request body must echo the ``nonce`` the gate issued when the\napproval was queued. Mismatches return ``409 NONCE_MISMATCH``; a\nnonce replayed against an already-resolved or evicted approval\nreturns ``410 NONCE_EXPIRED``.",
+        "description": "Resolve a queued approval with ``allow``, ``reject``, or ``always``.\n\nThe request body must echo the ``nonce`` the gate issued when the\napproval was queued. Mismatches return ``409 NONCE_MISMATCH``; a\nnonce replayed against an already-resolved or evicted approval\nreturns ``410 NONCE_EXPIRED``. The resolution is attributed to the\nprincipal the request authenticated as. When scoped tokens are\nconfigured and the request presents none, the call is refused with\n``401`` rather than recorded against an unnamed caller; when no scoped\ntokens are configured the server is in its loopback posture and the\ndecision is attributed to the loopback operator.",
         "operationId": "resolve_queued_approval_api_v1_approvals__approval_id__resolve_post",
         "parameters": [
           {
@@ -15099,6 +15371,9 @@
           },
           "400": {
             "description": "Invalid approval id or decision"
+          },
+          "401": {
+            "description": "No authenticated principal to attribute the decision to"
           },
           "404": {
             "description": "No pending approval with that id"
@@ -15746,6 +16021,275 @@
           },
           "503": {
             "description": "Server workdir not configured"
+          }
+        }
+      }
+    },
+    "/api/v1/scim/v2/ServiceProviderConfig": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "SCIM 2.0 service provider configuration",
+        "description": "Return the RFC 7643 §5 discovery document for this service provider.\n\nEverything reported here is what the mounted surface actually does. The\nwrite operations are absent rather than advertised-and-unimplemented, and\nthe deletion semantics a client will eventually meet are stated now.",
+        "operationId": "service_provider_config_api_v1_scim_v2_ServiceProviderConfig_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scim/v2/Schemas": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "SCIM 2.0 schema resources",
+        "description": "List the schema resources this server serves (RFC 7643 §7).",
+        "operationId": "list_schemas_api_v1_scim_v2_Schemas_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scim/v2/Schemas/{schema_id}": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "Fetch a single SCIM schema resource",
+        "description": "Fetch one schema resource by its URN.",
+        "operationId": "get_schema_api_v1_scim_v2_Schemas__schema_id__get",
+        "parameters": [
+          {
+            "name": "schema_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Schema Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown schema URN"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scim/v2/ResourceTypes": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "SCIM 2.0 resource types",
+        "description": "List the resource types this server serves (RFC 7643 §6).",
+        "operationId": "list_resource_types_api_v1_scim_v2_ResourceTypes_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scim/v2/ResourceTypes/{resource_type_id}": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "Fetch a single SCIM resource type",
+        "description": "Fetch one resource type by id.",
+        "operationId": "get_resource_type_api_v1_scim_v2_ResourceTypes__resource_type_id__get",
+        "parameters": [
+          {
+            "name": "resource_type_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Resource Type Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown resource type"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scim/v2/Users": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "List agent principals as SCIM users",
+        "description": "Return the agent principals this orchestrator knows about.\n\n``ServiceProviderConfig`` reports ``filter.supported = false``, so a\n``filter`` query is refused rather than ignored: silently returning the\nunfiltered list would hand a client more principals than it asked for and\nlook like a successful narrow query.",
+        "operationId": "list_users_api_v1_scim_v2_Users_get",
+        "parameters": [
+          {
+            "name": "startIndex",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Startindex"
+            }
+          },
+          {
+            "name": "count",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Count"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Filter"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "501": {
+            "description": "Filtering is not supported by this provider"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scim/v2/Users/{user_id}": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "Fetch one agent principal as a SCIM user",
+        "description": "Fetch a single agent principal by its SCIM ``id``.",
+        "operationId": "get_user_api_v1_scim_v2_Users__user_id__get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown principal"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }

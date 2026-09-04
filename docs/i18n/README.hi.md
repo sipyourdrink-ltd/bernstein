@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI एजेंटों के लिए ओपन-सोर्स गवर्नेंस लेयर
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:739f0a7ad1af" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:9c87d303c594" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -38,7 +38,7 @@
 
 > **स्थिति: beta।** अकेले मेंटेन किया जा रहा है, सक्रिय विकास में। वर्ज़न नंबर रिलीज़ गिनता है, परिपक्वता नहीं — माइनर वर्ज़न में भी इंटरफ़ेस बदल सकते हैं। जिस पर आप निर्भर हैं उसका वर्ज़न पिन कर लें; रिग्रेशन जल्दी ठीक होते हैं, [उन्हें दर्ज करें](https://github.com/sipyourdrink-ltd/bernstein/issues)।
 
-Bernstein AI एजेंटों के लिए ओपन-सोर्स गवर्नेंस लेयर है। एक डिटर्मिनिस्टिक शेड्यूलर - कोऑर्डिनेशन लूप में कोई मॉडल नहीं - एजेंटों को समानांतर चलाता है, उनके आउटपुट को गेट से जाँचता है और हर कदम रिकॉर्ड करता है, इसलिए रन को बाद में, ऑफ़लाइन, केवल आर्टिफ़ैक्ट्स से सत्यापित किया जा सकता है। CLI कोडिंग एजेंट सीधे काम करते हैं (Claude Code, Codex, Gemini CLI और 40+ अन्य), और यही लेयर किसी भी एजेंट वर्कलोड को गवर्न करती है: डिलिवरेबल एक diff, रिसर्च रिपोर्ट, डेटासेट या ऑडिट एविडेंस पैक हो सकता है। Air-gap इंस्टॉल प्रोफ़ाइल शामिल। Apache-2.0.
+Bernstein AI एजेंटों के लिए ओपन-सोर्स गवर्नेंस लेयर है। यह policy as code पर चलता है: आप नीति लिखते हैं - कौन क्या कर सकता है, किसे स्वीकृति चाहिए, क्या दर्ज होना चाहिए - और Bernstein इसे लागू करता है और सत्यापन-योग्य रिकॉर्ड बनाता है। एक डिटर्मिनिस्टिक शेड्यूलर - कोऑर्डिनेशन लूप में कोई मॉडल नहीं - एजेंटों को समानांतर चलाता है, उनके आउटपुट को गेट से जाँचता है और हर कदम रिकॉर्ड करता है, इसलिए रन को बाद में, ऑफ़लाइन, केवल आर्टिफ़ैक्ट्स से सत्यापित किया जा सकता है। CLI कोडिंग एजेंट सीधे काम करते हैं (Claude Code, Codex, Gemini CLI और 40+ अन्य), और यही लेयर किसी भी एजेंट वर्कलोड को गवर्न करती है: डिलिवरेबल एक diff, रिसर्च रिपोर्ट, डेटासेट या ऑडिट एविडेंस पैक हो सकता है। Air-gap इंस्टॉल प्रोफ़ाइल शामिल। Apache-2.0.
 
 ### एक नज़र में
 <!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->

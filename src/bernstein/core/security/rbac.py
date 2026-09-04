@@ -66,6 +66,15 @@ _PERM_AUTH_MANAGE = "auth:manage"
 
 _PATH_AUTH_USERS = "/auth/users"
 
+# SCIM 2.0 provisioning surface (RFC 7644).  Its permissions are its own so a
+# credential issued to an identity system for provisioning satisfies no other
+# route's requirement.
+_PATH_SCIM = "/scim"
+
+_PERM_SCIM_READ = "scim:read"
+
+_PERM_SCIM_WRITE = "scim:write"
+
 logger = logging.getLogger(__name__)
 
 
@@ -91,6 +100,11 @@ class RoutePermission:
 
 # Default route permission rules.  Order matters: first match wins.
 _DEFAULT_ROUTE_RULES: Final[list[RoutePermission]] = [
+    # SCIM provisioning - reads and writes are separately scoped, and the
+    # write rule is listed even though no write route is mounted yet so one
+    # added later cannot inherit the read permission.
+    RoutePermission(_PATH_SCIM, "GET", _PERM_SCIM_READ),
+    RoutePermission(_PATH_SCIM, "*", _PERM_SCIM_WRITE),
     # Auth management - admin only
     RoutePermission(_PATH_AUTH_USERS, "POST", _PERM_AUTH_MANAGE),
     RoutePermission(_PATH_AUTH_USERS, "DELETE", _PERM_AUTH_MANAGE),

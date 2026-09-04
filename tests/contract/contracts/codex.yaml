@@ -1,7 +1,17 @@
 # Contract for the OpenAI Codex CLI (adapter: codex).
 #
 # Always-passed surface from src/bernstein/adapters/codex.py:
-# ``codex exec --sandbox <profile> -m <model> --json -o <path> <prompt>``.
+# ``codex exec <sandbox-argv> -m <model> --json -o <path> <prompt>``.
+#
+# The sandbox argv is one of two forms, chosen by the adapter's declared
+# dangerous-mode strategy, so each flag is required of the *binary* rather
+# than of every spawn:
+#
+#   ``--sandbox workspace-write``  default; keeps the vendor sandbox.
+#   ``--dangerously-bypass-approvals-and-sandbox``  declared ALWAYS_ON only;
+#     for a runner that already isolates the process. ``--sandbox
+#     workspace-write`` is implemented with bubblewrap and cannot start
+#     without an unprivileged user namespace, which such runners deny.
 adapter: codex
 binary: codex
 install:
@@ -14,6 +24,7 @@ auth:
   basis: api_key
 required_flags:
   - "--sandbox"
+  - "--dangerously-bypass-approvals-and-sandbox"
   - "-m"
   - "--json"
   - "-o"

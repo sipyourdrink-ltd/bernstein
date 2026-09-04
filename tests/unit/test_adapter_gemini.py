@@ -225,6 +225,64 @@ class TestGeminiAdapterSpawn:
         kwargs = popen.call_args.kwargs
         assert kwargs.get("start_new_session") is True
 
+    def test_gemini_prompt_carries_the_completion_protocol(self, tmp_path: Path, binary: str) -> None:
+        """Neither Gemini binary has a system-prompt flag; a non-empty
+        addendum must still reach the agent by riding on the ``-p`` prompt
+        argument (issue #5325), or the completion / heartbeat / signal-check
+        protocol never reaches a ``--cli gemini`` run.
+        """
+        adapter = GeminiAdapter()
+        proc_mock = _make_popen_mock(pid=109)
+        with (
+            patch("bernstein.adapters.gemini.shutil.which", side_effect=_which_only(binary)),
+            patch("bernstein.adapters.gemini.subprocess.Popen", return_value=proc_mock) as popen,
+        ):
+            adapter.spawn(
+                prompt="fix the bug",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gemini-3.1-pro", effort="high"),
+                session_id="gemini-s9",
+                system_addendum="When done, POST /complete. Heartbeat every 30s.",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "When done, POST /complete. Heartbeat every 30s." in inner[inner.index("-p") + 1]
+
+    def test_gemini_addendum_appended_after_task_brief(self, tmp_path: Path, binary: str) -> None:
+        """A truncated prompt must lose the addendum, never the task brief."""
+        adapter = GeminiAdapter()
+        proc_mock = _make_popen_mock(pid=110)
+        with (
+            patch("bernstein.adapters.gemini.shutil.which", side_effect=_which_only(binary)),
+            patch("bernstein.adapters.gemini.subprocess.Popen", return_value=proc_mock) as popen,
+        ):
+            adapter.spawn(
+                prompt="primary task brief",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gemini-3.1-pro", effort="high"),
+                session_id="gemini-s10",
+                system_addendum="HEARTBEAT every 30s",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        full_prompt = inner[inner.index("-p") + 1]
+        assert full_prompt.index("primary task brief") < full_prompt.index("HEARTBEAT every 30s")
+
+    def test_gemini_empty_addendum_leaves_prompt_untouched(self, tmp_path: Path, binary: str) -> None:
+        adapter = GeminiAdapter()
+        proc_mock = _make_popen_mock(pid=111)
+        with (
+            patch("bernstein.adapters.gemini.shutil.which", side_effect=_which_only(binary)),
+            patch("bernstein.adapters.gemini.subprocess.Popen", return_value=proc_mock) as popen,
+        ):
+            adapter.spawn(
+                prompt="just the task",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gemini-3.1-pro", effort="high"),
+                session_id="gemini-s11",
+                system_addendum="",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert inner[inner.index("-p") + 1] == "just the task"
+
 
 # ---------------------------------------------------------------------------
 # spawn() - env isolation, parametrised on binary name
