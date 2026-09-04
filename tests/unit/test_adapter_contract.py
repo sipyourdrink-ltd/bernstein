@@ -64,6 +64,10 @@ def _popen_path(adapter: CLIAdapter) -> str:
 #: Per-adapter ``ModelConfig`` overrides for ``test_spawn_returns_spawn_result``.
 _CONTRACT_MODEL_CONFIG: dict[str, ModelConfig] = {
     "clm": ModelConfig(model="clm-7b-instruct", effort="high"),
+    # OpenCode resolves ``-m`` as ``provider/model``; the adapter refuses a bare
+    # id it cannot qualify from the operator's config, and the contract suite
+    # runs without one, so the case hands it an already-qualified id.
+    "OpenCode": ModelConfig(model="anthropic/sonnet", effort="high"),
 }
 
 #: Extra keyword arguments forwarded to ``spawn()`` in the contract suite.

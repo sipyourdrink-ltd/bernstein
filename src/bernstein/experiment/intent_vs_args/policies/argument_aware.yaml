@@ -1,0 +1,42 @@
+# Argument-aware policy: role-only + tool args_digest binding
+# Adds args_digest from ToolCallIdentityAttestation (already available)
+# Purpose: Test whether intent adds value over argument-aware policy alone
+version: "1.0"
+name: argument_aware
+description: |
+  Authorization policy that binds decisions to the exact tool-call arguments
+  via args_digest from ToolCallIdentityAttestation.
+  Same (agent, role, resource) with different args => different decision.
+  Used as treatment arm A in intent-vs-args experiment (#5065).
+
+policies:
+  - name: allow_known_arg_digest
+    description: Allow only requests whose args_digest is on the reviewed allowlist
+    severity: block
+    rule: |
+      # The args_digest below is bound to the reviewed invocation of
+      # read_file on q4_summary.csv by agent-001. Any other argument
+      # shape - even targeting the same resource - fails this rule.
+      task_role =~ "reader|coder|admin"
+      task_description =~ "sha256:a3f5c8d9e1b2c4f6a8b0d2e4f6a8b0d2e4f6a8b0d2e4f6a8b0d2e4f6a8b0d2e4"
+
+  - name: allow_vault_rotation_digest
+    description: Bind vault reads to the specific key-rotation argument payload
+    severity: block
+    rule: |
+      task_role =~ "operator|admin"
+      task_description =~ "sha256:b4e6d9c0f2a3b5c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c"
+
+  - name: block_unattested_arguments
+    description: Deny any request whose args_digest is not explicitly allowed above
+    severity: block
+    rule: |
+      task_description !~ "sha256:"
+      task_role !~ "admin"
+
+# Evaluation notes:
+# - args_digest is threaded into task_description by policy_evaluator.py
+#   (the experiment wrapper), because PolicySubject has no dedicated digest
+#   field. The mapping is deterministic and documented here.
+# - Benign and harmful pairs share identical args_digest by construction, so
+#   this policy cannot separate them - that is the experimental point.
