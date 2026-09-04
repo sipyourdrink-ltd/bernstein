@@ -48,8 +48,7 @@ class ThinCorpusError(ValueError):
         self.required = required
         self.fingerprint = fingerprint
         super().__init__(
-            f"thin corpus: found {found} sealed run(s) matching fingerprint "
-            f"{fingerprint!r}, required {required}"
+            f"thin corpus: found {found} sealed run(s) matching fingerprint {fingerprint!r}, required {required}"
         )
 
 
@@ -105,10 +104,7 @@ def _contract_to_dict(contract: ChangeContract) -> dict[str, Any]:
             }
             for pc in contract.predicted_changes
         ],
-        "invariants": [
-            {"name": inv.name, "predicate_hash": inv.predicate_hash}
-            for inv in contract.invariants
-        ],
+        "invariants": [{"name": inv.name, "predicate_hash": inv.predicate_hash} for inv in contract.invariants],
         "min_corpus_size": contract.min_corpus_size,
     }
 
@@ -120,9 +116,7 @@ def contract_canonical_bytes(contract: ChangeContract) -> bytes:
     verdict receipt carries as ``contract_canonical`` so a verifier holding
     only the receipt can reconstruct the contract offline.
     """
-    return json.dumps(
-        _contract_to_dict(contract), sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+    return json.dumps(_contract_to_dict(contract), sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
 def contract_fingerprint(contract: ChangeContract) -> str:
@@ -209,9 +203,7 @@ def select_corpus(
     matches.sort(key=lambda pair: pair[1])
 
     if len(matches) < n:
-        raise ThinCorpusError(
-            found=len(matches), required=n, fingerprint=target_fingerprint
-        )
+        raise ThinCorpusError(found=len(matches), required=n, fingerprint=target_fingerprint)
 
     return [run_id for run_id, _ in matches[:n]]
 
@@ -242,9 +234,7 @@ def _replay_one_run(
     for predicted in contract.predicted_changes:
         actual = decisions_index.get((predicted.subject, predicted.action))
         if actual is None:
-            predicted_mismatch.append(
-                f"predicted ({predicted.subject}, {predicted.action}) missing"
-            )
+            predicted_mismatch.append(f"predicted ({predicted.subject}, {predicted.action}) missing")
             continue
         if actual.verdict != predicted.expected_verdict:
             changed_subjects.append(predicted.subject)
@@ -262,9 +252,7 @@ def _replay_one_run(
     for invariant in contract.invariants:
         predicate = PREDICATE_REGISTRY.get(invariant.predicate_hash)
         if predicate is None:
-            inconclusive.append(
-                f"{invariant.name}: predicate {invariant.predicate_hash} not registered"
-            )
+            inconclusive.append(f"{invariant.name}: predicate {invariant.predicate_hash} not registered")
             continue
         try:
             holds = predicate(decisions)
@@ -338,19 +326,14 @@ def replay_contract(
     )
 
     run_verdicts = [
-        _replay_one_run(
-            run_id=run_id, lineage_root=lineage_root, contract=contract
-        )
-        for run_id in selected_run_ids
+        _replay_one_run(run_id=run_id, lineage_root=lineage_root, contract=contract) for run_id in selected_run_ids
     ]
 
     if any(rv.verdict == ReplayVerdict.INVARIANT_VIOLATED for rv in run_verdicts):
         aggregate = ReplayVerdict.INVARIANT_VIOLATED
     elif any(rv.verdict == ReplayVerdict.CHANGED_UNEXPECTEDLY for rv in run_verdicts):
         aggregate = ReplayVerdict.CHANGED_UNEXPECTEDLY
-    elif run_verdicts and all(
-        rv.verdict == ReplayVerdict.CHANGED_AS_PREDICTED for rv in run_verdicts
-    ):
+    elif run_verdicts and all(rv.verdict == ReplayVerdict.CHANGED_AS_PREDICTED for rv in run_verdicts):
         aggregate = ReplayVerdict.CHANGED_AS_PREDICTED
     else:
         aggregate = ReplayVerdict.UNCHANGED
@@ -422,9 +405,7 @@ def write_verdict_receipt(
     body = _receipt_body(result, contract)
     receipt = body | {"service_receipt_hash": _receipt_hash(body)}
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(
-        json.dumps(receipt, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    out_path.write_text(json.dumps(receipt, indent=2, ensure_ascii=False), encoding="utf-8")
     return out_path
 
 
@@ -477,15 +458,12 @@ def verify_verdict_receipt(
     try:
         contract = _contract_from_canonical(json.loads(contract_bytes))
     except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
-        raise ReceiptMismatch(
-            receipt_path, f"cannot rebuild contract from 'contract_canonical': {exc}"
-        ) from exc
+        raise ReceiptMismatch(receipt_path, f"cannot rebuild contract from 'contract_canonical': {exc}") from exc
     recomputed_fingerprint = contract_fingerprint(contract)
     if recomputed_fingerprint != stored_fingerprint:
         raise ReceiptMismatch(
             receipt_path,
-            f"contract fingerprint mismatch: stored={stored_fingerprint!r}, "
-            f"recomputed={recomputed_fingerprint!r}",
+            f"contract fingerprint mismatch: stored={stored_fingerprint!r}, recomputed={recomputed_fingerprint!r}",
         )
 
     # 2. Re-run the replay service against the same corpus.
@@ -511,8 +489,7 @@ def verify_verdict_receipt(
     if fresh_verdicts != list(stored.get("run_verdicts", [])):
         raise ReceiptMismatch(
             receipt_path,
-            f"run_verdicts mismatch: stored={stored.get('run_verdicts', [])!r}, "
-            f"recomputed={fresh_verdicts!r}",
+            f"run_verdicts mismatch: stored={stored.get('run_verdicts', [])!r}, recomputed={fresh_verdicts!r}",
         )
 
     # 3. The receipt's stored hash must match a fresh hash over its body.
@@ -521,8 +498,7 @@ def verify_verdict_receipt(
     if not hmac.compare_digest(recomputed_hash.encode(), stored_hash.encode()):
         raise ReceiptMismatch(
             receipt_path,
-            f"service_receipt_hash mismatch: stored={stored_hash!r}, "
-            f"recomputed={recomputed_hash!r}",
+            f"service_receipt_hash mismatch: stored={stored_hash!r}, recomputed={recomputed_hash!r}",
         )
 
     return True
