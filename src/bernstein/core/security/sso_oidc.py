@@ -25,6 +25,8 @@ import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any
 
+from bernstein.core.security.rbac import resolve_role_from_groups
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -289,8 +291,10 @@ class OIDCProvider:
     def resolve_role(self, groups: list[str]) -> str:
         """Map IdP groups to a Bernstein role.
 
-        The first matching group in the role_mapping wins. Falls back to
-        ``"viewer"`` if no mapping matches.
+        Delegates to :func:`bernstein.core.security.rbac.resolve_role_from_groups`
+        so the dashboard and the external-directory bridge resolve a role from
+        a group list by exactly one rule.  The first matching group in the
+        role_mapping wins; falls back to ``"viewer"`` if no mapping matches.
 
         Args:
             groups: Group memberships from the ID token.
@@ -298,10 +302,7 @@ class OIDCProvider:
         Returns:
             Bernstein role string.
         """
-        for group in groups:
-            if group in self._config.role_mapping:
-                return self._config.role_mapping[group]
-        return "viewer"
+        return resolve_role_from_groups(groups, self._config.role_mapping)
 
     def create_session(
         self,
