@@ -241,6 +241,35 @@ class TrajectorySection:
         row["schema_version"] = self.schema_version
         return row
 
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> TrajectorySection:
+        """Inverse of :meth:`to_dict`.
+
+        ``None`` fields are recovered by key absence - mirrors the
+        omission discipline :meth:`to_dict` uses, so a round trip
+        yields an equal instance whose canonical bytes are
+        byte-identical to the source.
+        """
+        return cls(
+            step_count=int(raw.get("step_count", 0)),
+            first_step_index=(
+                int(raw["first_step_index"])
+                if "first_step_index" in raw
+                else None
+            ),
+            last_step_index=(
+                int(raw["last_step_index"])
+                if "last_step_index" in raw
+                else None
+            ),
+            first_step_hash=raw.get("first_step_hash"),
+            last_step_hash=raw.get("last_step_hash"),
+            schema_version=int(
+                raw.get("schema_version", TRAJECTORY_SCHEMA_VERSION)
+            ),
+            citations=(),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class VerificationSection:
@@ -283,6 +312,24 @@ class VerificationSection:
             row["divergent_step"] = self.divergent_step
         return row
 
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> VerificationSection:
+        """Inverse of :meth:`to_dict`."""
+        return cls(
+            journal_ok=bool(raw.get("journal_ok", False)),
+            journal_head=str(raw.get("journal_head", "")),
+            journal_steps=int(raw.get("journal_steps", 0)),
+            divergent_step=(
+                int(raw["divergent_step"])
+                if "divergent_step" in raw
+                else None
+            ),
+            spine_ok=bool(raw.get("spine_ok", False)),
+            spine_head=str(raw.get("spine_head", "")),
+            spine_entries=int(raw.get("spine_entries", 0)),
+            citations=(),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class RecoverySection:
@@ -318,6 +365,25 @@ class RecoverySection:
             row["recovery_event_index"] = self.recovery_event_index
         return row
 
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> RecoverySection:
+        """Inverse of :meth:`to_dict`."""
+        return cls(
+            repaired=bool(raw.get("repaired", False)),
+            dropped_rows=int(raw.get("dropped_rows", 0)),
+            first_recoverable_seq=(
+                int(raw["first_recoverable_seq"])
+                if "first_recoverable_seq" in raw
+                else None
+            ),
+            recovery_event_index=(
+                int(raw["recovery_event_index"])
+                if "recovery_event_index" in raw
+                else None
+            ),
+            citations=(),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class StateConsistencySection:
@@ -350,6 +416,20 @@ class StateConsistencySection:
             row["last_mutation_event_index"] = self.last_mutation_event_index
         return row
 
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> StateConsistencySection:
+        """Inverse of :meth:`to_dict`."""
+        return cls(
+            mutation_count=int(raw.get("mutation_count", 0)),
+            disagreement_count=int(raw.get("disagreement_count", 0)),
+            last_mutation_event_index=(
+                int(raw["last_mutation_event_index"])
+                if "last_mutation_event_index" in raw
+                else None
+            ),
+            citations=(),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class SafetySection:
@@ -377,6 +457,16 @@ class SafetySection:
             "refusal_count": self.refusal_count,
             "run_receipt_signed": self.run_receipt_signed,
         }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> SafetySection:
+        """Inverse of :meth:`to_dict`."""
+        return cls(
+            capability_declared=bool(raw.get("capability_declared", False)),
+            refusal_count=int(raw.get("refusal_count", 0)),
+            run_receipt_signed=bool(raw.get("run_receipt_signed", False)),
+            citations=(),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -407,6 +497,17 @@ class ReplayabilitySection:
             "gateway_mode": self.gateway_mode,
             "fixture_present": self.fixture_present,
         }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> ReplayabilitySection:
+        """Inverse of :meth:`to_dict`."""
+        return cls(
+            recorded=bool(raw.get("recorded", False)),
+            key_scheme=str(raw.get("key_scheme", "")),
+            gateway_mode=str(raw.get("gateway_mode", "")),
+            fixture_present=bool(raw.get("fixture_present", False)),
+            citations=(),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -499,13 +600,60 @@ class Scorecard:
         of the same recorded run produce byte-identical bytes. The
         encoding contract mirrors
         :meth:`bernstein.core.replay.trajectory.TrajectoryStep.canonical_bytes`
-        and :func:`bernstein.core.persistence.journal.canonical_step_payload`.
+        and :func:`bernstein.core.persistence.journal.canonical_step_payload`,
+        and is identical to the convention used by
+        :func:`bernstein.core.replay.run_receipt._canonical_json_bytes`
+        (canonical JSON, sorted keys, ``(",", ":")`` separators, UTF-8)
+        so the whole receipt family canonicalises identically.
         """
         return json.dumps(
             self.to_dict(),
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> Scorecard:
+        """Inverse of :meth:`to_dict`.
+
+        Wall-clock fields (``wall_clock_start``, ``wall_clock_end``)
+        are recovered from ``raw`` when present and default to
+        ``None`` otherwise - matching the omission discipline in
+        :meth:`to_dict` and :meth:`canonical_bytes`. A round trip
+        through ``Scorecard -> to_dict -> from_dict -> canonical_bytes``
+        yields bytes byte-identical to the original
+        :meth:`canonical_bytes` output.
+        """
+        return cls(
+            run_id=str(raw["run_id"]),
+            trajectory=TrajectorySection.from_dict(raw["trajectory"]),
+            verification=VerificationSection.from_dict(raw["verification"]),
+            recovery=RecoverySection.from_dict(raw["recovery"]),
+            state_consistency=StateConsistencySection.from_dict(
+                raw["state_consistency"]
+            ),
+            safety=SafetySection.from_dict(raw["safety"]),
+            replayability=ReplayabilitySection.from_dict(raw["replayability"]),
+            schema_version=str(
+                raw.get("schema_version", SCORECARD_SCHEMA_VERSION)
+            ),
+            type_version=int(
+                raw.get("type_version", SCORECARD_TYPE_VERSION)
+            ),
+            scorecard_type=str(
+                raw.get("scorecard_type", SCORECARD_TYPE)
+            ),
+            wall_clock_start=(
+                float(raw["wall_clock_start"])
+                if "wall_clock_start" in raw
+                else None
+            ),
+            wall_clock_end=(
+                float(raw["wall_clock_end"])
+                if "wall_clock_end" in raw
+                else None
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
