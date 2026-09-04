@@ -706,6 +706,7 @@ def test_v1_receipt_still_loads_and_verifies(populated_workdir):
 
     # The signature on the v1 binding must verify cryptographically
     from bernstein.core.skills.catalog.signature import verify_payload
+
     outcome = verify_payload(v1_bytes, v1_signature, public_key_pem, allow_unverified=True)
     assert outcome.verified is True
 
@@ -745,7 +746,6 @@ def test_re_emitting_with_identical_inputs_yields_identical_binding(populated_wo
 
     assert receipt1.to_canonical_bytes() == receipt2.to_canonical_bytes()
     assert receipt1.coverage_set_hash == receipt2.coverage_set_hash
-
 
 
 def test_coverage_set_hash_is_signed(populated_workdir):

@@ -190,9 +190,7 @@ def runs_scorecard_cmd(run_id: str, workdir: Path, output_json: bool, verify: bo
         console.print_json(json.dumps(envelope))
         return
 
-    console.print(
-        f"wrote scorecard for {run_id} (outcome={scorecard.content.get('outcome', '?')}) -> {out_path}"
-    )
+    console.print(f"wrote scorecard for {run_id} (outcome={scorecard.content.get('outcome', '?')}) -> {out_path}")
 
 
 __all__ = ["runs_group"]

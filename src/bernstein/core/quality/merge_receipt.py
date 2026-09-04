@@ -258,13 +258,7 @@ def compute_coverage_sets(
         verified_set.update(scope.checked)
     verified = tuple(sorted(verified_set))
     unverified = tuple(path for path in change_set_sorted if path not in verified_set)
-    skipped = tuple(
-        sorted(
-            (path, reason)
-            for scope in scopes
-            for path, reason in scope.skipped
-        )
-    )
+    skipped = tuple(sorted((path, reason) for scope in scopes for path, reason in scope.skipped))
     payload: dict[str, Any] = {
         "verified": list(verified),
         "unverified": list(unverified),
