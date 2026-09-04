@@ -35,7 +35,6 @@ from bernstein.core.quality.gate_pipeline import (
     GateReport,
     GateResult,
     GateStatus,
-    VerificationScope,
     build_default_pipeline,
     normalize_gate_condition,
 )
@@ -421,12 +420,6 @@ class GateRunner:
                 details=f"Gate plugin {step.name!r} failed: {exc}",
                 metadata={},
                 reason="runner-died-before-output",
-                scope=VerificationScope(
-                    oracle_id="bernstein.gate_runner.exception_handler",
-                    kind="plugin_exception",
-                    checked=(),
-                    cannot_check=(f"plugin:{step.name}",),
-                ),
             )
         # ``inconclusive`` blocks at a required gate just like ``fail``; the
         # verdict differs, the promotion decision does not (issue #4181).

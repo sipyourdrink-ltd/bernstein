@@ -6,36 +6,9 @@ import json
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from bernstein.core.gate_runner import (
-    GatePipelineStep,
-    GateReport,
-    GateResult,
-    VerificationScope,
-    build_default_pipeline,
-)
+from bernstein.core.gate_runner import GatePipelineStep, GateReport, GateResult, build_default_pipeline
 from bernstein.core.models import Complexity, Scope, Task
 from bernstein.core.quality_gates import QualityGatesConfig, run_quality_gates
-
-
-def _scoped(**kwargs: object) -> GateResult:
-    """Build a ``GateResult`` with a populated ``VerificationScope``.
-
-    Issue #5397: every non-skipped/non-bypassed result must carry a
-    ``VerificationScope``. The scope is a placeholder oracle ("test")
-    with the gate name as the kind — the test exercises metric
-    mapping, not the attestation contract.
-    """
-    name = str(kwargs.get("name", "lint"))
-    scope = kwargs.pop(
-        "scope",
-        VerificationScope(
-            oracle_id="test",
-            kind=name,
-            checked=(),
-            cannot_check=(),
-        ),
-    )
-    return GateResult(scope=scope, **kwargs)  # type: ignore[arg-type]
 
 
 def _task() -> Task:
@@ -93,7 +66,7 @@ def test_run_quality_gates_preserves_warn_status_and_records_quality_score(tmp_p
         total_duration_ms=12,
         gates_run=["tests"],
         results=[
-            _scoped(
+            GateResult(
                 name="tests",
                 status="warn",
                 required=True,
@@ -138,9 +111,9 @@ def test_warn_timeout_and_bypassed_map_to_legacy_flagged_metrics(tmp_path: Path)
         total_duration_ms=30,
         gates_run=["lint", "tests", "dead_code"],
         results=[
-            _scoped(name="lint", status="warn", required=True, blocked=False, cached=False, duration_ms=10, details="warn"),
-            _scoped(name="tests", status="timeout", required=True, blocked=False, cached=False, duration_ms=10, details="timeout"),
-            GateResult(name="dead_code", status="bypassed", required=False, blocked=False, cached=False, duration_ms=0, details="manual"),
+            GateResult("lint", "warn", True, False, False, 10, "warn"),
+            GateResult("tests", "timeout", True, False, False, 10, "timeout"),
+            GateResult("dead_code", "bypassed", False, False, False, 0, "manual"),
         ],
         changed_files=["src/demo.py"],
         cache_hits=0,
@@ -189,7 +162,7 @@ def test_blocked_gate_maps_to_blocked_metric(tmp_path: Path) -> None:
         overall_pass=False,
         total_duration_ms=5,
         gates_run=["lint"],
-        results=[_scoped(name="lint", status="fail", required=True, blocked=True, cached=False, duration_ms=1, details="lint error")],
+        results=[GateResult("lint", "fail", True, True, False, 1, "lint error")],
         changed_files=["src/demo.py"],
         cache_hits=0,
     )
@@ -212,7 +185,7 @@ def test_quality_score_failure_is_best_effort(tmp_path: Path) -> None:
         overall_pass=True,
         total_duration_ms=5,
         gates_run=["lint"],
-        results=[_scoped(name="lint", status="pass", required=True, blocked=False, cached=False, duration_ms=1, details="ok")],
+        results=[GateResult("lint", "pass", True, False, False, 1, "ok")],
         changed_files=["src/demo.py"],
         cache_hits=0,
     )
