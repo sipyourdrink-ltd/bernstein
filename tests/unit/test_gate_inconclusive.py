@@ -23,6 +23,7 @@ from bernstein.core.quality.gate_pipeline import (
     GatePipelineStep,
     GateReport,
     GateResult,
+    VerificationScope,
 )
 from bernstein.core.quality.gate_runner import GateRunner
 from bernstein.core.quality.quality_gates import (
@@ -32,7 +33,21 @@ from bernstein.core.quality.quality_gates import (
 from bernstein.core.quality.quality_score import QualityScorer
 
 
-def _result(status: str, *, reason: str | None = None, blocked: bool = False) -> GateResult:
+_SCOPE: VerificationScope = VerificationScope(
+    oracle_id="test",
+    kind="lint",
+    checked=(),
+    cannot_check=(),
+)
+
+
+def _result(
+    status: str,
+    *,
+    reason: str | None = None,
+    blocked: bool = False,
+    scope: VerificationScope | None = _SCOPE,
+) -> GateResult:
     return GateResult(
         name="lint",
         status=status,  # type: ignore[arg-type]
@@ -43,6 +58,7 @@ def _result(status: str, *, reason: str | None = None, blocked: bool = False) ->
         details="test",
         metadata={},
         reason=reason,
+        scope=scope,
     )
 
 
@@ -72,6 +88,33 @@ class TestGateResultInvariant:
             assert r.reason is None
 
 
+class TestScopeInvariant:
+    """Issue #5397: a non-skipped/non-bypassed result must carry a VerificationScope.
+
+    The scope attestation is what makes a gate verdict a verifiable
+    claim. A green verdict with no recorded coverage cannot escape
+    into a gate report: ``GateResult.__post_init__`` raises
+    ``ValueError`` instead. Skipped and bypassed results may omit the
+    scope because they did not evaluate anything.
+    """
+
+    @pytest.mark.parametrize("status", ["pass", "fail", "warn", "timeout", "inconclusive"])
+    def test_non_skipped_or_bypassed_status_requires_scope(self, status: str) -> None:
+        with pytest.raises(ValueError, match="requires a VerificationScope"):
+            _result(status, scope=None, reason="runner-died-before-output" if status == "inconclusive" else None)
+
+    @pytest.mark.parametrize("status", ["skipped", "bypassed"])
+    def test_skipped_or_bypassed_status_may_omit_scope(self, status: str) -> None:
+        r = _result(status, scope=None)
+        assert r.status == status
+        assert r.scope is None
+
+    def test_error_message_names_the_gate(self) -> None:
+        """The ``ValueError`` must surface the gate name so producer-site bugs are debuggable."""
+        with pytest.raises(ValueError, match="name='lint'"):
+            _result("pass", scope=None)
+
+
 class TestBlockingSemantics:
     def test_inconclusive_blocks_at_required_gate(self) -> None:
         # Mirrors the producer sites: blocked is set to step.required,
@@ -87,6 +130,7 @@ class TestBlockingSemantics:
             details="x",
             metadata={},
             reason="runner-died-before-output",
+            scope=_SCOPE,
         )
         assert r.blocked is True
 
@@ -102,6 +146,7 @@ class TestBlockingSemantics:
             details="x",
             metadata={},
             reason="runner-died-before-output",
+            scope=_SCOPE,
         )
         assert r.blocked is False
 

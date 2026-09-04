@@ -5,8 +5,29 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from bernstein.core.gate_runner import GateReport, GateResult
+from bernstein.core.gate_runner import GateReport, GateResult, VerificationScope
 from bernstein.core.quality_score import QualityScore, QualityScorer
+
+
+def _scoped(**kwargs: object) -> GateResult:
+    """Build a ``GateResult`` with a populated ``VerificationScope``.
+
+    Issue #5397: every non-skipped/non-bypassed result must carry a
+    ``VerificationScope``. The scope is a placeholder oracle ("test")
+    with the gate name as the kind — the test exercises scoring, not
+    the attestation contract.
+    """
+    name = str(kwargs.get("name", "lint"))
+    scope = kwargs.pop(
+        "scope",
+        VerificationScope(
+            oracle_id="test",
+            kind=name,
+            checked=(),
+            cannot_check=(),
+        ),
+    )
+    return GateResult(scope=scope, **kwargs)  # type: ignore[arg-type]
 
 
 def _report(*results: GateResult) -> GateReport:
@@ -24,7 +45,7 @@ def _report(*results: GateResult) -> GateReport:
 def test_score_weights_warn_and_excludes_skipped(tmp_path: Path) -> None:
     scorer = QualityScorer(tmp_path)
     report = _report(
-        GateResult(
+        _scoped(
             name="lint",
             status="pass",
             required=True,
@@ -33,7 +54,7 @@ def test_score_weights_warn_and_excludes_skipped(tmp_path: Path) -> None:
             duration_ms=1,
             details="ok",
         ),
-        GateResult(
+        _scoped(
             name="tests",
             status="warn",
             required=True,
@@ -42,7 +63,7 @@ def test_score_weights_warn_and_excludes_skipped(tmp_path: Path) -> None:
             duration_ms=1,
             details="flaky",
         ),
-        GateResult(
+        _scoped(
             name="dead_code",
             status="fail",
             required=False,
@@ -111,7 +132,7 @@ def test_score_defaults_to_100_when_no_gates_are_included(tmp_path: Path) -> Non
 def test_timeout_status_scores_as_half_credit(tmp_path: Path) -> None:
     scorer = QualityScorer(tmp_path)
     report = _report(
-        GateResult(
+        _scoped(
             name="tests",
             status="timeout",
             required=True,
