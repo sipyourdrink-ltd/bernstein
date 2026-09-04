@@ -6,6 +6,12 @@ import hashlib
 import json
 from typing import Any
 
+from bernstein.core.govern.duplication_audit import (
+    DuplicationFinding,
+    DuplicationReport,
+    Verdict,
+    collect_duplication,
+)
 from bernstein.core.govern.findings import Finding, FindingsDocument
 from bernstein.core.govern.freshness_gate import (
     FreshnessGate,
@@ -238,6 +244,8 @@ __all__ = [
     "DesiredState",
     "DiffAction",
     "DraftProposal",
+    "DuplicationFinding",
+    "DuplicationReport",
     "EntityKind",
     "EntityPolicy",
     "EntityStatus",
@@ -272,7 +280,9 @@ __all__ = [
     "SnapshotEntity",
     "Surface",
     "UnremediatedFinding",
+    "Verdict",
     "build_restore_plan",
+    "collect_duplication",
     "collect_remediation",
     "compute_plan",
     "compute_reconcile_diff",
