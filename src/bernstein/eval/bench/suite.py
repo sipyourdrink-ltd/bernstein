@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -68,6 +69,7 @@ class BenchSuite:
 
     version: str
     tasks: list[BenchTask] = field(default_factory=list)
+    controls: list[str] = field(default_factory=list)
 
     # Computed lazily and cached.
     _suite_hash: str | None = field(default=None, init=False, repr=False, compare=False)
@@ -80,8 +82,11 @@ class BenchSuite:
 
     def _compute_hash(self) -> str:
         task_hashes = [t.content_hash() for t in self.tasks]
+        payload_dict: dict[str, Any] = {"version": self.version, "task_hashes": task_hashes}
+        if self.controls:
+            payload_dict["controls"] = list(self.controls)
         payload = json.dumps(
-            {"version": self.version, "task_hashes": task_hashes},
+            payload_dict,
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -95,6 +100,7 @@ class BenchSuite:
         return {
             "version": self.version,
             "suite_hash": self.suite_hash,
+            "controls": self.controls,
             "tasks": [
                 {
                     "id": t.id,
@@ -116,8 +122,7 @@ class BenchSuite:
         )
 
     @classmethod
-    def load(cls, path: Path) -> BenchSuite:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+    def from_dict(cls, raw: Mapping[str, Any]) -> BenchSuite:
         tasks = [
             BenchTask(
                 id=t["id"],
@@ -128,12 +133,17 @@ class BenchSuite:
             )
             for t in raw["tasks"]
         ]
-        suite = cls(version=raw["version"], tasks=tasks)
+        controls = list(raw.get("controls", []))
+        suite = cls(version=raw["version"], tasks=tasks, controls=controls)
         # Integrity check: stored hash must match recomputed hash.
-        if suite.suite_hash != raw["suite_hash"]:
+        if "suite_hash" in raw and suite.suite_hash != raw["suite_hash"]:
             raise ValueError(
                 f"Suite hash mismatch: stored {raw['suite_hash']!r} "
                 f"!= recomputed {suite.suite_hash!r}. "
                 "The suite file may have been tampered with."
             )
         return suite
+
+    @classmethod
+    def load(cls, path: Path) -> BenchSuite:
+        return cls.from_dict(json.loads(path.read_text(encoding="utf-8")))

@@ -7,6 +7,16 @@ Mandatory by August 2027.
 
 from __future__ import annotations
 
+from bernstein.compliance.controls import (
+    ControlEntry,
+    ControlRegistry,
+    generate_controls_markdown_table,
+    get_control,
+    get_control_registry,
+    list_controls,
+    validate_control_id,
+    validate_suite_controls,
+)
 from bernstein.compliance.eu_ai_act import (
     AnnexIIIDomain,
     ClassificationResult,
@@ -41,14 +51,22 @@ __all__ = [
     "ConformityAssessor",
     "ConformityCheck",
     "ConformityResult",
+    "ControlEntry",
+    "ControlRegistry",
     "EvidencePack",
     "RiskCategory",
     "SystemDescriptor",
     "TechDoc",
     "TechDocGenerator",
     "build_evidence_pack",
+    "generate_controls_markdown_table",
+    "get_control",
+    "get_control_registry",
     "get_standard_map",
     "iso42001_control_map",
+    "list_controls",
     "owasp_asi_control_map",
     "owasp_skills_control_map",
+    "validate_control_id",
+    "validate_suite_controls",
 ]
