@@ -9,6 +9,8 @@ what comes back on each stream.
 
 from __future__ import annotations
 
+import ast
+import hashlib
 import json
 from pathlib import Path
 
@@ -377,3 +379,101 @@ def test_deprecated_debug_bundle_alias_names_the_flags_that_do_not_carry_over() 
     assert "WARNING: 'bernstein debug-bundle' is deprecated" in result.stderr
     for flag in sorted(dropped):
         assert flag.replace("_", "-") in result.stderr, f"warning does not mention --{flag}"
+
+
+# ---------------------------------------------------------------------------
+# No two commands share a body (#5102)
+# ---------------------------------------------------------------------------
+#
+# The tests above pin the collapses that were already made. This one catches the
+# NEXT accidental copy, which is how the collapsed cases got there: a command was
+# reimplemented in a second module, both spellings kept working, and the two
+# copies then drifted apart with nobody watching. Comparing AST bodies rather
+# than text means a reformat, a renamed local or a different docstring cannot
+# hide a duplicate -- and cannot invent one either.
+
+
+def _command_name(decorator: ast.expr) -> str | None:
+    """The name a ``@click.command("x")`` / ``@group.command("x")`` decorator registers."""
+    if not isinstance(decorator, ast.Call):
+        return None
+    func = decorator.func
+    if not (isinstance(func, ast.Attribute) and func.attr in {"command", "group"}):
+        return None
+    if not decorator.args:
+        return None
+    first = decorator.args[0]
+    return first.value if isinstance(first, ast.Constant) and isinstance(first.value, str) else None
+
+
+def _body_digest(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str | None:
+    """A hash of the function body, with the docstring dropped. ``None`` for an empty body.
+
+    The docstring is excluded on purpose: two copies whose help text was reworded
+    are still two copies, and a group whose entire body IS its docstring (the
+    common Click idiom) has no implementation to duplicate.
+    """
+    body = node.body
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        body = body[1:]
+    if not body:
+        return None
+    dumped = ast.dump(ast.Module(body=body, type_ignores=[]))
+    return hashlib.sha256(dumped.encode("utf-8")).hexdigest()
+
+
+def _commands_by_body() -> dict[tuple[str, str], list[str]]:
+    """Every registered CLI command, grouped by ``(command name, body digest)``."""
+    root = Path(__file__).resolve().parents[2] / "src" / "bernstein" / "cli"
+    grouped: dict[tuple[str, str], list[str]] = {}
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            names = [n for n in (_command_name(d) for d in node.decorator_list) if n is not None]
+            digest = _body_digest(node)
+            if not names or digest is None:
+                continue
+            where = f"{path.relative_to(root)}:{node.lineno} ({node.name})"
+            grouped.setdefault((names[0], digest), []).append(where)
+    return grouped
+
+
+def test_no_two_commands_named_verify_share_a_body() -> None:
+    """``verify`` is the name most copied, and the one an operator most needs to be single."""
+    duplicates = {
+        name: where for (name, _digest), where in _commands_by_body().items() if name == "verify" and len(where) > 1
+    }
+    assert duplicates == {}, (
+        "two `verify` commands have the same implementation -- collapse them to one "
+        f"and make the other a warn-and-delegate shim (#5102): {duplicates}"
+    )
+
+
+def test_no_two_commands_of_any_name_share_a_body() -> None:
+    """The general form: a second copy of any command is a second place to fix a bug.
+
+    `bernstein completions` was implemented twice with byte-identical bodies --
+    once in ``commands/advanced_cmd.py`` and once in the dedicated
+    ``commands/completions_cmd.py`` the operations docs name as the source. Only
+    the first was registered, so an edit to the documented module would have had
+    no runtime effect at all.
+    """
+    duplicates = {
+        f"{name}:{digest[:8]}": where for (name, digest), where in _commands_by_body().items() if len(where) > 1
+    }
+    assert duplicates == {}, (
+        "a CLI command is implemented more than once with the same body -- register one and "
+        f"delete the copy, or make it delegate (#5102): {duplicates}"
+    )
+
+
+def test_completions_is_the_module_the_docs_name() -> None:
+    """The registered `completions` must be the one ``docs/operations/shell-completions.md`` points at."""
+    from bernstein.cli.commands.completions_cmd import completions_cmd
+
+    registered = cli.commands["completions"]
+    assert registered is completions_cmd
+    assert completions_cmd.callback is not None
+    assert completions_cmd.callback.__module__ == "bernstein.cli.commands.completions_cmd"

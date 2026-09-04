@@ -28,7 +28,6 @@ from bernstein.cli.adapter_cmd import adapters_group, test_adapter
 
 # Import commands from decomposed modules (NEW)
 from bernstein.cli.advanced_cmd import (
-    completions,
     dashboard,
     doctor,
     github_group,
@@ -61,6 +60,11 @@ from bernstein.cli.commands.bom_cmd import bom_group
 from bernstein.cli.commands.bundle_cmd import bundle_group
 from bernstein.cli.commands.citation_cmd import quality_group as citation_quality_group
 from bernstein.cli.commands.compaction_cmd import compaction_group
+
+# Aliased to `completions` so `from bernstein.cli.main import completions` keeps
+# working: the name is part of main's backward-compatible surface, and only the
+# implementation behind it moved to the module the docs already named (#5102).
+from bernstein.cli.commands.completions_cmd import completions_cmd as completions
 from bernstein.cli.commands.criterion_profile_cmd import criterion_profile_group
 from bernstein.cli.commands.datasource_cmd import datasource_group
 from bernstein.cli.commands.decisions_cmd import decisions_group
@@ -1118,7 +1122,6 @@ cli.add_command(trackers_group, "trackers")
 cli.add_command(run, "run")  # visible: `bernstein run [plan.yaml]`
 cli.add_command(cook, "cook")
 cli.add_command(init)
-cli.add_command(run, "run")
 cli.add_command(start)
 cli.add_command(serve)  # foreground task server for containers / central node (#2803)
 cli.add_command(demo)

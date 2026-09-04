@@ -12,9 +12,20 @@ The receipt captures:
 * the environment digest (canonical hash of the environment constraints);
 * the approver identity (human or service account that approved the changes);
 * the list of change attempts: each with change ID, type (create/update/delete),
-  target resource, timestamp, outcome (success/failure/skipped), and error message;
+  target resource, timestamp, outcome (success/failure/skipped), error message,
+  the value observed immediately before the change, and the value written;
 * the final status (complete/partial/failed) derived from change outcomes;
+* the digest of the receipt this one restores, empty when it is not a restore;
 * creation timestamp.
+
+Recording the prior value next to the written value is what makes a receipt
+enough to undo the changes it attests: the inverse plan is read off the receipt
+rather than derived by re-observing the environment. See
+:mod:`bernstein.core.govern.restore`.
+
+``prior_value``, ``written_value`` and ``restores_receipt_digest`` are additive:
+receipts serialised without them still verify, so the schema version is
+unchanged.
 
 All of that is serialized to canonical JSON (sorted keys, compact separators) and
 hashed to produce the receipt digest. The receipt is signed and carried in the
@@ -105,6 +116,14 @@ class ChangeAttempt:
         attempted_at: ISO 8601 timestamp when the change was attempted.
         outcome: Result: 'success', 'failure', or 'skipped'.
         error_message: Human-readable error, empty if outcome is 'success'.
+        prior_value: The value read from the target immediately before the
+            change was written. Empty when the target did not exist (a
+            'create') or when the applier could not read it. This is the
+            evidence an inverse plan is built from, so it is captured at
+            apply time and never re-derived afterwards.
+        written_value: The value the change wrote to the target. Empty for a
+            'delete'. Compared against the target's current value to decide
+            whether it has drifted since the apply.
     """
 
     change_id: str
@@ -113,6 +132,8 @@ class ChangeAttempt:
     attempted_at: str
     outcome: ChangeOutcome
     error_message: str = ""
+    prior_value: str = ""
+    written_value: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to JSON-compatible dict."""
@@ -123,6 +144,8 @@ class ChangeAttempt:
             "attempted_at": self.attempted_at,
             "outcome": self.outcome,
             "error_message": self.error_message,
+            "prior_value": self.prior_value,
+            "written_value": self.written_value,
         }
 
 
@@ -139,6 +162,10 @@ class ChangeReceipt:
         changes: Tuple of change attempts.
         final_status: Aggregate outcome: 'complete', 'partial', or 'failed'.
         timestamp: ISO 8601 timestamp of receipt creation.
+        restores_receipt_digest: Digest of the receipt this one inverts, empty
+            when this receipt is not a restore. The digest is the apply
+            record's identity, so the link is checkable offline from the two
+            receipts alone.
     """
 
     plan_id: str
@@ -149,6 +176,7 @@ class ChangeReceipt:
     changes: tuple[ChangeAttempt, ...] = ()
     final_status: FinalStatus = "complete"
     timestamp: str = ""
+    restores_receipt_digest: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to JSON-compatible dict."""
@@ -162,6 +190,7 @@ class ChangeReceipt:
             "changes": [c.to_dict() for c in self.changes],
             "final_status": self.final_status,
             "timestamp": self.timestamp,
+            "restores_receipt_digest": self.restores_receipt_digest,
         }
 
     def canonical_bytes(self) -> bytes:
@@ -230,6 +259,22 @@ def _change_entry_errors(index: int, change: Any) -> list[str]:
         errors.append(f"changes[{index}].outcome: expected string, got {type(outcome).__name__}")
     elif outcome not in ("success", "failure", "skipped"):
         errors.append(f"changes[{index}].outcome: invalid outcome {outcome!r}")
+
+    # The value replaced and the value written. Optional so that receipts
+    # serialised before these fields existed still verify; type-checked so a
+    # restore never reads a non-string.
+    prior_value = entry.get("prior_value", "")
+    if not isinstance(prior_value, str):
+        errors.append(
+            f"changes[{index}].prior_value: expected string, got {type(prior_value).__name__}",
+        )
+
+    written_value = entry.get("written_value", "")
+    if not isinstance(written_value, str):
+        errors.append(
+            f"changes[{index}].written_value: expected string, got {type(written_value).__name__}",
+        )
+
     return errors
 
 
@@ -268,6 +313,14 @@ def change_receipt_payload_errors(payload: Mapping[str, Any]) -> tuple[str, ...]
         errors.append(f"final_status: expected string, got {type(final_status).__name__}")
     elif final_status not in ("complete", "partial", "failed"):
         errors.append(f"final_status: invalid status {final_status!r}")
+
+    # Optional: the digest of the receipt this one inverts. Absent on an
+    # ordinary apply receipt, so it is type-checked but never required.
+    restores_receipt_digest = payload.get("restores_receipt_digest", "")
+    if not isinstance(restores_receipt_digest, str):
+        errors.append(
+            f"restores_receipt_digest: expected string, got {type(restores_receipt_digest).__name__}",
+        )
 
     raw_changes = payload.get("changes")
     if raw_changes is None:

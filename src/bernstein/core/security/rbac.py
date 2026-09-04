@@ -44,7 +44,12 @@ from typing import TYPE_CHECKING, Any, Final
 from fastapi import HTTPException, Request
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
+
     from bernstein.core.security.auth import AuthUser
+
+DEFAULT_ROLE = "viewer"
+"""Role assigned when no group of a principal maps to a Bernstein role."""
 
 _PERM_TASKS_WRITE = "tasks:write"
 
@@ -76,6 +81,42 @@ _PERM_SCIM_READ = "scim:read"
 _PERM_SCIM_WRITE = "scim:write"
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Group-to-role mapping
+# ---------------------------------------------------------------------------
+
+
+def resolve_role_from_groups(
+    groups: Iterable[str],
+    role_mapping: Mapping[str, str],
+    default: str = DEFAULT_ROLE,
+) -> str:
+    """Map an external group membership list onto a Bernstein role.
+
+    The first group with an entry in ``role_mapping`` wins, so the caller
+    controls precedence by the order it supplies the groups in.
+
+    This is the single rule every external identity source resolves through:
+    the dashboard's OIDC login (:mod:`bernstein.core.security.sso_oidc`) and
+    the directory bridge (:mod:`bernstein.core.security.directory_bridge`)
+    both call it rather than deciding a role themselves, so a group that
+    grants ``admin`` on one path cannot grant something else on the other.
+
+    Args:
+        groups: Group names as the identity source reported them.
+        role_mapping: Mapping from external group name to Bernstein role.
+        default: Role to return when no group matches.
+
+    Returns:
+        The mapped Bernstein role, or ``default``.
+    """
+    for group in groups:
+        role = role_mapping.get(group)
+        if role:
+            return role
+    return default
 
 
 # ---------------------------------------------------------------------------
