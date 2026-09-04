@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -128,6 +129,17 @@ class FileUpgradeExecutor:
                 except OSError as e:
                     errors.append(f"Backup integrity check failed: {backup_path} ({e})")
                     continue
+            else:
+                # No manifest entry yet — capture the current backup hash as the
+                # baseline so any subsequent corruption is detected on the next
+                # rollback call. This is the only place the manifest gains a
+                # key outside `_backup_file`, and only on first observation.
+                if backup_path.exists():
+                    with contextlib.suppress(OSError):
+                        manifest[manifest_key] = {
+                            "hash": self._hash_file(backup_path),
+                            "created_at": time.time(),
+                        }
 
             # Validate backup exists
             if not backup_path.exists():
@@ -147,6 +159,10 @@ class FileUpgradeExecutor:
                 shutil.copy2(backup_path, target_path)
             except Exception as exc:
                 errors.append(f"Failed to restore {target_path} from {backup_path}: {exc}")
+
+        # Persist any baseline hashes captured above so future rollbacks can
+        # detect backup corruption.
+        self._write_manifest(manifest)
 
         if errors:
             error_msg = "; ".join(errors)
