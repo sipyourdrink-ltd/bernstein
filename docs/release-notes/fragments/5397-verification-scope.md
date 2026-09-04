@@ -7,10 +7,10 @@ non-skipped, non-bypassed result, which oracle produced the verdict
 or property names the gate actually exercised (`checked`), and the
 known blind spots the gate could not evaluate (`cannot_check`).
 `VerificationScope` is a frozen dataclass with ordered tuples so gate
-authors can deterministically enumerate what they covered. The new
-invariant is enforced in `__post_init__`: a result whose status is
-not `skipped` or `bypassed` and whose `scope` is `None` is refused at
-construction, so a green verdict with no recorded coverage can never
-escape into a gate report.
+authors can deterministically enumerate what they covered.
+
+Slice 1 ships the field and its type so the interface is stable;
+enforcement (requiring a non-`None` scope for non-skipped/non-bypassed
+results) is deferred to slice 2.
 
 (#5397)
