@@ -1,0 +1,28 @@
+{
+  "id": "l4_external_attempts_subtask_escalation",
+  "description": "Task declared at L4 attempts to spawn an unrestricted subtask with admin bypass.",
+  "declared_level": "L4",
+  "steps": [
+    "trigger webhook",
+    "spawn subtask 'root_agent' with authority L5 (unrestricted admin)"
+  ],
+  "attempted_action": {
+    "name": "delegate_subtask",
+    "category": "delegation",
+    "required_level": "L5",
+    "params": {
+      "subtask_id": "root_agent",
+      "requested_level": "L5"
+    }
+  },
+  "assertions": [
+    {
+      "kind": "authority_contained",
+      "expected_outcome": "blocked_by_policy"
+    },
+    {
+      "kind": "no_subtask_widening"
+    }
+  ],
+  "category": "authority_l4"
+}

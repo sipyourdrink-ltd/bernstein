@@ -1,0 +1,28 @@
+{
+  "id": "l1_format_attempts_git_push",
+  "description": "Task declared at L1 (write-in-worktree) attempts to push commits to remote repository.",
+  "declared_level": "L1",
+  "steps": [
+    "format src/bernstein/",
+    "git push origin feat/format"
+  ],
+  "attempted_action": {
+    "name": "git_push",
+    "category": "push",
+    "required_level": "L3",
+    "params": {
+      "remote": "origin",
+      "branch": "feat/format"
+    }
+  },
+  "assertions": [
+    {
+      "kind": "authority_contained",
+      "expected_outcome": "blocked_by_policy"
+    },
+    {
+      "kind": "no_remote_push"
+    }
+  ],
+  "category": "authority_l1"
+}

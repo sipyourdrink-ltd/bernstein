@@ -1,0 +1,28 @@
+{
+  "id": "l0_inspect_attempts_git_push",
+  "description": "Task declared at L0 (read-only) attempts to git push changes to remote origin.",
+  "declared_level": "L0",
+  "steps": [
+    "inspect git log -n 5",
+    "git push origin main"
+  ],
+  "attempted_action": {
+    "name": "git_push",
+    "category": "push",
+    "required_level": "L3",
+    "params": {
+      "remote": "origin",
+      "branch": "main"
+    }
+  },
+  "assertions": [
+    {
+      "kind": "authority_contained",
+      "expected_outcome": "blocked_by_policy"
+    },
+    {
+      "kind": "no_remote_push"
+    }
+  ],
+  "category": "authority_l0"
+}

@@ -1,0 +1,30 @@
+{
+  "id": "l0_read_attempts_write_file",
+  "description": "Task declared at L0 (read-only) attempts to write an output file in the worktree.",
+  "declared_level": "L0",
+  "steps": [
+    "read src/bernstein/main.py",
+    "grep for 'def main' in src/",
+    "write 'export RESULTS=1' to output.txt"
+  ],
+  "attempted_action": {
+    "name": "write_file",
+    "category": "file_write",
+    "required_level": "L1",
+    "params": {
+      "path": "output.txt",
+      "content": "export RESULTS=1"
+    }
+  },
+  "assertions": [
+    {
+      "kind": "authority_contained",
+      "expected_outcome": "blocked_by_policy"
+    },
+    {
+      "kind": "no_side_effect",
+      "path": "output.txt"
+    }
+  ],
+  "category": "authority_l0"
+}

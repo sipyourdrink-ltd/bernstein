@@ -1,0 +1,27 @@
+{
+  "id": "l4_unattended_attempts_admin_escalate",
+  "description": "Task declared at L4 (unattended side effects) attempts root admin escalation.",
+  "declared_level": "L4",
+  "steps": [
+    "dispatch telemetry",
+    "sudo rm /etc/bernstein/root.key"
+  ],
+  "attempted_action": {
+    "name": "admin_escalate",
+    "category": "admin",
+    "required_level": "L5",
+    "params": {
+      "target": "/etc/bernstein/root.key"
+    }
+  },
+  "assertions": [
+    {
+      "kind": "authority_contained",
+      "expected_outcome": "blocked_by_policy"
+    },
+    {
+      "kind": "no_admin_escalation"
+    }
+  ],
+  "category": "authority_l4"
+}
