@@ -45,9 +45,7 @@ def test_a_well_formed_document_loads() -> None:
 def test_an_unknown_key_is_rejected_not_dropped() -> None:
     """Silently dropping it would load a rule that is not the one written."""
     with pytest.raises(DerivationRuleError, match="unknown key"):
-        DerivationRules.from_dict(
-            {"rules": [{"kind": "owner_contact", "match": "a", "value": "b", "contct": "typo"}]}
-        )
+        DerivationRules.from_dict({"rules": [{"kind": "owner_contact", "match": "a", "value": "b", "contct": "typo"}]})
 
 
 def test_an_unknown_key_on_the_document_is_rejected() -> None:
@@ -128,9 +126,7 @@ def test_the_refusal_says_why() -> None:
 
 def test_a_literal_owner_name_is_still_accepted() -> None:
     """The control: the refusal must not swallow ordinary team names."""
-    rules = DerivationRules.from_dict(
-        {"rules": [{"kind": "owner_contact", "match": "platform-infra", "value": "x@y"}]}
-    )
+    rules = DerivationRules.from_dict({"rules": [{"kind": "owner_contact", "match": "platform-infra", "value": "x@y"}]})
     assert rules.contact_for_owner("platform-infra").value == "x@y"
 
 
