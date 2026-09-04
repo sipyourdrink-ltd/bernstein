@@ -49,7 +49,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from bernstein.core.receipts.protocol import register_receipt_kind
@@ -332,92 +332,6 @@ def change_receipt_payload_errors(payload: Mapping[str, Any]) -> tuple[str, ...]
             errors.extend(_change_entry_errors(index, change))
 
     return tuple(errors)
-
-
-@dataclass(frozen=True, slots=True)
-class FieldError:
-    """A field-level verification failure -- which field, and why."""
-
-    field: str
-    message: str
-
-    def __str__(self) -> str:  # pragma: no cover - display only
-        return f"{self.field}: {self.message}"
-
-
-@dataclass(frozen=True, slots=True)
-class ReceiptVerification:
-    """Outcome of :func:`verify_receipt`.
-
-    Attributes:
-        ok: True iff all verification checks passed.
-        digest: The receipt digest (sha256 of canonical bytes), empty on failure.
-        receipt: Parsed receipt dict, empty on format errors.
-        errors: Tuple of field-level errors, empty when ok is True.
-    """
-
-    ok: bool
-    digest: str = ""
-    receipt: dict[str, Any] = field(default_factory=dict)
-    errors: tuple[FieldError, ...] = ()
-
-
-def _parse_field_errors(messages: tuple[str, ...]) -> tuple[FieldError, ...]:
-    """Translate ``"field: message"`` strings into :class:`FieldError` pairs."""
-    parsed: list[FieldError] = []
-    for message in messages:
-        field_name, _, rest = message.partition(":")
-        parsed.append(FieldError(field=field_name, message=rest.strip() or message))
-    return tuple(parsed)
-
-
-def verify_receipt(data: dict[str, Any]) -> ReceiptVerification:
-    """Offline verification of a change receipt.
-
-    Checks, in order, collecting field-level errors:
-
-    1. Schema version is present and matches the expected value.
-    2. All required fields are present: plan_id, plan_digest, playbook_digest,
-       environment_digest, approver_identity, changes, final_status, timestamp.
-    3. Field types are correct (strings, lists, etc.).
-    4. Each change has required fields and valid outcome, and the optional
-       prior_value/written_value pair is well-typed when present.
-    5. final_status is one of the valid values, and the optional
-       restores_receipt_digest is a string when present.
-    6. The receipt digests correctly: the parsed content re-serialises to the
-       attested value (when a 'digest' field is present and well-typed).
-
-    Args:
-        data: Parsed JSON dict to verify (typically from a receipt file).
-
-    Returns:
-        :class:`ReceiptVerification` with ok flag and field-level errors.
-    """
-    if not isinstance(data, dict):
-        return ReceiptVerification(
-            ok=False,
-            errors=(FieldError(field="root", message=f"expected an object, got {type(data).__name__}"),),
-        )
-
-    payload = cast("dict[str, Any]", data)
-    string_errors = change_receipt_payload_errors(payload)
-    errors = _parse_field_errors(string_errors)
-    if errors:
-        return ReceiptVerification(ok=False, receipt=payload, errors=errors)
-
-    # (6) Digest consistency: the receipt must hash to its attested value.
-    # The digest is a derived property computed from the canonical bytes;
-    # callers use it to anchor the receipt in chains or to sign it in an
-    # envelope. This mirrors result_receipt_bundle.py where digest is a
-    # @property, not a stored field.
-    recomputed = _sha256_hex(canonical_bytes(payload))
-
-    return ReceiptVerification(
-        ok=True,
-        digest=recomputed,
-        receipt=payload,
-        errors=(),
-    )
 
 
 register_receipt_kind(RECEIPT_KIND, payload_check=change_receipt_payload_errors)

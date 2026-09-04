@@ -27,7 +27,7 @@ from bernstein.core.govern.restore import (
 from bernstein.core.security.change_receipt import (
     ChangeAttempt,
     ChangeReceipt,
-    verify_receipt,
+    change_receipt_payload_errors,
 )
 
 # ---------------------------------------------------------------------------
@@ -78,7 +78,7 @@ def test_apply_record_stores_prior_value_alongside_written_value(
     assert entry["written_value"] == "read-write"
 
     # The extended receipt still verifies offline.
-    assert verify_receipt(apply_receipt.to_dict()).ok is True
+    assert change_receipt_payload_errors(apply_receipt.to_dict()) == ()
 
 
 def test_receipt_without_prior_values_still_verifies() -> None:
@@ -105,7 +105,7 @@ def test_receipt_without_prior_values_still_verifies() -> None:
         change.pop("written_value")
     data.pop("restores_receipt_digest")
 
-    assert verify_receipt(data).ok is True
+    assert change_receipt_payload_errors(data) == ()
 
 
 # ---------------------------------------------------------------------------
@@ -231,7 +231,7 @@ def test_restore_links_to_original_apply_record(apply_receipt: ChangeReceipt) ->
     )
 
     assert restore_receipt.to_dict()["restores_receipt_digest"] == apply_receipt.digest
-    assert verify_receipt(restore_receipt.to_dict()).ok is True
+    assert change_receipt_payload_errors(restore_receipt.to_dict()) == ()
     assert restore_receipt.digest != apply_receipt.digest
 
 
