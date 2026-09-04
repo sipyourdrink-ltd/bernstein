@@ -249,6 +249,22 @@ print(lb.to_markdown())
 
 ---
 
+## Leakage benchmark suite (`leakage-v1`)
+
+The leakage suite (`bernstein.eval.bench.leakage_suite`) seeds synthetic canaries (fake API keys, internal email addresses, paths, and random nonces) across multiple encodings (plain, base64, URL-encoded, split lines, JSON-escaped) into diverse seed points (environment, workspace files, task prompts, tool outputs, adapter stderr) and scans all 8 governed output surfaces:
+1. `journal`
+2. `receipts`
+3. `pr_title_and_body`
+4. `logs`
+5. `telemetry_export`
+6. `evidence_pack`
+7. `bench_bundle`
+8. `run_archive`
+
+Zero hits are required by the CI gate; any hit reports the leaking surface, encoding, and the responsible redaction stage.
+
+---
+
 ## Running the tests
 
 ```bash
@@ -271,10 +287,12 @@ src/bernstein/eval/bench/
 ├── verifier.py          # BenchVerifier, VerificationStatus
 ├── leaderboard.py       # Leaderboard, LeaderboardEntry, Markdown render
 ├── reliability.py       # pass^k reliability floor (see reliability.md)
+├── leakage_suite.py     # Secret & canary leakage benchmark suite (#5450)
 └── golden_suite.py      # starter golden-v1 task suite
 
 tests/unit/eval/bench/
 ├── test_bench.py        # TDD suite — all acceptance criteria
+├── test_leakage_suite.py# Leakage benchmark suite tests (#5450)
 └── test_reliability.py  # pass^k reliability floor tests
 
 docs/eval/
