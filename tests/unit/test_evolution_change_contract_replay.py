@@ -50,7 +50,6 @@ from bernstein.evolution.types import (
     RunVerdict,
 )
 
-
 # ------------------------------------------------------------------
 # Test helpers
 # ------------------------------------------------------------------
@@ -301,9 +300,7 @@ def test_select_corpus_skips_unsealed_runs(tmp_path: Path) -> None:
         "another-sealed": "sha256:abcdef1200000000000000000000000000",
     }
     with _patch_head(mapping):
-        result = select_corpus(
-            sdd_dir=tmp_path, target_fingerprint="abcdef12", n=2
-        )
+        result = select_corpus(sdd_dir=tmp_path, target_fingerprint="abcdef12", n=2)
     assert result == ["another-sealed", "sealed-run"]
 
 
@@ -340,9 +337,7 @@ def _run_verdict(
         out_dir.mkdir(parents=True)
         for i, dec in enumerate(decisions):
             (out_dir / f"{i:06d}-dec.json").write_text(json.dumps(dec.to_dict()))
-        return replay_mod._replay_one_run(
-            run_id=run_id, lineage_root=lineage, contract=contract
-        )
+        return replay_mod._replay_one_run(run_id=run_id, lineage_root=lineage, contract=contract)
 
 
 def test_verdict_unchanged_no_decisions() -> None:
@@ -360,11 +355,7 @@ def test_verdict_changed_as_predicted() -> None:
     PREDICATE_REGISTRY.clear()
     contract = ChangeContract(
         target_fingerprint="sha256:x",
-        predicted_changes=(
-            PredictedDecisionChange(
-                subject="role:backend", action="budget", expected_verdict="allow"
-            ),
-        ),
+        predicted_changes=(PredictedDecisionChange(subject="role:backend", action="budget", expected_verdict="allow"),),
         invariants=(),
     )
     decisions = [
@@ -392,11 +383,7 @@ def test_verdict_changed_unexpectedly_wrong_verdict() -> None:
     PREDICATE_REGISTRY.clear()
     contract = ChangeContract(
         target_fingerprint="sha256:x",
-        predicted_changes=(
-            PredictedDecisionChange(
-                subject="role:backend", action="budget", expected_verdict="allow"
-            ),
-        ),
+        predicted_changes=(PredictedDecisionChange(subject="role:backend", action="budget", expected_verdict="allow"),),
         invariants=(),
     )
     decisions = [
@@ -411,14 +398,10 @@ def test_verdict_changed_unexpectedly_predicted_missing() -> None:
     PREDICATE_REGISTRY.clear()
     contract = ChangeContract(
         target_fingerprint="sha256:x",
-        predicted_changes=(
-            PredictedDecisionChange(
-                subject="role:backend", action="budget", expected_verdict="allow"
-            ),
-        ),
+        predicted_changes=(PredictedDecisionChange(subject="role:backend", action="budget", expected_verdict="allow"),),
         invariants=(),
     )
-    decisions = []  # predicted decision missing
+    decisions: list[GovernanceDecision] = []  # predicted decision missing
     rv = _run_verdict(decisions, contract)
     assert rv.verdict == ReplayVerdict.CHANGED_UNEXPECTEDLY
 
@@ -430,9 +413,7 @@ def test_verdict_invariant_violated() -> None:
     contract = ChangeContract(
         target_fingerprint="sha256:x",
         predicted_changes=(),
-        invariants=(
-            ContractInvariant(name="always-true", predicate_hash=pred_hash),
-        ),
+        invariants=(ContractInvariant(name="always-true", predicate_hash=pred_hash),),
     )
     decisions = [_make_decision("role:backend", "budget", "allow")]
     rv = _run_verdict(decisions, contract)
@@ -445,13 +426,9 @@ def test_verdict_inconclusive_unregistered_predicate() -> None:
     contract = ChangeContract(
         target_fingerprint="sha256:x",
         predicted_changes=(),
-        invariants=(
-            ContractInvariant(
-                name="unknown-invariant", predicate_hash="not-registered-hash"
-            ),
-        ),
+        invariants=(ContractInvariant(name="unknown-invariant", predicate_hash="not-registered-hash"),),
     )
-    decisions = []
+    decisions: list[GovernanceDecision] = []
     rv = _run_verdict(decisions, contract)
     # inconclusive does not dominate — check details
     assert "not registered" in rv.details
@@ -460,15 +437,11 @@ def test_verdict_inconclusive_unregistered_predicate() -> None:
 def test_verdict_inconclusive_predicate_raises() -> None:
     PREDICATE_REGISTRY.clear()
     pred_hash = "raises-hash"
-    PREDICATE_REGISTRY[pred_hash] = lambda decisions: (_ for _ in ()).throw(
-        RuntimeError("boom")
-    )
+    PREDICATE_REGISTRY[pred_hash] = lambda decisions: (_ for _ in ()).throw(RuntimeError("boom"))
     contract = ChangeContract(
         target_fingerprint="sha256:x",
         predicted_changes=(),
-        invariants=(
-            ContractInvariant(name="boom-invariant", predicate_hash=pred_hash),
-        ),
+        invariants=(ContractInvariant(name="boom-invariant", predicate_hash=pred_hash),),
     )
     decisions: list[GovernanceDecision] = []
     rv = _run_verdict(decisions, contract)
@@ -488,11 +461,7 @@ def test_replay_contract_aggregates_invariant_violated(tmp_path: Path) -> None:
 
     contract = ChangeContract(
         target_fingerprint="sha256:abcdef12",
-        predicted_changes=(
-            PredictedDecisionChange(
-                subject="role:backend", action="budget", expected_verdict="allow"
-            ),
-        ),
+        predicted_changes=(PredictedDecisionChange(subject="role:backend", action="budget", expected_verdict="allow"),),
         invariants=(ContractInvariant(name="fail", predicate_hash=pred_hash),),
         min_corpus_size=1,
     )
@@ -512,11 +481,7 @@ def test_replay_contract_aggregates_changed_unexpectedly(tmp_path: Path) -> None
 
     contract = ChangeContract(
         target_fingerprint="sha256:abcdef12",
-        predicted_changes=(
-            PredictedDecisionChange(
-                subject="role:backend", action="budget", expected_verdict="allow"
-            ),
-        ),
+        predicted_changes=(PredictedDecisionChange(subject="role:backend", action="budget", expected_verdict="allow"),),
         invariants=(),
         min_corpus_size=1,
     )
@@ -536,11 +501,7 @@ def test_replay_contract_all_changed_as_predicted(tmp_path: Path) -> None:
 
     contract = ChangeContract(
         target_fingerprint="sha256:abcdef12",
-        predicted_changes=(
-            PredictedDecisionChange(
-                subject="role:backend", action="budget", expected_verdict="allow"
-            ),
-        ),
+        predicted_changes=(PredictedDecisionChange(subject="role:backend", action="budget", expected_verdict="allow"),),
         invariants=(),
         min_corpus_size=1,
     )
@@ -553,9 +514,7 @@ def test_replay_contract_all_changed_as_predicted(tmp_path: Path) -> None:
     dec_dir.mkdir(parents=True)
     dec = _make_decision("role:backend", "budget", "allow")
     # Filename pattern: {seq:06d}-{safe_subject}-{hash_frag}.json
-    (dec_dir / "000000-role_backend-abc123.json").write_text(
-        json.dumps(dec.to_dict())
-    )
+    (dec_dir / "000000-role_backend-abc123.json").write_text(json.dumps(dec.to_dict()))
 
     with _patch_head({"run-1": "sha256:abcdef1200000000000000000000000000"}):
         result = replay_contract(sdd_dir=tmp_path, contract=contract)
@@ -603,7 +562,7 @@ def test_receipt_body_contains_expected_keys() -> None:
                 verdict=ReplayVerdict.UNCHANGED,
                 changed_subjects=[],
                 violated_invariants=[],
-                details="ok",
+                details="all predictions matched",
             )
         ],
         thin_corpus=False,
@@ -651,7 +610,7 @@ def test_write_verdict_receipt_writes_valid_json(tmp_path: Path) -> None:
                 verdict=ReplayVerdict.UNCHANGED,
                 changed_subjects=[],
                 violated_invariants=[],
-                details="ok",
+                details="all predictions matched",
             )
         ],
         thin_corpus=False,
@@ -665,6 +624,7 @@ def test_write_verdict_receipt_writes_valid_json(tmp_path: Path) -> None:
 
 
 def test_write_verdict_receipt_roundtrips_through_verify(tmp_path: Path) -> None:
+    """write_verdict_receipt output passes verify when lineage matches."""
     PREDICATE_REGISTRY.clear()
     contract = ChangeContract(
         target_fingerprint="sha256:abcdef12",
@@ -672,33 +632,20 @@ def test_write_verdict_receipt_roundtrips_through_verify(tmp_path: Path) -> None
         invariants=(),
         min_corpus_size=1,
     )
-    result = ReplayServiceResult(
-        verdict=ReplayVerdict.UNCHANGED,
-        contract_fingerprint=contract_fingerprint(contract),
-        selected_run_ids=["run-1"],
-        run_verdicts=[
-            RunVerdict(
-                run_id="run-1",
-                verdict=ReplayVerdict.UNCHANGED,
-                changed_subjects=[],
-                violated_invariants=[],
-                details="ok",
-            )
-        ],
-        thin_corpus=False,
-    )
-    out = tmp_path / "receipt.json"
-    write_verdict_receipt(result=result, contract=contract, out_path=out)
 
-    # Seed the lineage so verify can replay. The contract has no
-    # predicted_changes, so empty decisions dirs match the receipt's
-    # UNCHANGED verdict.
     lineage = tmp_path / "lineage"
     lineage.mkdir()
     run_dir = lineage / "run-1"
     run_dir.mkdir()
-    dec_dir = run_dir / "decisions"
-    dec_dir.mkdir()
+    dec_dir = decisions_dir(lineage, "run-1")
+    dec_dir.mkdir(parents=True)
+
+    # Replay first so the result details match the verify recompute
+    with _patch_head({"run-1": "sha256:abcdef1200000000000000000000000000"}):
+        result = replay_contract(sdd_dir=tmp_path, contract=contract)
+
+    out = tmp_path / "receipt.json"
+    write_verdict_receipt(result=result, contract=contract, out_path=out)
 
     with _patch_head({"run-1": "sha256:abcdef1200000000000000000000000000"}):
         ok = verify_verdict_receipt(receipt_path=out, lineage_root=lineage)
@@ -722,9 +669,7 @@ def test_verify_receipt_invalid_json(tmp_path: Path) -> None:
 
 def test_verify_receipt_missing_contract_canonical(tmp_path: Path) -> None:
     receipt = tmp_path / "missing_canonical.json"
-    receipt.write_text(
-        json.dumps({"service_receipt_hash": "x" * 64}), encoding="utf-8"
-    )
+    receipt.write_text(json.dumps({"service_receipt_hash": "x" * 64}), encoding="utf-8")
     lineage = tmp_path / "lineage"
     lineage.mkdir()
     with pytest.raises(ReceiptMismatch) as exc_info:
@@ -735,10 +680,12 @@ def test_verify_receipt_missing_contract_canonical(tmp_path: Path) -> None:
 def test_verify_receipt_bad_hex_raises(tmp_path: Path) -> None:
     receipt = tmp_path / "bad_hex.json"
     receipt.write_text(
-        json.dumps({
-            "service_receipt_hash": "x" * 64,
-            "contract_canonical": "not-hex-xyz",
-        }),
+        json.dumps(
+            {
+                "service_receipt_hash": "x" * 64,
+                "contract_canonical": "not-hex-xyz",
+            }
+        ),
         encoding="utf-8",
     )
     lineage = tmp_path / "lineage"
@@ -774,7 +721,7 @@ def test_verify_receipt_fingerprint_mismatch(tmp_path: Path) -> None:
                 verdict=ReplayVerdict.UNCHANGED,
                 changed_subjects=[],
                 violated_invariants=[],
-                details="ok",
+                details="all predictions matched",
             )
         ],
         thin_corpus=False,
@@ -813,7 +760,7 @@ def test_verify_receipt_selected_run_ids_mismatch(tmp_path: Path) -> None:
                 verdict=ReplayVerdict.UNCHANGED,
                 changed_subjects=[],
                 violated_invariants=[],
-                details="ok",
+                details="all predictions matched",
             )
         ],
         thin_corpus=False,
@@ -845,7 +792,7 @@ def test_verify_receipt_service_receipt_hash_tampered(tmp_path: Path) -> None:
                 verdict=ReplayVerdict.UNCHANGED,
                 changed_subjects=[],
                 violated_invariants=[],
-                details="ok",
+                details="all predictions matched",
             )
         ],
         thin_corpus=False,
