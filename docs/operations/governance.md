@@ -147,11 +147,11 @@ decision is also mirrored into the HMAC audit chain as a `governance.decision`
 event, so an operator can confirm from the chain alone that a decision bound the
 claimed inputs to a named spine entry.
 
-## `govern audit`: what this install can and cannot show
+## `govern audit-compliance`: what this install can and cannot show
 
 ```
-bernstein govern audit [--workdir .] [--only CMP] [--skip CMP-014]
-                       [--profile soc2] [--list] [--json-output]
+bernstein govern audit-compliance [--workdir .] [--only CMP] [--skip CMP-014]
+                                  [--profile soc2] [--list] [--json-output]
 ```
 
 Runs every registered check over the install and reports one finding per check.
@@ -181,10 +181,11 @@ There is no score and no grade. The report ends in four counts —
 `measured pass`, `measured fail`, `declared`, `not measurable` — each against
 the number of checks that ran.
 
-`govern audit` and `compliance check` read the install through one function
-(`policy_input_from_project`), so the snapshot the policy engine evaluates and
-the findings the audit reports are two projections of one read rather than two
-independent opinions about the same directory.
+`govern audit-compliance` and `compliance check` both delegate to the same
+`check_*` functions in `core/security/compliance_library.py`, so the snapshot
+the policy engine evaluates and the findings the audit reports cannot re-decide
+a control the other would deny — the only way the two surfaces can disagree
+is by misreading the same library result.
 
 Inventory topology is `bernstein govern inventory --render`.
 See [govern inventory --render](govern-inventory.md).
@@ -236,7 +237,7 @@ Exit codes: `0` no drift, `1` unreadable desired state, `2` drift.
 
 ## Skip vs. suppress
 
-`bernstein govern audit` is the compliance check set above. The check
+`bernstein govern audit-compliance` is the compliance check set above. The check
 contract and ID scheme are defined in issue #5072. Two mechanisms remove a
 finding from a clean report, but they are different operations with different
 governance semantics and different records:

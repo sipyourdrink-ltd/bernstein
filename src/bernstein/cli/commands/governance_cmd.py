@@ -84,7 +84,7 @@ def govern_group() -> None:
       bernstein govern ingest --spans spans.json --source otel-collector-prod
       bernstein govern posture [--workdir w] [--json-output]
       bernstein govern inventory --render mermaid|dot --store PATH
-      bernstein govern audit [--workdir .] [--only CMP] [--skip ID] [--profile soc2]
+      bernstein govern audit-compliance [--workdir .] [--only CMP] [--skip ID] [--profile soc2]
       bernstein govern audit-keys
     """
 
@@ -789,7 +789,7 @@ def governance_ingest_cmd(
     console.print(f"  [dim]{receipt.coverage_detail}[/dim]")
 
 
-@govern_group.command("audit")
+@govern_group.command("audit-compliance")
 @click.option(
     "--workdir",
     "-w",
@@ -873,7 +873,7 @@ def govern_audit_cmd(
         )
         return
 
-    click.echo(f"govern audit -- area {CMP_AREA}, {len(outcomes)} checks over {workdir}")
+    click.echo(f"govern audit-compliance -- area {CMP_AREA}, {len(outcomes)} checks over {workdir}")
     click.echo("")
     for outcome in outcomes:
         marker = "*" if outcome.check_id in required else " "
@@ -922,13 +922,7 @@ def _print_audit_catalogue(
         click.echo(f"  {marker}{spec.check_id}  {spec.area:<12}  {spec.asserts}")
 
 
-@govern_group.command("audit-keys")
-def governance_audit_cmd() -> None:
-    """Check whether verifier keys are stale relative to the install identity.
-
-    Exit codes: 0 = up to date or no verifier files, 1 = keystore or verifier
-    file unreadable, 2 = stale verifier key detected.
-    """
+def _run_verifier_key_staleness_check() -> None:
     from bernstein.core.govern.audit_sweep import CheckVerdict, check_verifier_key_staleness
     from bernstein.core.identity.http_signing import default_keystore
 
@@ -947,6 +941,32 @@ def governance_audit_cmd() -> None:
             raise SystemExit(2)
 
     click.echo("verifier keys up to date")
+
+
+@govern_group.command("audit")
+def governance_audit_cmd() -> None:
+    """[Deprecated] Use ``bernstein govern audit-keys`` instead.
+
+    The compliance policy library moved to ``bernstein govern audit-compliance``
+    in #5075; this alias preserves the prior verifier-key staleness behaviour
+    for one release and prints a deprecation notice on every invocation.
+    """
+    click.echo(
+        "WARNING: 'bernstein govern audit' is deprecated and will be removed in v3.0.0 (#5075): "
+        "use 'bernstein govern audit-keys' instead.",
+        err=True,
+    )
+    _run_verifier_key_staleness_check()
+
+
+@govern_group.command("audit-keys")
+def governance_audit_keys_cmd() -> None:
+    """Check whether verifier keys are stale relative to the install identity.
+
+    Exit codes: 0 = up to date or no verifier files, 1 = keystore or verifier
+    file unreadable, 2 = stale verifier key detected.
+    """
+    _run_verifier_key_staleness_check()
 
 
 # Desired-state reconcile diff over the governed surface (#5085). Registered

@@ -10,13 +10,15 @@ them can therefore describe one install differently -- ``compliance check`` with
 no flags reports every control failing on a project whose configuration the
 policy library reads as satisfied.
 
-This module is the routing layer. :func:`observe_compliance_controls` reads the
-install once; :func:`run_compliance_checks` projects that observation into the
-:class:`~bernstein.core.govern.audit_sweep.CheckOutcome` contract under stable
-``CMP-nnn`` ids, and :func:`policy_input_from_project` projects the same
-observation into the snapshot the policy engine evaluates. Because both are
-projections of one read, the two surfaces cannot contradict each other about an
-install.
+This module is the routing layer. :func:`observe_compliance_controls` and
+:func:`run_compliance_checks` both delegate to the same ``check_*`` functions
+in ``core/security/compliance_library.py``; :func:`policy_input_from_project`
+calls :func:`observe_compliance_controls` and shapes the result into the
+:class:`~bernstein.core.security.compliance_policies.PolicyInput` snapshot
+the policy engine evaluates. Because the policy snapshot and the audit
+findings draw from the same library functions, neither surface can re-decide
+a control the other would deny: the only way the two surfaces can disagree
+is by misreading the same library result.
 
 The verdict a check earns follows from what its implementation reads, not from
 what its title claims:
@@ -334,11 +336,10 @@ def _library_result(spec: ComplianceCheckSpec, project_root: Path) -> Any:
 
 
 def observe_compliance_controls(project_root: Path) -> dict[str, bool]:
-    """Read *project_root* once and return ``check_id -> satisfied``.
+    """Evaluate every compliance check and return ``check_id -> satisfied``.
 
-    This is the single read every surface projects. The booleans are exactly
-    what ``compliance_library``'s check functions concluded; this module does
-    not re-decide them.
+    The booleans are exactly what ``compliance_library``'s check functions
+    concluded; this module does not re-decide them.
     """
     return {spec.check_id: bool(_library_result(spec, project_root).passed) for spec in _SPECS}
 
