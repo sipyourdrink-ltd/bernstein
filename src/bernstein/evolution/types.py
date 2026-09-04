@@ -17,6 +17,13 @@ class RiskLevel(Enum):
     L3_STRUCTURAL = "structural"  # Python code, data models, core logic
 
 
+class EffectDirection(Enum):
+    """Direction of a predicted metric effect."""
+
+    INCREASING = "increasing"
+    DECREASING = "decreasing"
+
+
 class ProposalStatus(Enum):
     """Lifecycle state of an upgrade proposal."""
 
@@ -34,6 +41,155 @@ class CircuitState(Enum):
     CLOSED = "closed"  # Normal operation, evolution allowed
     OPEN = "open"  # Evolution halted, cooling off
     HALF_OPEN = "half_open"  # Testing single low-risk change
+
+
+@dataclass
+class PredictedEffect:
+    """Structured metric + direction for a predicted change effect."""
+
+    metric: str
+    direction: EffectDirection
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"metric": self.metric, "direction": self.direction.value}
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> PredictedEffect:
+        return cls(
+            metric=d["metric"],
+            direction=EffectDirection(d["direction"]),
+        )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.metric, str):
+            raise TypeError(
+                f"PredictedEffect.metric must be str, got {type(self.metric).__name__}"
+            )
+        if not isinstance(self.direction, EffectDirection):
+            raise TypeError(
+                f"PredictedEffect.direction must be EffectDirection, got {type(self.direction).__name__}"
+            )
+
+
+@dataclass
+class ChangeFalsifier:
+    """Describes which recorded history a prediction should be checked against."""
+
+    history_ref: str
+    expected_verdicts: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "history_ref": self.history_ref,
+            "expected_verdicts": self.expected_verdicts,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> ChangeFalsifier:
+        return cls(
+            history_ref=d["history_ref"],
+            expected_verdicts=d["expected_verdicts"],
+        )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.history_ref, str):
+            raise TypeError(
+                f"ChangeFalsifier.history_ref must be str, got {type(self.history_ref).__name__}"
+            )
+        if not isinstance(self.expected_verdicts, list):
+            raise TypeError(
+                f"ChangeFalsifier.expected_verdicts must be list, got {type(self.expected_verdicts).__name__}"
+            )
+
+
+@dataclass
+class ChangeRollback:
+    """Describes the inverse change for rollback purposes."""
+
+    files_to_restore: list[str]
+    change_description: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "files_to_restore": self.files_to_restore,
+            "change_description": self.change_description,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> ChangeRollback:
+        return cls(
+            files_to_restore=d["files_to_restore"],
+            change_description=d["change_description"],
+        )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.files_to_restore, list):
+            raise TypeError(
+                f"ChangeRollback.files_to_restore must be list, got {type(self.files_to_restore).__name__}"
+            )
+        if not isinstance(self.change_description, str):
+            raise TypeError(
+                f"ChangeRollback.change_description must be str, got {type(self.change_description).__name__}"
+            )
+
+
+@dataclass
+class ChangeContract:
+    """Typed change contract attached to an UpgradeProposal."""
+
+    component: str
+    target_fingerprint: str
+    predicted_effect: PredictedEffect
+    invariants: list[str]
+    falsifier: ChangeFalsifier
+    rollback: ChangeRollback
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "component": self.component,
+            "target_fingerprint": self.target_fingerprint,
+            "predicted_effect": self.predicted_effect.to_dict(),
+            "invariants": self.invariants,
+            "falsifier": self.falsifier.to_dict(),
+            "rollback": self.rollback.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> ChangeContract:
+        return cls(
+            component=d["component"],
+            target_fingerprint=d["target_fingerprint"],
+            predicted_effect=PredictedEffect.from_dict(d["predicted_effect"]),
+            invariants=d["invariants"],
+            falsifier=ChangeFalsifier.from_dict(d["falsifier"]),
+            rollback=ChangeRollback.from_dict(d["rollback"]),
+        )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.component, str):
+            raise TypeError(
+                f"ChangeContract.component must be str, got {type(self.component).__name__}"
+            )
+        if not isinstance(self.target_fingerprint, str):
+            raise TypeError(
+                f"ChangeContract.target_fingerprint must be str, got {type(self.target_fingerprint).__name__}"
+            )
+        if not isinstance(self.predicted_effect, PredictedEffect):
+            raise TypeError(
+                f"ChangeContract.predicted_effect must be PredictedEffect, got {type(self.predicted_effect).__name__}"
+            )
+        if not isinstance(self.invariants, list):
+            raise TypeError(
+                f"ChangeContract.invariants must be list, got {type(self.invariants).__name__}"
+            )
+        if not isinstance(self.falsifier, ChangeFalsifier):
+            raise TypeError(
+                f"ChangeContract.falsifier must be ChangeFalsifier, got {type(self.falsifier).__name__}"
+            )
+        if not isinstance(self.rollback, ChangeRollback):
+            raise TypeError(
+                f"ChangeContract.rollback must be ChangeRollback, got {type(self.rollback).__name__}"
+            )
 
 
 @dataclass
@@ -102,6 +258,49 @@ class UpgradeProposal:
     applied_at: float | None = None
     sandbox_result: dict[str, Any] | None = None  # metrics from sandbox run
     reviewer: str | None = None  # human reviewer if applicable
+    contract: ChangeContract | None = None  # typed change contract (optional)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+            "risk_level": self.risk_level.value,
+            "target_files": self.target_files,
+            "diff": self.diff,
+            "rationale": self.rationale,
+            "expected_impact": self.expected_impact,
+            "confidence": self.confidence,
+            "status": self.status.value,
+            "created_at": self.created_at,
+            "evaluated_at": self.evaluated_at,
+            "applied_at": self.applied_at,
+            "sandbox_result": self.sandbox_result,
+            "reviewer": self.reviewer,
+            "contract": self.contract.to_dict() if self.contract is not None else None,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> UpgradeProposal:
+        contract_raw = d.get("contract")
+        return cls(
+            id=d["id"],
+            title=d["title"],
+            description=d["description"],
+            risk_level=RiskLevel(d["risk_level"]),
+            target_files=d["target_files"],
+            diff=d["diff"],
+            rationale=d["rationale"],
+            expected_impact=d["expected_impact"],
+            confidence=d["confidence"],
+            status=ProposalStatus(d.get("status", "pending")),
+            created_at=d.get("created_at", time.time()),
+            evaluated_at=d.get("evaluated_at"),
+            applied_at=d.get("applied_at"),
+            sandbox_result=d.get("sandbox_result"),
+            reviewer=d.get("reviewer"),
+            contract=ChangeContract.from_dict(contract_raw) if contract_raw is not None else None,
+        )
 
 
 @dataclass
