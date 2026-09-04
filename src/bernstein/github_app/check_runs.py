@@ -31,6 +31,8 @@ logger = logging.getLogger(__name__)
 _CHECK_RUN_NAME = "bernstein / agent verification"
 # Check run name for volunteer receipt verification
 _VERIFICATION_CHECK_RUN_NAME = "bernstein / volunteer receipt verification"
+# Check run name for benchmark scorecard evaluation (#5458)
+_BENCH_CHECK_RUN_NAME = "bernstein / bench scorecard"
 
 
 @dataclass
@@ -245,6 +247,47 @@ class CheckRunClient:
             check_run_id=result.check_run_id,
             html_url=result.html_url,
         )
+
+    def create_bench_check_run(
+        self,
+        head_sha: str,
+        summary: str,
+        scorecard_table: str,
+        conclusion: str = "neutral",
+        details_url: str = "",
+    ) -> CheckRunResult | None:
+        """Create a completed check run for benchmark scorecard results.
+
+        Args:
+            head_sha: Git SHA of the commit being checked.
+            summary: Short summary text.
+            scorecard_table: Markdown scorecard table.
+            conclusion: One of ``"success"``, ``"failure"``, ``"neutral"``.
+            details_url: Optional URL linking back to the dashboard.
+
+        Returns:
+            ``CheckRunResult`` on success, ``None`` on error.
+        """
+        if not self._configured:
+            logger.debug("CheckRunClient not configured - skipping bench check run create")
+            return None
+
+        body: dict[str, Any] = {
+            "name": _BENCH_CHECK_RUN_NAME,
+            "head_sha": head_sha,
+            "status": "completed",
+            "conclusion": conclusion,
+            "completed_at": _iso_now(),
+            "output": {
+                "title": f"Bench Scorecard: {conclusion}",
+                "summary": summary,
+                "text": scorecard_table,
+            },
+        }
+        if details_url:
+            body["details_url"] = details_url
+
+        return self._api_post(f"/repos/{self._repo}/check-runs", body)
 
     def _api_post(self, path: str, body: dict[str, Any]) -> CheckRunResult | None:
         """POST to a GitHub API path and return the parsed result."""

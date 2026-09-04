@@ -8,7 +8,9 @@ Registered in src/bernstein/cli/main.py alongside every other subcommand:
 
 This exposes:
     bernstein bench run <suite> [--out <path>] [--scheduler <name>] [--stub-signer]
-                        [--reliability K]
+                        [--reliability K] [--ci] [--sarif-out <path>]
+                        [--baseline <path>] [--regression-threshold <float>]
+                        [--repo <slug>] [--head-sha <sha>]
     bernstein bench verify <bundle> [--suite <name>]
     bernstein bench reliability-verify <receipt> [--suite <name>]
     bernstein bench reliability-check <receipt> [--suite <name>] [--task <id>] [--attempt N]
@@ -19,6 +21,7 @@ Also registered as a standalone script in pyproject.toml:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -96,7 +99,52 @@ def bench_group() -> None:
         "pass^k reliability receipt instead of a submission bundle."
     ),
 )
-def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliability_k: int | None) -> None:
+@click.option(
+    "--ci",
+    is_flag=True,
+    default=False,
+    help="Run in CI mode: output SARIF, evaluate scorecard against baseline, and check regression.",
+)
+@click.option(
+    "--sarif-out",
+    default=None,
+    help="Output file path for SARIF v2.1.0 diagnostic report.",
+)
+@click.option(
+    "--baseline",
+    default=None,
+    help="Path to baseline submission bundle .json for delta scorecard comparison.",
+)
+@click.option(
+    "--regression-threshold",
+    type=float,
+    default=0.0,
+    show_default=True,
+    help="Allowed pass rate drop before CI fails (e.g. 0.05 for 5% tolerance).",
+)
+@click.option(
+    "--repo",
+    default="",
+    help="GitHub repository slug (owner/repo) to publish check run to.",
+)
+@click.option(
+    "--head-sha",
+    default="",
+    help="Commit SHA to attach check run to.",
+)
+def bench_run(
+    suite: str,
+    out: str,
+    scheduler: str,
+    stub_signer: bool,
+    reliability_k: int | None,
+    ci: bool,
+    sarif_out: str | None,
+    baseline: str | None,
+    regression_threshold: float,
+    repo: str,
+    head_sha: str,
+) -> None:
     """Execute a suite and emit a signed submission bundle.
 
     SUITE is a built-in suite name (e.g. golden-v1) or a path to a .json
@@ -107,6 +155,7 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
     reliability receipt reporting pass@1 (any attempt passed) and pass^k
     (all K attempts passed — the headline floor).
     """
+    from bernstein.eval.bench.bundle import SubmissionBundle
     from bernstein.eval.bench.runner import BenchRunner, MockReplayAdapter
     from bernstein.eval.bench.signer import AgentCardSigner, StubSigner
 
@@ -141,6 +190,44 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
     click.echo(f"Bundle hash : {bundle.bundle_hash()}")
     click.echo(f"Signed by   : {bundle.signer_fingerprint or '(unsigned)'}")
     click.echo(f"\nBundle written to: {out_path}")
+
+    if ci or sarif_out:
+        from bernstein.eval.bench.ci import evaluate_ci_scorecard, post_bench_check_run
+        from bernstein.eval.bench.sarif import bundle_to_sarif
+        from bernstein.eval.bench.verifier import BenchVerifier
+        from bernstein.github_app.check_runs import CheckRunClient
+
+        sarif_data = bundle_to_sarif(bundle, suite_obj)
+        sarif_target = Path(sarif_out) if sarif_out else out_path.with_suffix(".sarif")
+        sarif_target.parent.mkdir(parents=True, exist_ok=True)
+        sarif_target.write_text(json.dumps(sarif_data, indent=2), encoding="utf-8")
+        click.echo(f"SARIF report written to: {sarif_target}")
+
+        baseline_bundle = None
+        if baseline:
+            base_path = Path(baseline)
+            if base_path.exists():
+                try:
+                    baseline_bundle = SubmissionBundle.load(base_path)
+                except Exception as exc:
+                    click.echo(f"Warning: Failed to load baseline bundle ({exc})")
+
+        verifier = BenchVerifier(suite=suite_obj, adapter=adapter)
+        scorecard = evaluate_ci_scorecard(
+            bundle=bundle,
+            suite=suite_obj,
+            baseline_bundle=baseline_bundle,
+            verifier=verifier,
+            regression_threshold=regression_threshold,
+        )
+        click.echo("\n" + scorecard.to_markdown())
+
+        if repo and head_sha:
+            client = CheckRunClient(repo=repo)
+            post_bench_check_run(scorecard=scorecard, client=client, head_sha=head_sha)
+
+        if ci and scorecard.conclusion == "failure":
+            sys.exit(1)
 
 
 # ---------------------------------------------------------------------------

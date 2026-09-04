@@ -15,6 +15,7 @@ machine), `bernstein-bench` is designed so that:
 2. **The posted score is recomputable** by anyone from the embedded run receipts.
 3. **A coordinator that puts a model in the scheduling loop cannot pass** the
    byte-identical reproducibility gate by construction.
+4. **CI surface & Code Scanning**: SARIF v2.1.0 generation, PR check run scorecards, and delta comparison against signed baselines.
 
 The primary artefact is not a leaderboard row — it is a **submission bundle** whose
 score is recomputable from the replayable run receipts it embeds.
@@ -24,7 +25,7 @@ score is recomputable from the replayable run receipts it embeds.
 ## Architecture
 
 ```
-bernstein bench run <suite>
+bernstein bench run <suite> [--ci] [--sarif-out <path>] [--baseline <path>]
         │
         ▼
  ┌─────────────┐     per-task     ┌──────────────────┐
@@ -36,15 +37,16 @@ bernstein bench run <suite>
                                   │  scheduler_cfg}  │
                                   └──────┬───────────┘
                                          │
-                                         ▼
-                              bernstein bench verify
-                                         │
-                              MATCH  ────┤
-                            DIVERGED ────┘
-                                         │
-                                         ▼
-                                    Leaderboard
-                              (only verified bundles)
+                 ┌───────────────────────┼────────────────────────┐
+                 ▼                       ▼                        ▼
+       bernstein bench verify      SARIF Diagnostics       GitHub Check Run
+                 │                 (SARIF v2.1.0 report)   (Scorecard Table)
+        MATCH  ──┤
+      DIVERGED ──┘
+                 │
+                 ▼
+            Leaderboard
+      (only verified bundles)
 ```
 
 ### Key invariants
@@ -55,6 +57,8 @@ bernstein bench run <suite>
 | Score = replay | `bench verify` replays every receipt offline and re-derives the verdict; mismatch → rejected |
 | No fabrication | Flipping a verdict without a matching receipt fails verification at the diverging task |
 | No missing receipts | An empty/absent receipt fails the entire bundle |
+| Baseline integrity | Delta comparison requires a verified signed baseline; missing or unverifiable baseline yields a neutral conclusion |
+| Regression gating | `--ci` fails on regressions exceeding `--regression-threshold`; compatible with branch protection |
 | Leaderboard is honest | Only `bench verify`-passing bundles are projected into the table |
 
 ---
@@ -66,6 +70,9 @@ bernstein bench run <suite>
 ```bash
 # Run the canonical golden-v1 suite and emit a submission bundle
 bernstein bench run golden-v1 --out my-bundle.json
+
+# Run in CI mode with SARIF output and baseline comparison
+bernstein bench run golden-v1 --ci --sarif-out results.sarif --baseline main-bundle.json
 ```
 
 This executes every task in `golden-v1` via the real adapter, collects
@@ -100,51 +107,38 @@ suite_hash  : a7e4b82f…
 overall     : MATCH
 
   ✓ file_io_read_write                       MATCH
-  ✓ refactor_rename_symbol                   MATCH
-  ✓ test_generation_happy_path               MATCH
-  ✓ lint_fix_unused_import                   MATCH
-  ✓ doc_update_docstring                     MATCH
+  ✓ bash_command_pipeline                    MATCH
 ```
-
-### 3. Submit to the leaderboard
-
-```bash
-bernstein bench submit my-bundle.json
-```
-
-The submission gate runs `bench verify` first.  A bundle whose replayed
-runs do not reproduce the claimed per-task outcomes is **rejected** before
-any leaderboard entry is written.
-
-The leaderboard (`docs/eval/leaderboard.md`) lists only verified bundles,
-each row linking its bundle hash so anyone can re-verify.
 
 ---
 
-## Reliability floor (`--reliability k`)
+## CI Scorecard & Check Run
 
-A submission bundle reports a single fixed-coordination run per task. To
-report a **floor** instead of a ceiling — does every task pass *all* of
-`k` attempts under byte-identical coordination, not just one? — run:
+In continuous integration environments, `bernstein bench run --ci` compares the
+current run against the baseline bundle from the default branch.
 
 ```bash
-bernstein bench run golden-v1 --reliability 5 --out reliability.json
-bernstein bench reliability-verify reliability.json
-bernstein bench reliability-check reliability.json
+bernstein bench run golden-v1 \
+  --ci \
+  --sarif-out sarif.json \
+  --baseline baseline-bundle.json \
+  --repo owner/repo \
+  --head-sha $GITHUB_SHA
 ```
 
-This emits a signed reliability receipt reporting `pass@1` (any attempt
-passed) and `pass^k` (all `k` attempts passed, the headline floor), with
-all `k` per-attempt run receipts embedded so the floor is recomputable
-offline. `bernstein eval --reliability k` is a thin alias for the same
-run path — identical receipt, verified with the same two verbs above.
-Full details: [reliability.md](reliability.md).
+### Scorecard Table Format
+
+| Suite | Pass Rate | Score | Baseline Pass Rate | Delta | Bundle Hash | Status |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| `golden-v1` | 100.0% | 1.00 | 100.0% | +0.0% | `3f9a2c1d4e5f` | ✓ PASS |
+
+- **Success**: Verified baseline exists and pass rate meets/exceeds baseline within tolerance.
+- **Failure**: Regression exceeds `--regression-threshold`.
+- **Neutral**: Missing or unverified baseline bundle.
 
 ---
 
 ## Suite format
-
-Suites are content-addressed JSON files:
 
 ```json
 {
@@ -200,8 +194,8 @@ Two runners on the same `suite_hash` provably ran the same task set.
 }
 ```
 
-The `receipt` is the replay substrate.  The `score` only means something
-because the receipt exists to replay it.  Removing or corrupting the receipt
+The `receipt` is the replay substrate. The `score` only means something
+because the receipt exists to replay it. Removing or corrupting the receipt
 makes the entire bundle fail verification.
 
 ---
@@ -214,6 +208,8 @@ from bernstein.eval.bench import (
     BenchVerifier,
     MockReplayAdapter,
     build_golden_suite_v1,
+    bundle_to_sarif,
+    evaluate_ci_scorecard,
     Leaderboard,
     LeaderboardEntry,
 )
@@ -223,6 +219,18 @@ suite = build_golden_suite_v1()
 adapter = MockReplayAdapter()
 runner = BenchRunner(suite=suite, adapter=adapter, scheduler_config={})
 bundle = runner.run()
+
+# Generate SARIF report
+sarif_dict = bundle_to_sarif(bundle, suite)
+
+# Evaluate CI scorecard against baseline
+scorecard = evaluate_ci_scorecard(
+    bundle=bundle,
+    suite=suite,
+    baseline_bundle=None,
+    regression_threshold=0.0,
+)
+print(scorecard.to_markdown())
 
 # Verify offline
 verifier = BenchVerifier(suite=suite, adapter=adapter)
@@ -269,12 +277,15 @@ src/bernstein/eval/bench/
 ├── bundle.py            # SubmissionBundle, TaskResult
 ├── runner.py            # BenchRunner, MockReplayAdapter, StochasticMockReplayAdapter
 ├── verifier.py          # BenchVerifier, VerificationStatus
+├── sarif.py             # bundle_to_sarif (SARIF v2.1.0 diagnostics)
+├── ci.py                # BenchScorecard, evaluate_ci_scorecard, post_bench_check_run
 ├── leaderboard.py       # Leaderboard, LeaderboardEntry, Markdown render
 ├── reliability.py       # pass^k reliability floor (see reliability.md)
 └── golden_suite.py      # starter golden-v1 task suite
 
 tests/unit/eval/bench/
 ├── test_bench.py        # TDD suite — all acceptance criteria
+├── test_bench_ci.py     # CI surface, SARIF & scorecard tests (#5458)
 └── test_reliability.py  # pass^k reliability floor tests
 
 docs/eval/
@@ -309,11 +320,14 @@ the strip-the-substrate failure contract.
 
 ---
 
-## Acceptance criteria (from issue #2932)
+## Acceptance criteria (from issue #2932 & #5458)
 
 - [x] `bernstein bench run <suite>` produces a signed submission bundle; two runs of the same suite on the same inputs produce byte-identical per-task receipts (empirical determinism).
 - [x] `bernstein bench verify <bundle>` recomputes every task's score by replaying the embedded receipts offline, with no access to the submitter's machine, and reports MATCH or the exact task whose replay diverged.
 - [x] A bundle with a fabricated score (verdict flipped without a matching replayable run) is rejected at the diverging task; removing or corrupting a task's receipt makes the whole bundle fail verification.
 - [x] The suite is content-addressed: two runners on the same suite hash provably ran the same task set; a changed task changes the suite hash.
+- [x] SARIF v2.1.0 output generated per failed task for code scanning integrations.
+- [x] Check run scorecard table comparing pass rate delta against signed verified baseline.
+- [x] Baseline verification: neutral conclusion on unverified or missing baseline, failure on regression.
 - [x] The leaderboard projection lists only `bench verify`-passing bundles, each row linking its bundle hash.
 - [x] Docs shipped in the same PR.
