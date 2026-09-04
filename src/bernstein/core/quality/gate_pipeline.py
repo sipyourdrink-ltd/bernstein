@@ -201,10 +201,10 @@ class GateResult:
         reason: Closed-set reason code for an ``"inconclusive"`` status;
             ``None`` for every other status.
         scope: Attestable statement of what the gate actually exercised
-            and what it could not. Expected for every result whose
-            status is not ``"skipped"`` or ``"bypassed"``; call sites
-            are being migrated in a follow-up slice (see
-            :class:`VerificationScope`, issue #5397).
+            and what it could not. Required for every result whose
+            status is not ``"skipped"`` or ``"bypassed"`` (those did not
+            evaluate anything). Enforced by ``__post_init__``; see
+            :class:`VerificationScope` (issue #5397).
     """
 
     name: str
@@ -219,7 +219,7 @@ class GateResult:
     scope: VerificationScope | None = None
 
     def __post_init__(self) -> None:
-        """Enforce the ``status ↔ reason`` invariant from the docstring."""
+        """Enforce the ``status ↔ reason`` and ``scope`` invariants from the docstring."""
         if self.status == "inconclusive":
             if self.reason is None:
                 raise ValueError(
@@ -237,6 +237,12 @@ class GateResult:
                 f"GateResult.reason={self.reason!r} is only valid with "
                 f"status='inconclusive'; got status={self.status!r} "
                 f"(name={self.name!r})"
+            )
+        if self.status not in {"skipped", "bypassed"} and self.scope is None:
+            raise ValueError(
+                f"GateResult.status={self.status!r} requires a VerificationScope "
+                f"(scope=None, name={self.name!r}). Skipped and bypassed "
+                f"results may omit scope because they did not evaluate anything."
             )
 
 
