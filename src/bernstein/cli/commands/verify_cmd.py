@@ -1590,28 +1590,28 @@ def verify_coverage_cmd(head_sha: str, workdir: str, as_json: bool) -> None:
     reasons: dict[str, str] = {}
 
     if not receipt.gate_results_hash:
-        remainder["gate_results"] = "unverified"
-        reasons["gate_results"] = "no gate results hash recorded"
+        remainder["gate_results_hash"] = "unverified"
+        reasons["gate_results_hash"] = "no gate results hash recorded"
     else:
-        remainder["gate_results"] = "verified"
+        remainder["gate_results_hash"] = "verified"
 
     if not receipt.ruleset_hash:
-        remainder["ruleset"] = "skipped"
-        reasons["ruleset"] = "no ruleset hash recorded (operator review or no ruleset)"
+        remainder["ruleset_hash"] = "skipped"
+        reasons["ruleset_hash"] = "no ruleset hash recorded (operator review or no ruleset)"
     else:
-        remainder["ruleset"] = "verified"
+        remainder["ruleset_hash"] = "verified"
 
     if not receipt.required_context_ids:
-        remainder["context_ids"] = "skipped"
-        reasons["context_ids"] = "no required contexts recorded"
+        remainder["required_context_ids"] = "skipped"
+        reasons["required_context_ids"] = "no required contexts recorded"
     else:
-        remainder["context_ids"] = "verified"
+        remainder["required_context_ids"] = "verified"
 
     if not receipt.review_receipt_id:
-        remainder["review_receipt"] = "skipped"
-        reasons["review_receipt"] = "no linked review receipt (autonomous or no review performed)"
+        remainder["review_receipt_id"] = "skipped"
+        reasons["review_receipt_id"] = "no linked review receipt (autonomous or no review performed)"
     else:
-        remainder["review_receipt"] = "verified"
+        remainder["review_receipt_id"] = "verified"
 
     if not receipt.journal_head:
         remainder["journal_head"] = "unverified"

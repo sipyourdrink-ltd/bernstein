@@ -221,7 +221,7 @@ def test_coverage_unverified_field(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     result = CliRunner().invoke(verify_cmd, ["coverage", head_sha])
     assert result.exit_code == 3
     assert "unverified" in result.output.lower()
-    assert "gate_results" in result.output
+    assert "gate_results_hash" in result.output
     assert "refuse" in result.output
     assert "operator_review" in result.output
 

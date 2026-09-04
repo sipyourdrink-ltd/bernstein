@@ -80,29 +80,29 @@ needs an operator's eye before any merge proceeds.
 ```json
 {
   "head_sha": "abc123...",
-  "receipt": {
-    "decision": "admit",
-    "authority": "autonomous",
-    "journal_head": "sha256:...",
-    "signature": "..."
-  },
+  "decision": "admit",
+  "authority": "autonomous",
   "coverage": {
-    "gate_results": {"status": "verified"},
-    "ruleset": {"status": "skipped", "reason": "..."},
-    "context_ids": {"status": "verified"},
-    "review_receipt": {"status": "unverified", "reason": "..."},
-    "journal_head": {"status": "verified"},
-    "signature": {"status": "verified"}
+    "verified": ["gate_results_hash", "required_context_ids", "journal_head", "signature"],
+    "unverified": ["review_receipt_id"],
+    "skipped": ["ruleset_hash"]
   },
-  "ok": false,
+  "remainder": {
+    "review_receipt_id": "unverified"
+  },
+  "reasons": {
+    "review_receipt_id": "no review receipt on autonomous admission"
+  },
   "exit_code": 3,
-  "reason": "required coverage fields absent: review_receipt"
+  "reason": "unverified remainder: review_receipt_id"
 }
 ```
 
-The `coverage` map is keyed by the canonical field names; each entry
-carries `status` (`verified` / `skipped` / `unverified`) and an optional
-`reason` string naming what is wrong.
+The `coverage` map is keyed by grade; each value is a list of canonical
+field names in that grade (`verified` / `skipped` / `unverified`). The
+`remainder` and `reasons` maps give per-field detail: `remainder[field]`
+is the field's grade, and `reasons[field]` (only present for
+`unverified` fields) names what is wrong.
 
 ## See also
 
