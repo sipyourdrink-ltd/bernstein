@@ -15,6 +15,7 @@ import pytest
 
 from bernstein.core.govern.observation import ObservationEnvelope
 from bernstein.core.govern.observation_store import ObservationStore, RecordState
+from bernstein.core.security.path_containment import PathContainmentError
 
 FIRST_SEEN = "2026-09-03T09:00:00Z"  # 3h before SWEEP_AT
 SECOND_SEEN = "2026-09-03T10:30:00Z"  # 1.5h before SWEEP_AT
@@ -111,3 +112,24 @@ def test_reappearing_entity_is_restored_and_journaled(tmp_path: Path) -> None:
     assert record.state is RecordState.LIVE
     assert record.envelope.observed_at == "2026-09-03T12:30:00Z"
     assert [e.transition for e in store.journal()] == ["tombstone", "restore"]
+
+
+def test_journal_refuses_a_planted_symlink(tmp_path: Path) -> None:
+    # The containment barrier the repo pins in
+    # test_path_containment.test_no_unrouted_journal_path_construction: a
+    # journal.jsonl symlinked outside the store root must not be read.
+    store = ObservationStore(tmp_path)
+    elsewhere = tmp_path.parent / "observation-journal-elsewhere"
+    elsewhere.mkdir(exist_ok=True)
+    planted = elsewhere / "journal.jsonl"
+    planted.write_text(
+        '{"entity_id":"entity:deadbeef","reason":"planted","swept_at":"2026-01-01T00:00:00Z","transition":"tombstone"}\n',
+        encoding="utf-8",
+    )
+    try:
+        (tmp_path / "journal.jsonl").symlink_to(planted)
+    except OSError:  # pragma: no cover - platform dependent
+        pytest.skip("cannot create symlinks on this platform")
+
+    with pytest.raises(PathContainmentError):
+        store.journal()

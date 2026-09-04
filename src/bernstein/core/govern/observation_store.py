@@ -36,6 +36,7 @@ from jsonschema import ValidationError as JsonSchemaValidationError
 from bernstein.core.govern.observation import ObservationEnvelope
 from bernstein.core.persistence.atomic_write import write_atomic_text
 from bernstein.core.persistence.file_locks import cross_process_lock
+from bernstein.core.security.path_containment import contained_path
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -158,6 +159,16 @@ def _lock_path_for(path: Path) -> Path:
     return path.with_name(path.name + ".lock")
 
 
+def _journal_path_for(root: Path) -> Path:
+    """Return the store journal path, contained under *root*.
+
+    The same barrier the run journal uses (``replay.journal.run_journal_path``):
+    the filename is fixed, but a symlinked entry can still redirect a read or
+    write outside the store, so every journal access derives its path here.
+    """
+    return contained_path(root, "journal.jsonl", label="observation journal")
+
+
 def _journal_row(entry: JournalEntry) -> str:
     """Canonical JSON of *entry*, so journal bytes are order-independent."""
     return json.dumps(
@@ -262,7 +273,7 @@ class ObservationStore:
 
     def journal(self) -> tuple[JournalEntry, ...]:
         """Return every journal entry, in the order recorded."""
-        path = self._root / "journal.jsonl"
+        path = _journal_path_for(self._root)
         if not path.is_file():
             return ()
         return tuple(
@@ -386,7 +397,7 @@ class ObservationStore:
         if not rows:
             return
         self._root.mkdir(parents=True, exist_ok=True)
-        journal_path = self._root / "journal.jsonl"
+        journal_path = _journal_path_for(self._root)
         existing = journal_path.read_text(encoding="utf-8") if journal_path.exists() else ""
         if existing and not existing.endswith("\n"):
             existing += "\n"
