@@ -18,6 +18,12 @@ declared posture (playbook) and enumerated environment (inventory). The plan
 contains one entry per mismatch (FORBIDDEN, ABSENT, WIDER_CEILING, UNKNOWN)
 and is anchored in the lineage spine for offline verification.
 
+    bernstein govern plan ... --remediation-plan <file>
+
+Collect the remedies the playbook declares for those findings into one unsigned
+proposal, anchored the same way. A finding whose clause declares no remedy is
+listed in the proposal as unremediated rather than dropped.
+
     bernstein govern ingest --spans <file|-> --source <label> [--profile <name>]
 
 Anchor OTLP spans reported by a runtime Bernstein did not schedule (#4962).
@@ -41,7 +47,7 @@ import hashlib
 import json
 import time
 from pathlib import Path
-from typing import Any, NoReturn, cast
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 import click
 from rich.console import Console
@@ -49,8 +55,12 @@ from rich.table import Table
 
 from bernstein.cli.commands.govern_cmd import govern_inventory_cmd, govern_reconcile_cmd
 from bernstein.cli.helpers import console
+from bernstein.core.govern import collect_remediation as _collect_remediation
 from bernstein.core.govern import compute_plan as _compute_plan
 from bernstein.core.lineage.spine import LineageSpine
+
+if TYPE_CHECKING:
+    from bernstein.core.govern.plan_models import GovernPlan
 
 
 def _load_hmac_key() -> bytes:
@@ -155,7 +165,19 @@ def governance_verify_cmd(run_id: str, bindings_file: str, ledger_file: str | No
     show_default=True,
     help="Project root containing .sdd/.",
 )
-def governance_plan_cmd(playbook_file: str, inventory_file: str, workdir: str) -> None:
+@click.option(
+    "--remediation-plan",
+    "remediation_out",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Collect the remedies the playbook declares for these findings into one unsigned proposal here.",
+)
+def governance_plan_cmd(
+    playbook_file: str,
+    inventory_file: str,
+    workdir: str,
+    remediation_out: str | None,
+) -> None:
     """Generate a signed, lineage-bearing govern plan.
 
     Exit 0 always (a signed empty plan is valid).
@@ -230,7 +252,56 @@ def governance_plan_cmd(playbook_file: str, inventory_file: str, workdir: str) -
         )
 
     console_obj.print(table)
+
+    if remediation_out is not None:
+        _write_remediation_proposal(
+            plan=plan,
+            playbook=playbook,
+            timestamp=timestamp,
+            out_path=Path(remediation_out),
+            spine=spine,
+            console_obj=console_obj,
+        )
+
     raise SystemExit(0)
+
+
+def _write_remediation_proposal(
+    *,
+    plan: GovernPlan,
+    playbook: dict[str, object],
+    timestamp: int,
+    out_path: Path,
+    spine: LineageSpine,
+    console_obj: Console,
+) -> None:
+    """Collect the declared remedies, anchor the proposal, and write it out."""
+    proposal = _collect_remediation(plan=plan, playbook=playbook, timestamp=timestamp)
+
+    spine.record(
+        artifact_path=f"govern-plan/remediation-{proposal.content_hash()[:16]}.json",
+        content=proposal.to_canonical_bytes(),
+        actor="bernstein.govern.plan",
+        step_id=proposal.plan_hash,
+        model="none",
+        timestamp=timestamp,
+    )
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps(proposal.to_dict(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    console_obj.print()
+    console_obj.print("[bold]Remediation proposal[/bold] (unsigned draft)")
+    console_obj.print(f"  Steps: {len(proposal.steps)}")
+    console_obj.print(f"  Without a declared remedy: {len(proposal.unremediated)} finding(s)")
+    for finding in proposal.unremediated:
+        console_obj.print(f"    [yellow]{finding.finding_kind}[/yellow] {finding.surface} -- {finding.reason}")
+    console_obj.print(f"  Proposal hash: {proposal.content_hash()}")
+    console_obj.print(f"  Proposal: {out_path}")
+    console_obj.print("[dim]Not applied: sign the proposal before anything executes it.[/dim]")
 
 
 @govern_group.command("posture")

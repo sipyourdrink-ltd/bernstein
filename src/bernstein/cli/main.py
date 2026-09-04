@@ -1118,7 +1118,6 @@ cli.add_command(trackers_group, "trackers")
 cli.add_command(run, "run")  # visible: `bernstein run [plan.yaml]`
 cli.add_command(cook, "cook")
 cli.add_command(init)
-cli.add_command(run, "run")
 cli.add_command(start)
 cli.add_command(serve)  # foreground task server for containers / central node (#2803)
 cli.add_command(demo)

@@ -27,6 +27,7 @@ from bernstein.core.govern.playbook_models import (
     Playbook,
     PlaybookClause,
     PlaybookValidationError,
+    RemediationAction,
 )
 from bernstein.core.govern.proposal import DraftProposal, ProposalStatus
 from bernstein.core.govern.reconcile import (
@@ -45,6 +46,12 @@ from bernstein.core.govern.reconcile_models import (
     ReconcileEntry,
     Snapshot,
     SnapshotEntity,
+)
+from bernstein.core.govern.remediation import (
+    RemediationProposal,
+    RemediationStep,
+    UnremediatedFinding,
+    collect_remediation,
 )
 
 
@@ -249,9 +256,14 @@ __all__ = [
     "ReconcileDiff",
     "ReconcileEntry",
     "RecordState",
+    "RemediationAction",
+    "RemediationProposal",
+    "RemediationStep",
     "Snapshot",
     "SnapshotEntity",
     "Surface",
+    "UnremediatedFinding",
+    "collect_remediation",
     "compute_plan",
     "compute_reconcile_diff",
     "freshness_gated_read",
