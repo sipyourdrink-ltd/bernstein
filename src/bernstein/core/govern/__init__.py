@@ -28,7 +28,7 @@ from bernstein.core.govern.freshness_gate import (
     ProducerState,
     freshness_gated_read,
 )
-from bernstein.core.govern.inventory_models import Inventory, Surface
+from bernstein.core.govern.inventory_models import Inventory, Surface, SweepResult, Tombstone
 from bernstein.core.govern.lanes import (
     Barrier,
     LaneAction,
@@ -306,6 +306,8 @@ __all__ = [
     "Snapshot",
     "SnapshotEntity",
     "Surface",
+    "SweepResult",
+    "Tombstone",
     "UnremediatedFinding",
     "Verdict",
     "apply_plan",
