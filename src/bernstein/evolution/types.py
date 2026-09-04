@@ -227,6 +227,7 @@ class RunVerdict:
 class ReplayServiceResult:
     """Top-level result returned by the replay service."""
 
+    verdict: ReplayVerdict
     contract_fingerprint: str
     selected_run_ids: list[str]
     run_verdicts: list[RunVerdict]
