@@ -1,0 +1,7 @@
+{
+  "class": "impossible_local_verification_publish",
+  "description": "Publish step executed with local verification bypassed or impossible in offline sandbox",
+  "expected_verdict": "fail",
+  "gate_that_must_flag": "benchmark_gate",
+  "taxonomy_category": "evasion_impossible_verification"
+}

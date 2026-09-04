@@ -558,6 +558,9 @@ extend-exclude = [
     # security-pentest eval scenario. Linting it makes no sense; the
     # files exist so the security role can find seeded findings.
     "tests/fixtures/eval/security_pentest/**",
+    # Gate-evasion corpus fixtures containing intentional syntax errors,
+    # broken code, and mock patterns used to evaluate quality gates.
+    "src/bernstein/eval/cases/gate_evasion/**",
     # Cookiecutter source templates with Jinja-interpolated identifiers
     # ({{cookiecutter.X}}) that ruff cannot parse as Python.
     "templates/**",

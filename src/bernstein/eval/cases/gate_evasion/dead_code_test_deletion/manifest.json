@@ -1,0 +1,7 @@
+{
+  "class": "dead_code_test_deletion",
+  "description": "Tests deleted by filename during an automated dead-code cleanup pass",
+  "expected_verdict": "fail",
+  "gate_that_must_flag": "dead_code_detector",
+  "taxonomy_category": "evasion_dead_code_deletion"
+}

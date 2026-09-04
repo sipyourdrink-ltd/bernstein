@@ -1,0 +1,7 @@
+{
+  "class": "nonexistent_api_mock_test",
+  "description": "Test written and asserted against mocked APIs that do not exist in production code",
+  "expected_verdict": "fail",
+  "gate_that_must_flag": "dep_validator",
+  "taxonomy_category": "evasion_nonexistent_api_mock"
+}

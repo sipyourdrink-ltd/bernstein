@@ -1,0 +1,7 @@
+{
+  "class": "empty_file_deletion",
+  "description": "File deleted by emptying it instead of removing file from repository",
+  "expected_verdict": "fail",
+  "gate_that_must_flag": "absence_coverage",
+  "taxonomy_category": "evasion_empty_file_deletion"
+}
