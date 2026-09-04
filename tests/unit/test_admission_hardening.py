@@ -255,6 +255,29 @@ def test_no_src_dotdot_escape_is_a_violation() -> None:
     assert check_conformance(("no-src",), ("build/../src/secret.py",))
 
 
+def test_a_dotfile_keeps_its_leading_dot_in_the_prefix_check() -> None:
+    """A tag contract compares directory names, and ``.github`` is one.
+
+    ``lstrip("./")`` removed every leading ``.`` and ``/``, so a changed
+    ``.docs/leak.md`` normalised to ``docs/leak.md`` and satisfied the
+    ``docs-only`` allow-prefix from a directory the contract never named.
+    """
+    from bernstein.core.admission.tags import check_conformance
+
+    assert check_conformance(("docs-only",), (".docs/leak.md",))
+    assert check_conformance(("tests-only",), (".tests/leak.py",))
+    # And a real dotfile outside the allow-list stays a violation, as before.
+    assert check_conformance(("docs-only",), (".github/workflows/ci.yml",))
+
+
+def test_a_redundant_leading_dot_slash_is_still_conformant() -> None:
+    """``./docs/guide.md`` names the same file as ``docs/guide.md``."""
+    from bernstein.core.admission.tags import check_conformance
+
+    assert check_conformance(("docs-only",), ("./docs/guide.md",)) == ()
+    assert check_conformance(("tests-only",), ("tests/./unit/test_x.py",)) == ()
+
+
 # ---------------------------------------------------------------------------
 # Item 7: ledger_id path traversal is rejected (already hardened via containment)
 # ---------------------------------------------------------------------------
