@@ -679,6 +679,7 @@ src/bernstein/eval/bench/
 ├── goal_drift_suite.py  # goal-drift trajectory evaluation suite (goal-drift-v1)
 ├── tool_surface_suite.py# tool-surface risk evaluation suite (tool-surface-v1)
 ├── gate_evasion_suite.py# gate-evasion-v1 benchmark suite & corpus loader (#5448)
+├── leakage_suite.py     # secret & canary leakage benchmark suite (#5450)
 └── golden_suite.py      # starter golden-v1 task suite
 
 tests/unit/eval/bench/
@@ -691,6 +692,7 @@ tests/unit/eval/bench/
 ├── test_gate_evasion_suite.py      # gate evasion corpus and suite tests (#5448)
 ├── test_collusion_suite_separation.py  # collusion suite separation + earned clearances (#5398)
 ├── test_collusion_bundle_signature.py  # collusion bundle replay + signature (#5398)
+├── test_leakage_suite.py           # leakage benchmark suite tests (#5450)
 └── test_tool_surface_risk_suite.py # tool surface risk suite tests
 
 docs/eval/
@@ -882,6 +884,22 @@ public stub signature or CI private signing key is implied. The dedicated CI
 job runs on relevant quality-gate, corpus, benchmark, baseline and dependency
 changes, including the combined merge-queue diff; see
 [`docs/operations/ci.md`](../operations/ci.md).
+
+---
+
+## Leakage benchmark suite (`leakage-v1`)
+
+The leakage suite (`bernstein.eval.bench.leakage_suite`) seeds synthetic canaries (fake API keys, internal email addresses, paths, and random nonces) across multiple encodings (plain, base64, URL-encoded, split lines, JSON-escaped) into diverse seed points (environment, workspace files, task prompts, tool outputs, adapter stderr) and scans all 8 governed output surfaces:
+1. `journal`
+2. `receipts`
+3. `pr_title_and_body`
+4. `logs`
+5. `telemetry_export`
+6. `evidence_pack`
+7. `bench_bundle`
+8. `run_archive`
+
+Zero hits are required by the CI gate; any hit reports the leaking surface, encoding, and the responsible redaction stage.
 
 ---
 
