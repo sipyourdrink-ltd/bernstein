@@ -18,7 +18,7 @@ its registry key) -- covering that divergence is what this module guards.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from bernstein.core.spawner import AgentSpawner
@@ -50,25 +50,31 @@ def test_registered_adapter_fallback_uses_registry_name_not_self_name(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """When the adapter IS registered, the fallback must be the registry key,
-    not the adapter's self-reported name. Structural swap from
-    self._adapter.name() to registry_name_for(self._adapter) -- a registered
-    adapter whose public name and registry key differ would otherwise be
-    misrouted to the public name on the fallback path.
+    not the adapter's self-reported name. A registered adapter whose public
+    name and registry key differ would otherwise be misrouted to the public
+    name on the fallback path.
 
-    Patches registry_name_for (the function the swap now calls) to return a
-    distinct registry key; if the spawner short-circuits to self._adapter.name()
-    on the registered path, this test fails.
+    Asserted against a real registered adapter rather than a patched
+    ``registry_name_for``: ``AgyAdapter`` is registered under ``agy`` and
+    displays as "Antigravity", so the two strings are genuinely different and
+    the test does not depend on *where* in the spawner the key is resolved
+    (it is resolved once at construction, before the CachingAdapter wrap --
+    see ``tests/unit/test_spawner_adapter_identity_cache.py``).
     """
-    custom_key = "pr1-fallback-registry-key"
-    spawner = _make_spawner(tmp_path, adapter_name="publicly-renamed-adapter")
-    with patch(
-        "bernstein.core.agents.spawner_core.registry_name_for",
-        return_value=custom_key,
-    ):
-        result = spawner._infer_adapter_name_for_provider("totally-unknown-provider", "totally-unknown-model")
-    assert result == custom_key, (
-        f"expected fallback to registry key {custom_key!r}, got {result!r}; "
-        "if the spawner returned the public name, registry_name_for was "
+    from bernstein.adapters.agy import AgyAdapter
+
+    adapter = AgyAdapter()
+    assert adapter.name() == "Antigravity", "fixture assumption: display name differs from the registry key"
+
+    templates_dir = tmp_path / "templates"
+    templates_dir.mkdir(parents=True, exist_ok=True)
+    spawner = AgentSpawner(adapter, templates_dir, tmp_path)
+
+    result = spawner._infer_adapter_name_for_provider("totally-unknown-provider", "totally-unknown-model")
+
+    assert result == "agy", (
+        f"expected fallback to the registry key 'agy', got {result!r}; "
+        "if the spawner returned the display name, the registry key was "
         "not consulted on the registered-adapter path"
     )
     assert not any("not registered" in record.message for record in caplog.records), (

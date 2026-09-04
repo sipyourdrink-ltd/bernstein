@@ -1666,12 +1666,35 @@ class AgentSpawner:
         # for an adapter that owns no vendor sandbox.
         if getattr(adapter, "consumes_host_isolation", False) is True:
             self._apply_host_isolation(adapter.name(), adapter)
+        # Resolved BEFORE the CachingAdapter wrap. ``registry_name_for`` matches
+        # on the registered class or instance, and ``CachingAdapter`` is not
+        # itself registered, so asking the wrapper answers ``None`` for an
+        # adapter that is in fact registered.
+        self._adapter_registry_name = registry_name_for(adapter)
         if enable_caching:
             from bernstein.adapters.caching_adapter import CachingAdapter
 
             adapter = CachingAdapter(adapter, workdir)
         self._adapter = adapter
+        # Two keys for one instance. The spawn path asks for an adapter by its
+        # registry key (see ``_infer_adapter_name_for_provider``), while older
+        # call sites and unregistered adapters still ask by display name --
+        # and 44 of the 53 registered adapters have a display name that is not
+        # their key (``agy`` displays as "Antigravity"). Seeding only the
+        # display name makes every registry-key lookup miss, and the miss path
+        # in ``_get_adapter_by_name`` silently builds a SECOND instance from
+        # the registry: the run-level instance the caller injected is dropped
+        # along with its host-isolation declaration and its CachingAdapter
+        # wrap, and an injected adapter that is not in the registry at all
+        # (test doubles, third-party adapters) fails the spawn outright.
+        #
+        # Keyed by identity, never by folding a display name back to a key:
+        # ``AgyAdapter`` displays as "Antigravity" while ``antigravity`` is a
+        # registry alias for ``GeminiAdapter``, so any name-string fold lands
+        # an agy spawn on the Gemini adapter.
         self._adapter_cache[self._adapter.name()] = self._adapter
+        if self._adapter_registry_name is not None:
+            self._adapter_cache[self._adapter_registry_name] = self._adapter
         self._registry = agent_registry or get_registry(
             definitions_dir=workdir / ".sdd" / "agents" / "definitions",
             auto_reload=True,
@@ -2850,7 +2873,12 @@ class AgentSpawner:
                 resolved,
             )
             return resolved
-        fallback = registry_name_for(self._adapter)
+        # ``self._adapter_registry_name``, not ``registry_name_for(self._adapter)``:
+        # under ``enable_caching`` the run-level adapter is wrapped in a
+        # ``CachingAdapter``, which is not itself registered, so re-resolving
+        # here reports a registered adapter as unregistered and falls back to
+        # the display name -- the exact defect this path fixes (#5348).
+        fallback = self._adapter_registry_name
         if fallback is None:
             logger.warning(
                 "_infer_adapter_name_for_provider: no registry match for provider_name=%r model=%r; "
@@ -3619,8 +3647,9 @@ class AgentSpawner:
         The default policy is warn: the decision is recorded and the spawn
         proceeds, so an operator sees exactly which adapters would be refused
         before flipping ``BERNSTEIN_ADAPTER_ADMISSION_POLICY=enforce``. Under
-        enforce the refusal raises. ``mock`` and ``generic`` are always exempt
-        so offline work is never blocked.
+        enforce the refusal raises. ``mock`` is the only exempt adapter, so
+        offline work against the test stub is never blocked; ``generic``
+        stopped being exempt in #4752 and is gated like any other adapter.
 
         Placed alongside the security-floor preflight and outside the inner
         spawn ``try`` for the same reason: a refusal is a hard stop, not an
