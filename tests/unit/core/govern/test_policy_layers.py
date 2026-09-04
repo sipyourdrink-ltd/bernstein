@@ -77,6 +77,21 @@ def test_declaration_order_inside_a_layer_kind_decides() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_explain_returns_one_row_per_clause_not_a_single_triple() -> None:
+    """The return type says a SEQUENCE of rows, and the value has to agree.
+
+    The annotation previously read `tuple[tuple[str, str, str], str | None]` --
+    a single fixed-length triple -- while the value was a variable-length tuple
+    of them. It read as correct and described a different shape.
+    """
+    rows, _reason = _set(BASELINE).compose("h1").explain()
+
+    assert len(rows) == len(BASELINE.clauses)
+    for row in rows:
+        assert len(row) == 3
+        assert all(isinstance(cell, str) for cell in row)
+
+
 def test_every_clause_names_the_layer_and_the_source() -> None:
     """The tier alone does not answer "which baseline entry"."""
     rows, reason = _set(BASELINE, INSTRUMENTATION, PROD).compose("h1", ["prod"]).explain()

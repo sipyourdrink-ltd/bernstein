@@ -172,6 +172,15 @@ class OverlayFinding:
         return {"target": self.target, "matched": list(self.matched), "reason": self.reason}
 
 
+#: One printable row of an explain: the surface, the clause, and ``layer:source``.
+#:
+#: Named because the tuple was annotated as a single fixed-length triple where a
+#: VARIABLE-length sequence of them was returned -- an annotation that read as
+#: correct and described a different shape. A named alias makes the two halves of
+#: `explain`'s return type impossible to confuse for one another.
+ExplainRow = tuple[str, str, str]
+
+
 @dataclass(frozen=True, slots=True)
 class EffectivePolicy:
     """One target's composed policy, and any finding that composing it raised.
@@ -193,11 +202,16 @@ class EffectivePolicy:
         """Whether composing this target raised an overlay finding."""
         return self.finding is not None
 
-    def explain(self) -> tuple[tuple[str, str, str], str | None]:
-        """``((surface, clause, "layer:source"), ...)`` plus the finding's reason.
+    def explain(self) -> tuple[tuple[ExplainRow, ...], str | None]:
+        """Every effective clause as a printable row, plus the finding's reason.
 
         The shape a `--explain` table prints, kept here rather than in the CLI so
         the answer does not depend on which command asked.
+
+        Returns:
+            ``(rows, reason)`` -- one :data:`ExplainRow` per effective clause in
+            the order :attr:`clauses` holds them, and the overlay finding's
+            reason or ``None``.
         """
         rows = tuple(
             (entry.clause.surface, entry.clause.clause, f"{entry.layer.value}:{entry.source}") for entry in self.clauses
