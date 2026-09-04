@@ -21,6 +21,13 @@ from bernstein.core.govern.apply import (
     apply_plan,
     verify_govern_apply_projection,
 )
+from bernstein.core.govern.derivation import (
+    DerivationRule,
+    DerivationRuleError,
+    DerivationRules,
+    DerivedFact,
+    RuleKind,
+)
 from bernstein.core.govern.duplication_audit import (
     DuplicationFinding,
     DuplicationReport,
@@ -279,6 +286,10 @@ __all__ = [
     "ChangeStatus",
     "CollectionMethod",
     "CostClass",
+    "DerivationRule",
+    "DerivationRuleError",
+    "DerivationRules",
+    "DerivedFact",
     "DesiredEntity",
     "DesiredState",
     "DiffAction",
@@ -324,6 +335,7 @@ __all__ = [
     "RestoreEntry",
     "RestorePlan",
     "RestoreRefusal",
+    "RuleKind",
     "Snapshot",
     "SnapshotEntity",
     "Surface",
