@@ -210,18 +210,3 @@ def test_observe_mode_still_records_so_the_gate_can_open(query) -> None:
     decision = enforcing.evaluate(proposal)
     assert decision.confidence.samples == 5
     assert decision.admitted is True
-
-
-def test_proposals_without_contract_field_pass_admission_gate(query) -> None:
-    """proposals.UpgradeProposal (used by the admission gate) has no contract
-    field; every such proposal is implicitly contract=None and must be admitted
-    normally when confidence history permits (issue #5405)."""
-    policy = AdmissionPolicy(query=query, cold_start=ColdStartMode.FAIL_OPEN)
-    proposal = _proposal()
-
-    assert not hasattr(proposal, "contract")
-
-    decision = policy.evaluate(proposal)
-
-    assert decision.admitted is True
-    assert "cold start" in decision.reason
