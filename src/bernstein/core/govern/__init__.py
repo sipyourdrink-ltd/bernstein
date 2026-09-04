@@ -14,6 +14,14 @@ from bernstein.core.govern.freshness_gate import (
     freshness_gated_read,
 )
 from bernstein.core.govern.inventory_models import Inventory, Surface
+from bernstein.core.govern.lanes import (
+    Barrier,
+    LaneAction,
+    LaneError,
+    LaneManifest,
+    load_lane_set,
+    reconcile_lanes,
+)
 from bernstein.core.govern.observation import ObservationEnvelope, ObservationLedger
 from bernstein.core.govern.observation_store import (
     ObservationRecord,
@@ -234,6 +242,7 @@ def _compare_values(observed: str, ceiling: str) -> int:
 
 
 __all__ = [
+    "Barrier",
     "DesiredEntity",
     "DesiredState",
     "DiffAction",
@@ -247,6 +256,9 @@ __all__ = [
     "FreshnessResult",
     "GovernPlan",
     "Inventory",
+    "LaneAction",
+    "LaneError",
+    "LaneManifest",
     "ObservationEnvelope",
     "ObservationLedger",
     "ObservationRecord",
@@ -277,7 +289,9 @@ __all__ = [
     "compute_plan",
     "compute_reconcile_diff",
     "freshness_gated_read",
+    "load_lane_set",
     "observation_store_root",
     "propose_reconcile",
+    "reconcile_lanes",
     "snapshot_surface",
 ]
