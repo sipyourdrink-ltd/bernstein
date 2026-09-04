@@ -62,13 +62,9 @@ class PredictedEffect:
 
     def __post_init__(self) -> None:
         if not isinstance(self.metric, str):
-            raise TypeError(
-                f"PredictedEffect.metric must be str, got {type(self.metric).__name__}"
-            )
+            raise TypeError(f"PredictedEffect.metric must be str, got {type(self.metric).__name__}")
         if not isinstance(self.direction, EffectDirection):
-            raise TypeError(
-                f"PredictedEffect.direction must be EffectDirection, got {type(self.direction).__name__}"
-            )
+            raise TypeError(f"PredictedEffect.direction must be EffectDirection, got {type(self.direction).__name__}")
 
 
 @dataclass
@@ -93,9 +89,7 @@ class ChangeFalsifier:
 
     def __post_init__(self) -> None:
         if not isinstance(self.history_ref, str):
-            raise TypeError(
-                f"ChangeFalsifier.history_ref must be str, got {type(self.history_ref).__name__}"
-            )
+            raise TypeError(f"ChangeFalsifier.history_ref must be str, got {type(self.history_ref).__name__}")
         if not isinstance(self.expected_verdicts, list):
             raise TypeError(
                 f"ChangeFalsifier.expected_verdicts must be list, got {type(self.expected_verdicts).__name__}"
@@ -124,9 +118,7 @@ class ChangeRollback:
 
     def __post_init__(self) -> None:
         if not isinstance(self.files_to_restore, list):
-            raise TypeError(
-                f"ChangeRollback.files_to_restore must be list, got {type(self.files_to_restore).__name__}"
-            )
+            raise TypeError(f"ChangeRollback.files_to_restore must be list, got {type(self.files_to_restore).__name__}")
         if not isinstance(self.change_description, str):
             raise TypeError(
                 f"ChangeRollback.change_description must be str, got {type(self.change_description).__name__}"
@@ -167,9 +159,7 @@ class ChangeContract:
 
     def __post_init__(self) -> None:
         if not isinstance(self.component, str):
-            raise TypeError(
-                f"ChangeContract.component must be str, got {type(self.component).__name__}"
-            )
+            raise TypeError(f"ChangeContract.component must be str, got {type(self.component).__name__}")
         if not isinstance(self.target_fingerprint, str):
             raise TypeError(
                 f"ChangeContract.target_fingerprint must be str, got {type(self.target_fingerprint).__name__}"
@@ -179,17 +169,11 @@ class ChangeContract:
                 f"ChangeContract.predicted_effect must be PredictedEffect, got {type(self.predicted_effect).__name__}"
             )
         if not isinstance(self.invariants, list):
-            raise TypeError(
-                f"ChangeContract.invariants must be list, got {type(self.invariants).__name__}"
-            )
+            raise TypeError(f"ChangeContract.invariants must be list, got {type(self.invariants).__name__}")
         if not isinstance(self.falsifier, ChangeFalsifier):
-            raise TypeError(
-                f"ChangeContract.falsifier must be ChangeFalsifier, got {type(self.falsifier).__name__}"
-            )
+            raise TypeError(f"ChangeContract.falsifier must be ChangeFalsifier, got {type(self.falsifier).__name__}")
         if not isinstance(self.rollback, ChangeRollback):
-            raise TypeError(
-                f"ChangeContract.rollback must be ChangeRollback, got {type(self.rollback).__name__}"
-            )
+            raise TypeError(f"ChangeContract.rollback must be ChangeRollback, got {type(self.rollback).__name__}")
 
 
 @dataclass
