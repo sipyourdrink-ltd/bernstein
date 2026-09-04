@@ -1671,6 +1671,11 @@ class AgentSpawner:
 
             adapter = CachingAdapter(adapter, workdir)
         self._adapter = adapter
+        from bernstein.adapters.registry import registry_name_for
+
+        reg_name = registry_name_for(self._adapter)
+        if reg_name:
+            self._adapter_cache[reg_name] = self._adapter
         self._adapter_cache[self._adapter.name()] = self._adapter
         self._registry = agent_registry or get_registry(
             definitions_dir=workdir / ".sdd" / "agents" / "definitions",
@@ -2814,11 +2819,14 @@ class AgentSpawner:
         is used. Model-name inference applies only when nothing is pinned
         anywhere.
         """
+        from bernstein.adapters.registry import registry_name_for
+
+        active_id = registry_name_for(self._adapter) or self._adapter.name()
         logger.debug(
             "_infer_adapter_name_for_provider: provider_name=%r model=%r current_adapter=%r adapter_pinned=%r",
             provider_name,
             model,
-            self._adapter.name(),
+            active_id,
             self._adapter_pinned,
         )
         if self._adapter_pinned:
@@ -2829,18 +2837,17 @@ class AgentSpawner:
                     "(overrides run-level pin %r)",
                     provider_name,
                     resolved,
-                    self._adapter.name(),
+                    active_id,
                 )
                 return resolved
-            pinned = self._adapter.name()
             logger.info(
                 "_infer_adapter_name_for_provider: run-level adapter pin %r wins; "
                 "model-name inference skipped for provider_name=%r model=%r",
-                pinned,
+                active_id,
                 provider_name,
                 model,
             )
-            return pinned
+            return active_id
         resolved = adapter_name_for_provider(provider_name, model)
         if resolved is not None:
             logger.info(
@@ -2850,15 +2857,14 @@ class AgentSpawner:
                 resolved,
             )
             return resolved
-        fallback = self._adapter.name()
         logger.info(
             "_infer_adapter_name_for_provider: no registry match for provider_name=%r model=%r; "
             "falling back to current adapter %r",
             provider_name,
             model,
-            fallback,
+            active_id,
         )
-        return fallback
+        return active_id
 
     def _get_adapter_by_name(self, adapter_name: str, *, role: str | None = None) -> CLIAdapter:
         """Return cached adapter instance, creating one when needed.
@@ -2877,6 +2883,9 @@ class AgentSpawner:
                 primary task's ``role`` field). Optional so legacy
                 call sites that have no role still work.
         """
+        from bernstein.adapters.registry import canonical_adapter_name
+
+        canonical = canonical_adapter_name(adapter_name) or adapter_name
         if role is not None:
             from bernstein.core.security.audit import AuditLog as _AuditLog
             from bernstein.core.security.role_adapter_policy import enforce as _enforce_role_adapter
@@ -2886,19 +2895,20 @@ class AgentSpawner:
                 audit_log = _AuditLog(audit_dir=self._workdir / ".sdd" / "audit")
             except Exception as exc:
                 logger.debug("role_adapter_policy: audit ctor failed (%s); deny will not be logged", exc)
-            _enforce_role_adapter(role, adapter_name, audit_log=audit_log)
+            _enforce_role_adapter(role, canonical, audit_log=audit_log)
 
-        cached = self._adapter_cache.get(adapter_name)
+        cached = self._adapter_cache.get(canonical) or self._adapter_cache.get(adapter_name)
         if cached is not None:
             return cached
 
-        adapter = get_adapter(adapter_name)
+        adapter = get_adapter(canonical)
         if getattr(adapter, "consumes_host_isolation", False):
-            self._apply_host_isolation(adapter_name, adapter)
+            self._apply_host_isolation(canonical, adapter)
         if self._enable_caching:
             from bernstein.adapters.caching_adapter import CachingAdapter
 
             adapter = CachingAdapter(adapter, self._workdir)
+        self._adapter_cache[canonical] = adapter
         self._adapter_cache[adapter_name] = adapter
         return adapter
 

@@ -342,6 +342,76 @@ def registry_name_for(adapter: CLIAdapter) -> str | None:
     return None
 
 
+_DISPLAY_NAME_TO_REGISTRY: dict[str, str] = {}
+
+
+def canonical_adapter_name(name: str) -> str | None:
+    """Resolve an adapter registry name or display name to its canonical registry id.
+
+    Examples:
+        >>> canonical_adapter_name("qwen")
+        'qwen'
+        >>> canonical_adapter_name("Qwen CLI")
+        'qwen'
+        >>> canonical_adapter_name("OpenCode")
+        'opencode'
+        >>> canonical_adapter_name("Claude Code")
+        'claude'
+
+    Args:
+        name: Registry name or display name.
+
+    Returns:
+        The canonical registry key, or None if not recognized.
+    """
+    if not isinstance(name, str) or not name:
+        return None
+    clean = name.strip()
+    if not clean:
+        return None
+    lower = clean.lower()
+
+    _load_entrypoint_adapters()
+    if lower in _ADAPTERS:
+        return lower
+
+    if not _DISPLAY_NAME_TO_REGISTRY:
+        for reg_id, entry in _ADAPTERS.items():
+            _DISPLAY_NAME_TO_REGISTRY[reg_id.lower()] = reg_id
+            disp = None
+            if isinstance(entry, CLIAdapter):
+                disp = entry.name()
+            elif inspect.isclass(entry) and issubclass(entry, CLIAdapter):
+                disp = getattr(entry, "display_name", None)
+                if not disp:
+                    try:
+                        disp = entry().name()
+                    except Exception:
+                        disp = None
+            if disp:
+                _DISPLAY_NAME_TO_REGISTRY[disp.strip().lower()] = reg_id
+
+    resolved = _DISPLAY_NAME_TO_REGISTRY.get(lower)
+    if resolved is not None:
+        return resolved
+
+    # Handle common suffixes / formatting
+    no_cli = lower.removesuffix(" cli").strip()
+    if no_cli in _ADAPTERS:
+        return no_cli
+    no_code = lower.removesuffix(" code").strip()
+    if no_code in _ADAPTERS:
+        return no_code
+    underscored = lower.replace(" ", "_").replace("-", "_")
+    if underscored in _ADAPTERS:
+        return underscored
+    hyphenated = lower.replace(" ", "-").replace("_", "-")
+    if hyphenated in _ADAPTERS:
+        return hyphenated
+
+    return None
+
+
 def register_adapter(name: str, adapter: type[CLIAdapter] | CLIAdapter) -> None:
     """Register a custom adapter by name.
 

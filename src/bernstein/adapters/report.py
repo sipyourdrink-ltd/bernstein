@@ -178,12 +178,15 @@ def _binary_for_adapter(name: str) -> str:
     hand-maintained override table, where a second copy of the same fact
     could drift from the adapter it describes.
     """
-    override = _BINARY_OVERRIDES.get(name)
+    from bernstein.adapters.registry import canonical_adapter_name
+
+    canonical = canonical_adapter_name(name) or name
+    override = _BINARY_OVERRIDES.get(canonical) or _BINARY_OVERRIDES.get(name)
     if override is not None:
         return override
     from bernstein.adapters.capability_profile import profile_binary_for
 
-    return profile_binary_for(name) or name
+    return profile_binary_for(canonical) or profile_binary_for(name) or canonical
 
 
 def _resolve_module_path(adapter: type[CLIAdapter] | CLIAdapter) -> str:
@@ -220,8 +223,13 @@ def _module_mtime_utc(adapter: type[CLIAdapter] | CLIAdapter) -> str:
 
 def _contract_hash(name: str, contracts_dir: Path | None = None) -> str:
     """Return ``sha256`` of the contract YAML, or ``""`` when absent."""
+    from bernstein.adapters.registry import canonical_adapter_name
+
     base = contracts_dir if contracts_dir is not None else CONTRACTS_DIR
-    path = base / f"{name}.yaml"
+    canonical = canonical_adapter_name(name) or name
+    path = base / f"{canonical}.yaml"
+    if not path.exists() and (base / f"{name}.yaml").exists():
+        path = base / f"{name}.yaml"
     try:
         data = path.read_bytes()
     except OSError:
@@ -313,8 +321,14 @@ def check_adapter_in_process(
     Returns:
         A populated :class:`ConformanceVerdictPayload`.
     """
+    from bernstein.adapters.registry import canonical_adapter_name
+
     base = contracts_dir if contracts_dir is not None else CONTRACTS_DIR
-    contract_path = base / f"{name}.yaml"
+    canonical = canonical_adapter_name(name) or name
+    contract_path = base / f"{canonical}.yaml"
+    if not contract_path.exists() and (base / f"{name}.yaml").exists():
+        contract_path = base / f"{name}.yaml"
+        canonical = name
     if not contract_path.exists():
         return ConformanceVerdictPayload(
             verdict=CONFORMANCE_SKIP,
@@ -323,7 +337,7 @@ def check_adapter_in_process(
         )
 
     try:
-        spec = ContractSpec.load(name, contracts_dir=base)
+        spec = ContractSpec.load(canonical, contracts_dir=base)
     except (FileNotFoundError, OSError, ValueError) as exc:
         return ConformanceVerdictPayload(
             verdict=CONFORMANCE_SKIP,
