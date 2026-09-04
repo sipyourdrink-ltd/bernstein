@@ -66,6 +66,9 @@ bernstein bench run <suite>
 ```bash
 # Run the canonical golden-v1 suite and emit a submission bundle
 bernstein bench run golden-v1 --out my-bundle.json
+
+# Run with a budget gate (halts when accumulated cost reaches limit)
+bernstein bench run golden-v1 --budget 0.50 --out my-bundle.json
 ```
 
 This executes every task in `golden-v1` via the real adapter, collects
@@ -106,7 +109,15 @@ overall     : MATCH
   ✓ doc_update_docstring                     MATCH
 ```
 
-### 3. Submit to the leaderboard
+### 3. Compare two bundles
+
+```bash
+bernstein bench compare bundle-v1.json bundle-v2.json
+```
+
+Reports pass rate, score, cost, token, and wall-time deltas side-by-side with per-task verdict transitions.
+
+### 4. Submit to the leaderboard
 
 ```bash
 bernstein bench submit my-bundle.json
@@ -173,12 +184,24 @@ Two runners on the same `suite_hash` provably ran the same task set.
 ```json
 {
   "bundle_hash": "<sha256 of everything except signature>",
+  "schema_version": 2,
   "suite_hash": "...",
   "suite_version": "golden-v1",
   "submitted_at": 1753000000.0,
   "scheduler_config": {"...": "..."},
   "overall_score": 0.95,
   "pass_rate": 1.0,
+  "total_cost_usd": 0.0450,
+  "total_tokens": 4500,
+  "total_duration_seconds": 12.5,
+  "cost_per_verdict": {
+    "passed": 0.0450,
+    "failed": 0.0
+  },
+  "tokens_per_verdict": {
+    "passed": 4500,
+    "failed": 0
+  },
   "task_results": [
     {
       "task_id": "file_io_read_write",
@@ -192,7 +215,10 @@ Two runners on the same `suite_hash` provably ran the same task set.
       "receipt_hash": "<sha256 of receipt bytes>",
       "passed": true,
       "score": 1.0,
-      "harness_output": {"...": "..."}
+      "harness_output": {"...": "..."},
+      "duration_seconds": 2.5,
+      "token_count": 900,
+      "cost_usd": 0.0090
     }
   ],
   "signature": "<Ed25519 JWS>",
@@ -214,14 +240,15 @@ from bernstein.eval.bench import (
     BenchVerifier,
     MockReplayAdapter,
     build_golden_suite_v1,
+    compare_bundles,
     Leaderboard,
     LeaderboardEntry,
 )
 
-# Build and run the golden suite (hermetic mock adapter)
+# Build and run the golden suite (hermetic mock adapter) with a budget gate
 suite = build_golden_suite_v1()
 adapter = MockReplayAdapter()
-runner = BenchRunner(suite=suite, adapter=adapter, scheduler_config={})
+runner = BenchRunner(suite=suite, adapter=adapter, scheduler_config={}, budget_usd=1.00)
 bundle = runner.run()
 
 # Verify offline
@@ -229,6 +256,10 @@ verifier = BenchVerifier(suite=suite, adapter=adapter)
 result = verifier.verify(bundle)
 print(result.report())
 # overall: MATCH
+
+# Compare two bundles
+comparison = compare_bundles(bundle_a, bundle_b)
+print(comparison.report())
 
 # Project to leaderboard
 lb = Leaderboard(suite_hash=suite.suite_hash, suite_version=suite.version)
@@ -268,14 +299,16 @@ src/bernstein/eval/bench/
 ├── suite.py             # BenchSuite, BenchTask (content-addressed)
 ├── bundle.py            # SubmissionBundle, TaskResult
 ├── runner.py            # BenchRunner, MockReplayAdapter, StochasticMockReplayAdapter
+├── compare.py           # BundleComparison, TaskComparison, compare_bundles
 ├── verifier.py          # BenchVerifier, VerificationStatus
 ├── leaderboard.py       # Leaderboard, LeaderboardEntry, Markdown render
 ├── reliability.py       # pass^k reliability floor (see reliability.md)
 └── golden_suite.py      # starter golden-v1 task suite
 
 tests/unit/eval/bench/
-├── test_bench.py        # TDD suite — all acceptance criteria
-└── test_reliability.py  # pass^k reliability floor tests
+├── test_bench.py              # TDD suite — all acceptance criteria
+├── test_bench_cost_budget.py  # Cost per verdict, budget gate, compare tests
+└── test_reliability.py        # pass^k reliability floor tests
 
 docs/eval/
 ├── bench.md                  # this document

@@ -79,6 +79,7 @@ def bench_group() -> None:
 @click.argument("suite")
 @click.option("--out", default="bundle.json", show_default=True, help="Output path for the submission bundle.")
 @click.option("--scheduler", default="default", show_default=True, help="Scheduler name to embed in the bundle.")
+@click.option("--budget", type=float, default=None, help="Maximum budget in USD for the run.")
 @click.option(
     "--stub-signer",
     is_flag=True,
@@ -96,7 +97,14 @@ def bench_group() -> None:
         "pass^k reliability receipt instead of a submission bundle."
     ),
 )
-def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliability_k: int | None) -> None:
+def bench_run(
+    suite: str,
+    out: str,
+    scheduler: str,
+    budget: float | None,
+    stub_signer: bool,
+    reliability_k: int | None,
+) -> None:
     """Execute a suite and emit a signed submission bundle.
 
     SUITE is a built-in suite name (e.g. golden-v1) or a path to a .json
@@ -114,6 +122,8 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
     click.echo(f"Suite       : {suite_obj.version}")
     click.echo(f"Suite hash  : {suite_obj.suite_hash}")
     click.echo(f"Tasks       : {len(suite_obj.tasks)}")
+    if budget is not None:
+        click.echo(f"Budget      : ${budget:.4f}")
 
     if reliability_k is not None:
         _run_reliability(suite_obj, scheduler, reliability_k, Path(out), stub_signer)
@@ -125,6 +135,7 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
         suite=suite_obj,
         adapter=adapter,
         scheduler_config={"scheduler": scheduler},
+        budget_usd=budget,
     )
 
     click.echo("\nRunning tasks…")
@@ -136,11 +147,46 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
     out_path = Path(out)
     bundle.save(out_path)
 
+    if bundle.budget_exceeded:
+        click.echo(
+            f"\n[BUDGET EXCEEDED] Run halted after spending ${bundle.total_cost_usd:.4f} "
+            f"(budget: ${budget:.4f}). {len(bundle.task_results)} of {len(suite_obj.tasks)} tasks completed."
+        )
+
     click.echo(f"\nScore       : {bundle.overall_score * 100:.1f}%")
     click.echo(f"Pass rate   : {bundle.pass_rate * 100:.1f}%")
+    click.echo(f"Cost        : ${bundle.total_cost_usd:.4f}")
+    click.echo(f"Tokens      : {bundle.total_tokens:,d}")
+    click.echo(f"Duration    : {bundle.total_duration_seconds:.2f}s")
     click.echo(f"Bundle hash : {bundle.bundle_hash()}")
     click.echo(f"Signed by   : {bundle.signer_fingerprint or '(unsigned)'}")
     click.echo(f"\nBundle written to: {out_path}")
+
+
+# ---------------------------------------------------------------------------
+# bernstein bench compare
+# ---------------------------------------------------------------------------
+
+
+@bench_group.command(name="compare")
+@click.argument("bundle_a", type=click.Path(exists=True, dir_okay=False))
+@click.argument("bundle_b", type=click.Path(exists=True, dir_okay=False))
+def bench_compare(bundle_a: str, bundle_b: str) -> None:
+    """Compare two submission bundles on score, pass rate, cost, and tokens.
+
+    BUNDLE_A and BUNDLE_B are paths to submission bundle .json files.
+    """
+    from bernstein.eval.bench.bundle import SubmissionBundle
+    from bernstein.eval.bench.compare import compare_bundles
+
+    bundle_a_path = Path(bundle_a)
+    bundle_b_path = Path(bundle_b)
+
+    ba = SubmissionBundle.load(bundle_a_path)
+    bb = SubmissionBundle.load(bundle_b_path)
+
+    cmp = compare_bundles(ba, bb)
+    click.echo(cmp.report())
 
 
 # ---------------------------------------------------------------------------

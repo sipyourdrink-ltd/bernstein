@@ -169,14 +169,27 @@ class BenchRunner:
     suite: BenchSuite
     adapter: ReplayAdapter
     scheduler_config: dict[str, Any]
+    budget_usd: float | None = None
 
     def run(self) -> SubmissionBundle:
         """Execute every task; return the unsigned bundle."""
         task_results: list[TaskResult] = []
+        accumulated_cost = 0.0
+        budget_exceeded = False
 
         for task in self.suite.tasks:
+            if self.budget_usd is not None and accumulated_cost >= self.budget_usd:
+                budget_exceeded = True
+                break
+
             receipt = self.adapter.run_task(task, self.scheduler_config)
             passed, score, harness_output = self.adapter.score_task(task, receipt)
+
+            duration_sec = float(receipt.get("duration_seconds", 0.0))
+            token_cnt = int(receipt.get("token_count", receipt.get("tokens", 0)))
+            cost_amount = float(receipt.get("cost_usd", receipt.get("cost", 0.0)))
+
+            accumulated_cost += cost_amount
 
             task_results.append(
                 TaskResult(
@@ -186,8 +199,19 @@ class BenchRunner:
                     passed=passed,
                     score=score,
                     harness_output=harness_output,
+                    duration_seconds=duration_sec,
+                    token_count=token_cnt,
+                    cost_usd=cost_amount,
                 )
             )
+
+            if (
+                self.budget_usd is not None
+                and accumulated_cost >= self.budget_usd
+                and len(task_results) < len(self.suite.tasks)
+            ):
+                budget_exceeded = True
+                break
 
         return SubmissionBundle(
             suite_hash=self.suite.suite_hash,
@@ -195,4 +219,6 @@ class BenchRunner:
             task_results=task_results,
             scheduler_config=self.scheduler_config,
             submitted_at=time.time(),
+            budget_usd=self.budget_usd,
+            budget_exceeded=budget_exceeded,
         )

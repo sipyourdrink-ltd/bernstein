@@ -1,6 +1,7 @@
 """bernstein-bench: runnable, reproducibility-gated evaluation harness."""
 
 from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult
+from bernstein.eval.bench.compare import BundleComparison, TaskComparison, compare_bundles
 from bernstein.eval.bench.golden_suite import build_golden_suite_v1
 from bernstein.eval.bench.leaderboard import Leaderboard, LeaderboardEntry
 from bernstein.eval.bench.reliability import (
@@ -39,6 +40,7 @@ __all__ = [
     "BenchSuite",
     "BenchTask",
     "BenchVerifier",
+    "BundleComparison",
     "BundleVerificationResult",
     "InstallIdentityReliabilitySigner",
     "Leaderboard",
@@ -54,12 +56,14 @@ __all__ = [
     "StochasticMockReplayAdapter",
     "StubReliabilitySigner",
     "SubmissionBundle",
+    "TaskComparison",
     "TaskReliabilityResult",
     "TaskReliabilityVerification",
     "TaskResult",
     "TaskVerificationResult",
     "VerificationStatus",
     "build_golden_suite_v1",
+    "compare_bundles",
     "coordination_hash",
     "coordination_projection",
     "first_divergent_coordination_field",

@@ -54,6 +54,9 @@ class TaskResult:
     # construction time and restored verbatim from the JSON at load time.
     # The verifier recomputes this from the live receipt and compares.
     stored_receipt_hash: str = ""
+    duration_seconds: float = 0.0
+    token_count: int = 0
+    cost_usd: float = 0.0
 
     def __post_init__(self) -> None:
         # If caller didn't supply stored_receipt_hash, derive it now.
@@ -81,6 +84,9 @@ class TaskResult:
             "passed": self.passed,
             "score": self.score,
             "harness_output": self.harness_output,
+            "duration_seconds": self.duration_seconds,
+            "token_count": self.token_count,
+            "cost_usd": self.cost_usd,
         }
 
 
@@ -107,6 +113,9 @@ class SubmissionBundle:
     signature: str = ""
     # Install identity fingerprint (public-key fingerprint of the signer).
     signer_fingerprint: str = ""
+    schema_version: int = 2
+    budget_usd: float | None = None
+    budget_exceeded: bool = False
 
     # Computed lazily.
     _bundle_hash: str | None = field(default=None, init=False, repr=False, compare=False)
@@ -127,6 +136,30 @@ class SubmissionBundle:
             return 0.0
         return sum(1 for r in self.task_results if r.passed) / len(self.task_results)
 
+    @property
+    def total_cost_usd(self) -> float:
+        return sum(r.cost_usd for r in self.task_results)
+
+    @property
+    def total_tokens(self) -> int:
+        return sum(r.token_count for r in self.task_results)
+
+    @property
+    def total_duration_seconds(self) -> float:
+        return sum(r.duration_seconds for r in self.task_results)
+
+    @property
+    def cost_per_verdict(self) -> dict[str, float]:
+        passed_cost = sum(r.cost_usd for r in self.task_results if r.passed)
+        failed_cost = sum(r.cost_usd for r in self.task_results if not r.passed)
+        return {"passed": passed_cost, "failed": failed_cost}
+
+    @property
+    def tokens_per_verdict(self) -> dict[str, int]:
+        passed_tokens = sum(r.token_count for r in self.task_results if r.passed)
+        failed_tokens = sum(r.token_count for r in self.task_results if not r.passed)
+        return {"passed": passed_tokens, "failed": failed_tokens}
+
     # ------------------------------------------------------------------
     # Content hash (covers everything *except* the signature field)
     # ------------------------------------------------------------------
@@ -137,14 +170,22 @@ class SubmissionBundle:
         return self._bundle_hash
 
     def _compute_hash(self) -> str:
+        payload_dict: dict[str, Any] = {
+            "suite_hash": self.suite_hash,
+            "suite_version": self.suite_version,
+            "submitted_at": self.submitted_at,
+            "scheduler_config": self.scheduler_config,
+            "task_results": [r.to_dict() for r in self.task_results],
+        }
+        if self.schema_version != 1:
+            payload_dict["schema_version"] = self.schema_version
+        if self.budget_usd is not None:
+            payload_dict["budget_usd"] = self.budget_usd
+        if self.budget_exceeded:
+            payload_dict["budget_exceeded"] = self.budget_exceeded
+
         payload = json.dumps(
-            {
-                "suite_hash": self.suite_hash,
-                "suite_version": self.suite_version,
-                "submitted_at": self.submitted_at,
-                "scheduler_config": self.scheduler_config,
-                "task_results": [r.to_dict() for r in self.task_results],
-            },
+            payload_dict,
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -155,18 +196,29 @@ class SubmissionBundle:
     # ------------------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "bundle_hash": self.bundle_hash(),
+            "schema_version": self.schema_version,
             "suite_hash": self.suite_hash,
             "suite_version": self.suite_version,
             "submitted_at": self.submitted_at,
             "scheduler_config": self.scheduler_config,
             "overall_score": self.overall_score,
             "pass_rate": self.pass_rate,
+            "total_cost_usd": self.total_cost_usd,
+            "total_tokens": self.total_tokens,
+            "total_duration_seconds": self.total_duration_seconds,
+            "cost_per_verdict": self.cost_per_verdict,
+            "tokens_per_verdict": self.tokens_per_verdict,
             "task_results": [r.to_dict() for r in self.task_results],
             "signature": self.signature,
             "signer_fingerprint": self.signer_fingerprint,
         }
+        if self.budget_usd is not None:
+            d["budget_usd"] = self.budget_usd
+        if self.budget_exceeded:
+            d["budget_exceeded"] = self.budget_exceeded
+        return d
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -198,9 +250,13 @@ class SubmissionBundle:
                 # Restore the hash that was stored at emit time — do NOT let
                 # __post_init__ recompute it from the current receipt bytes.
                 stored_receipt_hash=r["receipt_hash"],
+                duration_seconds=float(r.get("duration_seconds", 0.0)),
+                token_count=int(r.get("token_count", 0)),
+                cost_usd=float(r.get("cost_usd", 0.0)),
             )
             for r in raw["task_results"]
         ]
+        schema_ver = int(raw.get("schema_version", 1))
         bundle = cls(
             suite_hash=raw["suite_hash"],
             suite_version=raw["suite_version"],
@@ -209,6 +265,9 @@ class SubmissionBundle:
             submitted_at=raw["submitted_at"],
             signature=raw.get("signature", ""),
             signer_fingerprint=raw.get("signer_fingerprint", ""),
+            schema_version=schema_ver,
+            budget_usd=raw.get("budget_usd"),
+            budget_exceeded=raw.get("budget_exceeded", False),
         )
         # Integrity guard: recompute hash and compare.
         if bundle.bundle_hash() != raw["bundle_hash"]:
