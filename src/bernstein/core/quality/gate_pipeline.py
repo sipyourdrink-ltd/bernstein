@@ -141,6 +141,41 @@ class GatePipelineStep:
     command_override: str | None = None
 
 
+@dataclass(frozen=True)
+class VerificationScope:
+    """What a gate actually exercised, and what it explicitly could not.
+
+    A gate's verdict only means as much as the evidence it actually
+    examined. ``VerificationScope`` is the structured, attestable claim
+    of that coverage: which oracle produced the verdict (``oracle_id``),
+    what kind of check it was (``kind``), the concrete paths or
+    property names the gate evaluated (``checked``), and the known
+    blind spots the gate could not evaluate (``cannot_check`` — e.g.
+    generated or vendored files the gate was configured to skip).
+
+    Attributes:
+        oracle_id: Stable identifier of the oracle (tool, harness,
+            verifier) that produced the verdict. ``None`` when the gate
+            has no oracle identity to point at (e.g. a pure command
+            runner).
+        kind: Short classifier for the check (e.g. ``"lint"``,
+            ``"type_check"``, ``"test_run"``, ``"review"``). ``None``
+            when no classifier applies.
+        checked: Ordered tuple of paths or property names the gate
+            actually exercised. Tuples are ordered so gate authors can
+            deterministically enumerate what they covered.
+        cannot_check: Ordered tuple of known blind spots the gate could
+            not evaluate. Tuples are ordered to match ``checked``.
+
+    Issue #5397.
+    """
+
+    oracle_id: str | None
+    kind: str | None
+    checked: tuple[str, ...]
+    cannot_check: tuple[str, ...]
+
+
 @dataclass
 class GateResult:
     """Result for one gate execution.
@@ -165,6 +200,11 @@ class GateResult:
             lives on the dedicated ``reason`` field above.
         reason: Closed-set reason code for an ``"inconclusive"`` status;
             ``None`` for every other status.
+        scope: Attestable statement of what the gate actually exercised
+            and what it could not. Required for every result whose
+            status is not ``"skipped"`` or ``"bypassed"`` (those did not
+            evaluate anything). Enforced by ``__post_init__``; see
+            :class:`VerificationScope` (issue #5397).
     """
 
     name: str
@@ -176,9 +216,10 @@ class GateResult:
     details: str
     metadata: dict[str, Any] = field(default_factory=_empty_metadata)
     reason: str | None = None
+    scope: VerificationScope | None = None
 
     def __post_init__(self) -> None:
-        """Enforce the ``status ↔ reason`` invariant from the docstring."""
+        """Enforce the ``status ↔ reason`` and ``scope`` invariants from the docstring."""
         if self.status == "inconclusive":
             if self.reason is None:
                 raise ValueError(
@@ -196,6 +237,12 @@ class GateResult:
                 f"GateResult.reason={self.reason!r} is only valid with "
                 f"status='inconclusive'; got status={self.status!r} "
                 f"(name={self.name!r})"
+            )
+        if self.status not in {"skipped", "bypassed"} and self.scope is None:
+            raise ValueError(
+                f"GateResult.status={self.status!r} requires a VerificationScope "
+                f"(scope=None, name={self.name!r}). Skipped and bypassed "
+                f"results may omit scope because they did not evaluate anything."
             )
 
 
