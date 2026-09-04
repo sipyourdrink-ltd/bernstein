@@ -252,21 +252,11 @@ class TrajectorySection:
         """
         return cls(
             step_count=int(raw.get("step_count", 0)),
-            first_step_index=(
-                int(raw["first_step_index"])
-                if "first_step_index" in raw
-                else None
-            ),
-            last_step_index=(
-                int(raw["last_step_index"])
-                if "last_step_index" in raw
-                else None
-            ),
+            first_step_index=(int(raw["first_step_index"]) if "first_step_index" in raw else None),
+            last_step_index=(int(raw["last_step_index"]) if "last_step_index" in raw else None),
             first_step_hash=raw.get("first_step_hash"),
             last_step_hash=raw.get("last_step_hash"),
-            schema_version=int(
-                raw.get("schema_version", TRAJECTORY_SCHEMA_VERSION)
-            ),
+            schema_version=int(raw.get("schema_version", TRAJECTORY_SCHEMA_VERSION)),
             citations=(),
         )
 
@@ -319,11 +309,7 @@ class VerificationSection:
             journal_ok=bool(raw.get("journal_ok", False)),
             journal_head=str(raw.get("journal_head", "")),
             journal_steps=int(raw.get("journal_steps", 0)),
-            divergent_step=(
-                int(raw["divergent_step"])
-                if "divergent_step" in raw
-                else None
-            ),
+            divergent_step=(int(raw["divergent_step"]) if "divergent_step" in raw else None),
             spine_ok=bool(raw.get("spine_ok", False)),
             spine_head=str(raw.get("spine_head", "")),
             spine_entries=int(raw.get("spine_entries", 0)),
@@ -371,16 +357,8 @@ class RecoverySection:
         return cls(
             repaired=bool(raw.get("repaired", False)),
             dropped_rows=int(raw.get("dropped_rows", 0)),
-            first_recoverable_seq=(
-                int(raw["first_recoverable_seq"])
-                if "first_recoverable_seq" in raw
-                else None
-            ),
-            recovery_event_index=(
-                int(raw["recovery_event_index"])
-                if "recovery_event_index" in raw
-                else None
-            ),
+            first_recoverable_seq=(int(raw["first_recoverable_seq"]) if "first_recoverable_seq" in raw else None),
+            recovery_event_index=(int(raw["recovery_event_index"]) if "recovery_event_index" in raw else None),
             citations=(),
         )
 
@@ -423,9 +401,7 @@ class StateConsistencySection:
             mutation_count=int(raw.get("mutation_count", 0)),
             disagreement_count=int(raw.get("disagreement_count", 0)),
             last_mutation_event_index=(
-                int(raw["last_mutation_event_index"])
-                if "last_mutation_event_index" in raw
-                else None
+                int(raw["last_mutation_event_index"]) if "last_mutation_event_index" in raw else None
             ),
             citations=(),
         )
@@ -629,30 +605,14 @@ class Scorecard:
             trajectory=TrajectorySection.from_dict(raw["trajectory"]),
             verification=VerificationSection.from_dict(raw["verification"]),
             recovery=RecoverySection.from_dict(raw["recovery"]),
-            state_consistency=StateConsistencySection.from_dict(
-                raw["state_consistency"]
-            ),
+            state_consistency=StateConsistencySection.from_dict(raw["state_consistency"]),
             safety=SafetySection.from_dict(raw["safety"]),
             replayability=ReplayabilitySection.from_dict(raw["replayability"]),
-            schema_version=str(
-                raw.get("schema_version", SCORECARD_SCHEMA_VERSION)
-            ),
-            type_version=int(
-                raw.get("type_version", SCORECARD_TYPE_VERSION)
-            ),
-            scorecard_type=str(
-                raw.get("scorecard_type", SCORECARD_TYPE)
-            ),
-            wall_clock_start=(
-                float(raw["wall_clock_start"])
-                if "wall_clock_start" in raw
-                else None
-            ),
-            wall_clock_end=(
-                float(raw["wall_clock_end"])
-                if "wall_clock_end" in raw
-                else None
-            ),
+            schema_version=str(raw.get("schema_version", SCORECARD_SCHEMA_VERSION)),
+            type_version=int(raw.get("type_version", SCORECARD_TYPE_VERSION)),
+            scorecard_type=str(raw.get("scorecard_type", SCORECARD_TYPE)),
+            wall_clock_start=(float(raw["wall_clock_start"]) if "wall_clock_start" in raw else None),
+            wall_clock_end=(float(raw["wall_clock_end"]) if "wall_clock_end" in raw else None),
         )
 
 
