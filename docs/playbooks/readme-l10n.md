@@ -59,6 +59,17 @@ Adding a language is a data change, not a code change:
    "zh-Hans" = "@your-handle"
    ```
 
+   To adopt an existing translation, replace its current owner entry
+   with your own handle. For example:
+
+   ```toml
+   [tool.bernstein.readme-l10n.owners]
+   "fr" = "@your-handle"
+   ```
+
+   The owner entry is the handoff: it makes future drift reports reach
+   the person responsible for updating that language.
+
 A binding line for a section that does not exist in `README.md`
 makes `sync` warn; a translated section without a binding line makes
 `verify` fail with the section name.
