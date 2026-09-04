@@ -1,7 +1,0 @@
-FIXED: 3 of 3 blocking findings
-
-- F1: Changed `replay_verdict` default from `None` to `ReplayVerdict.ACCEPT` in `UpgradeProposal` (proposals.py:80). Moved `ReplayVerdict` from `TYPE_CHECKING` import to a real import so the default is resolvable at runtime. Production proposals now pass the gate; the three existing gating tests in test_evolution_loop.py (which explicitly pass a verdict) remain passing.
-
-- F2: Removed the `risk_route == "fast_track"` branch from `run_cycle` (loop.py), deleted `make_fast_track_sandbox_result` (_shared.py) and `_make_fast_track_sandbox_result` (loop.py), and removed the corresponding import. `grep -n fast_track src/bernstein/evolution/` returns no call sites. Removed `test_fast_track_skips_sandbox` from test_evolution_governance_integration.py which asserted the now-removed bypass behavior. Note: `test_classify_risk_route_low_risk` still asserts `_classify_risk_route` returns `"fast_track"` for low-risk proposals — that function still exists and the test passes; only the bypass in run_cycle was removed.
-
-- F3: Ran the full acceptance command from #5407: `UV_NO_SYNC=1 uv run --no-sync pytest tests/unit/test_evolution_loop.py tests/unit/test_evolution_admission.py tests/property/test_evolution_gate_properties.py -x` → 83 passed. The 4 previously failing tests (test_run_cycle_logs_experiment_to_jsonl, test_run_cycle_returns_experiment_result_when_opportunity_found, test_consecutive_empty_resets_after_successful_apply, test_governance_log_written_after_successful_apply) now pass.
