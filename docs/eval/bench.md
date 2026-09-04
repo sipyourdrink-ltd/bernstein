@@ -15,6 +15,7 @@ machine), `bernstein-bench` is designed so that:
 2. **The posted score is recomputable** by anyone from the embedded run receipts.
 3. **A coordinator that puts a model in the scheduling loop cannot pass** the
    byte-identical reproducibility gate by construction.
+4. **Cost, token, and latency accounting** are embedded in bundles, with budget gates for CI and comparison commands.
 
 The primary artefact is not a leaderboard row — it is a **submission bundle** whose
 score is recomputable from the replayable run receipts it embeds.
@@ -24,7 +25,7 @@ score is recomputable from the replayable run receipts it embeds.
 ## Architecture
 
 ```
-bernstein bench run <suite>
+bernstein bench run <suite> [--budget <usd>]
         │
         ▼
  ┌─────────────┐     per-task     ┌──────────────────┐
@@ -32,19 +33,21 @@ bernstein bench run <suite>
  │ (content-   │                  │ {suite_hash,     │
  │  addressed) │                  │  per_task_       │
  └─────────────┘                  │  receipts,       │
-                                  │  scores,         │
+                                  │  scores, tokens, │
+                                  │  cost_usd, time, │
                                   │  scheduler_cfg}  │
                                   └──────┬───────────┘
                                          │
-                                         ▼
-                              bernstein bench verify
-                                         │
-                              MATCH  ────┤
-                            DIVERGED ────┘
-                                         │
-                                         ▼
-                                    Leaderboard
-                              (only verified bundles)
+                        ┌────────────────┴────────────────┐
+                        ▼                                 ▼
+              bernstein bench verify            bernstein bench compare
+                        │                       (pass rate, score, cost,
+             MATCH  ────┤                        tokens & latency deltas)
+           DIVERGED ────┘
+                        │
+                        ▼
+                   Leaderboard
+             (only verified bundles)
 ```
 
 ### Key invariants
@@ -55,6 +58,8 @@ bernstein bench run <suite>
 | Score = replay | `bench verify` replays every receipt offline and re-derives the verdict; mismatch → rejected |
 | No fabrication | Flipping a verdict without a matching receipt fails verification at the diverging task |
 | No missing receipts | An empty/absent receipt fails the entire bundle |
+| Budget enforcement | `--budget <usd>` stops execution immediately upon exceeding budget and records refusal receipts |
+| Cost & token tracking | Per-task and aggregated token, cost (USD), and duration accounting in schema version 2 bundles |
 | Leaderboard is honest | Only `bench verify`-passing bundles are projected into the table |
 
 ---
@@ -66,17 +71,30 @@ bernstein bench run <suite>
 ```bash
 # Run the canonical golden-v1 suite and emit a submission bundle
 bernstein bench run golden-v1 --out my-bundle.json
+
+# Run with a budget gate (e.g. $0.50 in CI)
+bernstein bench run golden-v1 --out my-bundle.json --budget 0.50
 ```
 
 This executes every task in `golden-v1` via the real adapter, collects
 per-task run receipts (journal head + spine head), scores them with the
-`harness.py` multiplicative scorer, and writes a signed
-`SubmissionBundle` to `my-bundle.json`.
+`harness.py` multiplicative scorer, tracks token consumption and USD costs,
+and writes a signed `SubmissionBundle` to `my-bundle.json`.
 
 Two runs of the same suite on the same inputs produce **byte-identical
 per-task receipts** — this is the empirical determinism property.
 
-### 2. Verify the bundle
+### 2. Compare two bundles
+
+```bash
+# Compare two runs (e.g. baseline vs optimization)
+bernstein bench compare baseline.json candidate.json
+```
+
+Outputs a Markdown comparison table reporting pass-rate delta, score delta,
+USD cost delta (and percentage difference), token delta, and wall-clock duration delta.
+
+### 3. Verify the bundle
 
 ```bash
 bernstein bench verify my-bundle.json
@@ -100,51 +118,12 @@ suite_hash  : a7e4b82f…
 overall     : MATCH
 
   ✓ file_io_read_write                       MATCH
-  ✓ refactor_rename_symbol                   MATCH
-  ✓ test_generation_happy_path               MATCH
-  ✓ lint_fix_unused_import                   MATCH
-  ✓ doc_update_docstring                     MATCH
+  ✓ bash_command_pipeline                    MATCH
 ```
-
-### 3. Submit to the leaderboard
-
-```bash
-bernstein bench submit my-bundle.json
-```
-
-The submission gate runs `bench verify` first.  A bundle whose replayed
-runs do not reproduce the claimed per-task outcomes is **rejected** before
-any leaderboard entry is written.
-
-The leaderboard (`docs/eval/leaderboard.md`) lists only verified bundles,
-each row linking its bundle hash so anyone can re-verify.
-
----
-
-## Reliability floor (`--reliability k`)
-
-A submission bundle reports a single fixed-coordination run per task. To
-report a **floor** instead of a ceiling — does every task pass *all* of
-`k` attempts under byte-identical coordination, not just one? — run:
-
-```bash
-bernstein bench run golden-v1 --reliability 5 --out reliability.json
-bernstein bench reliability-verify reliability.json
-bernstein bench reliability-check reliability.json
-```
-
-This emits a signed reliability receipt reporting `pass@1` (any attempt
-passed) and `pass^k` (all `k` attempts passed, the headline floor), with
-all `k` per-attempt run receipts embedded so the floor is recomputable
-offline. `bernstein eval --reliability k` is a thin alias for the same
-run path — identical receipt, verified with the same two verbs above.
-Full details: [reliability.md](reliability.md).
 
 ---
 
 ## Suite format
-
-Suites are content-addressed JSON files:
 
 ```json
 {
@@ -172,6 +151,7 @@ Two runners on the same `suite_hash` provably ran the same task set.
 
 ```json
 {
+  "bundle_schema_version": 2,
   "bundle_hash": "<sha256 of everything except signature>",
   "suite_hash": "...",
   "suite_version": "golden-v1",
@@ -179,6 +159,9 @@ Two runners on the same `suite_hash` provably ran the same task set.
   "scheduler_config": {"...": "..."},
   "overall_score": 0.95,
   "pass_rate": 1.0,
+  "total_tokens": 12500,
+  "total_cost_usd": 0.0450,
+  "total_duration_seconds": 18.25,
   "task_results": [
     {
       "task_id": "file_io_read_write",
@@ -192,6 +175,9 @@ Two runners on the same `suite_hash` provably ran the same task set.
       "receipt_hash": "<sha256 of receipt bytes>",
       "passed": true,
       "score": 1.0,
+      "tokens": 1250,
+      "cost_usd": 0.0045,
+      "duration_seconds": 1.82,
       "harness_output": {"...": "..."}
     }
   ],
@@ -200,8 +186,8 @@ Two runners on the same `suite_hash` provably ran the same task set.
 }
 ```
 
-The `receipt` is the replay substrate.  The `score` only means something
-because the receipt exists to replay it.  Removing or corrupting the receipt
+The `receipt` is the replay substrate. The `score` only means something
+because the receipt exists to replay it. Removing or corrupting the receipt
 makes the entire bundle fail verification.
 
 ---
@@ -214,14 +200,15 @@ from bernstein.eval.bench import (
     BenchVerifier,
     MockReplayAdapter,
     build_golden_suite_v1,
+    compare_bundles,
     Leaderboard,
     LeaderboardEntry,
 )
 
-# Build and run the golden suite (hermetic mock adapter)
+# Build and run the golden suite (hermetic mock adapter) with budget gate
 suite = build_golden_suite_v1()
 adapter = MockReplayAdapter()
-runner = BenchRunner(suite=suite, adapter=adapter, scheduler_config={})
+runner = BenchRunner(suite=suite, adapter=adapter, scheduler_config={}, budget_usd=1.0)
 bundle = runner.run()
 
 # Verify offline
@@ -229,6 +216,10 @@ verifier = BenchVerifier(suite=suite, adapter=adapter)
 result = verifier.verify(bundle)
 print(result.report())
 # overall: MATCH
+
+# Compare two runs
+# cmp = compare_bundles(bundle_a, bundle_b)
+# print(cmp.to_markdown())
 
 # Project to leaderboard
 lb = Leaderboard(suite_hash=suite.suite_hash, suite_version=suite.version)
@@ -266,16 +257,18 @@ All tests use `MockReplayAdapter` — no network, no real adapters, no API keys.
 src/bernstein/eval/bench/
 ├── __init__.py          # public API re-exports
 ├── suite.py             # BenchSuite, BenchTask (content-addressed)
-├── bundle.py            # SubmissionBundle, TaskResult
-├── runner.py            # BenchRunner, MockReplayAdapter, StochasticMockReplayAdapter
+├── bundle.py            # SubmissionBundle, TaskResult (cost & token tracking)
+├── compare.py           # compare_bundles, CompareResult, TaskComparison
+├── runner.py            # BenchRunner (budget gate), MockReplayAdapter, StochasticMockReplayAdapter
 ├── verifier.py          # BenchVerifier, VerificationStatus
 ├── leaderboard.py       # Leaderboard, LeaderboardEntry, Markdown render
 ├── reliability.py       # pass^k reliability floor (see reliability.md)
 └── golden_suite.py      # starter golden-v1 task suite
 
 tests/unit/eval/bench/
-├── test_bench.py        # TDD suite — all acceptance criteria
-└── test_reliability.py  # pass^k reliability floor tests
+├── test_bench.py              # TDD suite — all acceptance criteria
+├── test_bench_cost_budget.py  # Bundle cost accounting, comparison & budget gate (#5464)
+└── test_reliability.py        # pass^k reliability floor tests
 
 docs/eval/
 ├── bench.md                  # this document
@@ -309,11 +302,14 @@ the strip-the-substrate failure contract.
 
 ---
 
-## Acceptance criteria (from issue #2932)
+## Acceptance criteria (from issue #2932 & #5464)
 
 - [x] `bernstein bench run <suite>` produces a signed submission bundle; two runs of the same suite on the same inputs produce byte-identical per-task receipts (empirical determinism).
 - [x] `bernstein bench verify <bundle>` recomputes every task's score by replaying the embedded receipts offline, with no access to the submitter's machine, and reports MATCH or the exact task whose replay diverged.
 - [x] A bundle with a fabricated score (verdict flipped without a matching replayable run) is rejected at the diverging task; removing or corrupting a task's receipt makes the whole bundle fail verification.
 - [x] The suite is content-addressed: two runners on the same suite hash provably ran the same task set; a changed task changes the suite hash.
+- [x] Per-task and total token counts, cost in USD, and duration in `TaskResult` and `SubmissionBundle` with bundle schema version 2.
+- [x] `bernstein bench compare <bundle_a> <bundle_b>` reporting cost deltas, token deltas, latency deltas, and pass-rate deltas.
+- [x] `--budget <usd>` option stopping execution when exceeded and recording refusal receipts.
 - [x] The leaderboard projection lists only `bench verify`-passing bundles, each row linking its bundle hash.
 - [x] Docs shipped in the same PR.

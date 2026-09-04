@@ -8,7 +8,8 @@ Registered in src/bernstein/cli/main.py alongside every other subcommand:
 
 This exposes:
     bernstein bench run <suite> [--out <path>] [--scheduler <name>] [--stub-signer]
-                        [--reliability K]
+                        [--reliability K] [--budget <usd>]
+    bernstein bench compare <bundle_a> <bundle_b> [--format markdown|json]
     bernstein bench verify <bundle> [--suite <name>]
     bernstein bench reliability-verify <receipt> [--suite <name>]
     bernstein bench reliability-check <receipt> [--suite <name>] [--task <id>] [--attempt N]
@@ -19,6 +20,7 @@ Also registered as a standalone script in pyproject.toml:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -66,6 +68,7 @@ def bench_group() -> None:
 
     \b
     bernstein bench run golden-v1 --out bundle.json
+    bernstein bench compare bundle_a.json bundle_b.json
     bernstein bench verify bundle.json
     """
 
@@ -96,7 +99,20 @@ def bench_group() -> None:
         "pass^k reliability receipt instead of a submission bundle."
     ),
 )
-def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliability_k: int | None) -> None:
+@click.option(
+    "--budget",
+    type=float,
+    default=None,
+    help="Stop runner if cumulative cost exceeds this USD limit.",
+)
+def bench_run(
+    suite: str,
+    out: str,
+    scheduler: str,
+    stub_signer: bool,
+    reliability_k: int | None,
+    budget: float | None,
+) -> None:
     """Execute a suite and emit a signed submission bundle.
 
     SUITE is a built-in suite name (e.g. golden-v1) or a path to a .json
@@ -125,6 +141,7 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
         suite=suite_obj,
         adapter=adapter,
         scheduler_config={"scheduler": scheduler},
+        budget_usd=budget,
     )
 
     click.echo("\nRunning tasks…")
@@ -138,9 +155,53 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
 
     click.echo(f"\nScore       : {bundle.overall_score * 100:.1f}%")
     click.echo(f"Pass rate   : {bundle.pass_rate * 100:.1f}%")
+    click.echo(f"Total tokens: {bundle.total_tokens:,}")
+    click.echo(f"Total cost  : ${bundle.total_cost_usd:.4f}")
     click.echo(f"Bundle hash : {bundle.bundle_hash()}")
     click.echo(f"Signed by   : {bundle.signer_fingerprint or '(unsigned)'}")
     click.echo(f"\nBundle written to: {out_path}")
+
+
+# ---------------------------------------------------------------------------
+# bernstein bench compare
+# ---------------------------------------------------------------------------
+
+
+@bench_group.command(name="compare")
+@click.argument("bundle_a")
+@click.argument("bundle_b")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["markdown", "json"]),
+    default="markdown",
+    show_default=True,
+    help="Output format for comparison.",
+)
+def bench_compare(bundle_a: str, bundle_b: str, output_format: str) -> None:
+    """Compare two submission bundles across accuracy, cost, and latency.
+
+    BUNDLE_A and BUNDLE_B are paths to submission bundle .json files.
+    """
+    from bernstein.eval.bench.bundle import SubmissionBundle
+    from bernstein.eval.bench.compare import compare_bundles
+
+    path_a = Path(bundle_a)
+    if not path_a.exists():
+        raise click.ClickException(f"Bundle file not found: {path_a}")
+
+    path_b = Path(bundle_b)
+    if not path_b.exists():
+        raise click.ClickException(f"Bundle file not found: {path_b}")
+
+    b_a = SubmissionBundle.load(path_a)
+    b_b = SubmissionBundle.load(path_b)
+
+    cmp_res = compare_bundles(b_a, b_b)
+    if output_format == "json":
+        click.echo(json.dumps(cmp_res.to_dict(), indent=2, sort_keys=True))
+    else:
+        click.echo(cmp_res.to_markdown())
 
 
 # ---------------------------------------------------------------------------

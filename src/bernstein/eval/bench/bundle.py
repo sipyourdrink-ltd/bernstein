@@ -54,6 +54,10 @@ class TaskResult:
     # construction time and restored verbatim from the JSON at load time.
     # The verifier recomputes this from the live receipt and compares.
     stored_receipt_hash: str = ""
+    # Resource metrics (#5464)
+    tokens: int = 0
+    cost_usd: float = 0.0
+    duration_seconds: float = 0.0
 
     def __post_init__(self) -> None:
         # If caller didn't supply stored_receipt_hash, derive it now.
@@ -81,6 +85,9 @@ class TaskResult:
             "passed": self.passed,
             "score": self.score,
             "harness_output": self.harness_output,
+            "tokens": self.tokens,
+            "cost_usd": self.cost_usd,
+            "duration_seconds": self.duration_seconds,
         }
 
 
@@ -107,6 +114,7 @@ class SubmissionBundle:
     signature: str = ""
     # Install identity fingerprint (public-key fingerprint of the signer).
     signer_fingerprint: str = ""
+    bundle_schema_version: int = 2
 
     # Computed lazily.
     _bundle_hash: str | None = field(default=None, init=False, repr=False, compare=False)
@@ -126,6 +134,18 @@ class SubmissionBundle:
         if not self.task_results:
             return 0.0
         return sum(1 for r in self.task_results if r.passed) / len(self.task_results)
+
+    @property
+    def total_tokens(self) -> int:
+        return sum(r.tokens for r in self.task_results)
+
+    @property
+    def total_cost_usd(self) -> float:
+        return sum(r.cost_usd for r in self.task_results)
+
+    @property
+    def total_duration_seconds(self) -> float:
+        return sum(r.duration_seconds for r in self.task_results)
 
     # ------------------------------------------------------------------
     # Content hash (covers everything *except* the signature field)
@@ -156,6 +176,7 @@ class SubmissionBundle:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "bundle_schema_version": self.bundle_schema_version,
             "bundle_hash": self.bundle_hash(),
             "suite_hash": self.suite_hash,
             "suite_version": self.suite_version,
@@ -163,6 +184,9 @@ class SubmissionBundle:
             "scheduler_config": self.scheduler_config,
             "overall_score": self.overall_score,
             "pass_rate": self.pass_rate,
+            "total_tokens": self.total_tokens,
+            "total_cost_usd": self.total_cost_usd,
+            "total_duration_seconds": self.total_duration_seconds,
             "task_results": [r.to_dict() for r in self.task_results],
             "signature": self.signature,
             "signer_fingerprint": self.signer_fingerprint,
@@ -198,6 +222,9 @@ class SubmissionBundle:
                 # Restore the hash that was stored at emit time — do NOT let
                 # __post_init__ recompute it from the current receipt bytes.
                 stored_receipt_hash=r["receipt_hash"],
+                tokens=r.get("tokens", 0),
+                cost_usd=float(r.get("cost_usd", 0.0)),
+                duration_seconds=float(r.get("duration_seconds", 0.0)),
             )
             for r in raw["task_results"]
         ]
@@ -209,6 +236,7 @@ class SubmissionBundle:
             submitted_at=raw["submitted_at"],
             signature=raw.get("signature", ""),
             signer_fingerprint=raw.get("signer_fingerprint", ""),
+            bundle_schema_version=raw.get("bundle_schema_version", 1),
         )
         # Integrity guard: recompute hash and compare.
         if bundle.bundle_hash() != raw["bundle_hash"]:
