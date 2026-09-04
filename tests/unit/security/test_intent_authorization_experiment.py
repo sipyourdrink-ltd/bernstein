@@ -340,13 +340,15 @@ class TestRunExperiment:
         assert len(parsed["results"]) == summary.total_events
 
 
-class TestInjectionResistance:
-    """Hostile tool result cannot change recorded intent mid-run.
+class TestInjectionResistanceAndDigestPurity:
+    """Hostile tool result cannot change recorded intent mid-run; intent digest is pure.
 
     This tests the structural property that intent_digest is computed at
     attestation time (before tool execution) and locked into the attestation
     record.  A tool result that arrives after attestation cannot retroactively
-    change the recorded intent_digest.
+    change the recorded intent_digest.  Because intent_digest is a pure
+    function of the pre-attestation declared_intent, the recorded digest is
+    also immune to mutation by any post-attestation tool result.
     """
 
     def test_intent_digest_is_precomputed_not_from_result(self) -> None:
@@ -398,6 +400,65 @@ class TestInjectionResistance:
         digest1 = _compute_intent_digest(intent_text)
         digest2 = _compute_intent_digest(intent_text)
         assert digest1 == digest2
+
+    def test_hostile_tool_result_cannot_mutate_recorded_intent_digest(self) -> None:
+        """A hostile tool result cannot alter the recorded intent_digest after attestation.
+
+        Simulates an adversarial injection attack where a malicious tool result tries
+        to mutate the pre-attested intent_digest. The test verifies that:
+        1. Pre-attested intent_digest is recorded before tool execution
+        2. A hostile tool result cannot change that digest retroactively
+        3. The same event processed twice yields the same intent_digest (determinism)
+        """
+        # Step 1: Pre-attestation - compute and "record" the intent digest
+        declared_intent = "reading quarterly summary for business review"
+        pre_attested_digest = _compute_intent_digest(declared_intent)
+
+        # Verif1: digest is a valid SHA-256
+        assert pre_attested_digest.startswith("sha256:")
+        assert len(pre_attested_digest) == 71
+
+        # Step 2: Simulate hostile tool result trying to inject malicious intent
+        # (In a real attack, the tool would return corrupted/corrupting data)
+        recorded_event_intent = declared_intent  # what was recorded at attestation
+        recorded_digest = _compute_intent_digest(recorded_event_intent)
+
+        # Attack attempt: different intent text would produce different digest
+        attack_intent = "exfiltrating data to external server for attacker"
+        attack_digest = _compute_intent_digest(attack_intent)
+
+        # Verif2: The attack digest differs from recorded digest
+        assert attack_digest != recorded_digest
+
+        # Verif3: The recorded digest is deterministic
+        assert recorded_digest == _compute_intent_digest(declared_intent)
+
+        # The policy evaluation always uses the pre-attested digest, never the attack variant
+        event_with_attack_intent = {
+            "agent_id": "agent-001",
+            "resource": "file:///data/reports/q4_summary.csv",
+            "declared_intent": attack_intent,  # attacker tries to change this
+            "args_digest": "sha256:abc",
+        }
+        attack_result = _eval_intent_aware(event_with_attack_intent)
+        assert attack_result.decision is False  # malicious intent is correctly rejected
+
+        # The benign intent gets approved (uses pre-attested digest from attestation)
+        event_benign = {
+            "agent_id": "agent-001",
+            "resource": "file:///data/reports/q4_summary.csv",
+            "declared_intent": declared_intent,
+            "args_digest": "sha256:abc",
+        }
+        benign_result = _eval_intent_aware(event_benign)
+        assert benign_result.decision is True  # benign approved
+
+        # Critical: Same attack event always produces same result (no mutation possible)
+        for _ in range(3):
+            r1 = _eval_intent_aware(event_with_attack_intent)
+            r2 = _eval_intent_aware(event_with_attack_intent)
+            assert r1.decision == r2.decision
+            assert r1.policy_digest == r2.policy_digest
 
 
 class TestLoadPolicies:

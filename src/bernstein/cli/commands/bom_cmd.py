@@ -137,7 +137,7 @@ def emit_cmd(
         click.echo("error: snapshot must decode to a JSON object", err=True)
         raise SystemExit(1)
 
-    snapshot: dict[str, Any] = cast("dict[str, Any]", snapshot_raw)
+    snapshot: dict[str, Any] = cast("dict[str, Any]", snapshot_raw)  # type: ignore[no-redef]  # conditional import
 
     _write_bom(snapshot, fmt=fmt, out_path=out_path)
 

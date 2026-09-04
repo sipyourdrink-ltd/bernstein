@@ -29,10 +29,14 @@ from bernstein.core.approval.gate import (
     ApprovalConfig,
     await_tool_call,
 )
-from bernstein.core.approval.models import ApprovalDecision
+from bernstein.core.approval.models import ApprovalDecision, ApprovalPrincipal
 from bernstein.core.security.always_allow import AlwaysAllowEngine
 from bernstein.core.security.audit import AuditLog
 from bernstein.core.security.auto_approve import Decision
+
+#: Every resolve names the operator it is attributed to; the queue has no
+#: default principal to fall back on (#5035).
+_PRINCIPAL = ApprovalPrincipal(identifier="alice@example.test", auth_method="scoped-token")
 
 
 def _audit_dir(workdir: Path) -> Path:
@@ -138,7 +142,7 @@ class TestFailClosedAutoApprovePosture:
             for _ in range(50):
                 pending = queue.list_pending()
                 if pending:
-                    queue.resolve(pending[0].id, ApprovalDecision.ALLOW)
+                    queue.resolve(pending[0].id, ApprovalDecision.ALLOW, principal=_PRINCIPAL)
                     break
                 await asyncio.sleep(0.01)
             else:
@@ -199,7 +203,7 @@ class TestFailClosedAutoApprovePosture:
             for _ in range(50):
                 pending = queue.list_pending()
                 if pending:
-                    queue.resolve(pending[0].id, ApprovalDecision.ALLOW)
+                    queue.resolve(pending[0].id, ApprovalDecision.ALLOW, principal=_PRINCIPAL)
                     break
                 await asyncio.sleep(0.01)
             else:

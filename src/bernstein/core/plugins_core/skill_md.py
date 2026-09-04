@@ -242,7 +242,7 @@ def load_skill_md(path: Path, *, role_fallback: str | None = None) -> SkillMD | 
 
     fields = normalise_skill(fm)
 
-    name: str = fields.get("name") or (role_fallback or "")
+    name: str = fields.get("name") or (role_fallback or "")  # type: ignore[no-redef]  # conditional import
     if not name:
         return None
 

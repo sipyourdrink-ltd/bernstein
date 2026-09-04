@@ -175,7 +175,7 @@ class PollingListener:
             comments = normalise_polling_payload(
                 repo=self._repo,
                 pr_number=pr,
-                comments=raw,
+                comments=raw,  # type: ignore[arg-type]  # invariant list
             )
             high_water = self._last_seen_per_pr.get(pr, "")
             new_high_water = high_water

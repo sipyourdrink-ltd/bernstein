@@ -240,6 +240,11 @@ EVENT_MCP_STATELESS_CALL = "mcp.stateless_call"
 #: gained or lost which tools.
 EVENT_MCP_CAPABILITY_DRIFT = "mcp.capability_drift"
 
+#: Issue #5115 -- emitted when the install identity key is rotated. The event
+#: records the new keyid (thumbprint of the install-identity public key), the
+#: old keyid if available, and the timestamp of rotation.
+EVENT_IDENTITY_ROTATION = "identity.rotation"
+
 #: Issue #3610 (slice 1) -- emitted when a run's semantic code graph digest
 #: is anchored in the HMAC chain. This event records the graph digest, the
 #: run id, the graph version, the source/indexed file counts, the unparsed
@@ -1022,6 +1027,15 @@ EVENT_IDENTITY_SPAWN_ATTESTATION = "identity.spawn_attestation"
 
 #: Issue #5031 -- session revocation propagation
 EVENT_IDENTITY_REVOKED = "identity.revoked"
+
+#: Issue #4970 -- emitted whenever the external-directory bridge
+#: (:mod:`bernstein.core.security.directory_bridge`) answers "who is this
+#: principal and what is it a member of". The event names the adapter and its
+#: version, the reference asked for, the principal the directory returned, the
+#: groups, the mapped role, the revocation state, and whether the answer came
+#: from the directory or from the bridge cache (with its age). A live lookup
+#: nobody can reproduce later thereby becomes a verifiable historical fact.
+EVENT_DIRECTORY_RESOLUTION = "identity.directory_resolution"
 
 #: Issue #2930 -- emitted whenever an eval run seals a clean-run attestation
 #: (:mod:`bernstein.eval.clean_run`). The event mirrors the attestation's
