@@ -17,7 +17,9 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
+from bernstein.cli.commands.runs_cmd import runs_group
 from bernstein.core.persistence.run_scorecard import (
     SCORECARD_KIND,
     SCORECARD_VERSION,
@@ -390,3 +392,96 @@ class TestModuleSurface:
         ):
             assert name in mod.__all__, f"missing {name!r} in __all__"
             assert hasattr(mod, name), f"missing {name!r} on module"
+
+
+# ---------------------------------------------------------------------------
+# CLI surface (`bernstein runs scorecard`)
+# ---------------------------------------------------------------------------
+
+
+class TestCliScorecard:
+    def test_scorecard_command_is_registered(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(runs_group, ["--help"])
+        assert result.exit_code == 0
+        # The "scorecard" subcommand must appear in the help text; "report"
+        # is the only other one and stays alongside it.
+        assert "scorecard" in result.output
+        assert "report" in result.output
+
+    def test_scorecard_default_writes_artifact(self, pr_run: tuple[Path, str]) -> None:
+        root, run_id = pr_run
+        runner = CliRunner()
+        result = runner.invoke(runs_group, ["scorecard", run_id, "--workdir", str(root)])
+        assert result.exit_code == 0, result.output
+        assert "wrote" in result.output
+        artifact_dir = root / ".sdd" / "runs" / run_id / "scorecard"
+        assert artifact_dir.exists()
+        artifacts = list(artifact_dir.glob("*.json"))
+        assert len(artifacts) == 1
+        # The single one-line summary names the outcome.
+        assert "outcome=pr-opened" in result.output
+
+    def test_scorecard_json_emits_canonical_content(self, pr_run: tuple[Path, str]) -> None:
+        root, run_id = pr_run
+        runner = CliRunner()
+        result = runner.invoke(runs_group, ["scorecard", run_id, "--workdir", str(root), "--json"])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert (
+            payload["sha256"]
+            == hashlib.sha256(
+                json.dumps(payload["content"], sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+            ).hexdigest()
+        )
+        assert payload["content"]["kind"] == "run_scorecard"
+        assert payload["content"]["outcome"] == "pr-opened"
+
+    def test_scorecard_verify_ok_on_clean_ledger(self, pr_run: tuple[Path, str]) -> None:
+        root, run_id = pr_run
+        runner = CliRunner()
+        # Build the artifact first via the default mode.
+        runner.invoke(runs_group, ["scorecard", run_id, "--workdir", str(root)])
+        result = runner.invoke(runs_group, ["scorecard", run_id, "--workdir", str(root), "--verify"])
+        assert result.exit_code == 0, result.output
+        assert "OK" in result.output
+        assert "match" in result.output.lower()
+
+    def test_scorecard_verify_json_on_clean_ledger(self, pr_run: tuple[Path, str]) -> None:
+        root, run_id = pr_run
+        runner = CliRunner()
+        runner.invoke(runs_group, ["scorecard", run_id, "--workdir", str(root)])
+        result = runner.invoke(runs_group, ["scorecard", run_id, "--workdir", str(root), "--verify", "--json"])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["ok"] is True
+        assert payload["artifact_sha256"] == payload["recomputed_sha256"]
+
+    def test_scorecard_verify_named_field_on_tamper(self, pr_run: tuple[Path, str]) -> None:
+        root, run_id = pr_run
+        runner = CliRunner()
+        # Build the artifact, then tamper the journal's branch line.
+        runner.invoke(runs_group, ["scorecard", run_id, "--workdir", str(root)])
+        journal_path = run_ledger_dir(root / ".sdd", run_id) / "000000.jsonl"
+        raw = journal_path.read_text(encoding="utf-8")
+        journal_path.write_text(raw.replace('"branch":"fix/scorecard"', '"branch":"fix/wrong"', 1), encoding="utf-8")
+        result = runner.invoke(runs_group, ["scorecard", run_id, "--workdir", str(root), "--verify", "--json"])
+        # Exit 1 on mismatch, payload names the diverging field.
+        assert result.exit_code == 1
+        payload = json.loads(result.output)
+        assert payload["ok"] is False
+        assert "branch" in payload["description"]
+
+    def test_scorecard_missing_ledger_exits_nonzero(self, tmp_path: Path) -> None:
+        runner = CliRunner()
+        result = runner.invoke(runs_group, ["scorecard", "no-such-run", "--workdir", str(tmp_path)])
+        assert result.exit_code != 0
+        assert "work ledger not found" in result.output
+
+    def test_scorecard_verify_missing_artifact_exits_nonzero(self, pr_run: tuple[Path, str]) -> None:
+        root, run_id = pr_run
+        runner = CliRunner()
+        # No artifact written yet -- --verify must fail loudly.
+        result = runner.invoke(runs_group, ["scorecard", run_id, "--workdir", str(root), "--verify"])
+        assert result.exit_code != 0
+        assert "no scorecard artifact" in result.output.lower()
