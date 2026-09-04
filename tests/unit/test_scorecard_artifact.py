@@ -7,6 +7,7 @@ Each test pins one of the 8 acceptance criteria from issue #5403.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,7 +22,7 @@ from bernstein.core.replay.run_receipt import (
     build_run_receipt,
     verify_run_receipt,
 )
-from bernstein.core.replay.scorecard import (
+from bernstein.core.replay.scorecard_artifact import (
     SCORECARD_PAYLOAD_TYPE,
     ScorecardDocument,
     _project_document_body,
@@ -385,5 +386,6 @@ def test_existing_run_receipt_roundtrip_still_green() -> None:
         capture_output=True,
         text=True,
         cwd=repo_root,
+        env={**os.environ, "UV_NO_SYNC": "1"},
     )
     assert result.returncode == 0, f"run-receipt roundtrip regression:\n{result.stdout}\n{result.stderr}"

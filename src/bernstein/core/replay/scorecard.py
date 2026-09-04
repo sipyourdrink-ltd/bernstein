@@ -1,590 +1,467 @@
-"""Signed, content-addressed scorecard artifact binding a derived document to its source journal.
+"""Pure projection of a run's sealed journal to an operator scorecard (#5402).
 
-Mirrors the signing and binding conventions of :mod:`bernstein.core.replay.run_receipt`
-so the scorecard and the run receipt share one DSSE/Ed25519 envelope family.
+The journal is the load-bearing artefact: every fact this module reports is
+read off the journal rows themselves, never off logs, stdout, or a
+self-reported summary flag. The projection follows the same discipline as
+:mod:`bernstein.core.replay.rederive` - "derive only from recorded inputs,
+never re-execute" - so the same journal produces the same document, with
+no filesystem or clock reads outside the journal itself.
 
-Wire format
------------
-The signed subject is the canonical JSON of a binding block containing:
-``run_id``, ``document_digest`` (SHA-256 of the canonical projected document body,
-excluding non-deterministic wall-clock fields), ``journal_head`` (recomputed from
-embedded journal rows), and ``journal_event_count``. The verifier rebuilds the
-binding block from recomputed values only; it never trusts an asserted head.
+What "scorecard" means here
+---------------------------
 
-Journal binding: the journal rows the scorecard was derived from are embedded,
-the head is recomputed via :func:`~bernstein.core.replay.journal.verify_events`,
-and the first divergent step is named on tamper.
+A run produces tool calls, retries, verifier verdicts and approval-gate
+outcomes. The journal records each as a Merkle-chained row, and the
+scorecard folds those rows into a small set of operator-facing counts
+(every count carries the event-index range it was computed from, so a
+reader can reach back to the events behind it). It is the
+operational-numbers view of a run: *how many* tool calls fired, *how many*
+tasks retried, *which* approval gates were encountered / honoured /
+overridden, and so on. The more detailed document type, its schema and its
+serialisation live in a sibling slice; this module fills it in.
 
-Non-reproducible fields (e.g. ``generated_at``) live on the document body but are
-EXCLUDED from the hashed binding subject via :func:`_project_document_body`.
+Determinism contract
+--------------------
 
-Determinism: for a fixed ``sdd_dir``, document body, and signing key, bytes are
-byte-identical across independent builds (RFC 8032 deterministic Ed25519 + canonical JSON).
+* Every set or mapping projected into the document is rendered in a fixed
+  order, so two derivations from the same journal serialise to identical
+  bytes.
+* No filesystem or clock read occurs; the only input is the in-memory list
+  of events already loaded by
+  :func:`bernstein.core.replay.journal.load_events`.
+* A torn or truncated tail (rows the tolerant reader had to discard) is
+  surfaced as :class:`ScorecardError` rather than silently undercounted;
+  counting from a journal whose tail was torn would report a
+  falsely-low number and the operator has to know.
 """
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import json
-import logging
-import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.replay.journal import (
-    run_journal_path,
-    verify_events,
+    JournalLoadResult,
+    load_events,
 )
-from bernstein.core.security.audit_dsse import pae
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Mapping, Sequence
 
-    from bernstein.core.security.lineage_kms import KMSAdapter
+#: Schema version of the scorecard document. Bump on any change to the
+#: canonical shape so consumers can refuse an unexpected variant.
+SCORECARD_SCHEMA_VERSION = 1
 
-logger = logging.getLogger(__name__)
+#: Journal event recorded for a tool invocation an agent dispatched
+#: (issue #1799; the row carries the serialised tool call under
+#: ``tool_call``). Counted toward the scorecard's *tool_calls* total.
+TOOL_CALL_EVENT = "tool_call"
 
-# ---------------------------------------------------------------------------
-# Wire-format identifiers
-# ---------------------------------------------------------------------------
+#: Journal event recorded when a task's verification gate refused the
+#: work the agent produced. The scorecard folds each of these into
+#: *verifier_failures*, and the following ``task_retried`` row into
+#: *recoveries* (a failed action followed by a repaired retry).
+TASK_VERIFICATION_FAILED_EVENT = "task_verification_failed"
 
-SCORECARD_SCHEMA_VERSION: str = "1.0.0"
+#: Journal event recorded when coordination handed a task back to the
+#: pool for another attempt. Counted both in *retries* and, when
+#: preceded by a ``task_verification_failed`` for the same task, in
+#: *recoveries*.
+TASK_RETRIED_EVENT = "task_retried"
 
-SCORECARD_TYPE: str = "https://bernstein.run/attestations/scorecard/v1"
+#: Journal event recorded for an approval gate that was *encountered*
+#: during a run. An encountered gate is one the run reached, regardless
+#: of how it was resolved.
+APPROVAL_GATE_EVENT = "approval_gate"
 
-SCORECARD_PAYLOAD_TYPE: str = "application/vnd.bernstein.scorecard+json"
+#: Journal event recorded when an approval gate was *honoured* (the
+#: agent's action was approved, the gate did not block). Distinct from
+#: an encountered gate so a run that encountered a gate and overrode it
+#: shows both numbers, not one folded into the other.
+APPROVAL_HONOURED_EVENT = "approval_honoured"
 
-SCORECARD_FILENAME: str = "scorecard.json"
+#: Journal event recorded when an approval gate was *overridden* (the
+#: agent proceeded without approval, or the gate was bypassed by an
+#: operator action). Carried as a separate field on the scorecard so a
+#: reader can see the override rate at a glance.
+APPROVAL_OVERRIDDEN_EVENT = "approval_overridden"
 
-SIGNING_KEY_PATH_ENV: str = "BERNSTEIN_SCORECARD_SIGNING_KEY_PATH"
-SIGNING_ENV_VAR_ENV: str = "BERNSTEIN_SCORECARD_SIGNING_ENV_VAR"
-SIGNING_KID_ENV: str = "BERNSTEIN_SCORECARD_SIGNING_KID"
+#: Closed set of event types the scorecard looks at. Any other row is
+#: folded into ``ignored_event_types`` so the document names what it
+#: skipped and a future journal vocabulary cannot break the projection.
+_FOLDED_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        TOOL_CALL_EVENT,
+        TASK_VERIFICATION_FAILED_EVENT,
+        TASK_RETRIED_EVENT,
+        APPROVAL_GATE_EVENT,
+        APPROVAL_HONOURED_EVENT,
+        APPROVAL_OVERRIDDEN_EVENT,
+    }
+)
 
-#: Wall-clock fields that appear on the document body but are excluded from
-#: the hashed binding subject because they are non-reproducible.
-_WALL_CLOCK_FIELDS: frozenset[str] = frozenset({"generated_at"})
 
-
-class ScorecardError(RuntimeError):
-    """Raised when a scorecard cannot be built."""
-
-
-# ---------------------------------------------------------------------------
-# Result models
-# ---------------------------------------------------------------------------
+class ScorecardError(ValueError):
+    """Raised when a journal cannot be turned into a scorecard."""
 
 
 @dataclass(frozen=True, slots=True)
-class ScorecardDocument:
-    """Document body to attest.
+class _Count:
+    """A single number with the event-index range it was computed from.
 
     Attributes:
-        run_id: The run this scorecard was derived from.
-        document_version: Scorecard schema version.
-        scorecard: The scorecard body fields (arbitrary dict, type-defined
-            by the caller).
-        generated_at: Wall-clock timestamp of generation (present on the
-            body, excluded from the hashed binding subject).
+        count: The reported number.
+        first_index: 0-based index of the first journal row that
+            contributed to *count*. ``None`` when *count* is zero (the
+            range is empty by definition).
+        last_index: 0-based index of the last journal row that
+            contributed to *count*. ``None`` when *count* is zero.
     """
 
+    count: int
+    first_index: int | None
+    last_index: int | None
+
+    @classmethod
+    def empty(cls) -> _Count:
+        return cls(count=0, first_index=None, last_index=None)
+
+
+@dataclass(frozen=True, slots=True)
+class Scorecard:
+    """The operator-facing numbers projected from a sealed journal.
+
+    Every number in this document is paired with the event-index range
+    the projection walked, so a reader can go back to the events behind
+    the figure and verify the count.
+
+    Attributes:
+        schema_version: The scorecard schema version. See
+            :data:`SCORECARD_SCHEMA_VERSION`.
+        run_id: The run whose journal was projected.
+        event_count: Total number of journal rows the projection
+            considered.
+        tool_calls: Count of ``tool_call`` rows, with the
+            event-index range they occupied.
+        retries: Count of ``task_retried`` rows, with the
+            event-index range.
+        recoveries: Count of retries that immediately followed a
+            ``task_verification_failed`` for the same task. A recovery
+            is a *failed action followed by a repaired retry*, not a
+            raw retry count.
+        verifier_failures: Count of ``task_verification_failed``
+            rows, with the event-index range.
+        verifier_coverage: Fraction of claimed tasks that reached a
+            verifier verdict (success or failure). Carries the
+            event-index range of the underlying claim set.
+        approval_gates_encountered: Count of ``approval_gate`` rows,
+            with the event-index range.
+        approval_gates_honoured: Count of ``approval_honoured`` rows,
+            with the event-index range. Distinct from
+            *approval_gates_encountered* so a run that encountered a
+            gate and overrode it shows both numbers, not one folded
+            into the other.
+        approval_gates_overridden: Count of ``approval_overridden``
+            rows, with the event-index range. Visible on its own so
+            an override rate is computable at a glance.
+        ignored_event_types: Event types seen in the journal that the
+            scorecard does not fold. Names are sorted so the document
+            is deterministic.
+    """
+
+    schema_version: int
     run_id: str
-    document_version: str
-    scorecard: dict[str, Any]
-    generated_at: str | None = field(default=None)
+    event_count: int
+    tool_calls: _Count
+    retries: _Count
+    recoveries: _Count
+    verifier_failures: _Count
+    verifier_coverage: _Count
+    approval_gates_encountered: _Count
+    approval_gates_honoured: _Count
+    approval_gates_overridden: _Count
+    ignored_event_types: tuple[str, ...] = field(default_factory=tuple)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the JSON-shaped scorecard served to operators."""
+        return {
+            "schema_version": self.schema_version,
+            "run_id": self.run_id,
+            "event_count": self.event_count,
+            "tool_calls": _count_to_dict(self.tool_calls),
+            "retries": _count_to_dict(self.retries),
+            "recoveries": _count_to_dict(self.recoveries),
+            "verifier_failures": _count_to_dict(self.verifier_failures),
+            "verifier_coverage": _count_to_dict(self.verifier_coverage),
+            "approval_gates": {
+                "encountered": _count_to_dict(self.approval_gates_encountered),
+                "honoured": _count_to_dict(self.approval_gates_honoured),
+                "overridden": _count_to_dict(self.approval_gates_overridden),
+            },
+            "ignored_event_types": list(self.ignored_event_types),
+        }
 
 
-@dataclass(frozen=True, slots=True)
-class ScorecardArtifact:
-    """Built scorecard artifact.
+def _count_to_dict(count: _Count) -> dict[str, Any]:
+    """Render a :class:`_Count` to its public dict shape.
 
-    Attributes:
-        run_id: The attested run.
-        journal_head: Recomputed journal Merkle head.
-        document_digest: SHA-256 of the projected (wall-clock-excluded) document body.
-        artifact: The serialisable artifact dict.
-        artifact_bytes: Canonical JSON bytes (byte-deterministic).
-        artifact_path: On-disk path when written, else ``None``.
+    A count with a positive value carries a non-empty
+    ``event_index_range``; a count of zero carries an explicit
+    ``null`` for both ends so consumers can branch on the field
+    without guessing what absence means.
     """
-
-    run_id: str
-    journal_head: str
-    document_digest: str
-    artifact: dict[str, Any]
-    artifact_bytes: bytes
-    artifact_path: Path | None = field(default=None)
-
-
-@dataclass(frozen=True, slots=True)
-class ScorecardVerifyResult:
-    """Outcome of :func:`verify_scorecard`.
-
-    Attributes:
-        ok: ``True`` only when every recompute and the signature pass.
-        status: ``"ok"``, ``"malformed"``, ``"tampered"``, or ``"untrusted_key"``.
-        run_id: Run id claimed by the scorecard.
-        journal_events: Number of embedded journal rows walked.
-        divergent_step: 0-based index of the first divergent journal step,
-            when journal tamper was located.
-        errors: Human-readable explanations, first failure first.
-    """
-
-    ok: bool
-    status: str
-    run_id: str = ""
-    journal_events: int = 0
-    divergent_step: int | None = None
-    errors: list[str] = field(default_factory=list)
+    if count.count == 0:
+        return {
+            "count": 0,
+            "event_index_range": {"first": None, "last": None},
+        }
+    return {
+        "count": count.count,
+        "event_index_range": {
+            "first": count.first_index,
+            "last": count.last_index,
+        },
+    }
 
 
-# ---------------------------------------------------------------------------
-# Canonical helpers
-# ---------------------------------------------------------------------------
-
-
-def _canonical_json_bytes(obj: dict[str, Any]) -> bytes:
-    """Deterministic JSON bytes — shared with the audit receipt family."""
-    from bernstein.core.security.audit_receipt import _canonical_json_bytes as _cjb
-
-    return _cjb(obj)
-
-
-def _project_document_body(document_dict: dict[str, Any]) -> dict[str, Any]:
-    """Return the document body with wall-clock fields excluded.
-
-    ``generated_at`` and other non-reproducible wall-clock fields are
-    present on the document body but MUST NOT enter the hashed binding
-    subject, otherwise two builds of the same scorecard over identical
-    journal content would produce different signed subjects and the
-    signature would not be reproducible.
-    """
-    return {k: v for k, v in document_dict.items() if k not in _WALL_CLOCK_FIELDS}
-
-
-def _load_journal_rows_strict(journal_path: Path, run_id: str) -> list[dict[str, Any]]:
-    """Strict line-by-line parse mirroring run_receipt.py signing path."""
-    rows: list[dict[str, Any]] = []
-    if not journal_path.exists():
-        return rows
-    with journal_path.open(encoding="utf-8") as fh:
-        for line_no, raw in enumerate(fh, start=1):
-            line = raw.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ScorecardError(
-                    f"refusing to sign scorecard for run {run_id!r}: journal line {line_no} is not valid JSON "
-                    f"({exc.msg}); a scorecard is never signed over a malformed journal",
-                ) from exc
-            if not isinstance(row, dict):
-                raise ScorecardError(
-                    f"refusing to sign scorecard for run {run_id!r}: journal line {line_no} is not a JSON object; "
-                    "a scorecard is never signed over a malformed journal",
-                )
-            rows.append(row)
-    return rows
-
-
-# ---------------------------------------------------------------------------
-# Build
-# ---------------------------------------------------------------------------
-
-
-def build_scorecard(
-    run_id: str,
-    sdd_dir: Path,
-    kms_adapter: KMSAdapter,
-    document: ScorecardDocument,
-    *,
-    write: bool = True,
-    output_path: Path | None = None,
-) -> ScorecardArtifact:
-    """Build (and by default write) the signed scorecard for one run.
+def _build_count(positions: Sequence[int]) -> _Count:
+    """Wrap the positions of one event class into a :class:`_Count`.
 
     Args:
-        run_id: The run whose journal anchors this scorecard.
-        sdd_dir: The project ``.sdd`` directory.
-        kms_adapter: Ed25519 signer implementing
-            :class:`~bernstein.core.security.lineage_kms.KMSAdapter`.
-        document: The scorecard document body to attest.
-        write: When ``False``, build in-memory only.
-        output_path: Override the on-disk destination (defaults to
-            ``.sdd/runs/<run_id>/scorecard.json``).
+        positions: Ordered 0-based indices of journal rows that
+            contribute to the count. Empty when the count is zero.
 
     Returns:
-        A :class:`ScorecardArtifact`.
+        A :class:`_Count` whose ``count`` matches ``len(positions)``
+        and whose range spans the first and last positions. A
+        zero-count yields :meth:`_Count.empty` so the range is
+        unambiguously empty rather than ``[None, None]``.
+    """
+    if not positions:
+        return _Count.empty()
+    return _Count(
+        count=len(positions),
+        first_index=positions[0],
+        last_index=positions[-1],
+    )
+
+
+def _claimant_task_ids(events: Sequence[Mapping[str, Any]]) -> set[str]:
+    """Return the set of task ids ever claimed by an agent in *events*.
+
+    The scorecard's *verifier_coverage* is the fraction of claimed
+    tasks that reached a verifier verdict, so the claim set has to be
+    collected from ``task_claimed`` rows before the verdicts are
+    folded.
+    """
+    claimed: set[str] = set()
+    for row in events:
+        if str(row.get("event", "")) != "task_claimed":
+            continue
+        task_id = row.get("task_id")
+        if isinstance(task_id, str) and task_id:
+            claimed.add(task_id)
+    return claimed
+
+
+def _verdict_task_ids(events: Sequence[Mapping[str, Any]]) -> set[str]:
+    """Return task ids that reached a verifier verdict in *events*.
+
+    A "verdict" is either ``task_verification_failed`` (the gate
+    refused the work) or ``task_completed`` (the gate accepted it).
+    Both rows name a task id and both are projectable here.
+    """
+    verdicts: set[str] = set()
+    for row in events:
+        event = str(row.get("event", ""))
+        if event not in (TASK_VERIFICATION_FAILED_EVENT, "task_completed"):
+            continue
+        task_id = row.get("task_id")
+        if isinstance(task_id, str) and task_id:
+            verdicts.add(task_id)
+    return verdicts
+
+
+def derive_scorecard(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    run_id: str = "",
+) -> Scorecard:
+    """Fold a list of journal rows into a :class:`Scorecard`.
+
+    The function is a *pure* projection: given the same list of
+    rows, it returns the same document. It does not read the
+    filesystem, the clock, or the process environment; the caller
+    hands it the events :func:`load_events` produced.
+
+    Args:
+        events: Journal rows in append order, as returned by
+            :func:`bernstein.core.replay.journal.load_events`.
+        run_id: Optional run id recorded on the scorecard. When
+            ``""`` the field is left empty so the function still
+            works for an inline sequence detached from a run.
+
+    Returns:
+        A :class:`Scorecard` whose every count is paired with the
+        event-index range it came from.
 
     Raises:
-        ScorecardError: The journal is missing/empty or malformed.
+        ScorecardError: The input carries no event rows at all, or
+            the load result is incomplete because the journal tail
+            was torn. The torn-tail case is reported by name so a
+            caller does not mistake an undercount for a real
+            ``0``.
     """
-    journal_path = run_journal_path(sdd_dir, run_id)
-    events = _load_journal_rows_strict(journal_path, run_id)
     if not events:
-        raise ScorecardError(
-            f"no journal events for run {run_id!r} at {journal_path}; a scorecard requires a non-empty journal",
+        raise ScorecardError("cannot derive a scorecard from an empty journal")
+
+    tool_call_positions: list[int] = []
+    retry_positions: list[int] = []
+    verifier_failure_positions: list[int] = []
+    approval_encountered_positions: list[int] = []
+    approval_honoured_positions: list[int] = []
+    approval_overridden_positions: list[int] = []
+
+    # ``last_event_per_task`` tracks the most recent event on a task
+    # id, so a retry can be paired with the verification failure it
+    # repaired. A recovery is a retry whose immediate predecessor on
+    # the same task was a ``task_verification_failed``.
+    last_event_per_task: dict[str, str] = {}
+    recovery_positions: list[int] = []
+
+    ignored: set[str] = set()
+
+    for index, row in enumerate(events):
+        event = str(row.get("event", ""))
+        if event not in _FOLDED_EVENT_TYPES:
+            # Record-but-do-not-fold every other event type so a
+            # future journal vocabulary cannot break the projection:
+            # operators see what was skipped, in a stable order.
+            if event:
+                ignored.add(event)
+            continue
+
+        task_id_raw = row.get("task_id")
+        task_id = task_id_raw if isinstance(task_id_raw, str) else ""
+
+        if event == TOOL_CALL_EVENT:
+            tool_call_positions.append(index)
+        elif event == TASK_VERIFICATION_FAILED_EVENT:
+            verifier_failure_positions.append(index)
+        elif event == TASK_RETRIED_EVENT:
+            retry_positions.append(index)
+            if task_id and last_event_per_task.get(task_id) == TASK_VERIFICATION_FAILED_EVENT:
+                recovery_positions.append(index)
+        elif event == APPROVAL_GATE_EVENT:
+            approval_encountered_positions.append(index)
+        elif event == APPROVAL_HONOURED_EVENT:
+            approval_honoured_positions.append(index)
+        elif event == APPROVAL_OVERRIDDEN_EVENT:
+            approval_overridden_positions.append(index)
+
+        if task_id:
+            last_event_per_task[task_id] = event
+
+    claimed = _claimant_task_ids(events)
+    verdicts = _verdict_task_ids(events)
+    if claimed:
+        coverage_count = len(claimed & verdicts)
+        # The coverage denominator is the set of *distinct* claimed
+        # tasks; we report it as a single value, with the index
+        # range spanning the first and last claim of any claimed
+        # task. Sorting the list keeps the range stable across
+        # Python runs.
+        first_claim = next(
+            (
+                i
+                for i, row in enumerate(events)
+                if str(row.get("event", "")) == "task_claimed"
+                and isinstance(row.get("task_id"), str)
+                and row.get("task_id") in claimed
+            ),
+            None,
         )
-
-    journal_check = verify_events(events)
-    if not journal_check.chain_consistent:
-        raise ScorecardError(
-            f"refusing to sign scorecard for run {run_id!r}: journal chain fails at step "
-            f"{journal_check.divergent_index}: {'; '.join(journal_check.errors)}",
+        last_claim = next(
+            (
+                i
+                for i in range(len(events) - 1, -1, -1)
+                if str(events[i].get("event", "")) == "task_claimed"
+                and isinstance(events[i].get("task_id"), str)
+                and events[i].get("task_id") in claimed
+            ),
+            None,
         )
-
-    # Project journal rows (drop wall-clock envelope).
-    projected_row_fields = frozenset({"ts", "elapsed_s"})
-    journal_rows = [{k: v for k, v in row.items() if k not in projected_row_fields} for row in events]
-    journal_head = str(events[-1].get("event_hash", ""))
-
-    # Project document body (drop wall-clock fields for the digest).
-    doc_body = {
-        "run_id": document.run_id,
-        "document_version": document.document_version,
-        "scorecard": document.scorecard,
-    }
-    if document.generated_at is not None:
-        doc_body["generated_at"] = document.generated_at
-    projected_doc = _project_document_body(doc_body)
-    doc_digest = hashlib.sha256(_canonical_json_bytes(projected_doc)).hexdigest()
-
-    # Build the signed subject binding.
-    binding: dict[str, Any] = {
-        "run_id": run_id,
-        "document_digest": doc_digest,
-        "journal_head": journal_head,
-        "journal_event_count": len(journal_rows),
-    }
-    binding_bytes = _canonical_json_bytes(binding)
-
-    # Sign over DSSE PAE.
-    signature = kms_adapter.sign(pae(SCORECARD_PAYLOAD_TYPE, binding_bytes))
-    jwk = kms_adapter.public_key_jwk()
-    key_id = str(jwk.get("kid") or "scorecard-key")
-
-    # Assemble artifact.
-    artifact: dict[str, Any] = {
-        "schema_version": SCORECARD_SCHEMA_VERSION,
-        "scorecard_type": SCORECARD_TYPE,
-        "run_id": run_id,
-        "subject": {
-            "name": f"scorecard-{run_id}",
-            "digest": {"sha256": doc_digest},
-        },
-        "document": doc_body,
-        "journal": {
-            "head_hash": journal_head,
-            "event_count": len(journal_rows),
-            "events": journal_rows,
-        },
-        "signing": {
-            "alg": "EdDSA",
-            "key_id": key_id,
-            "payload_type": SCORECARD_PAYLOAD_TYPE,
-            "public_key_jwk": jwk,
-            "signature_b64": base64.b64encode(signature).decode("ascii"),
-        },
-    }
-    artifact_bytes = _canonical_json_bytes(artifact) + b"\n"
-
-    artifact_path: Path | None = None
-    if write:
-        artifact_path = output_path or (journal_path.parent / SCORECARD_FILENAME)
-        artifact_path.parent.mkdir(parents=True, exist_ok=True)
-        artifact_path.write_bytes(artifact_bytes)
-        logger.info(
-            "Scorecard written run=%s journal_events=%d path=%s",
-            run_id,
-            len(journal_rows),
-            artifact_path,
+        verifier_coverage = _Count(
+            count=coverage_count,
+            first_index=first_claim,
+            last_index=last_claim,
         )
+    else:
+        verifier_coverage = _Count.empty()
 
-    return ScorecardArtifact(
+    return Scorecard(
+        schema_version=SCORECARD_SCHEMA_VERSION,
         run_id=run_id,
-        journal_head=journal_head,
-        document_digest=doc_digest,
-        artifact=artifact,
-        artifact_bytes=artifact_bytes,
-        artifact_path=artifact_path,
+        event_count=len(events),
+        tool_calls=_build_count(tool_call_positions),
+        retries=_build_count(retry_positions),
+        recoveries=_build_count(recovery_positions),
+        verifier_failures=_build_count(verifier_failure_positions),
+        verifier_coverage=verifier_coverage,
+        approval_gates_encountered=_build_count(approval_encountered_positions),
+        approval_gates_honoured=_build_count(approval_honoured_positions),
+        approval_gates_overridden=_build_count(approval_overridden_positions),
+        ignored_event_types=tuple(sorted(ignored)),
     )
 
 
-# ---------------------------------------------------------------------------
-# Verify (offline: the artifact bytes are the only input)
-# ---------------------------------------------------------------------------
+def derive_scorecard_from_path(path: Any) -> Scorecard:
+    """Load *path* and fold it into a :class:`Scorecard`.
 
-
-def _malformed(reason: str, *, run_id: str = "") -> ScorecardVerifyResult:
-    return ScorecardVerifyResult(ok=False, status="malformed", run_id=run_id, errors=[reason])
-
-
-def _public_key_from_jwk(jwk: dict[str, Any]) -> Any:
-    """Decode an OKP/Ed25519 JWK (RFC 8037) into an Ed25519 public key."""
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-
-    if jwk.get("kty") != "OKP" or jwk.get("crv") != "Ed25519":
-        raise ValueError(f"expected kty=OKP, crv=Ed25519; got kty={jwk.get('kty')!r} crv={jwk.get('crv')!r}")
-    x = jwk.get("x")
-    if not isinstance(x, str):
-        raise ValueError("JWK 'x' missing or not a string")
-    raw = base64.urlsafe_b64decode(x + "=" * (-len(x) % 4))
-    if len(raw) != 32:
-        raise ValueError(f"Ed25519 public key must be 32 bytes (got {len(raw)})")
-    return Ed25519PublicKey.from_public_bytes(raw)
-
-
-def verify_scorecard(
-    artifact_bytes: bytes,
-    *,
-    public_key_pem: bytes | None = None,
-    key_chain_bytes: bytes | None = None,
-    attested_signed_at: str | None = None,
-) -> ScorecardVerifyResult:
-    """Verify a scorecard artifact using only its own bytes (and an optional pin).
-
-    No HMAC key, no ``.sdd/``: the journal head is recomputed from the embedded
-    rows, the document digest is recomputed from the projected body, the signed
-    subject is rebuilt from the recomputed values, and the Ed25519 signature is
-    checked against the embedded JWK.
-
-    Trust model mirrors :func:`~bernstein.core.replay.run_receipt.verify_run_receipt`:
-    without a pin the signature is integrity-only; provenance requires supplying
-    ``public_key_pem`` out of band.
+    Convenience wrapper around :func:`load_events` and
+    :func:`derive_scorecard`. The path is read in tolerant mode so
+    the torn-tail detection below can do its job; a strict reader
+    would refuse the journal before the scorecard has a chance to
+    name the cause.
 
     Args:
-        artifact_bytes: The scorecard file contents.
-        public_key_pem: Optional PEM Ed25519 public key to pin.
-        key_chain_bytes: Optional signed key-succession chain document.
-        attested_signed_at: Optional ISO-8601 instant for key lifecycle decisions.
+        path: A filesystem path to a ``journal.jsonl`` file.
 
     Returns:
-        A :class:`ScorecardVerifyResult`.
+        A :class:`Scorecard` derived from the loaded events.
+
+    Raises:
+        ScorecardError: The journal does not exist, has no
+            parseable events, or the tolerant reader had to discard
+            rows at the tail (a torn write, not corruption).
     """
-    try:
-        artifact = json.loads(artifact_bytes.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        return _malformed(f"scorecard is not valid JSON: {exc}")
+    from pathlib import Path
 
-    if not isinstance(artifact, dict):
-        return _malformed("scorecard is not a JSON object")
-
-    run_id = str(artifact.get("run_id", ""))
-    if not run_id:
-        return _malformed("scorecard.run_id missing")
-    if artifact.get("scorecard_type") != SCORECARD_TYPE:
-        return _malformed(f"unexpected scorecard_type {artifact.get('scorecard_type')!r}", run_id=run_id)
-
-    journal_block = artifact.get("journal")
-    signing = artifact.get("signing")
-    document = artifact.get("document")
-    if not isinstance(journal_block, dict) or not isinstance(journal_block.get("events"), list):
-        return _malformed("scorecard.journal.events missing or not a list", run_id=run_id)
-    if not isinstance(signing, dict):
-        return _malformed("scorecard.signing missing", run_id=run_id)
-    if signing.get("payload_type") != SCORECARD_PAYLOAD_TYPE:
-        return _malformed(f"unexpected signing.payload_type {signing.get('payload_type')!r}", run_id=run_id)
-    if not isinstance(document, dict):
-        return _malformed("scorecard.document missing or not an object", run_id=run_id)
-
-    events_any: list[Any] = journal_block["events"]
-    if not all(isinstance(e, dict) for e in events_any):
-        return _malformed("scorecard.journal.events contains a non-object row", run_id=run_id)
-    events: list[dict[str, Any]] = list(events_any)
-    if not events:
-        return _malformed("scorecard embeds no journal events; an empty range attests nothing", run_id=run_id)
-
-    def _tampered(errors: list[str], divergent_step: int | None = None) -> ScorecardVerifyResult:
-        return ScorecardVerifyResult(
-            ok=False,
-            status="tampered",
-            run_id=run_id,
-            journal_events=len(events),
-            divergent_step=divergent_step,
-            errors=errors,
+    journal_path = Path(path)
+    if not journal_path.is_file():
+        raise ScorecardError(f"journal not found at {journal_path}")
+    loaded: JournalLoadResult = load_events(journal_path)
+    if loaded.discarded_line_indices:
+        joined = ", ".join(str(i) for i in loaded.discarded_line_indices)
+        raise ScorecardError(
+            f"refusing to scorecard {journal_path}: reader discarded physical line(s) "
+            f"{joined}; the journal tail is torn or truncated and any number reported "
+            "from it would be a silent undercount"
         )
-
-    # 1. Journal: recompute head via verify_events.
-    journal_result = verify_events(events)
-    if not journal_result.chain_consistent or journal_result.discarded_line_indices:
-        step = journal_result.divergent_index
-        return _tampered(
-            [f"journal diverges at step {step}: {'; '.join(journal_result.errors)}"],
-            divergent_step=step,
-        )
-    recomputed_journal_head = str(events[-1].get("event_hash", ""))
-    if str(journal_block.get("head_hash", "")) != recomputed_journal_head:
-        return _tampered(["journal.head_hash does not match the head recomputed from the embedded rows"])
-    if journal_block.get("event_count") != len(events):
-        return _tampered(["journal.event_count does not match the embedded rows"])
-
-    # 2. Document digest: recompute from projected body.
-    projected_doc = _project_document_body(document)
-    recomputed_doc_digest = hashlib.sha256(_canonical_json_bytes(projected_doc)).hexdigest()
-    stated_doc_digest = str(((artifact.get("subject") or {}).get("digest") or {}).get("sha256", ""))
-    if stated_doc_digest != recomputed_doc_digest:
-        return _tampered(
-            [
-                f"document digest {stated_doc_digest[:16]}... does not match "
-                f"{recomputed_doc_digest[:16]}... recomputed from the projected body",
-            ],
-        )
-
-    # 3. Subject binding: rebuilt from recomputed values only.
-    binding: dict[str, Any] = {
-        "run_id": run_id,
-        "document_digest": recomputed_doc_digest,
-        "journal_head": recomputed_journal_head,
-        "journal_event_count": len(events),
-    }
-    binding_bytes = _canonical_json_bytes(binding)
-
-    # 4. Signature: embedded JWK, DSSE PAE.
-    from cryptography.exceptions import InvalidSignature
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-
-    jwk = signing.get("public_key_jwk")
-    if not isinstance(jwk, dict):
-        return _malformed("scorecard.signing.public_key_jwk missing or not an object", run_id=run_id)
-
-    try:
-        public_key = _public_key_from_jwk(jwk)
-    except ValueError as exc:
-        return _malformed(f"embedded JWK is not a usable Ed25519 key: {exc}", run_id=run_id)
-
-    if public_key_pem is not None:
-        try:
-            pinned = serialization.load_pem_public_key(public_key_pem)
-        except (ValueError, TypeError) as exc:
-            return _malformed(f"pinned public key is not valid PEM: {exc}", run_id=run_id)
-        if not isinstance(pinned, Ed25519PublicKey):
-            return _malformed(
-                f"pinned public key is not Ed25519 (got {type(pinned).__name__})",
-                run_id=run_id,
-            )
-        raw_pin = pinned.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-        raw_emb = public_key.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-        if raw_pin != raw_emb:
-            return _tampered(["embedded scorecard key does not match the pinned public key"])
-
-    sig_b64 = signing.get("signature_b64")
-    if not isinstance(sig_b64, str):
-        return _malformed("scorecard.signing.signature_b64 missing", run_id=run_id)
-    try:
-        signature = base64.b64decode(sig_b64, validate=True)
-    except (ValueError, TypeError):
-        return _malformed("scorecard.signing.signature_b64 is not valid base64", run_id=run_id)
-
-    try:
-        public_key.verify(signature, pae(SCORECARD_PAYLOAD_TYPE, binding_bytes))
-    except InvalidSignature:
-        return _tampered(["Ed25519 signature does not verify over the recomputed subject binding"])
-
-    # 5. Key lifecycle (mirrors run_receipt).
-    if key_chain_bytes is not None and public_key_pem is None:
-        return _malformed(
-            "a key chain needs public_key_pem: the chain is only evidence relative to the "
-            "root key the auditor pinned out of band",
-            run_id=run_id,
-        )
-
-    if key_chain_bytes is not None and public_key_pem is not None:
-        from bernstein.core.security.receipt_key_chain import (
-            KeyChainError,
-            resolve_signing_key,
-            verify_key_chain,
-        )
-
-        try:
-            chain = verify_key_chain(key_chain_bytes, root_public_key_pem=public_key_pem)
-            trust = resolve_signing_key(
-                chain,
-                kid=str(signing.get("key_id", "")),
-                public_key_raw=public_key.public_bytes(
-                    serialization.Encoding.Raw,
-                    serialization.PublicFormat.Raw,
-                ),
-                attested_signed_at=attested_signed_at,
-            )
-        except KeyChainError as exc:
-            return ScorecardVerifyResult(
-                ok=False,
-                status="untrusted_key",
-                run_id=run_id,
-                journal_events=len(events),
-                errors=[str(exc)],
-            )
-        if not trust.trusted:
-            return ScorecardVerifyResult(
-                ok=False,
-                status="untrusted_key",
-                run_id=run_id,
-                journal_events=len(events),
-                errors=[trust.detail],
-            )
-        _ = trust  # resolution succeeded; verdict consumed by `untrusted_key` return above
-
-    return ScorecardVerifyResult(
-        ok=True,
-        status="ok",
-        run_id=run_id,
-        journal_events=len(events),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Finalization hook helper
-# ---------------------------------------------------------------------------
-
-
-def resolve_kms_adapter_from_env() -> KMSAdapter | None:
-    """Resolve the scorecard signing adapter from the environment."""
-    from bernstein.core.security.lineage_kms import kms_adapter_from_config
-
-    key_path = os.environ.get(SIGNING_KEY_PATH_ENV, "").strip()
-    env_var = os.environ.get(SIGNING_ENV_VAR_ENV, "").strip()
-    kid = os.environ.get(SIGNING_KID_ENV, "").strip() or None
-    if key_path:
-        return kms_adapter_from_config(enabled=True, kind="file", key_path=key_path, kid=kid)
-    if env_var:
-        return kms_adapter_from_config(enabled=True, kind="env", env_var=env_var, kid=kid)
-    return None
-
-
-def write_scorecard_if_configured(
-    run_id: str,
-    sdd_dir: Path,
-    document: ScorecardDocument,
-) -> Path | None:
-    """Write the scorecard at finalization when a signing key is configured.
-
-    Returns:
-        The written scorecard path, or ``None`` when signing is not configured.
-    """
-    kms_adapter = resolve_kms_adapter_from_env()
-    if kms_adapter is None:
-        logger.debug(
-            "scorecard not written for run %s: no signing key configured (set %s or %s)",
-            run_id,
-            SIGNING_KEY_PATH_ENV,
-            SIGNING_ENV_VAR_ENV,
-        )
-        return None
-    return build_scorecard(run_id, sdd_dir, kms_adapter, document).artifact_path
+    run_id = journal_path.parent.name
+    return derive_scorecard(loaded.events, run_id=run_id)
 
 
 __all__ = [
-    "SCORECARD_FILENAME",
-    "SCORECARD_PAYLOAD_TYPE",
+    "APPROVAL_GATE_EVENT",
+    "APPROVAL_HONOURED_EVENT",
+    "APPROVAL_OVERRIDDEN_EVENT",
     "SCORECARD_SCHEMA_VERSION",
-    "SCORECARD_TYPE",
-    "ScorecardArtifact",
-    "ScorecardDocument",
+    "TASK_RETRIED_EVENT",
+    "TASK_VERIFICATION_FAILED_EVENT",
+    "TOOL_CALL_EVENT",
+    "Scorecard",
     "ScorecardError",
-    "ScorecardVerifyResult",
-    "build_scorecard",
-    "resolve_kms_adapter_from_env",
-    "verify_scorecard",
-    "write_scorecard_if_configured",
+    "derive_scorecard",
+    "derive_scorecard_from_path",
 ]
