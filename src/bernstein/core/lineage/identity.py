@@ -1,7 +1,14 @@
 """Agent identity + Ed25519 JWS detached signing.
 
-The lineage layer signs every entry with an Ed25519 keypair issued per agent
-invocation. The Agent Card subset modelled here is the slice of the A2A v1.0
+The lineage layer signs every entry with an Ed25519 keypair that is created on
+first use and then persisted and reused: ``load_or_create_signing_identity``
+writes the PEM pair into the identity directory its caller names -- for example
+``.sdd/datasources/identity/`` for datasource query receipts, or
+``<audit_dir>/.signing/`` for ingest receipts -- and every later invocation
+reads those same files back. The key is long-lived, not per-invocation, which
+is the property that matters for custody and rotation.
+
+The Agent Card subset modelled here is the slice of the A2A v1.0
 Agent Card spec that's actually load-bearing for lineage verification - the
 agent id, the key id, and the PEM-encoded public key. External tools (auditor
 CLI) hold only the public side and a copy of the card; the operator-side

@@ -19,7 +19,7 @@ import logging
 import re
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import click
 
@@ -351,6 +351,118 @@ def microvm_launcher_cmd(output: Path | None, library: str | None) -> None:
         console.print("[green]host is ready to boot a libkrun microVM.[/green]")
 
 
+@sandbox_group.command("attest")
+@click.option(
+    "--host-facts",
+    "host_facts_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help=(
+        "JSON file of host facts to attest over. Without it only the two facts "
+        "readable without probing the host (os, arch) are recorded."
+    ),
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Print the canonical signed attestation JSON instead of a summary.",
+)
+def attest_cmd(host_facts_path: Path | None, as_json: bool) -> None:
+    """Mint an Ed25519-signed isolation attestation for this host.
+
+    The attestation records, per registered backend, which of its declared
+    capabilities this host was observed to deliver. Nothing is measured yet:
+    every declared capability is recorded as ``unverifiable`` with the reason
+    code ``probe_runner_not_implemented``, because an unmeasured capability
+    reported as observed would be a false statement. The probe runner that
+    turns those entries into real verdicts lands separately.
+
+    The signed body carries no wall-clock, run id or chain position, so
+    minting twice over an unchanged host under the same install identity
+    produces byte-identical output.
+    """
+    from bernstein.core.sandbox.attestation import (
+        BackendAttestation,
+        IsolationAttestationError,
+        ProbeOutcome,
+        ProbeResult,
+        build_isolation_attestation,
+    )
+    from bernstein.core.sandbox.registry import list_backends
+    from bernstein.core.security.agent_card_keystore import AgentCardKeystore
+
+    host_facts = _read_host_facts(host_facts_path)
+
+    entries: list[BackendAttestation] = []
+    for backend in list_backends():
+        declared = tuple(backend.capabilities)
+        entries.append(
+            BackendAttestation(
+                name=backend.name,
+                declared=declared,
+                unverifiable=declared,
+                probes=tuple(
+                    ProbeResult(
+                        capability=cap,
+                        outcome=ProbeOutcome.UNVERIFIABLE,
+                        reason_code="probe_runner_not_implemented",
+                    )
+                    for cap in declared
+                ),
+            ),
+        )
+
+    try:
+        attestation = build_isolation_attestation(
+            keystore=AgentCardKeystore(),
+            host_facts=host_facts,
+            backends=entries,
+        )
+    except IsolationAttestationError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if as_json:
+        click.echo(attestation.to_canonical_json())
+        return
+
+    console.print(f"[green]attestation:[/green] {attestation.attestation_digest()}")
+    console.print(f"[dim]host facts:[/dim] {attestation.host_facts_digest}")
+    console.print(f"[dim]signer:[/dim] {attestation.keyid}")
+    for entry in attestation.backends:
+        console.print(
+            f"  {entry.name}: {len(entry.observed)} observed, "
+            f"{len(entry.refuted)} refuted, {len(entry.unverifiable)} unverifiable",
+        )
+    console.print(
+        "[yellow]nothing measured yet[/yellow] - every capability is recorded as "
+        "unverifiable until the probe runner lands.",
+    )
+
+
+def _read_host_facts(path: Path | None) -> dict[str, object]:
+    """Load host facts from *path*, or fall back to the two facts readable here.
+
+    Returning a partial-but-honest set is deliberate: the collector that reads
+    kernel, runtime versions and cgroup mode is a separate piece of work, and
+    inventing values for the fields it will own would put a fabricated input
+    into the digest the selector later caches on.
+    """
+    import json as _json
+    import platform
+
+    if path is None:
+        return {"os": platform.system().lower(), "arch": platform.machine()}
+    try:
+        raw = _json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(f"could not read host facts from {path}: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise click.ClickException(f"host facts file {path} must contain a JSON object")
+    return {str(k): v for k, v in cast("dict[Any, Any]", raw).items()}
+
+
 @sandbox_group.group("receipt")
 def receipt_group() -> None:
     """Inspect and verify fork-race selection receipts."""
@@ -532,6 +644,7 @@ def receipt_verify_cmd(receipt_path: Path, cas_dir: Path, expected_keyid: str | 
 
 
 __all__ = [
+    "attest_cmd",
     "fork_race_cmd",
     "microvm_launcher_cmd",
     "receipt_group",

@@ -108,6 +108,61 @@ def test_adapter_without_the_marker_is_untouched(tmp_path: Path) -> None:
     assert _events(tmp_path) == []
 
 
+def _codex_spawner(tmp_path: Path) -> AgentSpawner:
+    """Spawner constructed the way the orchestrator/worker command does:
+
+    a real, un-cached, run-level ``CodexAdapter`` passed straight into
+    ``__init__`` rather than resolved later through ``_get_adapter_by_name``.
+    """
+    templates_dir = tmp_path / "templates" / "roles"
+    templates_dir.mkdir(parents=True)
+    return AgentSpawner(CodexAdapter(), templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
+
+
+def test_run_level_adapter_receives_host_isolation_declaration(tmp_path: Path) -> None:
+    """The adapter passed into __init__ must get the declaration too (#5341, #5314).
+
+    It is seeded into the adapter cache directly, without ever going through
+    _get_adapter_by_name's cache-miss path -- so if __init__ itself does not
+    apply the declaration, nothing else ever will for this instance, and a
+    declared container tier never drops the Codex vendor sandbox.
+    """
+    spawner = _codex_spawner(tmp_path)
+
+    adapter = spawner._adapter  # type: ignore[reportPrivateUsage]
+    assert str(adapter.host_isolation) == "container"
+    assert adapter._sandbox_args() == ("--dangerously-bypass-approvals-and-sandbox",)  # type: ignore[reportPrivateUsage]
+
+
+def test_run_level_adapter_without_declaration_keeps_vendor_sandbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("BERNSTEIN_HOST_ISOLATION_TIER", raising=False)
+    monkeypatch.delenv("BERNSTEIN_HOST_ISOLATION_EVIDENCE", raising=False)
+    spawner = _codex_spawner(tmp_path)
+
+    adapter = spawner._adapter  # type: ignore[reportPrivateUsage]
+    assert adapter._sandbox_args() == ("--sandbox", "workspace-write")  # type: ignore[reportPrivateUsage]
+
+
+def test_run_level_adapter_declaration_is_not_reapplied_on_cache_hit(tmp_path: Path) -> None:
+    """__init__ applies the declaration once; a later same-name lookup is a cache hit.
+
+    ``_get_adapter_by_name`` caches the run-level adapter under
+    ``adapter.name()`` (seeded by __init__), so looking it up again by that
+    same name must return the identical, already-declared instance rather
+    than re-resolving and re-recording it.
+    """
+    spawner = _codex_spawner(tmp_path)
+    stored = spawner._adapter  # type: ignore[reportPrivateUsage]
+    assert len(_events(tmp_path)) == 1
+
+    resolved = spawner._get_adapter_by_name(stored.name())  # type: ignore[reportPrivateUsage]
+
+    assert resolved is stored
+    assert len(_events(tmp_path)) == 1
+
+
 def test_a_broken_declaration_does_not_wedge_the_spawn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

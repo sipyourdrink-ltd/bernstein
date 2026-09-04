@@ -34,6 +34,8 @@ from bernstein.core.lineage.spine import LineageSpine, content_hash_of
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.core.security.governance import GovernanceDecision
+
 logger = logging.getLogger(__name__)
 
 #: Version stamped into every report preimage. Bump only on a wire-format change.
@@ -199,6 +201,52 @@ class AuditReport:
             if finding.get("id") == finding_id:
                 return finding
         return None
+
+    def suppressed_findings(
+        self,
+        suppressions: tuple[GovernanceDecision, ...],
+        *,
+        now: int,
+    ) -> dict[str, dict[str, str]]:
+        """Return suppression labels for findings suppressed at *now*.
+
+        For every suppression whose ``subject`` matches a finding id in this
+        report and whose ``expiry`` (``YYYY-MM-DD``) is still in the future at
+        *now*, the matching decision is returned as
+        ``{"anchor", "reason", "expiry"}`` -- the label a report renderer
+        applies instead of the finding's raw verdict (``verdict=accepted`` plus
+        this decision anchor). Findings stay in the report; they are only
+        re-labeled.
+
+        A suppression whose ``expiry`` is in the past (or unparseable) has
+        lapsed: the finding is not returned here and its normal verdict
+        applies.
+        """
+        from datetime import UTC, datetime
+
+        try:
+            today = datetime.fromtimestamp(now, tz=UTC).date()
+        except (OverflowError, OSError, ValueError):
+            today = None
+
+        finding_ids = {f.get("id") for f in self.findings}
+        labels: dict[str, dict[str, str]] = {}
+        for suppression in suppressions:
+            if suppression.action != "suppress" or suppression.subject not in finding_ids:
+                continue
+            expiry_raw = str(suppression.context.get("expiry", ""))
+            try:
+                expiry_date = datetime.strptime(expiry_raw, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            if today is not None and expiry_date < today:
+                continue
+            labels[str(suppression.subject)] = {
+                "anchor": suppression.journal_entry_hash,
+                "reason": str(suppression.context.get("reason", "")),
+                "expiry": expiry_raw,
+            }
+        return labels
 
 
 def diff_reports(before: AuditReport, after: AuditReport) -> tuple[FindingDrift, ...]:

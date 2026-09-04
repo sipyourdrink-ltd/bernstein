@@ -1,0 +1,44 @@
+# Role-only policy: identity + role + resource only
+# This is the baseline - does NOT include args_digest or intent_digest
+# Purpose: Test whether argument-aware policy adds value over role-only
+version: "1.0"
+name: role_only
+description: |
+  Baseline authorization policy using only identity, role, and resource.
+  Does NOT incorporate args_digest or intent_digest.
+  Used as control in intent-vs-args experiment (#5065).
+
+policies:
+  - name: allow_benign_operations
+    description: Allow standard operations by role
+    severity: warn
+    rule: |
+      # Allow reads for readers on any resource
+      task_role == "reader" & task_description =~ "read"
+    # Note: This is simplified - actual evaluation uses the policy engine's
+    # field matching. See PolicyEngine._evaluate_compare_rule and _evaluate_regex_rule.
+
+  - name: allow_coder_file_operations
+    description: Allow coders to read/write files in allowed paths
+    severity: warn
+    rule: |
+      task_role == "coder"
+
+  - name: allow_admin_all
+    description: Admins can do everything
+    severity: warn
+    rule: |
+      task_role == "admin"
+
+  - name: block_destructive_by_default
+    description: Block destructive operations unless explicitly allowed
+    severity: block
+    rule: |
+      task_role !~ "admin|operator"
+      task_description !~ "maintenance|break-glass"
+
+# Field mappings for policy engine evaluation:
+# - task_role: from PolicySubject.role
+# - task_description: from PolicySubject.description (intent text when available)
+# - file_content: from PolicyDiff.combined_content
+# - file_path: from PolicyDiff.file_paths

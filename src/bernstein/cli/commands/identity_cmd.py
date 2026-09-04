@@ -183,6 +183,71 @@ def keydir_cmd() -> None:
     click.echo(json.dumps(keydir, indent=2, sort_keys=True))
 
 
+@identity_group.command("export-verifier", hidden=True)
+@click.option(
+    "--target",
+    type=click.Choice(["local", "server"], case_sensitive=False),
+    default="local",
+    help=(
+        "Verifier file target. 'local' targets ~/.config/bernstein/verifier/local.json "
+        "(operator workstation); 'server' targets ~/.config/bernstein/verifier/server.json "
+        "(shared server filesystem)."
+    ),
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Print the destination path without writing anything.",
+)
+def export_verifier_cmd(target: str, dry_run: bool) -> None:
+    """Write the install-identity JWKS to a per-platform verifier file.
+
+    Writes the JWKS as canonical JSON and a ``.json.sha256`` sidecar. Skips the
+    write when the key content is unchanged since the last run (hash compared
+    against the sidecar); use ``--dry-run`` to print the destination without
+    writing.
+
+    Targets:
+
+    \\b
+      local  -> ~/.config/bernstein/verifier/local.json   (default, operator workstation)
+      server -> ~/.config/bernstein/verifier/server.json  (shared server filesystem)
+
+    This command mirrors the ``/.well-known/http-message-signatures-directory``
+    JWKS endpoint but writes to a local file so a verifier can pin the trust
+    anchor without a runtime fetch.
+    """
+    import hashlib
+    import json
+    from pathlib import Path
+
+    from bernstein.core.identity import http_signing
+
+    verifier_dir = Path.home() / ".config" / "bernstein" / "verifier"
+    filename = f"{target}.json"
+    dest = verifier_dir / filename
+    sidecar = dest.with_name(f"{target}.json.sha256")
+
+    keydir = http_signing.build_key_directory(http_signing.default_keystore())
+
+    canonical = json.dumps(keydir, separators=(",", ":"), sort_keys=True)
+    content_hash = hashlib.sha256(canonical.encode("ascii")).hexdigest()
+
+    if dry_run:
+        click.echo(str(dest))
+        return
+
+    if sidecar.exists() and sidecar.read_text().strip() == content_hash:
+        click.echo(f"unchanged: {dest}")
+        return
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(canonical, encoding="utf-8")
+    sidecar.write_text(content_hash, encoding="utf-8")
+    click.echo(f"wrote: {dest}")
+
+
 @identity_group.command("disable")
 def disable_cmd() -> None:
     """Print the environment line that suppresses every emit site.

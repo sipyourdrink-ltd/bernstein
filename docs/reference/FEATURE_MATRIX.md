@@ -95,6 +95,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | Rule enforcement (`.bernstein/rules.yaml`) | Full | 3 | Enforcement behavior documented |
 | [Log redaction (PII filter)](../security/log-redaction.md) | Full | 3 | Active |
 | Lethal-trifecta capability gate | Full | 3 | Taint-aware egress denial: a chain that unions private data, tainted input, and external comms is refused even when static tags would pass (`core/security/capability_matrix.py`) |
+| [Executor admission policy](../operations/admission-policy.md) | Full | 3 | Fail-closed allow/deny rules over the executor identity of every spawn — role, adapter, model, endpoint, sandbox tier, task type. An unmatched subject is refused, a refusal starts no process and appends an `admission_refusal` event to the audit chain, and both outcomes are recorded with the deciding rule id (`core/security/executor_admission.py`) |
 | Circuit breaker | Full | 3 | Halts misbehaving agents, writes SHUTDOWN signal |
 | [Token growth monitor](../operations/token-growth-monitor.md) | Full | 3 | Auto-intervention on runaway consumption |
 | [Cost anomaly detection](../operations/cost-anomaly-detection.md) | Full | 3 | Z-score based, acts via task completion |
@@ -242,6 +243,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | `bernstein recap` | Full | 3 | Post-run summary |
 | `bernstein retro` | Full | 3 | Retrospective report |
 | `bernstein runs report` | Full | 3 | Finished runs projected from the work ledger and classified `pr-opened` / `gate-failed` / `no-changes` / `infra-error` / `wedged`, each with the evidence line it was read from |
+| `bernstein runs scorecard` | Full | 3 | Content-addressed per-run scorecard derived from the work ledger. The same facts as `bernstein runs report` plus steps, task counters, `cost_usd`, host, parent run id, attempt count and elapsed seconds. Writes `<sha256>.json` to `.sdd/runs/<id>/scorecard/`; `--verify` re-derives the scorecard from the live ledger and names the diverging field on mismatch; `--json` prints the canonical content |
 | `bernstein report commits/incident/postmortem` | Brief | 3 | Per-run markdown summaries: `commits` is per-agent commit attribution ([reference](../operations/commit-attribution.md)); `incident` correlates a timeline from logs, metrics, and traces; `postmortem` writes a structured report for a failed run. The group has no reference page of its own; `cli-reference.md` and `bernstein report --help` carry it |
 | `bernstein trace ID` | Full | 3 | Decision trace |
 | `bernstein logs` | Full | 3 | Agent log tail |
@@ -328,6 +330,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein events query/verify`](../events/grammar.md) | Full | 3 | Query the unified event feed and verify its chain projection |
 | `bernstein endpoints certify/verify` | Full | 3 | Conformance-certify a local-model endpoint and verify its certification |
 | `bernstein ledger verify/anchor/fetch` | Full | 3 | Verify, anchor, and fetch work-ledger segments |
+| `bernstein seal publish/verify` | Full | 3 | Anchor a run's sealed journal head to an RFC 3161 timestamping authority and re-check the anchor offline against pinned TSA roots |
 | `bernstein mission define/status/verify` | Full | 3 | Define multi-phase missions and verify mission status (`mission digest verify` for digests) |
 | [`bernstein tournament show/verify`](../operations/tournament-runs.md) | Full | 3 | Inspect a tournament run and verify its selection receipt |
 | `bernstein spiffe id/verify-binding` | Full | 4 | Print the SPIFFE id and verify a workload-identity binding |
@@ -338,6 +341,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein pool register/list/show/verify`](../operations/sandbox-pools.md) | Full | 3 | Manage lease-backed named resource pools |
 | [`bernstein volunteer verify`](volunteer-manifest.md) | Full | 3 | Validate a project's `.bernstein/volunteer.json` and print the manifest digest a receipt binds to |
 | [`bernstein volunteer budget`](volunteer-budget.md) | Full | 3 | Set or inspect persistent donor limits and completed/in-flight usage |
+| [`bernstein admission check`](../operations/admission-policy.md) | Full | 3 | Evaluate the declared executor admission policy against the executor identity each configured role would spawn on, printing the decision and the deciding rule id without spawning; exits non-zero when a role is refused |
 
 ## Cloud / Cloudflare
 > **How a row graduates:** A row graduates out of Preview when its maturity score increases to ≥ 3 (or when a first-run smoke test lands and the marker is intentionally removed).

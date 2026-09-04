@@ -13,8 +13,11 @@ import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
-from importlib.metadata import entry_points
+from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError, entry_points
+from importlib.metadata import version as dist_version
 from pathlib import Path
+from types import ModuleType
 from typing import Any, ClassVar, cast
 
 import pluggy
@@ -50,6 +53,7 @@ __all__ = [
     "HookValidationError",
     "PluginManager",
     "PluginPolicyViolation",
+    "PluginResolution",
     "get_plugin_manager",
 ]
 
@@ -588,6 +592,86 @@ class CommandHook:
 REPORTER_NAME_PREFIX = "reporters:"
 
 
+@dataclass(frozen=True, slots=True)
+class PluginResolution:
+    """What one declared plugin resolved to at load time.
+
+    Discovery keeps going when a plugin raises, which is the right call for
+    availability and the wrong one for the record: the surviving state shows
+    only the plugins that happened to import, so a declared entry that blew
+    up is indistinguishable from one that was never declared. One of these
+    is appended for every declared plugin, loaded or not.
+
+    Attributes:
+        name:     Name the plugin is (or would have been) registered under.
+        source:   Where the declaration came from - ``entry_point``,
+            ``config`` or ``reporter``.
+        declared: The declared import target as written.
+        version:  Resolved distribution version, ``""`` when unknown.
+        origin:   Module file the registered object came from, ``""`` when
+            the entry did not load or has no file.
+        loaded:   Whether the plugin is registered in this process.
+        failure:  Error text when it is not, else ``""``.
+    """
+
+    name: str
+    source: str
+    declared: str
+    version: str
+    origin: str
+    loaded: bool
+    failure: str
+
+
+def _defining_module(plugin: object) -> ModuleType | None:
+    """Return the module a registered plugin object was defined in."""
+    if isinstance(plugin, ModuleType):
+        return plugin
+    module_name = getattr(type(plugin), "__module__", "")
+    return sys.modules.get(module_name) if module_name else None
+
+
+def _plugin_origin(plugin: object) -> str:
+    """Return the source file the plugin object resolved from, ``""`` when none."""
+    module = _defining_module(plugin)
+    file = getattr(module, "__file__", None) if module is not None else None
+    if not isinstance(file, str) or not file:
+        return ""
+    return file
+
+
+def _entry_point_dist_version(ep: object) -> str:
+    """Return the version of the distribution declaring *ep*, ``""`` when unknown."""
+    try:
+        dist = getattr(ep, "dist", None)
+    except Exception:  # pragma: no cover - metadata backends vary
+        return ""
+    if dist is None:
+        return ""
+    return str(getattr(dist, "version", "") or "")
+
+
+def _plugin_version(plugin: object) -> str:
+    """Return the plugin's version: its distribution's, else ``__version__``.
+
+    The distribution lookup is by top-level package, which is the only name
+    an imported module exposes. When no distribution owns it - a plugin
+    imported off ``sys.path`` rather than installed - the module's own
+    ``__version__`` is the best available answer.
+    """
+    module = _defining_module(plugin)
+    if module is None:
+        return ""
+    root = (module.__name__ or "").split(".")[0]
+    if root:
+        try:
+            return dist_version(root)
+        except (PackageNotFoundError, ValueError):
+            pass
+    declared = getattr(module, "__version__", "")
+    return str(declared) if isinstance(declared, str) else ""
+
+
 class PluginManager:
     """Discovers, loads, and invokes Bernstein plugins.
 
@@ -614,6 +698,8 @@ class PluginManager:
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="BernsteinPluginHook")
         # Shared dedup registry for hook scripts across all CommandHook instances (T455).
         self._hook_seen: set[tuple[str, str]] = set()
+        # What every declared plugin resolved to - failures included (#4986).
+        self._resolutions: list[PluginResolution] = []
 
     def fire_task_created(self, task_id: str, role: str, title: str) -> None:
         self._safe_call("on_task_created", task_id=task_id, role=role, title=title)
@@ -1066,6 +1152,7 @@ class PluginManager:
         """Load all plugins registered via the ``bernstein.plugins`` entry-point group."""
         eps = entry_points(group="bernstein.plugins")
         for ep in eps:
+            declared_version = _entry_point_dist_version(ep)
             try:
                 check_plugin_allowed(ep.name, self._policy)
                 plugin = ep.load()
@@ -1075,18 +1162,95 @@ class PluginManager:
                 name = ep.name
                 self._pm.register(plugin, name=name)
                 self._registered_names.append(name)
+                self._record_resolution(
+                    name=name,
+                    source="entry_point",
+                    declared=ep.value,
+                    version=declared_version or _plugin_version(plugin),
+                    origin=_plugin_origin(plugin),
+                    loaded=True,
+                    failure="",
+                )
                 log.debug("Loaded entry-point plugin %r from %s", name, ep.value)
             except PluginPolicyViolation as exc:
                 log.warning("Plugin %r blocked by enterprise policy: %s", ep.name, exc.reason)
+                self._record_failed_resolution(
+                    name=ep.name,
+                    source="entry_point",
+                    declared=ep.value,
+                    version=declared_version,
+                    failure=f"blocked by enterprise policy: {exc.reason}",
+                )
             except Exception as exc:
                 warnings.warn(
                     f"Failed to load bernstein plugin {ep.name!r} ({ep.value}): {exc}",
                     stacklevel=1,
                 )
+                self._record_failed_resolution(
+                    name=ep.name,
+                    source="entry_point",
+                    declared=ep.value,
+                    version=declared_version,
+                    failure=f"{type(exc).__name__}: {exc}",
+                )
 
         from bernstein.plugins.reporters import discover_reporters
 
-        discover_reporters(self._register_reporter)
+        discover_reporters(self._register_reporter, on_failure=self._record_reporter_failure)
+
+    def _record_resolution(
+        self,
+        *,
+        name: str,
+        source: str,
+        declared: str,
+        version: str,
+        origin: str,
+        loaded: bool,
+        failure: str,
+    ) -> None:
+        """Append one resolution outcome to the record."""
+        self._resolutions.append(
+            PluginResolution(
+                name=name,
+                source=source,
+                declared=declared,
+                version=version,
+                origin=origin,
+                loaded=loaded,
+                failure=failure,
+            )
+        )
+
+    def _record_failed_resolution(
+        self,
+        *,
+        name: str,
+        source: str,
+        declared: str,
+        version: str,
+        failure: str,
+    ) -> None:
+        """Record a declared plugin that produced nothing loadable."""
+        self._record_resolution(
+            name=name,
+            source=source,
+            declared=declared,
+            version=version,
+            origin="",
+            loaded=False,
+            failure=failure,
+        )
+
+    def _record_reporter_failure(self, name: str, declared: str, failure: str) -> None:
+        """Record a reporter entry point that did not load."""
+        self._record_failed_resolution(
+            name=f"{REPORTER_NAME_PREFIX}{name}",
+            source="reporter",
+            declared=declared,
+            version="",
+            failure=failure,
+        )
 
     def _register_reporter(self, reporter: object, name: str) -> None:
         """Apply policy and register a discovered reporter hook plugin.
@@ -1100,6 +1264,15 @@ class PluginManager:
         check_plugin_allowed(name, self._policy)
         self._pm.register(reporter, name=f"{REPORTER_NAME_PREFIX}{name}")
         self._registered_names.append(f"{REPORTER_NAME_PREFIX}{name}")
+        self._record_resolution(
+            name=f"{REPORTER_NAME_PREFIX}{name}",
+            source="reporter",
+            declared=name,
+            version=_plugin_version(reporter),
+            origin=_plugin_origin(reporter),
+            loaded=True,
+            failure="",
+        )
 
     def discover_config_plugins(self, config_plugins: list[str]) -> None:
         """Load plugins listed in ``bernstein.yaml`` under the ``plugins:`` key.
@@ -1128,13 +1301,36 @@ class PluginManager:
                 name = spec
                 self._pm.register(plugin, name=name)
                 self._registered_names.append(name)
+                self._record_resolution(
+                    name=name,
+                    source="config",
+                    declared=spec,
+                    version=_plugin_version(plugin),
+                    origin=_plugin_origin(plugin),
+                    loaded=True,
+                    failure="",
+                )
                 log.debug("Loaded config plugin %r", name)
             except PluginPolicyViolation as exc:
                 log.warning("Plugin %r blocked by enterprise policy: %s", spec, exc.reason)
+                self._record_failed_resolution(
+                    name=spec,
+                    source="config",
+                    declared=spec,
+                    version="",
+                    failure=f"blocked by enterprise policy: {exc.reason}",
+                )
             except Exception as exc:
                 warnings.warn(
                     f"Failed to load bernstein config plugin {spec!r}: {exc}",
                     stacklevel=1,
+                )
+                self._record_failed_resolution(
+                    name=spec,
+                    source="config",
+                    declared=spec,
+                    version="",
+                    failure=f"{type(exc).__name__}: {exc}",
                 )
 
     def _load_command_hooks_subsystem(self, root: Path) -> None:
@@ -1264,6 +1460,16 @@ class PluginManager:
     def registered_names(self) -> list[str]:
         """Names of all successfully registered plugins."""
         return self._registered_names.copy()
+
+    @property
+    def resolutions(self) -> tuple[PluginResolution, ...]:
+        """What every declared plugin resolved to, failures included.
+
+        :attr:`registered_names` answers "what can run"; this answers "what
+        was declared and what became of it", which is the pair the record
+        needs to distinguish a missing plugin from an absent declaration.
+        """
+        return tuple(self._resolutions)
 
     def plugin_hooks(self, plugin_name: str) -> list[str]:
         """Return names of hooks implemented by *plugin_name*.
