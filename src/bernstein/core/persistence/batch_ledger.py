@@ -166,13 +166,15 @@ class BatchLedger:
                 raise BatchLedgerError(f"corrupt entry at line {index + 1} of {self._path}") from None
             if not isinstance(row, dict):
                 raise BatchLedgerError(f"entry at line {index + 1} of {self._path} is not an object")
+            raw_detail = row.get("detail")
+            detail: dict[str, Any] = raw_detail if isinstance(raw_detail, dict) else {}
             yield BatchItemRecord(
                 entity_id=str(row.get("entity_id", "")),
                 at=float(row.get("at", 0.0)),
                 day=str(row.get("day", "")),
                 entry_hash=str(row.get("entry_hash", "")),
                 prev_hash=str(row.get("prev_hash", GENESIS_HASH)),
-                detail=row.get("detail") if isinstance(row.get("detail"), dict) else {},
+                detail=detail,
             )
 
     def done_ids(self) -> set[str]:
