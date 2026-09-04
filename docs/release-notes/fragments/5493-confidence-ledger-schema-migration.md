@@ -1,0 +1,3 @@
+## Confidence ledger upgrades its own table on connect
+
+The empirical-confidence ledger creates `agent_outcomes` with `CREATE TABLE IF NOT EXISTS`, so a database written by an earlier version was never brought forward and every recorded outcome failed with `table agent_outcomes has no column named sampled_at`. The store now inspects the table on connect and renames the older `recorded_at` column to `sampled_at`, preserving existing rows, row ids, and the lookup index. The rename runs under `BEGIN IMMEDIATE` so concurrent processes sharing the file serialise against each other, and a table carrying neither column name is left untouched rather than guessed at (#5493).
