@@ -1,5 +1,17 @@
-"""bernstein-bench: runnable, reproducibility-gated evaluation harness."""
-
+from bernstein.eval.bench.authority_levels import (
+    AuthorityAction,
+    AuthorityLevel,
+    AuthorityReceipt,
+    ContainmentOutcome,
+    evaluate_authority_action,
+    evaluate_subtask_delegation,
+    verify_authority_receipt,
+)
+from bernstein.eval.bench.authority_suite import (
+    AuthorityContainmentScorer,
+    AuthorityContainmentSummary,
+    build_authority_suite_v1,
+)
 from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult
 from bernstein.eval.bench.golden_suite import build_golden_suite_v1
 from bernstein.eval.bench.leaderboard import Leaderboard, LeaderboardEntry
@@ -35,11 +47,17 @@ from bernstein.eval.bench.verifier import (
 )
 
 __all__ = [
+    "AuthorityAction",
+    "AuthorityContainmentScorer",
+    "AuthorityContainmentSummary",
+    "AuthorityLevel",
+    "AuthorityReceipt",
     "BenchRunner",
     "BenchSuite",
     "BenchTask",
     "BenchVerifier",
     "BundleVerificationResult",
+    "ContainmentOutcome",
     "InstallIdentityReliabilitySigner",
     "Leaderboard",
     "LeaderboardEntry",
@@ -59,10 +77,14 @@ __all__ = [
     "TaskResult",
     "TaskVerificationResult",
     "VerificationStatus",
+    "build_authority_suite_v1",
     "build_golden_suite_v1",
     "coordination_hash",
     "coordination_projection",
+    "evaluate_authority_action",
+    "evaluate_subtask_delegation",
     "first_divergent_coordination_field",
     "reliability_check",
     "validate_run_receipt",
+    "verify_authority_receipt",
 ]

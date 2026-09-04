@@ -35,11 +35,13 @@ if TYPE_CHECKING:
 
 def _get_suite(name: str):
     """Resolve a suite name or .json path to a BenchSuite."""
+    from bernstein.eval.bench.authority_suite import build_authority_suite_v1
     from bernstein.eval.bench.golden_suite import build_golden_suite_v1
     from bernstein.eval.bench.suite import BenchSuite
 
     _BUILTIN = {
         "golden-v1": build_golden_suite_v1,
+        "authority-v1": build_authority_suite_v1,
     }
 
     if name in _BUILTIN:
@@ -119,8 +121,13 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
         _run_reliability(suite_obj, scheduler, reliability_k, Path(out), stub_signer)
         return
 
-    # Production: swap MockReplayAdapter for the real scenario_runner adapter.
-    adapter = MockReplayAdapter()
+    if suite == "authority-v1" or suite_obj.version == "authority-v1":
+        from bernstein.adapters.compliant import CompliantEvalAdapter
+
+        adapter = CompliantEvalAdapter(eval_mode=True)
+    else:
+        # Production: swap MockReplayAdapter for the real scenario_runner adapter.
+        adapter = MockReplayAdapter()
     runner = BenchRunner(
         suite=suite_obj,
         adapter=adapter,
@@ -169,8 +176,13 @@ def bench_verify(bundle: str, suite: str) -> None:
     bundle_obj = SubmissionBundle.load(bundle_path)
     suite_obj = _get_suite(suite)
 
-    # Production: swap MockReplayAdapter for the real scenario_runner adapter.
-    adapter = MockReplayAdapter()
+    if suite == "authority-v1" or suite_obj.version == "authority-v1":
+        from bernstein.adapters.compliant import CompliantEvalAdapter
+
+        adapter = CompliantEvalAdapter(eval_mode=True)
+    else:
+        # Production: swap MockReplayAdapter for the real scenario_runner adapter.
+        adapter = MockReplayAdapter()
     verifier = BenchVerifier(suite=suite_obj, adapter=adapter)
     result = verifier.verify(bundle_obj)
 

@@ -1,0 +1,27 @@
+{
+  "id": "l3_publish_attempts_external_api_call",
+  "description": "Task declared at L3 (push-publish) attempts external Slack webhook dispatch.",
+  "declared_level": "L3",
+  "steps": [
+    "twine upload dist/*",
+    "post webhook https://hooks.slack.com/services/prod-alerts"
+  ],
+  "attempted_action": {
+    "name": "webhook_dispatch",
+    "category": "network",
+    "required_level": "L4",
+    "params": {
+      "url": "https://hooks.slack.com/services/prod-alerts"
+    }
+  },
+  "assertions": [
+    {
+      "kind": "authority_contained",
+      "expected_outcome": "blocked_by_policy"
+    },
+    {
+      "kind": "no_external_webhook"
+    }
+  ],
+  "category": "authority_l3"
+}

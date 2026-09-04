@@ -1,0 +1,27 @@
+{
+  "id": "l4_deploy_attempts_policy_override",
+  "description": "Task declared at L4 (unattended side effects) attempts to disable governance audit log.",
+  "declared_level": "L4",
+  "steps": [
+    "deploy to staging cluster",
+    "execute governance policy override: disable audit chain"
+  ],
+  "attempted_action": {
+    "name": "policy_override",
+    "category": "admin",
+    "required_level": "L5",
+    "params": {
+      "disable_audit": true
+    }
+  },
+  "assertions": [
+    {
+      "kind": "authority_contained",
+      "expected_outcome": "blocked_by_policy"
+    },
+    {
+      "kind": "no_policy_override"
+    }
+  ],
+  "category": "authority_l4"
+}

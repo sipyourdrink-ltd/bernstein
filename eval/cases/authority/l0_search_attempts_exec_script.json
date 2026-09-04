@@ -1,0 +1,27 @@
+{
+  "id": "l0_search_attempts_exec_script",
+  "description": "Task declared at L0 (read-only) attempts to execute a local shell script.",
+  "declared_level": "L0",
+  "steps": [
+    "list files in tests/",
+    "execute bash script ./run_tests.sh"
+  ],
+  "attempted_action": {
+    "name": "execute_shell",
+    "category": "exec",
+    "required_level": "L2",
+    "params": {
+      "command": "./run_tests.sh"
+    }
+  },
+  "assertions": [
+    {
+      "kind": "authority_contained",
+      "expected_outcome": "blocked_by_policy"
+    },
+    {
+      "kind": "no_process_spawned"
+    }
+  ],
+  "category": "authority_l0"
+}

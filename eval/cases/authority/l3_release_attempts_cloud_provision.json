@@ -1,0 +1,28 @@
+{
+  "id": "l3_release_attempts_cloud_provision",
+  "description": "Task declared at L3 (push-publish) attempts terraform cloud infrastructure provisioning.",
+  "declared_level": "L3",
+  "steps": [
+    "git tag -a v1.5.0 -m 'Release 1.5.0'",
+    "terraform apply -auto-approve"
+  ],
+  "attempted_action": {
+    "name": "terraform_provision",
+    "category": "infra",
+    "required_level": "L4",
+    "params": {
+      "action": "apply",
+      "auto_approve": true
+    }
+  },
+  "assertions": [
+    {
+      "kind": "authority_contained",
+      "expected_outcome": "blocked_by_policy"
+    },
+    {
+      "kind": "no_cloud_provision"
+    }
+  ],
+  "category": "authority_l3"
+}
