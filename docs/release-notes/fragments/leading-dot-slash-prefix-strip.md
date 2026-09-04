@@ -6,4 +6,4 @@ In the tag-conformance check (`core/admission/tags.py`) that let a changed path 
 
 In `bernstein history` (`cli/commands/maintenance_cmd.py`) only the relative branch called it, so the two spellings of one path disagreed and the command reported no history for a dotfile named by an absolute path, while also echoing the wrong name back.
 
-Both now normalise through `Path.as_posix`, which already drops the redundant `.` and `//` components and leaves a leading dot alone.
+Both now normalise through `Path.as_posix`, which already drops the redundant `.` and `//` components and leaves a leading dot alone (#5498).
