@@ -10,6 +10,7 @@ no context active, the four-layer precedence is unchanged.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -177,3 +178,126 @@ def test_create_list_get(tmp_path: Path) -> None:
     store.create(OperatingContext(name="staging", server_url="https://staging"))
     assert store.list_names() == ["dev", "staging"]
     assert store.get("dev").server_url == "http://localhost:8052"
+
+
+# ---------------------------------------------------------------------------
+# Durability of the context files and the activation pointer
+# ---------------------------------------------------------------------------
+
+
+def _context(name: str = "staging-fleet") -> OperatingContext:
+    return OperatingContext(
+        name=name,
+        server_url="https://staging.example",
+        store_dsn="postgres://s/db",
+        adapter_defaults={"model": "claude", "effort": "medium"},
+        budget_envelope="staging-budget",
+    )
+
+
+def _fsync_spy(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Record every ``os.fsync`` the write path performs."""
+    seen: list[int] = []
+    real = os.fsync
+
+    def spy(fd: int) -> None:
+        seen.append(fd)
+        real(fd)
+
+    monkeypatch.setattr(os, "fsync", spy)
+    return seen
+
+
+def test_the_activation_pointer_is_fsynced_before_it_is_published(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An audited activation must not survive as a pointer full of nothing.
+
+    ``activate`` records the audit event first so a live pointer always has
+    its record. Without an fsync the inverse happens instead: the rename is
+    durable, the bytes are not, and ``_active_field`` answers the truncated
+    pointer with ``None``. The fleet silently drops back to four-layer
+    precedence while the chain still says the context was activated.
+    """
+    project = tmp_path / "proj"
+    project.mkdir()
+    store = _store(project, _chain(tmp_path))
+    store.create(_context())
+    seen = _fsync_spy(monkeypatch)
+    store.activate("staging-fleet")
+    assert seen, "the activation pointer was published without being fsynced"
+
+
+def test_a_context_definition_is_fsynced_before_it_is_published(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "proj"
+    project.mkdir()
+    store = _store(project, _chain(tmp_path))
+    seen = _fsync_spy(monkeypatch)
+    store.create(_context())
+    assert seen, "the context definition was published without being fsynced"
+
+
+def test_writing_leaves_no_temporary_behind(tmp_path: Path) -> None:
+    project = tmp_path / "proj"
+    project.mkdir()
+    store = _store(project, _chain(tmp_path))
+    store.create(_context())
+    store.activate("staging-fleet")
+    root = project / ".sdd" / "fleet" / "contexts"
+    assert [p.name for p in root.iterdir() if ".tmp" in p.name] == []
+
+
+def test_concurrent_writers_do_not_share_one_temporary_slot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing here holds a lock, so the temporary name must be per-writer.
+
+    ``path.with_suffix(".json.tmp")`` gave every writer of one target the
+    same slot: two activations could write it at once and publish a torn
+    mix of both.
+    """
+    project = tmp_path / "proj"
+    project.mkdir()
+    store = _store(project, _chain(tmp_path))
+    store.create(_context())
+
+    temporaries: list[str] = []
+    from bernstein.core.persistence import atomic_write
+
+    real = atomic_write._tmp_path_for
+
+    def record(path: Path) -> Path:
+        chosen = real(path)
+        temporaries.append(chosen.name)
+        return chosen
+
+    monkeypatch.setattr(atomic_write, "_tmp_path_for", record)
+    store.activate("staging-fleet")
+    store.activate("staging-fleet")
+    assert len(temporaries) == 2
+    assert temporaries[0] != temporaries[1]
+
+
+def test_a_failed_write_leaves_the_previous_pointer_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "proj"
+    project.mkdir()
+    store = _store(project, _chain(tmp_path))
+    store.create(_context())
+    store.create(_context("prod-fleet"))
+    store.activate("staging-fleet")
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("bernstein.core.persistence.atomic_write.os.replace", boom)
+    with pytest.raises(OSError):
+        store.activate("prod-fleet")
+
+    monkeypatch.undo()
+    assert store.active_name() == "staging-fleet"
+    root = project / ".sdd" / "fleet" / "contexts"
+    assert [p.name for p in root.iterdir() if ".tmp" in p.name] == []

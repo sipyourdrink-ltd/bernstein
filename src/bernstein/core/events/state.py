@@ -23,6 +23,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from bernstein.core.persistence.atomic_write import write_atomic_text
+
 if sys.platform == "win32":  # pragma: no cover - exercised only on Windows
     import msvcrt
 
@@ -124,9 +126,16 @@ def _load(path: Path) -> dict[str, Any]:
 
 
 def _atomic_write(path: Path, data: dict[str, Any]) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=True), encoding="utf-8")
-    tmp.replace(path)
+    """Persist *data* through the crash-safe write path.
+
+    The previous local implementation wrote the temporary file and renamed
+    it without ever calling ``fsync``, so the rename could reach the disk
+    while the bytes behind it did not. What survived a power loss was a
+    zero-length ``counters.json``, and :func:`_load` answers that by
+    quarantining the file and raising ``TriggerStateCorruptError`` -- the
+    exact outcome the temp-and-rename dance is there to avoid.
+    """
+    write_atomic_text(path, json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
 
 
 class TriggerStateStore:
