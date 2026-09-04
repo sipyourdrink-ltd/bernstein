@@ -1269,3 +1269,20 @@ def test_run_cycle_does_close_the_issue_when_an_upgrade_really_lands(tmp_path: P
     assert result.accepted is True
     gh_mock.close_issue.assert_called_once()
     assert "applied automatically" in gh_mock.close_issue.call_args.kwargs["comment"]
+
+
+@pytest.mark.parametrize(
+    "composite_risk",
+    [0.0, 0.05, 0.29, 0.3, 0.31, 0.45, 0.59, 0.6, 0.61, 0.85, 1.0],
+)
+def test_classify_risk_route_matches_proposal_scorer(composite_risk: float) -> None:
+    """Loop and ProposalScorer must agree on routing for the same risk score.
+
+    Both are expected to delegate to ``RiskScorer.classify_risk_route`` so
+    thresholds and labels stay in lockstep.
+    """
+    from bernstein.evolution.proposal_scorer import ProposalScorer
+
+    assert EvolutionLoop._classify_risk_route(composite_risk) == ProposalScorer().classify_risk_route(
+        composite_risk
+    )

@@ -54,22 +54,10 @@ class ProposalScorer:
     def classify_risk_route(self, composite_risk: float) -> str:
         """Map a composite risk score to a routing strategy.
 
-        Thresholds:
-          - composite_risk > 0.6 → ``sandbox_verify``  (forced sandbox)
-          - composite_risk 0.3-0.6 → ``standard``       (normal flow)
-          - composite_risk < 0.3 → ``fast_track``       (skip sandbox)
-
-        Args:
-            composite_risk: Composite risk score in [0.0, 1.0].
-
-        Returns:
-            One of ``"sandbox_verify"``, ``"standard"``, or ``"fast_track"``.
+        Delegates to :meth:`RiskScorer.classify_risk_route` so the loop and
+        ``ProposalScorer`` share the same thresholds and labels.
         """
-        if composite_risk > 0.6:
-            return "sandbox_verify"
-        if composite_risk > 0.3:
-            return "standard"
-        return "fast_track"
+        return self._risk_scorer.classify_risk_route(composite_risk)
 
     @staticmethod
     def infer_risk_level(proposal: UpgradeProposal) -> RiskLevel:
