@@ -715,6 +715,11 @@ class TestEvolutionCoordinator:
 
     def test_execute_pending_upgrades(self, tmp_path: Path) -> None:
         coordinator = EvolutionCoordinator(tmp_path)
+        # Stub the executor so execute_upgrade reports failure and
+        # rollback_upgrade reports success without touching the filesystem.
+        coordinator.executor = MagicMock()
+        coordinator.executor.execute_upgrade.return_value = False
+        coordinator.executor.rollback_upgrade.return_value = True
 
         # Create an approved proposal
         proposal = UpgradeProposal(
