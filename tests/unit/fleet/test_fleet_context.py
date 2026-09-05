@@ -249,7 +249,9 @@ def test_writing_leaves_no_temporary_behind(tmp_path: Path) -> None:
     assert [p.name for p in root.iterdir() if ".tmp" in p.name] == []
 
 
-def test_concurrent_writers_do_not_share_one_temporary_slot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_concurrent_writers_do_not_share_one_temporary_slot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Nothing here holds a lock, so the temporary name must be per-writer.
 
     ``path.with_suffix(".json.tmp")`` gave every writer of one target the
@@ -278,7 +280,9 @@ def test_concurrent_writers_do_not_share_one_temporary_slot(tmp_path: Path, monk
     assert temporaries[0] != temporaries[1]
 
 
-def test_a_failed_write_leaves_the_previous_pointer_intact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_failed_write_leaves_the_previous_pointer_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     project = tmp_path / "proj"
     project.mkdir()
     store = _store(project, _chain(tmp_path))

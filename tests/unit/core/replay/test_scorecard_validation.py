@@ -17,24 +17,26 @@ def test_valid_scorecard():
     scorecard = {
         "schema_version": "1.0.0",
         "type_version": 1,
-        "type": "https://bernstein.run/attestations/scorecard/v1",
+        "scorecard_type": "https://bernstein.run/attestations/scorecard/v1",
         "run_id": "run-123",
         "trajectory": {
-            "steps": 10,
-            "shape": "linear",
-            "first_step_seq": {"event_index": 1},
-            "last_step_seq": {"event_index": 10},
+            "step_count": 10,
+            "first_step_index": 0,
+            "last_step_index": 9,
+            "first_step_hash": "a" * 64,
+            "last_step_hash": "b" * 64,
+            "schema_version": 1,
         },
         "verification": {
             "journal_ok": True,
             "journal_head": "abcd1234",
-            "divergent_step": None,
+            "journal_steps": 10,
             "spine_ok": True,
             "spine_head": "abcd1234",
             "spine_entries": 5,
         },
-        "recovery": {"repaired": False, "dropped_rows": 0, "first_recoverable_seq": None},
-        "state_consistency": {"mutation_count": 15, "disagreement_count": 0, "last_mutation_event_index": None},
+        "recovery": {"repaired": False, "dropped_rows": 0},
+        "state_consistency": {"mutation_count": 15, "disagreement_count": 0, "last_mutation_event_index": 7},
         "safety": {"capability_declared": True, "refusal_count": 0, "run_receipt_signed": True},
         "replayability": {"recorded": True, "key_scheme": "v1", "gateway_mode": "secure", "fixture_present": True},
     }
@@ -48,7 +50,7 @@ def test_invalid_scorecard_missing_fields():
     invalid_scorecard = {
         "schema_version": "1.0.0",
         "type_version": 1,
-        "type": "https://bernstein.run/attestations/scorecard/v1",
+        "scorecard_type": "https://bernstein.run/attestations/scorecard/v1",
         "run_id": "run-123",
     }  # Missing sections trajectory, verification... etc
 

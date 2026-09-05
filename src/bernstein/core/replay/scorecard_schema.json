@@ -6,7 +6,7 @@
   "required": [
     "schema_version",
     "type_version",
-    "type",
+    "scorecard_type",
     "run_id",
     "trajectory",
     "verification",
@@ -15,34 +15,29 @@
     "safety",
     "replayability"
   ],
-  "additionalProperties": {
-    "oneOf": [
-      { "type": "number" },
-      { "type": "string" },
-      { "type": "boolean" },
-      { "type": "null" }
-    ]
-  },
+  "additionalProperties": false,
   "properties": {
     "schema_version": {
       "type": "string",
       "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
     },
     "type_version": { "type": "integer", "minimum": 1 },
-    "type": {
+    "scorecard_type": {
       "type": "string",
       "pattern": "^https://bernstein\\.run/attestations/scorecard/v[0-9]+$"
     },
     "run_id": { "type": "string", "minLength": 1 },
     "trajectory": {
       "type": "object",
-      "required": ["steps", "shape", "first_step_seq", "last_step_seq"],
+      "required": ["step_count", "schema_version"],
       "additionalProperties": false,
       "properties": {
-        "steps": { "type": "integer", "minimum": 0 },
-        "shape": { "type": "string" },
-        "first_step_seq": { "$ref": "#/definitions/citation" },
-        "last_step_seq": { "$ref": "#/definitions/citation" }
+        "step_count": { "type": "integer", "minimum": 0 },
+        "first_step_index": { "type": "integer", "minimum": 0 },
+        "last_step_index": { "type": "integer", "minimum": 0 },
+        "first_step_hash": { "type": "string", "minLength": 1 },
+        "last_step_hash": { "type": "string", "minLength": 1 },
+        "schema_version": { "type": "integer", "minimum": 1 }
       }
     },
     "verification": {
@@ -50,7 +45,7 @@
       "required": [
         "journal_ok",
         "journal_head",
-        "divergent_step",
+        "journal_steps",
         "spine_ok",
         "spine_head",
         "spine_entries"
@@ -59,7 +54,8 @@
       "properties": {
         "journal_ok": { "type": "boolean" },
         "journal_head": { "type": "string" },
-        "divergent_step": { "$ref": "#/definitions/citation" },
+        "journal_steps": { "type": "integer", "minimum": 0 },
+        "divergent_step": { "type": ["integer", "null"], "minimum": 0 },
         "spine_ok": { "type": "boolean" },
         "spine_head": { "type": "string" },
         "spine_entries": { "type": "integer", "minimum": 0 }
@@ -67,26 +63,23 @@
     },
     "recovery": {
       "type": "object",
-      "required": ["repaired", "dropped_rows", "first_recoverable_seq"],
+      "required": ["repaired", "dropped_rows"],
       "additionalProperties": false,
       "properties": {
         "repaired": { "type": "boolean" },
         "dropped_rows": { "type": "integer", "minimum": 0 },
-        "first_recoverable_seq": { "$ref": "#/definitions/citation" }
+        "first_recoverable_seq": { "type": ["integer", "null"], "minimum": 0 },
+        "recovery_event_index": { "type": ["integer", "null"], "minimum": 0 }
       }
     },
     "state_consistency": {
       "type": "object",
-      "required": [
-        "mutation_count",
-        "disagreement_count",
-        "last_mutation_event_index"
-      ],
+      "required": ["mutation_count", "disagreement_count"],
       "additionalProperties": false,
       "properties": {
         "mutation_count": { "type": "integer", "minimum": 0 },
         "disagreement_count": { "type": "integer", "minimum": 0 },
-        "last_mutation_event_index": { "$ref": "#/definitions/citation" }
+        "last_mutation_event_index": { "type": ["integer", "null"], "minimum": 0 }
       }
     },
     "safety": {
@@ -113,21 +106,6 @@
         "gateway_mode": { "type": "string" },
         "fixture_present": { "type": "boolean" }
       }
-    }
-  },
-  "definitions": {
-    "citation": {
-      "oneOf": [
-        {
-          "type": "object",
-          "required": ["event_index"],
-          "additionalProperties": false,
-          "properties": {
-            "event_index": { "type": "integer", "minimum": 0 }
-          }
-        },
-        { "type": "null" }
-      ]
     }
   }
 }
