@@ -1682,6 +1682,9 @@ class TestRunStop:
             "loaded_extension_set",
             "tick_start",
             "run_completed",
+            # Appended before the seal so the sealed head and the run receipt
+            # cover whether execution had actually stopped (#5272).
+            "run_quiescence",
         ]
         stream.finalize.assert_called_once_with()
         chain = AuditChainStore(tmp_path / ".sdd" / "audit")

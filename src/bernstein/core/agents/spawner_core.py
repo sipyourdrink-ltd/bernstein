@@ -6783,6 +6783,16 @@ class AgentSpawner:
             session.exit_code = container_mgr.get_exit_code(handle)
         return alive
 
+    def session_process_groups(self) -> dict[str, int | None]:
+        """Return each live session's process group id, for a quiescence check.
+
+        Adapters spawn with ``start_new_session=True``, so the stored
+        ``Popen.pid`` is the group id. A session with no stored process
+        contributes ``None``: there is nothing to probe, which is different
+        from a group that was probed and found empty (#5272).
+        """
+        return {session_id: (proc.pid if proc is not None else None) for session_id, proc in self._procs.items()}
+
     def _check_alive_process(self, session: AgentSession) -> bool | None:
         """Check liveness via stored subprocess. Returns None if no proc stored."""
         proc = self._procs.get(session.id)

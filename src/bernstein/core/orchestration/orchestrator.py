@@ -3353,6 +3353,7 @@ class Orchestrator:
         )
         self._mark_finalization_started()
         try:
+            self._record_run_quiescence()
             self._seal_journal_into_lineage_spine()
             if self._otel_stream is not None:
                 self._otel_stream.finalize()
@@ -3364,6 +3365,45 @@ class Orchestrator:
             self._recorder.path,
             self._recorder.fingerprint()[:16] + "...",
         )
+
+    def _record_run_quiescence(self) -> None:
+        """Record whether every process the run started had exited.
+
+        Appended *before* the seal, so the sealed head and the run receipt
+        cover the answer rather than being written over an unanswered
+        question. A tool process that outlived its wrapper can still write
+        into a worktree or the integration branch after the seal; this row is
+        what makes that visible in the record instead of invisible (#5272).
+
+        Never raises: a run that already completed must not fail because its
+        quiescence could not be established. A failure to check is recorded as
+        a failure to check.
+        """
+        try:
+            from bernstein.core.orchestration.quiescence import check_quiescence
+
+            groups = self._spawner.session_process_groups() if hasattr(self._spawner, "session_process_groups") else {}
+            report = check_quiescence(groups)
+        except Exception:
+            logger.warning("run_quiescence check failed", exc_info=True)
+            self._recorder.record(
+                "run_quiescence",
+                run_id=self._run_id,
+                verified=False,
+                residual=[],
+                method="check_failed",
+                checked=0,
+            )
+            return
+
+        if report.residual:
+            logger.warning(
+                "run %s sealed with %d process group(s) still alive: %s",
+                self._run_id,
+                len(report.residual),
+                ", ".join(f"{g.session_id}:{g.pgid}" for g in report.residual),
+            )
+        self._recorder.record("run_quiescence", run_id=self._run_id, **report.to_dict())
 
     def _seal_journal_into_lineage_spine(self) -> None:
         """Wire the journal head into the f01 lineage spine (issue #2293).
