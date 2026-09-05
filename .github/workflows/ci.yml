@@ -1868,6 +1868,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - name: Establish origin/HEAD
+        # The same step, for the same reason, as the one in `repo-hygiene`:
+        # actions/checkout does not set `refs/remotes/origin/HEAD`, and the
+        # AGENTS.md generator's first-choice resolver reads that symbolic ref.
+        # Without it `tests/unit/test_agents_md_mirror_guards.py` raises
+        # DefaultBranchUnresolvedError -- but only on the runs where the
+        # affected-test selector happens to pick that file up, which is why it
+        # read as an unrelated flake instead of a missing setup step.
+        run: git remote set-head origin -a
       - uses: ./.github/actions/bootstrap
         with:
           python-version: ${{ matrix.python-version }}
@@ -2146,6 +2155,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - name: Establish origin/HEAD
+        # The same step, for the same reason, as the one in `repo-hygiene`:
+        # actions/checkout does not set `refs/remotes/origin/HEAD`, and the
+        # AGENTS.md generator's first-choice resolver reads that symbolic ref.
+        # Without it `tests/unit/test_agents_md_mirror_guards.py` raises
+        # DefaultBranchUnresolvedError -- but only on the runs where the
+        # affected-test selector happens to pick that file up, which is why it
+        # read as an unrelated flake instead of a missing setup step.
+        run: git remote set-head origin -a
       - uses: ./.github/actions/bootstrap
         with:
           python-version: ${{ matrix.python-version }}
