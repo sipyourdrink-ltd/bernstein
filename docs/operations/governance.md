@@ -147,6 +147,46 @@ decision is also mirrored into the HMAC audit chain as a `governance.decision`
 event, so an operator can confirm from the chain alone that a decision bound the
 claimed inputs to a named spine entry.
 
+## `govern audit-compliance`: what this install can and cannot show
+
+```
+bernstein govern audit-compliance [--workdir .] [--only CMP] [--skip CMP-014]
+                                  [--profile soc2] [--list] [--json-output]
+```
+
+Runs every registered check over the install and reports one finding per check.
+A finding carries a stable id, one of three verdicts, and the evidence it read.
+
+| Verdict | What it means | Carries |
+|---|---|---|
+| `measured` | the check read an artefact on disk | `passed`, plus `(locator, sha256)` for every locator probed |
+| `declared` | the operator asserted the control in configuration; nothing was read that confirms it | no `passed` — the summary names the gap |
+| `not_measurable` | the check could not run | what would make it measurable |
+
+The compliance namespace (`CMP-001` … `CMP-023`) is the policy library in
+`core/security/compliance_library.py`. Most of its checks test whether a key is
+present in `bernstein.yaml` or `.sdd/config.yaml`, so they report `declared`: an
+empty `auth:` section is a declaration, not a measurement. The five checks that
+read the filesystem — the audit directory, the state directory, the incident
+response document, the privacy document, the dependency lock file — report
+`measured` and name the bytes they read. A locator that was probed and found
+missing is recorded as `absent`, so a measured finding never carries empty
+evidence.
+
+`--profile <framework>` marks which ids that framework requires. It selects ids
+and states nothing about the result: the findings are the same findings whichever
+profile is named, and no output asserts that the install conforms to anything.
+
+There is no score and no grade. The report ends in four counts —
+`measured pass`, `measured fail`, `declared`, `not measurable` — each against
+the number of checks that ran.
+
+`govern audit-compliance` and `compliance check` both delegate to the same
+`check_*` functions in `core/security/compliance_library.py`, so the snapshot
+the policy engine evaluates and the findings the audit reports cannot re-decide
+a control the other would deny — the only way the two surfaces can disagree
+is by misreading the same library result.
+
 Inventory topology is `bernstein govern inventory --render`.
 See [govern inventory --render](govern-inventory.md).
 
@@ -195,18 +235,12 @@ unchanged environment reports nothing. By default only drifted entities print;
 
 Exit codes: `0` no drift, `1` unreadable desired state, `2` drift.
 
-## govern audit
+## Skip vs. suppress
 
-`bernstein audit run` executes the registered check set and emits a signed,
-chain-anchored audit report. Each finding carries a stable namespaced ID, a
-three-state verdict (`pass`, `fail`, `not_measurable`), and evidence pairs whose
-canonical JSON hash is recomputed at verify time. The check contract and ID
-scheme are defined in issue #5072.
-
-### Skip vs. suppress
-
-Two mechanisms remove a finding from a clean report, but they are different
-operations with different governance semantics and different records:
+`bernstein govern audit-compliance` is the compliance check set above. The check
+contract and ID scheme are defined in issue #5072. Two mechanisms remove a
+finding from a clean report, but they are different operations with different
+governance semantics and different records:
 
 | | `--skip ID` (check exclusion) | `bernstein audit suppress ID --reason ... --until DATE` |
 |---|---|---|

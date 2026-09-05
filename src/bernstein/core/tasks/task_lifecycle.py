@@ -1353,7 +1353,7 @@ def retry_or_fail_task(
         elif adapter_is_claude_compatible:
             retry_model = tier_model
         else:
-            retry_model = pinned_model or task.model
+            retry_model = pinned_model or task.model  # type: ignore[assignment]  # dynamic status
 
         logger.info(
             "Retry model decision for task %s (role=%s, retry_count=%s, scope=%s): "

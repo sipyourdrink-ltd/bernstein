@@ -266,7 +266,9 @@ def get_adapter(cli_name: str, *, admission_gate: AdmissionGateLike | None = Non
     if cli_name == "generic":
         if admission_gate is not None:
             admission_gate.admit(cli_name)
-        return GenericAdapter(cli_command="generic-cli", display_name="Generic CLI")
+        instance = GenericAdapter(cli_command="generic-cli", display_name="Generic CLI")
+        instance.registry_name = cli_name
+        return instance
 
     _load_entrypoint_adapters()
 
@@ -287,9 +289,9 @@ def get_adapter(cli_name: str, *, admission_gate: AdmissionGateLike | None = Non
     if admission_gate is not None:
         admission_gate.admit(cli_name)
 
-    if isinstance(adapter_cls, CLIAdapter):
-        return adapter_cls
-    return adapter_cls()
+    instance = adapter_cls if isinstance(adapter_cls, CLIAdapter) else adapter_cls()
+    instance.registry_name = cli_name
+    return instance
 
 
 def removed_adapter_message(cli_name: str) -> str | None:
@@ -326,19 +328,20 @@ def registry_name_for(adapter: CLIAdapter) -> str | None:
         adapter: A live :class:`CLIAdapter` instance.
 
     Returns:
-        The registry key, or ``None`` when the adapter is not registered.
+        The registry key, or ``None`` when the adapter is not registered or ambiguous.
     """
+    _load_entrypoint_adapters()
     explicit = getattr(adapter, "registry_name", "") or ""
     if explicit and explicit in _ADAPTERS:
         return explicit
 
-    _load_entrypoint_adapters()
     adapter_type = type(adapter)
+    matching_names: list[str] = []
     for name, entry in _ADAPTERS.items():
-        if entry is adapter:
-            return name
-        if inspect.isclass(entry) and entry is adapter_type:
-            return name
+        if entry is adapter or (inspect.isclass(entry) and entry is adapter_type):
+            matching_names.append(name)
+    if len(matching_names) == 1:
+        return matching_names[0]
     return None
 
 

@@ -1,0 +1,26 @@
+id: risky_triple_oauth
+name: Enterprise OAuth Risky Triple Server
+description: OAuth2 protected server reading sensitive HR records, receiving webhook inputs, and calling external APIs.
+auth_posture: oauth2_pkce
+has_untrusted_input: true
+has_sensitive_reach: true
+has_egress_channel: true
+has_wildcard_permissions: false
+tools:
+  - name: read_hr_records
+    description: Access confidential employee records and compensation info.
+    sensitive_reach: true
+    untrusted_input: false
+    egress: false
+  - name: accept_untrusted_webhook
+    description: Process webhook payloads from untrusted public internet sources.
+    sensitive_reach: false
+    untrusted_input: true
+    egress: false
+  - name: call_third_party_saas
+    description: Export processed summaries to external SaaS partners.
+    sensitive_reach: false
+    untrusted_input: false
+    egress: true
+resources: []
+prompts: []

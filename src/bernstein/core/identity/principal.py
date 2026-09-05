@@ -1,8 +1,8 @@
 """One identity for an agent, independent of the credential that proved it.
 
 Three unrelated types answer "who is this agent" today:
-:class:`bernstein.core.agents.agent_identity.AgentIdentity` (JWT / opaque
-bearer store), :class:`bernstein.core.security.agent_identity.AgentIdentityCard`
+:class:`bernstein.core.identity.agent_jwt.AgentIdentity` (JWT / opaque
+bearer store), :class:`bernstein.core.identity.agent_card.AgentIdentityCard`
 (Ed25519-signed capability card), and the delegation hop chain in
 :mod:`bernstein.core.identity.delegation`.  They share no id space, so an
 authority decision taken against one of them cannot be checked against
@@ -33,8 +33,8 @@ from bernstein.core.security.tenanting import DEFAULT_TENANT_ID, normalize_tenan
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
-    from bernstein.core.agents.agent_identity import AgentIdentity
-    from bernstein.core.security.agent_identity import AgentIdentityCard
+    from bernstein.core.identity.agent_card import AgentIdentityCard
+    from bernstein.core.identity.agent_jwt import AgentIdentity
 
 __all__ = [
     "AgentPrincipal",
@@ -43,6 +43,7 @@ __all__ = [
     "PrincipalStatus",
     "principal_from_agent_identity",
     "principal_from_identity_card",
+    "principal_ref",
 ]
 
 
@@ -64,7 +65,7 @@ class PrincipalStatus(StrEnum):
     """Lifecycle status of a principal.
 
     Spelled with the same three values as
-    :class:`bernstein.core.agents.agent_identity.AgentIdentityStatus` so a
+    :class:`bernstein.core.identity.agent_jwt.AgentIdentityStatus` so a
     stored identity record maps across without a translation table.
     """
 
@@ -359,3 +360,20 @@ def principal_from_identity_card(card: AgentIdentityCard) -> AgentPrincipal:
         credentials=(credential,),
         metadata={"adapter": card.adapter, "model": card.model},
     )
+
+
+def principal_ref(principal: AgentPrincipal | str) -> str:
+    """Return the id an audit record names for *principal*.
+
+    Audit writers accept either an :class:`AgentPrincipal` or a bare id
+    string: the delegation ledger records hops for agents *and* for parties
+    that hold no credential at all ("operator", "cli"), and those have an id
+    but no principal to resolve.  Routing both through this function keeps a
+    caller that holds a principal from recording anything except its
+    :attr:`AgentPrincipal.id`, so a hop written from an authenticated agent
+    lands in the same id space it is read back in.
+
+    Args:
+        principal: A principal, or an id already in that id space.
+    """
+    return principal if isinstance(principal, str) else principal.id

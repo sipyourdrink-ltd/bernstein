@@ -128,10 +128,37 @@ Default required gates (only those whose `quality_gates.<flag>: true`):
 | `review_rubric`          | `review_rubric`             | `python_changed`   | required            |
 | `test_expansion`         | `test_expansion`            | `python_changed`   | optional            |
 | `agent_test_mutation`    | `agent_test_mutation`       | `tests_changed`    | required            |
+| `behavior_probe`         | `behavior_probe`            | `python_changed`   | optional            |
 | `benchmark`              | `benchmark.enabled`         | `always`           | required            |
 
 A failing **required** gate hard-blocks merge. A failing **optional** gate
 is reported but does not block.
+
+`behavior_probe` is the only gate that executes the changed code against
+inputs the worker did not choose (`behavior_probe.py`). It walks the diff with
+`ast`, turns each parameter annotation into a fixed list of boundary values
+(empty/singleton/large collection, zero/negative/large int, empty/blank/long
+string, `None` where the annotation admits it) and runs one probe per
+subprocess in the worktree.
+
+Its claim is **crash-level, not semantic**. A probe is red only when the
+callable raises an exception its own docstring does not document, returns a
+value whose type contradicts its return annotation, or does not return inside
+the per-callable budget. The gate never asserts what a callable *should* have
+computed - that judgement stays with the review lane.
+
+Derivation uses no model and no randomness: the boundary vocabulary and the
+ordering of argument combinations are fixed, so the same files at the same
+content yield a byte-identical probe set. Its SHA-256 (`probe_set_hash`), the
+per-probe outcomes and the minimal failing input are attached to the gate
+result as `metadata["probe_receipt"]`, so a red verdict names the exact call
+that produced it. Callables the deriver could not turn into inputs are listed
+in the receipt with a reason code (`missing-annotation`,
+`unsupported-annotation`, `receiver-required`, `async-callable`,
+`variadic-parameter`, `keyword-only-parameter`, `unparsable-module`,
+`cap-exceeded`) - absence is recorded, never silent. Runtime is bounded by
+`behavior_probe_per_callable_timeout_s`, `behavior_probe_gate_timeout_s` and
+the two probe caps.
 
 Gate conditions (`gate_pipeline.py:42`) gate execution by what changed:
 `always`, `python_changed`, `tests_changed`, `any_changed`, `deps_changed`.

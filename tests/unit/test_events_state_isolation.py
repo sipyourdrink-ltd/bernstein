@@ -7,6 +7,7 @@ not interleave state (tested with concurrent workers).
 
 from __future__ import annotations
 
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -111,3 +112,65 @@ def test_windows_lock_path_uses_msvcrt(tmp_path: Path, monkeypatch: pytest.Monke
 
     assert store.increment("gate.result") == 1
     assert modes == [_FakeMsvcrt.LK_LOCK, _FakeMsvcrt.LK_UNLCK]
+
+
+def _fsync_spy(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Record every ``os.fsync`` the write path performs."""
+    seen: list[int] = []
+    real = os.fsync
+
+    def spy(fd: int) -> None:
+        seen.append(fd)
+        real(fd)
+
+    monkeypatch.setattr(os, "fsync", spy)
+    return seen
+
+
+def test_a_counter_write_is_fsynced_before_it_is_published(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A rename that outlives its own bytes is what _load quarantines.
+
+    The write path used to rename the temporary into place without ever
+    calling fsync, so a power loss could leave a durable directory entry
+    pointing at a zero-length file. The next boot reads that, raises
+    TriggerStateCorruptError and quarantines the state.
+    """
+    store = TriggerStateStore(tmp_path / ".sdd" / "runtime" / "triggers")
+    seen = _fsync_spy(monkeypatch)
+    store.increment("k")
+    assert seen, "counters were published without being fsynced"
+
+
+def test_an_expectation_write_is_fsynced_before_it_is_published(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = TriggerStateStore(tmp_path / ".sdd" / "runtime" / "triggers")
+    seen = _fsync_spy(monkeypatch)
+    store.open_expectation("k", {"payload": 1})
+    assert seen, "expectations were published without being fsynced"
+
+
+def test_a_write_leaves_no_temporary_behind(tmp_path: Path) -> None:
+    root = tmp_path / ".sdd" / "runtime" / "triggers"
+    store = TriggerStateStore(root)
+    store.increment("k")
+    store.open_expectation("e", {"payload": 1})
+    assert [p.name for p in root.iterdir() if ".tmp" in p.name] == []
+
+
+def test_a_failed_write_leaves_the_previous_counters_readable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The point of temp-and-rename: a failure loses the update, not the file."""
+    root = tmp_path / ".sdd" / "runtime" / "triggers"
+    store = TriggerStateStore(root)
+    store.increment("k", amount=7)
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("bernstein.core.persistence.atomic_write.os.replace", boom)
+    with pytest.raises(OSError):
+        store.increment("k")
+
+    monkeypatch.undo()
+    assert TriggerStateStore(root).get_counter("k") == 7
+    assert [p.name for p in root.iterdir() if ".tmp" in p.name] == []

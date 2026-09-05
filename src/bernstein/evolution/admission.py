@@ -133,8 +133,10 @@ def decision_key(proposal: Admissible | UpgradeProposal) -> str:
     Both halves are read through ``getattr(..., "value", ...)`` so the key is
     identical whether the field holds an enum member or a bare string.
     """
-    category = getattr(proposal.category, "value", proposal.category)
-    trigger = getattr(proposal.triggered_by, "value", proposal.triggered_by)
+    cat = getattr(proposal, "category", "general")
+    category = getattr(cat, "value", cat)
+    trig = getattr(proposal, "triggered_by", "manual")
+    trigger = getattr(trig, "value", trig)
     return f"category:{category}|trigger:{trigger}"
 
 
@@ -223,6 +225,15 @@ class AdmissionPolicy:
         agent_type = producer_identity(proposal)
         key = decision_key(proposal)
         confidence = self._query.get(agent_type, key)
+
+        target_files = getattr(proposal, "target_files", None)
+        if target_files:
+            from bernstein.evolution.invariants import check_proposal_targets
+
+            safe, violations = check_proposal_targets(target_files)
+            if not safe:
+                reason = f"Proposal targets constraint layer / locked file(s): {', '.join(sorted(violations))}"
+                return self._finalise(False, reason, agent_type, key, confidence)
 
         if confidence.insufficient_data:
             admitted = self._cold_start is ColdStartMode.FAIL_OPEN

@@ -1,0 +1,15 @@
+id: wildcard_no_auth
+name: Anonymous Wildcard Execution Server
+description: Anonymous server with wildcard permissions over system commands.
+auth_posture: none
+has_untrusted_input: false
+has_sensitive_reach: false
+has_egress_channel: false
+has_wildcard_permissions: true
+tools:
+  - name: system_command_runner
+    description: Execute any system command with wildcard permissions.
+    scope: "*"
+    wildcard: true
+resources: []
+prompts: []

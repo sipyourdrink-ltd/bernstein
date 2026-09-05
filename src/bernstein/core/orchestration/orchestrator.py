@@ -3213,7 +3213,7 @@ class Orchestrator:
                 chain=self._provider_audit_chain,
                 run_id=self._run_id,
                 graph_digest=graph_digest_val,
-                graph_version=SCHEDULE_PROJECTION_REV,
+                graph_version=SCHEDULE_PROJECTION_REV,  # type: ignore[arg-type]  # version string
                 source_file_count=source_count,
                 indexed_file_count=indexed_count,
                 unparsed_file_count=unparsed_count,
@@ -7198,6 +7198,17 @@ if __name__ == "__main__":
 
         # Resolve cluster-aware settings from env vars + seed config
         server_url = os.environ.get("BERNSTEIN_SERVER_URL", f"http://127.0.0.1:{args.port}")
+        # Publish the run's own port to the agent environment. Without this, an
+        # agent told to POST its completion resolves the base URL through
+        # ``_resolve_task_server_url`` / ``resolve_server_url``, both of which fall
+        # back to the historical 8052 -- ``--port N`` reached neither. The agent
+        # then hit whatever answered 8052 (another run's server), got 401, and the
+        # log scanner failed the task as auth_error. BERNSTEIN_SERVER_URL is
+        # allow-listed into the agent env (adapters/env_isolation.py:142), so
+        # setting it here is what makes the prompt's {base}, the claude adapter's
+        # hook URL and the worktree CLI all name the same server. setdefault, so an
+        # operator-supplied cluster URL still wins.
+        os.environ.setdefault("BERNSTEIN_SERVER_URL", server_url)
         auth_token = os.environ.get("BERNSTEIN_AUTH_TOKEN")
 
         # Build cluster config: env vars take precedence over seed file

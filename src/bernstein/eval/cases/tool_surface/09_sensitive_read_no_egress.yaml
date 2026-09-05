@@ -1,0 +1,16 @@
+id: sensitive_read_no_egress
+name: Local Sensitive Credentials Inspector Server
+description: Inspects credentials and secret configs locally with no network egress.
+auth_posture: static_bearer_token
+has_untrusted_input: false
+has_sensitive_reach: true
+has_egress_channel: false
+has_wildcard_permissions: false
+tools:
+  - name: inspect_credentials
+    description: Inspect local encryption key configuration.
+    sensitive_reach: true
+    untrusted_input: false
+    egress: false
+resources: []
+prompts: []

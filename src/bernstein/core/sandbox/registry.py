@@ -186,7 +186,7 @@ class _Registry:
                 logger.warning("Failed to load sandbox backend entry-point %r: %s", name, exc)
                 continue
             if inspect.isclass(loaded):
-                self._factories[name] = loaded
+                self._factories[name] = loaded  # type: ignore[assignment]  # dynamic registry
             else:
                 self._backends[name] = loaded
 

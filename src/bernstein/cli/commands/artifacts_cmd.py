@@ -22,12 +22,7 @@ from pathlib import Path
 import click
 
 from bernstein.cli.helpers import console
-
-
-def _load_hmac_key() -> bytes:
-    from bernstein.core.security.audit import load_or_create_audit_key
-
-    return load_or_create_audit_key()
+from bernstein.core.security.audit import load_or_create_audit_key
 
 
 def _render_report_provenance(payload: dict[str, object], sdd: Path) -> None:
@@ -134,7 +129,7 @@ def artifacts_list_cmd(task: str, workdir: str, output_json: bool) -> None:
     # Read WITHOUT the fail-closed filter so a tampered journal renders as
     # tampered, not as "no artifacts". Verdicts drive the displayed state.
     records = read_artifact_rows(sdd, task, verify=False)
-    verdict_list = verify_run_artifacts(sdd, task, hmac_key=_load_hmac_key())
+    verdict_list = verify_run_artifacts(sdd, task, hmac_key=load_or_create_audit_key())
     verdicts = {(r.key, r.version): r for r in verdict_list}
 
     def _emit_json(rows: list[dict[str, object]], *, verified: bool, reason: str | None) -> None:
@@ -235,7 +230,7 @@ def artifacts_show_cmd(task: str, key: str, workdir: str, provenance: bool) -> N
     sdd = Path(workdir).resolve() / ".sdd"
     # Unverified read so a broken journal reaches the tampered (exit 2) path
     # instead of masquerading as a missing artifact.
-    verdict_list = verify_run_artifacts(sdd, task, hmac_key=_load_hmac_key())
+    verdict_list = verify_run_artifacts(sdd, task, hmac_key=load_or_create_audit_key())
     verdicts = {(r.key, r.version): r for r in verdict_list}
     records = [r for r in read_artifact_rows(sdd, task, verify=False) if r.key == key]
     if not records:

@@ -1871,17 +1871,26 @@ jobs:
       - uses: ./.github/actions/bootstrap
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Fetch base ref for impacted-test selection
+      - name: Fetch base commit for impacted-test selection
         if: github.event_name == 'pull_request' && runner.os != 'Windows'
         env:
-          BASE_REF: ${{ github.base_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
+          # Fetch the base by sha, never by branch name. `github.base_ref`
+          # resolves when the step runs, and the shards of one run do not run
+          # together - slot contention has staggered them by hours. Each shard
+          # then compared against a different `main`, computed a different
+          # affected set, and `--shard i/N` partitioned a different list in
+          # each job, so the four slices stopped covering the union: some
+          # files ran twice and others ran nowhere while every shard reported
+          # success (#5421). The payload sha is fixed for the run, so every
+          # shard - at any start time, in any re-run attempt - selects from
+          # one list and the slices are a partition of it again.
           git fetch --no-tags --depth=1 origin \
-            "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            "${BASE_SHA}:refs/remotes/origin/pr-base"
       - name: Run isolated test suite (Linux/macOS)
         if: runner.os != 'Windows'
         env:
-          BASE_REF: ${{ github.base_ref }}
           EVENT_NAME: ${{ github.event_name }}
           PYTHON_VERSION: ${{ matrix.python-version }}
           SHARD: ${{ matrix.shard }}
@@ -1896,11 +1905,11 @@ jobs:
             coverage_args=(--coverage)
           fi
           if [ "${EVENT_NAME}" = "pull_request" ] && \
-             git rev-parse --verify "refs/remotes/origin/${BASE_REF}" >/dev/null 2>&1; then
+             git rev-parse --verify refs/remotes/origin/pr-base >/dev/null 2>&1; then
             uv run python scripts/run_tests.py --parallel 4 \
               "${coverage_args[@]}" \
               --shard "${SHARD}/${SHARD_COUNT}" \
-              --affected "refs/remotes/origin/${BASE_REF}"
+              --affected refs/remotes/origin/pr-base
           else
             uv run python scripts/run_tests.py --parallel 4 \
               "${coverage_args[@]}" \
@@ -2140,16 +2149,25 @@ jobs:
       - uses: ./.github/actions/bootstrap
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Fetch base ref for impacted-test selection
+      - name: Fetch base commit for impacted-test selection
         if: github.event_name == 'pull_request'
         env:
-          BASE_REF: ${{ github.base_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
+          # Fetch the base by sha, never by branch name. `github.base_ref`
+          # resolves when the step runs, and the shards of one run do not run
+          # together - slot contention has staggered them by hours. Each shard
+          # then compared against a different `main`, computed a different
+          # affected set, and `--shard i/N` partitioned a different list in
+          # each job, so the four slices stopped covering the union: some
+          # files ran twice and others ran nowhere while every shard reported
+          # success (#5421). The payload sha is fixed for the run, so every
+          # shard - at any start time, in any re-run attempt - selects from
+          # one list and the slices are a partition of it again.
           git fetch --no-tags --depth=1 origin \
-            "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            "${BASE_SHA}:refs/remotes/origin/pr-base"
       - name: Run isolated test suite
         env:
-          BASE_REF: ${{ github.base_ref }}
           EVENT_NAME: ${{ github.event_name }}
           SHARD: ${{ matrix.shard }}
           SHARD_COUNT: ${{ env.MACOS_SHARD_COUNT }}
@@ -2159,10 +2177,10 @@ jobs:
           # across all 4 cells, so per-push macOS coverage is the
           # complete suite rather than a fixed quarter of it.
           if [ "${EVENT_NAME}" = "pull_request" ] && \
-             git rev-parse --verify "refs/remotes/origin/${BASE_REF}" >/dev/null 2>&1; then
+             git rev-parse --verify refs/remotes/origin/pr-base >/dev/null 2>&1; then
             uv run python scripts/run_tests.py --parallel 4 \
               --shard "${SHARD}/${SHARD_COUNT}" \
-              --affected "refs/remotes/origin/${BASE_REF}"
+              --affected refs/remotes/origin/pr-base
           else
             uv run python scripts/run_tests.py --parallel 4 \
               --shard "${SHARD}/${SHARD_COUNT}"

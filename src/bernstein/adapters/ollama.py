@@ -187,12 +187,24 @@ class OllamaAdapter(CLIAdapter):
             base_url: The configured Ollama / OpenAI-compatible base URL.
 
         Returns:
-            True if the endpoint looks self-hosted, False otherwise.
+            True if the endpoint looks self-hosted, False otherwise. A URL
+            this function cannot parse is False, never an exception: the
+            caller is a residency check, and a guard that raises stops the
+            spawn with a traceback instead of a residency verdict.
         """
         import ipaddress
         from urllib.parse import urlparse
 
-        host = (urlparse(base_url).hostname or "").lower()
+        try:
+            host = (urlparse(base_url).hostname or "").lower()
+        except ValueError:
+            # urlsplit rejects a bracketed-IPv6 netloc carrying userinfo
+            # ("http://[::1]@evil.com:8000") and an unclosed or stray bracket
+            # ("http://[::1", "http://a]b"). None of those names an endpoint
+            # whose residency can be established, so they fail closed with
+            # the rest of the unparseable inputs rather than escaping as a
+            # ValueError from inside spawn().
+            return False
         if not host:
             # Empty / malformed URL - fail closed under residency mode.
             return False
