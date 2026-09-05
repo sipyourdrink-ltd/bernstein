@@ -6784,15 +6784,49 @@ class AgentSpawner:
         return alive
 
     def _check_alive_process(self, session: AgentSession) -> bool | None:
-        """Check liveness via stored subprocess. Returns None if no proc stored."""
+        """Check liveness via the stored subprocess *and its process group*.
+
+        ``proc.poll()`` alone answers a narrower question than the caller is
+        asking. Adapters spawn the tool with ``start_new_session=True``, so the
+        wrapper is a session leader and its ``pid`` is the group id; the tool
+        and anything it forks live in that group and outlive the wrapper. A
+        liveness check that stopped at the wrapper reported the session dead
+        while its descendants were still running, and finalization would then
+        seal the journal and write a run receipt over execution that had not
+        stopped (#5272).
+
+        The wrapper's exit code is still recorded the moment it is known - it
+        is a fact about the wrapper - but the session is reported alive while
+        any member of its group survives.
+
+        On Windows there are no POSIX process groups and
+        :func:`process_group_alive` falls back to the lead PID, so behaviour
+        there is exactly what it was.
+
+        Returns:
+            None when no process is stored for the session, so the next
+            checker in the chain runs.
+        """
         proc = self._procs.get(session.id)
         if proc is None:
             return None
         exit_code = proc.poll()
-        if exit_code is not None:
-            session.exit_code = exit_code
-            return False
-        return True
+        if exit_code is None:
+            return True
+
+        from bernstein.core.config.platform_compat import process_group_alive
+
+        session.exit_code = exit_code
+        pgid = proc.pid
+        if pgid and process_group_alive(pgid):
+            logger.debug(
+                "session %s: wrapper exited (%s) but process group %s still has members",
+                session.id,
+                exit_code,
+                pgid,
+            )
+            return True
+        return False
 
     def _check_alive_sandbox_session(self, session: AgentSession) -> bool | None:
         """Liveness for agents whose exec runs via :meth:`SandboxSession.exec`.
