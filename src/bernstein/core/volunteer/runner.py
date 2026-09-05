@@ -574,11 +574,9 @@ def run_claimed_task(
                 url = f"{url.rstrip('/')}/issues/{task.issue_number}"
             payload = fetch_ticket(url)
             comments = list(payload.comments) if payload.comments else None
-        # intentional-broad-except: comments are enrichment, and no failure to
-        # read them should cost the donor the run. Written as one clause
-        # because that is what it always was: `except (TicketParseError,
-        # Exception)` reads as if only a parse failure was caught, while
-        # Exception subsumes TicketParseError and swallows everything after it.
+        # `except (TicketParseError, Exception)` read as if only a parse
+        # failure was caught; Exception subsumes it, so this always caught
+        # everything. intentional-broad-except: comments are enrichment.
         except Exception:
             comments = None
 

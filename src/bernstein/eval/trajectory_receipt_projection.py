@@ -43,7 +43,6 @@ What the projection does *not* prove
 from __future__ import annotations
 
 import base64
-import binascii
 import hashlib
 import json
 import logging
@@ -304,8 +303,15 @@ def _build_intoto(
 def _verify_intoto(intoto_dict: dict[str, Any], *, public_key: Ed25519PublicKey) -> str:
     """Verify a DSSE / in-toto envelope and return the receipt hash.
 
+    Every failure leaves as a :class:`TrajectoryProjectionError`, the same
+    contract :func:`_verify_cose` and :func:`_verify_transparency` keep, and
+    the one ``verify_trajectory_receipt_projection`` documents. The message
+    distinguishes the three kinds: an entry rejected for its shape, a
+    signature that did not verify, and a fault raised by the verifier itself.
+
     Raises:
-        TrajectoryProjectionError: Signature invalid or envelope malformed.
+        TrajectoryProjectionError: The envelope is malformed, no signature
+            verifies, or the verifier failed.
     """
     from cryptography.exceptions import InvalidSignature
 
@@ -345,7 +351,7 @@ def _verify_intoto(intoto_dict: dict[str, Any], *, public_key: Ed25519PublicKey)
             continue
         try:
             sig_bytes = base64.b64decode(raw_sig, validate=True)
-        except (ValueError, binascii.Error) as exc:
+        except ValueError as exc:
             rejections.append(f"signatures[{index}].sig is not base64: {exc}")
             continue
         try:
@@ -353,6 +359,14 @@ def _verify_intoto(intoto_dict: dict[str, Any], *, public_key: Ed25519PublicKey)
         except InvalidSignature:
             rejections.append(f"signatures[{index}] does not verify")
             continue
+        except Exception as exc:
+            # Not a rejection: the verifier itself failed. _verify_cose and
+            # _verify_transparency both convert this into a
+            # TrajectoryProjectionError with a distinguishing message, and a
+            # caller writing the documented `except TrajectoryProjectionError`
+            # must not have one leg of three raise something else.
+            msg = f"DSSE verify error: {exc}"
+            raise TrajectoryProjectionError(msg) from exc
         verified = True
         break
 

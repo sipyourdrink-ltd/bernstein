@@ -269,8 +269,13 @@ def test_a_bug_inside_verification_is_not_reported_as_a_bad_signature(
 
     monkeypatch.setattr(type(sk.public_key()), "verify", boom, raising=False)
 
-    with pytest.raises(RuntimeError, match="exploded"):
+    # Reported as a verify error, never folded in with the rejections: the
+    # two sibling legs keep the same contract, so a caller writing the
+    # documented `except TrajectoryProjectionError` still catches it.
+    with pytest.raises(TrajectoryProjectionError, match="verify error") as caught:
         _verify_intoto(envelope, public_key=sk.public_key())
+    assert "does not verify against the supplied public key" not in str(caught.value)
+    assert isinstance(caught.value.__cause__, RuntimeError)
 
 
 # ---------------------------------------------------------------------------
