@@ -63,7 +63,7 @@ only ever blocks deletion, it never deletes more.
 
 ```text
 bernstein worktrees list   [--workdir DIR] [--json]
-bernstein worktrees gc     [--workdir DIR] [--yes] [--dry] [--force-unsaved]
+bernstein worktrees gc     [--workdir DIR] [--apply] [--yes] [--dry] [--force-unsaved]
 bernstein worktrees unlock [--workdir DIR] [--force] [--json]
 ```
 
@@ -180,17 +180,27 @@ Inspect what's on disk:
 bernstein worktrees list
 ```
 
-Preview reap plan without touching disk:
+Preview reap plan without touching disk — this is the default, so no flag is
+needed:
 
 ```bash
-bernstein worktrees gc --dry
+bernstein worktrees gc
 ```
 
-Reap non-interactively (CI / cron):
+Reap, with a confirmation prompt:
+
+```bash
+bernstein worktrees gc --apply
+```
+
+Reap non-interactively (CI / cron). `--yes` implies `--apply`, so an existing
+script keeps working unchanged:
 
 ```bash
 bernstein worktrees gc --yes
 ```
+
+`--dry` forces a dry run and outranks both, so `gc --yes --dry` still previews.
 
 JSON dump for piping into `jq`:
 
