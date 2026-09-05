@@ -50,6 +50,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, cast
 
+from bernstein.core.persistence.atomic_write import write_atomic_bytes
 from bernstein.core.skills.catalog.lockfile import (
     _acquire_lock,  # pyright: ignore[reportPrivateUsage]
     _release_lock,  # pyright: ignore[reportPrivateUsage]
@@ -624,10 +625,15 @@ def _gate_refuses(text: str, *, role: str, chain: AuditChainStore | None) -> boo
 
 
 def _atomic_write(path: Path, content: bytes, *, expected_sha256: str) -> None:
-    """Write *content* atomically and verify the on-disk bytes by readback."""
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_bytes(content)
-    tmp.replace(path)
+    """Write *content* through the crash-safe path and verify it by readback.
+
+    The readback is the point of this helper, and it was checking less than
+    it looked. The previous local version renamed without ``fsync``, so the
+    bytes it read back came from the page cache: the check proved the write
+    call had run, not that a backup existed on disk to be read after a
+    crash. It also reused one fixed temporary name per target.
+    """
+    write_atomic_bytes(path, content)
     if hashlib.sha256(path.read_bytes()).hexdigest() != expected_sha256:
         raise BackupIntegrityError(f"readback verification failed after writing {path}")
 
