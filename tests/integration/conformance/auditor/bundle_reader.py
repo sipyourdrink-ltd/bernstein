@@ -82,6 +82,26 @@ class BundleReader:
         """Return the parsed JSON of the bundle entry *name*."""
         return json.loads(self.read_bytes(name).decode("utf-8"))
 
+    def zip_members(self, name: str) -> list[str]:
+        """Return the member names of a zip held in the bundle, sorted.
+
+        An auditor handed ``article12.zip`` can open it; a reader that can
+        only fetch a member it already knows the name of cannot search the
+        archive, which makes anything inside it invisible to a vector that
+        asks whether some record exists anywhere in the bundle.
+
+        Args:
+            name: The zip entry inside the bundle.
+
+        Returns:
+            The names of its members, sorted, directory entries omitted.
+
+        Raises:
+            BundleBoundaryError: *name* is outside the bundle.
+        """
+        with zipfile.ZipFile(self.path(name)) as archive:
+            return sorted(info.filename for info in archive.infolist() if not info.is_dir())
+
     def read_zip_member(self, name: str, member: str) -> bytes:
         """Return one member of a zip held in the bundle.
 
