@@ -852,7 +852,17 @@ def repo_url_problem(repo_url: str) -> str | None:
         return "the repository URL is empty"
     if url.startswith("-"):
         return f"the repository URL {url!r} would be read as a command-line option"
-    scheme = urlparse(url).scheme
+    try:
+        scheme = urlparse(url).scheme
+    except ValueError as exc:
+        # urlsplit refuses a bracketed-IPv6 netloc carrying userinfo
+        # ("http://[::1]@evil.com/x.git") and an unclosed or stray bracket. A
+        # repo_url arrives on a claimed task, so this input is not ours: a
+        # URL the parser will not read is one this function cannot clear,
+        # and saying so is the whole contract. Letting the ValueError out
+        # would leave the caller with a traceback instead of the refusal it
+        # is waiting to record.
+        return f"the repository URL {url!r} cannot be parsed: {exc}"
     if not scheme:
         # No scheme at all is a local filesystem path.  ``git clone ./x`` and
         # ``git clone /srv/x`` are both ordinary and both harmless: there is no

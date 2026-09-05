@@ -474,6 +474,39 @@ def test_the_repo_url_allowlist_admits_transports_and_refuses_helpers(url: str, 
     assert (repo_url_problem(url) is not None) is rejected
 
 
+#: URL shapes ``urllib.parse.urlsplit`` refuses outright: a bracketed-IPv6
+#: netloc carrying userinfo, an unclosed bracket, and a stray one.
+_UNPARSEABLE_URLS = [
+    "http://[::1]@evil.com/project.git",
+    "https://[::1",
+    "http://a]b/project.git",
+]
+
+
+@pytest.mark.parametrize("url", _UNPARSEABLE_URLS)
+def test_a_url_the_parser_refuses_is_refused_not_raised(url: str) -> None:
+    """``repo_url`` arrives on a claimed task, so this input is not ours.
+
+    ``urlparse`` raises ``ValueError`` on these, and the call was unguarded,
+    so the gate that decides whether a URL may reach git left the caller
+    with a traceback instead of the refusal it is waiting to record.
+    """
+    problem = repo_url_problem(url)
+    assert problem is not None
+    assert "cannot be parsed" in problem
+
+
+@pytest.mark.parametrize("url", _UNPARSEABLE_URLS)
+def test_an_unparseable_url_never_reaches_git(url: str) -> None:
+    """The refusal has to name the stage a verifier reads, like any other."""
+    assert repo_url_problem(url) is not None
+
+
+def test_a_well_formed_url_is_still_admitted() -> None:
+    """Catching the parse error must not start refusing the ordinary case."""
+    assert repo_url_problem("https://github.com/owner/project.git") is None
+
+
 def test_private_github_repository_is_refused_in_volunteer_mode(
     fixture_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

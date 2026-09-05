@@ -1,0 +1,5 @@
+## A repository URL the parser refuses is a refusal, not a traceback
+
+`repo_url_problem` is the gate deciding whether a repository URL from a claimed volunteer task may be handed to `git`. It read the scheme with `urllib.parse.urlparse`, which raises `ValueError` on a bracketed-IPv6 netloc carrying userinfo (`http://[::1]@evil.com/x.git`) and on a stray or unclosed bracket. The call was unguarded, so a task carrying such a URL left the donor with a traceback out of `run_claimed_task` instead of the `TaskRefusal` the volunteer protocol records. `repo_url` arrives on a claimed task, so the input is not the donor's to trust.
+
+A URL the parser will not read is now a refusal reason naming the parse failure, which fails closed alongside the existing scheme allowlist and leading-dash checks. `claim.repo_slug` reads the same untrusted URL and had the same unguarded call; a URL that will not parse names no GitHub issue, so it returns `None`, which is what that function already returns for a URL with no host.

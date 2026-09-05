@@ -187,7 +187,13 @@ def repo_slug(repo_url: str) -> str | None:
     trimmed = repo_url.strip()
     if trimmed.endswith(".git"):
         trimmed = trimmed[:-4]
-    parsed = urlparse(trimmed)
+    try:
+        parsed = urlparse(trimmed)
+    except ValueError:
+        # Same untrusted repo_url as repo_url_problem, and the same three
+        # shapes urlsplit refuses. A URL that will not parse names no GitHub
+        # issue, which is exactly what this function returns None for.
+        return None
     if not parsed.netloc:
         return None
     path = parsed.path.strip("/")
