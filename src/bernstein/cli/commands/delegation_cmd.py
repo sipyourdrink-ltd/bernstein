@@ -86,6 +86,34 @@ def _verify_exit_code(result: delegation.ChainResult) -> int:
     return 0
 
 
+def _declared_root_issuers(run: str, root: Path | None) -> frozenset[str]:
+    """Return the run's declared chain-root identities, read from its manifest.
+
+    The run manifest (``.sdd/runtime/manifests/<run-id>.json``) records the
+    identity the orchestrator minted as the run root, and every top-level agent
+    is minted under it (#5047). Naming it here is what lets several agents
+    spawned by one run each grade as a root: the name arrives from outside the
+    receipts, so a receipt still cannot promote itself out of a narrowing check.
+
+    Read-only and best effort. No manifest, no field, or an unreadable file
+    means an empty set and the positional root rule exactly as before -- the
+    identity store is never consulted, which is the point of recording the id in
+    the manifest at all.
+    """
+    from bernstein.core.config.manifest import load_manifest
+
+    sdd = (root.parent if root is not None else Path(".sdd/audit")).resolve(strict=False)
+    if root is None:
+        sdd = Path(".sdd")
+    try:
+        manifest = load_manifest(sdd, run)
+    except (OSError, ValueError, KeyError):
+        return frozenset()
+    if manifest is None or not manifest.run_root_identity_id:
+        return frozenset()
+    return frozenset({manifest.run_root_identity_id})
+
+
 @delegation_group.command("verify")
 @click.argument("run")
 @click.option(
@@ -108,7 +136,7 @@ def verify_cmd(run: str, root: Path | None, as_json: bool) -> None:
     when a check failed, and 3 when the receipts carry too little to decide.
     Unproven is not a pass: a chain that recorded no scope reaches 3, not 0.
     """
-    result = delegation.verify_run(run, root=root)
+    result = delegation.verify_run(run, root=root, root_issuers=_declared_root_issuers(run, root))
     authority = result.authority
 
     if as_json:
