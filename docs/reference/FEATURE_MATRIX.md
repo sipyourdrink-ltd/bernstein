@@ -133,6 +133,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [Stall escalation receipts](../operations/stall-escalation.md) | Full | 3 | A stalled worker produces a signed escalation receipt embedding the last audit entries and a deterministic recommended action (`supervisor escalate`) |
 | C2PA content credentials | Full | 3 | Artifact lineage projected into signed C2PA credentials (`credential emit/verify`) |
 | Skill install receipts | Full | 3 | Install and usage links recomputable via `skill verify` / `skill provenance` |
+| Run-helper artefacts | Brief | 2 | Executed agent-created files are classified from journal `file_create`/`file_execute` events and content-addressed into `.sdd/cas` with an origin step before worktree reap (`core/worktrees/run_helpers.py`, #5322 PR1) |
 | Adapter security-floor receipts | Full | 3 | A below-floor adapter spawn is refused with a content-addressed, chain-anchored refusal receipt (`adapters/security_floor.py`) |
 | Endpoint certification | Full | 3 | Local-model workers are conformance-tested and issued a signed certification (`core/endpoints/certification.py`) |
 | SLA violation receipts | Full | 3 | Per-goal SLA contracts evaluated read-only each tick; a breach becomes a signed, offline-verifiable violation receipt (`core/planning/sla_store.py`) |
