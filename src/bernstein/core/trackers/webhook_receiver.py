@@ -52,6 +52,10 @@ if TYPE_CHECKING:
 
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.trackers.contract import RateLimited, RoutingHint, Ticket
+from bernstein.core.trackers.event_catalogue import (
+    SHAPE_NOTE,
+    get_event_catalogue_runtime,
+)
 from bernstein.core.webhook_signatures import verify_hmac_sha256
 
 logger = logging.getLogger(__name__)
@@ -72,12 +76,19 @@ class TrackerEvent:
 
     Attributes:
         adapter: Short adapter name (``jira_cloud``, ``github``, ...).
-        action: Event action (``created``, ``updated``, ``transitioned``).
+        action: Tracker-supplied action string when the payload carries one
+            (e.g. ``opened``, ``created``); otherwise the catalogue
+            canonical id for the mapped source event (``github.issues``,
+            …). Unmapped source events do not produce a ``TrackerEvent`` —
+            they are counted (and logged on first sight) then ignored.
         ticket: Normalised ticket payload.
         delivery_id: Stable per-delivery identifier used for replay
             protection.  Falls back to a hash of the raw body when the
             tracker does not send one.
         received_ts: Unix seconds the receiver accepted the event.
+        catalogue_content_hash: SHA-256 of the event-type catalogue used
+            to classify this event; ``None`` when the adapter does not
+            yet map through the catalogue.
     """
 
     adapter: str
@@ -85,6 +96,7 @@ class TrackerEvent:
     ticket: Ticket
     delivery_id: str
     received_ts: float = field(default_factory=time.time)
+    catalogue_content_hash: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -195,12 +207,20 @@ class ReplayLedger:
         with self._lock:
             return delivery_id in self._seen
 
-    def remember(self, delivery_id: str, *, ts: float | None = None) -> bool:
+    def remember(
+        self,
+        delivery_id: str,
+        *,
+        ts: float | None = None,
+        catalogue_content_hash: str | None = None,
+    ) -> bool:
         """Record ``delivery_id``.  Return ``True`` if it was new.
 
         The on-disk append is best-effort; failures log a warning but do
         not raise so a transient disk error does not surface as a 5xx to
-        the tracker.
+        the tracker.  When ``catalogue_content_hash`` is set it is written
+        onto the journal row so replay can bind the classification to the
+        catalogue bytes that produced it (#5132).
         """
 
         ts_value = float(ts if ts is not None else time.time())
@@ -215,8 +235,11 @@ class ReplayLedger:
         if self._path is not None:
             try:
                 self._path.parent.mkdir(parents=True, exist_ok=True)
+                row: dict[str, object] = {"delivery_id": delivery_id, "ts": ts_value}
+                if catalogue_content_hash is not None:
+                    row["catalogue_content_hash"] = catalogue_content_hash
                 with self._path.open("a", encoding="utf-8") as fh:
-                    fh.write(json.dumps({"delivery_id": delivery_id, "ts": ts_value}) + "\n")
+                    fh.write(json.dumps(row) + "\n")
             except OSError as exc:
                 logger.warning("ReplayLedger: append failed for %s: %s", self._path, exc)
         return True
@@ -337,7 +360,8 @@ class WebhookReceiver:
 
         # Record only after successful parse so a flaky parser does not
         # poison the ledger and silently swallow legitimate retries.
-        self._ledger.remember(delivery_id)
+        catalogue_hash = event.catalogue_content_hash if event is not None else None
+        self._ledger.remember(delivery_id, catalogue_content_hash=catalogue_hash)
 
         if event is None:
             return ReceiveResult(status="ignored", delivery_id=delivery_id)
@@ -353,6 +377,7 @@ class WebhookReceiver:
                 ticket=event.ticket,
                 delivery_id=delivery_id,
                 received_ts=event.received_ts,
+                catalogue_content_hash=event.catalogue_content_hash,
             )
         )
         return ReceiveResult(status="accepted", delivery_id=delivery_id, event=canonical_event)
@@ -469,7 +494,11 @@ def _github_delivery_id(headers: dict[str, str], body: bytes) -> str:
 
 def _github_parse(headers: dict[str, str], payload: dict[str, Any]) -> TrackerEvent | None:
     event_type = _header(headers, "x-github-event") or "unknown"
-    if event_type not in {"issues", "issue_comment", "pull_request"}:
+    runtime = get_event_catalogue_runtime()
+    entry = runtime.resolve("github", event_type)
+    if entry is None:
+        # Classify + count, but do not emit a queue-bound event (#5132).
+        runtime.record_unmapped("github", event_type)
         return None
     issue = payload.get("issue") or payload.get("pull_request") or {}
     if not issue:
@@ -501,9 +530,10 @@ def _github_parse(headers: dict[str, str], payload: dict[str, Any]) -> TrackerEv
     )
     return TrackerEvent(
         adapter="github",
-        action=str(payload.get("action") or event_type),
+        action=str(payload.get("action") or entry.canonical),
         ticket=ticket,
         delivery_id=_github_delivery_id(headers, b""),
+        catalogue_content_hash=runtime.content_hash,
     )
 
 
@@ -529,10 +559,14 @@ def _gitlab_delivery_id(headers: dict[str, str], body: bytes) -> str:
 
 def _gitlab_parse(headers: dict[str, str], payload: dict[str, Any]) -> TrackerEvent | None:
     kind = str(payload.get("object_kind") or "")
-    if kind not in {"issue", "note"}:
+    runtime = get_event_catalogue_runtime()
+    entry = runtime.resolve("gitlab", kind)
+    if entry is None:
+        # Classify + count, but do not emit a queue-bound event (#5132).
+        runtime.record_unmapped("gitlab", kind or "unknown")
         return None
     attrs = payload.get("object_attributes") or {}
-    if kind == "note":
+    if entry.shape == SHAPE_NOTE:
         issue_obj = payload.get("issue") or {}
         if not issue_obj:
             return None
@@ -560,9 +594,10 @@ def _gitlab_parse(headers: dict[str, str], payload: dict[str, Any]) -> TrackerEv
     )
     return TrackerEvent(
         adapter="gitlab",
-        action=str(attrs.get("action") or kind),
+        action=str(attrs.get("action") or entry.canonical),
         ticket=ticket,
         delivery_id=_gitlab_delivery_id(headers, b""),
+        catalogue_content_hash=runtime.content_hash,
     )
 
 
@@ -680,7 +715,12 @@ def register_builtin_handlers() -> None:
     Idempotent - safe to call multiple times.  Adapter implementations
     that ship outside the core package can register additional handlers
     via :func:`register_handler` from their own ``__init__`` hooks.
+
+    Loads the event-type catalogue at registration time so a malformed
+    packaged catalogue fails at start rather than on the first delivery.
     """
+
+    get_event_catalogue_runtime()
 
     register_handler(
         WebhookHandler(
