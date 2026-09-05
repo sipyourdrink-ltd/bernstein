@@ -103,7 +103,8 @@ the text has:
 1. every `Cc`/`Cf`/`Cs` codepoint dropped, which is the zero-width family
    (U+200B to U+200D, U+FEFF, the soft hyphen, the bidi controls):
    characters that take a position in the string and none on the screen, so
-   `ig<ZWSP>nore` reads as `ignore` to a person;
+   a zero-width space placed inside `ignore` still reads as the word to a
+   person;
 2. NFKC applied, folding the fullwidth, ligature and compatibility forms;
 3. the confusables NFKC deliberately leaves alone mapped to ASCII. A
    Cyrillic U+0430 and a Latin `a` are different letters, and folding them

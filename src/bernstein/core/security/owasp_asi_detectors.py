@@ -197,19 +197,52 @@ def _rendered_values(payload: Any) -> str:
 #: more spelling detectable and can never make a plain-ASCII payload invisible.
 _CONFUSABLES: dict[str, str] = {
     # Cyrillic, upper
-    "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u0406": "I", "\u0408": "J",
-    "\u041a": "K", "\u041c": "M", "\u041d": "H", "\u041e": "O", "\u0420": "P",
-    "\u0421": "C", "\u0422": "T", "\u0423": "Y", "\u0425": "X", "\u0405": "S",
+    "\u0410": "A",
+    "\u0412": "B",
+    "\u0415": "E",
+    "\u0406": "I",
+    "\u0408": "J",
+    "\u041a": "K",
+    "\u041c": "M",
+    "\u041d": "H",
+    "\u041e": "O",
+    "\u0420": "P",
+    "\u0421": "C",
+    "\u0422": "T",
+    "\u0423": "Y",
+    "\u0425": "X",
+    "\u0405": "S",
     # Cyrillic, lower
-    "\u0430": "a", "\u0435": "e", "\u0456": "i", "\u0458": "j", "\u043e": "o",
-    "\u0440": "p", "\u0441": "c", "\u0443": "y", "\u0445": "x", "\u0455": "s",
-    "\u051b": "q", "\u051d": "w",
+    "\u0430": "a",
+    "\u0435": "e",
+    "\u0456": "i",
+    "\u0458": "j",
+    "\u043e": "o",
+    "\u0440": "p",
+    "\u0441": "c",
+    "\u0443": "y",
+    "\u0445": "x",
+    "\u0455": "s",
+    "\u051b": "q",
+    "\u051d": "w",
     # Greek, upper
-    "\u0391": "A", "\u0392": "B", "\u0395": "E", "\u0396": "Z", "\u0397": "H",
-    "\u0399": "I", "\u039a": "K", "\u039c": "M", "\u039d": "N", "\u039f": "O",
-    "\u03a1": "P", "\u03a4": "T", "\u03a5": "Y", "\u03a7": "X",
+    "\u0391": "A",
+    "\u0392": "B",
+    "\u0395": "E",
+    "\u0396": "Z",
+    "\u0397": "H",
+    "\u0399": "I",
+    "\u039a": "K",
+    "\u039c": "M",
+    "\u039d": "N",
+    "\u039f": "O",
+    "\u03a1": "P",
+    "\u03a4": "T",
+    "\u03a5": "Y",
+    "\u03a7": "X",
     # Greek, lower
-    "\u03bf": "o", "\u03c1": "p",
+    "\u03bf": "o",
+    "\u03c1": "p",
 }
 
 _CONFUSABLE_TABLE = str.maketrans(_CONFUSABLES)
@@ -223,8 +256,9 @@ def _fold_for_matching(text: str) -> str:
     1. Drop every ``Cc``/``Cf``/``Cs`` codepoint. That is the zero-width
        family (U+200B..U+200D, U+FEFF, the soft hyphen, the bidi controls):
        characters that occupy a position in the string and none on the screen,
-       so ``ig<ZWSP>nore`` reads as ``ignore`` to a person and matched nothing
-       here. Dropping before normalising is what makes the result NFKC rather
+       so a zero-width space placed inside ``ignore`` still reads as the word
+       to a person while matching nothing here. Dropping before normalising
+       is what makes the result NFKC rather
        than merely NFKC-derived, the discipline
        :mod:`bernstein.core.volunteer.issue_sanitize` documents.
     2. NFKC. Folds the fullwidth, ligature and compatibility spellings.
