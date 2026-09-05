@@ -220,6 +220,15 @@ class TestLifecycle:
         sys.platform != "linux",
         reason="PR_SET_CHILD_SUBREAPER is a Linux prctl flag; darwin has no prctl symbol at all",
     )
+    @pytest.mark.skipif(
+        sys.platform != "linux",
+        reason=(
+            "PR_SET_CHILD_SUBREAPER is a Linux prctl option; dlsym cannot resolve "
+            "prctl at all on macOS. Without the subreaper the grandchild reparents "
+            "to an unreaping PID 1 and the liveness read below never settles, so "
+            "the test cannot run unguarded either."
+        ),
+    )
     def test_check_alive_process_waits_for_surviving_group_member(self, tmp_path: Path, mock_adapter_factory) -> None:
         """Issue #5272: a grandchild in the wrapper's process group must keep
         the session alive after the wrapper itself exits.

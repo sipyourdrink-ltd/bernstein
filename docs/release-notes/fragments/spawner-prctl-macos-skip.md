@@ -1,0 +1,3 @@
+## The surviving-group-member spawner test no longer breaks the macOS lane
+
+`test_check_alive_process_waits_for_surviving_group_member` marks the test process as a child subreaper with `prctl(PR_SET_CHILD_SUBREAPER)` so the grandchild it spawns reparents to the test rather than to an unreaping PID 1. That option is Linux-only, and `dlsym` cannot resolve `prctl` at all on macOS, so the call raised `AttributeError` before the test body ran and failed the `macos-latest` shard holding that file on every pull request whose allocation included it. The test is now skipped off Linux, because without the subreaper the liveness read it performs never settles and it cannot run unguarded either (#5272).
