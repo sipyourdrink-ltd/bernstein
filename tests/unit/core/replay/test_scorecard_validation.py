@@ -26,6 +26,7 @@ def test_valid_scorecard():
             "first_step_hash": "a" * 64,
             "last_step_hash": "b" * 64,
             "schema_version": 1,
+            "citations": [],
         },
         "verification": {
             "journal_ok": True,
@@ -34,11 +35,28 @@ def test_valid_scorecard():
             "spine_ok": True,
             "spine_head": "abcd1234",
             "spine_entries": 5,
+            "citations": [],
         },
-        "recovery": {"repaired": False, "dropped_rows": 0},
-        "state_consistency": {"mutation_count": 15, "disagreement_count": 0, "last_mutation_event_index": 7},
-        "safety": {"capability_declared": True, "refusal_count": 0, "run_receipt_signed": True},
-        "replayability": {"recorded": True, "key_scheme": "v1", "gateway_mode": "secure", "fixture_present": True},
+        "recovery": {"repaired": False, "dropped_rows": 0, "citations": []},
+        "state_consistency": {
+            "mutation_count": 15,
+            "disagreement_count": 0,
+            "last_mutation_event_index": 7,
+            "citations": [],
+        },
+        "safety": {
+            "capability_declared": True,
+            "refusal_count": 0,
+            "run_receipt_signed": True,
+            "citations": [],
+        },
+        "replayability": {
+            "recorded": True,
+            "key_scheme": "v1",
+            "gateway_mode": "secure",
+            "fixture_present": True,
+            "citations": [],
+        },
     }
 
     schema = scorecard_schema()
@@ -57,3 +75,62 @@ def test_invalid_scorecard_missing_fields():
     schema = scorecard_schema()
     with pytest.raises(ValidationError):
         validate(instance=invalid_scorecard, schema=schema)
+
+
+def test_section_without_citations_is_rejected():
+    """A section that omits its ``citations`` array fails validation.
+
+    The schema enforces the "every section field traces to a journal
+    event" contract by making ``citations`` a required property on each
+    section; a section whose ``citations`` key is absent is rejected.
+    """
+    schema = scorecard_schema()
+    valid = {
+        "schema_version": "1.0.0",
+        "type_version": 1,
+        "scorecard_type": "https://bernstein.run/attestations/scorecard/v1",
+        "run_id": "run-123",
+        "trajectory": {
+            "step_count": 10,
+            "schema_version": 1,
+            "citations": [],
+        },
+        "verification": {
+            "journal_ok": True,
+            "journal_head": "abcd1234",
+            "journal_steps": 10,
+            "spine_ok": True,
+            "spine_head": "abcd1234",
+            "spine_entries": 5,
+            "citations": [],
+        },
+        "recovery": {"repaired": False, "dropped_rows": 0, "citations": []},
+        "state_consistency": {
+            "mutation_count": 15,
+            "disagreement_count": 0,
+            "last_mutation_event_index": 7,
+            "citations": [],
+        },
+        "safety": {
+            "capability_declared": True,
+            "refusal_count": 0,
+            "run_receipt_signed": True,
+            "citations": [],
+        },
+        "replayability": {
+            "recorded": True,
+            "key_scheme": "v1",
+            "gateway_mode": "secure",
+            "fixture_present": True,
+            "citations": [],
+        },
+    }
+    # Sanity: the baseline with citations present is valid.
+    validate(instance=valid, schema=schema)
+
+    # Drop citations from one section: schema must reject.
+    for section_name in ("trajectory", "verification", "recovery", "state_consistency", "safety", "replayability"):
+        broken = {k: (dict(v) if isinstance(v, dict) else v) for k, v in valid.items()}
+        broken[section_name] = {k: v for k, v in valid[section_name].items() if k != "citations"}
+        with pytest.raises(ValidationError):
+            validate(instance=broken, schema=schema)

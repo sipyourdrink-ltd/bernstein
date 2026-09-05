@@ -332,6 +332,7 @@ class TrajectorySection:
         if self.last_step_hash is not None:
             row["last_step_hash"] = self.last_step_hash
         row["schema_version"] = self.schema_version
+        row["citations"] = [c.to_dict() for c in self.citations]
         return row
 
     @classmethod
@@ -350,7 +351,7 @@ class TrajectorySection:
             first_step_hash=raw.get("first_step_hash"),
             last_step_hash=raw.get("last_step_hash"),
             schema_version=int(raw.get("schema_version", TRAJECTORY_SCHEMA_VERSION)),
-            citations=(),
+            citations=tuple(Citation.from_dict(c) for c in raw.get("citations", ())),
         )
 
 
@@ -393,6 +394,7 @@ class VerificationSection:
         }
         if self.divergent_step is not None:
             row["divergent_step"] = self.divergent_step
+        row["citations"] = [c.to_dict() for c in self.citations]
         return row
 
     @classmethod
@@ -406,7 +408,7 @@ class VerificationSection:
             spine_ok=bool(raw.get("spine_ok", False)),
             spine_head=str(raw.get("spine_head", "")),
             spine_entries=int(raw.get("spine_entries", 0)),
-            citations=(),
+            citations=tuple(Citation.from_dict(c) for c in raw.get("citations", ())),
         )
 
 
@@ -442,6 +444,7 @@ class RecoverySection:
             row["first_recoverable_seq"] = self.first_recoverable_seq
         if self.recovery_event_index is not None:
             row["recovery_event_index"] = self.recovery_event_index
+        row["citations"] = [c.to_dict() for c in self.citations]
         return row
 
     @classmethod
@@ -452,7 +455,7 @@ class RecoverySection:
             dropped_rows=int(raw.get("dropped_rows", 0)),
             first_recoverable_seq=(int(raw["first_recoverable_seq"]) if "first_recoverable_seq" in raw else None),
             recovery_event_index=(int(raw["recovery_event_index"]) if "recovery_event_index" in raw else None),
-            citations=(),
+            citations=tuple(Citation.from_dict(c) for c in raw.get("citations", ())),
         )
 
 
@@ -485,6 +488,7 @@ class StateConsistencySection:
         }
         if self.last_mutation_event_index is not None:
             row["last_mutation_event_index"] = self.last_mutation_event_index
+        row["citations"] = [c.to_dict() for c in self.citations]
         return row
 
     @classmethod
@@ -496,7 +500,7 @@ class StateConsistencySection:
             last_mutation_event_index=(
                 int(raw["last_mutation_event_index"]) if "last_mutation_event_index" in raw else None
             ),
-            citations=(),
+            citations=tuple(Citation.from_dict(c) for c in raw.get("citations", ())),
         )
 
 
@@ -525,6 +529,7 @@ class SafetySection:
             "capability_declared": self.capability_declared,
             "refusal_count": self.refusal_count,
             "run_receipt_signed": self.run_receipt_signed,
+            "citations": [c.to_dict() for c in self.citations],
         }
 
     @classmethod
@@ -534,7 +539,7 @@ class SafetySection:
             capability_declared=bool(raw.get("capability_declared", False)),
             refusal_count=int(raw.get("refusal_count", 0)),
             run_receipt_signed=bool(raw.get("run_receipt_signed", False)),
-            citations=(),
+            citations=tuple(Citation.from_dict(c) for c in raw.get("citations", ())),
         )
 
 
@@ -565,6 +570,7 @@ class ReplayabilitySection:
             "key_scheme": self.key_scheme,
             "gateway_mode": self.gateway_mode,
             "fixture_present": self.fixture_present,
+            "citations": [c.to_dict() for c in self.citations],
         }
 
     @classmethod
@@ -575,7 +581,7 @@ class ReplayabilitySection:
             key_scheme=str(raw.get("key_scheme", "")),
             gateway_mode=str(raw.get("gateway_mode", "")),
             fixture_present=bool(raw.get("fixture_present", False)),
-            citations=(),
+            citations=tuple(Citation.from_dict(c) for c in raw.get("citations", ())),
         )
 
 

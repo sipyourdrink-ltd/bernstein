@@ -46,6 +46,7 @@ def _valid_trajectory_dict() -> dict:
         "first_step_hash": "h0" * 32,
         "last_step_hash": "h3" * 32,
         "schema_version": 1,
+        "citations": [],
     }
 
 
@@ -57,6 +58,7 @@ def _valid_verification_dict() -> dict:
         "spine_ok": True,
         "spine_head": "s" * 64,
         "spine_entries": 2,
+        "citations": [],
     }
 
 
@@ -64,6 +66,7 @@ def _valid_recovery_dict() -> dict:
     return {
         "repaired": False,
         "dropped_rows": 0,
+        "citations": [],
     }
 
 
@@ -72,6 +75,7 @@ def _valid_state_consistency_dict() -> dict:
         "mutation_count": 1,
         "disagreement_count": 0,
         "last_mutation_event_index": 3,
+        "citations": [],
     }
 
 
@@ -80,6 +84,7 @@ def _valid_safety_dict() -> dict:
         "capability_declared": True,
         "refusal_count": 0,
         "run_receipt_signed": True,
+        "citations": [],
     }
 
 
@@ -89,6 +94,7 @@ def _valid_replayability_dict() -> dict:
         "key_scheme": "scheme/v1",
         "gateway_mode": "record",
         "fixture_present": True,
+        "citations": [],
     }
 
 
@@ -112,7 +118,7 @@ def minimal_scorecard_dict() -> dict:
     """A minimal scorecard dict - empty journal, no provider state."""
     return {
         "run_id": "run-empty",
-        "trajectory": {"step_count": 0},
+        "trajectory": {"step_count": 0, "citations": []},
         "verification": {
             "journal_ok": True,
             "journal_head": "",
@@ -120,19 +126,22 @@ def minimal_scorecard_dict() -> dict:
             "spine_ok": True,
             "spine_head": "",
             "spine_entries": 0,
+            "citations": [],
         },
-        "recovery": {"repaired": False, "dropped_rows": 0},
-        "state_consistency": {"mutation_count": 0, "disagreement_count": 0},
+        "recovery": {"repaired": False, "dropped_rows": 0, "citations": []},
+        "state_consistency": {"mutation_count": 0, "disagreement_count": 0, "citations": []},
         "safety": {
             "capability_declared": False,
             "refusal_count": 0,
             "run_receipt_signed": False,
+            "citations": [],
         },
         "replayability": {
             "recorded": False,
             "key_scheme": "",
             "gateway_mode": "",
             "fixture_present": False,
+            "citations": [],
         },
     }
 
@@ -298,6 +307,7 @@ class TestCanonicalBytes:
             "step_count": traj["step_count"],
             "last_step_index": traj["last_step_index"],
             "first_step_index": traj["first_step_index"],
+            "citations": traj["citations"],
         }
         reference = Scorecard.from_dict(full_scorecard_dict()).canonical_bytes()
         assert Scorecard.from_dict(d).canonical_bytes() == reference
