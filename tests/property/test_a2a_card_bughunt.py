@@ -118,9 +118,18 @@ RFC 8785 reference vector status (cyberphone/json-canonicalization):
     french.json    PASS
     values.json    PASS
     structures.json PASS (since #2 was fixed)
-    weird.json     FAIL (U+007F escaping in a string value; its key order,
-                   the #3 surrogate-pair case, is correct since #3105, and
-                   its numbers are correct since #2)
+    weird.json     PASS
+
+``weird.json`` was recorded here as FAIL on U+007F escaping. It was not.
+Its literals had been transcribed by hand and lost three characters on the
+way, so the test drove a payload the vector does not contain against bytes
+no conformant implementation produces, and the xfail pinned that rather
+than a divergence. RFC 8785 section 3.2.2.2 defers string serialization to
+ECMAScript's ``JSON.stringify``, which escapes the quote, the backslash
+and U+0000 to U+001F and emits everything else as-is, U+007F included.
+All five published vectors were checked against
+``cyberphone/json-canonicalization/testdata/`` and ``canonicalize_jcs``
+reproduces each one byte for byte.
 """
 
 from __future__ import annotations
@@ -584,34 +593,37 @@ def test_rfc_8785_vector_structures() -> None:
     assert canonicalize_jcs(inp) == expected
 
 
-@pytest.mark.xfail(
-    reason=(
-        "The key-sort half of this vector passes since #3105: 😂 (U+1F602, "
-        "UTF-16 high surrogate 0xD83D) now sorts before שּ (U+FB33), which is "
-        "the RFC 8785 §3.2.3 order. The remaining divergence is unrelated to "
-        "key order - it is the escaping of U+007F inside a string VALUE, "
-        "which belongs to §3.2.2.2 string serialization and is tracked "
-        "separately. Do not fold it into a key-ordering change: it moves "
-        "signed bytes for a different class of payload."
-    ),
-    strict=True,
-)
 def test_rfc_8785_vector_weird() -> None:
+    """RFC 8785 reference vector ``weird.json`` (PASSES; the xfail was wrong).
+
+    Two things this vector pins at once. Its key order is the #3
+    surrogate-pair case: U+1F602 starts with the UTF-16 high surrogate
+    0xD83D and sorts below U+FB33, which is the RFC 8785 section 3.2.3
+    order and has held since #3105.
+
+    Its value is the part that was recorded wrong. The expected bytes here
+    escaped U+007F; the published vector carries the raw 0x7f byte, and so
+    does this canonicaliser, because section 3.2.2.2 defers to ECMAScript's
+    ``JSON.stringify`` and that escapes only the quote, the backslash and
+    U+0000 to U+001F.
+    """
     inp = {
-        "€": "Euro Sign",
-        "\r": "Carriage Return",
-        "\n": "Newline",
+        "\u20ac": "Euro Sign",
+        "\u000d": "Carriage Return",
+        "\u000a": "Newline",
         "1": "One",
-        "": "Control",
-        "😂": "Smiley",
-        "ö": "Latin Small Letter O With Diaeresis",
-        "שּ": "Hebrew Letter Dalet With Dagesh",
+        "\u0080": "Control\u007f",
+        "\U0001f602": "Smiley",
+        "\u00f6": "Latin Small Letter O With Diaeresis",
+        "\ufb33": "Hebrew Letter Dalet With Dagesh",
         "</script>": "Browser Challenge",
     }
     expected = (
-        b'{"\\n":"Newline","\\r":"Carriage Return","1":"One",'
+        b'{"\\n":"Newline",'
+        b'"\\r":"Carriage Return",'
+        b'"1":"One",'
         b'"</script>":"Browser Challenge",'
-        b'"\xc2\x80":"Control\\u007f",'
+        b'"\xc2\x80":"Control\x7f",'
         b'"\xc3\xb6":"Latin Small Letter O With Diaeresis",'
         b'"\xe2\x82\xac":"Euro Sign",'
         b'"\xf0\x9f\x98\x82":"Smiley",'

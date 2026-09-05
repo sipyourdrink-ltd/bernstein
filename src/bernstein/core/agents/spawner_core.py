@@ -104,7 +104,7 @@ from bernstein.core.agents.spawner_worktree import (
 )
 from bernstein.core.context import TaskContextBuilder
 from bernstein.core.context_recommendations import RecommendationEngine
-from bernstein.core.defaults import SPAWN
+from bernstein.core.defaults import SDD_SERVER_PORT, SPAWN
 from bernstein.core.evidence.run_artifacts import record_persistent_agent_step
 from bernstein.core.lessons import gather_lessons_for_context
 from bernstein.core.lifecycle import transition_agent
@@ -651,7 +651,7 @@ def _prompt_with_addendum(prompt: str, system_addendum: str) -> str:
     return f"{prompt}\n\n{system_addendum}"
 
 
-def _resolve_task_server_url() -> str:
+def _resolve_task_server_url(workdir: Path | None = None) -> str:
     """Resolve the base URL agents use to reach the task server.
 
     Remote workers export ``BERNSTEIN_SERVER_URL`` into the agent env before
@@ -659,14 +659,32 @@ def _resolve_task_server_url() -> str:
     agents (``adapters/env_isolation.py``). Reading it here means a completion
     POST from an agent on a worker node reaches the central server instead of
     the worker's own loopback, and it also fixes local runs started on a
-    non-default port. Falls back to the historical local default when unset.
+    non-default port.
+
+    When the env var is unset, read the run's own ``.sdd/runtime/server.port``
+    before falling back to 8052. The agent spawns into a worktree whose own
+    ``.sdd`` has no port file, so the CLI's cwd-relative lookup
+    (``cli/helpers.py:resolve_server_url``) missed it and the prompt told the
+    agent to POST to 8052 - another run's server, which answered 401 and got
+    the task failed as auth_error. ``workdir`` is the operator checkout, where
+    ``persist_server_port`` actually wrote the port.
     """
     import os
 
-    return os.environ.get("BERNSTEIN_SERVER_URL", "http://127.0.0.1:8052").rstrip("/")
+    configured = os.environ.get("BERNSTEIN_SERVER_URL")
+    if configured:
+        return configured.rstrip("/")
+    if workdir is not None:
+        try:
+            port = int((workdir / SDD_SERVER_PORT).read_text().strip())
+            if 1 <= port <= 65535:
+                return f"http://127.0.0.1:{port}"
+        except (OSError, ValueError):
+            pass
+    return "http://127.0.0.1:8052"
 
 
-def _render_auth_section(token_path: Path) -> str:
+def _render_auth_section(token_path: Path, workdir: Path | None = None) -> str:
     """Return authentication instructions to inject into every agent's prompt.
 
     The token file path is referenced by path rather than embedding the raw
@@ -685,7 +703,7 @@ def _render_auth_section(token_path: Path) -> str:
         Markdown block instructing the agent to authenticate all requests.
     """
     absolute = token_path if token_path.is_absolute() else token_path.resolve(strict=False)
-    base = _resolve_task_server_url()
+    base = _resolve_task_server_url(workdir)
     return (
         "\n## Task Server Authentication\n"
         "Your agent token is stored at this absolute path (do NOT print or "
@@ -4689,7 +4707,7 @@ class AgentSpawner:
         try:
             task_ids_for_scope = [t.id for t in tasks]
             _token_path = self._issue_agent_token(session_id, role, task_ids_for_scope)
-            prompt = prompt + _render_auth_section(_token_path)
+            prompt = prompt + _render_auth_section(_token_path, self._workdir)
         except Exception as _token_exc:
             # Only the session_id and exception are logged.
             # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
@@ -6784,12 +6802,27 @@ class AgentSpawner:
         return alive
 
     def _check_alive_process(self, session: AgentSession) -> bool | None:
-        """Check liveness via stored subprocess. Returns None if no proc stored."""
+        """Check liveness via stored subprocess. Returns None if no proc stored.
+
+        Adapters spawn with ``start_new_session=True``, so the wrapper leads
+        its own process group (pgid == pid) and a grandchild it forks (the
+        real CLI tool, or a fork of it) can survive the wrapper's own exit.
+        Polling only the wrapper reports the session dead the moment it
+        exits even when the group is not empty, letting
+        ``drain_before_cleanup`` seal the run's journal while a grandchild
+        is still writing to the worktree. Report alive until the whole
+        group is gone, matching the group-aware check already used on the
+        escalation-kill path (``process_group_alive``, issue #2643).
+        """
         proc = self._procs.get(session.id)
         if proc is None:
             return None
         exit_code = proc.poll()
         if exit_code is not None:
+            from bernstein.core.config.platform_compat import process_group_alive
+
+            if process_group_alive(proc.pid):
+                return True
             session.exit_code = exit_code
             return False
         return True

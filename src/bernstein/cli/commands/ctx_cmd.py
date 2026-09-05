@@ -23,12 +23,7 @@ from urllib.parse import urlsplit, urlunsplit
 import click
 
 from bernstein.cli.helpers import console
-
-
-def _load_hmac_key() -> bytes:
-    from bernstein.core.security.audit import load_or_create_audit_key
-
-    return load_or_create_audit_key()
+from bernstein.core.security.audit import load_or_create_audit_key
 
 
 def _store(workdir: Path):
@@ -36,7 +31,7 @@ def _store(workdir: Path):
     from bernstein.core.security.audit_chain import AuditChainStore
 
     sdd = Path(workdir) / ".sdd"
-    chain = AuditChainStore(sdd / "audit", key=_load_hmac_key())
+    chain = AuditChainStore(sdd / "audit", key=load_or_create_audit_key())
     return ContextStore(sdd / "fleet" / "contexts", chain=chain)
 
 

@@ -17,12 +17,7 @@ from rich.table import Table
 
 from bernstein.cli.helpers import console
 from bernstein.core.lineage.spine import LineageSpine
-
-
-def _load_hmac_key() -> bytes:
-    from bernstein.core.security.audit import load_or_create_audit_key
-
-    return load_or_create_audit_key()
+from bernstein.core.security.audit import load_or_create_audit_key
 
 
 @click.command(name="replay")
@@ -45,7 +40,7 @@ def _load_hmac_key() -> bytes:
 def lineage_replay_cmd(run_id: str, workdir: str, limit: int) -> None:
     """Replay the lineage spine for *run_id* in append order."""
     lineage_root = Path(workdir).resolve() / ".sdd" / "lineage"
-    spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=_load_hmac_key())
+    spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=load_or_create_audit_key())
     entries = list(spine.iter_entries())
     if not entries:
         console.print(f"[yellow]NO ENTRIES[/yellow] -- no lineage spine for run={run_id}.")
