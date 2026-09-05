@@ -819,13 +819,19 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "ollama": AdapterStrategy(),
     "open_interpreter": AdapterStrategy(),
     # Resume and dangerous mode are backed by flags ``opencode.py`` passes:
-    # ``--continue`` and ``--auto`` plus an explicit permission policy. The
-    # event channel stays ``text-signals``: the CLI does emit NDJSON under
-    # ``--format json``, but nothing consumes it yet, and declaring a channel
-    # no parser reads would claim a surface that does not exist.
+    # ``--continue`` and ``--auto`` plus an explicit permission policy.
+    # ``event_channel`` names what the upstream CLI emits (see the enum's own
+    # docstring and docs/adapters/capability_contract.md), not what Bernstein
+    # currently parses -- the same reading ``cursor`` above is declared under
+    # despite having no dedicated stream parser either (#3676). ``opencode.py``
+    # already passes ``--format json``, under which the CLI emits NDJSON, so
+    # this is ``stream-json`` today even though nothing consumes those events
+    # yet; that consumption is separate follow-up work, not a reason to
+    # misdeclare the upstream surface.
     "opencode": AdapterStrategy(
         resume=ResumeStrategy.FLAG,
         dangerous_mode=DangerousModeStrategy.CLI_FLAG,
+        event_channel=EventChannel.STREAM_JSON,
     ),
     "openhands": AdapterStrategy(),
     "pi": AdapterStrategy(),
