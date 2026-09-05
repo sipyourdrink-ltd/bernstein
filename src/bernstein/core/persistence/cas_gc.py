@@ -112,10 +112,30 @@ def _extract_digests_from_obj(obj: Any) -> set[str]:
     return digests
 
 
-def _scan_wal_for_digests(sdd_dir: Path) -> set[str]:
+def _record_unreadable(collector: list[str] | None, root: str, path: Path, exc: Exception) -> None:
+    """Note that *path* could not be read, if the caller is collecting.
+
+    A scanner that swallows a per-file failure and carries on returns fewer
+    digests than the tree holds, and a sweep against that answer deletes
+    live blobs. The failure has to reach the caller, not only the log.
+    """
+    if collector is None:
+        return
+    collector.append(f"{root}: {path.name} ({type(exc).__name__})")
+
+
+def _scan_wal_for_digests(sdd_dir: Path, *, unreadable: list[str] | None = None) -> set[str]:
     """Scan WAL files for CAS digests.
 
-    Returns set of digests referenced in WAL entries.
+    Args:
+        sdd_dir: The ``.sdd`` directory root.
+        unreadable: Collector for files this scan could not read. A caller
+            deciding whether to sweep passes one; without it a per-file
+            failure is logged and lost, and the mark looks complete when it
+            is not.
+
+    Returns:
+        Set of digests referenced in WAL entries.
     """
     wal_dir = sdd_dir / "runtime" / "wal"
     digests: set[str] = set()
@@ -140,6 +160,7 @@ def _scan_wal_for_digests(sdd_dir: Path) -> set[str]:
                         continue
         except OSError as exc:
             logger.warning("Failed to read WAL file %s: %s", wal_file, exc)
+            _record_unreadable(unreadable, "WAL", wal_file, exc)
 
     return digests
 
@@ -158,7 +179,7 @@ def _scan_snapshots_for_digests(sdd_dir: Path) -> set[str]:
     return set()
 
 
-def _scan_audit_seals_for_digests(sdd_dir: Path) -> set[str]:
+def _scan_audit_seals_for_digests(sdd_dir: Path, *, unreadable: list[str] | None = None) -> set[str]:
     """Scan audit Merkle seals for CAS digests.
 
     Each seal contains a Merkle tree over CAS blobs, so we extract the leaf
@@ -191,11 +212,12 @@ def _scan_audit_seals_for_digests(sdd_dir: Path) -> set[str]:
                     digests.add(digest)
         except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
             logger.warning("Failed to read audit seal %s: %s", seal_file, exc)
+            _record_unreadable(unreadable, "Audit seals", seal_file, exc)
 
     return digests
 
 
-def _scan_lineage_for_digests(sdd_dir: Path) -> set[str]:
+def _scan_lineage_for_digests(sdd_dir: Path, *, unreadable: list[str] | None = None) -> set[str]:
     """Scan lineage spines for CAS digests.
 
     Lineage entries store content_hash which is sha256: prefixed CAS digest.
@@ -236,11 +258,12 @@ def _scan_lineage_for_digests(sdd_dir: Path) -> set[str]:
                             digests.add(digest)
         except OSError as exc:
             logger.warning("Failed to read lineage spine %s: %s", spine_file, exc)
+            _record_unreadable(unreadable, "Lineage", spine_file, exc)
 
     return digests
 
 
-def _scan_backlog_for_digests(sdd_dir: Path) -> set[str]:
+def _scan_backlog_for_digests(sdd_dir: Path, *, unreadable: list[str] | None = None) -> set[str]:
     """Scan backlog YAML files for CAS digests.
 
     Backlog tasks may reference CAS digests in their metadata or parameters.
@@ -263,6 +286,7 @@ def _scan_backlog_for_digests(sdd_dir: Path) -> set[str]:
                     digests.update(_extract_digests_from_obj(data))
                 except OSError as exc:
                     logger.warning("Failed to read backlog file %s: %s", yaml_file, exc)
+                    _record_unreadable(unreadable, "Backlog", yaml_file, exc)
 
     return digests
 
@@ -293,8 +317,15 @@ class RootSet:
 
         Sorted before hashing so the value depends on which digests were
         reachable and not on the order the scanners happened to yield them.
+
+        The unreadable roots are hashed in too. Without them a partial-and-
+        empty root set and a complete-and-empty one produce the same value,
+        and ``CASPruneResult.root_set_hash`` is public and is populated on a
+        refusal, so a reader comparing two sweeps could not tell those apart.
         """
-        payload = "\n".join(sorted(self.digests)).encode("utf-8")
+        payload = "\n".join(["digests", *sorted(self.digests), "unreadable", *sorted(self.unreadable_roots)]).encode(
+            "utf-8"
+        )
         return f"sha256:{hashlib.sha256(payload).hexdigest()}"
 
 
@@ -314,6 +345,11 @@ def collect_root_set(sdd_dir: Path) -> RootSet:
     """
     logger.debug("Scanning durable roots for CAS digests")
     all_digests: set[str] = set()
+    # Two ways a root goes unread, and both have to land here. A scanner
+    # raising all the way out is the loud one; a per-file OSError swallowed
+    # inside it is the one that actually happens - a permissions problem, a
+    # transient I/O error, a network-filesystem hiccup on a single spine
+    # file - and it used to leave the mark looking complete.
     unreadable: list[str] = []
 
     # Scan each root type
@@ -327,7 +363,7 @@ def collect_root_set(sdd_dir: Path) -> RootSet:
 
     for name, scanner in roots:
         try:
-            digests = scanner(sdd_dir)
+            digests = scanner(sdd_dir, unreadable=unreadable)
             logger.debug("Found %d digests in %s", len(digests), name)
             all_digests.update(digests)
         except Exception as exc:  # pylint: disable=broad-except
@@ -461,7 +497,8 @@ def prune_cas_store(
         unreadable_roots=root_set.unreadable_roots,
     )
     logger.info(
-        "CAS GC complete: scanned=%d, preserved=%d (%d bytes), deleted=%d (%d bytes)",
+        "CAS GC %s: scanned=%d, preserved=%d (%d bytes), deleted=%d (%d bytes)",
+        "complete" if deleting or dry_run else "refused (mark incomplete)",
         result.scanned_entries,
         result.preserved_entries,
         result.preserved_bytes,
@@ -553,6 +590,15 @@ def run_cas_gc_cli(
             f"[DRY RUN] Would delete {result.deleted_entries} CAS entries "
             f"({result.deleted_bytes} bytes), preserve {result.preserved_entries} "
             f"({result.preserved_bytes} bytes)"
+        )
+    elif result.unreadable_roots:
+        # Nothing was deleted. The headline line is what a log scraper reads,
+        # so it must not say "deleted N" when the sweep refused.
+        print(
+            f"CAS GC refused: nothing deleted, because the mark phase could not read "
+            f"{', '.join(result.unreadable_roots)}. "
+            f"{result.deleted_entries} entries ({result.deleted_bytes} bytes) would have "
+            f"been considered once every root is readable."
         )
     else:
         print(

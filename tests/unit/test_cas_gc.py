@@ -227,10 +227,7 @@ class TestLineageScannerToleratesOddLines:
         spine.mkdir(parents=True)
         good = "sha256:" + ("a" * 64)
         spine.joinpath("spine.jsonl").write_text(
-            json.dumps({"content_hash": 12345})
-            + "\n"
-            + json.dumps({"content_hash": good})
-            + "\n",
+            json.dumps({"content_hash": 12345}) + "\n" + json.dumps({"content_hash": good}) + "\n",
             encoding="utf-8",
         )
         assert _scan_lineage_for_digests(sdd) == {"a" * 64}
@@ -560,9 +557,7 @@ class TestMarkPhaseCompleteness:
         assert root_set.complete
         assert root_set.unreadable_roots == ()
 
-    def test_a_failing_scanner_is_named_not_only_logged(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_a_failing_scanner_is_named_not_only_logged(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         sdd = tmp_path / ".sdd"
         sdd.mkdir()
 
@@ -574,9 +569,7 @@ class TestMarkPhaseCompleteness:
         assert not root_set.complete
         assert root_set.unreadable_roots == ("Lineage",)
 
-    def test_a_partial_mark_deletes_nothing(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_a_partial_mark_deletes_nothing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """The blob's only reference may live in the root that did not open.
 
         Before this guard the scanner's failure was logged and the sweep ran
@@ -618,9 +611,7 @@ class TestMarkPhaseCompleteness:
         assert result.deleted_entries == 1
         assert store.get(digest) is None
 
-    def test_a_partial_mark_writes_no_receipt(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_a_partial_mark_writes_no_receipt(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A receipt always attests a sweep decided against every root."""
         store, _digest = self._store_one_old_unreferenced_blob(tmp_path)
 
@@ -631,6 +622,97 @@ class TestMarkPhaseCompleteness:
         prune_cas_store(tmp_path / ".sdd", retention_days=30)
         receipts = [e for e in store.list_entries() if e.metadata.get("type") == "cas_prune_receipt"]
         assert receipts == []
+
+
+class TestAnUnreadableFileMakesTheMarkIncomplete:
+    """The trigger that actually happens, not just a scanner raising outright.
+
+    Every scanner catches per-file OSError internally and carries on. Those
+    failures never reached ``collect_root_set``'s broad except, so a
+    permissions problem or a transient I/O error on one spine file left
+    ``complete`` True and destroyed live data silently.
+    """
+
+    @staticmethod
+    def _unreadable_lineage_spine(sdd: Path) -> Path:
+        spine = sdd / "lineage" / "run-1"
+        spine.mkdir(parents=True)
+        path = spine / "spine.jsonl"
+        path.write_text("{}\n", encoding="utf-8")
+        return path
+
+    def test_a_per_file_oserror_is_reported_not_only_logged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sdd = tmp_path / ".sdd"
+        sdd.mkdir()
+        self._unreadable_lineage_spine(sdd)
+
+        real_open = Path.open
+
+        def refuse(self: Path, *args: object, **kwargs: object) -> object:
+            if self.name == "spine.jsonl":
+                raise PermissionError("permission denied")
+            return real_open(self, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(Path, "open", refuse)
+        root_set = collect_root_set(sdd)
+
+        assert not root_set.complete
+        assert any("Lineage" in entry for entry in root_set.unreadable_roots)
+
+    def test_a_blob_referenced_from_an_unreadable_root_survives(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The whole point: one unreadable file must not cost a live blob."""
+        sdd = tmp_path / ".sdd"
+        sdd.mkdir()
+        store = CASStore(sdd / "cas")
+        digest = store.put(b"the only copy", content_type="text/plain")
+        _age_entry(sdd / "cas", digest, days=120)
+
+        spine = sdd / "lineage" / "run-1"
+        spine.mkdir(parents=True)
+        spine.joinpath("spine.jsonl").write_text(
+            json.dumps({"content_hash": "sha256:" + digest}) + "\n", encoding="utf-8"
+        )
+
+        real_open = Path.open
+
+        def refuse(self: Path, *args: object, **kwargs: object) -> object:
+            if self.name == "spine.jsonl":
+                raise PermissionError("permission denied")
+            return real_open(self, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(Path, "open", refuse)
+        result = prune_cas_store(sdd, retention_days=30)
+        monkeypatch.undo()
+
+        assert result.unreadable_roots, "the mark reported itself complete"
+        assert store.has(digest), "a live blob was deleted on a partial mark"
+
+    def test_the_cli_does_not_claim_a_deletion_it_refused(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The headline line is what a log scraper reads."""
+        from bernstein.core.persistence.cas_gc import run_cas_gc_cli
+
+        sdd = tmp_path / ".sdd"
+        sdd.mkdir()
+        store = CASStore(sdd / "cas")
+        digest = store.put(b"orphan", content_type="text/plain")
+        _age_entry(sdd / "cas", digest, days=120)
+
+        def boom(_sdd: Path, **_kwargs: object) -> set[str]:
+            raise OSError("unreadable")
+
+        monkeypatch.setattr(cas_gc_mod, "_scan_wal_for_digests", boom)
+        success = run_cas_gc_cli(tmp_path, days=30, yes=True)
+        out = capsys.readouterr().out
+
+        assert not success
+        assert "CAS GC refused" in out
+        assert "CAS GC complete" not in out
 
 
 class TestRootSetHash:
