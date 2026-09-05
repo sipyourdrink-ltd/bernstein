@@ -945,3 +945,77 @@ def worktrees_group_ref():  # small helper so the import lives next to use
     from bernstein.cli.commands.worktrees_cmd import worktrees_group
 
     return worktrees_group
+
+
+# ---------------------------------------------------------------------------
+# Dry run is the default (#5112)
+# ---------------------------------------------------------------------------
+
+
+def test_cli_gc_without_flags_deletes_nothing(repo_root: Path) -> None:
+    """An unqualified ``gc`` prints the plan and never touches disk."""
+    wt = _make_worktree_dir(repo_root, "gc-default")
+    runner = CliRunner()
+
+    result = runner.invoke(worktrees_group, ["gc", "--workdir", str(repo_root)])
+
+    assert result.exit_code == 0, result.output
+    assert wt.exists(), "an unqualified gc must not delete"
+    # And it says so, after the plan, so the reader knows what happened to the
+    # paths they were just shown.
+    assert "--apply" in result.output
+
+
+def test_cli_gc_apply_deletes(repo_root: Path) -> None:
+    """``--apply --yes`` is the opt-in, and it reaps."""
+    wt = _make_worktree_dir(repo_root, "gc-apply")
+    runner = CliRunner()
+
+    result = runner.invoke(worktrees_group, ["gc", "--workdir", str(repo_root), "--apply", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert not wt.exists()
+
+
+def test_cli_gc_yes_alone_still_deletes(repo_root: Path) -> None:
+    """The compatibility rule.
+
+    ``--yes`` has always meant "do it without asking me". Reading it as a dry
+    run would leave every existing ``gc --yes`` in a cron job reporting success
+    while cleaning nothing up - a change in the one direction an operator
+    cannot notice.
+    """
+    wt = _make_worktree_dir(repo_root, "gc-yes-only")
+    runner = CliRunner()
+
+    result = runner.invoke(worktrees_group, ["gc", "--workdir", str(repo_root), "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert not wt.exists()
+
+
+def test_cli_gc_dry_outranks_apply(repo_root: Path) -> None:
+    """Between "delete" and "do not", the flag asking for less wins."""
+    wt = _make_worktree_dir(repo_root, "gc-dry-wins")
+    runner = CliRunner()
+
+    result = runner.invoke(worktrees_group, ["gc", "--workdir", str(repo_root), "--apply", "--yes", "--dry"])
+
+    assert result.exit_code == 0, result.output
+    assert wt.exists()
+
+
+def test_cli_gc_dry_run_does_not_prompt(repo_root: Path) -> None:
+    """Nothing is being destroyed, so there is nothing to confirm.
+
+    Answering the prompt is what an operator does to authorise deletion; asking
+    for it when no deletion can follow trains them to answer without reading.
+    """
+    _make_worktree_dir(repo_root, "gc-no-prompt")
+    runner = CliRunner()
+
+    # No stdin at all: a prompt would abort here rather than pass.
+    result = runner.invoke(worktrees_group, ["gc", "--workdir", str(repo_root)], input="")
+
+    assert result.exit_code == 0, result.output
+    assert "Reap" not in result.output or "worktree(s)?" not in result.output

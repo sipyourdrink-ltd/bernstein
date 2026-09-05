@@ -2160,7 +2160,15 @@ class TriggerConfig:
 
 @dataclass
 class TriggerFireRecord:
-    """Audit record written when a trigger fires and creates a task."""
+    """Audit record written when a trigger fires and creates a task.
+
+    ``produced`` says whether the fire found real work. A routine that runs and
+    finds nothing is still recorded -- an operator needs to see that it ran --
+    but it does not reset the cooldown clock, because a check with an empty
+    result is otherwise indistinguishable from one that never happened
+    (issue #5113). Defaults to ``True`` so a record written before the field
+    existed, and every caller that does not pass it, means what it always did.
+    """
 
     trigger_name: str
     source: str
@@ -2168,6 +2176,7 @@ class TriggerFireRecord:
     task_id: str
     dedup_key: str
     event_summary: str = ""
+    produced: bool = True
 
 
 @dataclass(frozen=True)

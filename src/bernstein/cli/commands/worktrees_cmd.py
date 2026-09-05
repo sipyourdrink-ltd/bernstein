@@ -3,7 +3,7 @@
 Two subcommands::
 
     bernstein worktrees list           # tabular dump of every worktree
-    bernstein worktrees gc [--yes] [--dry]
+    bernstein worktrees gc [--apply] [--yes]
 
 The classifier in :mod:`bernstein.core.worktrees.classifier` is the
 source of truth for state. This module only handles I/O: rendering the
@@ -318,7 +318,8 @@ def list_cmd(workdir: Path, as_json: bool) -> None:
     reapable = sum(1 for r in rows if r.is_reapable)
     if reapable:
         console.print(
-            f"[yellow]{reapable} worktree(s) reapable - run [bold]bernstein worktrees gc[/bold] to clean up.[/yellow]"
+            f"[yellow]{reapable} worktree(s) reapable - run [bold]bernstein worktrees gc[/bold] to preview, "
+            f"then [bold]--apply[/bold] to clean up.[/yellow]"
         )
 
 
@@ -330,13 +331,20 @@ def list_cmd(workdir: Path, as_json: bool) -> None:
     show_default=True,
     help="Project root containing .sdd/.",
 )
-@click.option("--yes", is_flag=True, default=False, help="Skip the confirmation prompt.")
+@click.option("--yes", is_flag=True, default=False, help="Skip the confirmation prompt. Implies --apply.")
 @click.option(
-    "--dry",
-    "dry_run",
+    "--apply",
+    "apply_changes",
     is_flag=True,
     default=False,
-    help="Print what would be deleted without touching disk.",
+    help="Actually delete. Without it (and without --yes) this is a dry run.",
+)
+@click.option(
+    "--dry",
+    "dry",
+    is_flag=True,
+    default=False,
+    help="Force a dry run. Now the default, so only meaningful alongside --apply or --yes.",
 )
 @click.option(
     "--force-unsaved",
@@ -348,8 +356,19 @@ def list_cmd(workdir: Path, as_json: bool) -> None:
         "destroys the only copy of that work. Requires an extra confirmation."
     ),
 )
-def gc_cmd(workdir: Path, yes: bool, dry_run: bool, force_unsaved: bool) -> None:
-    """Delete orphan, stale, and corrupt worktrees.
+def gc_cmd(workdir: Path, yes: bool, apply_changes: bool, dry: bool, force_unsaved: bool) -> None:
+    """Delete orphan, stale, and corrupt worktrees. Dry run unless --apply.
+
+    An unqualified ``gc`` never touches disk: it prints what it would reap and
+    stops (issue #5112). Deleting is opt-in through ``--apply``.
+
+    ``--yes`` still deletes. It has always meant "do it without asking me", so
+    reading it as a dry run would leave every existing ``gc --yes`` in a cron
+    job or a script reporting success while cleaning nothing up - a silent
+    change in the one direction an operator cannot notice.
+
+    ``--dry`` keeps forcing a dry run and OUTRANKS both, so ``gc --yes --dry``
+    means today what it meant before. It is now redundant on its own.
 
     Worktrees that still hold unsaved work (uncommitted changes or unmerged
     commits) are preserved and reported as safety-skips unless
@@ -357,6 +376,10 @@ def gc_cmd(workdir: Path, yes: bool, dry_run: bool, force_unsaved: bool) -> None
     recorded in the HMAC-chained audit log either way, so a skip is never
     silent.
     """
+    # `--dry` outranks the opt-ins: between "delete" and "do not", the flag that
+    # asks for less is the one to honour, and `gc --yes --dry` is an existing
+    # spelling that has always meant a dry run.
+    dry_run = dry or not (apply_changes or yes)
     repo_root = workdir.resolve()
     rows = classify_worktrees(repo_root)
     reapable = [r for r in rows if r.is_reapable]
@@ -417,6 +440,14 @@ def gc_cmd(workdir: Path, yes: bool, dry_run: bool, force_unsaved: bool) -> None
     except GcLockError as exc:
         console.print(f"[red]{exc}[/red]")
         raise SystemExit(2) from exc
+
+    if dry_run:
+        # Said after the plan, not before it: the reader has just seen a list of
+        # paths and needs to know nothing happened to them.
+        console.print(
+            f"[cyan]Dry run - nothing was deleted. Re-run with [bold]--apply[/bold] to reap "
+            f"{len(targets)} worktree(s).[/cyan]"
+        )
 
 
 def _report_safety_skips(console: Console, skipped: list[ClassifiedWorktree]) -> None:
