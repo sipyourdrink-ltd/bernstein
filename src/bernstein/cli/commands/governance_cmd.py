@@ -70,15 +70,10 @@ from bernstein.core.govern.compliance_checks import (
     select_check_ids,
 )
 from bernstein.core.lineage.spine import LineageSpine
+from bernstein.core.security.audit import load_or_create_audit_key
 
 if TYPE_CHECKING:
     from bernstein.core.govern.plan_models import GovernPlan
-
-
-def _load_hmac_key() -> bytes:
-    from bernstein.core.security.audit import load_or_create_audit_key
-
-    return load_or_create_audit_key()
 
 
 def _lineage_root(workdir: Path) -> Path:
@@ -138,7 +133,7 @@ def governance_verify_cmd(run_id: str, bindings_file: str, ledger_file: str | No
     result = verify_governance(
         run_id=run_id,
         lineage_root=_lineage_root(root),
-        hmac_key=_load_hmac_key(),
+        hmac_key=load_or_create_audit_key(),
         bindings=bindings,
         ledger_path=ledger_path,
     )
@@ -213,7 +208,7 @@ def governance_plan_cmd(
     # Anchoring in the lineage spine
     from bernstein.core.lineage.spine import LineageSpine
 
-    hmac_key = _load_hmac_key()
+    hmac_key = load_or_create_audit_key()
     lineage_root = _lineage_root(root)
     spine = LineageSpine(lineage_root, run_id="govern-plan", hmac_key=hmac_key)
 
@@ -357,7 +352,7 @@ def governance_posture_cmd(workdir: str, as_json: bool) -> None:
     root = Path(workdir).resolve()
 
     if as_json:
-        click.echo(evidenced_posture_json(root, hmac_key=_load_hmac_key()))
+        click.echo(evidenced_posture_json(root, hmac_key=load_or_create_audit_key()))
         raise SystemExit(0)
 
     console.print()
@@ -727,7 +722,7 @@ def govern_discover_cmd(
     lineage_root = _lineage_root(root)
     lineage_root.mkdir(parents=True, exist_ok=True)
 
-    hmac_key = _load_hmac_key()
+    hmac_key = load_or_create_audit_key()
     spine = LineageSpine(lineage_root, run_id="govern-discover", hmac_key=hmac_key)
 
     artifact_path = f"govern-discover/proposal-{proposal.content_hash()[:16]}.json"
@@ -846,7 +841,7 @@ def governance_ingest_cmd(
         source_label=source_label,
         profile_name=profile_name,
         audit_dir=root / ".sdd" / "audit",
-        hmac_key=_load_hmac_key(),
+        hmac_key=load_or_create_audit_key(),
         ingest_adapter=adapter,
     ).ingest_batch(spans)
 
