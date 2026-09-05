@@ -80,10 +80,16 @@ KNOWN_UNCALLED: frozenset[str] = frozenset(
     }
 )
 
-pytestmark = pytest.mark.skipif(
-    not PACKAGE.is_dir(),
-    reason="security wiring guard only runs inside a bernstein source checkout",
-)
+#: Scans the source tree rather than importing it, so no diff produces an
+#: import edge to this file. The marker puts it in every pull request's
+#: affected slice instead of only the merge group (#5428).
+pytestmark = [
+    pytest.mark.whole_tree_guard,
+    pytest.mark.skipif(
+        not PACKAGE.is_dir(),
+        reason="security wiring guard only runs inside a bernstein source checkout",
+    ),
+]
 
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 

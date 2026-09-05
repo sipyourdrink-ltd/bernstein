@@ -28,10 +28,16 @@ PACKAGED_GUI_DIR = REPO_ROOT / "src" / "bernstein" / "gui" / "static"
 
 VITE_CONFIG = REPO_ROOT / "web" / "vite.config.ts"
 
-pytestmark = pytest.mark.skipif(
-    not (REPO_ROOT / "pyproject.toml").is_file(),
-    reason="packaging guards only run inside a bernstein source checkout",
-)
+#: Scans the source tree rather than importing it, so no diff produces an
+#: import edge to this file. The marker puts it in every pull request's
+#: affected slice instead of only the merge group (#5428).
+pytestmark = [
+    pytest.mark.whole_tree_guard,
+    pytest.mark.skipif(
+        not (REPO_ROOT / "pyproject.toml").is_file(),
+        reason="packaging guards only run inside a bernstein source checkout",
+    ),
+]
 
 
 def test_no_source_map_under_the_packaged_gui_tree() -> None:
