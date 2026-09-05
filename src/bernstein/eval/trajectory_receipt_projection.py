@@ -43,11 +43,12 @@ What the projection does *not* prove
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import json
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import cbor2
 
@@ -327,17 +328,38 @@ def _verify_intoto(intoto_dict: dict[str, Any], *, public_key: Ed25519PublicKey)
 
     pae_bytes = pae(DSSE_PAYLOAD_TYPE, payload)
     verified = False
-    for sig_entry in signatures:
-        try:
-            sig_bytes = base64.b64decode(sig_entry.get("sig", ""))
-            public_key.verify(sig_bytes, pae_bytes)
-            verified = True
-            break
-        except (InvalidSignature, Exception):
+    # Why each entry is rejected, so a failure names the cause instead of
+    # blaming the key. ``except (InvalidSignature, Exception)`` read as if
+    # only a bad signature was caught; ``Exception`` subsumes
+    # ``InvalidSignature``, so every entry that was malformed, and every
+    # bug raised from inside the verification, arrived at the same
+    # "does not verify against the supplied public key".
+    rejections: list[str] = []
+    for index, sig_entry in enumerate(signatures):
+        if not isinstance(sig_entry, dict):
+            rejections.append(f"signatures[{index}] is not an object")
             continue
+        raw_sig = cast("dict[str, Any]", sig_entry).get("sig", "")
+        if not isinstance(raw_sig, str):
+            rejections.append(f"signatures[{index}].sig is not a string")
+            continue
+        try:
+            sig_bytes = base64.b64decode(raw_sig, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            rejections.append(f"signatures[{index}].sig is not base64: {exc}")
+            continue
+        try:
+            public_key.verify(sig_bytes, pae_bytes)
+        except InvalidSignature:
+            rejections.append(f"signatures[{index}] does not verify")
+            continue
+        verified = True
+        break
 
     if not verified:
         msg = "DSSE signature does not verify against the supplied public key"
+        if rejections:
+            msg = f"{msg} ({'; '.join(rejections)})"
         raise TrajectoryProjectionError(msg)
 
     try:
