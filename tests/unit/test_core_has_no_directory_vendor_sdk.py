@@ -14,7 +14,11 @@ import ast
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CORE_ROOT = REPO_ROOT / "src" / "bernstein" / "core"
+#: The tree this guard walks, spelled as a repo-relative glob. A guard that
+#: scans a directory imports nothing from it, so this literal is the only
+#: edge the affected-test selector can bind a change inside the tree to.
+SCANNED_TREE = "src/bernstein/core/**/*.py"
+CORE_ROOT = REPO_ROOT / SCANNED_TREE.split("/**/", 1)[0]
 
 #: Top-level distributions that speak a specific identity directory or IdP.
 #: Adapters may depend on these; core may not. Cloud-storage and secret-store

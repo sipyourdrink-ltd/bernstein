@@ -12,6 +12,7 @@ import json
 import logging
 from contextlib import suppress
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, cast
 
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 # every existing entry potentially short of edges even though its file hashes
 # still match.
 _ANALYZER_CACHE_VERSION = "4"
-_COMPAT_CACHE_VERSION = "5"
+_COMPAT_CACHE_VERSION = "6"
 _WORKFLOW_PATH_PREFIX = ".github/workflows/"
 
 # Upper bound on a harvested path literal. Long strings in a test are prose,
@@ -234,6 +235,53 @@ def extract_path_literals(path: Path) -> set[str]:
     }
 
 
+#: Module-level name a test binds to declare the tree it walks. A leading
+#: underscore is ignored so a module can keep its own naming convention.
+_SCANNED_TREE_NAMES = frozenset({"SCANNED_TREE", "SCANNED_TREES"})
+
+
+def extract_scanned_trees(path: Path) -> set[str]:
+    """Return the globs a test declares as the trees it scans.
+
+    ``extract_path_literals`` recovers an edge for a guard that reads a named
+    file, because reading it is what makes the guard name it. A guard that
+    walks a *directory* names no such thing: it holds a root built from path
+    segments and passes ``"*.py"`` to ``rglob``, and neither half is a repo
+    path that any changed file can match.
+
+    Harvesting anything glob-shaped instead of a declaration was measured and
+    rejected. Test files are full of glob-shaped fixture data -- ``"src/*.py"``
+    appears in eight tests as an argument to a path-matching rule under test --
+    and honouring those bound thirteen unrelated tests to every change under
+    ``src``. Worse, the set grows silently: adding a fixture string would
+    enrol a test in a tree it never reads.
+
+    So this edge is declared. The cost is that a new scanning guard has to say
+    what it scans; the guard is already writing the glob, and binding the scan
+    to the declared name keeps the two from drifting apart.
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return set()
+
+    declared: set[str] = set()
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id.lstrip("_") in _SCANNED_TREE_NAMES for target in node.targets
+        ):
+            continue
+        values: list[ast.expr] = list(node.value.elts) if isinstance(node.value, ast.List | ast.Tuple) else [node.value]
+        declared.update(
+            value.value.strip().strip("/")
+            for value in values
+            if isinstance(value, ast.Constant) and isinstance(value.value, str) and value.value.strip()
+        )
+    return declared
+
+
 def _string_dict_literal(node: ast.expr) -> dict[str, str]:
     """Return the ``str -> str`` pairs of a dict literal, ignoring the rest."""
     if not isinstance(node, ast.Dict):
@@ -355,6 +403,7 @@ def build_compat_dep_map(
                 "hash": _file_hash(test_file),
                 "imports": sorted(resolve_module_aliases(extract_project_imports(test_file, prefixes), aliases)),
                 "paths": sorted(extract_path_literals(test_file)),
+                "globs": sorted(extract_scanned_trees(test_file)),
             }
 
     source_imports: dict[str, dict[str, Any]] = {}
@@ -491,6 +540,18 @@ def _build_path_to_tests_map(test_deps: dict[str, object]) -> dict[str, set[str]
     return path_to_tests
 
 
+def _build_glob_to_tests_map(test_deps: dict[str, object]) -> dict[str, set[str]]:
+    """Build a reverse map from a declared scan glob to the tests declaring it."""
+    glob_to_tests: dict[str, set[str]] = {}
+    for test_rel, entry in test_deps.items():
+        if not isinstance(entry, dict):
+            continue
+        entry_dict = cast("_JsonObject", entry)
+        for glob in _normalize_string_list(entry_dict.get("globs", [])):
+            glob_to_tests.setdefault(glob, set()).add(test_rel)
+    return glob_to_tests
+
+
 def _path_match_keys(rel_path: str) -> set[str]:
     """Return every suffix of ``rel_path`` a test could have written.
 
@@ -503,15 +564,41 @@ def _path_match_keys(rel_path: str) -> set[str]:
     return {"/".join(parts[index:]) for index in range(len(parts))}
 
 
+def _glob_match_patterns(literal: str) -> tuple[str, ...]:
+    """Return the ``fnmatch`` patterns a declared scan glob stands for.
+
+    ``**/`` matches zero directories for ``pathlib.Path.glob`` but not for
+    ``fnmatch``, so ``src/bernstein/**/*.py`` would cover every nested module
+    and silently miss the three that sit directly in the package. Emitting the
+    collapsed pattern alongside the written one lets a guard declare the exact
+    string it passes to ``glob()`` and be selected for everything that string
+    actually walks.
+
+    Note that ``*`` crosses ``/`` under ``fnmatch``, so ``src/bernstein/*.py``
+    also matches nested modules. The error direction is a guard that runs with
+    nothing to check, which is the trade the suffix-key rule already makes.
+    """
+    return tuple(dict.fromkeys((literal, literal.replace("**/", ""))))
+
+
 def _tests_reading_changed_paths(
     changed_files: list[str],
     path_to_tests: dict[str, set[str]],
+    glob_to_tests: dict[str, set[str]],
 ) -> set[str]:
-    """Return tests that name any changed path as a string literal."""
+    """Return tests that name any changed path, by literal or by declared glob."""
     affected: set[str] = set()
+    globs = [(_glob_match_patterns(glob), tests) for glob, tests in glob_to_tests.items()]
     for rel_path in changed_files:
-        for key in _path_match_keys(rel_path):
+        keys = _path_match_keys(rel_path)
+        for key in keys:
             affected.update(path_to_tests.get(key, set()))
+        # Case-sensitive matching: git reports posix paths, while ``fnmatch``
+        # folds case against the host's rules, so an index built on macOS and
+        # one built in CI would otherwise not select the same tests.
+        for patterns, tests in globs:
+            if tests - affected and any(fnmatchcase(key, pattern) for pattern in patterns for key in keys):
+                affected.update(tests)
     return affected
 
 
@@ -679,7 +766,13 @@ def compat_get_affected_tests(
     # import graph has no edge to offer for them. Selecting on the paths a test
     # names is what puts a markdown, INI or registry-parsing guard in front of
     # the diff that breaks it, rather than on main after the merge.
-    affected_tests.update(_tests_reading_changed_paths(changed_files, _build_path_to_tests_map(test_deps)))
+    affected_tests.update(
+        _tests_reading_changed_paths(
+            changed_files,
+            _build_path_to_tests_map(test_deps),
+            _build_glob_to_tests_map(test_deps),
+        )
+    )
     # A generated file is named by the module that generates it, not by the
     # guard that checks it. The tests bound directly to that module are the ones
     # that can notice; its transitive importers cannot, so this edge stops at

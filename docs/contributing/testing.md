@@ -473,3 +473,43 @@ Alias resolution feeds the cached `imports` lists, so changing it means
 bumping `_ANALYZER_CACHE_VERSION` and `_COMPAT_CACHE_VERSION` in
 `src/bernstein/core/quality/test_impact.py`. File hashes alone will not
 invalidate a map whose edges were derived under the old rule.
+
+### Guards that scan a directory must declare the tree
+
+A structural guard reads its subject instead of importing it, so the
+import graph has no edge to offer. For a guard that reads a *named*
+file the selector recovers one anyway: `extract_path_literals` harvests
+the paths a test writes, and reading `AGENTS.md` is what makes the
+guard name it.
+
+A guard that walks a *directory* names nothing a changed path can
+match. It holds a root assembled from segments
+(`REPO_ROOT / "src" / "bernstein"`) and passes `"*.py"` to `rglob`, and
+neither half is a repo path. `test_cast_alias_form` fails on any new
+module under `src/bernstein` that declares a string-valued cast alias,
+and before this edge existed no diff selected it - so such a PR went
+green in its own lane and failed for the first time in the merge queue,
+where the failure blocks every entry behind it.
+
+Such a guard declares the tree it walks as a module-level
+`SCANNED_TREE` (or `SCANNED_TREES` for several), spelled repo-relative,
+and drives its own scan from that constant so the two cannot drift:
+
+```python
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCANNED_TREE = "src/bernstein/**/*.py"
+
+for path in sorted(REPO_ROOT.glob(SCANNED_TREE)):
+    ...
+```
+
+The declaration is deliberate rather than inferred. Harvesting every
+glob-shaped string was measured first and rejected: `"src/*.py"` is
+fixture data in eight tests here, and honouring those bound thirteen
+unrelated tests to every change under `src`, a set that would grow
+silently as fixtures are added. Matching is `fnmatch` against every
+suffix of the changed path, so `*` crosses `/` and `**/` also matches
+zero directories, the way `Path.glob` treats it.
+
+This edge feeds the cached map, so changing it means bumping
+`_COMPAT_CACHE_VERSION` for the same reason alias resolution does.

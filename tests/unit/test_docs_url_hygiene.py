@@ -12,14 +12,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-_SRC = Path(__file__).resolve().parents[2] / "src" / "bernstein"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+#: The tree this guard walks, spelled as a repo-relative glob. A guard that
+#: scans a directory imports nothing from it, so this literal is the only
+#: edge the affected-test selector can bind a change inside the tree to.
+_SCANNED_TREE = "src/bernstein/**/*.py"
 
 _DEAD_DOCS_HOST = "chernistry.github.io"
 
 
 def _dead_link_sites() -> list[str]:
     hits: list[str] = []
-    for py in _SRC.rglob("*.py"):
+    for py in _REPO_ROOT.glob(_SCANNED_TREE):
         try:
             text = py.read_text(encoding="utf-8")
         except UnicodeDecodeError:

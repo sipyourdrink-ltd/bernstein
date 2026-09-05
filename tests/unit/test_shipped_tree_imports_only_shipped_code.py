@@ -19,7 +19,10 @@ import ast
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PACKAGE_ROOT = REPO_ROOT / "src" / "bernstein"
+#: The tree this guard walks, spelled as a repo-relative glob. A guard that
+#: scans a directory imports nothing from it, so this literal is the only
+#: edge the affected-test selector can bind a change inside the tree to.
+SCANNED_TREE = "src/bernstein/**/*.py"
 
 #: Top-level directories that live in the repository and never in the wheel.
 REPO_ONLY_ROOTS = frozenset({"scripts", "tests", "tools", "benchmarks", "docs", "examples"})
@@ -38,7 +41,7 @@ def _imported_roots(tree: ast.AST) -> set[str]:
 
 def test_no_shipped_module_imports_a_repository_only_directory() -> None:
     offenders: list[str] = []
-    for path in sorted(PACKAGE_ROOT.rglob("*.py")):
+    for path in sorted(REPO_ROOT.glob(SCANNED_TREE)):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for root in sorted(_imported_roots(tree) & REPO_ONLY_ROOTS):
             offenders.append(f"{path.relative_to(REPO_ROOT)} imports {root!r}")
