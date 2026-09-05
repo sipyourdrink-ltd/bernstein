@@ -185,7 +185,11 @@ def runs_scorecard_cmd(run_id: str, workdir: Path | None, verify: bool, output_j
         else:
             console.print(f"[red]FAIL[/red] {result.description}")
         if not result.ok:
-            raise click.ClickException("scorecard verification failed")
+            # The mismatch has already been reported: as the JSON envelope on
+            # the machine path, as the FAIL line on the human path. Exit
+            # non-zero without emitting a second message, which would append a
+            # trailing line after the envelope and stop it parsing as JSON.
+            raise click.exceptions.Exit(1)
         return
 
     with WorkLedger.open(ledger_dir) as journal:
