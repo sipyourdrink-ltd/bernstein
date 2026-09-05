@@ -1,4 +1,4 @@
-"""Tests for CAS garbage collection (bernsstein.core.persistence.cas_gc)."""
+"""Tests for CAS garbage collection (bernstein.core.persistence.cas_gc)."""
 
 from __future__ import annotations
 
@@ -8,16 +8,34 @@ from pathlib import Path
 
 import pytest
 
+from bernstein.core.persistence import cas_gc as cas_gc_mod
 from bernstein.core.persistence.cas_gc import (
+    RootSet,
     _extract_digests_from_obj,
     _scan_audit_seals_for_digests,
     _scan_backlog_for_digests,
     _scan_lineage_for_digests,
     _scan_wal_for_digests,
     collect_referenced_digests,
+    collect_root_set,
     prune_cas_store,
 )
 from bernstein.core.persistence.cas_store import CASStore
+
+
+def _age_entry(cas_dir: Path, digest: str, *, days: int) -> None:
+    """Backdate one CAS entry by rewriting the ``created_at`` in its metadata.
+
+    Retention is decided on that field, so this is the only way to make an
+    entry old. Passing ``retention_days=0`` instead sets the cutoff to
+    ``time.time()`` and leaves the comparison against an entry written
+    microseconds earlier to the clock's resolution, which is 15ms on
+    Windows and makes the outcome a coin flip.
+    """
+    meta_path = cas_dir / digest[:2] / f"{digest}.meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["created_at"] = time.time() - (days * 86400)
+    meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
 
 
 class TestExtractDigestsFromObj:
@@ -200,6 +218,43 @@ class TestScanLineageForDigests:
         assert len(result) == 2
 
 
+class TestLineageScannerToleratesOddLines:
+    """One malformed spine line must not take the whole root out of the mark."""
+
+    def test_a_non_string_content_hash_is_skipped(self, tmp_path: Path) -> None:
+        sdd = tmp_path / ".sdd"
+        spine = sdd / "lineage" / "run-1"
+        spine.mkdir(parents=True)
+        good = "sha256:" + ("a" * 64)
+        spine.joinpath("spine.jsonl").write_text(
+            json.dumps({"content_hash": 12345})
+            + "\n"
+            + json.dumps({"content_hash": good})
+            + "\n",
+            encoding="utf-8",
+        )
+        assert _scan_lineage_for_digests(sdd) == {"a" * 64}
+
+    def test_a_line_that_is_not_an_object_is_skipped(self, tmp_path: Path) -> None:
+        sdd = tmp_path / ".sdd"
+        spine = sdd / "lineage" / "run-1"
+        spine.mkdir(parents=True)
+        good = "sha256:" + ("b" * 64)
+        spine.joinpath("spine.jsonl").write_text(
+            "[1, 2, 3]\n" + json.dumps({"content_hash": good}) + "\n",
+            encoding="utf-8",
+        )
+        assert _scan_lineage_for_digests(sdd) == {"b" * 64}
+
+    def test_an_odd_line_does_not_make_the_root_unreadable(self, tmp_path: Path) -> None:
+        """The mark phase stays complete, so the sweep is not blocked either."""
+        sdd = tmp_path / ".sdd"
+        spine = sdd / "lineage" / "run-1"
+        spine.mkdir(parents=True)
+        spine.joinpath("spine.jsonl").write_text(json.dumps({"content_hash": None}) + "\n", encoding="utf-8")
+        assert collect_root_set(sdd).complete
+
+
 class TestScanBacklogForDigests:
     """Tests for _scan_backlog_for_digests."""
 
@@ -339,11 +394,7 @@ class TestPruneCASStore:
         store = CASStore(cas_dir)
         old_digest = store.put(b"old-content", content_type="text/plain")
 
-        # Override the created_at by rewriting metadata
-        meta_path = cas_dir / old_digest[:2] / f"{old_digest}.meta.json"
-        meta_data = json.loads(meta_path.read_text(encoding="utf-8"))
-        meta_data["created_at"] = time.time() - (31 * 86400)
-        meta_path.write_text(json.dumps(meta_data, indent=2) + "\n", encoding="utf-8")
+        _age_entry(cas_dir, old_digest, days=31)
 
         # Run GC with 30-day retention
         result = prune_cas_store(sdd_dir, retention_days=30)
@@ -362,9 +413,10 @@ class TestPruneCASStore:
 
         store = CASStore(cas_dir)
         digest = store.put(b"dry-run-content", content_type="text/plain")
+        _age_entry(cas_dir, digest, days=31)
 
         # Run GC in dry-run mode
-        result = prune_cas_store(sdd_dir, retention_days=0, dry_run=True)
+        result = prune_cas_store(sdd_dir, retention_days=30, dry_run=True)
 
         # Entry should still exist
         assert store.has(digest)
@@ -380,10 +432,11 @@ class TestPruneCASStore:
         cas_dir.mkdir()
 
         store = CASStore(cas_dir)
-        store.put(b"orphan-content", content_type="text/plain")
+        digest = store.put(b"orphan-content", content_type="text/plain")
+        _age_entry(cas_dir, digest, days=31)
 
         # Run GC
-        prune_cas_store(sdd_dir, retention_days=0, dry_run=False)
+        prune_cas_store(sdd_dir, retention_days=30, dry_run=False)
 
         # Check that a receipt was written (a new entry in CAS)
         entries = store.list_entries()
@@ -408,6 +461,26 @@ class TestRunCasGCCli:
         assert success
         captured = capsys.readouterr()
         assert "DRY RUN" in captured.out or "Would delete" in captured.out
+
+    def test_a_partial_mark_exits_nonzero_and_says_why(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An operator running `bernstein gc cas` must hear about a refusal."""
+        from bernstein.core.persistence.cas_gc import run_cas_gc_cli
+
+        sdd_dir = tmp_path / ".sdd"
+        sdd_dir.mkdir()
+        (sdd_dir / "cas").mkdir()
+        CASStore(sdd_dir / "cas").put(b"orphan", content_type="text/plain")
+
+        def boom(_sdd: Path) -> set[str]:
+            raise OSError("unreadable")
+
+        monkeypatch.setattr(cas_gc_mod, "_scan_wal_for_digests", boom)
+        success = run_cas_gc_cli(tmp_path, days=30, yes=True)
+
+        assert not success
+        assert "refusing to delete" in capsys.readouterr().out
 
     def test_negative_days_returns_false(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Negative days returns False."""
@@ -466,3 +539,134 @@ class TestCASGCCommandIsReachable:
 
         result = CliRunner().invoke(cli, ["gc", "cas", "--workdir", str(tmp_path), "--yes"])
         assert result.exit_code != 0
+
+
+class TestMarkPhaseCompleteness:
+    """A sweep is only as safe as its mark."""
+
+    @staticmethod
+    def _store_one_old_unreferenced_blob(tmp_path: Path) -> tuple[CASStore, str]:
+        sdd = tmp_path / ".sdd"
+        sdd.mkdir()
+        store = CASStore(sdd / "cas")
+        digest = store.put(b"payload", content_type="text/plain")
+        _age_entry(sdd / "cas", digest, days=120)
+        return store, digest
+
+    def test_a_readable_root_set_is_complete(self, tmp_path: Path) -> None:
+        sdd = tmp_path / ".sdd"
+        sdd.mkdir()
+        root_set = collect_root_set(sdd)
+        assert root_set.complete
+        assert root_set.unreadable_roots == ()
+
+    def test_a_failing_scanner_is_named_not_only_logged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sdd = tmp_path / ".sdd"
+        sdd.mkdir()
+
+        def boom(_sdd: Path) -> set[str]:
+            raise OSError("lineage directory is unreadable")
+
+        monkeypatch.setattr(cas_gc_mod, "_scan_lineage_for_digests", boom)
+        root_set = collect_root_set(sdd)
+        assert not root_set.complete
+        assert root_set.unreadable_roots == ("Lineage",)
+
+    def test_a_partial_mark_deletes_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The blob's only reference may live in the root that did not open.
+
+        Before this guard the scanner's failure was logged and the sweep ran
+        on the digests it did have, so an old blob referenced only from the
+        unreadable root was deleted as unreferenced.
+        """
+        store, digest = self._store_one_old_unreferenced_blob(tmp_path)
+
+        def boom(_sdd: Path) -> set[str]:
+            raise OSError("lineage directory is unreadable")
+
+        monkeypatch.setattr(cas_gc_mod, "_scan_lineage_for_digests", boom)
+        result = prune_cas_store(tmp_path / ".sdd", retention_days=30)
+
+        assert result.unreadable_roots == ("Lineage",)
+        assert store.get(digest) is not None, "a blob was deleted on a partial mark"
+        assert any("refusing to delete" in error for error in result.errors)
+
+    def test_a_partial_mark_still_reports_what_it_would_have_considered(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The counts stay informative, the way they do for a dry run."""
+        self._store_one_old_unreferenced_blob(tmp_path)
+
+        def boom(_sdd: Path) -> set[str]:
+            raise OSError("unreadable")
+
+        monkeypatch.setattr(cas_gc_mod, "_scan_wal_for_digests", boom)
+        result = prune_cas_store(tmp_path / ".sdd", retention_days=30)
+        assert result.scanned_entries == 1
+        assert result.deleted_entries == 1
+
+    def test_a_complete_mark_still_deletes(self, tmp_path: Path) -> None:
+        """The guard must not stop an ordinary sweep."""
+        store, digest = self._store_one_old_unreferenced_blob(tmp_path)
+        result = prune_cas_store(tmp_path / ".sdd", retention_days=30)
+        assert result.unreadable_roots == ()
+        assert result.errors == []
+        assert result.deleted_entries == 1
+        assert store.get(digest) is None
+
+    def test_a_partial_mark_writes_no_receipt(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A receipt always attests a sweep decided against every root."""
+        store, _digest = self._store_one_old_unreferenced_blob(tmp_path)
+
+        def boom(_sdd: Path) -> set[str]:
+            raise OSError("unreadable")
+
+        monkeypatch.setattr(cas_gc_mod, "_scan_backlog_for_digests", boom)
+        prune_cas_store(tmp_path / ".sdd", retention_days=30)
+        receipts = [e for e in store.list_entries() if e.metadata.get("type") == "cas_prune_receipt"]
+        assert receipts == []
+
+
+class TestRootSetHash:
+    """The receipt's root_set_hash says which reachable set justified a sweep."""
+
+    def test_the_hash_does_not_depend_on_discovery_order(self) -> None:
+        digests = {"a" * 64, "b" * 64, "c" * 64}
+        assert RootSet(frozenset(digests)).content_hash() == RootSet(frozenset(reversed(list(digests)))).content_hash()
+
+    def test_two_different_root_sets_hash_differently(self) -> None:
+        assert RootSet(frozenset({"a" * 64})).content_hash() != RootSet(frozenset({"b" * 64})).content_hash()
+
+    def test_the_empty_root_set_has_a_hash(self) -> None:
+        assert RootSet(frozenset()).content_hash().startswith("sha256:")
+
+    def test_the_receipt_carries_the_root_set_hash(self, tmp_path: Path) -> None:
+        """It was ``null`` in every receipt ever written before this change."""
+        sdd = tmp_path / ".sdd"
+        sdd.mkdir()
+        store = CASStore(sdd / "cas")
+        digest = store.put(b"payload", content_type="text/plain")
+        _age_entry(sdd / "cas", digest, days=120)
+
+        result = prune_cas_store(sdd, retention_days=30)
+        assert result.deleted_entries == 1
+
+        receipts = [e for e in store.list_entries() if e.metadata.get("type") == "cas_prune_receipt"]
+        assert len(receipts) == 1
+        body = json.loads(store.get(receipts[0].digest) or b"{}")
+        assert body["version"] == 2
+        assert body["root_set_hash"] == result.root_set_hash
+        assert body["root_set_hash"].startswith("sha256:")
+
+
+class TestCollectReferencedDigestsStillWorks:
+    def test_the_digests_only_view_matches_the_root_set(self, tmp_path: Path) -> None:
+        sdd = tmp_path / ".sdd"
+        sdd.mkdir()
+        assert collect_referenced_digests(sdd) == set(collect_root_set(sdd).digests)
