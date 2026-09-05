@@ -22,15 +22,10 @@ from typing import TYPE_CHECKING
 import click
 
 from bernstein.cli.helpers import console
+from bernstein.core.security.audit import load_or_create_audit_key
 
 if TYPE_CHECKING:
     from bernstein.core.evidence.output_diff import OutputDiff
-
-
-def _load_hmac_key() -> bytes:
-    from bernstein.core.security.audit import load_or_create_audit_key
-
-    return load_or_create_audit_key()
 
 
 @click.group("evidence")
@@ -152,7 +147,7 @@ def evidence_verify_cmd(task: str, workdir: str) -> None:
     result = verify_evidence_bundle(
         workdir=root,
         lineage_root=root / ".sdd" / "lineage",
-        hmac_key=_load_hmac_key(),
+        hmac_key=load_or_create_audit_key(),
         task_id=task,
     )
     console.print()

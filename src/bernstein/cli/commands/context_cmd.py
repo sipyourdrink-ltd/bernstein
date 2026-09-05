@@ -38,15 +38,10 @@ from typing import TYPE_CHECKING
 import click
 
 from bernstein.cli.helpers import console
+from bernstein.core.security.audit import load_or_create_audit_key
 
 if TYPE_CHECKING:
     from bernstein.core.tasks.models import Task
-
-
-def _load_hmac_key() -> bytes:
-    from bernstein.core.security.audit import load_or_create_audit_key
-
-    return load_or_create_audit_key()
 
 
 def _sdd_dir(workdir: Path) -> Path:
@@ -69,7 +64,7 @@ def _load_task(workdir: Path, task_id: str) -> Task | None:
 def _chain(workdir: Path):
     from bernstein.core.security.audit_chain import AuditChainStore
 
-    return AuditChainStore(_sdd_dir(workdir) / "audit", key=_load_hmac_key())
+    return AuditChainStore(_sdd_dir(workdir) / "audit", key=load_or_create_audit_key())
 
 
 @click.group("context")

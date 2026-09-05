@@ -22,12 +22,7 @@ from pathlib import Path
 import click
 
 from bernstein.cli.helpers import console
-
-
-def _load_hmac_key() -> bytes:
-    from bernstein.core.security.audit import load_or_create_audit_key
-
-    return load_or_create_audit_key()
+from bernstein.core.security.audit import load_or_create_audit_key
 
 
 def _lineage_root(workdir: Path) -> Path:
@@ -73,7 +68,7 @@ def gate_verify_cmd(run_id: str, inputs_file: str, workdir: str) -> None:
     )
 
     root = Path(workdir).resolve()
-    key = _load_hmac_key()
+    key = load_or_create_audit_key()
     lineage_root = _lineage_root(root)
     claimed = json.loads(Path(inputs_file).read_text(encoding="utf-8"))
 
