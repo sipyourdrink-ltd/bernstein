@@ -25,7 +25,10 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from contextlib import AbstractContextManager
     from pathlib import Path
+
+from bernstein.core.persistence.file_locks import LockTimeout, cross_process_lock
 
 logger = logging.getLogger(__name__)
 
@@ -84,10 +87,23 @@ class UncommittedIndex:
 
         {"run_id": "r-1", "seq": 3, "entry_hash": "ab12..."}
 
-    The index is a *secondary cache*: if it is missing, truncated, or
-    otherwise corrupt, callers must fall back to a full WAL scan and
-    rebuild the index from the scan result. Loss of the index therefore
-    only costs one slow boot - never correctness.
+    :meth:`WALRecovery.scan_all_uncommitted` trusts an index it can parse,
+    so this file is authoritative rather than advisory, and the invariant
+    that makes that safe is: **the index is either absent or right.**
+
+    Three rules hold it up:
+
+    * *Absent means scan.* A missing or unparseable index sends the caller
+      to a full WAL scan that rebuilds it. Losing the file costs one slow
+      boot, never a missed record.
+    * *Absent stays absent.* Only :meth:`rebuild` creates the file.
+      :meth:`add` is a no-op when it is gone, because an append-mode write
+      would resurrect it holding one row - short, well-formed, parseable,
+      and trusted, which is the one state a reader must never see.
+    * *One writer at a time.* Every mutation and the read pair take a
+      cross-process lock. ``add`` is a bare append while ``remove`` and
+      ``rebuild`` are load-modify-save, so without one a lost update drops
+      a run from recovery entirely.
 
     All mutating operations ``fsync`` the file so a crash cannot leave
     the on-disk form diverging from the in-process state.
@@ -95,14 +111,49 @@ class UncommittedIndex:
 
     _FILENAME = "uncommitted.idx.json"
 
+    #: Bound on how long a mutation waits for the index lock. The WAL
+    #: append path runs through here, so a stuck holder must degrade into a
+    #: reported failure rather than stall the orchestrator forever.
+    _LOCK_TIMEOUT_SECONDS = 5.0
+
     def __init__(self, sdd_dir: Path) -> None:
         self._path = sdd_dir / "runtime" / "wal" / self._FILENAME
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock_path = self._path.with_name(self._path.name + ".lock")
 
     @property
     def path(self) -> Path:
         """Return the on-disk path of the index file."""
         return self._path
+
+    def _locked(self) -> AbstractContextManager[None]:
+        """Return the cross-process index lock for one operation.
+
+        Never nested: :meth:`load` and :meth:`_write_all` stay lock-free and
+        are only called from inside a public method that already holds it.
+        ``flock`` will not grant a second descriptor to a process already
+        holding one, so a nested acquire would deadlock rather than reenter.
+        """
+        return cross_process_lock(self._lock_path, timeout=self._LOCK_TIMEOUT_SECONDS)
+
+    def read_rows(self) -> list[tuple[str, int, str]] | None:
+        """Return the indexed rows, or ``None`` when the index cannot be used.
+
+        ``None`` covers both "no index file" and "index we cannot parse",
+        which are the same instruction to the caller: scan everything and
+        rebuild. The existence check and the read happen under one lock, so
+        a concurrent :meth:`rebuild` cannot land between them.
+
+        Returns:
+            The rows, or ``None`` when there is no usable index.
+        """
+        try:
+            with self._locked():
+                if not self._path.exists():
+                    return None
+                return self.load()
+        except (ValueError, OSError, LockTimeout):
+            return None
 
     # ------------------------------------------------------------------
     # Load / persist
@@ -161,13 +212,32 @@ class UncommittedIndex:
     # Mutations
     # ------------------------------------------------------------------
 
-    def add(self, run_id: str, seq: int, entry_hash: str) -> None:
+    def add(self, run_id: str, seq: int, entry_hash: str) -> bool:
         """Append ``(run_id, seq, entry_hash)`` to the index.
+
+        A no-op when the index file is absent, and that is the point rather
+        than an optimisation. Append mode creates what it opens, so an add
+        after :meth:`invalidate` would resurrect the file holding a single
+        row: short, well-formed, parseable, and therefore trusted by
+        :meth:`WALRecovery.scan_all_uncommitted`, which would then walk past
+        every other run that still needs recovery. Absent has to stay absent
+        until a full scan rebuilds it.
 
         Duplicates are allowed on disk - :meth:`load` is tolerant of them
         as long as each row is individually well-formed.  Callers that
         care about uniqueness should use :meth:`remove` before re-adding.
+
+        Returns:
+            True when the row was written. False when there was no index to
+            append to, which is not a failure: the next scan rebuilds it.
         """
+        with self._locked():
+            if not self._path.exists():
+                return False
+            return self._append_row(run_id, seq, entry_hash)
+
+    def _append_row(self, run_id: str, seq: int, entry_hash: str) -> bool:
+        """Append one row. Caller holds the lock and has checked existence."""
         with self._path.open("a") as f:
             f.write(
                 json.dumps(
@@ -178,6 +248,7 @@ class UncommittedIndex:
             )
             f.flush()
             os.fsync(f.fileno())
+        return True
 
     def remove(self, run_id: str, seq: int) -> bool:
         """Remove every row matching ``(run_id, seq)`` from the index.
@@ -186,14 +257,17 @@ class UncommittedIndex:
         corrupt indexes are treated as empty (no rows removed, no error).
         """
         try:
-            rows = self.load()
-        except ValueError:
-            # Corrupt index: nothing to remove, let the next scan rebuild.
+            with self._locked():
+                rows = self.load()
+                kept = [r for r in rows if not (r[0] == run_id and r[1] == seq)]
+                if len(kept) == len(rows):
+                    return False
+                self._write_all(kept)
+        except (ValueError, LockTimeout):
+            # Corrupt index, or a holder we could not wait out: nothing is
+            # removed and the next scan rebuilds. Leaving a row in is the
+            # safe direction - it costs one WAL read, not a missed record.
             return False
-        kept = [r for r in rows if not (r[0] == run_id and r[1] == seq)]
-        if len(kept) == len(rows):
-            return False
-        self._write_all(kept)
         return True
 
     def remove_run(self, run_id: str) -> int:
@@ -204,18 +278,23 @@ class UncommittedIndex:
         stale rows pointing at an already-recovered WAL.
         """
         try:
-            rows = self.load()
-        except ValueError:
+            with self._locked():
+                rows = self.load()
+                kept = [r for r in rows if r[0] != run_id]
+                removed = len(rows) - len(kept)
+                if removed:
+                    self._write_all(kept)
+        except (ValueError, LockTimeout):
             return 0
-        kept = [r for r in rows if r[0] != run_id]
-        removed = len(rows) - len(kept)
-        if removed:
-            self._write_all(kept)
         return removed
 
     def rebuild(self, rows: list[tuple[str, int, str]]) -> None:
-        """Replace the index with *rows* (used after a fallback scan)."""
-        self._write_all(rows)
+        """Replace the index with *rows* (used after a fallback scan).
+
+        The only operation that may create the file. See :meth:`add`.
+        """
+        with self._locked():
+            self._write_all(rows)
 
     def invalidate(self) -> bool:
         """Delete the index so the next scan falls back and rebuilds it.
@@ -233,8 +312,9 @@ class UncommittedIndex:
             which is the one case the caller has to shout about.
         """
         try:
-            self._path.unlink(missing_ok=True)
-        except OSError:
+            with self._locked():
+                self._path.unlink(missing_ok=True)
+        except (OSError, LockTimeout):
             return False
         return True
 
@@ -291,7 +371,12 @@ class WALWriter:
         try:
             found = _uncommitted_in_runs(wal_dir, self._sdd_dir) if wal_dir.is_dir() else []
             index.rebuild([(run_id, entry.seq, entry.entry_hash) for run_id, entry in found])
-        except OSError:
+        except (OSError, ValueError, LockTimeout):
+            # ValueError covers UnicodeDecodeError: the reader opens as UTF-8
+            # and a torn write mid-multibyte is exactly what crash recovery
+            # exists for. This runs in WALWriter.__init__, before the guard
+            # that wraps replay, so letting it out would stop the
+            # orchestrator constructing at all over one garbled log.
             logger.warning("could not seed the uncommitted index at %s", index.path, exc_info=True)
 
     def _load_tail(self) -> tuple[int, str]:
@@ -962,12 +1047,9 @@ class WALRecovery:
         Returns:
             The run ids with at least one uncommitted entry, or ``None``.
         """
-        if not index.path.exists():
-            return None
-        try:
-            rows = index.load()
-        except ValueError:
-            logger.warning("uncommitted index at %s is unusable; falling back to a full scan", index.path)
+        rows = index.read_rows()
+        if rows is None:
+            logger.debug("no usable uncommitted index at %s; falling back to a full scan", index.path)
             return None
         return {run_id for run_id, _seq, _entry_hash in rows}
 
