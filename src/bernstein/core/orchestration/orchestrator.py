@@ -882,6 +882,48 @@ class Orchestrator:
             self._spawner.set_quality_gate_config(self._quality_gate_config)
         if hasattr(self._spawner, "set_run_id"):
             self._spawner.set_run_id(self._run_id)
+        if hasattr(self._spawner, "set_max_agent_runtime_s"):
+            self._spawner.set_max_agent_runtime_s(config.max_agent_runtime_s)
+
+        # Run-root identity (#5047): one parentless identity per run, the issuer
+        # every top-level agent's delegation hop names. Parentless, so it records
+        # no hop of its own -- an empty chain is not a broken chain -- but it
+        # gives the first real hop a parent to be graded against. Without it,
+        # top-level agents have no issuer, no hop is recorded, and a single-level
+        # run still verifies as "no receipts".
+        #
+        # Scope is left unconstrained on both axes rather than snapshotted. A
+        # run's task set is not bounded at start: tasks are fetched per tick and
+        # created during the run, so a snapshot taken here would make every task
+        # created later a widening on its own agent's hop and fail verification
+        # for a run that did nothing wrong. ``None`` is the widest value on every
+        # DelegationScope axis, so an unconstrained root is exactly "the whole
+        # run" and is a valid ceiling for any child. This codebase has no
+        # run-level file allowlist, so that axis is unconstrained for the same
+        # reason.
+        self._run_root_identity_id = ""
+        try:
+            from bernstein.core.identity.agent_jwt import AgentIdentityStore
+
+            _root_store = AgentIdentityStore(workdir / ".sdd" / "auth")
+            _root_identity, _ = _root_store.create_identity(
+                f"run-root-{run_id}",
+                "manager",
+                metadata={"source": "orchestrator", "run_id": run_id, "run_root": "true"},
+            )
+            self._run_root_identity_id = _root_identity.id
+        except Exception as _root_exc:
+            # Degrades to the pre-#5047 behaviour: no root means no issuer, so
+            # no hop is recorded and `delegation verify` reports "no receipts".
+            # Loud, because a run that silently stops being verifiable is the
+            # thing this change exists to prevent.
+            logger.warning(
+                "Run-root identity not minted for %s: %s. Delegation receipts will not be recorded for this run.",
+                run_id,
+                sanitize_log(str(_root_exc)),
+            )
+        if hasattr(self._spawner, "set_run_root_identity_id"):
+            self._spawner.set_run_root_identity_id(self._run_root_identity_id)
 
         # Convergence guard: blocks spawn waves when merge queue, active
         # agent count, error rate, or spawn rate exceed safe thresholds.
@@ -963,6 +1005,7 @@ class Orchestrator:
                 model=None,
                 workflow_name=_wf_name,
                 workflow_definition_hash=_wf_hash,
+                run_root_identity_id=self._run_root_identity_id,
             )
             save_manifest(self._manifest, workdir / ".sdd")
         except Exception:
@@ -3353,6 +3396,7 @@ class Orchestrator:
         )
         self._mark_finalization_started()
         try:
+            self._record_run_quiescence()
             self._seal_journal_into_lineage_spine()
             if self._otel_stream is not None:
                 self._otel_stream.finalize()
@@ -3364,6 +3408,45 @@ class Orchestrator:
             self._recorder.path,
             self._recorder.fingerprint()[:16] + "...",
         )
+
+    def _record_run_quiescence(self) -> None:
+        """Record whether every process the run started had exited.
+
+        Appended *before* the seal, so the sealed head and the run receipt
+        cover the answer rather than being written over an unanswered
+        question. A tool process that outlived its wrapper can still write
+        into a worktree or the integration branch after the seal; this row is
+        what makes that visible in the record instead of invisible (#5272).
+
+        Never raises: a run that already completed must not fail because its
+        quiescence could not be established. A failure to check is recorded as
+        a failure to check.
+        """
+        try:
+            from bernstein.core.orchestration.quiescence import check_quiescence
+
+            groups = self._spawner.session_process_groups() if hasattr(self._spawner, "session_process_groups") else {}
+            report = check_quiescence(groups)
+        except Exception:
+            logger.warning("run_quiescence check failed", exc_info=True)
+            self._recorder.record(
+                "run_quiescence",
+                run_id=self._run_id,
+                verified=False,
+                residual=[],
+                method="check_failed",
+                checked=0,
+            )
+            return
+
+        if report.residual:
+            logger.warning(
+                "run %s sealed with %d process group(s) still alive: %s",
+                self._run_id,
+                len(report.residual),
+                ", ".join(f"{g.session_id}:{g.pgid}" for g in report.residual),
+            )
+        self._recorder.record("run_quiescence", run_id=self._run_id, **report.to_dict())
 
     def _seal_journal_into_lineage_spine(self) -> None:
         """Wire the journal head into the f01 lineage spine (issue #2293).

@@ -28,6 +28,7 @@ from bernstein.adapters.registry import adapter_name_for_provider, get_adapter, 
 from bernstein.adapters.skills_injector import inject_skills
 from bernstein.agents.registry import AgentRegistry, get_registry
 from bernstein.bridges.base import AgentState, AgentStatus, BridgeError, RuntimeBridge, SpawnRequest
+from bernstein.core import defaults as _defaults
 from bernstein.core.agents import project_context as _project_context
 from bernstein.core.agents.adapter_health import AdapterHealthMonitor
 from bernstein.core.agents.attachment_dispatch import (
@@ -1671,6 +1672,10 @@ class AgentSpawner:
         # understands - see ``_coerce_model_for_non_claude_adapter``.
         self._default_model = default_model
         self._resource_limits = resource_limits
+        # Bare spawners (for example worker-only entry points) start from the
+        # current tuning-backed orchestrator value. Orchestrator owners wire
+        # their concrete config after construction via set_max_agent_runtime_s.
+        self._max_agent_runtime_s = int(_defaults.ORCHESTRATOR.max_agent_runtime_s)
         self._adapter_cache: dict[str, CLIAdapter] = {}
         self._templates_dir = templates_dir
         self._workdir = workdir
@@ -1899,7 +1904,39 @@ class AgentSpawner:
             self._identity_store_instance = AgentIdentityStore(auth_dir)
         return self._identity_store_instance
 
-    def _issue_agent_token(self, session_id: str, role: str, task_ids: list[str]) -> Path:
+    def _audit_spawn_refused_unreceipted(self, session_id: str, issuer: str, reason: str) -> None:
+        """Record that a spawn was refused because its delegation was unreceipted.
+
+        Best-effort by design: the refusal itself is already carried by the
+        exception that is about to propagate, so a failure to write the audit row
+        must not mask it or replace it with a second, less informative error.
+        """
+        try:
+            from bernstein.core.security.audit_chain import EVENT_SPAWN_REFUSED_UNRECEIPTED, AuditChainStore
+            from bernstein.core.security.sanitize import sanitize_log
+
+            AuditChainStore(self._workdir / ".sdd" / "audit").log(
+                event_type=EVENT_SPAWN_REFUSED_UNRECEIPTED,
+                actor="spawner",
+                resource_type="agent_session",
+                resource_id=session_id,
+                details={
+                    "run_id": getattr(self, "_run_id", ""),
+                    "issuer": issuer,
+                    "reason": sanitize_log(reason),
+                },
+            )
+        except Exception as exc:  # intentional-broad-except: audit mirroring must never mask the refusal
+            logger.warning("Spawn-refusal audit row not written for %s: %s", session_id, type(exc).__name__)
+
+    def _issue_agent_token(
+        self,
+        session_id: str,
+        role: str,
+        task_ids: list[str],
+        *,
+        parent_identity_id: str | None = None,
+    ) -> Path:
         """Issue a short-lived task-scoped JWT and write it to a 0600 token file.
 
         The token file path is recorded in ``_agent_token_files`` for cleanup
@@ -1918,17 +1955,27 @@ class AgentSpawner:
             session_id: The agent session ID (used as identity ID).
             role: The agent's role.
             task_ids: Task IDs the agent is authorised to act on.
+            parent_identity_id: The delegating identity: the spawning agent's
+                identity for a nested spawn, otherwise the run root.  Minting
+                with it records one delegation hop (#5047); ``None`` records
+                none, which is the pre-#5047 behaviour.
 
         Returns:
             Absolute path to the written token file.
+
+        Raises:
+            DelegationWriteError: the delegation hop could not be recorded.
+                Deliberately not caught here: the caller fails the spawn closed
+                on this type alone.
         """
         import os
 
         _, raw_token = self._identity_store.create_identity(
             session_id,
             role,
+            parent_identity_id=parent_identity_id,
             task_ids=task_ids,
-            metadata={"source": "spawner"},
+            metadata={"source": "spawner", "run_id": getattr(self, "_run_id", "")},
         )
 
         # ``resolve(strict=False)`` returns an absolute path even when the
@@ -2137,6 +2184,10 @@ class AgentSpawner:
         """Wire in the orchestrator's :class:`QualityGatesConfig` (#4393)."""
         self._quality_gate_config = config
 
+    def set_max_agent_runtime_s(self, max_agent_runtime_s: int) -> None:
+        """Wire in the orchestrator's upward-only runtime floor."""
+        self._max_agent_runtime_s = int(max_agent_runtime_s)
+
     def set_run_id(self, run_id: str) -> None:
         """Wire in the orchestrator's run id.
 
@@ -2144,6 +2195,18 @@ class AgentSpawner:
         rows by run, so without this the rows have no spine to join.
         """
         self._run_id = run_id
+
+    def set_run_root_identity_id(self, identity_id: str) -> None:
+        """Wire in the run-root identity every top-level agent is minted under.
+
+        The orchestrator mints one parentless identity per run and passes its id
+        here (#5047).  It becomes the issuer of each top-level agent's delegation
+        hop, which is what makes the first hop gradable: without it a top-level
+        agent has no parent, no hop is recorded, and a single-level run verifies
+        as "no receipts".  Empty when the run minted no root, in which case the
+        pre-#5047 behaviour stands and nothing is recorded.
+        """
+        self._run_root_identity_id = identity_id
 
     def _merge_and_cleanup_worktree(
         self,
@@ -3403,7 +3466,7 @@ class AgentSpawner:
                     command=[],
                     prompt=prompt,
                     workdir=str(spawn_cwd),
-                    timeout_seconds=session.timeout_s or 1800,
+                    timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
                     log_path=str(preferred_log_path),
                     role=session.role,
                     model=model_config.model,
@@ -3479,8 +3542,7 @@ class AgentSpawner:
                 else:
                     os.environ[_k] = _prev
 
-    @staticmethod
-    def _resolve_spawn_timeout(tasks: list[Task]) -> int:
+    def _resolve_spawn_timeout(self, tasks: list[Task]) -> int:
         """Resolve the wall-clock timeout bucket for a task batch (#4571).
 
         Delegates to ``_batch_timeout_seconds`` so the value armed on the
@@ -3489,7 +3551,7 @@ class AgentSpawner:
         """
         from bernstein.core.tasks.task_lifecycle import _batch_timeout_seconds
 
-        return _batch_timeout_seconds(tasks)
+        return _batch_timeout_seconds(tasks, self._max_agent_runtime_s)
 
     def _apply_provider_availability(
         self,
@@ -4703,11 +4765,32 @@ class AgentSpawner:
         # Zero-trust: issue a short-lived, task-scoped JWT for this agent.
         # The token is written to a 0600 file and its path is injected into
         # the prompt so the agent can include it in task server requests.
-        # We wrap in try/except so auth failures never block spawning.
+        # Auth failures still never block spawning -- with ONE exception, below.
+        #
+        # The delegating identity is the spawning agent's for a nested spawn and
+        # the run root otherwise; minting under it records the delegation hop
+        # (#5047). Empty means no root was minted, and nothing is recorded.
+        from bernstein.core.identity.agent_jwt import DelegationWriteError
+
+        _delegating_identity: str | None = session.parent_id or getattr(self, "_run_root_identity_id", "") or None
         try:
             task_ids_for_scope = [t.id for t in tasks]
-            _token_path = self._issue_agent_token(session_id, role, task_ids_for_scope)
+            _token_path = self._issue_agent_token(
+                session_id,
+                role,
+                task_ids_for_scope,
+                parent_identity_id=_delegating_identity,
+            )
             prompt = prompt + _render_auth_section(_token_path, self._workdir)
+        except DelegationWriteError as _deleg_exc:
+            # FAIL CLOSED, and only for this type. A delegation that cannot be
+            # receipted must not spawn: the chain would be short by exactly the
+            # hop a verifier needs, and a hop that was never written is
+            # indistinguishable from one that never happened. Every other
+            # identity failure keeps the log-and-continue behaviour above it.
+            self._audit_spawn_refused_unreceipted(session_id, _delegating_identity or "", str(_deleg_exc))
+            logger.error("Spawn refused for %s: delegation hop not recorded: %s", session_id, _deleg_exc)
+            raise
         except Exception as _token_exc:
             # Only the session_id and exception are logged.
             # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
@@ -5157,6 +5240,7 @@ class AgentSpawner:
                                 model_config=model_config,
                                 session_id=session_id,
                                 mcp_config=attempt_mcp,
+                                timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
                             )
                             result = SpawnResult(pid=fake_pid, log_path=actual_log_path)
                         elif self._sandbox_session_routing_active():
@@ -5762,6 +5846,7 @@ class AgentSpawner:
             task_ids=[t.id for t in tasks],
             model_config=model_config,
             status="starting",
+            timeout_s=self._resolve_spawn_timeout(tasks),
             context_receipt=receipt.to_dict()["entries"],
             # Endpoint identity fields (issue #4908) - resume resolves the
             # same way the primary spawn path does: role policy overrides
@@ -6002,6 +6087,7 @@ class AgentSpawner:
                 model_config=model_config,
                 session_id=session_id,
                 mcp_config=mcp_config,
+                timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
                 task_scope=task_scope,
                 system_addendum=system_addendum,
             )
@@ -6122,6 +6208,7 @@ class AgentSpawner:
                 model_config=model_config,
                 session_id=session_id,
                 mcp_config=mcp_config,
+                timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
                 task_scope=task_scope,
                 system_addendum=system_addendum,
             )
@@ -6246,6 +6333,7 @@ class AgentSpawner:
                     model_config=model_config,
                     session_id=session_id,
                     mcp_config=mcp_config,
+                    timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
                     system_addendum=system_addendum,
                 )
             owned = True
@@ -6800,6 +6888,16 @@ class AgentSpawner:
         if not alive:
             session.exit_code = container_mgr.get_exit_code(handle)
         return alive
+
+    def session_process_groups(self) -> dict[str, int | None]:
+        """Return each live session's process group id, for a quiescence check.
+
+        Adapters spawn with ``start_new_session=True``, so the stored
+        ``Popen.pid`` is the group id. A session with no stored process
+        contributes ``None``: there is nothing to probe, which is different
+        from a group that was probed and found empty (#5272).
+        """
+        return {session_id: (proc.pid if proc is not None else None) for session_id, proc in self._procs.items()}
 
     def _check_alive_process(self, session: AgentSession) -> bool | None:
         """Check liveness via stored subprocess. Returns None if no proc stored.

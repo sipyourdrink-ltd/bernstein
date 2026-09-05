@@ -529,6 +529,69 @@ def export_prov_cmd(artefact_path: str, fmt: str, log_path: Path, output_path: P
         console.print(f"[green]Wrote[/green] {len(payload)} byte(s) -> {output_path} [{fmt.lower()}]")
 
 
+@lineage_cmd.command(name="plan")
+@click.argument("run_id")
+@click.option(
+    "--runs-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=Path(".sdd/runs"),
+    show_default=True,
+    help="Directory holding per-run journals.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit the plan as JSON instead of text.")
+def lineage_plan_cmd(run_id: str, runs_dir: Path, as_json: bool) -> None:
+    """Render RUN_ID's whole task graph from its journal.
+
+    Every review surface is per-task, so an operator approving task 7 of 20
+    has no rendering of what the other 19 add up to. This reads the run's
+    recorded decomposition back: the goal, every task, its role and title,
+    and the dependencies between them.
+
+    Re-rendering the same journal produces identical bytes.
+    """
+    import json as _json
+
+    from bernstein.core.lineage.plan_render import read_run_plan, render_plan_text
+    from bernstein.core.replay.journal import contained_run_journal
+
+    # RUN_ID arrives from the command line, so the path is derived through the
+    # containment barrier rather than by joining: a crafted id must not address
+    # a journal outside the runs root, and an ordinary-looking run directory
+    # that is a symlink must not redirect the read.
+    journal_path = contained_run_journal(runs_dir, run_id)
+    if journal_path is None:
+        console.print(f"[red]run id does not resolve inside[/red] {runs_dir}: {run_id}")
+        raise SystemExit(1)
+    plan = read_run_plan(journal_path)
+
+    if as_json:
+        click.echo(
+            _json.dumps(
+                {
+                    "run_id": run_id,
+                    "goal": plan.goal,
+                    "recorded": plan.recorded,
+                    "nodes": [
+                        {
+                            "id": node.task_id,
+                            "role": node.role,
+                            "title": node.title,
+                            "depends_on": list(node.depends_on),
+                        }
+                        for node in plan.nodes
+                    ],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+
+    # click.echo rather than the Rich console: the output is an artefact a
+    # caller may diff or hash, and Rich would wrap it to the terminal width.
+    click.echo(render_plan_text(plan, run_id=run_id), nl=False)
+
+
 @lineage_cmd.command(name="reindex")
 @click.option(
     "--log",

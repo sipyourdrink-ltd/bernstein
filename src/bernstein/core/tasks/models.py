@@ -54,7 +54,7 @@ def _default_planning_window_s() -> float:
 
 
 def _default_max_agent_runtime_s() -> int:
-    """Return the current canonical agent wall-clock kill starting value.
+    """Return the current canonical agent runtime floor value.
 
     Reads from :mod:`bernstein.core.defaults` each call (same pattern as
     :func:`_default_poll_interval_s`) so that ``tuning.orchestrator.
@@ -1631,11 +1631,11 @@ class OrchestratorConfig:
     # #3012). Overridable via ``tuning.agent.heartbeat_starting_timeout_s``.
     heartbeat_starting_timeout_s: int = field(default_factory=lambda: int(AGENT.heartbeat_starting_timeout_s))
     heartbeat_enabled: bool = True
-    # Derived from ORCHESTRATOR.max_agent_runtime_s (canonical) so
-    # ``tuning.orchestrator.max_agent_runtime_s`` overrides the starting
-    # wall-clock kill deadline (agents need time for complex tasks; this
-    # self-extends up to a 5400s hard cap while heartbeating, see
-    # core/agents/agent_lifecycle.py - this is only the starting value).
+    # Derived from ORCHESTRATOR.max_agent_runtime_s (canonical). Values above
+    # the shipped 1800s default raise shorter scope/XL starting deadlines;
+    # values at or below the default never shorten those buckets. Heartbeat
+    # self-extension still tops out at 5400s, but does not clamp a longer
+    # initial deadline (see core/agents/agent_lifecycle.py).
     max_agent_runtime_s: int = field(default_factory=_default_max_agent_runtime_s)
     # Derived from ORCHESTRATOR.stalled_manager_threshold_s (canonical) so
     # ``tuning.orchestrator.stalled_manager_threshold_s`` overrides actually

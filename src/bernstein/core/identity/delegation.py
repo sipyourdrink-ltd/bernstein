@@ -405,6 +405,7 @@ def verify_run_chain(
     run_id: str,
     key: bytes,
     scope_resolver: Callable[[str], DelegationScope | None] | None = None,
+    root_issuers: frozenset[str] = frozenset(),
 ) -> ChainResult:
     """Reconstruct and verify a run's delegation chain offline.
 
@@ -420,6 +421,12 @@ def verify_run_chain(
         key: The HMAC key (install audit key) the receipts were written with.
         scope_resolver: Optional lookup for receipts that carry only a
             content-addressed ``scope_ref`` rather than an inline scope body.
+        root_issuers: Identities the run declared as chain roots, supplied from
+            outside the receipts (the run manifest). A hop issued by one of them
+            may be a root without being first, which is what lets several agents
+            spawned by the same run root each grade as a root instead of the
+            second and later ones reading as ``root_claimed_mid_chain``. Empty
+            keeps the positional rule exactly as it was.
 
     Returns:
         A :class:`ChainResult`. ``valid`` is True only when at least one hop
@@ -484,6 +491,7 @@ def verify_run_chain(
         scope_resolver=scope_resolver,
         genesis=GENESIS_HMAC,
         chain_ok=chain_ok,
+        root_issuers=root_issuers,
     )
     return ChainResult(
         valid=chain_ok and authority.ok,
@@ -555,6 +563,7 @@ def verify_run(
     *,
     root: Path | None = None,
     scope_resolver: Callable[[str], DelegationScope | None] | None = None,
+    root_issuers: frozenset[str] = frozenset(),
 ) -> ChainResult:
     """Verify a run's delegation chain using install-anchored defaults.
 
@@ -571,4 +580,5 @@ def verify_run(
         run_id=run_id,
         key=_audit_key(),
         scope_resolver=scope_resolver,
+        root_issuers=root_issuers,
     )
