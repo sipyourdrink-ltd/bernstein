@@ -62,13 +62,20 @@ PRE_CHANGE_BODY = {
 }
 
 #: The canonical bytes ``scope_ref()`` hashes, on the pre-change class.
+#:
+#: Frozen under ``JCS_CANONICALIZATION_VERSION`` 3. The literal moved once, when
+#: #5494 made integral floats follow RFC 8785 3.2.2.3 (`not_after` serialises as
+#: ``1``, not ``1.0``); that bump is versioned and deliberate. If these two
+#: literals fail, decide which happened before touching them: a member was added
+#: to the body, which is the thing this group exists to catch, or the number
+#: grammar moved again, which shows up only in a payload carrying a float.
 PRE_CHANGE_JCS = (
-    b'{"duties":["spawn"],"max_depth":3,"max_uses":2,"not_after":1.0,'
+    b'{"duties":["spawn"],"max_depth":3,"max_uses":2,"not_after":1,'
     b'"path_prefixes":["src"],"permissions":["repo.read"],"task_ids":["t1"]}'
 )
 
 #: ``REPRESENTATIVE.scope_ref()`` on the pre-change class.
-PRE_CHANGE_REF = "sha256:1a46652e64715a2daf47eb654351b1f9809322f4cee965559d91585156485231"
+PRE_CHANGE_REF = "sha256:82809a0d877bc91da391c41b349a8a5ec405fdb1bc92613adf5a4654b1af6d58"
 
 #: ``DelegationScope().scope_ref()`` on the pre-change class.
 PRE_CHANGE_EMPTY_REF = "sha256:0215f133c471eb217982555a27f131a3d94f1b3764ee4679a79c5a2021e875b1"

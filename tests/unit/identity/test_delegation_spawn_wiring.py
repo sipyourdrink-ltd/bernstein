@@ -18,10 +18,10 @@ import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.commands.delegation_cmd import delegation_group
-from bernstein.core.identity.agent_jwt import AgentIdentityStore, DelegationWriteError
 from bernstein.core.agents.spawner_core import AgentSpawner
 from bernstein.core.config.manifest import RunManifest, save_manifest
 from bernstein.core.identity import delegation
+from bernstein.core.identity.agent_jwt import AgentIdentityStore, DelegationWriteError
 
 KEY = b"k" * 32
 RUN = "run-5047-live"

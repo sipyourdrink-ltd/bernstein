@@ -21,8 +21,8 @@ import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.commands.delegation_cmd import delegation_group
-from bernstein.core.identity.agent_jwt import AgentIdentityStore, DelegationWriteError
 from bernstein.core.identity import delegation
+from bernstein.core.identity.agent_jwt import AgentIdentityStore, DelegationWriteError
 from bernstein.core.identity.delegation_scope import (
     REASON_COMPARISON_AXIS_UNSUPPORTED,
     VERDICT_UNPROVEN,
