@@ -696,7 +696,7 @@ def _coerce_pid(record: dict[str, object] | None) -> int | None:
     if candidate is None:
         return None
     try:
-        value = int(candidate)  # type: ignore[arg-type]
+        value = int(candidate)  # type: ignore[call-overload]  # dynamic parse
     except (TypeError, ValueError):
         return None
     return value if value > 0 else None

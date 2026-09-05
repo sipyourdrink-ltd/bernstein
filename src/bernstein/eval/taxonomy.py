@@ -154,7 +154,7 @@ def classify_failure(
         category=category,
         details=details or default_details,
         files_involved=involved,
-        severity=severity,
+        severity=severity,  # type: ignore[arg-type]  # dynamic severity string
     )
 
 

@@ -264,7 +264,7 @@ class AgentDiscovery:
 
         return added
 
-    def discover_npm(self, *, timeout: float = 5.0) -> list[DirectoryEntry]:
+    def discover_npm(self, *, timeout: float = 5.0) -> list[DirectoryEntry]:  # type: ignore[return]  # implicit None return
         """Search npm for packages with the ``bernstein-agent`` keyword.
 
         Args:

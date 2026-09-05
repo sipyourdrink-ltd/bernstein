@@ -36,11 +36,11 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.persistence.atomic_write import write_atomic_text
 from bernstein.core.security.audit_chain import record_fleet_context_activate
 
 if TYPE_CHECKING:
@@ -353,7 +353,19 @@ _validate_name = validate_context_name
 
 
 def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload, sort_keys=True, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+    """Persist *payload* through the crash-safe write path.
+
+    Two properties the previous local implementation did not have, both of
+    which :meth:`ContextStore.activate` states as guarantees:
+
+    * ``fsync``. The rename could reach the disk while the bytes behind it
+      did not, leaving a zero-length ``active.json``. ``_active_field``
+      answers an unparseable pointer with ``None``, so the fleet silently
+      falls back to four-layer precedence while the audit chain still
+      records the activation.
+    * A temporary name unique per writer. ``path.with_suffix(".json.tmp")``
+      is one fixed slot per target, and nothing here holds a lock, so two
+      activations could write the same temporary at once and publish a
+      torn mix of both.
+    """
+    write_atomic_text(path, json.dumps(payload, sort_keys=True, indent=2))

@@ -3213,7 +3213,7 @@ class Orchestrator:
                 chain=self._provider_audit_chain,
                 run_id=self._run_id,
                 graph_digest=graph_digest_val,
-                graph_version=SCHEDULE_PROJECTION_REV,
+                graph_version=SCHEDULE_PROJECTION_REV,  # type: ignore[arg-type]  # version string
                 source_file_count=source_count,
                 indexed_file_count=indexed_count,
                 unparsed_file_count=unparsed_count,

@@ -337,3 +337,81 @@ class RollbackError(EvolutionError):
     """Failure when rolling back a failed proposal application."""
 
     error_type: str = "rollback"
+
+
+# ---------------------------------------------------------------------------
+# Replay service types — ReplayContract and verdict enums
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PredictedDecisionChange:
+    """A single predicted change within a ReplayContract.
+
+    The contract claims that the subject will undergo the specified action,
+    producing the expected_verdict.
+    """
+
+    subject: str
+    action: str
+    expected_verdict: str
+
+
+@dataclass(frozen=True)
+class ContractInvariant:
+    """A named property that must hold across replayed governance decisions.
+
+    The predicate_hash is the stable identity of the invariant predicate;
+    the name is a human-readable label.  The actual check logic lives in
+    a separate registry keyed by predicate_hash.
+    """
+
+    name: str
+    predicate_hash: str
+
+
+@dataclass
+class ReplayContract:
+    """A self-contained specification for the replay service.
+
+    The contract encodes what a proposer claims will happen: which subjects
+    will change, how, and what invariants must hold throughout the replay.
+    """
+
+    target_fingerprint: str
+    predicted_changes: tuple[PredictedDecisionChange, ...]
+    invariants: tuple[ContractInvariant, ...]
+    min_corpus_size: int = 5
+
+
+class ReplayVerdict(Enum):
+    """Outcome classification for a single replayed run."""
+
+    UNCHANGED = "unchanged"
+    CHANGED_AS_PREDICTED = "changed_as_predicted"
+    CHANGED_UNEXPECTEDLY = "changed_unexpectedly"
+    INVARIANT_VIOLATED = "invariant_violated"
+    THIN_CORPUS = "thin_corpus"
+    INCONCLUSIVE = "inconclusive"
+
+
+@dataclass
+class RunVerdict:
+    """Verdict for one replayed run."""
+
+    run_id: str
+    verdict: ReplayVerdict
+    changed_subjects: list[str]
+    violated_invariants: list[str]
+    details: str
+
+
+@dataclass
+class ReplayServiceResult:
+    """Top-level result returned by the replay service."""
+
+    verdict: ReplayVerdict
+    contract_fingerprint: str
+    selected_run_ids: list[str]
+    run_verdicts: list[RunVerdict]
+    thin_corpus: bool
