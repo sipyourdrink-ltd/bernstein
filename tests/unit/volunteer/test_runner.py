@@ -497,9 +497,19 @@ def test_a_url_the_parser_refuses_is_refused_not_raised(url: str) -> None:
 
 
 @pytest.mark.parametrize("url", _UNPARSEABLE_URLS)
-def test_an_unparseable_url_never_reaches_git(url: str) -> None:
-    """The refusal has to name the stage a verifier reads, like any other."""
-    assert repo_url_problem(url) is not None
+def test_an_unparseable_url_becomes_a_refusal_from_run_claimed_task(url: str, tmp_path: Path) -> None:
+    """The headline claim: the caller gets a refusal, not a traceback.
+
+    ``repo_url_problem`` returning a string is only half of it. What the
+    volunteer protocol records is a ``TaskRefusal`` carrying the stage and
+    reason a verifier reads, and on ``main`` the ``ValueError`` escaped
+    ``run_claimed_task`` before one could be built.
+    """
+    outcome = _run(url, tmp_path, agent_argv=mock_agent_argv(fix="off-by-one"))
+
+    assert isinstance(outcome, TaskRefusal)
+    assert outcome.stage == RefusalStage.REPO_URL
+    assert outcome.reason == "unsupported_repo_url"
 
 
 def test_a_well_formed_url_is_still_admitted() -> None:
