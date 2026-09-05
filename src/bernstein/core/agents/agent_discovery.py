@@ -16,7 +16,10 @@ import time
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Final, cast
+from typing import TYPE_CHECKING, Final, Protocol, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _CONFIG_TOML_FILENAME = "config.toml"
 
@@ -685,6 +688,10 @@ def _detect_aider() -> tuple[AgentCapabilities | None, list[str]]:
 # Adapters with a dedicated detector above, keyed by registry name. Values
 # are module attribute names resolved at call time (not captured at import
 # time) so tests can monkeypatch the individual ``_detect_*`` functions.
+#
+# Kept as the seed for :data:`_DETECTOR_REGISTRY` rather than as the dispatch
+# table: the loop asks the registry, so a new entity class is added by
+# registering a pair and never by editing a branch here.
 _RICH_DETECTOR_NAMES: dict[str, str] = {
     "aider": "_detect_aider",
     "claude": "_detect_claude",
@@ -696,6 +703,130 @@ _RICH_DETECTOR_NAMES: dict[str, str] = {
     "opencode": "_detect_opencode",
     "qwen": "_detect_qwen",
 }
+
+
+class DetectorMatcher(Protocol):
+    """Decides whether a registration handles a registry entry."""
+
+    def __call__(self, name: str) -> bool:
+        """Return True when *name* is this registration's to collect."""
+        ...
+
+
+class DetectorAdapter(Protocol):
+    """Performs deep collection for a matched registry entry."""
+
+    def __call__(self, name: str) -> tuple[AgentCapabilities | None, list[str]]:
+        """Return the collected capabilities and any warnings."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class DetectorRegistration:
+    """One ``(matcher, adapter)`` pair in the deep-collection registry.
+
+    ``source`` names where the pair came from, so a run can report which
+    registration answered for an entity without the caller reconstructing it
+    from the adapter's identity.
+    """
+
+    matcher: DetectorMatcher
+    adapter: DetectorAdapter
+    source: str
+
+
+def _module_attr_adapter(attr: str) -> DetectorAdapter:
+    """Adapt a module-level ``_detect_*`` function into the registry shape.
+
+    The attribute is resolved on every call rather than captured here, which
+    is the property the old name-keyed table existed to preserve: the unit
+    tests monkeypatch the individual ``_detect_*`` functions, and a captured
+    reference would make the patch invisible.
+    """
+
+    def _call(name: str) -> tuple[AgentCapabilities | None, list[str]]:
+        del name  # a built-in detector knows the entity it collects
+        detector = cast("Callable[[], tuple[AgentCapabilities | None, list[str]]]", globals()[attr])
+        return detector()
+
+    return _call
+
+
+def _exact_name(expected: str) -> DetectorMatcher:
+    """Match one registry name exactly."""
+
+    def _match(name: str) -> bool:
+        return name == expected
+
+    return _match
+
+
+#: Deep-collection registrations, in resolution order. The first matcher that
+#: answers owns the entry, so a later registration cannot silently take an
+#: entity a built-in already claims.
+_DETECTOR_REGISTRY: list[DetectorRegistration] = [
+    DetectorRegistration(
+        matcher=_exact_name(_name),
+        adapter=_module_attr_adapter(_attr),
+        source=f"builtin:{_attr}",
+    )
+    for _name, _attr in sorted(_RICH_DETECTOR_NAMES.items())
+]
+
+
+def register_detector(
+    matcher: DetectorMatcher,
+    adapter: DetectorAdapter,
+    *,
+    source: str,
+) -> DetectorRegistration:
+    """Register a ``(matcher, adapter)`` pair for deep collection.
+
+    Adding an entity class is a registration, never an edit to the dispatch
+    loop. Registrations are consulted in order and the first match wins, so a
+    pair registered later cannot take over an entity a built-in already
+    claims.
+
+    Args:
+        matcher: Returns True for the registry names this pair collects.
+        adapter: Performs the collection for a matched name.
+        source: Where the pair came from, for reporting.
+
+    Returns:
+        The registration, so a caller can pass it to
+        :func:`unregister_detector`.
+    """
+    registration = DetectorRegistration(matcher=matcher, adapter=adapter, source=source)
+    _DETECTOR_REGISTRY.append(registration)
+    return registration
+
+
+def unregister_detector(registration: DetectorRegistration) -> None:
+    """Remove a registration. A registration already gone is not an error."""
+    with suppress(ValueError):
+        _DETECTOR_REGISTRY.remove(registration)
+
+
+def resolve_detector(name: str) -> DetectorRegistration | None:
+    """Return the registration that owns *name*, or None for the sweep path.
+
+    A matcher that raises is treated as not matching and never aborts
+    resolution: one bad third-party pair must not make the whole discovery
+    pass fail.
+    """
+    for registration in _DETECTOR_REGISTRY:
+        try:
+            if registration.matcher(name):
+                return registration
+        except Exception:
+            logger.warning(
+                "detector matcher from %s raised for %r; treating as no match",
+                registration.source,
+                name,
+                exc_info=True,
+            )
+    return None
+
 
 # Registry entries that never resolve to a probeable dedicated CLI binary:
 # internal test/wrapper adapters, and SDK adapters that ride a shared host
@@ -789,15 +920,14 @@ def discover_agents() -> DiscoveryResult:
     start = time.monotonic()
     agents: list[AgentCapabilities] = []
     warnings: list[str] = []
-    module_globals = globals()
 
     for name, _entry in iter_adapter_specs():
-        detector_name = _RICH_DETECTOR_NAMES.get(name)
-        if detector_name is None and name in _SWEEP_EXCLUDED:
+        registration = resolve_detector(name)
+        if registration is None and name in _SWEEP_EXCLUDED:
             continue
         try:
-            if detector_name is not None:
-                agent, agent_warnings = module_globals[detector_name]()
+            if registration is not None:
+                agent, agent_warnings = registration.adapter(name)
             else:
                 agent, agent_warnings = _detect_registry_cli(name)
             if agent is not None:
