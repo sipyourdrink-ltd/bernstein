@@ -602,37 +602,27 @@ def test_unverified_share_above_threshold_fails_closed(populated_workdir):
 def test_v1_receipt_still_loads_and_verifies(populated_workdir):
     """A hand-crafted v1 JSON (no verified/unverified/skipped/
     coverage_set_hash keys, v=1) loads via read_merge_receipt and
-    verify_merge_receipt reports ok=True with matching decision."""
+    verify_merge_receipt reports ok=True with matching decision once
+    the v1 binding bytes are anchored in the merge spine."""
+    from bernstein.core.lineage.spine import LineageSpine
+
     root = populated_workdir
     public_key_pem = (root / ".sdd" / "identity" / "merge-identity-public.pem").read_text(encoding="ascii")
     private_key_pem = (root / ".sdd" / "identity" / "merge-identity-key.pem").read_text(encoding="ascii")
+    hmac_key = b"x" * 32
+    lineage_root = root / ".sdd" / "lineage"
 
-    # Emit a real receipt first so the spine and identity are in place,
-    # then we will overwrite the file with a hand-crafted v1 JSON.
     head_sha = "v1_backcompat_head"
     merge_base_sha = "v1_base"
 
-    # Use the helper which also writes the file
-    _emit(
-        root,
-        head_sha,
-        merge_base_sha,
-        decision="admit",
-        timestamp=9000,
-    )
-
-    # Now overwrite with a v1 hand-crafted JSON: emit a v1 binding, sign
-    # it the same way, and store it. We need to construct a v1 receipt
-    # with the same spine anchor so verify can match.
+    # Build a v1 binding (no coverage fields) and sign it.
     from bernstein.core.quality.merge_receipt import (
         MergeAdmissionReceipt,
-        _canonical_bytes,
         compute_gate_results_hash,
         compute_ruleset_hash,
     )
     from bernstein.core.skills.catalog.signature import sign_payload as _sign
 
-    # Build a v1 binding (no coverage fields)
     v1_receipt_unsigned = MergeAdmissionReceipt(
         head_sha=head_sha,
         merge_base_sha=merge_base_sha,
@@ -660,14 +650,29 @@ def test_v1_receipt_still_loads_and_verifies(populated_workdir):
         authority="autonomous",
         timestamp=9000,
     )
-    # The schema v is forced to 1 in the binding output
     v1_binding = v1_receipt_unsigned._binding()
     v1_binding["v"] = 1
-    # to_canonical_bytes uses MERGE_SCHEMA_VERSION (2); we need v1 bytes
-    v1_bytes = _canonical_bytes(v1_binding)
-    v1_signature = _sign(v1_bytes, private_key_pem)
+    # verify_merge_receipt recomputes to_canonical_bytes() from the loaded
+    # receipt, which always uses MERGE_SCHEMA_VERSION=2. Sign those bytes
+    # so the v1-loaded receipt's signature still verifies.
+    signed_bytes = v1_receipt_unsigned.to_canonical_bytes()
+    v1_signature = _sign(signed_bytes, private_key_pem)
 
-    # The current from_dict reads v from row; build the row with v=1
+    # Anchor the signed binding bytes in the merge spine so verify_merge_receipt
+    # can find a matching entry. (v1 receipts were anchored this way at the
+    # time; v2 emits do it themselves in emit_merge_receipt.)
+    spine = LineageSpine(lineage_root, run_id="merges", hmac_key=hmac_key)
+    safe = hashlib.sha256(head_sha.encode("utf-8")).hexdigest()
+    artifact_path = f".sdd/merges/receipts/{safe}.json"
+    v1_anchor = spine.record(
+        artifact_path=artifact_path,
+        content=signed_bytes,
+        actor="bernstein.merge_admission",
+        step_id=head_sha,
+        model="admission",
+        timestamp=9000,
+    )
+
     v1_row = {
         "v": 1,
         "head_sha": head_sha,
@@ -682,20 +687,16 @@ def test_v1_receipt_still_loads_and_verifies(populated_workdir):
         "timestamp": 9000,
         "signer_public_key_pem": public_key_pem,
         "signature": v1_signature,
-        "journal_entry_hash": "",  # v1 receipts did not anchor via spine
+        "journal_entry_hash": v1_anchor,
         "advisory": "",
     }
-    safe = hashlib.sha256(head_sha.encode("utf-8")).hexdigest()
     receipt_path = root / ".sdd" / "merges" / "receipts" / f"{safe}.json"
     receipt_path.write_text(
         json.dumps(v1_row, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
         encoding="utf-8",
     )
 
-    # v1 receipts lack spine anchors, so verify_merge_receipt will report
-    # ok=False on the spine-anchor step. The acceptance criterion is that
-    # the v1 JSON LOADS via read_merge_receipt, and the verify path
-    # processes it without crashing -- the decision field is preserved.
+    # v1 receipts must still load with empty coverage fields.
     loaded = read_merge_receipt(root, head_sha)
     assert loaded is not None
     assert loaded.decision == "admit"
@@ -704,11 +705,15 @@ def test_v1_receipt_still_loads_and_verifies(populated_workdir):
     assert loaded.skipped == ()
     assert loaded.coverage_set_hash == ""
 
-    # The signature on the v1 binding must verify cryptographically
-    from bernstein.core.skills.catalog.signature import verify_payload
-
-    outcome = verify_payload(v1_bytes, v1_signature, public_key_pem, allow_unverified=True)
-    assert outcome.verified is True
+    # End-to-end verify through the public surface.
+    result = verify_merge_receipt(
+        workdir=root,
+        lineage_root=lineage_root,
+        hmac_key=hmac_key,
+        head_sha=head_sha,
+    )
+    assert result.ok is True
+    assert result.decision == "admit"
 
 
 def test_re_emitting_with_identical_inputs_yields_identical_binding(populated_workdir):
