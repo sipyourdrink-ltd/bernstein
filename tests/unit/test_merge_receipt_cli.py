@@ -599,12 +599,23 @@ def test_unverified_share_above_threshold_fails_closed(populated_workdir):
         )
 
 
-def test_v1_receipt_still_loads_and_verifies(populated_workdir):
-    """A hand-crafted v1 JSON (no verified/unverified/skipped/
-    coverage_set_hash keys, v=1) loads via read_merge_receipt and
-    verify_merge_receipt reports ok=True with matching decision once
-    the v1 binding bytes are anchored in the merge spine."""
+def test_receipt_signed_under_the_v1_binding_still_verifies_after_the_schema_bump(populated_workdir):
+    """An archived v1 receipt stays verifiable across the v1 -> v2 bump.
+
+    The fixture is a genuine v1 artefact: the binding dict is written out
+    by hand at the v1 key set (no coverage fields), the Ed25519 signature
+    is taken over *those* bytes, and *those* bytes are what the merge
+    spine anchors.  Nothing here is produced by the current
+    ``_binding()``, so the test cannot pass by construction -- if the
+    loaded receipt re-canonicalises at v2, the signature check and the
+    anchor lookup both miss.
+    """
     from bernstein.core.lineage.spine import LineageSpine
+    from bernstein.core.quality.merge_receipt import (
+        compute_gate_results_hash,
+        compute_ruleset_hash,
+    )
+    from bernstein.core.skills.catalog.signature import sign_payload as _sign
 
     root = populated_workdir
     public_key_pem = (root / ".sdd" / "identity" / "merge-identity-public.pem").read_text(encoding="ascii")
@@ -613,21 +624,17 @@ def test_v1_receipt_still_loads_and_verifies(populated_workdir):
     lineage_root = root / ".sdd" / "lineage"
 
     head_sha = "v1_backcompat_head"
-    merge_base_sha = "v1_base"
 
-    # Build a v1 binding (no coverage fields) and sign it.
-    from bernstein.core.quality.merge_receipt import (
-        MergeAdmissionReceipt,
-        compute_gate_results_hash,
-        compute_ruleset_hash,
-    )
-    from bernstein.core.skills.catalog.signature import sign_payload as _sign
-
-    v1_receipt_unsigned = MergeAdmissionReceipt(
-        head_sha=head_sha,
-        merge_base_sha=merge_base_sha,
-        required_context_ids=("status/green",),
-        gate_results_hash=compute_gate_results_hash(
+    # The v1 binding, spelled out at the key set v1 actually signed.
+    # Deliberately not built from MergeAdmissionReceipt._binding(): this is
+    # the archived shape, and it must stay pinned even as the live schema
+    # grows fields.
+    v1_binding = {
+        "v": 1,
+        "head_sha": head_sha,
+        "merge_base_sha": "v1_base",
+        "required_context_ids": ["status/green"],
+        "gate_results_hash": compute_gate_results_hash(
             blast_radius={
                 "score": 0.2,
                 "hard_one_way": False,
@@ -640,51 +647,32 @@ def test_v1_receipt_still_loads_and_verifies(populated_workdir):
             review_verdict="pass",
             required_contexts=("status/green",),
         ),
-        ruleset_hash=compute_ruleset_hash(
+        "ruleset_hash": compute_ruleset_hash(
             required_contexts=("status/green",),
             ruleset_bytes=b"",
         ),
-        review_receipt_id="",
-        journal_head="",
-        decision="admit",
-        authority="autonomous",
-        timestamp=9000,
-    )
-    v1_binding = v1_receipt_unsigned._binding()
-    v1_binding["v"] = 1
-    # verify_merge_receipt recomputes to_canonical_bytes() from the loaded
-    # receipt, which always uses MERGE_SCHEMA_VERSION=2. Sign those bytes
-    # so the v1-loaded receipt's signature still verifies.
-    signed_bytes = v1_receipt_unsigned.to_canonical_bytes()
-    v1_signature = _sign(signed_bytes, private_key_pem)
+        "review_receipt_id": "",
+        "journal_head": "",
+        "decision": "admit",
+        "authority": "autonomous",
+        "timestamp": 9000,
+    }
+    v1_bytes = json.dumps(v1_binding, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
-    # Anchor the signed binding bytes in the merge spine so verify_merge_receipt
-    # can find a matching entry. (v1 receipts were anchored this way at the
-    # time; v2 emits do it themselves in emit_merge_receipt.)
+    # Sign and anchor the v1 bytes -- not whatever the current code projects.
+    v1_signature = _sign(v1_bytes, private_key_pem)
     spine = LineageSpine(lineage_root, run_id="merges", hmac_key=hmac_key)
     safe = hashlib.sha256(head_sha.encode("utf-8")).hexdigest()
-    artifact_path = f".sdd/merges/receipts/{safe}.json"
     v1_anchor = spine.record(
-        artifact_path=artifact_path,
-        content=signed_bytes,
+        artifact_path=f".sdd/merges/receipts/{safe}.json",
+        content=v1_bytes,
         actor="bernstein.merge_admission",
         step_id=head_sha,
         model="admission",
         timestamp=9000,
     )
 
-    v1_row = {
-        "v": 1,
-        "head_sha": head_sha,
-        "merge_base_sha": merge_base_sha,
-        "required_context_ids": ["status/green"],
-        "gate_results_hash": v1_binding["gate_results_hash"],
-        "ruleset_hash": v1_binding["ruleset_hash"],
-        "review_receipt_id": "",
-        "journal_head": "",
-        "decision": "admit",
-        "authority": "autonomous",
-        "timestamp": 9000,
+    v1_row = v1_binding | {
         "signer_public_key_pem": public_key_pem,
         "signature": v1_signature,
         "journal_entry_hash": v1_anchor,
@@ -696,24 +684,49 @@ def test_v1_receipt_still_loads_and_verifies(populated_workdir):
         encoding="utf-8",
     )
 
-    # v1 receipts must still load with empty coverage fields.
     loaded = read_merge_receipt(root, head_sha)
     assert loaded is not None
     assert loaded.decision == "admit"
-    assert loaded.verified == ()
-    assert loaded.unverified == ()
-    assert loaded.skipped == ()
-    assert loaded.coverage_set_hash == ""
 
-    # End-to-end verify through the public surface.
+    # The property under test: the loaded receipt projects back to the exact
+    # bytes that were signed, so the v2 coverage keys must be absent.
+    assert loaded.to_canonical_bytes() == v1_bytes
+    assert b"coverage_set_hash" not in loaded.to_canonical_bytes()
+
+    # ... and the signature and the spine anchor over those bytes both hold.
     result = verify_merge_receipt(
         workdir=root,
         lineage_root=lineage_root,
         hmac_key=hmac_key,
         head_sha=head_sha,
     )
-    assert result.ok is True
+    assert result.ok is True, result.reason
     assert result.decision == "admit"
+
+    assert loaded.schema_version == 1
+    # v1 rows carry no coverage sets, and loading must not invent any.
+    assert loaded.verified == ()
+    assert loaded.unverified == ()
+    assert loaded.skipped == ()
+    assert loaded.coverage_set_hash == ""
+
+
+def test_a_v2_receipt_round_trips_through_from_dict_at_the_current_schema(populated_workdir):
+    """A freshly emitted receipt reloads at the live schema version.
+
+    Guards the other side of the version-carrying change: pinning the
+    loaded version must not pin *every* receipt to v1.
+    """
+    from bernstein.core.quality.merge_receipt import MERGE_SCHEMA_VERSION
+
+    root = populated_workdir
+    head_sha = "v2_roundtrip_head"
+    _emit(root, head_sha, "v2_roundtrip_base")
+
+    loaded = read_merge_receipt(root, head_sha)
+    assert loaded is not None
+    assert loaded.schema_version == MERGE_SCHEMA_VERSION
+    assert b"coverage_set_hash" in loaded.to_canonical_bytes()
 
 
 def test_re_emitting_with_identical_inputs_yields_identical_binding(populated_workdir):

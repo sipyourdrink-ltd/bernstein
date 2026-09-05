@@ -79,6 +79,10 @@ _MERGE_MODEL = "admission"
 #: preimage; v1 receipts (without those fields) still load.
 MERGE_SCHEMA_VERSION = 2
 
+# First schema version whose signed binding carries the coverage fields.
+# A receipt below this version re-canonicalises without them.
+_COVERAGE_FIELDS_SINCE = 2
+
 #: Admission decision: every gate satisfied, merge permitted.
 DECISION_ADMIT = "admit"
 
@@ -345,6 +349,12 @@ class MergeAdmissionReceipt:
             ``verified``, ``unverified``, and ``skipped`` (v2+). Changes
             to any scope reshuffle this digest and therefore the signed
             binding.
+        schema_version: The schema version this receipt's binding is
+            projected at. Defaults to the live
+            :data:`MERGE_SCHEMA_VERSION` for freshly emitted receipts;
+            :meth:`from_dict` carries the loaded row's ``v`` through so an
+            archived receipt re-canonicalises to the bytes it was signed
+            and anchored over.
     """
 
     head_sha: str
@@ -365,18 +375,26 @@ class MergeAdmissionReceipt:
     unverified: tuple[str, ...] = ()
     skipped: tuple[tuple[str, str], ...] = ()
     coverage_set_hash: str = ""
+    schema_version: int = MERGE_SCHEMA_VERSION
 
     def _binding(self) -> dict[str, Any]:
         """Return the signed + anchored binding (no signature / anchor).
 
         The ``advisory`` field is deliberately excluded -- it is a sibling
         annotation and must never be a term in the admission decision.
-        The v2 coverage fields (``verified``, ``unverified``, ``skipped``,
-        ``coverage_set_hash``) are included in sorted-key JSON so the
-        receipt is byte-reproducible across machines.
+
+        The projection is emitted at the receipt's own
+        :attr:`schema_version` rather than at the live
+        :data:`MERGE_SCHEMA_VERSION`, so a receipt loaded from an older
+        row re-canonicalises to the exact key set its signature and spine
+        anchor were taken over.  The coverage fields (``verified``,
+        ``unverified``, ``skipped``, ``coverage_set_hash``) appear only
+        from :data:`_COVERAGE_FIELDS_SINCE` onward.  Everything is
+        sorted-key JSON so the receipt is byte-reproducible across
+        machines.
         """
-        return {
-            "v": MERGE_SCHEMA_VERSION,
+        binding: dict[str, Any] = {
+            "v": self.schema_version,
             "head_sha": self.head_sha,
             "merge_base_sha": self.merge_base_sha,
             "required_context_ids": list(self.required_context_ids),
@@ -387,11 +405,13 @@ class MergeAdmissionReceipt:
             "decision": self.decision,
             "authority": self.authority,
             "timestamp": self.timestamp,
-            "coverage_set_hash": self.coverage_set_hash,
-            "verified": list(self.verified),
-            "unverified": list(self.unverified),
-            "skipped": [list(pair) for pair in self.skipped],
         }
+        if self.schema_version >= _COVERAGE_FIELDS_SINCE:
+            binding["coverage_set_hash"] = self.coverage_set_hash
+            binding["verified"] = list(self.verified)
+            binding["unverified"] = list(self.unverified)
+            binding["skipped"] = [list(pair) for pair in self.skipped]
+        return binding
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the binding to canonical JSON bytes."""
@@ -411,7 +431,7 @@ class MergeAdmissionReceipt:
         # older receipts still load and existing gate_results_hash is still
         # verified.
         version = int(row.get("v", 1))
-        if version < 2:
+        if version < _COVERAGE_FIELDS_SINCE:
             verified: tuple[str, ...] = ()
             unverified: tuple[str, ...] = ()
             skipped: tuple[tuple[str, str], ...] = ()
@@ -440,6 +460,7 @@ class MergeAdmissionReceipt:
             unverified=unverified,
             skipped=skipped,
             coverage_set_hash=coverage_set_hash,
+            schema_version=version,
         )
 
 
@@ -634,6 +655,7 @@ def emit_merge_receipt(
         unverified=unsigned.unverified,
         skipped=unsigned.skipped,
         coverage_set_hash=unsigned.coverage_set_hash,
+        schema_version=unsigned.schema_version,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
