@@ -991,16 +991,27 @@ def main() -> None:
                 sys.exit(1)
         # Whole-tree guards scan the tree instead of importing it, so no diff
         # produces an import edge to them and the affected set never contains
-        # one. They are seconds long and deterministic, so they run on every
-        # pull request rather than first failing in the merge group (#5428).
-        guard_files = [f for f in discover_whole_tree_guard_files() if f not in set(affected_files)]
+        # one. They run on every pull request rather than first failing in the
+        # merge group (#5428).
+        #
+        # The set is fixed and small, so it is carried by the FIRST shard
+        # rather than distributed: copying it into every shard would multiply a
+        # constant cost by the shard count, and adding it to every shard's
+        # slice would mean a shard whose affected set is empty is no longer
+        # empty - the contract
+        # ``test_empty_affected_shard_remains_success_when_other_shards_have_tests``
+        # pins. Unsharded runs take the whole set.
+        carries_guards = shard is None or shard[0] == 1
+        guard_files = (
+            [f for f in discover_whole_tree_guard_files() if f not in set(affected_files)] if carries_guards else []
+        )
+        if args.keyword:
+            affected_files = [f for f in affected_files if args.keyword in f.stem]
+            guard_files = [f for f in guard_files if args.keyword in f.stem]
+        files = shard_files(affected_files, *shard, durations=shard_durations or None) if shard else affected_files
         if guard_files:
             print(f"Including {len(guard_files)} whole-tree guard test file(s) regardless of the diff")
-        files = sorted(set(affected_files) | set(guard_files))
-        if args.keyword:
-            files = [f for f in files if args.keyword in f.stem]
-        if shard is not None:
-            files = shard_files(files, *shard, durations=shard_durations or None)
+        files = sorted(set(files) | set(guard_files))
         if not files:
             _report_empty_selection(shard, context="affected ", base=args.affected)
             sys.exit(0)
