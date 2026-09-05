@@ -36,13 +36,20 @@ from __future__ import annotations
 import ast
 import re
 from collections import defaultdict
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = REPO_ROOT / "src" / "bernstein" / "core" / "security"
-SEARCHED = ("src", "tests", "scripts")
+#: The trees this guard walks, spelled as repo-relative globs. It reads the
+#: whole search space rather than importing it, so these literals are the only
+#: edge the affected-test selector can bind a change to. Both directions matter:
+#: a new entry point inside the subject package, and a change anywhere else that
+#: drops the last reference to one.
+SCANNED_TREES = ["src/**/*.py", "tests/**/*.py", "scripts/**/*.py"]
+SEARCHED = tuple(tree.split("/", 1)[0] for tree in SCANNED_TREES)
 SELF = Path(__file__).resolve()
 
 #: The 20 still PROVED uncalled: each name appears nowhere outside its own module, in
@@ -112,8 +119,14 @@ def _module_aliases(tree: ast.AST) -> dict[str, str]:
     return aliases
 
 
+@lru_cache(maxsize=1)
 def _static_references() -> dict[str, set[str]]:
-    """``{module_stem: {names reached through it statically}}``, alias-aware."""
+    """``{module_stem: {names reached through it statically}}``, alias-aware.
+
+    Built once per session. The uncached shape re-parsed ``src``, ``tests`` and
+    ``scripts`` on every call -- eight full passes across the five tests below --
+    and cost about ninety seconds of wall time on its own.
+    """
     refs: dict[str, set[str]] = defaultdict(set)
     for top in SEARCHED:
         for path in (REPO_ROOT / top).rglob("*.py"):
@@ -135,9 +148,10 @@ def _static_references() -> dict[str, set[str]]:
                     if stem != own:
                         for a in node.names:
                             refs[stem].add(a.name)
-    return refs
+    return dict(refs)
 
 
+@lru_cache(maxsize=1)
 def _written_anywhere() -> set[str]:
     """Every identifier-shaped token appearing outside `core/security/`.
 
@@ -157,7 +171,8 @@ def _written_anywhere() -> set[str]:
     return seen
 
 
-def _classify() -> tuple[set[str], set[str]]:
+@lru_cache(maxsize=1)
+def _classify() -> tuple[frozenset[str], frozenset[str]]:
     """``(proved_uncalled, unproven)`` over public functions in `core/security/`."""
     refs = _static_references()
     written = _written_anywhere()
@@ -183,7 +198,7 @@ def _classify() -> tuple[set[str], set[str]]:
                 continue
             entry = f"{path.name}:{node.name}"
             (proved if node.name not in written else unproven).add(entry)
-    return proved, unproven
+    return frozenset(proved), frozenset(unproven)
 
 
 def test_no_security_control_is_proved_uncalled() -> None:

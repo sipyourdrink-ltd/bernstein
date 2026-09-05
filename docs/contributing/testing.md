@@ -511,5 +511,14 @@ silently as fixtures are added. Matching is `fnmatch` against every
 suffix of the changed path, so `*` crosses `/` and `**/` also matches
 zero directories, the way `Path.glob` treats it.
 
+Declaring a tree puts the guard on every PR that touches it, so a
+whole-tree guard has to be cheap. Build the index once with
+`@lru_cache(maxsize=1)` rather than per test: `test_token_orphans`,
+`test_orchestration_reachability` and `test_security_controls_are_wired`
+each re-parsed `src`, `tests` and `scripts` on every call, and caching
+the three of them cut about two minutes off a PR that touches `src`.
+Return an immutable or plain-`dict` value from a cached builder - a
+`defaultdict` that escapes a cache inserts on lookup.
+
 This edge feeds the cached map, so changing it means bumping
 `_COMPAT_CACHE_VERSION` for the same reason alias resolution does.

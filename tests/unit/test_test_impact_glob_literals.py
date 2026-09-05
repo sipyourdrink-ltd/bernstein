@@ -154,6 +154,36 @@ def test_a_new_source_module_selects_the_repo_tree_guards() -> None:
     assert "tests/unit/test_cast_alias_form.py" in selected
     assert "tests/unit/test_shipped_tree_imports_only_shipped_code.py" in selected
     assert "tests/unit/test_core_has_no_directory_vendor_sdk.py" in selected
+    # The reachability guards fail on exactly the reported shape: a new module
+    # under a scanned package with nothing calling into it.
+    assert "tests/unit/test_security_controls_are_wired.py" in selected
+    assert "tests/unit/test_orchestration_reachability.py" in selected
+
+
+def test_a_test_only_change_selects_the_guards_that_search_the_test_tree() -> None:
+    """A reachability guard reads ``tests/`` too, and says so.
+
+    Dropping the last caller of a control is how an allowlist entry goes stale,
+    and a test file is a caller like any other. Declaring only the subject
+    package would leave that direction uncovered.
+    """
+    src_root = _REPO_ROOT / "src"
+    dep_map = build_compat_dep_map(_REPO_ROOT, src_root, [_REPO_ROOT / "tests" / "unit"])
+
+    selected = {
+        p.relative_to(_REPO_ROOT).as_posix()
+        for p in compat_get_affected_tests(
+            ["tests/unit/test_router.py"],
+            dep_map,
+            root=_REPO_ROOT,
+            src_root=src_root,
+        )
+    }
+
+    assert "tests/unit/test_security_controls_are_wired.py" in selected
+    assert "tests/unit/test_orchestration_reachability.py" in selected
+    # ...while a guard scoped to the source tree stays out of a test-only diff.
+    assert "tests/unit/test_cast_alias_form.py" not in selected
 
 
 def test_an_unrelated_change_does_not_select_the_source_tree_guards() -> None:
