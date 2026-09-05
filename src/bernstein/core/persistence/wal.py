@@ -979,7 +979,6 @@ class WALRecovery:
         except OSError:
             logger.warning("could not rebuild the uncommitted index at %s", index.path, exc_info=True)
 
-
     @staticmethod
     def find_orphaned_claims(
         sdd_dir: Path,
