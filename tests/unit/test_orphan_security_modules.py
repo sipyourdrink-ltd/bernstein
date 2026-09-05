@@ -28,20 +28,21 @@ SCAN = SubpackageScan(directory=SECURITY_DIR, package="bernstein.core.security")
 KNOWN_ORPHANS = frozenset(
     {
         "audit_export",
+        "authzen",
         "capability_delta",
-        "change_receipt",
         "claude_permission_profiles",
         "command_allowlist",
         "command_policy",
         "commit_signing",
-        "compliance_library",
         "compliance_report",
         "data_residency",
+        "directory_bridge",
+        "directory_registry",
         "dlp_scanner_v2",
         "dp_telemetry",
-        "dual_approval",
         "engagement_mandate",
         "environment_digest",
+        "evidence_envelope",
         "external_policy_hook",
         "guardrail_pipeline",
         "hipaa",
@@ -51,7 +52,6 @@ KNOWN_ORPHANS = frozenset(
         "license_manager",
         "native_toolcall_evidence",
         "owasp_asi_detectors",
-        "permission_delegation",
         "permission_graph",
         "permission_matrix",
         "policy",
@@ -67,7 +67,6 @@ KNOWN_ORPHANS = frozenset(
         "secret_rotation",
         "security_correlation",
         "security_incident_response",
-        "security_posture",
         "sensitive_data",
         "sensitive_file_detector",
         "soc2_report",
@@ -138,3 +137,17 @@ def test_a_module_used_only_by_a_wired_module_is_reachable() -> None:
         "helper": {SECURITY_DIR / "wired.py"},
     }
     assert SCAN.reachable_modules(importers) == {"wired", "helper"}
+
+
+def test_a_one_way_dead_chain_is_orphaned_end_to_end() -> None:
+    """A module whose only importer is itself caller-less is an orphan too.
+
+    ``authzen`` is imported by ``external_policy_hook`` and by nothing else,
+    and ``external_policy_hook`` has no caller at all. A scan that stops at
+    "does anything import it" reports ``authzen`` as live, so the two names
+    enter and leave the baseline together. Recording only the importer is how
+    a baseline ends up describing a tree the scan does not see.
+    """
+    assert SCAN.importers_of("authzen") == {SECURITY_DIR / "external_policy_hook.py"}
+    assert SCAN.importer_of("external_policy_hook") is None
+    assert {"authzen", "external_policy_hook"} <= KNOWN_ORPHANS
