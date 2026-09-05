@@ -196,3 +196,55 @@ def test_runbook_documents_the_release_path_through_the_queue(
         "github-merge-queue[bot] and does start push-triggered workflows - that "
         "is the evidence the auto-release chain survives the queue"
     )
+
+
+#: Merge-queue parameters an operator can set. A page other than the runbook
+#: that assigns any of these is a second copy of the configuration, and a
+#: second copy is what went stale: `merge-gate.md` carried
+#: `max_entries_to_merge=5` against the runbook's pinned `1` for long enough
+#: that following it would have re-provisioned the queue into the state
+#: `test_batch_size_is_pinned_to_one` exists to prevent.
+QUEUE_PARAMETERS = (
+    "max_entries_to_build",
+    "max_entries_to_merge",
+    "min_entries_to_merge",
+    "min_entries_to_merge_wait_minutes",
+    "max_entries_to_merge_wait_minutes",
+    "check_response_timeout_minutes",
+    "merge_queue_grouping_strategy",
+    "grouping_strategy",
+)
+
+#: `<param>=<value>` or `"<param>": <value>` - an assignment, not a mention.
+_ASSIGNMENT = re.compile(r"(?:{params})\s*(?:=|\"?\s*:)\s*\"?[0-9A-Za-z]".format(params="|".join(QUEUE_PARAMETERS)))
+
+
+def test_merge_gate_does_not_carry_a_second_copy_of_the_queue_config() -> None:
+    """One document sets these values, and it is the runbook.
+
+    `merge-gate.md` is an operator page that used to restate the whole
+    `gh api ... /merge_queue` payload. Nothing kept the two in step, so it
+    drifted: it told the operator to set `max_entries_to_merge=5`, which
+    silently skips a release version bump for every entry but the last -
+    green CI, no tag, no publish, no error. The runbook's own test pins that
+    parameter to `1`; this one stops the second copy coming back.
+
+    Naming a value to explain why it matters is fine as long as the line
+    points at the runbook, so a reader can tell which copy is authoritative
+    and a drifting one is visible. A bare assignment - the kind an operator
+    pastes into a shell - is not.
+    """
+    offenders = sorted(
+        {
+            line.strip()
+            for line in MERGE_GATE.read_text(encoding="utf-8").splitlines()
+            if _ASSIGNMENT.search(line) and RUNBOOK.name not in line
+        }
+    )
+    assert offenders == [], (
+        f"{MERGE_GATE} assigns merge-queue parameters:\n  "
+        + "\n  ".join(offenders)
+        + f"\n\nThese are set in one place, {RUNBOOK}. Link to its Enable "
+        "section instead of restating the values here; a line that must name a "
+        f"value has to cite `{RUNBOOK.name}` on the same line."
+    )

@@ -58,18 +58,22 @@ gh api -X PATCH "repos/sipyourdrink-ltd/bernstein/branches/main/protection" \
   -f required_pull_request_reviews.required_approving_review_count=1 \
   -f required_pull_request_reviews.require_code_owner_reviews=true \
   -F allow_merge_queue=true
-
-# 2b. Configure the merge-queue policy (sets max group size and timeouts).
-gh api -X PUT "repos/sipyourdrink-ltd/bernstein/branches/main/merge_queue" \
-  -H "Accept: application/vnd.github+json" \
-  -f merge_method=squash \
-  -F max_entries_to_build=5 \
-  -F max_entries_to_merge=5 \
-  -F min_entries_to_merge=1 \
-  -F merge_queue_grouping_strategy=ALLGREEN \
-  -F min_entries_to_merge_wait_minutes=5 \
-  -F max_entries_to_merge_wait_minutes=60
 ```
+
+**2b. Configure the merge-queue policy** using the ruleset payload in
+[merge-queue.md :: Enable](merge-queue.md), which is the declared source of
+truth for these parameters: the shipped ruleset is reconciled *to* that
+document, and `tests/unit/test_merge_queue_runbook_docs.py` holds it to its own
+Tunables table. This page deliberately does not restate the values.
+
+Two of them are load-bearing rather than tuning, and are the reason a second
+copy is not kept here:
+
+- `max_entries_to_merge` must stay `1`. The auto-release gate keys on the push
+  head SHA, so merging N entries in one push skips a version bump anywhere but
+  last - green CI, no tag, no publish, and no error anywhere to notice.
+- `min_entries_to_merge_wait_minutes` is `0`. With one entry merging per push
+  there is no batch to fill, so any wait is pure added latency.
 
 After enabling, `gh pr merge --auto` will route the PR into the merge queue instead of merging immediately. CI then runs against the combined branch GitHub computes for the queued merge group, and the `merge_group:` trigger added to `.github/workflows/ci.yml` makes the existing CI suite respond to that event.
 
