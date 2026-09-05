@@ -160,18 +160,42 @@ def _converted_writers(tmp_path: Path) -> list[tuple[str, Callable[[], Any]]]:
                 expected_sha256=hashlib.sha256(payload).hexdigest(),
             ),
         ),
+        (
+            "tokens.template_compression.store_backup",
+            lambda: template_compression.store_backup(payload, backup_root=tmp_path / "backups"),
+        ),
         ("tunnels.registry", lambda: registry._atomic_write(tmp_path / "tunnels.json", "{}")),
         ("plugins_core.plugin_pin_manifest", lambda: plugin_pin_manifest._write_atomic(tmp_path / "pins.json", b"{}")),
         ("evolution.applicator", lambda: executor._atomic_write(tmp_path / "proposal.yaml", {"id": "p-1"})),
     ]
 
 
-def test_every_converted_writer_fsyncs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    for label, write in _converted_writers(tmp_path):
-        seen = _fsync_spy(monkeypatch)
-        write()
-        assert seen, f"{label} published without fsyncing"
-        monkeypatch.undo()
+#: Labels of the helpers this change routed through the canonical path, so
+#: each is its own test case. Looping inside one test stops at the first
+#: failure and leaves the other six unreported.
+_CONVERTED_LABELS = [
+    "mcp_catalog.user_config",
+    "review_responder.dedup",
+    "tokens.template_compression",
+    "tokens.template_compression.store_backup",
+    "tunnels.registry",
+    "plugins_core.plugin_pin_manifest",
+    "evolution.applicator",
+]
+
+
+@pytest.mark.parametrize("label", _CONVERTED_LABELS)
+def test_every_converted_writer_fsyncs(label: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A rename that outlives its own bytes is the failure these helpers hide."""
+    write = dict(_converted_writers(tmp_path))[label]
+    seen = _fsync_spy(monkeypatch)
+    write()
+    assert seen, f"{label} published without fsyncing"
+
+
+def test_the_parametrisation_covers_every_converted_writer(tmp_path: Path) -> None:
+    """A label dropped from the list above would silently stop being tested."""
+    assert sorted(label for label, _ in _converted_writers(tmp_path)) == sorted(_CONVERTED_LABELS)
 
 
 def test_every_converted_writer_leaves_no_temporary_behind(tmp_path: Path) -> None:
