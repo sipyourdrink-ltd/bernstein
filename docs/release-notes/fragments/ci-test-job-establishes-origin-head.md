@@ -12,7 +12,11 @@ affected-test selector happened to pull that file into a shard's slice. A
 failure that appears on some pull requests and not others, in a file the pull
 request never touched, reads as an unrelated flake and was re-run as one.
 
-Both jobs now run the same step, and
+Both jobs now fetch the default branch at depth 1 and then run the step.
+`repo-hygiene` gets away with `set-head` alone because it checks out at
+`fetch-depth: 0`; a shallow checkout has no `refs/remotes/origin/<default>` for
+`set-head` to resolve, and it fails with `Not a valid ref`. The depth-1 fetch is
+enough for both the symbolic ref and the generator's fallback resolver, and
 `tests/unit/scripts/test_ci_establishes_origin_head.py` makes it a property of
 any job that selects tests from the diff rather than something each job has to
 remember. It is deliberately narrower than "runs pytest": `beartype` runs

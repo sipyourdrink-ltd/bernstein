@@ -1869,14 +1869,26 @@ jobs:
         with:
           persist-credentials: false
       - name: Establish origin/HEAD
-        # The same step, for the same reason, as the one in `repo-hygiene`:
-        # actions/checkout does not set `refs/remotes/origin/HEAD`, and the
-        # AGENTS.md generator's first-choice resolver reads that symbolic ref.
+        # The AGENTS.md generator's first-choice resolver reads
+        # `refs/remotes/origin/HEAD`, which actions/checkout does not set.
         # Without it `tests/unit/test_agents_md_mirror_guards.py` raises
         # DefaultBranchUnresolvedError -- but only on the runs where the
         # affected-test selector happens to pick that file up, which is why it
-        # read as an unrelated flake instead of a missing setup step.
-        run: git remote set-head origin -a
+        # read as an unrelated flake rather than a missing setup step.
+        #
+        # `repo-hygiene` runs `set-head` alone because it checks out at
+        # fetch-depth 0. These jobs check out shallow, so the remote-tracking
+        # ref does not exist yet and `set-head` fails with "Not a valid ref".
+        # The default branch is fetched at depth 1 first: that is enough for
+        # both the symbolic ref and the generator's fallback resolver, and it
+        # costs one commit rather than the whole history.
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git fetch --no-tags --depth=1 origin \
+            "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
+          git remote set-head origin -a
       - uses: ./.github/actions/bootstrap
         with:
           python-version: ${{ matrix.python-version }}
@@ -2156,14 +2168,26 @@ jobs:
         with:
           persist-credentials: false
       - name: Establish origin/HEAD
-        # The same step, for the same reason, as the one in `repo-hygiene`:
-        # actions/checkout does not set `refs/remotes/origin/HEAD`, and the
-        # AGENTS.md generator's first-choice resolver reads that symbolic ref.
+        # The AGENTS.md generator's first-choice resolver reads
+        # `refs/remotes/origin/HEAD`, which actions/checkout does not set.
         # Without it `tests/unit/test_agents_md_mirror_guards.py` raises
         # DefaultBranchUnresolvedError -- but only on the runs where the
         # affected-test selector happens to pick that file up, which is why it
-        # read as an unrelated flake instead of a missing setup step.
-        run: git remote set-head origin -a
+        # read as an unrelated flake rather than a missing setup step.
+        #
+        # `repo-hygiene` runs `set-head` alone because it checks out at
+        # fetch-depth 0. These jobs check out shallow, so the remote-tracking
+        # ref does not exist yet and `set-head` fails with "Not a valid ref".
+        # The default branch is fetched at depth 1 first: that is enough for
+        # both the symbolic ref and the generator's fallback resolver, and it
+        # costs one commit rather than the whole history.
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git fetch --no-tags --depth=1 origin \
+            "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
+          git remote set-head origin -a
       - uses: ./.github/actions/bootstrap
         with:
           python-version: ${{ matrix.python-version }}
