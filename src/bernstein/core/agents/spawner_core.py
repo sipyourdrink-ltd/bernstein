@@ -6784,12 +6784,27 @@ class AgentSpawner:
         return alive
 
     def _check_alive_process(self, session: AgentSession) -> bool | None:
-        """Check liveness via stored subprocess. Returns None if no proc stored."""
+        """Check liveness via stored subprocess. Returns None if no proc stored.
+
+        Adapters spawn with ``start_new_session=True``, so the wrapper leads
+        its own process group (pgid == pid) and a grandchild it forks (the
+        real CLI tool, or a fork of it) can survive the wrapper's own exit.
+        Polling only the wrapper reports the session dead the moment it
+        exits even when the group is not empty, letting
+        ``drain_before_cleanup`` seal the run's journal while a grandchild
+        is still writing to the worktree. Report alive until the whole
+        group is gone, matching the group-aware check already used on the
+        escalation-kill path (``process_group_alive``, issue #2643).
+        """
         proc = self._procs.get(session.id)
         if proc is None:
             return None
         exit_code = proc.poll()
         if exit_code is not None:
+            from bernstein.core.config.platform_compat import process_group_alive
+
+            if process_group_alive(proc.pid):
+                return True
             session.exit_code = exit_code
             return False
         return True
