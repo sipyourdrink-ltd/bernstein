@@ -23,6 +23,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import os
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -37,9 +38,36 @@ SRC = Path(__file__).resolve().parents[2] / "src" / "bernstein"
 CANONICAL = SRC / "core" / "persistence" / "atomic_write.py"
 
 
-def _atomic_helpers() -> list[tuple[str, str]]:
-    """Return ``(label, source)`` for every local ``*atomic*`` write helper."""
-    found: list[tuple[str, str]] = []
+#: Names that publish a file by moving another one onto it.
+_PUBLISHING = {"replace", "rename"}
+
+#: The canonical helpers. A body that *calls* one of these delegates.
+_DELEGATES = {"write_atomic_bytes", "write_atomic_text", "write_atomic_json", "promote_atomic"}
+
+
+def _called_names(node: ast.AST) -> set[str]:
+    """Return the bare and attribute names this body calls."""
+    names: set[str] = set()
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call):
+            continue
+        func = child.func
+        if isinstance(func, ast.Attribute):
+            names.add(func.attr)
+        elif isinstance(func, ast.Name):
+            names.add(func.id)
+    return names
+
+
+def _atomic_helpers() -> list[tuple[str, ast.AST]]:
+    """Return ``(label, node)`` for every local ``*atomic*`` write helper.
+
+    A helper is in scope when it either publishes by its own rename *or*
+    delegates to the canonical module. Scoping on the rename alone would
+    drop every converted helper out of the scan, so a later regression to a
+    plain non-atomic ``write_bytes`` in any of them would be invisible.
+    """
+    found: list[tuple[str, ast.AST]] = []
     for path in sorted(SRC.rglob("*.py")):
         if path == CANONICAL:
             continue
@@ -54,10 +82,10 @@ def _atomic_helpers() -> list[tuple[str, str]]:
                 continue
             if "atomic" not in node.name.lower():
                 continue
-            body = ast.get_source_segment(source, node) or ""
-            if ".replace(" not in body and ".rename(" not in body:
+            called = _called_names(node)
+            if not (called & _PUBLISHING) and not (called & _DELEGATES):
                 continue
-            found.append((f"{path.relative_to(SRC).as_posix()}::{node.name}", body))
+            found.append((f"{path.relative_to(SRC).as_posix()}::{node.name}", node))
     return found
 
 
@@ -68,7 +96,7 @@ def test_the_guard_can_see_the_helpers_it_is_guarding() -> None:
 
 def test_no_atomic_helper_publishes_with_rename() -> None:
     """``os.replace`` overwrites atomically; ``Path.rename`` refuses on Windows."""
-    offenders = [label for label, body in _atomic_helpers() if ".rename(" in body]
+    offenders = [label for label, node in _atomic_helpers() if "rename" in _called_names(node)]
     assert offenders == [], (
         "these helpers publish with rename, which raises FileExistsError on "
         "Windows when the destination exists: " + ", ".join(offenders)
@@ -76,10 +104,22 @@ def test_no_atomic_helper_publishes_with_rename() -> None:
 
 
 def test_every_atomic_helper_fsyncs_or_delegates() -> None:
-    """A rename that outlives its own bytes is not a crash-safe write."""
-    offenders = [label for label, body in _atomic_helpers() if "fsync" not in body and "write_atomic" not in body]
+    """A rename that outlives its own bytes is not a crash-safe write.
+
+    Delegation is decided on the *call*, not on a substring of the source.
+    Matching text would let any helper named ``*write_atomic*`` exempt
+    itself, because the extracted segment includes its own ``def`` line --
+    which is how ``plugin_pin_manifest._write_atomic``, a genuine offender,
+    scored clean against an earlier draft of this guard.
+    """
+    offenders = []
+    for label, node in _atomic_helpers():
+        called = _called_names(node)
+        if called & _DELEGATES or "fsync" in called:
+            continue
+        offenders.append(label)
     assert offenders == [], (
-        "these helpers rename without fsync and without delegating to "
+        "these helpers publish without fsync and without delegating to "
         "core.persistence.atomic_write: " + ", ".join(offenders)
     )
 
@@ -158,19 +198,50 @@ def test_rewriting_an_existing_file_replaces_it(tmp_path: Path) -> None:
     assert "second" in target.read_text(encoding="utf-8")
 
 
-def test_yaml_is_written_as_utf8_regardless_of_host_locale(tmp_path: Path) -> None:
-    """``Path.open("w")`` falls back to the locale encoding.
+def test_a_proposal_round_trips_through_write_and_read(tmp_path: Path) -> None:
+    """Both sides name UTF-8, so a value survives a host whose locale does not.
 
-    ``FileUpgradeExecutor._atomic_write`` used it, and PyYAML emits non-ASCII
-    as-is by default, so a proposal carrying one was encoded in whatever the
-    writing host happened to use and had to be read back on the same one.
+    An earlier draft asserted only that the bytes decoded, which
+    ``yaml.dump``'s ASCII escaping made true either way. What matters is
+    that the writer and ``_read_yaml`` agree: hard-coding UTF-8 on one side
+    alone turns a self-consistent pair into a mismatched one.
     """
     from bernstein.evolution.applicator import FileUpgradeExecutor
 
     executor = FileUpgradeExecutor(tmp_path / "evolution")
     proposal = tmp_path / "proposal.yaml"
-    executor._atomic_write(proposal, {"title": "café"})
-    assert proposal.read_bytes().decode("utf-8")
+    executor._atomic_write(proposal, {"title": "café ☃"})
+    assert executor._read_yaml(proposal) == {"title": "café ☃"}
+
+
+def test_a_catalog_round_trips_through_write_and_read(tmp_path: Path) -> None:
+    """``user_config`` writes UTF-8 and now reads it back the same way."""
+    from bernstein.core.protocols.mcp_catalog import user_config
+
+    catalog = tmp_path / "catalog.json"
+    user_config._atomic_write(catalog, {"name": "café ☃"})
+    assert user_config._load_raw(catalog) == {"name": "café ☃"}
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes only")
+def test_runtime_state_is_owner_only_but_templates_stay_readable(tmp_path: Path) -> None:
+    """The helper's default narrows to 0600; role templates opt back out.
+
+    ``resolve_roles_dir`` can land on the templates directory inside the
+    installed package, so a system-wide install written as one account and
+    run as another must not lose read access to its own templates.
+    """
+    from bernstein.core.tokens import template_compression
+    from bernstein.core.tunnels import registry
+
+    runtime = tmp_path / "tunnels.json"
+    registry._atomic_write(runtime, "{}")
+    assert (runtime.stat().st_mode & 0o777) == 0o600
+
+    template = tmp_path / "role.md"
+    payload = b"# role"
+    template_compression._atomic_write(template, payload, expected_sha256=hashlib.sha256(payload).hexdigest())
+    assert (template.stat().st_mode & 0o777) == 0o644
 
 
 def test_a_converted_writer_still_round_trips_its_payload(tmp_path: Path) -> None:

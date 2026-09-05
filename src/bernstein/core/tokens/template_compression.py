@@ -143,9 +143,12 @@ def store_backup(content: bytes, *, backup_root: Path | None = None) -> str:
     root.mkdir(parents=True, exist_ok=True)
     target = root / digest
     if not target.is_file():
-        tmp = target.with_suffix(".tmp")
-        tmp.write_bytes(content)
-        tmp.replace(target)
+        # Through the crash-safe path: the readback below is the point of this
+        # function, and without an fsync it came from the page cache, proving
+        # the write call had run rather than that a backup existed on disk to
+        # be read after a crash. Owner-only is right here -- backups live
+        # under the user's own cache directory.
+        write_atomic_bytes(target, content)
     readback = target.read_bytes()
     if hashlib.sha256(readback).hexdigest() != digest:
         raise BackupIntegrityError(f"backup readback verification failed for {target}")
@@ -633,7 +636,12 @@ def _atomic_write(path: Path, content: bytes, *, expected_sha256: str) -> None:
     call had run, not that a backup existed on disk to be read after a
     crash. It also reused one fixed temporary name per target.
     """
-    write_atomic_bytes(path, content)
+    # 0o644, not the helper's owner-only default: these are role prompt
+    # templates, and resolve_roles_dir can land on the directory shipped
+    # inside the installed package. A system-wide install written as one
+    # account and run as another must not lose read access to its own
+    # templates.
+    write_atomic_bytes(path, content, mode=0o644)
     if hashlib.sha256(path.read_bytes()).hexdigest() != expected_sha256:
         raise BackupIntegrityError(f"readback verification failed after writing {path}")
 

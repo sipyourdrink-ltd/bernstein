@@ -126,7 +126,7 @@ def _load_raw(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
     except OSError:
         return {}
     if not text.strip():

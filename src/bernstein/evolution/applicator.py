@@ -120,7 +120,7 @@ class FileUpgradeExecutor:
         """Read a YAML file; return empty dict if missing or empty."""
         if not file_path.exists():
             return {}
-        with file_path.open() as f:
+        with file_path.open(encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
 
     def _atomic_write(self, file_path: Path, data: dict[str, Any]) -> None:
