@@ -20,12 +20,7 @@ from pathlib import Path
 import click
 
 from bernstein.cli.helpers import console
-
-
-def _load_hmac_key() -> bytes:
-    from bernstein.core.security.audit import load_or_create_audit_key
-
-    return load_or_create_audit_key()
+from bernstein.core.security.audit import load_or_create_audit_key
 
 
 def _lineage_root(workdir: Path) -> Path:
@@ -63,7 +58,7 @@ def webhook_verify_cmd(event_id: str, workdir: str) -> None:
     result = verify_webhook_event(
         workdir=root,
         lineage_root=_lineage_root(root),
-        hmac_key=_load_hmac_key(),
+        hmac_key=load_or_create_audit_key(),
         event_id=event_id,
     )
 

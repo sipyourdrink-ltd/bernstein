@@ -79,7 +79,10 @@ class TestConstraintLayerRejection:
         decision = gate.route(proposal)
 
         assert decision.outcome == ApprovalOutcome.BLOCKED
-        assert decision.reason == "Proposal targets constraint layer / locked file(s): src/bernstein/core/security/audit.py"
+        assert (
+            decision.reason
+            == "Proposal targets constraint layer / locked file(s): src/bernstein/core/security/audit.py"
+        )
         assert decision.requires_human is True
 
         # Verify audit record was written to decisions.jsonl
@@ -128,11 +131,7 @@ class TestCodeownersDrift:
         # Each entry in manifest must match at least one codeowner pattern
         for entry in CONSTRAINT_MANIFEST:
             norm_entry = entry.lstrip("/")
-            matched = any(
-                norm_entry.startswith(p.rstrip("*"))
-                or p == "*"
-                for p in owner_patterns
-            )
+            matched = any(norm_entry.startswith(p.rstrip("*")) or p == "*" for p in owner_patterns)
             assert matched, f"Constraint manifest entry {entry!r} not covered by any pattern in {owner_patterns}"
 
     def test_every_hash_locked_module_in_manifest(self) -> None:
@@ -174,19 +173,30 @@ class TestNoBehaviorChangeOutsideManifest:
         gate = ApprovalGate(decisions_dir=tmp_path / "evolution")
 
         # L0 config auto-approved
-        l0 = _make_proposal(id="L0-safe", risk_level=RiskLevel.L0_CONFIG, target_files=[".sdd/config.yaml"], confidence=0.98)
+        l0 = _make_proposal(
+            id="L0-safe", risk_level=RiskLevel.L0_CONFIG, target_files=[".sdd/config.yaml"], confidence=0.98
+        )
         assert gate.route(l0).outcome == ApprovalOutcome.AUTO_APPROVED
 
         # L1 template auto-approved
-        l1 = _make_proposal(id="L1-safe", risk_level=RiskLevel.L1_TEMPLATE, target_files=["templates/roles/backend.md"], confidence=0.98)
+        l1 = _make_proposal(
+            id="L1-safe", risk_level=RiskLevel.L1_TEMPLATE, target_files=["templates/roles/backend.md"], confidence=0.98
+        )
         assert gate.route(l1).outcome == ApprovalOutcome.AUTO_APPROVED
 
         # L2 logic human review
-        l2 = _make_proposal(id="L2-safe", risk_level=RiskLevel.L2_LOGIC, target_files=[".sdd/config/routing.yaml"], confidence=0.98)
+        l2 = _make_proposal(
+            id="L2-safe", risk_level=RiskLevel.L2_LOGIC, target_files=[".sdd/config/routing.yaml"], confidence=0.98
+        )
         assert gate.route(l2).outcome == ApprovalOutcome.HUMAN_REVIEW_4H
 
         # L3 structural blocked with standard L3 message
-        l3 = _make_proposal(id="L3-safe", risk_level=RiskLevel.L3_STRUCTURAL, target_files=["src/bernstein/core/models.py"], confidence=0.98)
+        l3 = _make_proposal(
+            id="L3-safe",
+            risk_level=RiskLevel.L3_STRUCTURAL,
+            target_files=["src/bernstein/core/models.py"],
+            confidence=0.98,
+        )
         d3 = gate.route(l3)
         assert d3.outcome == ApprovalOutcome.BLOCKED
         assert "L3_STRUCTURAL changes require human-only review" in d3.reason
