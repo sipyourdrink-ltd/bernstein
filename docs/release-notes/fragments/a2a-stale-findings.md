@@ -1,11 +1,11 @@
-## Three A2A bughunt findings were fixed but still recorded as open
+## Two A2A findings were fixed but still recorded as open, and two were not
 
-`tests/property/test_a2a_card_bughunt.py` keeps an index of findings against the signed agent-card surface, each pinned by an xfail. Three of them describe security controls that have since shipped, and the tests holding them open could not have detected that:
+`tests/property/test_a2a_card_bughunt.py` keeps an index of findings against the signed agent-card surface, each pinned by an xfail. Three were checked against what has since shipped.
 
-- **JWKS rotation grace window.** `agent_json_keys` appends every archived public key still inside the keystore's grace window, which is what RFC 7517 expects of a rotation. The test simulated rotation by resetting the in-process cache twice, which predates persistence: resetting now reloads the same key from disk, so it asserted against a rotation that never happened.
-- **Private signing key file mode.** `AgentCardKeystore` creates the private PEM with `O_EXCL` and mode `0600`, chmods it again after write, and refuses to load a key already on disk with looser permissions. The test asserted a path the implementation never used, so it failed on "no persisted key file" and reported the control missing.
-- **RFC 8707 resource indicators.** `auth_middleware` consults the JWT `resource` claim and answers a mismatch with the RFC 6750 challenge. The test body raised unconditionally with "not implemented".
+**Finding #7, the private signing key file mode, is closed.** `AgentCardKeystore` creates the private PEM with `O_EXCL` and mode `0600`, chmods it again after write, re-chmods on archive, and refuses to load a key already on disk with looser permissions. The test asserted a path the implementation never used, so it failed on "no persisted key file" and reported the control missing.
 
-All three now have tests that exercise the shipped control, including the negatives that make them worth having: a key past the grace window stops being advertised, a key loosened after write is refused rather than loaded, and enforcement stays opt-in when no resource is configured.
+**Finding #6, the JWKS rotation grace window, is half closed.** `agent_json_keys` now publishes every archived key still inside the window, so a verifier that tries every key is rescued. A verifier that routes by `kid` is not: a card is signed under the stable kid while an archived key is published under a timestamped one, so after a rotation the stable kid resolves to the new key and the retired key sits under a kid no card ever referenced. That half is now pinned as its own xfail.
 
-Finding #10, the unbounded rotation archive, is genuinely still open and its entry now says why: rotation moves the previous keypair under `archive/`, `list_archived` filters that by the grace window when publishing, and nothing removes an entry once it falls outside.
+**Finding #8, RFC 8707 resource indicators, is implemented but not closed.** The check and its RFC 6750 challenge are real, but `expected_resource` defaults to empty so enforcement is off on a stock install, and where it is configured a token carrying no `resource` claim passes anyway. Both gaps are named in the record rather than left implied by a finding marked fixed.
+
+Finding #10, the unbounded archive of retired private keys, remains open and unchanged (#5512).

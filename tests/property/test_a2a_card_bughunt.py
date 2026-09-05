@@ -41,12 +41,27 @@ surface. Findings:
     that signed will fail verification. Tracked in well_known.py docstring
     - persistence is deferred.
 
-#6 (FIXED - JWKS rotation grace window):
+#6 (PARTIAL - JWKS rotation grace window publishes, but does not route):
     The orchestrator used to publish exactly one key, so a rotation broke
     every in-flight verifier holding the previous one. ``agent_json_keys``
     now appends every archived public key still inside the keystore's
-    grace window (24h by default) after the current one, which is what
-    RFC 7517 expects of a rotation window.
+    grace window (24h by default), so a verifier that tries every key in
+    the JWKS is rescued.
+
+    A verifier that routes by ``kid`` is not, and ``well_known.py`` claims
+    it is. A card is signed under the *stable* kid
+    (``agent-bernstein-orchestrator``, ``_tenant_kid``) while an archived
+    key is published under a *timestamped* one
+    (``agent-bernstein-orchestrator-<stamp>``, ``ArchivedKey.kid``). After
+    a rotation the stable kid resolves to the **new** key, and the old key
+    sits under a kid no card ever referenced::
+
+        signing kid on a card : agent-bernstein-orchestrator
+        jwks kid=agent-bernstein-orchestrator            -> new key
+        jwks kid=agent-bernstein-orchestrator-2026...Z   -> retired key
+
+    ``identity/http_signing.py`` gets this right by keying archived JWKs on
+    the thumbprint the signature carries. Pinned as an xfail below.
 
 #7 (FIXED - private signing key file mode):
     Persistence landed as :class:`AgentCardKeystore`, and it enforces
@@ -58,15 +73,29 @@ surface. Findings:
     ``.bernstein/keys``), so it reported the control missing on a tree
     that had it.
 
-#8 (FIXED - RFC 8707 resource indicators):
+#8 (PARTIAL - RFC 8707 resource indicators: implemented, opt-in, claim-conditional):
     ``auth_middleware`` consults the JWT ``resource`` claim through
     ``_resource_indicator_check`` and answers a mismatch with the RFC 6750
     challenge ``Bearer error="invalid_token",
-    error_description="resource indicator mismatch"``. Enforcement is
-    keyed on a configured ``expected_resource`` and is skipped when that is
-    unset, so a deployment that has not opted in is unaffected. The
-    middleware-level coverage lives in
+    error_description="resource indicator mismatch"``. That machinery is
+    real and covered in
     ``tests/unit/test_auth_middleware_resource_indicator.py``.
+
+    Two gaps keep the original finding open on a default install, and
+    neither is a bug in that machinery:
+
+    1. **Opt-in.** ``expected_resource`` defaults to ``""``
+       (``auth.py``), so with the environment variable unset the tuple is
+       empty, ``_resource_indicator_check`` returns early, and a token
+       minted for another resource server is accepted out of the box.
+    2. **Claim-conditional.** Even where enforcement *is* configured, a
+       token carrying no ``resource`` claim at all passes.
+
+    So a stolen Bearer can still be replayed at a sibling resource server
+    on a stock deployment. Closing that is a separate change with its own
+    risk (OIDC puts the client id in ``aud``, so treating ``aud`` as a
+    resource indicator would break ordinary setups); what is recorded here
+    is what shipped.
 
 #9 (FIXED - ``typ`` cross-context replay):
     Confirmed via :class:`TestTypReplayContext`. The verifier rejects any
@@ -646,13 +675,14 @@ def test_jcs_emoji_emitted_as_utf8_4_byte_sequence() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_jwks_rotation_grace_window_keeps_old_key_verifying(tmp_path: Path) -> None:
-    """A rotation keeps the retired key in the JWKS for the grace window (FIXED).
+def test_jwks_rotation_grace_window_publishes_the_retired_key(tmp_path: Path) -> None:
+    """A rotation keeps the retired key in the JWKS for the grace window.
 
     This was an xfail claiming the orchestrator publishes exactly one key,
     so a rotation 401s every in-flight verifier holding the previous one.
     ``agent_json_keys`` now appends every archived key still inside the
-    keystore's grace window, which is what RFC 7517 expects.
+    keystore's grace window, so a verifier that tries every key is rescued.
+    A verifier that routes by ``kid`` is not: see the xfail below.
 
     The old test simulated rotation by resetting the in-process cache
     twice. That predates persistence: resetting the cache now reloads the
@@ -674,22 +704,84 @@ def test_jwks_rotation_grace_window_keeps_old_key_verifying(tmp_path: Path) -> N
         _new_priv, new_pub = _get_signing_keypair()
         assert new_pub != old_pub, "rotate() did not actually rotate"
 
-        jwks = agent_json_keys(_jwks_request())
-        advertised = {jwk["x"] for jwk in jwks["keys"]}
+        advertised = {jwk["x"] for jwk in agent_json_keys(_jwks_request())["keys"]}
         assert _jwk_x(new_pub) in advertised, "the current key is not advertised"
-        assert _jwk_x(old_pub) in advertised, "retired key dropped from JWKS at rotation - verifiers cached on it 401"
+        assert _jwk_x(old_pub) in advertised, (
+            "retired key dropped from JWKS at rotation - a verifier that tries every key 401s"
+        )
+    finally:
+        _reset_signing_keypair_for_tests()
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Finding #6, remaining half. A card is signed under the stable kid "
+        "(_tenant_kid -> 'agent-bernstein-orchestrator') while an archived key "
+        "is published under a timestamped one (ArchivedKey.kid). After a "
+        "rotation the stable kid resolves to the NEW key, so a verifier that "
+        "routes by kid - which well_known.agent_json_keys' docstring says is "
+        "supported - fetches the wrong key and still fails. Only a verifier "
+        "that tries every key is rescued by the grace window. "
+        "identity/http_signing.py keys archived JWKs on the thumbprint the "
+        "signature carries, which is the shape that works."
+    ),
+)
+def test_jwks_routes_the_signing_kid_to_the_retired_key(tmp_path: Path) -> None:
+    """The kid on an in-flight card must resolve to the key that signed it."""
+    from bernstein.core.routes.well_known import (
+        _get_keystore,
+        _get_signing_keypair,
+        _reset_signing_keypair_for_tests,
+        _tenant_kid,
+        agent_json_keys,
+    )
+
+    _reset_signing_keypair_for_tests(tmp_path / "keys")
+    try:
+        _old_priv, old_pub = _get_signing_keypair()
+        signing_kid = _tenant_kid("default")
+        _get_keystore().rotate()
+        _reset_signing_keypair_for_tests(tmp_path / "keys")
+        _get_signing_keypair()
+
+        by_kid = {jwk["kid"]: jwk["x"] for jwk in agent_json_keys(_jwks_request())["keys"]}
+        assert by_kid[signing_kid] == _jwk_x(old_pub)
     finally:
         _reset_signing_keypair_for_tests()
 
 
 def test_jwks_drops_a_key_once_the_grace_window_closes(tmp_path: Path) -> None:
-    """The window is a window: a key past it stops being advertised."""
-    from bernstein.core.security.agent_card_keystore import AgentCardKeystore
+    """The window is a window: a key past it stops being advertised.
 
-    keystore = AgentCardKeystore(tmp_path / "keys", grace_seconds=0)
-    _priv, old_pub = keystore.load_or_generate()
-    keystore.rotate()
-    assert _jwk_x(old_pub) not in {_jwk_x(archived.public_pem) for archived in keystore.list_archived()}
+    Asserted against ``agent_json_keys`` rather than ``list_archived``. The
+    JWKS is what a verifier fetches, and a test that only checks the
+    keystore would still pass if the builder stopped consulting it.
+    """
+    from bernstein.core.routes.well_known import (
+        _KEYSTORES,
+        _get_keystore,
+        _get_signing_keypair,
+        _reset_signing_keypair_for_tests,
+        agent_json_keys,
+    )
+    from bernstein.core.security.agent_card_keystore import AgentCardKeystore
+    from bernstein.core.security.tenanting import DEFAULT_TENANT_ID
+
+    _reset_signing_keypair_for_tests(tmp_path / "keys")
+    try:
+        _priv, old_pub = _get_signing_keypair()
+        _get_keystore().rotate()
+        # Re-bind the tenant to a keystore whose window has already closed.
+        _KEYSTORES[DEFAULT_TENANT_ID] = AgentCardKeystore(tmp_path / "keys", grace_seconds=0)
+        _reset_signing_keypair_for_tests(tmp_path / "keys")
+        _get_signing_keypair()
+        _KEYSTORES[DEFAULT_TENANT_ID] = AgentCardKeystore(tmp_path / "keys", grace_seconds=0)
+
+        advertised = {jwk["x"] for jwk in agent_json_keys(_jwks_request())["keys"]}
+        assert _jwk_x(old_pub) not in advertised
+    finally:
+        _reset_signing_keypair_for_tests()
 
 
 def test_jwks_cold_start_under_concurrent_load_does_not_500() -> None:
@@ -783,8 +875,23 @@ def test_rfc_8707_resource_indicator_mismatch_rejected() -> None:
     assert malformed is not None, "a non-string resource indicator was accepted"
 
 
-def test_rfc_8707_enforcement_is_opt_in() -> None:
-    """With no configured resource, the check is skipped so upgrades do not break."""
+def test_rfc_8707_enforcement_is_skipped_when_unconfigured_or_unclaimed() -> None:
+    """Both skips are gaps in finding #8, not properties worth having.
+
+    This test exists to pin them as *known*, because a finding recorded as
+    closed is a finding nobody looks at again:
+
+    1. ``expected_resource`` defaults to ``""``, so on a stock install the
+       tuple is empty and a token minted for another resource server is
+       accepted.
+    2. Where enforcement is configured, a token carrying no ``resource``
+       claim passes anyway.
+
+    Changing either is a separate change with its own risk - OIDC puts the
+    client id in ``aud``, so treating ``aud`` as a resource indicator would
+    break ordinary deployments. What is asserted here is today's behaviour,
+    named as the gap it is.
+    """
     from bernstein.core.security.auth_middleware import _resource_indicator_check
 
     assert _resource_indicator_check({"resource": "https://other.example"}, ()) is None
