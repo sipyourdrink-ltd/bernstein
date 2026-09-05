@@ -60,7 +60,11 @@ class CASPruneResult:
         deleted_entries: Number of entries deleted.
         preserved_bytes: Bytes preserved (referenced or young).
         deleted_bytes: Bytes deleted.
-        errors: Human-readable error messages for any deletion failures.
+        errors: Human-readable reasons this sweep did not go cleanly: a
+            deletion that failed, or the refusal recorded when the mark
+            phase could not read every root. A refusal is not a deletion
+            failure, and both land here because both mean the caller
+            should not treat the run as a clean sweep.
         root_set_hash: Digest of the root set this sweep was decided
             against, so a reader can tell two sweeps apart by what each one
             considered reachable rather than only by their counts.
