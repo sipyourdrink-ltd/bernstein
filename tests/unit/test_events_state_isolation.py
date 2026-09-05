@@ -127,9 +127,7 @@ def _fsync_spy(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     return seen
 
 
-def test_a_counter_write_is_fsynced_before_it_is_published(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_counter_write_is_fsynced_before_it_is_published(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A rename that outlives its own bytes is what _load quarantines.
 
     The write path used to rename the temporary into place without ever
@@ -160,9 +158,7 @@ def test_a_write_leaves_no_temporary_behind(tmp_path: Path) -> None:
     assert [p.name for p in root.iterdir() if ".tmp" in p.name] == []
 
 
-def test_a_failed_write_leaves_the_previous_counters_readable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_failed_write_leaves_the_previous_counters_readable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The point of temp-and-rename: a failure loses the update, not the file."""
     root = tmp_path / ".sdd" / "runtime" / "triggers"
     store = TriggerStateStore(root)
