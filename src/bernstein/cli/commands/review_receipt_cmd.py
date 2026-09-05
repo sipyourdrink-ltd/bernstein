@@ -28,12 +28,7 @@ from pathlib import Path
 import click
 
 from bernstein.cli.helpers import console
-
-
-def _load_hmac_key() -> bytes:
-    from bernstein.core.security.audit import load_or_create_audit_key
-
-    return load_or_create_audit_key()
+from bernstein.core.security.audit import load_or_create_audit_key
 
 
 def _lineage_root(workdir: Path) -> Path:
@@ -103,7 +98,7 @@ def review_receipt_emit_cmd(
     from bernstein.core.security.audit_chain import AuditChainStore, record_review_receipt
 
     root = Path(workdir).resolve()
-    key = _load_hmac_key()
+    key = load_or_create_audit_key()
     private_pem, public_pem = load_or_create_review_identity(_identity_dir(root))
 
     issue_body = Path(issue_file).read_text(encoding="utf-8")
@@ -205,7 +200,7 @@ def review_receipt_verify_cmd(
     result = verify_review_receipt(
         workdir=root,
         lineage_root=_lineage_root(root),
-        hmac_key=_load_hmac_key(),
+        hmac_key=load_or_create_audit_key(),
         pr_url=pr_url,
         issue_body=issue_body,
         diff=diff,
@@ -242,7 +237,7 @@ def _verify_chain(
     result = verify_review_chain(
         workdir=root,
         lineage_root=_lineage_root(root),
-        hmac_key=_load_hmac_key(),
+        hmac_key=load_or_create_audit_key(),
         pr_url=pr_url,
         issue_body=issue_body,
         diff=diff,

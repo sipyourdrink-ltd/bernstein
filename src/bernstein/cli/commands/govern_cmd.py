@@ -33,17 +33,12 @@ import click
 
 from bernstein.core.govern.reconcile import propose_reconcile, snapshot_surface
 from bernstein.core.govern.reconcile_models import DesiredState, ReconcileEntry
+from bernstein.core.security.audit import load_or_create_audit_key
 
 #: The lineage run every reconcile record anchors to. Fixed so a later run can
 #: recover the previous observed state from the same run's records, the way
 #: ``governance plan`` pins ``govern-plan``.
 RECONCILE_RUN_ID = "govern-reconcile"
-
-
-def _load_hmac_key() -> bytes:
-    from bernstein.core.security.audit import load_or_create_audit_key
-
-    return load_or_create_audit_key()
 
 
 @click.command("reconcile")
@@ -95,7 +90,7 @@ def govern_reconcile_cmd(propose: bool, desired_file: str, workdir: str, full: b
     diff, decision = propose_reconcile(
         run_id=RECONCILE_RUN_ID,
         lineage_root=root / ".sdd" / "lineage",
-        hmac_key=_load_hmac_key(),
+        hmac_key=load_or_create_audit_key(),
         snapshot=snapshot,
         desired=desired,
         now=now,

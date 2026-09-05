@@ -19,12 +19,7 @@ from pathlib import Path
 import click
 
 from bernstein.cli.helpers import console
-
-
-def _load_hmac_key() -> bytes:
-    from bernstein.core.security.audit import load_or_create_audit_key
-
-    return load_or_create_audit_key()
+from bernstein.core.security.audit import load_or_create_audit_key
 
 
 def _lineage_root(workdir: Path) -> Path:
@@ -90,7 +85,7 @@ def skill_provenance_cmd(skill: str, workdir: str) -> None:
     graph = provenance_graph(
         workdir=root,
         lineage_root=_lineage_root(root),
-        hmac_key=_load_hmac_key(),
+        hmac_key=load_or_create_audit_key(),
         skill_hash=skill_hash,
     )
 
@@ -150,7 +145,7 @@ def skill_verify_cmd(skill: str, workdir: str) -> None:
     result = verify_install(
         workdir=root,
         lineage_root=_lineage_root(root),
-        hmac_key=_load_hmac_key(),
+        hmac_key=load_or_create_audit_key(),
         skill_hash=skill_hash,
         installed_manifest_hash=manifest_hash,
     )
