@@ -33,7 +33,7 @@ the other way, so it is stated here and pinned by a test.
 from __future__ import annotations
 
 import re
-from functools import lru_cache
+from functools import cache, lru_cache
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -44,6 +44,7 @@ __all__ = [
     "ScopePatternError",
     "normalise_repo_path",
     "paths_outside_scope",
+    "pattern_subsumes",
     "validate_repo_relative_pattern",
 ]
 
@@ -218,3 +219,86 @@ def paths_outside_scope(paths: Iterable[str], patterns: Sequence[str]) -> tuple[
         if not _admits(path, patterns):
             outside.append(path)
     return tuple(outside)
+
+
+def pattern_subsumes(outer: str, inner: str) -> bool:
+    """True when every path ``inner`` admits is also admitted by ``outer``.
+
+    Containment between two patterns, decided against the language above
+    rather than by matching sample paths: ``src/**`` subsumes ``src/core/**``
+    because no path exists that the second admits and the first does not.
+
+    The relation is not ancestry. ``src`` does not subsume ``src/core`` for the
+    same reason ``src`` does not admit the path ``src/core`` - a pattern is not
+    a prefix. Nor is it string containment: ``src/*`` does not subsume
+    ``src/a/b``, because ``*`` stops at a separator.
+
+    Undecided cases answer ``False``. A pattern that is admitted only by two
+    parent patterns *together* (``a/b`` under ``{a/*, b/*}`` is decided, but
+    ``a/?`` under ``{a/x, a/y}`` is not) is reported as not subsumed, which is
+    the direction that cannot report a narrowing that did not happen. Callers
+    comparing whole sets should read :func:`globs_narrow` in
+    :mod:`bernstein.core.security.capability_tokens`, which is where the
+    narrowing primitives live.
+
+    Args:
+        outer: The wider pattern, in any spelling ``normalise_repo_path``
+            accepts.
+        inner: The pattern that must be contained in it.
+
+    Returns:
+        True when ``outer`` admits every path ``inner`` admits.
+    """
+    outer_segments = _collapse_repeated_stars(normalise_repo_path(outer).split("/"))
+    inner_segments = _collapse_repeated_stars(normalise_repo_path(inner).split("/"))
+    return _segments_subsume(tuple(outer_segments), tuple(inner_segments))
+
+
+@lru_cache(maxsize=1024)
+def _segments_subsume(outer: tuple[str, ...], inner: tuple[str, ...]) -> bool:
+    """Whole-path subsumption, matching ``**`` against runs of inner segments."""
+
+    @cache
+    def walk(o: int, i: int) -> bool:
+        if o == len(outer):
+            # Nothing left to admit with. A remaining inner segment - even a
+            # `**`, which can also stand for one or more - names paths this
+            # side cannot produce.
+            return i == len(inner)
+        if outer[o] == "**":
+            # Zero segments, or one more of the inner's.
+            return walk(o + 1, i) or (i < len(inner) and walk(o, i + 1))
+        if i == len(inner):
+            return False
+        if inner[i] == "**":
+            # A single outer segment stands for exactly one segment; `**` may
+            # stand for none or for several, so it is not contained by one.
+            return False
+        return _segment_subsumes(outer[o], inner[i]) and walk(o + 1, i + 1)
+
+    return walk(0, 0)
+
+
+@lru_cache(maxsize=2048)
+def _segment_subsumes(outer: str, inner: str) -> bool:
+    """Subsumption within one segment, where ``*`` and ``?`` do not cross ``/``."""
+
+    @cache
+    def walk(o: int, i: int) -> bool:
+        if o == len(outer):
+            # A remaining `*` on the inner side can stand for a character this
+            # side has nothing left to admit with, so only an exhausted inner
+            # is contained.
+            return i == len(inner)
+        if outer[o] == "*":
+            # Any run within the segment, including none.
+            return walk(o + 1, i) or (i < len(inner) and walk(o, i + 1))
+        if i == len(inner):
+            return False
+        if outer[o] == "?":
+            # Exactly one character, so an inner `*` - which may stand for none
+            # or for several - is not contained by it.
+            return inner[i] != "*" and walk(o + 1, i + 1)
+        return outer[o] == inner[i] and walk(o + 1, i + 1)
+
+    return walk(0, 0)

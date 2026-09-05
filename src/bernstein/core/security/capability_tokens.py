@@ -90,6 +90,7 @@ from bernstein.core.identity.agent_jwt import (
     PERM_TASKS_WRITE,
     PERM_TESTS_RUN,
 )
+from bernstein.core.path_scope import pattern_subsumes
 from bernstein.core.security.agent_card_signer import (
     canonicalize_jcs,
     sign_detached_jws_over_canonical,
@@ -116,6 +117,7 @@ __all__ = [
     "attenuate",
     "bound_narrows",
     "caveats_for_scope",
+    "globs_narrow",
     "mint_root",
     "narrowing_violations",
     "path_covered_by",
@@ -243,6 +245,27 @@ def prefixes_narrow(child: frozenset[str] | None, parent: frozenset[str] | None)
     if child is None:
         return False
     return all(any(path_covered_by(c, p) for p in parent) for c in child)
+
+
+def globs_narrow(child: frozenset[str] | None, parent: frozenset[str] | None) -> bool:
+    """Glob-set subsumption for repository-relative file scopes (``None`` = all).
+
+    The file axis needs a different subset relation from
+    :func:`prefixes_narrow`. That one narrows by ancestry, where ``src`` covers
+    ``src/core``; a file scope is a glob set read by
+    :mod:`bernstein.core.path_scope`, where ``src`` admits the path ``src`` and
+    nothing under it. Grading a glob set with the ancestry relation records a
+    narrowing that did not happen, which is worse than recording none.
+
+    Every child pattern must be subsumed by a *single* parent pattern. A child
+    admitted only by two parent patterns together is reported as widening: it
+    is the direction that cannot overstate what the hop proved.
+    """
+    if parent is None:
+        return True
+    if child is None:
+        return False
+    return all(any(pattern_subsumes(p, c) for p in parent) for c in child)
 
 
 def uses_narrows(child: int | None, parent: int | None) -> bool:
