@@ -6,6 +6,7 @@ import ctypes
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -215,6 +216,10 @@ class TestLifecycle:
         session = AgentSession(id="test-1", role="backend", pid=99)
         assert spawner.check_alive(session) is False
 
+    @pytest.mark.skipif(
+        sys.platform != "linux",
+        reason="PR_SET_CHILD_SUBREAPER is a Linux prctl flag; darwin has no prctl symbol at all",
+    )
     def test_check_alive_process_waits_for_surviving_group_member(self, tmp_path: Path, mock_adapter_factory) -> None:
         """Issue #5272: a grandchild in the wrapper's process group must keep
         the session alive after the wrapper itself exits.
