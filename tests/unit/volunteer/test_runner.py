@@ -474,8 +474,8 @@ def test_the_repo_url_allowlist_admits_transports_and_refuses_helpers(url: str, 
     assert (repo_url_problem(url) is not None) is rejected
 
 
-#: URL shapes ``urllib.parse.urlsplit`` refuses outright: a bracketed-IPv6
-#: netloc carrying userinfo, an unclosed bracket, and a stray one.
+# URL shapes urlsplit refuses outright: a bracketed-IPv6 netloc carrying
+# userinfo, an unclosed bracket, and a stray one.
 _UNPARSEABLE_URLS = [
     "http://[::1]@evil.com/project.git",
     "https://[::1",
