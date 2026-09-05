@@ -1,4 +1,4 @@
-## Two A2A findings were fixed but still recorded as open, and two were not
+## Three A2A findings re-recorded against what actually shipped
 
 `tests/property/test_a2a_card_bughunt.py` keeps an index of findings against the signed agent-card surface, each pinned by an xfail. Three were checked against what has since shipped.
 
