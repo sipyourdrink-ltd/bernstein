@@ -78,8 +78,7 @@ class EventCatalogue(BaseModel):
             key = (entry.adapter, entry.source_event)
             if key in seen:
                 raise ValueError(
-                    f"duplicate catalogue entry for adapter={entry.adapter!r} "
-                    f"source_event={entry.source_event!r}"
+                    f"duplicate catalogue entry for adapter={entry.adapter!r} source_event={entry.source_event!r}"
                 )
             seen.add(key)
         return self
@@ -128,9 +127,7 @@ def load_event_catalogue(path: Path | None = None) -> EventCatalogue:
     except yaml.YAMLError as exc:
         raise EventCatalogueError(f"malformed event catalogue YAML: {exc}") from exc
     if not isinstance(raw, dict):
-        raise EventCatalogueError(
-            f"event catalogue must be a mapping, got {type(raw).__name__}"
-        )
+        raise EventCatalogueError(f"event catalogue must be a mapping, got {type(raw).__name__}")
     try:
         return EventCatalogue.model_validate(raw)
     except Exception as exc:  # pydantic ValidationError + ValueError
