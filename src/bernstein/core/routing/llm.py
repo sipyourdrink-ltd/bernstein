@@ -241,8 +241,26 @@ async def call_llm(
         RuntimeError: If the API call fails.
     """
     from bernstein.core.orchestration.deterministic import get_active_store
+    from bernstein.core.routing.outbound_coverage import (
+        get_active_outbound_recorder,
+        is_in_recorded_call,
+    )
 
     _store = get_active_store()
+    _recorder = get_active_outbound_recorder()
+    if _recorder is not None and not is_in_recorded_call():
+        try:
+            _recorder.check_and_record(
+                prompt=prompt,
+                model=model,
+                provider=provider,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                replay=bool(_store and _store.is_replay),
+            )
+        except Exception as _rec_exc:
+            logger.debug("Outbound recorder error: %s", _rec_exc)
+
     if _store is not None and _store.is_replay:
         # ``get_replay`` raises ReplayMissError on a miss in strict mode
         # (the default), keeping replay hermetic - we never reach the live

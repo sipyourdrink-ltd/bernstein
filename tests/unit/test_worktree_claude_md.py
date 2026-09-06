@@ -161,6 +161,22 @@ class TestWriteClaudeMd:
         assert "old content" not in content
         assert "Bernstein Agent" in content
 
+    def test_symlinked_claude_md_is_replaced_not_followed(self, tmp_path: Path) -> None:
+        # A repo that tracks ``CLAUDE.md -> AGENTS.md``: writing through the link
+        # would truncate AGENTS.md, which skip-worktree does not cover.
+        (tmp_path / "AGENTS.md").write_text("project instructions", encoding="utf-8")
+        (tmp_path / "CLAUDE.md").symlink_to("AGENTS.md")
+        write_claude_md(
+            tmp_path,
+            [_make_task()],
+            session_id="sess-1",
+            role="backend",
+            workdir=Path("/tmp"),
+        )
+        assert not (tmp_path / "CLAUDE.md").is_symlink()
+        assert "Bernstein Agent" in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+        assert (tmp_path / "AGENTS.md").read_text(encoding="utf-8") == "project instructions"
+
 
 # ---------------------------------------------------------------------------
 # _get_role_rules
