@@ -873,19 +873,40 @@ class TestMixedEndpointHandling:
         # destination. Asserting False here pins the right semantics.
         assert adapter._is_self_hosted_endpoint(url) is False, url
 
-    @pytest.mark.xfail(
-        reason=(
-            "Operational bug: Python 3.12+ urllib.parse.urlsplit raises "
-            "ValueError on a bracketed-IPv6 netloc with userinfo "
-            "(e.g. 'http://[::1]@evil.com:8000'). The residency guard "
-            "doesn't catch the parse error, so a malformed URL crashes "
-            "spawn instead of cleanly returning False. Fix: wrap urlparse "
-            "in try/except ValueError and fail closed. Tracked as a "
-            "follow-up."
-        ),
-        strict=True,
-    )
     def test_ipv6_userinfo_does_not_mask_real_host(self) -> None:
+        """A bracketed-IPv6 netloc with userinfo fails closed (FIXED).
+
+        This was an ``xfail(strict=True)``: ``urllib.parse.urlsplit``
+        raises ``ValueError`` on this shape, and the guard did not catch
+        it, so a malformed URL left ``spawn()`` with a traceback instead
+        of a residency verdict.
+        """
         url = "http://[::1]@evil.com:8000"
         adapter = OllamaAdapter()
         assert adapter._is_self_hosted_endpoint(url) is False, url
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://[::1]@evil.com:8000",
+            "http://[::1",
+            "http://a]b",
+            "http://[",
+            "http://]",
+        ],
+    )
+    def test_an_unparseable_url_is_a_verdict_not_an_exception(self, url: str) -> None:
+        """Every URL urlsplit refuses lands on False, the fail-closed answer.
+
+        The guard runs inside ``spawn()`` under the residency profile. A
+        raise there reads as a crash rather than as the refusal it should
+        be, and hides which endpoint was rejected and why.
+        """
+        adapter = OllamaAdapter()
+        assert adapter._is_self_hosted_endpoint(url) is False, url
+
+    @pytest.mark.parametrize("url", ["http://[::1]:11434", "http://[fe80::1]", "http://[fc00::1]:8080"])
+    def test_a_well_formed_bracketed_ipv6_literal_still_resolves(self, url: str) -> None:
+        """Catching the parse error must not swallow the addresses that work."""
+        adapter = OllamaAdapter()
+        assert adapter._is_self_hosted_endpoint(url) is True, url

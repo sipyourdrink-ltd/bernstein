@@ -1682,6 +1682,9 @@ class TestRunStop:
             "loaded_extension_set",
             "tick_start",
             "run_completed",
+            # Appended before the seal so the sealed head and the run receipt
+            # cover whether execution had actually stopped (#5272).
+            "run_quiescence",
         ]
         stream.finalize.assert_called_once_with()
         chain = AuditChainStore(tmp_path / ".sdd" / "audit")
@@ -4098,6 +4101,37 @@ def test_per_task_timeout_medium_bucket(tmp_path: Path) -> None:
     assert sessions, "Expected one agent to be spawned"
     session = sessions[0]
     assert session.timeout_s == 1800
+
+
+def test_raised_max_agent_runtime_floor_reaches_spawn_timeout(tmp_path: Path) -> None:
+    """A raised runtime floor is applied before the adapter watchdog is armed."""
+    task = _make_task(id="T-floor", scope="small", complexity="low")
+    task_dict = _task_as_dict(task)
+    transport = _mock_transport(
+        {
+            "GET /tasks?status=open": httpx.Response(200, json=[task_dict]),
+            "GET /tasks?status=done": httpx.Response(200, json=[]),
+            "GET /tasks?status=failed": httpx.Response(200, json=[]),
+            "GET /status": httpx.Response(200, json={"open": 1, "done": 0}),
+            f"POST /tasks/{task.id}/claim": httpx.Response(200, json={}),
+        }
+    )
+    cfg = OrchestratorConfig(
+        max_agents=6,
+        poll_interval_s=1,
+        max_agent_runtime_s=5400,
+        max_tasks_per_agent=1,
+        server_url="http://testserver",
+    )
+    adapter = _mock_adapter()
+    orch = _build_orchestrator(tmp_path, transport, adapter=adapter, config=cfg)
+
+    orch.tick()
+
+    sessions = list(orch._agents.values())
+    assert sessions
+    assert sessions[0].timeout_s == 5400
+    assert adapter.spawn.call_args.kwargs["timeout_seconds"] == 5400
 
 
 def test_reap_uses_per_session_timeout(tmp_path: Path) -> None:

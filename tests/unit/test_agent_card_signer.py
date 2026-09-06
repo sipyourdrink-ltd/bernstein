@@ -6,6 +6,10 @@ import json
 
 import pytest
 
+from bernstein.core.identity.agent_card import (
+    AgentIdentityCard,
+    issue_identity_card,
+)
 from bernstein.core.security.agent_card_signer import (
     AgentCardSignature,
     canonicalize_jcs,
@@ -13,10 +17,6 @@ from bernstein.core.security.agent_card_signer import (
     generate_ed25519_keypair,
     sign_agent_card,
     verify_agent_card,
-)
-from bernstein.core.security.agent_identity import (
-    AgentIdentityCard,
-    issue_identity_card,
 )
 
 # ---------------------------------------------------------------------------

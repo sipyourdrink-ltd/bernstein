@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from bernstein.core.identity.agent_card import AgentIdentityCard, issue_identity_card
 from bernstein.core.identity.spiffe import (
     SvidBinding,
     bind_svid_to_card,
@@ -24,7 +25,6 @@ from bernstein.core.identity.spiffe import (
 )
 from bernstein.core.identity.spiffe.binding import BindingError
 from bernstein.core.identity.spiffe.svid import X509Svid
-from bernstein.core.security.agent_identity import AgentIdentityCard, issue_identity_card
 from bernstein.core.security.audit_chain import (
     EVENT_SPIFFE_SVID_BINDING,
     AuditChainStore,

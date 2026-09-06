@@ -37,7 +37,6 @@ def test_advanced_cmd_imports() -> None:
     assert hasattr(advanced_cmd, "github_group")
     assert hasattr(advanced_cmd, "mcp_server")
     assert hasattr(advanced_cmd, "quarantine_group")
-    assert hasattr(advanced_cmd, "completions")
     assert hasattr(advanced_cmd, "live")
     assert hasattr(advanced_cmd, "dashboard")
     assert hasattr(advanced_cmd, "install_hooks")
@@ -46,6 +45,27 @@ def test_advanced_cmd_imports() -> None:
     assert hasattr(advanced_cmd, "recap")
     assert hasattr(advanced_cmd, "help_all")
     assert hasattr(advanced_cmd, "retro")
+    # `completions` is deliberately NOT here. It was defined twice with
+    # byte-identical bodies -- once here and once in the dedicated
+    # `commands/completions_cmd.py` that docs/operations/shell-completions.md
+    # names as the source -- and only this copy was registered, so an edit to
+    # the documented module had no runtime effect (#5102). The copy is gone;
+    # see test_completions_cmd_is_the_documented_home below.
+    assert not hasattr(advanced_cmd, "completions")
+
+
+def test_completions_cmd_is_the_documented_home() -> None:
+    """`completions` lives in its own module, which is the one the docs name.
+
+    `bernstein.cli.main.completions` still resolves -- it is aliased to the
+    surviving implementation, so the backward-compatible import surface pinned
+    by ``test_backward_compat_main_imports`` is unchanged.
+    """
+    from bernstein.cli.commands.completions_cmd import completions_cmd
+    from bernstein.cli.main import completions
+
+    assert completions is completions_cmd
+    assert completions_cmd.name == "completions"
 
 
 def test_eval_benchmark_cmd_imports() -> None:

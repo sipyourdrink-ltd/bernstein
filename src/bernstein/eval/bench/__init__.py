@@ -27,6 +27,10 @@ from bernstein.eval.bench.runner import (
     StochasticMockReplayAdapter,
 )
 from bernstein.eval.bench.suite import BenchSuite, BenchTask
+from bernstein.eval.bench.tool_surface_suite import (
+    ToolSurfaceReplayAdapter,
+    build_tool_surface_suite,
+)
 from bernstein.eval.bench.verifier import (
     BenchVerifier,
     BundleVerificationResult,
@@ -58,8 +62,10 @@ __all__ = [
     "TaskReliabilityVerification",
     "TaskResult",
     "TaskVerificationResult",
+    "ToolSurfaceReplayAdapter",
     "VerificationStatus",
     "build_golden_suite_v1",
+    "build_tool_surface_suite",
     "coordination_hash",
     "coordination_projection",
     "first_divergent_coordination_field",

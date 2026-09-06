@@ -64,6 +64,12 @@ def _normalize_repo_path(workdir: Path, target: Path | str) -> str:
         workdir: Repository root.
         target: Absolute or relative path string.
 
+    Both branches must agree on a given file or the caller compares an
+    argument against archive entries that name the same path and finds no
+    match. ``Path.as_posix`` is what makes them agree: it already drops the
+    redundant ``.`` and ``//`` components a relative path may carry, and it
+    leaves a leading dot in a name alone.
+
     Returns:
         Repo-relative path when possible, otherwise a normalized POSIX string.
     """
@@ -73,7 +79,7 @@ def _normalize_repo_path(workdir: Path, target: Path | str) -> str:
             return candidate.resolve().relative_to(workdir.resolve()).as_posix()
         except ValueError:
             return candidate.as_posix()
-    return candidate.as_posix().lstrip("./")
+    return candidate.as_posix()
 
 
 def _history_rows(workdir: Path, file_path: Path, *, limit: int) -> list[HistoryRow]:

@@ -30,7 +30,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from bernstein.core.security.agent_identity import (
+from bernstein.core.identity.agent_card import (
     TASK_BUDGETS_BETA_HEADER,
     AgentIdentityCard,
 )
@@ -209,7 +209,7 @@ def record_graceful_finish(card: AgentIdentityCard, turn_state: TurnState) -> No
     observes the headroom percentage on
     ``bernstein_task_budget_remaining_at_finish_pct``. Both metrics are
     labelled by the agent role, with cardinality bounded by the
-    role-template enumeration in :mod:`bernstein.core.security.agent_identity`.
+    role-template enumeration in :mod:`bernstein.core.identity.agent_card`.
 
     Args:
         card: Agent identity card whose ``role`` labels the metric.

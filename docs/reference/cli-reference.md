@@ -1261,7 +1261,7 @@ receipt that no longer recomputes fails exactly like a tampered chain entry.
 | `bernstein self` | Provenance-verified update lifecycle (group). | `cli/commands/self_update_cmd.py:self_group` |
 | `bernstein self-update` | Compatibility alias for `bernstein self`. | `cli/commands/self_update_cmd.py:self_update_cmd` |
 | `bernstein man-pages` | Man-page generator. | `cli/man_page.py:man_pages_cmd` |
-| `bernstein completions` | Shell completion script. | `cli/commands/advanced_cmd.py:1076` |
+| `bernstein completions` | Shell completion script. | `cli/commands/completions_cmd.py:14` |
 | `bernstein config-path` | Show config path. | `cli/config_path_cmd.py:54` |
 | `bernstein config` | Config mgmt (group). | `cli/workspace_cmd.py:180` |
 | `bernstein workspace` | Workspace mgmt (group). | `cli/workspace_cmd.py:30` |

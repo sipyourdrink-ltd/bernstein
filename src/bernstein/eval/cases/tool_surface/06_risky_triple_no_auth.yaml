@@ -1,0 +1,26 @@
+id: risky_triple_no_auth
+name: Unauthenticated Risky Triple Tool Server
+description: Anonymous server accessing secrets vault, running arbitrary scripts, and egressing over sockets.
+auth_posture: none
+has_untrusted_input: true
+has_sensitive_reach: true
+has_egress_channel: true
+has_wildcard_permissions: false
+tools:
+  - name: fetch_vault_secrets
+    description: Read secret keys and credentials from local vault.
+    sensitive_reach: true
+    untrusted_input: false
+    egress: false
+  - name: run_dynamic_query
+    description: Parse and execute dynamic query text from untrusted caller.
+    sensitive_reach: false
+    untrusted_input: true
+    egress: false
+  - name: open_remote_socket
+    description: Send data packets over raw TCP socket to remote host.
+    sensitive_reach: false
+    untrusted_input: false
+    egress: true
+resources: []
+prompts: []

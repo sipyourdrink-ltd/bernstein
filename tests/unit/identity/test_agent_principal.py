@@ -1,19 +1,26 @@
 """One identity type behind both agent credential formats.
 
-Today an authority decision made against a JWT-authenticated agent cannot be
-checked against an Ed25519-carded one: the two live in unrelated types with no
-shared id space. These tests pin the single type both formats resolve to.
+An authority decision made against a JWT-authenticated agent used to be
+uncheckable against an Ed25519-carded one: the two lived in unrelated types
+with no shared id space. These tests pin the single type both formats resolve
+to, the ids the real mint paths produce for it, and the id a delegation
+receipt records for a principal.
 """
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
-from bernstein.core.agents.agent_identity import (
+from bernstein.core.identity.agent_card import AgentIdentityCard, issue_identity_card
+from bernstein.core.identity.agent_jwt import (
     AgentCredential,
     AgentIdentity,
     AgentIdentityStatus,
+    AgentIdentityStore,
 )
+from bernstein.core.identity.delegation import DelegationLedger
 from bernstein.core.identity.principal import (
     AgentPrincipal,
     CredentialFormat,
@@ -21,8 +28,11 @@ from bernstein.core.identity.principal import (
     PrincipalStatus,
     principal_from_agent_identity,
     principal_from_identity_card,
+    principal_ref,
 )
-from bernstein.core.security.agent_identity import AgentIdentityCard
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 AGENT_ID = "agent-7f3c9d"
 
@@ -195,3 +205,56 @@ def test_principal_round_trips_through_dict() -> None:
 def test_principal_rejects_a_blank_id() -> None:
     with pytest.raises(ValueError, match="id"):
         AgentPrincipal(id="  ")
+
+
+def test_minted_jwt_and_issued_card_resolve_to_one_principal(tmp_path: Path) -> None:
+    """The real mint paths, not just the adapters, agree on the agent id.
+
+    The adapter tests above build their source records by hand. This one
+    drives the store and the card issuer, so a change to how either mints an
+    id fails here rather than being papered over by a fixture that spells the
+    id twice.
+    """
+    store = AgentIdentityStore(tmp_path / "auth")
+    identity, _token = store.create_identity(session_id="sess-1", role="backend")
+    card = issue_identity_card(identity.id, identity.role, adapter="claude", model="opus")
+
+    from_jwt = principal_from_agent_identity(identity)
+    from_card = principal_from_identity_card(card)
+    assert from_jwt.id == from_card.id == identity.id
+
+    joined = from_jwt.merge(from_card)
+    jwt_credential = joined.credential_for(CredentialFormat.JWT)
+    card_credential = joined.credential_for(CredentialFormat.ED25519_CARD)
+    assert jwt_credential is not None
+    assert card_credential is not None
+    assert jwt_credential.ref
+    assert card_credential.ref
+    assert jwt_credential.ref != card_credential.ref
+
+
+def test_delegation_receipt_records_a_principal_by_its_id(tmp_path: Path) -> None:
+    """A hop recorded for a principal names that principal's id, both ways."""
+    store = AgentIdentityStore(tmp_path / "auth")
+    identity, _token = store.create_identity(session_id="sess-1", role="backend")
+    card = issue_identity_card(identity.id, identity.role, adapter="claude", model="opus")
+    subject = principal_from_agent_identity(identity)
+    ledger = DelegationLedger(tmp_path / "audit", key=b"test-key")
+
+    receipt = ledger.record_hop(
+        run_id="run-1",
+        issuer="operator",
+        subject=subject,
+        audience="task-server",
+        act="spawn",
+    )
+
+    assert receipt.subject == identity.id
+    assert receipt.subject == principal_from_identity_card(card).id
+    assert receipt.principal_ids() == ("operator", identity.id)
+
+
+def test_principal_ref_passes_through_a_non_agent_id() -> None:
+    """Parties that hold no credential ("operator", "cli") record as-is."""
+    assert principal_ref("operator") == "operator"
+    assert principal_ref(AgentPrincipal(id=AGENT_ID)) == AGENT_ID

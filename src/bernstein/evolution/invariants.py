@@ -19,19 +19,99 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Files that MUST NOT be modified by the evolution system.
-# These are the "immutable kernel" per the Stable Kernel Thesis.
-# Paths follow the post-decomposition layout (orchestration/, quality/, server/
-# sub-packages); legacy top-level shims are loaded via sys.meta_path and do
-# not exist on disk.
-LOCKED_FILES: tuple[str, ...] = (
+# Manifest of the constraint layer defining what the system may do.
+# These safety-critical modules and paths are hash-locked and immutable
+# against self-evolution modifications across all levels (L0-L3).
+# Do not widen the manifest without a comment naming the module's role.
+CONSTRAINT_MANIFEST: tuple[str, ...] = (
+    # Core orchestration and quality (original hard-coded kernel)
     "src/bernstein/core/quality/janitor.py",
     "src/bernstein/core/server/server_app.py",
     "src/bernstein/core/orchestration/orchestrator.py",
-    "src/bernstein/evolution/invariants.py",
+    # Evolution kernel: admission, circuit, gate, governance, invariants
+    "src/bernstein/evolution/admission.py",
     "src/bernstein/evolution/circuit.py",
     "src/bernstein/evolution/gate.py",
+    "src/bernstein/evolution/governance.py",
+    "src/bernstein/evolution/invariants.py",
+    # Core identity layer: agent registry, delegation, grants, signing, spiffe
+    "src/bernstein/core/identity/**",
+    "src/bernstein/core/security/agent_identity.py",
+    "src/bernstein/core/security/identity_spawn_anchor.py",
+    "src/bernstein/core/security/toolcall_identity.py",
+    # Core audit chain and verification
+    "src/bernstein/core/audit/**",
+    "src/bernstein/core/security/audit*.py",
+    "src/bernstein/core/security/change_receipt.py",
+    "src/bernstein/core/verifier/audit_receipt_verifier.py",
+    # Core policy and RBAC modules
+    "src/bernstein/core/security/command_policy.py",
+    "src/bernstein/core/security/external_policy_hook.py",
+    "src/bernstein/core/security/guardrail_pipeline.py",
+    "src/bernstein/core/security/guardrails.py",
+    "src/bernstein/core/security/network_policy.py",
+    "src/bernstein/core/security/permission_delegation.py",
+    "src/bernstein/core/security/permission_graph.py",
+    "src/bernstein/core/security/permission_matrix.py",
+    "src/bernstein/core/security/permission_mode.py",
+    "src/bernstein/core/security/permission_policy.py",
+    "src/bernstein/core/security/permission_rules.py",
+    "src/bernstein/core/security/permissions.py",
+    "src/bernstein/core/security/plugin_policy.py",
+    "src/bernstein/core/security/policy.py",
+    "src/bernstein/core/security/policy_engine.py",
+    "src/bernstein/core/security/policy_limits.py",
+    "src/bernstein/core/security/policy_templates.py",
+    "src/bernstein/core/security/rbac.py",
+    "src/bernstein/core/security/role_adapter_policy.py",
 )
+
+# Concrete non-glob locked files derived from CONSTRAINT_MANIFEST
+LOCKED_FILES: tuple[str, ...] = tuple(p for p in CONSTRAINT_MANIFEST if "*" not in p)
+
+
+def is_constraint_path(path: str | Path) -> bool:
+    """Check if a file path belongs to the constraint layer manifest."""
+    import fnmatch
+
+    norm = str(path).replace("\\", "/").strip().lstrip("./")
+    if norm.startswith("core/") or norm.startswith("evolution/"):
+        norm_full = f"src/bernstein/{norm}"
+    elif norm.startswith("bernstein/"):
+        norm_full = f"src/{norm}"
+    else:
+        norm_full = norm
+
+    for pattern in CONSTRAINT_MANIFEST:
+        if fnmatch.fnmatch(norm, pattern) or fnmatch.fnmatch(norm_full, pattern):
+            return True
+        if pattern.endswith("/**"):
+            prefix = pattern[:-3]
+            if (
+                norm == prefix
+                or norm.startswith(prefix + "/")
+                or norm_full == prefix
+                or norm_full.startswith(prefix + "/")
+            ):
+                return True
+        elif pattern.endswith("/*"):
+            prefix = pattern[:-2]
+            if norm.startswith(prefix + "/") or norm_full.startswith(prefix + "/"):
+                return True
+    return False
+
+
+def resolve_locked_files(repo_root: Path) -> list[str]:
+    """Derive concrete locked file paths from the constraint manifest for a given repo."""
+    locked: set[str] = set()
+    for entry in CONSTRAINT_MANIFEST:
+        if "*" in entry:
+            for p in repo_root.glob(entry):
+                if p.is_file():
+                    locked.add(p.relative_to(repo_root).as_posix())
+        else:
+            locked.add(entry)
+    return sorted(locked)
 
 
 def _sha256(path: Path) -> str:
@@ -65,7 +145,7 @@ def compute_invariants(repo_root: Path) -> dict[str, str]:
     """
     hashes: dict[str, str] = {}
     source_tree = (repo_root / "src" / "bernstein").is_dir()
-    for rel_path in LOCKED_FILES:
+    for rel_path in resolve_locked_files(repo_root):
         full_path = repo_root / rel_path
         if full_path.exists():
             hashes[rel_path] = _sha256(full_path)
@@ -144,7 +224,7 @@ def check_proposal_targets(
     Returns:
         Tuple of (safe, violations). If safe is False, proposal MUST be rejected.
     """
-    violations = [f for f in target_files if f in LOCKED_FILES]
+    violations = [f for f in target_files if is_constraint_path(f)]
     if violations:
         logger.error("Proposal targets %d locked file(s): %s", len(violations), violations)
     return len(violations) == 0, violations

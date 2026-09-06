@@ -9,15 +9,17 @@ surface. Findings:
     ``"str"``). Network-controlled input → 500 / unhandled exception. Now
     returns ``False`` defensively (``isinstance(header, dict)`` guard).
 
-#2 (xfail - RFC 8785 §3.2.2.3 number divergence):
-    JCS-canonicalised numbers differ from the spec for integer-valued
-    floats (``10.0`` → ``"10.0"`` should be ``"10"``), small scientific
-    (``1e-7`` → ``"1e-07"`` should be ``"1e-7"``), and negative zero. Cards
-    today carry ``max_budget_usd``, ``created_at``, ``expires_at`` as
-    floats - a strictly RFC-8785-compliant verifier will compute different
-    bytes than the signer when those values are integer-valued.
-    Verified against the official RFC 8785 reference test vectors -
-    ``structures.json`` fails for exactly this reason (``56.0`` ≠ ``56``).
+#2 (FIXED - RFC 8785 §3.2.2.3 number serialisation):
+    JCS-canonicalised numbers used to differ from the spec for
+    integer-valued floats (``10.0`` → ``"10.0"``, should be ``"10"``), for
+    scientific notation on either side of the ES6 thresholds (``1e-7`` →
+    ``"1e-07"``, should be ``"1e-7"``), and for negative zero. Cards carry
+    ``max_budget_usd``, ``created_at`` and ``expires_at`` as floats, so a
+    strictly RFC-8785-compliant verifier computed different bytes than the
+    signer whenever one of those landed on an integer boundary.
+    ``canonicalize_jcs`` now implements the ECMAScript ``Number::toString``
+    rule the spec cites, and the official reference vector
+    ``structures.json`` passes (``56.0`` → ``56``).
 
 #3 (FIXED in #3105 - RFC 8785 §3.2.3 key-sort order):
     Object keys used to be sorted by Unicode code point (Python
@@ -74,9 +76,19 @@ RFC 8785 reference vector status (cyberphone/json-canonicalization):
     arrays.json    PASS
     french.json    PASS
     values.json    PASS
-    structures.json FAIL (#2 - integer-valued float ``56.0`` ≠ ``56``)
-    weird.json     FAIL (U+007F escaping in a string value; its key order,
-                   the #3 surrogate-pair case, is correct since #3105)
+    structures.json PASS (since #2 was fixed)
+    weird.json     PASS
+
+``weird.json`` was recorded here as FAIL on U+007F escaping. It was not.
+Its literals had been transcribed by hand and lost three characters on the
+way, so the test drove a payload the vector does not contain against bytes
+no conformant implementation produces, and the xfail pinned that rather
+than a divergence. RFC 8785 section 3.2.2.2 defers string serialization to
+ECMAScript's ``JSON.stringify``, which escapes the quote, the backslash
+and U+0000 to U+001F and emits everything else as-is, U+007F included.
+All five published vectors were checked against
+``cyberphone/json-canonicalization/testdata/`` and ``canonicalize_jcs``
+reproduces each one byte for byte.
 """
 
 from __future__ import annotations
@@ -90,16 +102,16 @@ from cryptography.hazmat.primitives import serialization
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from bernstein.core.identity.agent_card import (
+    AgentIdentityCard,
+    issue_identity_card,
+)
 from bernstein.core.security.agent_card_signer import (
     AgentCardSignature,
     canonicalize_jcs,
     generate_ed25519_keypair,
     sign_agent_card,
     verify_agent_card,
-)
-from bernstein.core.security.agent_identity import (
-    AgentIdentityCard,
-    issue_identity_card,
 )
 
 # ---------------------------------------------------------------------------
@@ -238,37 +250,27 @@ def test_jws_with_invalid_base64_header_returns_false() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "RFC 8785 §3.2.2.3: integer-valued floats serialise as '10', not '10.0'. "
-        "Python json.dumps emits '10.0'. Card body has float fields "
-        "(max_budget_usd, created_at, expires_at) so this affects every signed "
-        "card whenever those values land on integer boundaries. A strict RFC "
-        "8785 verifier (e.g. a Java JOSE library) would compute different bytes "
-        "than the signer. Tracked for canonicaliser overhaul; current surface "
-        "is interoperable as long as both sides use this same canonicaliser."
-    ),
-    strict=True,
-)
 def test_rfc_8785_integer_valued_floats_lose_decimal() -> None:
+    """An integer-valued float serialises as an integer (FIXED).
+
+    This was an ``xfail(strict=True)``: Python's ``repr`` keeps the
+    trailing ``.0`` that RFC 8785 §3.2.2.3 drops, so a strict verifier
+    (a Java JOSE library, say) computed different bytes than the signer
+    for any card whose ``max_budget_usd``, ``created_at`` or
+    ``expires_at`` landed on an integer boundary.
+    """
     assert canonicalize_jcs(10.0) == b"10"
     assert canonicalize_jcs(0.0) == b"0"
     assert canonicalize_jcs(1.0) == b"1"
 
 
-@pytest.mark.xfail(
-    reason=("RFC 8785 §3.2.2.3 small-scientific exponent has no leading zero - 1e-7, not 1e-07."),
-    strict=True,
-)
 def test_rfc_8785_small_scientific_exponent_format() -> None:
+    """The exponent carries no padding zero (FIXED): ``1e-7``, not ``1e-07``."""
     assert canonicalize_jcs(1e-7) == b"1e-7"
 
 
-@pytest.mark.xfail(
-    reason="RFC 8785 §3.2.2.3 normalises -0.0 to '0'; Python emits '-0.0'.",
-    strict=True,
-)
 def test_rfc_8785_negative_zero_normalised() -> None:
+    """Negative zero normalises to ``0`` (FIXED); Python's ``repr`` kept the sign."""
     assert canonicalize_jcs(-0.0) == b"0"
 
 
@@ -511,18 +513,13 @@ def test_rfc_8785_vector_values_numbers() -> None:
     assert canonicalize_jcs(1e-27) == b"1e-27"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "RFC 8785 reference vector ``structures.json`` uses ``56.0`` as an "
-        "integer-valued float and the canonical output is ``56``. Python "
-        "json.dumps emits ``56.0``. Same root cause as #2 - flagged "
-        "separately so the failure points at the reference vector, not "
-        "just an ad-hoc number we picked."
-    ),
-    strict=True,
-)
 def test_rfc_8785_vector_structures() -> None:
-    """RFC 8785 reference vector ``structures.json`` - fails on ``56.0``."""
+    """RFC 8785 reference vector ``structures.json`` (PASSES since #2).
+
+    The vector's ``56.0`` is the integer-valued-float case, so this is the
+    reference-vector form of the #2 assertion rather than a number we
+    picked ourselves.
+    """
     inp = {
         "1": {"f": {"f": "hi", "F": 5}, "\n": 56.0},
         "10": {},
@@ -535,34 +532,37 @@ def test_rfc_8785_vector_structures() -> None:
     assert canonicalize_jcs(inp) == expected
 
 
-@pytest.mark.xfail(
-    reason=(
-        "The key-sort half of this vector passes since #3105: 😂 (U+1F602, "
-        "UTF-16 high surrogate 0xD83D) now sorts before שּ (U+FB33), which is "
-        "the RFC 8785 §3.2.3 order. The remaining divergence is unrelated to "
-        "key order - it is the escaping of U+007F inside a string VALUE, "
-        "which belongs to §3.2.2.2 string serialization and is tracked "
-        "separately. Do not fold it into a key-ordering change: it moves "
-        "signed bytes for a different class of payload."
-    ),
-    strict=True,
-)
 def test_rfc_8785_vector_weird() -> None:
+    """RFC 8785 reference vector ``weird.json`` (PASSES; the xfail was wrong).
+
+    Two things this vector pins at once. Its key order is the #3
+    surrogate-pair case: U+1F602 starts with the UTF-16 high surrogate
+    0xD83D and sorts below U+FB33, which is the RFC 8785 section 3.2.3
+    order and has held since #3105.
+
+    Its value is the part that was recorded wrong. The expected bytes here
+    escaped U+007F; the published vector carries the raw 0x7f byte, and so
+    does this canonicaliser, because section 3.2.2.2 defers to ECMAScript's
+    ``JSON.stringify`` and that escapes only the quote, the backslash and
+    U+0000 to U+001F.
+    """
     inp = {
-        "€": "Euro Sign",
-        "\r": "Carriage Return",
-        "\n": "Newline",
+        "\u20ac": "Euro Sign",
+        "\u000d": "Carriage Return",
+        "\u000a": "Newline",
         "1": "One",
-        "": "Control",
-        "😂": "Smiley",
-        "ö": "Latin Small Letter O With Diaeresis",
-        "שּ": "Hebrew Letter Dalet With Dagesh",
+        "\u0080": "Control\u007f",
+        "\U0001f602": "Smiley",
+        "\u00f6": "Latin Small Letter O With Diaeresis",
+        "\ufb33": "Hebrew Letter Dalet With Dagesh",
         "</script>": "Browser Challenge",
     }
     expected = (
-        b'{"\\n":"Newline","\\r":"Carriage Return","1":"One",'
+        b'{"\\n":"Newline",'
+        b'"\\r":"Carriage Return",'
+        b'"1":"One",'
         b'"</script>":"Browser Challenge",'
-        b'"\xc2\x80":"Control\\u007f",'
+        b'"\xc2\x80":"Control\x7f",'
         b'"\xc3\xb6":"Latin Small Letter O With Diaeresis",'
         b'"\xe2\x82\xac":"Euro Sign",'
         b'"\xf0\x9f\x98\x82":"Smiley",'
@@ -585,15 +585,8 @@ def test_rfc_8785_vector_weird() -> None:
     "value",
     [1.0, 1e0, 100e-2, 100e-2],
 )
-@pytest.mark.xfail(
-    reason=(
-        "RFC 8785 §3.2.2.3 - these float literals must canonicalise to "
-        "``1``. Python json.dumps emits ``1.0``. Same root cause as #2; "
-        "flagged separately as the canonical-form gotcha."
-    ),
-    strict=True,
-)
 def test_rfc_8785_numeric_equivalence_floats_canonicalise_to_int(value: float) -> None:
+    """Every spelling of one canonicalises to ``1`` (FIXED)."""
     assert canonicalize_jcs(value) == b"1"
 
 

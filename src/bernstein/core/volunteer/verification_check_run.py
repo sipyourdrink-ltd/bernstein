@@ -420,8 +420,8 @@ def _compare_gate_results(
             comparisons.append(
                 GateComparison(
                     command=command,
-                    attested_exit_code=None,
-                    attested_log_sha256=None,
+                    attested_exit_code=None,  # type: ignore[arg-type]  # optional fields
+                    attested_log_sha256=None,  # type: ignore[arg-type]  # optional fields
                     ci_exit_code=ci_exit_code,
                     ci_log_sha256=ci_log_sha256,
                     passed=False,

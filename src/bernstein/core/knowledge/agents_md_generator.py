@@ -276,7 +276,7 @@ def generate(repo_path: Path, options: GenerateOptions | None = None) -> list[Ag
     sections = [sec for _key, sec in builders if sec is not None]
 
     sections.extend(_build_overlay_sections(repo_path, opts))
-    return sections
+    return sections  # type: ignore[return-value]  # dynamic list construction
 
 
 # ---------------------------------------------------------------------------

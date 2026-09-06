@@ -159,3 +159,13 @@ def completion_refusal_payload(task_id: str, current_status: str) -> dict[str, A
             "task mailbox with bernstein_post_message."
         ),
     }
+
+
+def check_tool_surface_approval_gate(
+    manifest_or_receipt: Any,
+    approver_configured: bool = True,
+) -> tuple[bool, str]:
+    """Check whether a tool surface forces an approval gate, failing closed if unconfigured."""
+    from bernstein.mcp.tool_surface import is_approval_forced
+
+    return is_approval_forced(manifest_or_receipt, approver_configured=approver_configured)

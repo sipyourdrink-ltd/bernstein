@@ -14,10 +14,32 @@ offline.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
+
+
+def canonical_bytes(payload: Any) -> bytes:
+    """Return canonical JSON bytes: sorted keys, minimal separators, UTF-8."""
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+
+def canonical_digest(payload: Any) -> str:
+    """Return the ``sha256:``-prefixed digest of *payload*'s canonical bytes."""
+    return "sha256:" + hashlib.sha256(canonical_bytes(payload)).hexdigest()
+
+
+def compute_inputs_hash(*, playbook: dict[str, Any], inventory: dict[str, Any]) -> str:
+    """Return the digest binding a plan to the two documents it was computed from.
+
+    ``govern plan`` stores this as :attr:`GovernPlan.inputs_hash`; ``govern apply``
+    recomputes it against the playbook in force and the environment as
+    inventoried at apply time. A plan whose recomputation differs was reviewed
+    against a different world and must not be applied.
+    """
+    return canonical_digest({"playbook": playbook, "inventory": inventory})
 
 
 class PlanEntryKind(Enum):
@@ -168,4 +190,7 @@ __all__ = [
     "GovernPlan",
     "PlanEntry",
     "PlanEntryKind",
+    "canonical_bytes",
+    "canonical_digest",
+    "compute_inputs_hash",
 ]

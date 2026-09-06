@@ -557,7 +557,7 @@ class MCPGateway:
 
         return settled
 
-    def _anchor_proxied_call(self, method: str, params: dict[str, Any]) -> StatelessCallRecord | None:
+    def _anchor_proxied_call(self, method: str, params: dict[str, Any]) -> StatelessCallRecord | None:  # type: ignore[return]  # implicit None
         """Anchor a proxied call into the run journal and audit chain.
 
         Mirrors the WAL record with a chain-anchored continuity record
@@ -567,7 +567,7 @@ class MCPGateway:
         a missing anchor is visible to a verifier as a call-index gap.
         """
         if self._journal is None:
-            return
+            return  # type: ignore[return-value]  # implicit None
         try:
             return anchor_stateless_call(
                 journal=self._journal,
