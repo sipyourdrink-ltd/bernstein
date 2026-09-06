@@ -66,6 +66,8 @@ from bernstein.core.worktree import WorktreeSetupConfig
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.core.security.executor_admission import AdmissionPolicy
+
 logger = logging.getLogger(__name__)
 
 # Type alias for the common cast target used when parsing untyped YAML dicts.
@@ -1763,6 +1765,28 @@ def _parse_key_rotation(raw: object) -> KeyRotationConfig | None:
     )
 
 
+def _parse_admission(raw: object) -> AdmissionPolicy | None:
+    """Parse the optional ``admission`` block (issue #4907).
+
+    Declarative allow/deny rules over the executor identity of a spawn.
+    Validating here means a typo in the block fails the run at config
+    load with the offending key named, instead of surfacing later as a
+    refused spawn; the spawn-time gate re-reads the same file, so the two
+    can never disagree about what the operator declared.
+    """
+    if raw is None:
+        return None
+    from bernstein.core.security.executor_admission import (
+        AdmissionPolicy,
+        AdmissionPolicyError,
+    )
+
+    try:
+        return AdmissionPolicy.from_mapping(raw)
+    except AdmissionPolicyError as exc:
+        raise SeedError(str(exc)) from exc
+
+
 def _parse_compliance(raw: object) -> ComplianceConfig | None:
     """Parse the optional ``compliance`` section."""
     if raw is None:
@@ -1902,6 +1926,12 @@ def _parse_quality_gates(raw: object) -> QualityGatesConfig | None:
         auto_format_python_command=_qg_str("auto_format_python_command", "ruff format"),
         auto_format_js_command=_qg_str("auto_format_js_command", "prettier --write"),
         auto_format_rust_command=_qg_str("auto_format_rust_command", "rustfmt"),
+        behavior_probe=_qg_bool("behavior_probe", False),
+        behavior_probe_python_command=_qg_str("behavior_probe_python_command", ""),
+        behavior_probe_per_callable_timeout_s=_qg_int("behavior_probe_per_callable_timeout_s", 15),
+        behavior_probe_gate_timeout_s=_qg_int("behavior_probe_gate_timeout_s", 300),
+        behavior_probe_max_callables=_qg_int("behavior_probe_max_callables", 12),
+        behavior_probe_max_probes_per_callable=_qg_int("behavior_probe_max_probes_per_callable", 6),
         benchmark=benchmark_cfg,
     )
 
@@ -2503,6 +2533,7 @@ def parse_seed(path: Path) -> SeedConfig:
     secrets = _parse_secrets(data.get("secrets"))
     key_rotation = _parse_key_rotation(data.get("key_rotation"))
     compliance = _parse_compliance(data.get("compliance"))
+    admission = _parse_admission(data.get("admission"))
     visual = _parse_visual(data.get("visual"))
     sandbox = _parse_sandbox(data.get("sandbox"))
     bridges = _parse_bridge_settings(data.get("bridges"))
@@ -2567,6 +2598,7 @@ def parse_seed(path: Path) -> SeedConfig:
         model_policy=model_policy,
         role_model_policy=cast(Any, role_model_policy),
         compliance=compliance,
+        admission=admission,
         visual=visual,
         sandbox=sandbox,
         bridges=bridges,

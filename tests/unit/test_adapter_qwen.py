@@ -370,6 +370,67 @@ class TestQwenAdapterSpawn:
             )
         assert result.log_path.name == "my-qwen-session.log"
 
+    def test_qwen_prompt_carries_the_completion_protocol(self, tmp_path: Path) -> None:
+        """Qwen has no system-prompt flag; a non-empty addendum must still
+        reach the agent by riding on the positional prompt argument (issue
+        #5325), or the completion / heartbeat / signal-check protocol never
+        reaches a ``--cli qwen`` run.
+        """
+        adapter = QwenAdapter()
+        proc_mock = _make_popen_mock(pid=113)
+        settings = _default_settings()
+        with (
+            patch("bernstein.adapters.qwen.subprocess.Popen", return_value=proc_mock) as popen,
+            patch("bernstein.adapters.qwen.LLMSettings", return_value=settings),
+        ):
+            adapter.spawn(
+                prompt="fix the bug",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="qwen-max", effort="high"),
+                session_id="qwen-s12",
+                system_addendum="When done, POST /complete. Heartbeat every 30s.",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "When done, POST /complete. Heartbeat every 30s." in inner[-1]
+
+    def test_qwen_addendum_appended_after_task_brief(self, tmp_path: Path) -> None:
+        """A truncated prompt must lose the addendum, never the task brief."""
+        adapter = QwenAdapter()
+        proc_mock = _make_popen_mock(pid=114)
+        settings = _default_settings()
+        with (
+            patch("bernstein.adapters.qwen.subprocess.Popen", return_value=proc_mock) as popen,
+            patch("bernstein.adapters.qwen.LLMSettings", return_value=settings),
+        ):
+            adapter.spawn(
+                prompt="primary task brief",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="qwen-max", effort="high"),
+                session_id="qwen-s13",
+                system_addendum="HEARTBEAT every 30s",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        full_prompt = inner[-1]
+        assert full_prompt.index("primary task brief") < full_prompt.index("HEARTBEAT every 30s")
+
+    def test_qwen_empty_addendum_leaves_prompt_untouched(self, tmp_path: Path) -> None:
+        adapter = QwenAdapter()
+        proc_mock = _make_popen_mock(pid=115)
+        settings = _default_settings()
+        with (
+            patch("bernstein.adapters.qwen.subprocess.Popen", return_value=proc_mock) as popen,
+            patch("bernstein.adapters.qwen.LLMSettings", return_value=settings),
+        ):
+            adapter.spawn(
+                prompt="just the task",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="qwen-max", effort="high"),
+                session_id="qwen-s14",
+                system_addendum="",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert inner[-1] == "just the task"
+
 
 # ---------------------------------------------------------------------------
 # PR3: sampling params (temperature/top_p) wired via mcp_config

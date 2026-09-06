@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### tầng governance mã nguồn mở cho AI agent
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:739f0a7ad1af" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:9c87d303c594" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -38,7 +38,7 @@
 
 > **Trạng thái: beta.** Được duy trì bởi một cá nhân, đang trong quá trình phát triển tích cực. Số phiên bản thể hiện số lần phát hành, không phản ánh độ hoàn thiện — các phiên bản phụ (minor) có thể thay đổi giao diện. Hãy ghim phiên bản cho các thành phần phụ thuộc; các lỗi hồi quy được khắc phục nhanh chóng, [báo cáo lỗi tại đây](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein là tầng governance mã nguồn mở cho AI agent. Bộ lập lịch tất định - không có model trong vòng lặp điều phối - chạy các agent song song, chặn kiểm những gì chúng tạo ra qua các gate và ghi lại từng bước, nên một lần chạy có thể được xác minh về sau, offline, chỉ từ các artefact. Các CLI coding agent chạy được ngay (Claude Code, Codex, Gemini CLI và hơn 40 agent khác), và cùng tầng đó governe mọi workload agent: sản phẩm có thể là một diff, một báo cáo nghiên cứu, một dataset hay một gói bằng chứng kiểm toán. Kèm sẵn hồ sơ cài đặt air-gap. Apache-2.0.
+Bernstein là tầng governance mã nguồn mở cho AI agent. Nó chạy trên policy as code: bạn viết chính sách - ai được làm gì, cái gì cần phê duyệt, cái gì phải được ghi lại - và Bernstein thực thi chính sách đó và tạo ra bản ghi có thể xác minh. Bộ lập lịch tất định - không có model trong vòng lặp điều phối - chạy các agent song song, chặn kiểm những gì chúng tạo ra qua các gate và ghi lại từng bước, nên một lần chạy có thể được xác minh về sau, offline, chỉ từ các artefact. Các CLI coding agent chạy được ngay (Claude Code, Codex, Gemini CLI và hơn 40 agent khác), và cùng tầng đó governe mọi workload agent: sản phẩm có thể là một diff, một báo cáo nghiên cứu, một dataset hay một gói bằng chứng kiểm toán. Kèm sẵn hồ sơ cài đặt air-gap. Apache-2.0.
 
 ### tổng quan nhanh
 <!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->

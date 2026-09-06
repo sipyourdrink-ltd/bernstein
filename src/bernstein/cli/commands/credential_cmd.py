@@ -37,6 +37,7 @@ from bernstein.core.lineage.c2pa import (
     verify_manifest,
 )
 from bernstein.core.lineage.spine import LineageSpine
+from bernstein.core.security.audit import load_or_create_audit_key
 from bernstein.core.security.install_key import (
     InstallKeyError,
     load_or_create_install_key,
@@ -233,13 +234,7 @@ def _read_artifact(root: Path, artifact_path: str) -> bytes:
 
 def _load_spine(root: Path, run_id: str) -> LineageSpine:
     lineage_root = root / ".sdd" / "lineage"
-    return LineageSpine(lineage_root, run_id=run_id, hmac_key=_load_hmac_key())
-
-
-def _load_hmac_key() -> bytes:
-    from bernstein.core.security.audit import load_or_create_audit_key
-
-    return load_or_create_audit_key()
+    return LineageSpine(lineage_root, run_id=run_id, hmac_key=load_or_create_audit_key())
 
 
 def _signing_key_path(root: Path) -> Path:

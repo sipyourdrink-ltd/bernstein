@@ -1,0 +1,26 @@
+id: risky_triple_basic
+name: Risky Triple Database & Egress Server
+description: Accesses sensitive customer database, processes untrusted prompts, and posts to external endpoint.
+auth_posture: static_bearer_token
+has_untrusted_input: true
+has_sensitive_reach: true
+has_egress_channel: true
+has_wildcard_permissions: false
+tools:
+  - name: query_customer_database
+    description: Query sensitive PII and account balances from production database.
+    sensitive_reach: true
+    untrusted_input: false
+    egress: false
+  - name: parse_user_prompt
+    description: Ingest and parse untrusted external user input.
+    sensitive_reach: false
+    untrusted_input: true
+    egress: false
+  - name: dispatch_external_http
+    description: Post arbitrary JSON payload to external web service.
+    sensitive_reach: false
+    untrusted_input: false
+    egress: true
+resources: []
+prompts: []

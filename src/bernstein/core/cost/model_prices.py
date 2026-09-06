@@ -143,6 +143,41 @@ class UsagePriceResult:
     model_call_id: str = ""
 
 
+# Model names ``price_model_usage`` has already logged a "no pricing-table
+# entry" warning for in this process. The warning is deduped against this set
+# so a gateway/alias route with no entry does not repeat it on every call.
+_UNPRICED_MODELS_WARNED: set[str] = set()
+
+
+def _reset_unpriced_model_warnings() -> None:
+    """Clear the once-per-process warning cache. Tests only."""
+    _UNPRICED_MODELS_WARNED.clear()
+
+
+def model_has_pricing_entry(model: str) -> bool:
+    """Return ``True`` when *model* matches an entry in the pricing table.
+
+    Same substring rule :func:`price_model_usage` uses to price a call, so a
+    name this returns ``False`` for is exactly one that would meter at an
+    explicit ``$0`` with ``priced=False``. Display code uses this to print
+    the word ``unpriced`` for such a name instead of quoting ``$0.00`` as if
+    the route were free.
+    """
+    model_lower = model.lower()
+    return any(key in model_lower for key in MODEL_COSTS_PER_1M_TOKENS)
+
+
+def model_cost_is_known(model: str) -> bool:
+    """Return ``True`` when a dollar figure for *model* is meaningful.
+
+    That is either a table entry (:func:`model_has_pricing_entry`) or a
+    ``:free`` id, whose ``$0`` is a real price rather than a missing one.
+    A name this returns ``False`` for should be shown as ``unpriced`` in a
+    cost-estimate line, not quoted ``$0.00``.
+    """
+    return model.strip().lower().endswith(":free") or model_has_pricing_entry(model)
+
+
 def price_model_usage(
     model: str,
     input_tokens: int,
@@ -196,15 +231,25 @@ def price_model_usage(
                 priced=True,
                 model_call_id=model_call_id,
             )
-    logger.warning(
-        "price_model_usage: no pricing-table entry for model %r - metering at "
-        "$0/token so this call's tokens stay visible instead of vanishing from "
-        "cost totals (input_tokens=%d, output_tokens=%d). Add an entry to "
-        "MODEL_COSTS_PER_1M_TOKENS to price this model.",
-        model,
-        input_tokens,
-        output_tokens,
-    )
+    # Warn once per distinct model name per process. A gateway/alias route
+    # with no table entry is priced at $0 on every call; without this guard
+    # the warning repeats for every call and every cost estimate in a
+    # non-interactive run (scheduler, CI) and buries the lines an operator
+    # actually needs. Later calls for the same name meter at $0 silently;
+    # ``priced`` stays ``False`` so totals still carry the tokens and the
+    # run summary still reports the model as unpriced.
+    if model not in _UNPRICED_MODELS_WARNED:
+        _UNPRICED_MODELS_WARNED.add(model)
+        logger.warning(
+            "price_model_usage: no pricing-table entry for model %r - metering at "
+            "$0/token so this call's tokens stay visible instead of vanishing from "
+            "cost totals (input_tokens=%d, output_tokens=%d). Add an entry to "
+            "MODEL_COSTS_PER_1M_TOKENS to price this model. This warning is "
+            "emitted once per model name per process.",
+            model,
+            input_tokens,
+            output_tokens,
+        )
     return UsagePriceResult(
         model=model,
         input_tokens=input_tokens,

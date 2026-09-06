@@ -1,7 +1,8 @@
 """Verify CLI -- run receipts, ladder receipts, WAL integrity, determinism, memory, wheelhouse.
 
-``bernstein verify`` is a group. Two run-receipt verbs (issue #2924) and a
-ladder-receipt verb (issue #2927):
+``bernstein verify`` is a group. Two run-receipt verbs (issue #2924), a
+ladder-receipt verb (issue #2927), a pin-manifest verb (issue #5089), and
+a merge admission receipt coverage verb (issue #5400):
 
 * ``bernstein verify run <run-id>`` -- build the signed ``run-receipt.json``
   binding the run's journal head, lineage-spine head, and (opt-in) an
@@ -22,6 +23,13 @@ ladder-receipt verb (issue #2927):
   verdict`` plus the composite claim, re-checked against the
   ``verifier-ladder`` lineage spine. Exit codes: ``0`` OK, ``1`` no readable
   receipt, ``2`` re-derivation or anchor mismatch.
+* ``bernstein verify pins --manifest <path> --loaded <path>`` -- verify
+  the loaded plugin and skill set against the governed pin manifest. Exit
+  codes: ``0`` OK, ``1`` unreadable files, ``2`` drift detected.
+* ``bernstein verify coverage <head-sha> [--sha SHA] [--workdir PATH] [--json]``
+  -- inspect and recompute structured coverage sets on a merge admission
+  receipt. Exit codes: ``0`` OK, ``1`` missing receipt or v1 schema, ``2``
+  coverage_set_hash mismatch.
 
 The five legacy flag/positional modes are preserved verbatim under the
 default ``legacy`` subcommand -- any invocation whose first token is not a
@@ -42,8 +50,9 @@ behaviour and exit codes:
   binaries must be installed separately on PATH (no bundled extra).
 
 One routing edge: a wheelhouse directory literally named ``run``,
-``receipt``, ``ladder``, or ``legacy`` shadows the positional mode -- spell
-it ``./run`` (or use ``bernstein verify legacy run``) in that case.
+``receipt``, ``ladder``, ``pins``, ``coverage``, or ``legacy`` shadows
+the positional mode -- spell it ``./run`` (or use ``bernstein verify legacy run``)
+in that case.
 """
 
 from __future__ import annotations
@@ -97,6 +106,8 @@ def verify_cmd() -> None:
       bernstein verify run <run-id>               Build the signed run receipt
       bernstein verify receipt <path>             Verify a receipt offline (0/1/2)
       bernstein verify ladder <receipt-hash>      Re-derive a verifier-ladder receipt (0/1/2)
+      bernstein verify pins --manifest ...        Check loaded set against pin manifest (0/1/2)
+      bernstein verify coverage <head-sha>        Inspect merge receipt coverage (0/1/2)
       bernstein verify <wheelhouse-path>          Verify air-gap wheelhouse signatures
       bernstein verify --wal-integrity <run-id>   Validate hash chain
       bernstein verify --determinism  <run-id>    Show execution fingerprint
@@ -112,7 +123,11 @@ def verify_cmd() -> None:
     "wheelhouse_path",
     required=False,
     default=None,
-    type=click.Path(exists=False, file_okay=False, dir_okay=True, path_type=Path),
+    # file_okay=True so a portable artefact (bom, receipt-bundle, ...) can be
+    # routed through the kind-detecting dispatcher (#5103) below. Before this
+    # the type rejected any file outright, so allowing files here is
+    # additive: no prior invocation of this positional could ever be a file.
+    type=click.Path(exists=False, file_okay=True, dir_okay=True, path_type=Path),
 )
 @click.option(
     "--wal-integrity",
@@ -278,19 +293,26 @@ def verify_legacy_cmd(
     exit_code = 0
 
     if wheelhouse_path is not None:
-        exit_code |= _verify_wheelhouse(
-            wheelhouse_path,
-            ca_pubkey=ca_pubkey,
-            require_signatures=require_signatures,
-            require_customer_sig=require_customer_sig,
-            customer_trust_dir=customer_trust_dir,
-            sigstore=sigstore or require_sigstore,
-            sigstore_owner=sigstore_owner,
-            sigstore_repo=sigstore_repo,
-            sigstore_offline=sigstore_offline,
-            sigstore_bundle_dir=sigstore_bundle_dir,
-            require_sigstore=require_sigstore,
-        )
+        if wheelhouse_path.is_file():
+            # A file positional never reached this command before (the
+            # argument's type rejected it outright), so this branch only
+            # ever fires for previously-impossible invocations: no existing
+            # wheelhouse call is affected.
+            exit_code |= _verify_artefact_by_kind(wheelhouse_path)
+        else:
+            exit_code |= _verify_wheelhouse(
+                wheelhouse_path,
+                ca_pubkey=ca_pubkey,
+                require_signatures=require_signatures,
+                require_customer_sig=require_customer_sig,
+                customer_trust_dir=customer_trust_dir,
+                sigstore=sigstore or require_sigstore,
+                sigstore_owner=sigstore_owner,
+                sigstore_repo=sigstore_repo,
+                sigstore_offline=sigstore_offline,
+                sigstore_bundle_dir=sigstore_bundle_dir,
+                require_sigstore=require_sigstore,
+            )
 
     if wal_run_id is not None:
         exit_code |= _verify_wal_integrity(wal_run_id)
@@ -309,6 +331,34 @@ def verify_legacy_cmd(
         exit_code |= _verify_formal(formal_task_id)
 
     raise SystemExit(exit_code)
+
+
+def _verify_artefact_by_kind(path: Path) -> int:
+    """Detect *path*'s artefact kind and dispatch to its verifier (#5103).
+
+    This is the ``bernstein verify <artefact>`` half of the command: a
+    kind-detecting dispatcher over a registry of ``(kind, verifier)`` pairs,
+    so an operator holding an artefact does not need to already know which
+    of the many ``<group> verify`` commands produced it. Only two kinds are
+    wired so far (``bom``, ``receipt-bundle``) -- see
+    :mod:`bernstein.cli.commands.verify_kinds` for why, and for the ~53
+    ``verify`` commands not yet migrated.
+    """
+    from bernstein.cli.commands.verify_kinds import register_default_verifiers
+    from bernstein.core.verify_dispatch import dispatch_verify
+
+    register_default_verifiers()
+    outcome = dispatch_verify(path)
+
+    console.print()
+    console.print(f"[bold]Verify[/bold] artefact={path}")
+    if outcome.kind == "unknown":
+        console.print(f"[yellow]UNKNOWN KIND[/yellow] -- {outcome.message}")
+    elif outcome.ok:
+        console.print(f"[green]OK[/green] kind={outcome.kind} -- {outcome.message}")
+    else:
+        console.print(f"[red]FAILED[/red] kind={outcome.kind} -- {outcome.message}")
+    return outcome.exit_code
 
 
 def _verify_wheelhouse(
@@ -1709,3 +1759,219 @@ def verify_pins_cmd(
     )
     console.print()
     raise SystemExit(result.exit_code)
+
+
+# ---------------------------------------------------------------------------
+# Merge admission receipt coverage (issue #5400)
+# ---------------------------------------------------------------------------
+
+
+@verify_cmd.command("coverage")
+@click.argument("head_sha", required=False, default=None)
+@click.option(
+    "--sha",
+    "sha_option",
+    default=None,
+    metavar="HEAD_SHA",
+    help="Commit SHA whose merge admission receipt coverage to inspect.",
+)
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit coverage sets and hash recomputation as machine-readable JSON.",
+)
+def verify_coverage_cmd(
+    head_sha: str | None,
+    sha_option: str | None,
+    workdir: str,
+    as_json: bool,
+) -> None:
+    """Inspect and verify structured coverage on a merge admission receipt.
+
+    Loads the merge admission receipt for HEAD_SHA, recomputes the
+    coverage set hash from the receipt's own verified, unverified, and skipped
+    sets, and prints the breakdown: what was exercised, what was not, and
+    which oracles were skipped and why.
+
+    \b
+    Exit codes:
+      0  receipt coverage sets are consistent and hash recomputes byte-for-byte
+      1  no readable merge receipt, missing SHA, or receipt has no coverage sets (v1)
+      2  coverage_set_hash mismatch (tamper / divergence)
+    """
+    from bernstein.core.quality.merge_receipt import (
+        _canonical_bytes,
+        _sha256_hex,
+        read_merge_receipt,
+    )
+
+    target_sha = head_sha or sha_option
+    if not target_sha:
+        if as_json:
+            console.print_json(
+                data={
+                    "ok": False,
+                    "status": "missing_sha",
+                    "reason": "Commit SHA is required (pass as argument or via --sha).",
+                }
+            )
+        else:
+            console.print("[red]Error: Commit SHA is required (pass as argument or via --sha).[/red]")
+        raise SystemExit(1)
+
+    root = Path(workdir).resolve()
+    receipt = read_merge_receipt(root, target_sha)
+
+    if receipt is None:
+        if as_json:
+            console.print_json(
+                data={
+                    "ok": False,
+                    "status": "missing",
+                    "reason": f"No merge admission receipt found for {target_sha}.",
+                    "head_sha": target_sha,
+                }
+            )
+        else:
+            console.print()
+            console.print(
+                Panel(
+                    "[bold red]Merge Coverage: NOT FOUND[/bold red]",
+                    border_style="red",
+                    expand=False,
+                )
+            )
+            console.print(f"  [red]![/red] No merge admission receipt found for {target_sha}.")
+            console.print()
+        raise SystemExit(1)
+
+    if receipt.schema_version < 2 or not receipt.coverage_set_hash:
+        reason = (
+            f"Merge receipt for {target_sha} was signed under schema v{receipt.schema_version} "
+            "without structured coverage sets."
+        )
+        if as_json:
+            console.print_json(
+                data={
+                    "ok": False,
+                    "status": "no_coverage_sets",
+                    "reason": reason,
+                    "head_sha": target_sha,
+                    "schema_version": receipt.schema_version,
+                }
+            )
+        else:
+            console.print()
+            console.print(
+                Panel(
+                    "[bold red]Merge Coverage: NO COVERAGE DATA[/bold red]",
+                    border_style="red",
+                    expand=False,
+                )
+            )
+            console.print(f"  [red]![/red] {reason}")
+            console.print()
+        raise SystemExit(1)
+
+    payload = {
+        "verified": list(receipt.verified),
+        "unverified": list(receipt.unverified),
+        "skipped": [list(pair) for pair in receipt.skipped],
+    }
+    recomputed_hash = _sha256_hex(_canonical_bytes(payload))
+
+    if recomputed_hash != receipt.coverage_set_hash:
+        if as_json:
+            console.print_json(
+                data={
+                    "ok": False,
+                    "status": "mismatch",
+                    "reason": "coverage_set_hash mismatch",
+                    "head_sha": receipt.head_sha,
+                    "expected": receipt.coverage_set_hash,
+                    "recomputed": recomputed_hash,
+                    "verified": list(receipt.verified),
+                    "unverified": list(receipt.unverified),
+                    "skipped": [list(pair) for pair in receipt.skipped],
+                }
+            )
+        else:
+            console.print()
+            console.print(
+                Panel(
+                    "[bold red]Merge Coverage: TAMPER / DIVERGENCE DETECTED[/bold red]",
+                    border_style="red",
+                    expand=False,
+                )
+            )
+            console.print(f"  [red]![/red] Stored coverage_set_hash:     {receipt.coverage_set_hash}")
+            console.print(f"  [red]![/red] Recomputed coverage_set_hash: {recomputed_hash}")
+            console.print()
+        raise SystemExit(2)
+
+    if as_json:
+        console.print_json(
+            data={
+                "ok": True,
+                "status": "verified",
+                "head_sha": receipt.head_sha,
+                "merge_base_sha": receipt.merge_base_sha,
+                "decision": receipt.decision,
+                "authority": receipt.authority,
+                "coverage_set_hash": receipt.coverage_set_hash,
+                "recomputed_hash": recomputed_hash,
+                "verified": list(receipt.verified),
+                "unverified": list(receipt.unverified),
+                "skipped": [list(pair) for pair in receipt.skipped],
+            }
+        )
+        raise SystemExit(0)
+
+    console.print()
+    table = Table(show_header=True, box=None, padding=(0, 2))
+    table.add_column("Category", style="bold", no_wrap=True, min_width=14)
+    table.add_column("Count", justify="right", no_wrap=True)
+    table.add_column("Details", no_wrap=False)
+
+    table.add_row(
+        "[green]Verified[/green]",
+        str(len(receipt.verified)),
+        ", ".join(receipt.verified) if receipt.verified else "[dim](none)[/dim]",
+    )
+    table.add_row(
+        "[yellow]Unverified[/yellow]" if receipt.unverified else "Unverified",
+        str(len(receipt.unverified)),
+        ", ".join(receipt.unverified) if receipt.unverified else "[dim](none)[/dim]",
+    )
+    skipped_str = ", ".join(f"{p} ({r})" for p, r in receipt.skipped) if receipt.skipped else "[dim](none)[/dim]"
+    table.add_row(
+        "[cyan]Skipped[/cyan]" if receipt.skipped else "Skipped",
+        str(len(receipt.skipped)),
+        skipped_str,
+    )
+    console.print(table)
+    console.print()
+    console.print(f"  Head SHA:          {receipt.head_sha}")
+    console.print(f"  Decision:          {receipt.decision} (Authority: {receipt.authority})")
+    console.print(f"  Coverage set hash: {receipt.coverage_set_hash}")
+    console.print()
+    console.print(
+        Panel(
+            "[bold green]Merge Coverage: VERIFIED[/bold green]",
+            border_style="green",
+            expand=False,
+        )
+    )
+    console.print("  [dim]Structured coverage sets recomputed and matched the signed receipt byte-for-byte.[/dim]")
+    console.print()
+    raise SystemExit(0)

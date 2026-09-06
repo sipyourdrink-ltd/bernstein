@@ -715,7 +715,13 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
         event_channel=EventChannel.STREAM_JSON,
         session_state=SessionState.PERSISTENT_AGENT,
     ),
-    # Codex drives unattended via its sandbox/full-auto flag.
+    # Codex drives unattended via its sandbox flag: ``--sandbox
+    # workspace-write`` pins the posture, hence CLI_FLAG. The adapter reads
+    # this row to pick the sandbox argv, and ALWAYS_ON is the only value that
+    # selects ``--dangerously-bypass-approvals-and-sandbox`` instead -- for a
+    # runner that already isolates the process, where the bubblewrap-backed
+    # vendor sandbox cannot start at all. Leave this row as CLI_FLAG: an
+    # operator opts into the bypass per adapter instance, not repo-wide.
     "codex": AdapterStrategy(dangerous_mode=DangerousModeStrategy.CLI_FLAG),
     # Everyone else - no native resume, text-signal channel. Dangerous-mode
     # default is ``UNSUPPORTED`` until an adapter declares otherwise.
@@ -813,13 +819,19 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "ollama": AdapterStrategy(),
     "open_interpreter": AdapterStrategy(),
     # Resume and dangerous mode are backed by flags ``opencode.py`` passes:
-    # ``--continue`` and ``--auto`` plus an explicit permission policy. The
-    # event channel stays ``text-signals``: the CLI does emit NDJSON under
-    # ``--format json``, but nothing consumes it yet, and declaring a channel
-    # no parser reads would claim a surface that does not exist.
+    # ``--continue`` and ``--auto`` plus an explicit permission policy.
+    # ``event_channel`` names what the upstream CLI emits (see the enum's own
+    # docstring and docs/adapters/capability_contract.md), not what Bernstein
+    # currently parses -- the same reading ``cursor`` above is declared under
+    # despite having no dedicated stream parser either (#3676). ``opencode.py``
+    # already passes ``--format json``, under which the CLI emits NDJSON, so
+    # this is ``stream-json`` today even though nothing consumes those events
+    # yet; that consumption is separate follow-up work, not a reason to
+    # misdeclare the upstream surface.
     "opencode": AdapterStrategy(
         resume=ResumeStrategy.FLAG,
         dangerous_mode=DangerousModeStrategy.CLI_FLAG,
+        event_channel=EventChannel.STREAM_JSON,
     ),
     "openhands": AdapterStrategy(),
     "pi": AdapterStrategy(),
@@ -1210,11 +1222,20 @@ _SYSTEM_PROMPT_ADDENDUM_ADAPTERS: frozenset[str] = frozenset(
 #: model. The base ``CLIAdapter.spawn`` contract permits this fallback.
 _PROMPT_APPEND_ADDENDUM_ADAPTERS: frozenset[str] = frozenset(
     {
+        # "antigravity" is the upstream rename of the "gemini" CLI binary and
+        # shares GeminiAdapter's spawn() body verbatim -- see the twin
+        # AdapterStrategy declarations above -- so it carries the same
+        # system_addendum channel.
+        "antigravity",
+        "codex",
         "devin_terminal",
+        "gemini",
         "junie",
         "muse",
+        "opencode",
         "python_runtime",
         "q_dev",
+        "qwen",
         "ralphex",
     }
 )

@@ -1,0 +1,17 @@
+id: read_only_public
+name: Public Documentation Reader Server
+description: Anonymous public documentation reader with no sensitive reach or egress.
+auth_posture: anonymous
+has_untrusted_input: false
+has_sensitive_reach: false
+has_egress_channel: false
+has_wildcard_permissions: false
+tools:
+  - name: fetch_public_docs
+    description: Fetch static documentation pages from public knowledge base.
+    read_only: true
+    sensitive_reach: false
+    untrusted_input: false
+    egress: false
+resources: []
+prompts: []

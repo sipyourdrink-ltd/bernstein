@@ -1,9 +1,12 @@
 """``bernstein resume <task-id>`` - pick up a task from its last checkpoint.
 
 Loads the per-task checkpoint written by the orchestrator after every
-successful step transition, validates it, bumps ``resume_count``, fires
-the ``task.resume`` lifecycle event, and hands control back so the
-orchestrator can re-spawn the task from the next step boundary.
+successful step transition, or before an automatic stall kill (heartbeat
+staleness or identical-progress detection; issue #3376) discards the
+worker's state, validates it, bumps ``resume_count``, fires the
+``task.resume`` lifecycle event, and hands control back so the
+orchestrator can re-spawn the task from the next step boundary. A
+checkpoint written at a stall kill carries its ``stall_reason``.
 
 See ``feat-resume-from-checkpoint`` spec for the full contract. v1 scope
 is local-only - cross-machine resume, distributed checkpoint storage,
@@ -24,6 +27,8 @@ from bernstein.adapters._contract import resume_capability, strategy_for
 from bernstein.cli.helpers import console
 from bernstein.core.lifecycle.hooks import HookRegistry, LifecycleContext, LifecycleEvent
 from bernstein.core.persistence.agent_checkpoint import (
+    discard_checkpoint,
+    evaluate_observations,
     find_checkpoint_for_task,
     is_checkpoint_recoverable,
 )
@@ -44,6 +49,7 @@ EXIT_NO_CHECKPOINT: int = 2
 EXIT_CORRUPT: int = 3
 EXIT_HOOK_FAILED: int = 4
 EXIT_GRANT_REFUSED: int = 5
+EXIT_OBSERVATIONS_MOVED: int = 6
 
 
 class GrantRefusedError(RuntimeError):
@@ -53,6 +59,31 @@ class GrantRefusedError(RuntimeError):
     permissions, task, parent run, chain head) so the operator can act
     without reading source.
     """
+
+
+class ObservationsMovedError(RuntimeError):
+    """Raised when the bytes the suspended work was derived from have moved.
+
+    Distinct from :class:`GrantRefusedError` on purpose: the grant refusal
+    says the run may no longer act, while this says the run would act on a
+    world model that is no longer true. Discarding the checkpoint and
+    respawning is the expected answer; ``--override-observations`` resumes
+    anyway and records that it did.
+    """
+
+
+def discard_agent_checkpoint(workdir: Path, task_id: str) -> bool:
+    """Drop the agent checkpoint for ``task_id``; return whether one existed.
+
+    Exposed so the dashboard and the API can take the discard path without
+    parsing CLI output. After the drop the next run of the task carries no
+    continuation entry, so the chain reads it as a new run.
+    """
+    runtime_dir = workdir / ".sdd" / "runtime"
+    checkpoint = find_checkpoint_for_task(task_id, runtime_dir)
+    if checkpoint is None:
+        return False
+    return discard_checkpoint(checkpoint.agent_id, runtime_dir)
 
 
 @dataclass(frozen=True)
@@ -78,6 +109,7 @@ def prepare_resume(
     *,
     hooks: HookRegistry | None = None,
     override_interpreter: bool = False,
+    override_observations: bool = False,
 ) -> ResumePlan:
     """Load + validate the checkpoint, bump ``resume_count``, fire the hook.
 
@@ -88,6 +120,9 @@ def prepare_resume(
         override_interpreter: When ``True``, bypass the interpreter mismatch
             check (``--override-interpreter``) so a resume proceeds even
             though the adapter or resolved model moved.
+        override_observations: When ``True``, resume even though the bytes the
+            suspended work was derived from moved, instead of discarding the
+            checkpoint and respawning.
 
     Returns:
         A :class:`ResumePlan` ready for the orchestrator.
@@ -95,6 +130,8 @@ def prepare_resume(
     Raises:
         CheckpointMissingError: No checkpoint on disk.
         CheckpointCorruptError: File exists but is invalid.
+        GrantRefusedError: The grant the checkpoint was written under moved.
+        ObservationsMovedError: The observations the checkpoint bound moved.
         HookFailure: The ``task.resume`` hook rejected the resume.
     """
     # Reading once before the bump gives us a clear error path: if the
@@ -122,6 +159,13 @@ def prepare_resume(
         )
         if not _ok:
             raise GrantRefusedError(_reason)
+        # The authority question is settled; the world-model question is not.
+        # Both are asked before the first side effect, and in this order: a
+        # run that may not act at all is never offered the discard choice.
+        if not override_observations:
+            _verdict = evaluate_observations(_agent_checkpoint)
+            if _verdict.discard_candidate:
+                raise ObservationsMovedError(_verdict.reason)
 
     checkpoint = bump_resume_count(workdir, task_id)
     adapter_name = checkpoint.adapter or ""
@@ -223,12 +267,26 @@ def _render_plan(workdir: Path, plan: ResumePlan, *, output_json: bool) -> None:
     default=False,
     help="Resume even though the adapter or resolved model moved since suspend.",
 )
+@click.option(
+    "--override-observations",
+    is_flag=True,
+    default=False,
+    help="Resume even though the bytes the suspended work was derived from moved.",
+)
+@click.option(
+    "--discard",
+    is_flag=True,
+    default=False,
+    help="Drop the checkpoint first, so the task runs fresh instead of continuing.",
+)
 def resume_cmd(
     task_id: str,
     workdir: Path | None,
     output_json: bool,
     dry_run: bool,
     override_interpreter: bool,
+    override_observations: bool,
+    discard: bool,
 ) -> None:
     """Pick up a paused/killed/crashed task from its last checkpoint.
 
@@ -239,10 +297,24 @@ def resume_cmd(
         3  checkpoint corrupt / failed schema validation
         4  task.resume lifecycle hook failed
         5  grant mismatch — role narrowed, task reassigned, or parent cancelled
+        6  observations moved — discard and respawn, or --override-observations
     """
     project_root = workdir or Path.cwd()
+    if discard:
+        dropped = discard_agent_checkpoint(project_root, task_id)
+        console.print(
+            f"[yellow]Checkpoint discarded for {task_id!r}.[/yellow] The task runs fresh; "
+            "the chain records a new run, not a continuation."
+            if dropped
+            else f"[dim]No agent checkpoint to discard for {task_id!r}.[/dim]"
+        )
     try:
-        plan = prepare_resume(project_root, task_id, override_interpreter=override_interpreter)
+        plan = prepare_resume(
+            project_root,
+            task_id,
+            override_interpreter=override_interpreter,
+            override_observations=override_observations,
+        )
     except CheckpointMissingError as exc:
         console.print(f"[red]No checkpoint:[/red] {exc}")
         _hint_work_ledger(project_root, task_id)
@@ -260,6 +332,14 @@ def resume_cmd(
             " checkpoint was written. Re-run the task from scratch or restore the original grant.[/dim]"
         )
         raise SystemExit(EXIT_GRANT_REFUSED) from None
+    except ObservationsMovedError as exc:
+        console.print(f"[red]Observations moved — resume is not a continuation:[/red] {exc}")
+        console.print(
+            "[dim]Respawn the task from scratch with 'bernstein resume"
+            f" {task_id} --discard', or resume onto the changed bytes with"
+            " --override-observations (recorded in the chain).[/dim]"
+        )
+        raise SystemExit(EXIT_OBSERVATIONS_MOVED) from None
 
     _render_plan(project_root, plan, output_json=output_json)
 

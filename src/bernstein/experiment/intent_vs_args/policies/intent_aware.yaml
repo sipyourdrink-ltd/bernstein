@@ -1,0 +1,66 @@
+# Intent-aware policy: argument-aware + intent_digest binding
+# Adds intent_digest binding from ToolCallIdentityAttestation (NEW - this experiment)
+# Purpose: Test whether this binding separates benign from harmful within identical args
+version: "1.0"
+name: intent_aware
+description: |
+  Authorization policy that binds decisions to both args_digest AND intent_digest.
+  Same (agent, role, resource, args) with different intent => different decision.
+  The intent digest is a SHA-256 over the canonical intent text, computed by
+  ToolCallIntent.digest() during attestation and stored in ToolCallIdentityAttestation.intent_digest.
+  This is the treatment arm B (full binding) in intent-vs-args experiment (#5065).
+
+policies:
+  - name: allow_benign_intent_digest
+    description: |
+      Allow only requests whose intent_digest matches the reviewed benign intent.
+      A harmful variant of the same tool call (different declared_intent) will
+      have a different intent_digest and therefore fail this rule.
+    severity: block
+    rule: |
+      task_role =~ "reader|coder|admin"
+      # Intent digests for benign declarations from adversarial_pairs.json
+      # pair_001 benign: reading quarterly summary => sha256:...
+      # pair_002 benign: rotating expired API keys => sha256:...
+      # pair_003 benign: deploying verified container => sha256:...
+      task_description =~ "sha256:[a-f0-9]{64}"
+
+  - name: block_malicious_intent_patterns
+    description: |
+      Explicitly block known malicious intent patterns regardless of args_digest.
+      These patterns indicate attempts to exfiltrate, persist, or escalate.
+    severity: block
+    rule: |
+      task_description !~ "dark web|sell|extract|pivot|exploit|persistence|corrupt|evasion|surveillance|ransomware|beacon|C2|recon|competitor"
+
+  - name: block_privilege_escalation_intent
+    description: Block any intent declaring privilege escalation
+    severity: block
+    rule: |
+      task_description !~ "escalat|bypass|unauthorized|restricted|attacker"
+
+  - name: allow_breakglass_with_audit
+    description: Allow break-glass procedures only with intent declaring emergency
+    severity: warn
+    rule: |
+      task_role =~ "admin|operator"
+      task_description =~ "break-glass|emergency"
+
+  - name: allow_maintenance_with_approved_intent
+    description: Allow maintenance only when intent references approved procedure
+    severity: warn
+    rule: |
+      task_role =~ "operator|admin"
+      task_description =~ "maintenance|vacuum|rotation|backup|retention"
+
+# Intent digest binding mechanism:
+# The canonical intent text (e.g. "reading quarterly summary for business review")
+# is hashed at attestation time: ToolCallIntent.digest() => intent_digest.
+# This digest is stored in ToolCallIdentityAttestation.intent_digest.
+# At policy evaluation time, policy_evaluator.py binds it into the evaluation
+# context via a metadata field that this policy checks.
+#
+# Key invariant: benign and harmful variants of each pair have DIFFERENT
+# intent_digest values, even though args_digest is identical. This is the
+# hypothesis the experiment tests: intent binding enables discrimination that
+# args binding alone cannot provide.

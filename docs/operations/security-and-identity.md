@@ -60,7 +60,7 @@ user_id, scopes)`. Three issuers exist:
   `localStorage`. Device flow (`/auth/cli/device`, `/auth/cli/token`)
   issues the same token via polling for CLI-based logins
   (`routes/auth.py:324-372`).
-- **Agent identity** - `core/security/agent_identity.py` issues task-scoped JWTs
+- **Agent identity** - `core/identity/agent_jwt.py` issues task-scoped JWTs
   with claims `{session_id, user_id=identity_id, task_ids: [...],
   permissions: [...]}`. Stored in `.sdd/auth/identities/`.
 - **Cluster nodes** - `ClusterAuthenticator.issue_node_token(node_id)`
@@ -207,10 +207,16 @@ Per-role permission table
 | `bulletin:read`    |  yes  |   yes    |  yes   |
 | `bulletin:write`   |  yes  |   yes    |  no    |
 | `admin:manage`     |  yes  |   no     |  no    |
+| `scim:read`        |  yes  |   no     |  no    |
+| `scim:write`       |  no   |   no     |  no    |
 
 `admin:manage` is the kill-switch: shutdown, broadcast, drain, and the
 config writer all require it. Only ADMIN holds it by design
 (`core/security/auth.py:109-113`).
+
+`scim:write` is held by no role: the SCIM surface serves reads only, so
+nothing may hold the authority to reach a write route that does not exist.
+A write slice adds the routes and the grant together.
 
 RBAC is enforced at the route level by `RBACEnforcer`
 (`core/security/rbac.py:118-...`), which maps URL prefixes + HTTP
@@ -334,7 +340,7 @@ for. The identities surface lives at `core/routes/identities.py`.
 | `POST /identities/{id}/revoke`                | Revoke an agent identity. Body `{reason: "..."}`. Future requests with the identity's JWT fail.    | `routes/identities.py:91-103`         |
 | `GET /identities/{id}/audit`                  | Per-identity audit trail. Returns the identity's events from the audit store. `?limit=100` default. | `routes/identities.py:111-122`        |
 
-Backing store: `core/security/agent_identity.py` (`AgentIdentityStore`) under
+Backing store: `core/identity/agent_jwt.py` (`AgentIdentityStore`) under
 `.sdd/auth/`. The store is created lazily on first request
 (`routes/identities.py:17-27`). Credentials are stored hashed; the API
 strips them before responses (`:82`).
@@ -485,6 +491,46 @@ the merge itself does not share, so a large enough diff can time out here
 while `git merge` still succeeds. Both gates stay inert when nothing was
 asked of them — no ceiling set, no scope declared — so only a failed read
 inside a gate that is actually on can turn into a refusal.
+
+## SCIM 2.0 provisioning surface (read-only)
+
+An identity team's directory already speaks SCIM 2.0, so the orchestrator
+serves it rather than asking anyone to write an adapter. The surface is JSON
+over HTTP (RFC 7643 schema, RFC 7644 protocol) - no client library is
+involved. It lives at `core/routes/scim.py` and mounts under `/scim/v2`.
+
+Today it serves reads only. Every principal it returns is the same agent
+identity the Identities API serves; there is one store, read two ways.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /scim/v2/ServiceProviderConfig` | RFC 7643 §5 discovery. Reports only what is mounted. |
+| `GET /scim/v2/Schemas`, `GET /scim/v2/Schemas/{urn}` | RFC 7643 §7 schema resources for the attributes actually projected. |
+| `GET /scim/v2/ResourceTypes`, `GET /scim/v2/ResourceTypes/{id}` | RFC 7643 §6. Only resources that have an endpoint. |
+| `GET /scim/v2/Users`, `GET /scim/v2/Users/{id}` | Agent principals as SCIM `User` resources, in the RFC 7644 §3.4.2 `ListResponse` envelope. |
+
+`GET /scim/v2/Users` accepts `startIndex` and `count` (page size capped at
+200). `filter` is answered with `501` and `scimType: invalidFilter` because
+`ServiceProviderConfig` reports `filter.supported = false`; returning the
+unfiltered list would look like a successful narrow query.
+
+**Deletion semantics.** A SCIM client expects `DELETE` to remove a resource.
+The record kept here is append-only, so a principal removed upstream becomes
+inactive while the record of its existence and of its removal stays. That is
+declared now, under
+`urn:ietf:params:scim:schemas:extension:bernstein:2.0:ServiceProviderConfig`,
+rather than met as a surprise once the write surface exists:
+
+```json
+"delete": { "supported": false, "semantics": "soft", "retainsHistory": true }
+```
+
+**Access.** Reads need `scim:read`, writes `scim:write`. The requirement is
+declared in the same two places every other route uses - the rule table in
+`core/security/rbac.py` and the prefix map the middleware consults in
+`core/security/auth_middleware.py` - so a credential issued to a directory for
+provisioning satisfies no other route's requirement, and a plain `status:read`
+viewer cannot list principals.
 
 ## Delegation capability tokens
 
@@ -698,7 +744,8 @@ Compliance modules in code (`core/security/`):
 | JWT manager                        | `src/bernstein/core/security/jwt_tokens.py`                           |
 | OIDC / SAML / device flow routes   | `src/bernstein/core/routes/auth.py`                                   |
 | Agent identities API               | `src/bernstein/core/routes/identities.py`                             |
-| Agent identity store               | `src/bernstein/core/security/agent_identity.py`                                |
+| SCIM 2.0 provisioning surface      | `src/bernstein/core/routes/scim.py`                                   |
+| Agent identity store               | `src/bernstein/core/identity/agent_jwt.py`                            |
 | Delegation capability tokens       | `src/bernstein/core/security/capability_tokens.py`, `permission_delegation.py` |
 | Delegation verify CLI              | `src/bernstein/cli/commands/delegation_cmd.py`                        |
 | Audit log (HMAC chain)             | `src/bernstein/core/security/audit.py`                                |

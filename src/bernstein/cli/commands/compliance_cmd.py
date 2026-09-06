@@ -35,6 +35,8 @@ from bernstein.core.compliance_policies import (
     PolicySeverity,
     evaluate_all,
     evaluate_framework,
+    observe_audit_retention_days,
+    summarise_evidence_coverage,
 )
 from bernstein.core.eu_ai_act import summarize_assessments
 
@@ -415,10 +417,14 @@ def check_policies(
     """Evaluate compliance policies against the current runtime configuration.
 
     Pass --<flag> / --no-<flag> options to describe the current state of your
-    deployment.  The command exits non-zero if any failing policy meets the
-    severity threshold set by --fail-on (default: critical).
+    deployment.  Those flags are operator declarations: results resting on
+    them are reported as declared, not as evidenced.  Audit retention is not a
+    flag - it is read off the audit segments under WORKDIR.  The command exits
+    non-zero if any failing policy meets the severity threshold set by
+    --fail-on (default: critical).
     """
     inp = PolicyInput(
+        audit_retention_days=observe_audit_retention_days(workdir / ".sdd" / "audit"),
         audit_logging=audit_logging,
         audit_hmac_chain=audit_hmac_chain,
         sandbox_enabled=sandbox_enabled,
@@ -459,6 +465,8 @@ def check_policies(
         "none": 99,
     }
 
+    coverage = summarise_evidence_coverage(results)
+
     if as_json:
         click.echo(
             json.dumps(
@@ -467,6 +475,7 @@ def check_policies(
                         "total": len(results),
                         "passing": len(passing),
                         "failing": len(failing),
+                        "evidence": coverage.to_dict(),
                     },
                     "results": [r.to_dict() for r in results],
                 },
@@ -476,6 +485,7 @@ def check_policies(
     else:
         click.echo(f"Compliance check: {len(results)} policies evaluated")
         click.echo(f"  Passing: {len(passing)}   Failing: {len(failing)}")
+        click.echo(f"  Evidenced: {coverage.evidenced}   Operator-declared: {coverage.operator_asserted}")
         click.echo("")
         if failing:
             click.echo("FAILURES:")
@@ -517,6 +527,74 @@ def export_rego(framework: str, output_dir: Path | None, workdir: Path) -> None:
     dest = output_dir or (workdir / ".sdd" / "compliance" / "rego" / fw.value)
     paths = CompliancePolicyLibrary().export_rego(fw, dest_dir=dest)
     click.echo(f"Exported {len(paths)} Rego policies to: {dest}")
+
+
+# ---------------------------------------------------------------------------
+# `bernstein compliance decisions` - decision provenance for gated actions
+# ---------------------------------------------------------------------------
+
+
+@compliance_group.command("decisions")
+@click.option(
+    "--audit-dir",
+    default=".sdd/audit",
+    show_default=True,
+    type=click.Path(path_type=Path),
+    help="Directory holding the HMAC-chained audit log.",
+)
+@click.option("--json-output", "as_json", is_flag=True, help="Emit the closed-schema records as JSON.")
+def decisions(audit_dir: Path, as_json: bool) -> None:
+    """Report decision provenance for every approval-gated action.
+
+    One record per settled approval card: who approved it, what tool call it
+    authorised, the intent and blast-radius estimate they were shown, and the
+    two audit-chain events each field was taken from.
+
+    The report is emitted only when the chain verifies and only for cards the
+    approval-card verifier could fully reconstruct. A decision-provenance
+    report drawn from a chain that failed verification would be an ordinary
+    claims document, which is what this command exists to replace, so a failed
+    verdict prints the errors and exits non-zero instead.
+    """
+    from bernstein.core.approval.card_verify import verify_approval_card_events
+    from bernstein.core.compliance.decision_record import (
+        build_decision_records,
+        render_decision_records,
+    )
+    from bernstein.core.security.audit import (
+        AuditKeyMissingError,
+        AuditKeyPermissionError,
+        load_audit_key,
+    )
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+    try:
+        key = load_audit_key()
+    except (AuditKeyMissingError, AuditKeyPermissionError) as exc:
+        raise click.ClickException(f"cannot authenticate audit rows: {exc}") from exc
+
+    # One locked snapshot: the rows projected below are exactly the rows the
+    # verdict covers. Verifying and querying separately would let an append
+    # land in between, so the report could carry a decision the verification
+    # never saw.
+    chain = AuditChainStore(audit_dir, key=key)
+    chain_ok, chain_errors, events = chain.verify_and_query(include_archived=True)
+    if not chain_ok:
+        for error in chain_errors:
+            click.echo(f"audit chain verification failed: {error}", err=True)
+        raise SystemExit(1)
+
+    result = verify_approval_card_events(events)
+    if not result.ok:
+        for error in [*result.errors, *result.verifier_errors]:
+            click.echo(f"approval card verification failed: {error}", err=True)
+        raise SystemExit(1)
+
+    records = build_decision_records(result)
+    if as_json:
+        click.echo(json.dumps([record.to_dict() for record in records], indent=2, sort_keys=False))
+        return
+    click.echo(render_decision_records(records))
 
 
 # ---------------------------------------------------------------------------

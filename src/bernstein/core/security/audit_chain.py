@@ -30,7 +30,7 @@ import hashlib
 import json
 import threading
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Mapping, Sequence
@@ -84,6 +84,14 @@ EVENT_COMPACTION_RECEIPT = "compaction.receipt"
 #: holding the ledger can recompute the report byte-identically and
 #: check it against the chain.
 EVENT_COST_PROFILE_REPORT = "cost.profile_report"
+
+#: Issue #2918 -- emitted the first time a run's spend ledger crosses its
+#: soft or hard budget cap. Until this event existed the halt survived
+#: only as a ``logger.warning`` line, so "this run stopped because of its
+#: budget" was not reconstructable from the tamper-evident chain. The
+#: event records the band that tripped, the spend and the cap as integer
+#: nano-USD, and the previous chain digest.
+EVENT_BUDGET_HALT = "cost.budget_halt"
 
 #: Issue #2247 -- emitted whenever ``bernstein eval ab`` writes a
 #: content-addressed profile comparison artifact. The event records the
@@ -151,6 +159,14 @@ EVENT_SKILL_USAGE = "skill.usage"
 #: :mod:`bernstein.core.skills.catalog.transparency` and
 #: :mod:`bernstein.core.skills.catalog.revocation`.
 EVENT_SKILL_VERIFICATION_REFUSAL = "skill.verification_refusal"
+
+#: Issue #5047 -- emitted when a spawn is refused because the delegation hop for
+#: the agent's identity could not be written. Fail-closed: an agent whose
+#: delegation cannot be receipted must not run, because the chain would then be
+#: short by exactly the hop a verifier needs and a missing hop is
+#: indistinguishable from a delegation that never happened. Carries the run, the
+#: refused session and the reason; never a token or a key.
+EVENT_SPAWN_REFUSED_UNRECEIPTED = "spawn.refused_unreceipted"
 
 #: Issue #2306 -- emitted whenever a payment is authorized under a signed
 #: spending mandate. The event carries the consent receipt binding
@@ -231,6 +247,11 @@ EVENT_MCP_STATELESS_CALL = "mcp.stateless_call"
 #: named run and journal head, so the chain alone proves which server
 #: gained or lost which tools.
 EVENT_MCP_CAPABILITY_DRIFT = "mcp.capability_drift"
+
+#: Issue #5115 -- emitted when the install identity key is rotated. The event
+#: records the new keyid (thumbprint of the install-identity public key), the
+#: old keyid if available, and the timestamp of rotation.
+EVENT_IDENTITY_ROTATION = "identity.rotation"
 
 #: Issue #3610 (slice 1) -- emitted when a run's semantic code graph digest
 #: is anchored in the HMAC chain. This event records the graph digest, the
@@ -501,6 +522,16 @@ EVENT_ADAPTER_CAPABILITY_SELECTION = "adapter.capability_selection"
 #: names a changed ``tier_policy_version`` as a divergence. The reserved
 #: ``error`` marker is recorded when the classifier raises at the call site.
 EVENT_TASK_TIER_DECISION = "task.tier_decision"
+
+#: Issue #5341 -- emitted when an operator's host-isolation declaration reaches
+#: an adapter that owns a vendor sandbox. Records the declared tier, the
+#: operator's evidence for it, the config layer the declaration came from, and
+#: whether the adapter consequently dropped its vendor sandbox. Dropping a
+#: sandbox is a posture change, so it belongs on the record as a statement
+#: somebody made from a named source rather than as an unexplained flag flip:
+#: a reader reconstructing a run can prove offline which declaration was in
+#: force and what it was based on.
+EVENT_HOST_ISOLATION_DECLARED = "sandbox.host_isolation_declared"
 
 #: Issue #2663 -- emitted when capability-aware routing refuses a task because
 #: no candidate adapter's declared profile satisfied its requirements. The event
@@ -1004,6 +1035,15 @@ EVENT_IDENTITY_SPAWN_ATTESTATION = "identity.spawn_attestation"
 
 #: Issue #5031 -- session revocation propagation
 EVENT_IDENTITY_REVOKED = "identity.revoked"
+
+#: Issue #4970 -- emitted whenever the external-directory bridge
+#: (:mod:`bernstein.core.security.directory_bridge`) answers "who is this
+#: principal and what is it a member of". The event names the adapter and its
+#: version, the reference asked for, the principal the directory returned, the
+#: groups, the mapped role, the revocation state, and whether the answer came
+#: from the directory or from the bridge cache (with its age). A live lookup
+#: nobody can reproduce later thereby becomes a verifiable historical fact.
+EVENT_DIRECTORY_RESOLUTION = "identity.directory_resolution"
 
 #: Issue #2930 -- emitted whenever an eval run seals a clean-run attestation
 #: (:mod:`bernstein.eval.clean_run`). The event mirrors the attestation's
@@ -1553,6 +1593,74 @@ def record_cost_profile_report(
         actor=actor,
         resource_type="cost_profile_report",
         resource_id=report_sha256,
+        details=payload,
+    )
+
+
+@dataclass(frozen=True)
+class BudgetHaltDetails:
+    """Structured payload for the ``cost.budget_halt`` event."""
+
+    run_id: str
+    band: Literal["soft", "hard"]
+    spent_nano_usd: int
+    cap_nano_usd: int
+    ledger_entries_written: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "band": self.band,
+            "spent_nano_usd": self.spent_nano_usd,
+            "cap_nano_usd": self.cap_nano_usd,
+            "ledger_entries_written": self.ledger_entries_written,
+        }
+
+
+def record_budget_halt(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    band: Literal["soft", "hard"],
+    spent_nano_usd: int,
+    cap_nano_usd: int,
+    ledger_entries_written: int,
+    actor: str = "cost",
+) -> AuditEvent:
+    """Append a ``cost.budget_halt`` event into *chain*.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: Run whose ledger tripped the cap.
+        band: Which cap tripped -- ``"soft"`` or ``"hard"``. The two
+            bands are the closed vocabulary of this event; a reader
+            never has to interpret free text to know what stopped.
+        spent_nano_usd: Cumulative spend at the halt, in integer
+            nano-USD (never a float -- see
+            :func:`bernstein.core.cost.showback_canonical.nano_usd_from_float`).
+        cap_nano_usd: The cap that was crossed, in integer nano-USD.
+        ledger_entries_written: Rows the halting ledger instance had
+            appended when the cap tripped, so an operator can locate the
+            boundary row in ``.sdd/cost/ledger.jsonl``.
+        actor: Recorded actor; defaults to ``"cost"``.
+
+    Returns:
+        The recorded :class:`AuditEvent`. The event details payload
+        carries every input plus ``prev_chain_digest`` (set to the
+        chain head at write time).
+    """
+    payload = BudgetHaltDetails(
+        run_id=run_id,
+        band=band,
+        spent_nano_usd=spent_nano_usd,
+        cap_nano_usd=cap_nano_usd,
+        ledger_entries_written=ledger_entries_written,
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_BUDGET_HALT,
+        actor=actor,
+        resource_type="budget_halt",
+        resource_id=run_id,
         details=payload,
     )
 
@@ -5410,6 +5518,61 @@ def record_task_tier_decision(
             "feature_digest": feature_digest,
             "features": dict(sorted(features.items())),
             "score": score,
+        },
+    )
+
+
+def record_host_isolation_declaration(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    adapter: str,
+    tier: str,
+    evidence: str,
+    source: str,
+    vendor_sandbox_dropped: bool,
+    actor: str = "host_isolation",
+) -> AuditEvent:
+    """Append a ``sandbox.host_isolation_declared`` event into *chain* (#5341).
+
+    Anchors one operator declaration at the dispatch seam
+    :func:`record_capability_selection` already uses. An adapter that ships its
+    own sandbox drops it when the host is declared to isolate the process
+    already; without this record the drop is invisible after the fact, and the
+    difference between "the operator declared a container" and "somebody
+    escalated the adapter" cannot be reconstructed.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run the declaration was resolved for.
+        adapter: Adapter the declaration was injected into.
+        tier: Declared isolation tier (a ``SandboxTier`` value).
+        evidence: The operator's description of the isolation, verbatim. Free
+            text, recorded so a reader can judge the claim rather than take the
+            tier on faith.
+        source: Config layer the tier resolved from (``session``, ``project``,
+            ``global``, ``default``, ...), so the declaration names where it
+            was made and not only what it said.
+        vendor_sandbox_dropped: Whether the adapter consequently spawned
+            without its own sandbox. ``False`` for a tier that does not replace
+            it, which keeps the weak-tier declarations on the record too.
+        actor: Recorded actor; defaults to ``"host_isolation"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_HOST_ISOLATION_DECLARED,
+        actor=actor,
+        resource_type="sandbox",
+        resource_id=adapter,
+        details={
+            "run_id": run_id,
+            "adapter": adapter,
+            "tier": tier,
+            "evidence": evidence,
+            "source": source,
+            "vendor_sandbox_dropped": vendor_sandbox_dropped,
         },
     )
 
@@ -9588,6 +9751,7 @@ __all__ = [
     "EVENT_APPROVAL_CARD_RESOLVED",
     "EVENT_AUDIT_RECEIPT_EXPORT",
     "EVENT_AUTOMATION_ACTION",
+    "EVENT_BUDGET_HALT",
     "EVENT_CACHE_DEDUP_CLAIM",
     "EVENT_CACHE_EVICTION",
     "EVENT_CACHE_HIT",
@@ -9631,6 +9795,7 @@ __all__ = [
     "EVENT_FORK_SNAPSHOT",
     "EVENT_GATE_ADJUDICATION",
     "EVENT_GOVERNANCE_DECISION",
+    "EVENT_HOST_ISOLATION_DECLARED",
     "EVENT_IDENTITY_REVOKED",
     "EVENT_INPUT_REFUSAL",
     "EVENT_INTENT_CAPSULE",
@@ -9721,6 +9886,7 @@ __all__ = [
     "GATE_TERMINAL_RESOLUTIONS",
     "UNRELEASED_CLAIM_PATHS",
     "AuditChainStore",
+    "BudgetHaltDetails",
     "CapabilityAuthorizationDetails",
     "CapabilityDeltaDetails",
     "ClearanceResolutionRefusal",
@@ -9748,6 +9914,7 @@ __all__ = [
     "record_adapter_version_posture_receipt",
     "record_audit_receipt_export",
     "record_automation_action",
+    "record_budget_halt",
     "record_cache_dedup_claim",
     "record_cache_eviction",
     "record_cache_hit",
@@ -9789,6 +9956,7 @@ __all__ = [
     "record_fork_snapshot",
     "record_gate_adjudication",
     "record_governance_decision",
+    "record_host_isolation_declaration",
     "record_input_refusal",
     "record_intent_capsule",
     "record_intent_drift",

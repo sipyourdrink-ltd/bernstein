@@ -22,7 +22,7 @@ import re
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -30,6 +30,7 @@ from bernstein.core.approval.models import (
     ApprovalDecision,
     ApprovalNonceExpired,
     ApprovalNonceMismatch,
+    ApprovalPrincipal,
 )
 from bernstein.core.approval.models import PendingApproval as QueuedApproval
 from bernstein.core.approval.queue import get_default_queue, promote_to_always_allow
@@ -42,6 +43,50 @@ from bernstein.core.security.path_containment import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
+
+#: Principal recorded when the server runs without scoped tokens, matching the
+#: loopback operator the dashboard issues at startup.
+_LOOPBACK_APPROVAL_PRINCIPAL = "dashboard-operator"
+
+
+def _bearer_token(request: Request) -> str:
+    """Return the bearer credential on *request*, or an empty string."""
+    header = request.headers.get("authorization", "")
+    prefix = "bearer "
+    if header.lower().startswith(prefix):
+        return header[len(prefix) :].strip()
+    return ""
+
+
+def _resolve_approval_principal(request: Request) -> ApprovalPrincipal:
+    """Return the principal a resolution over HTTP is attributed to.
+
+    A validated scoped token is authoritative, so a client cannot declare its
+    own attribution. When scoped tokens are configured but the request carries
+    none, the resolution is refused rather than recorded against an unnamed
+    caller: an approval gate exists to record that a *person* decided, so the
+    cheapest way past it must not be to arrive without a name. When no tokens
+    are configured at all the server is in its loopback posture and the
+    decision is attributed to the loopback operator, which is stated as such
+    by its authentication method.
+
+    Raises:
+        HTTPException: ``401`` when scoped tokens are configured and the
+            request presents no valid one.
+    """
+    auth_state = getattr(request.app.state, "dashboard_auth_state", None)
+    registry = getattr(auth_state, "token_registry", None) if auth_state is not None else None
+    if registry is not None and registry.has_tokens():
+        token = _bearer_token(request)
+        record = registry.validate(token) if token else None
+        if record is None:
+            raise HTTPException(status_code=401, detail="An approval resolution must name an authenticated principal")
+        return ApprovalPrincipal(
+            identifier=record.principal,
+            auth_method="scoped-token",
+            grant=record.token_id,
+        )
+    return ApprovalPrincipal(identifier=_LOOPBACK_APPROVAL_PRINCIPAL, auth_method="loopback")
 
 
 # ---------------------------------------------------------------------------
@@ -351,21 +396,28 @@ def list_queued_approvals(session_id: str | None = None) -> QueuedApprovalsRespo
     "/{approval_id}/resolve",
     responses={
         400: {"description": "Invalid approval id or decision"},
+        401: {"description": "No authenticated principal to attribute the decision to"},
         404: {"description": "No pending approval with that id"},
         409: {"description": "NONCE_MISMATCH"},
         410: {"description": "NONCE_EXPIRED"},
     },
 )
-def resolve_queued_approval(approval_id: str, body: ResolveRequest) -> dict[str, str]:
+def resolve_queued_approval(request: Request, approval_id: str, body: ResolveRequest) -> dict[str, str]:
     """Resolve a queued approval with ``allow``, ``reject``, or ``always``.
 
     The request body must echo the ``nonce`` the gate issued when the
     approval was queued. Mismatches return ``409 NONCE_MISMATCH``; a
     nonce replayed against an already-resolved or evicted approval
-    returns ``410 NONCE_EXPIRED``.
+    returns ``410 NONCE_EXPIRED``. The resolution is attributed to the
+    principal the request authenticated as. When scoped tokens are
+    configured and the request presents none, the call is refused with
+    ``401`` rather than recorded against an unnamed caller; when no scoped
+    tokens are configured the server is in its loopback posture and the
+    decision is attributed to the loopback operator.
     """
     if not re.fullmatch(r"[a-zA-Z0-9_-]+", approval_id):
         raise HTTPException(status_code=400, detail="Invalid approval id format")
+    principal = _resolve_approval_principal(request)
     queue = get_default_queue()
     approval = queue.get(approval_id)
     if approval is None:
@@ -379,7 +431,13 @@ def resolve_queued_approval(approval_id: str, body: ResolveRequest) -> dict[str,
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid decision: {body.decision}") from exc
     try:
-        resolution = queue.resolve(approval_id, decision, reason=body.reason, nonce=body.nonce)
+        resolution = queue.resolve(
+            approval_id,
+            decision,
+            principal=principal,
+            reason=body.reason,
+            nonce=body.nonce,
+        )
     except ApprovalNonceMismatch as exc:
         raise HTTPException(status_code=409, detail="NONCE_MISMATCH") from exc
     except ApprovalNonceExpired as exc:

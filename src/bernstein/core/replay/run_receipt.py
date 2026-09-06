@@ -70,6 +70,7 @@ from bernstein.core.security.key_derivation import (
     SCHEME_V2,
     domain_tag,
 )
+from bernstein.core.security.loaded_extension_set import extension_set_digest_from_events
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -81,7 +82,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 #: Receipt schema version. Bump only on a wire-format change.
-RUN_RECEIPT_SCHEMA_VERSION: str = "1.0.0"
+RUN_RECEIPT_SCHEMA_VERSION: str = "1.1.0"
 
 #: Receipt type URL. Versioned so a future v2 can co-exist.
 RUN_RECEIPT_TYPE: str = "https://bernstein.run/attestations/run-receipt/v1"
@@ -151,6 +152,9 @@ class RunReceipt:
             recorded no spine entries).
         audit_head_sha256: Audit-range head when the opt-in block was
             included, else ``None``.
+        extension_set_digest: Content address of the skill and plugin set
+            the run loaded, recomputed from the journal rows, or ``None``
+            when the run recorded none.
         receipt: The serialisable receipt dict.
         receipt_bytes: Canonical JSON bytes (byte-deterministic).
         receipt_path: On-disk path when written, else ``None``.
@@ -163,6 +167,7 @@ class RunReceipt:
     receipt: dict[str, Any]
     receipt_bytes: bytes
     receipt_path: Path | None = field(default=None)
+    extension_set_digest: str | None = field(default=None)
 
     @property
     def sha256(self) -> str:
@@ -190,6 +195,10 @@ class RunReceiptVerifyResult:
             key-succession chain was supplied
             (:class:`~bernstein.core.security.receipt_key_chain.KeyVerdict`
             as its string value), else ``None``.
+        binding_version: Schema version of the subject binding block used
+            to verify the receipt (e.g. ``"1.1.0"`` or ``"1.0.0"``).
+        warnings: Non-fatal advisory notices (e.g. legacy unbound audit
+            window under schema 1.0.0).
         errors: Human-readable explanations, first failure first.
     """
 
@@ -200,6 +209,8 @@ class RunReceiptVerifyResult:
     spine_entries: int = 0
     divergent_step: int | None = None
     key_verdict: str | None = None
+    binding_version: str | None = None
+    warnings: list[str] = field(default_factory=list[str])
     errors: list[str] = field(default_factory=list[str])
 
 
@@ -229,6 +240,12 @@ def _binding_block(
     spine_count: int,
     audit_head_sha256: str | None,
     endpoint_identities: list[dict[str, str]] | None = None,
+    extension_set_digest: str | None = None,
+    audit_since: str | None = None,
+    audit_until: str | None = None,
+    audit_event_count: int | None = None,
+    audit_head_hmac: str | None = None,
+    schema_version: str = RUN_RECEIPT_SCHEMA_VERSION,
 ) -> dict[str, Any]:
     """The subject binding: one canonical block over every recomputed head.
 
@@ -239,12 +256,29 @@ def _binding_block(
     the opt-in audit block from a receipt that was signed with it changes
     the binding bytes and collapses verification.
 
+    Under schema 1.1.0+, ``audit_since``, ``audit_until``,
+    ``audit_event_count``, and ``audit_head_hmac`` describe the declared
+    audit window itself and are bound into the subject alongside
+    ``audit_range_head_sha256``: the verifier cannot re-derive ``head_hmac``
+    without the operator's HMAC key, so it passes through the receipt's own
+    ``audit_range`` values here, making any post-signing window relabelling
+    fail the signature check.
+
+    Under legacy schema 1.0.0, only ``audit_range_head_sha256`` is bound.
+
     When ``endpoint_identities`` is provided (non-empty), it is included in
     the binding block as an ``endpoints`` array. The verifier will only
     include it when present in journal events, keeping backwards
     compatibility with existing receipts that have no endpoint identity
     events (the field is simply absent, and the binding block is built
     without it).
+
+    ``extension_set_digest`` follows the same rule for the skill and plugin
+    set the run actually loaded. It is *recomputed* from the embedded
+    ``loaded_extension_set`` rows on both sides, so the receipt names the
+    resolved set rather than asserting a digest nothing re-derives; a run
+    that recorded no such event binds no field and older receipts keep
+    verifying unchanged.
     """
     block: dict[str, Any] = {
         "journal_event_count": journal_count,
@@ -255,8 +289,21 @@ def _binding_block(
     }
     if endpoint_identities is not None and len(endpoint_identities) > 0:
         block["endpoints"] = endpoint_identities
+    if extension_set_digest is not None:
+        block["extension_set_digest"] = extension_set_digest
     if audit_head_sha256 is not None:
-        block["audit_range_head_sha256"] = audit_head_sha256
+        if schema_version == "1.0.0":
+            block["audit_range_head_sha256"] = audit_head_sha256
+        else:
+            if audit_event_count is not None:
+                block["audit_range_event_count"] = audit_event_count
+            if audit_head_hmac is not None:
+                block["audit_range_head_hmac"] = audit_head_hmac
+            block["audit_range_head_sha256"] = audit_head_sha256
+            if audit_since is not None:
+                block["audit_range_since"] = audit_since
+            if audit_until is not None:
+                block["audit_range_until"] = audit_until
     return block
 
 
@@ -592,6 +639,7 @@ def build_run_receipt(
             "events": rebuilt,
         }
 
+    extension_set_digest = extension_set_digest_from_events(journal_rows)
     binding = _binding_block(
         run_id=run_id,
         journal_head=journal_head,
@@ -600,6 +648,12 @@ def build_run_receipt(
         spine_count=len(spine_rows),
         audit_head_sha256=audit_head,
         endpoint_identities=_extract_endpoint_identities(journal_rows),
+        extension_set_digest=extension_set_digest,
+        audit_since=audit_block["since"] if audit_block is not None else None,
+        audit_until=audit_block["until"] if audit_block is not None else None,
+        audit_event_count=audit_block["event_count"] if audit_block is not None else None,
+        audit_head_hmac=audit_block["head_hmac"] if audit_block is not None else None,
+        schema_version=RUN_RECEIPT_SCHEMA_VERSION,
     )
     binding_bytes = _canonical_json_bytes(binding)
     subject_sha256 = hashlib.sha256(binding_bytes).hexdigest()
@@ -658,6 +712,7 @@ def build_run_receipt(
         receipt=receipt,
         receipt_bytes=receipt_bytes,
         receipt_path=receipt_path,
+        extension_set_digest=extension_set_digest,
     )
 
 
@@ -666,8 +721,10 @@ def build_run_receipt(
 # ---------------------------------------------------------------------------
 
 
-def _malformed(reason: str, *, run_id: str = "") -> RunReceiptVerifyResult:
-    return RunReceiptVerifyResult(ok=False, status="malformed", run_id=run_id, errors=[reason])
+def _malformed(reason: str, *, run_id: str = "", binding_version: str | None = None) -> RunReceiptVerifyResult:
+    return RunReceiptVerifyResult(
+        ok=False, status="malformed", run_id=run_id, binding_version=binding_version, errors=[reason]
+    )
 
 
 def _public_key_from_jwk(jwk: dict[str, Any]) -> Any:
@@ -708,15 +765,9 @@ def verify_run_receipt(
     re-signed, so the embedded key cannot establish *who* produced the
     receipt. Provenance - the receipt was signed by a specific operator's
     key - requires supplying that key out-of-band via ``public_key_pem``;
-    the embedded key must then match it.
-
-    Key lifecycle: an operator who rotates or revokes receipt-signing
-    keys pins one *root* key and hands over a signed key-succession chain
-    (:mod:`bernstein.core.security.receipt_key_chain`) alongside the
-    receipts. Supplying ``key_chain_bytes`` replaces the single-key pin
-    with a walk from that root to whichever key signed this receipt, so a
-    rotation does not invalidate receipts the predecessor signed and a
-    revoked key stops carrying trust. The verdict is reported in
+    a third tier - **audited key succession** - is reached by supplying
+    the signed ``key_chain_bytes`` alongside the root pin, which resolves
+    key rotations and revocations and returns the resulting
     ``key_verdict``.
 
     Args:
@@ -758,28 +809,47 @@ def verify_run_receipt(
     if receipt.get("receipt_type") != RUN_RECEIPT_TYPE:
         return _malformed(f"unexpected receipt_type {receipt.get('receipt_type')!r}", run_id=run_id)
 
+    raw_schema_version = receipt.get("schema_version")
+    if raw_schema_version not in ("1.0.0", "1.1.0"):
+        return _malformed(f"unsupported schema_version {raw_schema_version!r}", run_id=run_id)
+    schema_version = str(raw_schema_version)
+
     journal_block = receipt.get("journal")
     spine_block = receipt.get("spine")
     signing = receipt.get("signing")
     if not isinstance(journal_block, dict) or not isinstance(journal_block.get("events"), list):
-        return _malformed("receipt.journal.events missing or not a list", run_id=run_id)
+        return _malformed("receipt.journal.events missing or not a list", run_id=run_id, binding_version=schema_version)
     if not isinstance(spine_block, dict) or not isinstance(spine_block.get("entries"), list):
-        return _malformed("receipt.spine.entries missing or not a list", run_id=run_id)
+        return _malformed("receipt.spine.entries missing or not a list", run_id=run_id, binding_version=schema_version)
     if not isinstance(signing, dict):
-        return _malformed("receipt.signing missing", run_id=run_id)
+        return _malformed("receipt.signing missing", run_id=run_id, binding_version=schema_version)
     if signing.get("payload_type") != RUN_RECEIPT_PAYLOAD_TYPE:
-        return _malformed(f"unexpected signing.payload_type {signing.get('payload_type')!r}", run_id=run_id)
+        return _malformed(
+            f"unexpected signing.payload_type {signing.get('payload_type')!r}",
+            run_id=run_id,
+            binding_version=schema_version,
+        )
 
     events_any: list[Any] = journal_block["events"]
     if not all(isinstance(e, dict) for e in events_any):
-        return _malformed("receipt.journal.events contains a non-object row", run_id=run_id)
+        return _malformed(
+            "receipt.journal.events contains a non-object row", run_id=run_id, binding_version=schema_version
+        )
     events: list[dict[str, Any]] = list(events_any)
     if not events:
-        return _malformed("receipt embeds no journal events; an empty range attests nothing", run_id=run_id)
+        return _malformed(
+            "receipt embeds no journal events; an empty range attests nothing",
+            run_id=run_id,
+            binding_version=schema_version,
+        )
     entries_any: list[Any] = spine_block["entries"]
     if not all(isinstance(e, dict) for e in entries_any):
-        return _malformed("receipt.spine.entries contains a non-object row", run_id=run_id)
+        return _malformed(
+            "receipt.spine.entries contains a non-object row", run_id=run_id, binding_version=schema_version
+        )
     entries: list[dict[str, Any]] = list(entries_any)
+
+    warnings: list[str] = []
 
     def _tampered(errors: list[str], divergent_step: int | None = None) -> RunReceiptVerifyResult:
         return RunReceiptVerifyResult(
@@ -789,6 +859,8 @@ def verify_run_receipt(
             journal_events=len(events),
             spine_entries=len(entries),
             divergent_step=divergent_step,
+            binding_version=schema_version,
+            warnings=warnings,
             errors=errors,
         )
 
@@ -817,10 +889,16 @@ def verify_run_receipt(
 
     # 3. Optional audit range: head recomputes from the embedded events.
     audit_head: str | None = None
+    audit_since: str | None = None
+    audit_until: str | None = None
+    audit_event_count: int | None = None
+    audit_head_hmac: str | None = None
     audit_block = receipt.get("audit_range")
     if audit_block is not None:
         if not isinstance(audit_block, dict) or not isinstance(audit_block.get("events"), list):
-            return _malformed("receipt.audit_range.events missing or not a list", run_id=run_id)
+            return _malformed(
+                "receipt.audit_range.events missing or not a list", run_id=run_id, binding_version=schema_version
+            )
         from bernstein.core.security.audit_multitenant import _events_jsonl_bytes
 
         audit_events: list[dict[str, Any]] = list(audit_block["events"])
@@ -830,6 +908,14 @@ def verify_run_receipt(
         if audit_block.get("event_count") != len(audit_events):
             return _tampered(["audit_range.event_count does not match the embedded events"])
         audit_head = recomputed_audit_head
+        # In schema 1.1.0+, the declared window and keyed head are bound alongside the recomputed head.
+        audit_since = audit_block.get("since")
+        audit_until = audit_block.get("until")
+        audit_event_count = audit_block.get("event_count")
+        audit_head_hmac = audit_block.get("head_hmac")
+
+        if schema_version == "1.0.0":
+            warnings.append("audit window unbound in schema 1.0.0")
 
     # 4. Subject binding: rebuilt from recomputed values only.
     endpoint_identities = _extract_endpoint_identities(events)
@@ -841,6 +927,12 @@ def verify_run_receipt(
         spine_count=len(entries),
         audit_head_sha256=audit_head,
         endpoint_identities=endpoint_identities if endpoint_identities else None,
+        extension_set_digest=extension_set_digest_from_events(events),
+        audit_since=audit_since,
+        audit_until=audit_until,
+        audit_event_count=audit_event_count,
+        audit_head_hmac=audit_head_hmac,
+        schema_version=schema_version,
     )
     binding_bytes = _canonical_json_bytes(binding)
     recomputed_subject = hashlib.sha256(binding_bytes).hexdigest()
@@ -860,21 +952,28 @@ def verify_run_receipt(
 
     jwk = signing.get("public_key_jwk")
     if not isinstance(jwk, dict):
-        return _malformed("receipt.signing.public_key_jwk missing or not an object", run_id=run_id)
+        return _malformed(
+            "receipt.signing.public_key_jwk missing or not an object", run_id=run_id, binding_version=schema_version
+        )
     try:
         public_key = _public_key_from_jwk(jwk)
     except ValueError as exc:
-        return _malformed(f"embedded JWK is not a usable Ed25519 key: {exc}", run_id=run_id)
+        return _malformed(
+            f"embedded JWK is not a usable Ed25519 key: {exc}", run_id=run_id, binding_version=schema_version
+        )
 
     if public_key_pem is not None and key_chain_bytes is None:
         try:
             pinned = serialization.load_pem_public_key(public_key_pem)
         except (ValueError, TypeError) as exc:
-            return _malformed(f"pinned public key is not valid PEM: {exc}", run_id=run_id)
+            return _malformed(
+                f"pinned public key is not valid PEM: {exc}", run_id=run_id, binding_version=schema_version
+            )
         if not isinstance(pinned, Ed25519PublicKey):
             return _malformed(
                 f"pinned public key is not Ed25519 (got {type(pinned).__name__})",
                 run_id=run_id,
+                binding_version=schema_version,
             )
         raw_pin = pinned.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
         raw_emb = public_key.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
@@ -883,11 +982,13 @@ def verify_run_receipt(
 
     sig_b64 = signing.get("signature_b64")
     if not isinstance(sig_b64, str):
-        return _malformed("receipt.signing.signature_b64 missing", run_id=run_id)
+        return _malformed("receipt.signing.signature_b64 missing", run_id=run_id, binding_version=schema_version)
     try:
         signature = base64.b64decode(sig_b64, validate=True)
     except (ValueError, TypeError):
-        return _malformed("receipt.signing.signature_b64 is not valid base64", run_id=run_id)
+        return _malformed(
+            "receipt.signing.signature_b64 is not valid base64", run_id=run_id, binding_version=schema_version
+        )
     try:
         public_key.verify(signature, _signature_preimage(binding_bytes))
     except InvalidSignature:
@@ -901,6 +1002,7 @@ def verify_run_receipt(
                 "a key chain needs public_key_pem: the chain is only evidence relative to the "
                 "root key the auditor pinned out of band",
                 run_id=run_id,
+                binding_version=schema_version,
             )
         from bernstein.core.security.receipt_key_chain import (
             KeyChainError,
@@ -916,6 +1018,8 @@ def verify_run_receipt(
                 journal_events=len(events),
                 spine_entries=len(entries),
                 key_verdict=verdict,
+                binding_version=schema_version,
+                warnings=warnings,
                 errors=[reason],
             )
 
@@ -943,6 +1047,8 @@ def verify_run_receipt(
         journal_events=len(events),
         spine_entries=len(entries),
         key_verdict=key_verdict,
+        binding_version=schema_version,
+        warnings=warnings,
     )
 
 

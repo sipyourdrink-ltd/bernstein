@@ -71,13 +71,13 @@ populates today:
 
 | Key | Purpose |
 |-----|---------|
-| `prompt` | User / system prompt, scanned by ASI01 + ASI05 |
+| `prompt` | User / system prompt, scanned by ASI01 + ASI05. `bytes` is decoded, not skipped |
 | `retrieved_content` | RAG context, scanned by ASI01 + ASI06 |
 | `system_prompt` | System message, scanned by ASI01 |
 | `tool_name` | Tool about to be invoked |
-| `tool_args` | Tool argument dict, scanned by ASI02 + ASI05 |
+| `tool_args` | Tool arguments, scanned by ASI02 + ASI05. A mapping, a positional sequence and a bare scalar are all read |
 | `tool_descriptions` | Map of tool name to description text (for ASI02) |
-| `loaded_components` | List of `{name, signed}` dicts (for ASI04) |
+| `loaded_components` | List of `{name, signed}` dicts, or a mapping of name to that dict (for ASI04) |
 | `capability_violation` / `capability_violation_reason` | ASI03 delegation |
 | `code_safe_tools` | Whitelist for ASI05 (lint / format tools) |
 | `audit_log_present` | ASI09 - whether the call landed in the chain |
@@ -87,7 +87,42 @@ Detectors that don't see their keys return `INFO` (passed). The
 heuristic surface is wide on purpose so a caller that only populates
 two keys still gets eight passing detectors out of ten.
 
+A key that is *present* in an unreadable shape is a different case from
+one that is absent, and is not a pass. `loaded_components` that is not a
+component manifest is reported by ASI04, because no component in it was
+checked for a signature.
+
 ---
+
+## Matching is done on a folded form
+
+ASI01 and ASI06 match English keywords, and a payload does not have to be
+spelled in ASCII to read as English. Before the goal-hijack patterns run,
+the text has:
+
+1. every `Cc`/`Cf`/`Cs` codepoint dropped, which is the zero-width family
+   (U+200B to U+200D, U+FEFF, the soft hyphen, the bidi controls):
+   characters that take a position in the string and none on the screen, so
+   a zero-width space placed inside `ignore` still reads as the word to a
+   person;
+2. NFKC applied, folding the fullwidth, ligature and compatibility forms;
+3. the confusables NFKC deliberately leaves alone mapped to ASCII. A
+   Cyrillic U+0430 and a Latin `a` are different letters, and folding them
+   everywhere would corrupt ordinary Cyrillic text, so the mapping exists
+   only on this matching path.
+
+The folded text is used for matching and is never presented as the payload.
+A finding whose match came from the folded form says
+`(after folding an obfuscated spelling)` in its evidence, because the bytes
+an operator has to go and look at are the ones that arrived.
+
+The confusables table is best-effort, not the full Unicode set. Adding a row
+makes one more spelling detectable and cannot make a plain-ASCII payload
+invisible.
+
+ASI06's `source` is compared as a trust label rather than as bytes:
+`Untrusted` and `UNTRUSTED` are the same label as `untrusted`, since a JSON
+envelope in between may have case-normalised it.
 
 ## Honesty caveats
 

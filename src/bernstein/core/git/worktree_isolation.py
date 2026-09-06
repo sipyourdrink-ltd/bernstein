@@ -129,6 +129,18 @@ def check_symlinks_read_only(
     """
     violations: list[str] = []
     repo_root_resolved = repo_root.resolve()
+    # Agent worktrees live at ``<repo_root>/.sdd/worktrees/<session_id>``, inside
+    # the very directory the check below calls parent mutable state. A link that
+    # stays within its own worktree - a repo that tracks ``CLAUDE.md -> AGENTS.md``,
+    # say - is ordinary tracked content, not a reach into the parent, so it is
+    # exempted before that test. Resolved here rather than through
+    # ``_resolve_link_target`` so the exemption's base is never the link resolver's
+    # answer: this is the worktree root, not a link target. An unresolvable root
+    # exempts nothing rather than widening the exemption on a guess.
+    try:
+        worktree_resolved: Path | None = worktree_path.resolve()
+    except (OSError, RuntimeError):
+        worktree_resolved = None
 
     # Only check top-level entries; deep traversal would be too slow.
     if not worktree_path.exists():
@@ -148,11 +160,15 @@ def check_symlinks_read_only(
             # cleared of pointing into parent state, so record it (#2643).
             violations.append(f"Symlink '{rel_name}' could not be resolved (cannot verify isolation): {entry}")
             continue
-        # Symlinks pointing into the parent repo's mutable state dirs are dangerous
+        if worktree_resolved is not None and link_target.is_relative_to(worktree_resolved):
+            continue
+        # Symlinks pointing into the parent repo's mutable state dirs are dangerous.
+        # ``is_relative_to`` compares whole path components, so a sibling that merely
+        # shares a prefix (``.github`` against ``.git``) is not mistaken for a child.
         mutable_dirs = (".sdd", ".git")
         for mutable in mutable_dirs:
             mutable_root = repo_root_resolved / mutable
-            if str(link_target).startswith(str(mutable_root)):
+            if link_target.is_relative_to(mutable_root):
                 violations.append(
                     f"Symlink '{rel_name}' points into parent repo mutable state: {entry} -> {link_target}"
                 )

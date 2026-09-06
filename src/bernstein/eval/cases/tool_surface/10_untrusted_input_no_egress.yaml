@@ -1,0 +1,16 @@
+id: untrusted_input_no_egress
+name: Local Untrusted Feedback Parser Server
+description: Ingests untrusted user feedback prompts and parses sentiment locally with no network egress.
+auth_posture: static_bearer_token
+has_untrusted_input: true
+has_sensitive_reach: false
+has_egress_channel: false
+has_wildcard_permissions: false
+tools:
+  - name: parse_user_feedback
+    description: Parse untrusted feedback submissions and extract sentiment keywords locally.
+    sensitive_reach: false
+    untrusted_input: true
+    egress: false
+resources: []
+prompts: []

@@ -2,15 +2,99 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from typing import Any
 
+from bernstein.core.govern.apply import (
+    ApplyStatus,
+    ChangeApplier,
+    ChangeOutcome,
+    ChangeResult,
+    ChangeStatus,
+    GovernApplyRecord,
+    GovernApplyRefused,
+    apply_plan,
+    verify_govern_apply_projection,
+)
+from bernstein.core.govern.duplication_audit import (
+    DuplicationFinding,
+    DuplicationReport,
+    Verdict,
+    collect_duplication,
+)
 from bernstein.core.govern.findings import Finding, FindingsDocument
+from bernstein.core.govern.freshness_gate import (
+    FreshnessGate,
+    FreshnessResult,
+    ProducerState,
+    freshness_gated_read,
+)
 from bernstein.core.govern.inventory_models import Inventory, Surface
-from bernstein.core.govern.plan_models import GovernPlan, PlanEntry, PlanEntryKind
-from bernstein.core.govern.playbook_models import Playbook, PlaybookClause
+from bernstein.core.govern.lanes import (
+    Barrier,
+    LaneAction,
+    LaneError,
+    LaneManifest,
+    load_lane_set,
+    reconcile_lanes,
+)
+from bernstein.core.govern.observation import ObservationEnvelope, ObservationLedger
+from bernstein.core.govern.observation_store import (
+    ObservationRecord,
+    ObservationStore,
+    ObservationStoreError,
+    RecordState,
+    observation_store_root,
+)
+from bernstein.core.govern.plan_models import (
+    GovernPlan,
+    PlanEntry,
+    PlanEntryKind,
+    compute_inputs_hash,
+)
+from bernstein.core.govern.playbook_models import (
+    Playbook,
+    PlaybookClause,
+    PlaybookValidationError,
+    RemediationAction,
+)
+from bernstein.core.govern.probe import (
+    CollectionMethod,
+    CostClass,
+    Probe,
+    ProbeError,
+    ProbeSet,
+    load_probe_set,
+)
 from bernstein.core.govern.proposal import DraftProposal, ProposalStatus
+from bernstein.core.govern.reconcile import (
+    compute_reconcile_diff,
+    propose_reconcile,
+    snapshot_surface,
+)
+from bernstein.core.govern.reconcile_models import (
+    DesiredEntity,
+    DesiredState,
+    DiffAction,
+    EntityKind,
+    EntityPolicy,
+    EntityStatus,
+    ReconcileDiff,
+    ReconcileEntry,
+    Snapshot,
+    SnapshotEntity,
+)
+from bernstein.core.govern.remediation import (
+    RemediationProposal,
+    RemediationStep,
+    UnremediatedFinding,
+    collect_remediation,
+)
+from bernstein.core.govern.restore import (
+    RestoreEntry,
+    RestorePlan,
+    RestoreRefusal,
+    build_restore_plan,
+)
 
 
 def compute_plan(
@@ -153,13 +237,7 @@ def compute_plan(
             )
         )
 
-    inputs_bytes = json.dumps(
-        {"playbook": playbook, "inventory": inventory},
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    inputs_hash = "sha256:" + hashlib.sha256(inputs_bytes).hexdigest()
+    inputs_hash = compute_inputs_hash(playbook=playbook, inventory=inventory)
 
     return GovernPlan(
         run_id=run_id,
@@ -186,16 +264,76 @@ def _compare_values(observed: str, ceiling: str) -> int:
 
 
 __all__ = [
+    "ApplyStatus",
+    "Barrier",
+    "ChangeApplier",
+    "ChangeOutcome",
+    "ChangeResult",
+    "ChangeStatus",
+    "CollectionMethod",
+    "CostClass",
+    "DesiredEntity",
+    "DesiredState",
+    "DiffAction",
     "DraftProposal",
+    "DuplicationFinding",
+    "DuplicationReport",
+    "EntityKind",
+    "EntityPolicy",
+    "EntityStatus",
     "Finding",
     "FindingsDocument",
+    "FreshnessGate",
+    "FreshnessResult",
+    "GovernApplyRecord",
+    "GovernApplyRefused",
     "GovernPlan",
     "Inventory",
+    "LaneAction",
+    "LaneError",
+    "LaneManifest",
+    "ObservationEnvelope",
+    "ObservationLedger",
+    "ObservationRecord",
+    "ObservationStore",
+    "ObservationStoreError",
     "PlanEntry",
     "PlanEntryKind",
     "Playbook",
     "PlaybookClause",
+    "PlaybookValidationError",
+    "Probe",
+    "ProbeError",
+    "ProbeSet",
+    "ProducerState",
     "ProposalStatus",
+    "ReconcileDiff",
+    "ReconcileEntry",
+    "RecordState",
+    "RemediationAction",
+    "RemediationProposal",
+    "RemediationStep",
+    "RestoreEntry",
+    "RestorePlan",
+    "RestoreRefusal",
+    "Snapshot",
+    "SnapshotEntity",
     "Surface",
+    "UnremediatedFinding",
+    "Verdict",
+    "apply_plan",
+    "build_restore_plan",
+    "collect_duplication",
+    "collect_remediation",
+    "compute_inputs_hash",
     "compute_plan",
+    "compute_reconcile_diff",
+    "freshness_gated_read",
+    "load_lane_set",
+    "load_probe_set",
+    "observation_store_root",
+    "propose_reconcile",
+    "reconcile_lanes",
+    "snapshot_surface",
+    "verify_govern_apply_projection",
 ]

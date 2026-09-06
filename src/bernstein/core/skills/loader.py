@@ -1,8 +1,19 @@
 """Orchestrates :class:`~bernstein.core.skills.source.SkillSource` instances.
 
 The loader merges every registered source into a single lookup table and
-fails fast when two sources publish a skill with the same name. This is
-the central piece that makes progressive disclosure safe:
+QUARANTINES anything it cannot index, rather than failing the whole load.
+One broken source used to take every other skill with it: ``_reload`` had
+no exception handling, and ``__init__`` calls it directly, so a source
+whose ``iter_skills()`` threw -- or a single duplicate name -- left the
+caller with no ``SkillLoader`` at all (issue #5108). A conflict is still
+never silent; it is now recorded and reportable instead of fatal.
+
+Distinct from ``source_resolutions``, which reports what each declared
+ENTRY POINT resolved to at import time. This is the next stage: a source
+that imported fine and then threw while enumerating, or produced an
+artifact the index refused.
+
+This is the central piece that makes progressive disclosure safe:
 
 - ``role_resolver`` asks the loader for a skill matching a role; if one
   exists, its body is NOT injected into the prompt - only the index is.
@@ -18,6 +29,8 @@ eagerly. Re-registering a source requires a new :class:`SkillLoader`.
 
 from __future__ import annotations
 
+import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
@@ -26,7 +39,10 @@ from bernstein.core.skills.sanitizer import sanitize_skill_body
 from bernstein.core.skills.sources.local_dir import LocalDirSkillSource
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from bernstein.core.skills.source import SkillArtifact, SkillSource
+    from bernstein.core.skills.sources.plugin import SkillSourceResolution
 
 # Signature of ``read_reference`` / ``read_script`` on sources that support
 # on-demand file reads. Sources that can't serve bucketed files simply omit
@@ -34,6 +50,8 @@ if TYPE_CHECKING:
 # is ``object`` so third-party plugin implementations cannot trick the static
 # checker into skipping the runtime string-validation in :func:`_call_reader`.
 _ReaderFn = Callable[[str, str], object]
+
+logger = logging.getLogger(__name__)
 
 
 class DuplicateSkillError(RuntimeError):
@@ -55,6 +73,36 @@ class SkillNotFoundError(KeyError):
 
 
 @dataclass(frozen=True)
+class QuarantinedSkill:
+    """A source or artifact the loader refused to index, and why.
+
+    A failure that vanishes into a log line is the same as no failure at all
+    to the operator reading ``status``. This is the record that makes it
+    visible and bounded: everything else loaded, and this names exactly what
+    did not and what stopped it.
+
+    Attributes:
+        source_name: Label of the :class:`SkillSource` involved.
+        origin:      The artifact's origin, or the source label when the whole
+                     source failed before producing any artifact.
+        skill_name:  The skill that failed, or ``None`` for a whole-source
+                     failure -- a source that throws in ``iter_skills`` has not
+                     said which skill it was building.
+        reason:      The exception text.
+        error_type:  The exception class name, so a caller can group by cause
+                     without parsing prose.
+        at:          Unix timestamp of the failure.
+    """
+
+    source_name: str
+    origin: str
+    skill_name: str | None
+    reason: str
+    error_type: str
+    at: float
+
+
+@dataclass(frozen=True)
 class LoadedSkill:
     """A skill after the loader has indexed it.
 
@@ -68,6 +116,9 @@ class LoadedSkill:
         origin:      Where the skill came from (path or plugin name).
         source_name: Label of the :class:`SkillSource` that owns it.
         trigger_keywords: Optional keyword hints for matching.
+        version:     Manifest version of the pack this body came from. Kept
+            on the loaded skill (not only on the manifest) so the resolved
+            set can be recorded without re-reading the source.
     """
 
     name: str
@@ -79,6 +130,7 @@ class LoadedSkill:
     origin: str
     source_name: str
     trigger_keywords: tuple[str, ...]
+    version: str = ""
 
 
 class SkillLoader:
@@ -89,10 +141,33 @@ class SkillLoader:
     :meth:`list_all`, and :meth:`find_source_for` for downstream callers.
     """
 
-    def __init__(self, sources: list[SkillSource]) -> None:
+    def __init__(
+        self,
+        sources: list[SkillSource],
+        *,
+        source_resolutions: Sequence[SkillSourceResolution] = (),
+        on_quarantine: Callable[[QuarantinedSkill], None] | None = None,
+    ) -> None:
+        """Index every source, quarantining whatever cannot be indexed.
+
+        Args:
+            sources: Sources to merge, in precedence order.
+            source_resolutions: What each declared entry point resolved to at
+                import time. A different stage from the quarantine below.
+            on_quarantine: Called once per quarantined entry, as it happens.
+                The hook exists because the loader is deliberately stateless
+                and has no audit key: journaling a governance event is the
+                caller's to do, and it needs the record at the moment of
+                failure rather than a list to diff afterwards. A hook that
+                raises is itself caught -- a broken reporter must not become
+                the thing that stops the load.
+        """
         self._sources: list[SkillSource] = sources.copy()
+        self._source_resolutions: tuple[SkillSourceResolution, ...] = tuple(source_resolutions)
         self._skills: dict[str, LoadedSkill] = {}
         self._source_by_skill: dict[str, SkillSource] = {}
+        self._quarantined: list[QuarantinedSkill] = []
+        self._on_quarantine = on_quarantine
         self._reload()
 
     @property
@@ -100,15 +175,88 @@ class SkillLoader:
         """Expose the sources the loader was constructed with."""
         return tuple(self._sources)
 
+    @property
+    def source_resolutions(self) -> tuple[SkillSourceResolution, ...]:
+        """What each declared skill-source entry point resolved to.
+
+        Carries the sources that failed to import as well as the ones that
+        produced skills: a pack that never loaded is otherwise
+        indistinguishable from one that was never declared.
+        """
+        return self._source_resolutions
+
+    @property
+    def quarantined(self) -> tuple[QuarantinedSkill, ...]:
+        """Every source or artifact this load refused to index, in failure order."""
+        return tuple(self._quarantined)
+
+    def _quarantine(
+        self,
+        *,
+        source_name: str,
+        origin: str,
+        skill_name: str | None,
+        exc: Exception,
+    ) -> None:
+        """Record one failure and report it, without letting either fail the load."""
+        record = QuarantinedSkill(
+            source_name=source_name,
+            origin=origin,
+            skill_name=skill_name,
+            reason=str(exc),
+            error_type=type(exc).__name__,
+            at=time.time(),
+        )
+        self._quarantined.append(record)
+        logger.error(
+            "Quarantined skill %s from source %r (%s): %s",
+            skill_name or "<whole source>",
+            source_name,
+            record.error_type,
+            record.reason,
+        )
+        if self._on_quarantine is None:
+            return
+        try:
+            self._on_quarantine(record)
+        except Exception:
+            # The reporter is not the subject. An audit sink that is down must
+            # not do what the broken skill could not.
+            logger.exception("on_quarantine hook raised for %s", skill_name or source_name)
+
     def _reload(self) -> None:
-        """Re-scan every source. Separate method so tests can force a refresh."""
+        """Re-scan every source. Separate method so tests can force a refresh.
+
+        Per-source AND per-artifact isolation, because they are different
+        failures: a source that throws in ``iter_skills`` never named a skill,
+        while a duplicate name is one artifact out of many.
+        """
         self._skills.clear()
         self._source_by_skill.clear()
+        self._quarantined.clear()
 
         for source in self._sources:
-            artifacts = source.iter_skills()
+            source_name = _source_label(source)
+            try:
+                artifacts = source.iter_skills()
+            except Exception as exc:
+                self._quarantine(
+                    source_name=source_name,
+                    origin=source_name,
+                    skill_name=None,
+                    exc=exc,
+                )
+                continue
             for artifact in artifacts:
-                self._register(source, artifact)
+                try:
+                    self._register(source, artifact)
+                except Exception as exc:
+                    self._quarantine(
+                        source_name=source_name,
+                        origin=_artifact_origin(artifact),
+                        skill_name=_artifact_name(artifact),
+                        exc=exc,
+                    )
 
     def _register(self, source: SkillSource, artifact: SkillArtifact) -> None:
         """Add a single artifact to the index, raising on name conflicts.
@@ -146,6 +294,7 @@ class SkillLoader:
             origin=artifact.origin,
             source_name=source.name,
             trigger_keywords=tuple(artifact.manifest.trigger_keywords),
+            version=artifact.manifest.version,
         )
         self._source_by_skill[name] = source
 
@@ -257,12 +406,38 @@ def default_loader_from_templates(
         LocalDirSkillSource(skills_root, source_name="local"),
     ]
 
+    resolutions: tuple[SkillSourceResolution, ...] = ()
     if include_plugins:
-        from bernstein.core.skills.sources.plugin import load_plugin_sources
+        from bernstein.core.skills.sources.plugin import scan_plugin_sources
 
-        sources.extend(load_plugin_sources())
+        scan = scan_plugin_sources()
+        sources.extend(scan.sources)
+        resolutions = scan.resolutions
 
-    return SkillLoader(sources=sources)
+    return SkillLoader(sources=sources, source_resolutions=resolutions)
+
+
+def _source_label(source: SkillSource) -> str:
+    """A source's name, for a source whose own ``name`` may be the broken part."""
+    try:
+        return source.name
+    except Exception:  # pragma: no cover - a source this broken is hypothetical
+        return repr(source)
+
+
+def _artifact_name(artifact: SkillArtifact) -> str | None:
+    """The artifact's skill name, or None when reading it is itself the failure."""
+    try:
+        return artifact.manifest.name
+    except Exception:  # pragma: no cover - defensive, same reason as above
+        return None
+
+
+def _artifact_origin(artifact: SkillArtifact) -> str:
+    try:
+        return artifact.origin
+    except Exception:  # pragma: no cover - defensive, same reason as above
+        return "<unreadable artifact>"
 
 
 def _resolve_reader(source: SkillSource, attr: str) -> _ReaderFn:

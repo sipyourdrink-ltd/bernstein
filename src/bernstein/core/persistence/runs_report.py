@@ -66,6 +66,7 @@ from bernstein.core.persistence.work_ledger import (
 from bernstein.core.security.path_containment import PathContainmentError
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from bernstein.core.persistence.work_ledger import LedgerEntry
@@ -586,10 +587,16 @@ def detect_failure_patterns(runs: list[FinishedRun]) -> list[FailurePatternDraft
         sorted_runs = sorted(group_runs, key=lambda r: (-r.started_at, r.run_id))
         most_recent = sorted_runs[0]
 
-        # Build title and body
+        # Build title and body.  The body is what an operator reads on the
+        # tracked issue, so it names how often the pattern recurred and which
+        # run last hit it -- not just the sample the title already carries.
         title = f"{most_recent.outcome.value.upper()}: {most_recent.evidence}"
         body = (
-            f"Failure type: {most_recent.outcome.value}\nEvidence: {most_recent.evidence}\nBranch: {most_recent.branch}"
+            f"Failure type: {most_recent.outcome.value}\n"
+            f"Evidence: {most_recent.evidence}\n"
+            f"Branch: {most_recent.branch}\n"
+            f"Occurrences: {len(group_runs)}\n"
+            f"Most recent run: {most_recent.run_id}"
         )
 
         draft = FailurePatternDraft(
@@ -622,3 +629,175 @@ __all__ = [
     "list_finished_runs",
     "list_non_terminal_runs",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Masked failures: retries that succeeded (#5106)
+# ---------------------------------------------------------------------------
+#
+# A retry that eventually succeeds is invisible in every dashboard reading only
+# the final state. `flaky_detector.py` closed exactly this blind spot for TESTS
+# by keeping per-execution history; a run that failed twice and closed on the
+# third attempt reports identically to one that closed on its first --
+# `outcome=pr-opened`, and nothing anywhere says it took three goes.
+#
+# `FinishedRun.attempt_count` already carries the number, from the run's own
+# `task.started` transitions. Nothing read it as a signal.
+
+
+#: An attempt count at or below this is a run that did not need retrying.
+#: One `task.started` is the run happening; the second is the first retry.
+FIRST_RETRY_ATTEMPT = 2
+
+#: Outcomes that mean the run got where it was going. A retry only MASKS
+#: something when the ending it reached was a success -- a run that retried and
+#: still failed is already visible in every report, which is the point.
+_SUCCESS_OUTCOMES = frozenset({RunOutcome.PR_OPENED, RunOutcome.NO_CHANGES})
+
+
+@dataclass(frozen=True)
+class MaskedFailure:
+    """A run that failed at least one attempt and then succeeded anyway.
+
+    Attributes:
+        run_id: The run.
+        branch: Branch it published, when it published one.
+        outcome: The successful outcome it reported, unchanged -- this record
+            adds to the report, it does not reclassify the run.
+        attempt_count: Total attempts, from ``FinishedRun.attempt_count``.
+        retries: ``attempt_count - 1``. The number an operator asks for.
+        owner: Attribution for grouping -- see :func:`masked_failures`.
+        started_at: Unix instant the run started, for the window it falls in.
+    """
+
+    run_id: str
+    branch: str
+    outcome: RunOutcome
+    attempt_count: int
+    retries: int
+    owner: str
+    started_at: float
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the stable JSON row shape, mirroring :meth:`FinishedRun.to_dict`."""
+        return {
+            "run_id": self.run_id,
+            "branch": self.branch,
+            "outcome": self.outcome.value,
+            "attempt_count": self.attempt_count,
+            "retries": self.retries,
+            "owner": self.owner,
+            "started_at": self.started_at,
+        }
+
+
+@dataclass(frozen=True)
+class MaskedFailureReport:
+    """Masked failures over one window, grouped by owner.
+
+    Attributes:
+        rows: Every masked failure, in the order :func:`list_finished_runs`
+            produced -- newest-started first, ties broken by run id, so two
+            reports over the same journal are byte-identical.
+        finished: How many finished runs the window held, masked or not. The
+            denominator; without it a count of 3 says nothing.
+        by_owner: ``owner -> (masked, finished)``, so a share can be computed
+            per owner as well as overall.
+    """
+
+    rows: tuple[MaskedFailure, ...]
+    finished: int
+    by_owner: Mapping[str, tuple[int, int]]
+
+    @property
+    def masked(self) -> int:
+        """How many finished runs in this window needed a retry to succeed."""
+        return len(self.rows)
+
+    @property
+    def share(self) -> float:
+        """Masked runs as a fraction of finished ones. ``0.0`` for an empty window.
+
+        An empty window is not a clean bill of health, and it is not a failure
+        either -- there is nothing to divide. Zero keeps a threshold gate from
+        firing on a quiet day, which is the only sane reading of "no data".
+        """
+        return 0.0 if self.finished == 0 else len(self.rows) / self.finished
+
+    def exceeds(self, threshold: float) -> bool:
+        """Whether :attr:`share` is over *threshold*, for a CI gate to exit on.
+
+        Strictly greater: a threshold of ``0.4`` admits exactly 40% and refuses
+        anything above it, so an operator setting a limit gets the limit rather
+        than one masked run less than it.
+        """
+        return self.share > threshold
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the stable JSON document shape."""
+        return {
+            "finished": self.finished,
+            "masked": self.masked,
+            "share": self.share,
+            "by_owner": {
+                owner: {"masked": masked, "finished": finished, "share": 0.0 if finished == 0 else masked / finished}
+                for owner, (masked, finished) in sorted(self.by_owner.items())
+            },
+            "rows": [row.to_dict() for row in self.rows],
+        }
+
+
+def _run_owner(run: FinishedRun) -> str:
+    """Attribution for one run.
+
+    The HOST, because it is the attribution runs actually carry today. Grouping
+    by the owning capability or adapter is what the issue ultimately wants, and
+    it needs runs to record that first (#5107); this reports the real number
+    against the real key rather than inventing a bucket.
+
+    A run whose entries never recorded a host groups under ``unattributed``,
+    named rather than dropped: a run with no host is still a run that retried,
+    and silently omitting it would understate the very number being reported.
+    """
+    return run.host if run.host else "unattributed"
+
+
+def masked_failures(runs: list[FinishedRun]) -> MaskedFailureReport:
+    """Report the runs that succeeded only after retrying.
+
+    Args:
+        runs: Finished runs, typically from :func:`list_finished_runs`, whose
+            ordering is inherited unchanged so the report is byte-identical for
+            the same window on the same journal.
+
+    Returns:
+        A :class:`MaskedFailureReport` over exactly the runs given. The window
+        is the caller's to choose -- pass ``list_finished_runs(sdd, since=...)``.
+    """
+    rows: list[MaskedFailure] = []
+    counts: dict[str, list[int]] = {}
+    for run in runs:
+        owner = _run_owner(run)
+        tally = counts.setdefault(owner, [0, 0])
+        tally[1] += 1
+        if run.outcome not in _SUCCESS_OUTCOMES:
+            continue
+        if run.attempt_count < FIRST_RETRY_ATTEMPT:
+            continue
+        tally[0] += 1
+        rows.append(
+            MaskedFailure(
+                run_id=run.run_id,
+                branch=run.branch,
+                outcome=run.outcome,
+                attempt_count=run.attempt_count,
+                retries=run.attempt_count - 1,
+                owner=owner,
+                started_at=run.started_at,
+            )
+        )
+    return MaskedFailureReport(
+        rows=tuple(rows),
+        finished=len(runs),
+        by_owner={owner: (masked, finished) for owner, (masked, finished) in counts.items()},
+    )

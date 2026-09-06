@@ -236,6 +236,67 @@ and lets the operator decide response policy. Source:
 
 ---
 
+## Reporting effective data sensitivity
+
+Trust propagates *inward* over a lineage closure: the effective trust of
+an artefact is the minimum `trust_class` over everything it derives
+from. Data sensitivity propagates the other way. The effective
+sensitivity of an artefact is the **maximum** class over the same
+closure, so a summary of a confidential document reports as
+confidential, and re-saving or transforming it does not shed the class -
+the new entry names the old one as a parent, and the closure still
+reaches the classified source.
+
+```bash
+bernstein lineage sensitivity <artefact-path|sha256:entry-hash> \
+                              [--log .sdd/lineage/log.jsonl] \
+                              [--cards .sdd/agents] [--json]
+```
+
+Source: `src/bernstein/cli/commands/lineage_cmd.py`. The report names
+the effective class, the closure member that raised it, and the walk
+through the graph that reaches it - not "this is confidential", which
+invites an argument, but "this is confidential because it derives,
+through these hops, from that entry", which is checkable offline from
+`log.jsonl` alone.
+
+Exit codes:
+
+| Code | Meaning                                                                |
+| ---- | ---------------------------------------------------------------------- |
+| `0`  | A verdict was produced (including the fail-closed one).                |
+| `1`  | The lineage gate failed; no class is printed.                          |
+
+The gate runs first because a class projected from an unverified log is
+not evidence of anything. An artefact the log does not know, and a log
+that does not exist, both report the fail-closed class `restricted`:
+absence of a classification is not a claim that something is harmless.
+
+### The source-to-sensitivity map
+
+Classifications enter the graph from a table the operator controls, the
+mirror of `trust_sources.yaml` on the opposite axis:
+
+```
+templates/provenance/sensitivity_sources.yaml
+```
+
+Each row maps a source name (`operator.attachment`, `web.fetch`, ...) to
+one of `public < internal < confidential < restricted`. A project-local
+copy at `<workdir>/templates/provenance/sensitivity_sources.yaml`
+replaces the bundled table rather than merging into it, so the table in
+force is exactly what the operator wrote. A source that is not listed
+reads as the highest class, and a class token that is not one of the
+four is dropped rather than coerced - guessing a class for a row the
+operator got wrong picks the least sensitive one exactly when that is
+the most damaging answer.
+
+Sensitivity is operator-set. Content inspection - the DLP scanner in
+`src/bernstein/core/security/dlp_scanner_v2.py` - answers a different
+question and its guesses are never written into this field.
+
+---
+
 ## Retention rules
 
 Lineage records share storage with the run's WAL and inherit the

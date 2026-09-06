@@ -8,20 +8,21 @@ import sys
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
+import pytest
 from bernstein.core.models import ApiTier, ModelConfig, ProviderType
 
 from bernstein.adapters._contract import AdapterStrategy, DangerousModeStrategy, ResumeStrategy
+from bernstein.adapters.base import SpawnError
 from bernstein.adapters.opencode import (
     _ESCALATED_PERMISSION,
     _ESCALATED_PERMISSION_FLAG,
     _RESTRICTED_PERMISSION,
     OpenCodeAdapter,
+    _qualify_model,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 def _make_popen_mock(pid: int) -> MagicMock:
@@ -75,6 +76,64 @@ def test_spawn_warns_when_auth_missing(tmp_path: Path, caplog: pytest.LogCapture
         )
 
     assert "no OpenCode/provider auth detected" in caplog.text
+
+
+def test_opencode_prompt_carries_the_completion_protocol(tmp_path: Path) -> None:
+    """OpenCode has no system-prompt flag; a non-empty addendum must still
+    reach the agent by riding on the positional prompt argument (issue
+    #5325), or the completion / heartbeat / signal-check protocol never
+    reaches a ``--cli opencode`` run.
+    """
+    adapter = OpenCodeAdapter()
+    proc_mock = _make_popen_mock(109)
+
+    with patch("bernstein.adapters.opencode.subprocess.Popen", return_value=proc_mock) as popen:
+        adapter.spawn(
+            prompt="fix the bug",
+            workdir=tmp_path,
+            model_config=ModelConfig(model="openai/gpt-5.4-mini", effort="high"),
+            session_id="oc-s9",
+            system_addendum="When done, POST /complete. Heartbeat every 30s.",
+        )
+
+    inner = _inner_cmd(popen.call_args.args[0])
+    assert "When done, POST /complete. Heartbeat every 30s." in inner[-1]
+
+
+def test_opencode_addendum_appended_after_task_brief(tmp_path: Path) -> None:
+    """A truncated prompt must lose the addendum, never the task brief."""
+    adapter = OpenCodeAdapter()
+    proc_mock = _make_popen_mock(110)
+
+    with patch("bernstein.adapters.opencode.subprocess.Popen", return_value=proc_mock) as popen:
+        adapter.spawn(
+            prompt="primary task brief",
+            workdir=tmp_path,
+            model_config=ModelConfig(model="openai/gpt-5.4-mini", effort="high"),
+            session_id="oc-s10",
+            system_addendum="HEARTBEAT every 30s",
+        )
+
+    inner = _inner_cmd(popen.call_args.args[0])
+    full_prompt = inner[-1]
+    assert full_prompt.index("primary task brief") < full_prompt.index("HEARTBEAT every 30s")
+
+
+def test_opencode_empty_addendum_leaves_prompt_untouched(tmp_path: Path) -> None:
+    adapter = OpenCodeAdapter()
+    proc_mock = _make_popen_mock(111)
+
+    with patch("bernstein.adapters.opencode.subprocess.Popen", return_value=proc_mock) as popen:
+        adapter.spawn(
+            prompt="just the task",
+            workdir=tmp_path,
+            model_config=ModelConfig(model="openai/gpt-5.4-mini", effort="high"),
+            session_id="oc-s11",
+            system_addendum="",
+        )
+
+    inner = _inner_cmd(popen.call_args.args[0])
+    assert inner[-1] == "just the task"
 
 
 class TestPermissionPosture:
@@ -174,6 +233,33 @@ def test_contract_pins_the_flags_the_adapter_now_depends_on() -> None:
     assert "--continue" in spec.required_flags
 
 
+class TestEventChannelDeclaration:
+    """Regression for #3676: the declared channel must match the spawn command.
+
+    ``event_channel`` names what the upstream CLI *emits* (see the
+    ``EventChannel`` docstring and ``docs/adapters/capability_contract.md``),
+    not what Bernstein currently parses -- the same reading ``cursor`` is
+    declared under with no dedicated stream parser either. ``opencode.py``
+    passes ``--format json``, under which the CLI emits NDJSON, so the
+    declared channel is ``stream-json``. This test fails first if a future
+    change either drops ``--format json`` from the spawn command (the
+    declaration would then overclaim) or the declaration drifts back to
+    ``text-signals`` while the flag stays (the declaration would then
+    underclaim) -- either direction breaks the tie this test pins.
+    """
+
+    def test_declared_channel_is_stream_json(self) -> None:
+        from bernstein.adapters._contract import STRATEGY_MATRIX, EventChannel
+
+        assert STRATEGY_MATRIX["opencode"].event_channel is EventChannel.STREAM_JSON
+
+    def test_spawn_command_requests_the_structured_output_the_declaration_names(self) -> None:
+        adapter = OpenCodeAdapter()
+        cmd = adapter._build_command(model="openai/gpt-5.4-mini", prompt="fix the bug")
+        assert "--format" in cmd
+        assert cmd[cmd.index("--format") + 1] == "json"
+
+
 class TestSessionContinuation:
     """``resume=flag`` has to describe a flag the adapter actually passes."""
 
@@ -228,3 +314,224 @@ def test_detect_tier_with_auth_file(tmp_path: Path) -> None:
     assert info is not None
     assert info.tier == ApiTier.PRO
     assert info.provider == ProviderType.OPENCODE
+
+
+class TestModelIdQualification:
+    """Bare model ids (no /) must be qualified from the opencode config or refused."""
+
+    def test_qualified_id_passed_through_unchanged(self, tmp_path: Path) -> None:
+        adapter = OpenCodeAdapter()
+        proc_mock = _make_popen_mock(300)
+
+        with patch("bernstein.adapters.opencode.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="do it",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="anthropic/claude-sonnet-4", effort="high"),
+                session_id="oc-mq1",
+            )
+
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert inner[3] == "anthropic/claude-sonnet-4"
+
+    def test_bare_id_qualified_when_exactly_one_provider_matches(self, tmp_path: Path) -> None:
+        adapter = OpenCodeAdapter()
+        proc_mock = _make_popen_mock(301)
+
+        cfg = tmp_path / "opencode.jsonc"
+        cfg.write_text(
+            """\
+            // my config
+            { "provider": { "anthropic": { "models": ["claude-sonnet-4"] } } }
+            """
+        )
+        with (
+            patch("bernstein.adapters.opencode._OPENCODE_CONFIG_FILE", cfg),
+            patch("bernstein.adapters.opencode.subprocess.Popen", return_value=proc_mock) as popen,
+        ):
+            adapter.spawn(
+                prompt="do it",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="claude-sonnet-4", effort="high"),
+                session_id="oc-mq2",
+            )
+
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert inner[3] == "anthropic/claude-sonnet-4"
+
+    def test_bare_id_refused_when_zero_providers_match(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "opencode.jsonc"
+        cfg.write_text('{ "provider": { "openai": { "models": ["gpt-5"] } } }')
+
+        with patch("bernstein.adapters.opencode._OPENCODE_CONFIG_FILE", cfg):
+            with pytest.raises(Exception) as exc_info:
+                _qualify_model("claude-sonnet-4")
+
+            msg = str(exc_info.value)
+            assert "claude-sonnet-4" in msg
+            assert str(cfg) in msg
+            assert "provider" in msg and "models" in msg
+
+    def test_bare_id_refused_when_two_providers_match(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "opencode.jsonc"
+        cfg.write_text(
+            '{ "provider": { "provider-a": { "models": ["my-model"] }, "provider-b": { "models": ["my-model"] } } }'
+        )
+
+        with patch("bernstein.adapters.opencode._OPENCODE_CONFIG_FILE", cfg):
+            with pytest.raises(Exception) as exc_info:
+                _qualify_model("my-model")
+
+            msg = str(exc_info.value)
+            assert "my-model" in msg
+            assert str(cfg) in msg
+
+    def test_bare_id_refused_when_config_file_missing(self, tmp_path: Path) -> None:
+        missing = tmp_path / "no-such-config.jsonc"
+        assert not missing.exists()
+
+        with patch("bernstein.adapters.opencode._OPENCODE_CONFIG_FILE", missing):
+            with pytest.raises(Exception) as exc_info:
+                _qualify_model("claude-sonnet-4")
+
+            msg = str(exc_info.value)
+            assert "claude-sonnet-4" in msg
+            assert str(missing) in msg
+
+    def test_bare_id_refused_when_config_unparseable(self, tmp_path: Path) -> None:
+        bad = tmp_path / "bad.jsonc"
+        bad.write_text("not valid json at all {")
+
+        with patch("bernstein.adapters.opencode._OPENCODE_CONFIG_FILE", bad):
+            with pytest.raises(Exception) as exc_info:
+                _qualify_model("claude-sonnet-4")
+
+            msg = str(exc_info.value)
+            assert "claude-sonnet-4" in msg
+            assert str(bad) in msg
+
+    def test_spawn_refuses_bare_id_before_popen(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "opencode.jsonc"
+        cfg.write_text('{ "provider": { "openai": { "models": ["gpt-5"] } } }')
+
+        adapter = OpenCodeAdapter()
+        with (
+            patch("bernstein.adapters.opencode._OPENCODE_CONFIG_FILE", cfg),
+            patch("bernstein.adapters.opencode.subprocess.Popen") as popen,
+        ):
+            with pytest.raises(SpawnError) as exc_info:
+                adapter.spawn(
+                    prompt="do it",
+                    workdir=tmp_path,
+                    model_config=ModelConfig(model="claude-sonnet-4", effort="high"),
+                    session_id="oc-mq3",
+                )
+
+            popen.assert_not_called()
+            msg = str(exc_info.value)
+            assert "claude-sonnet-4" in msg
+            assert str(cfg) in msg
+
+    def test_refusal_text_is_what_the_spawner_extracts(self, tmp_path: Path) -> None:
+        """The spawner's _diagnose_spawn_failure falls back to str(exc) when the
+        per-session log does not exist yet -- which is the case here, because the
+        refusal raises before the adapter opens the log file. The refusal text
+        must therefore survive into the extracted reason verbatim."""
+        from bernstein.core.agents.spawner_core import _diagnose_spawn_failure
+
+        cfg = tmp_path / "opencode.jsonc"
+        cfg.write_text('{ "provider": { "openai": { "models": ["gpt-5"] } } }')
+
+        adapter = OpenCodeAdapter()
+        with patch("bernstein.adapters.opencode._OPENCODE_CONFIG_FILE", cfg):
+            with pytest.raises(SpawnError) as exc_info:
+                adapter.spawn(
+                    prompt="do it",
+                    workdir=tmp_path,
+                    model_config=ModelConfig(model="claude-sonnet-4", effort="high"),
+                    session_id="oc-mq7",
+                )
+
+        reason = _diagnose_spawn_failure("oc-mq7", tmp_path, "OpenCode", exc_info.value)
+        assert "claude-sonnet-4" in reason
+        assert str(cfg) in reason
+        assert "provider" in reason and "models" in reason
+
+    def test_env_var_opencode_config_honored(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "custom.jsonc"
+        cfg.write_text('{ "provider": { "google": { "models": ["gemini-pro"] } } }')
+
+        adapter = OpenCodeAdapter()
+        proc_mock = _make_popen_mock(302)
+
+        with (
+            patch.dict("os.environ", {"OPENCODE_CONFIG": str(cfg)}),
+            patch("bernstein.adapters.opencode.subprocess.Popen", return_value=proc_mock) as popen,
+        ):
+            adapter.spawn(
+                prompt="do it",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gemini-pro", effort="high"),
+                session_id="oc-mq4",
+            )
+
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert inner[3] == "google/gemini-pro"
+
+    def test_env_var_opencode_config_dir_honored(self, tmp_path: Path) -> None:
+        cfg_dir = tmp_path / "oc-config"
+        cfg_dir.mkdir()
+        cfg = cfg_dir / "opencode.jsonc"
+        cfg.write_text('{ "provider": { "mistral": { "models": ["mistral-large"] } } }')
+
+        adapter = OpenCodeAdapter()
+        proc_mock = _make_popen_mock(303)
+
+        with (
+            patch.dict("os.environ", {"OPENCODE_CONFIG_DIR": str(cfg_dir)}),
+            patch("bernstein.adapters.opencode.subprocess.Popen", return_value=proc_mock) as popen,
+        ):
+            adapter.spawn(
+                prompt="do it",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="mistral-large", effort="high"),
+                session_id="oc-mq5",
+            )
+
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert inner[3] == "mistral/mistral-large"
+
+    def test_models_as_dict_schema_accepted(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "opencode.jsonc"
+        cfg.write_text('{ "provider": { "openai": { "models": { "gpt-5": { "temperature": 0.7 } } } } }')
+
+        adapter = OpenCodeAdapter()
+        proc_mock = _make_popen_mock(304)
+
+        with (
+            patch("bernstein.adapters.opencode._OPENCODE_CONFIG_FILE", cfg),
+            patch("bernstein.adapters.opencode.subprocess.Popen", return_value=proc_mock) as popen,
+        ):
+            adapter.spawn(
+                prompt="do it",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5", effort="high"),
+                session_id="oc-mq6",
+            )
+
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert inner[3] == "openai/gpt-5"
+
+    def test_config_path_constant_can_be_patched_in_tests(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "opencode.jsonc"
+        cfg.write_text('{ "provider": { "test": { "models": ["model-x"] } } }')
+
+        from bernstein.adapters import opencode as oc_module
+
+        original = oc_module._OPENCODE_CONFIG_FILE
+        oc_module._OPENCODE_CONFIG_FILE = cfg
+        try:
+            qualified = oc_module._qualify_model("model-x")
+            assert qualified == "test/model-x"
+        finally:
+            oc_module._OPENCODE_CONFIG_FILE = original

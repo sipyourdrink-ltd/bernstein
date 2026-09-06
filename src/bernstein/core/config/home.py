@@ -2,8 +2,11 @@
 
 Provides cross-project config storage, catalog cache, and cost tracking.
 
-Config precedence (highest to lowest):
-  session overrides > project .sdd/config.yaml > ~/.bernstein/config.yaml > built-in defaults
+Config precedence is defined once, by ``CONFIG_PRECEDENCE`` below, and every
+statement of it elsewhere should point at that tuple rather than restate it.
+Two copies of this list had already gone stale in this file: the header said
+four layers and ``resolve_config`` said five, while the resolver has built six
+since ``context`` was added.
 
 Environment overrides (take priority over all file-based config layers):
   BERNSTEIN_CLI         Default CLI adapter (e.g. claude, codex, gemini, qwen).
@@ -11,6 +14,9 @@ Environment overrides (take priority over all file-based config layers):
   BERNSTEIN_MAX_AGENTS  Maximum concurrent agents (default 6).
   BERNSTEIN_EFFORT      Default effort level (max | medium | low).
   BERNSTEIN_MODEL       Default model override (empty = adapter default).
+  BERNSTEIN_HOST_ISOLATION_TIER      Isolation the host already provides
+                                     (none | process | container | vm).
+  BERNSTEIN_HOST_ISOLATION_EVIDENCE  Operator's description of that isolation.
 """
 
 from __future__ import annotations
@@ -35,6 +41,14 @@ _DEFAULTS: dict[str, Any] = {
     "max_agents": 6,
     "effort": "max",
     "model": None,
+    # Isolation the runner already applies to this process, declared by the
+    # operator (#5341). Adapters that ship their own vendor sandbox read it to
+    # decide whether that sandbox is redundant. The vocabulary is the
+    # ``SandboxTier`` value set; parsing and validation live in
+    # ``bernstein.core.config.host_isolation`` so this table stays a plain
+    # key -> default map like every other row.
+    "host_isolation_tier": "none",
+    "host_isolation_evidence": "",
 }
 
 _DEFAULT_CONFIG_YAML = """\
@@ -58,6 +72,31 @@ model: null
 """
 
 ConfigSource = Literal["seed", "session", "project", "context", "global", "default"]
+
+
+#: Every config layer, highest precedence first. This is the ONLY definition of
+#: the order: :func:`resolve_config` builds its chain in exactly this sequence,
+#: ``bernstein config explain`` prints it in this sequence, and
+#: ``test_config_precedence_is_defined_once`` fails if a layer is added to
+#: :data:`ConfigSource` without being placed here (#5110).
+CONFIG_PRECEDENCE: tuple[ConfigSource, ...] = (
+    "seed",
+    "session",
+    "project",
+    "context",
+    "global",
+    "default",
+)
+
+#: What each layer is, for an operator asking where a value came from.
+CONFIG_LAYER_DESCRIPTIONS: dict[ConfigSource, str] = {
+    "seed": "run seed (bernstein.yaml) — the value the orchestrator enforces at runtime",
+    "session": "session-only override (environment variable or caller-provided)",
+    "project": "<project>/.sdd/config.yaml",
+    "context": "the active context's config, selected within the project",
+    "global": "~/.bernstein/config.yaml",
+    "default": "built-in default",
+}
 
 
 class ConfigProvenanceLayer(TypedDict):
@@ -268,6 +307,8 @@ _ENV_OVERRIDE_MAP: dict[str, str] = {
     "max_agents": "BERNSTEIN_MAX_AGENTS",
     "effort": "BERNSTEIN_EFFORT",
     "model": "BERNSTEIN_MODEL",
+    "host_isolation_tier": "BERNSTEIN_HOST_ISOLATION_TIER",
+    "host_isolation_evidence": "BERNSTEIN_HOST_ISOLATION_EVIDENCE",
 }
 
 
@@ -409,13 +450,10 @@ def resolve_config(
 ) -> ConfigResolution:
     """Resolve the effective value for *key* across all config layers.
 
-    Precedence (highest first):
-    1. Run seed overrides (``bernstein.yaml``, the value the orchestrator
-       actually enforces at runtime - see ``seed_overrides``)
-    2. Session-only overrides (environment or caller-provided)
-    3. ``<project>/.sdd/config.yaml``
-    4. ``~/.bernstein/config.yaml``
-    5. Built-in defaults
+    Layers are appended in :data:`CONFIG_PRECEDENCE` order, highest first, so
+    ``source_chain[0]`` is always the winner. The order is not restated here:
+    the copy that used to live in this docstring omitted ``context`` and stayed
+    wrong for as long as nothing compared it to the code.
 
     Args:
         key: Config key to look up.

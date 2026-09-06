@@ -50,6 +50,12 @@ from bernstein.core.cost.model_prices import (
     UsagePriceResult as UsagePriceResult,
 )
 from bernstein.core.cost.model_prices import (
+    model_cost_is_known as model_cost_is_known,
+)
+from bernstein.core.cost.model_prices import (
+    model_has_pricing_entry as model_has_pricing_entry,
+)
+from bernstein.core.cost.model_prices import (
     price_model_usage as price_model_usage,
 )
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus

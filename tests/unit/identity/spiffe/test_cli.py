@@ -13,13 +13,13 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from bernstein.cli.commands.spiffe_cmd import spiffe_group
+from bernstein.core.identity.agent_card import issue_identity_card
 from bernstein.core.identity.spiffe import (
     bind_svid_to_card,
     derive_spiffe_id_from_key,
     svid_reference_from_x509,
 )
 from bernstein.core.identity.spiffe.svid import X509Svid
-from bernstein.core.security.agent_identity import issue_identity_card
 from bernstein.core.security.audit_chain import AuditChainStore
 
 

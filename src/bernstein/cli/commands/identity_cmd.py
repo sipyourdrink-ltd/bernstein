@@ -15,6 +15,13 @@ Subcommands:
   paste into their shell to suppress all emit sites.
 * ``bernstein identity attest show|verify --run <id>`` - project or verify a
   run-attestation receipt without overloading install-rev verification.
+* ``bernstein identity agents`` - list the agent principals the grant and
+  delegation chains establish, with the capability ceiling in force now and
+  the chain events behind each entry.  ``--verify <file>`` recomputes a stored
+  projection from the chain and refuses any entry the chain does not establish.
+* ``bernstein identity review --since <date>`` - derive a signed per-principal
+  access review from the delegation and grant chains, and record a reviewer's
+  sign-off as its own chain event.
 
 The install-rev verbs are read-only and never open a network connection.  This
 is the project's hard rule: no telemetry, ever.  The nested ``attest verify``
@@ -26,9 +33,13 @@ playbook (seed generation, storage, rotation, decode).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import click
 
 from bernstein.cli.commands.identity_attest_cmd import attest_group
+from bernstein.cli.commands.identity_review_cmd import review_group
+from bernstein.core.identity import agent_registry
 from bernstein.core.identity import install_rev as _identity
 from bernstein.core.identity.install_rev import (
     DISABLED_SENTINEL,
@@ -61,6 +72,8 @@ def identity_group() -> None:
       bernstein identity disable
       bernstein identity attest show --run r-1234 \\
           --signing-key-path key.pem
+      bernstein identity agents --json
+      bernstein identity review --since 2026-01-01
     """
 
 
@@ -175,6 +188,71 @@ def keydir_cmd() -> None:
     click.echo(json.dumps(keydir, indent=2, sort_keys=True))
 
 
+@identity_group.command("export-verifier", hidden=True)
+@click.option(
+    "--target",
+    type=click.Choice(["local", "server"], case_sensitive=False),
+    default="local",
+    help=(
+        "Verifier file target. 'local' targets ~/.config/bernstein/verifier/local.json "
+        "(operator workstation); 'server' targets ~/.config/bernstein/verifier/server.json "
+        "(shared server filesystem)."
+    ),
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Print the destination path without writing anything.",
+)
+def export_verifier_cmd(target: str, dry_run: bool) -> None:
+    """Write the install-identity JWKS to a per-platform verifier file.
+
+    Writes the JWKS as canonical JSON and a ``.json.sha256`` sidecar. Skips the
+    write when the key content is unchanged since the last run (hash compared
+    against the sidecar); use ``--dry-run`` to print the destination without
+    writing.
+
+    Targets:
+
+    \\b
+      local  -> ~/.config/bernstein/verifier/local.json   (default, operator workstation)
+      server -> ~/.config/bernstein/verifier/server.json  (shared server filesystem)
+
+    This command mirrors the ``/.well-known/http-message-signatures-directory``
+    JWKS endpoint but writes to a local file so a verifier can pin the trust
+    anchor without a runtime fetch.
+    """
+    import hashlib
+    import json
+    from pathlib import Path
+
+    from bernstein.core.identity import http_signing
+
+    verifier_dir = Path.home() / ".config" / "bernstein" / "verifier"
+    filename = f"{target}.json"
+    dest = verifier_dir / filename
+    sidecar = dest.with_name(f"{target}.json.sha256")
+
+    keydir = http_signing.build_key_directory(http_signing.default_keystore())
+
+    canonical = json.dumps(keydir, separators=(",", ":"), sort_keys=True)
+    content_hash = hashlib.sha256(canonical.encode("ascii")).hexdigest()
+
+    if dry_run:
+        click.echo(str(dest))
+        return
+
+    if sidecar.exists() and sidecar.read_text().strip() == content_hash:
+        click.echo(f"unchanged: {dest}")
+        return
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(canonical, encoding="utf-8")
+    sidecar.write_text(content_hash, encoding="utf-8")
+    click.echo(f"wrote: {dest}")
+
+
 @identity_group.command("disable")
 def disable_cmd() -> None:
     """Print the environment line that suppresses every emit site.
@@ -186,8 +264,123 @@ def disable_cmd() -> None:
     click.echo("export BERNSTEIN_DISABLE_IDENTITY=1")
 
 
+def _audit_key_for_read() -> bytes:
+    """Return the install audit key, read-only.
+
+    A verifier that minted its own key would fail every HMAC check against a
+    chain written under the real one, so a missing key is an operator error
+    rather than something to paper over with fresh key material -- the same
+    rule ``bernstein spiffe verify-binding`` follows.
+    """
+    from bernstein.core.security.audit import load_audit_key
+
+    return load_audit_key()
+
+
+@identity_group.command("agents")
+@click.option(
+    "--root",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Audit root holding grants/ and delegation/ (default: .sdd/audit).",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit the canonical JSON projection.")
+@click.option(
+    "--as-of",
+    "as_of",
+    type=int,
+    default=None,
+    help="Epoch second the capability ceiling is resolved at (default: now).",
+)
+@click.option("--trust-domain", "trust_domain", default=None, help="SPIFFE trust domain for id derivation.")
+@click.option(
+    "--install-key",
+    "install_key",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Install public key PEM (SPKI Ed25519) for SPIFFE id derivation.",
+)
+@click.option(
+    "--verify",
+    "verify_file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Recompute a stored projection from the chain instead of printing one.",
+)
+def agents_cmd(
+    root: Path | None,
+    as_json: bool,
+    as_of: int | None,
+    trust_domain: str | None,
+    install_key: Path | None,
+    verify_file: Path | None,
+) -> None:
+    """List the agent principals the audit chain establishes.
+
+    The listing is a projection over the grant and delegation chains, not a
+    stored directory: every entry names the chain events behind it, and the
+    capability ceiling is the one in force at ``--as-of``, not the one the
+    widest grant carried when it was issued.
+
+    With ``--verify`` the stored projection is recomputed from the chain.
+    Exit codes: 0 verified, 1 no records or unreadable input, 2 mismatch.
+    """
+    import time
+
+    if (trust_domain is None) != (install_key is None):
+        raise click.UsageError("--trust-domain and --install-key must be given together")
+
+    audit_root = root if root is not None else Path(".sdd/audit")
+    moment = int(as_of if as_of is not None else time.time())
+    install_pem = install_key.read_bytes() if install_key is not None else None
+    key = _audit_key_for_read()
+
+    if verify_file is not None:
+        verification = agent_registry.verify_registry(
+            verify_file,
+            root=audit_root,
+            key=key,
+            now=moment,
+            trust_domain=trust_domain,
+            install_public_key_pem=install_pem,
+        )
+        if verification.ok:
+            click.echo(f"verified: {verification.reason}")
+            raise SystemExit(0)
+        click.echo(f"mismatch: {verification.reason}", err=True)
+        raise SystemExit(2)
+
+    projection = agent_registry.project_agents(
+        root=audit_root,
+        key=key,
+        now=moment,
+        trust_domain=trust_domain,
+        install_public_key_pem=install_pem,
+    )
+    if as_json:
+        click.echo(agent_registry.render_registry(projection))
+        return
+
+    if not projection.agents:
+        click.echo("no agent principals: the chain under this root establishes none", err=True)
+    for entry in projection.agents:
+        ceiling = ", ".join(entry.capability_ceiling) or "(nothing in force)"
+        click.echo(f"{entry.agent_id}\t{entry.spiffe_id or '-'}\t{ceiling}")
+        click.echo(
+            f"  grants={len(entry.grants)} delegations={len(entry.delegations)} events={len(entry.chain_events)}"
+        )
+    for err in projection.errors:
+        click.echo(err, err=True)
+
+
 # ``identity attest`` is a separate group rather than new verbs here because
 # ``identity verify`` above checks an install-rev fingerprint token, which is a
 # different object from a run's attestation evidence; sharing the verb would
 # give one noun two meanings.
 identity_group.add_command(attest_group, "attest")
+
+# ``identity review`` is a third noun again: not an install-rev token and not a
+# run's attestation evidence, but a windowed projection of who was granted what
+# across runs. The verbs stay grouped so ``review verify`` cannot be confused
+# with either of the other two ``verify`` verbs.
+identity_group.add_command(review_group, "review")

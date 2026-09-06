@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bernstein"
-version = "3.19.0"
+version = "3.19.1"
 description = "The open-source governance layer for AI agents. No model in the coordination loop, so replaying a plan reproduces its task graph byte-identically, and run receipts are byte-identical across independent builds. Signed lineage plus an opt-in HMAC audit chain a reviewer checks offline, without rerunning it. Runs Claude Code, Codex, Gemini CLI, and 40+ CLI agents; governs any deliverable from code to research to audit evidence packs. Cluster mode, air-gap deploy."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -772,7 +772,7 @@ languages = ["zh-Hans", "zh-TW", "ja", "ko", "hi", "bn", "ru", "es", "pt", "de",
 "es" = "@chernistry"
 "pt" = "@chernistry"
 "de" = "@chernistry"
-"fr" = "@chernistry"
+"fr" = "@atirna"
 "it" = "@chernistry"
 "nl" = "@chernistry"
 "pl" = "@chernistry"
@@ -807,6 +807,7 @@ markers = [
     "stress: resource-leak / memory-growth / deadlock stress tests (TC-C); gated off by default CI, run nightly via `-m stress`",
     "allow_network: opt out of the autouse unit no-network guard (rare; a genuine integration test belongs in tests/integration/ instead)",
     "protocol: protocol compatibility tests; applied to every item under tests/protocol/ by that directory's conftest, and run by the publish workflow's release gate",
+    "auditor_question: binds one conformance vector under tests/integration/conformance/auditor/ to the question it answers; the argument is a question number registered in that suite's questions.py",
 ]
 # Visible warnings without converting to errors; individual tests or runs
 # can tighten via `pytest -W error::DeprecationWarning`.

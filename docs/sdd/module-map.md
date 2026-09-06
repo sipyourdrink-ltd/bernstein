@@ -20,6 +20,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `registry_guard.py`         | Shared duplicate-registration guard for the registry classes under ``bernstein`` |
 | `run_auth_token.py`         | Persist and read the auto-generated run Bearer token (issue #2794) |
 | `streaming_merge.py`        | Streaming task results for long-running agents (incremental merge) |
+| `verify_dispatch.py`        | Kind-detecting dispatcher for a single ``bernstein verify <artefact>`` entry point (#5103) |
 | `verify_result.py`          | The one shape an offline verification answers in |
 | `admission/`                | Named resource pools with lease-backed admission (#2544) |
 | `agents/`                   | agents sub-package |
@@ -27,6 +28,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `autofix/`                  | Bernstein autofix daemon - auto-repair CI failures on Bernstein PRs |
 | `autoheal/`                 | Auto-heal v2 subpackage |
 | `chat/`                     | Chat-control bridges for driving Bernstein agents from messaging apps |
+| `checks/`                   | Audit check contract, registry, and producer adapters (#5072) |
 | `communication/`            | communication sub-package |
 | `compliance/`               | Compliance subpackage |
 | `config/`                   | Config: seed parsing, config management, settings, feature gates |
@@ -61,6 +63,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `preview/`                  | ``bernstein preview`` - sandboxed dev-server with public tunnel link |
 | `protocols/`                | protocols sub-package |
 | `quality/`                  | quality sub-package |
+| `receipts/`                 | One receipt protocol for every receipt kind the project emits |
 | `replay/`                   | Deterministic replay package for Bernstein agent runs |
 | `review/`                   | Per-adapter perspective assignment and chain coordination for reviews |
 | `review_responder/`         | PR review responder - react to inline review comments on Bernstein PRs |
@@ -183,6 +186,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `scanner_finding.py`        | Scanner Finding dataclass |
 | `scanner_registry.py`       | Scanner registry - look up scanner adapters by name |
 | `security_floor.py`         | Adapter security-floor spawn preflight with signed refusal receipts (#2515) |
+| `semgrep.py`                | Deterministic Semgrep scanner adapter and SARIF normalization |
 | `session_id.py`             | Deterministic session-id binding for adapter replay isolation |
 | `skills_injector.py`        | Inject per-task Claude Code skills into the worktree before spawn |
 | `skyvern.py`                | Skyvern adapter: drives an existing Skyvern server over HTTP |
@@ -191,6 +195,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `use_cases.py`              | Per-adapter metadata for the ``bernstein integrations list`` command |
 | `ci/`                       | CI system adapters for log parsing and failure extraction |
 | `digest/`                   | Tool output digesters registry and ruleset models |
+| `directory/`                | Directory provisioning adapters |
 
 ### `src/bernstein/agents/` - agent catalog & discovery
 
@@ -244,32 +249,33 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 
 ### `src/bernstein/evolution/` - self-evolution engine
 
-| File                       | Purpose |
-|----------------------------|---------|
-| `_shared.py`               | Shared constants, data classes, and helpers for the evolution loop modules |
-| `admission.py`             | Empirical-confidence admission gate for upgrade proposals |
-| `aggregator.py`            | Metrics aggregation with EWMA, CUSUM, BOCPD, and Goodhart defenses |
-| `applicator.py`            | Change applicator - execute upgrades via file modification |
-| `benchmark.py`             | Tiered benchmark runner for evolution validation |
-| `circuit.py`               | CircuitBreaker - halt evolution when safety conditions are violated |
-| `creative.py`              | Creative evolution pipeline - visionary → analyst → production gate |
-| `data_collector.py`        | Metric record types and file-based metrics collection for the evolution system |
-| `detector.py`              | Opportunity detection from aggregated metrics |
-| `gate.py`                  | ApprovalGate and EvalGate - risk-stratified routing for evolution proposals |
-| `governance.py`            | Adaptive governance for the evolution system |
-| `invariants.py`            | InvariantsGuard - hash-lock safety-critical files |
-| `loop.py`                  | Autoresearch evolution loop - continuous self-improvement via experiment cycles |
-| `observability_signals.py` | Read ``bernstein doctor observe`` snapshots into evolution signals |
-| `oscillation_guard.py`     | Oscillation guard for prompt-evolution proposals |
-| `predicted_delta.py`       | Predicted-delta gate for prompt-evolution proposals |
-| `proposal_scorer.py`       | Proposal risk scoring and routing classification |
-| `proposals.py`             | Upgrade proposal generation |
-| `report.py`                | Evolution observability - history table and static report generation |
-| `report_generator.py`      | Analysis result types, statistical helpers, and Goodhart's Law defenses |
-| `risk.py`                  | Strategic Risk Score (SRS) computation for evolution proposals |
-| `sandbox.py`               | SandboxValidator - isolated testing of evolution proposals |
-| `types.py`                 | Shared types for the evolution system |
-| `upgrade_targets.py`       | Category-to-target-file mapping shared by the upgrade executor and task spawn |
+| File                        | Purpose |
+|-----------------------------|---------|
+| `_shared.py`                | Shared constants, data classes, and helpers for the evolution loop modules |
+| `admission.py`              | Empirical-confidence admission gate for upgrade proposals |
+| `aggregator.py`             | Metrics aggregation with EWMA, CUSUM, BOCPD, and Goodhart defenses |
+| `applicator.py`             | Change applicator - execute upgrades via file modification |
+| `benchmark.py`              | Tiered benchmark runner for evolution validation |
+| `change_contract_replay.py` | Replay service for ReplayContract — verifiable offline replay of governance decisions |
+| `circuit.py`                | CircuitBreaker - halt evolution when safety conditions are violated |
+| `creative.py`               | Creative evolution pipeline - visionary → analyst → production gate |
+| `data_collector.py`         | Metric record types and file-based metrics collection for the evolution system |
+| `detector.py`               | Opportunity detection from aggregated metrics |
+| `gate.py`                   | ApprovalGate and EvalGate - risk-stratified routing for evolution proposals |
+| `governance.py`             | Adaptive governance for the evolution system |
+| `invariants.py`             | InvariantsGuard - hash-lock safety-critical files |
+| `loop.py`                   | Autoresearch evolution loop - continuous self-improvement via experiment cycles |
+| `observability_signals.py`  | Read ``bernstein doctor observe`` snapshots into evolution signals |
+| `oscillation_guard.py`      | Oscillation guard for prompt-evolution proposals |
+| `predicted_delta.py`        | Predicted-delta gate for prompt-evolution proposals |
+| `proposal_scorer.py`        | Proposal risk scoring and routing classification |
+| `proposals.py`              | Upgrade proposal generation |
+| `report.py`                 | Evolution observability - history table and static report generation |
+| `report_generator.py`       | Analysis result types, statistical helpers, and Goodhart's Law defenses |
+| `risk.py`                   | Strategic Risk Score (SRS) computation for evolution proposals |
+| `sandbox.py`                | SandboxValidator - isolated testing of evolution proposals |
+| `types.py`                  | Shared types for the evolution system |
+| `upgrade_targets.py`        | Category-to-target-file mapping shared by the upgrade executor and task spawn |
 
 ### `src/bernstein/eval/` - evaluation harness
 
@@ -397,6 +403,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `server.py`           | Bernstein MCP server |
 | `signal_paths.py`     | Containment barrier for the MCP shutdown-signal path |
 | `streaming.py`        | In-flight tool-call tracking with cancellation and partial-result preservation |
+| `tool_surface.py`     | Tool surface risk scoring and capability receipts for MCP servers |
 | `resources/`          | MCP resource registrars for Bernstein |
 | `tool_schemas/`       | tool_schemas/ sub-package |
 

@@ -22,7 +22,8 @@ from __future__ import annotations
 import logging
 import os
 import re
-from collections.abc import Callable, Iterable
+import unicodedata
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -139,6 +140,168 @@ def _flag(
 # ---------------------------------------------------------------------------
 
 
+def _as_text(value: Any) -> str:
+    """Render one payload value as text, decoding a binary transport.
+
+    A payload carried as ``bytes`` is the same payload. Skipping it is how
+    a detector reports clean on a string it never read.
+
+    Args:
+        value: One value out of a detector's input payload.
+
+    Returns:
+        The value as text, with undecodable bytes replaced rather than
+        raising, so a malformed transport cannot suppress the scan.
+    """
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _rendered_values(payload: Any) -> str:
+    """Flatten a tool-argument payload of any wire shape into one string.
+
+    Tool calls carry their arguments as a mapping, as a positional list,
+    and occasionally as a bare scalar. A detector that reads only the
+    mapping shape returns a pass on the other two that the caller never
+    earned, so every shape is rendered here instead.
+
+    Args:
+        payload: The ``tool_args`` value as it arrived, of any type.
+
+    Returns:
+        The payload's values joined by spaces, or ``""`` when it holds
+        nothing to scan.
+    """
+    if payload is None:
+        return ""
+    if isinstance(payload, Mapping):
+        values: list[Any] = list(payload.values())
+    elif isinstance(payload, (str, bytes, bytearray, memoryview)):
+        values = [payload]
+    elif isinstance(payload, Iterable):
+        values = list(payload)
+    else:
+        values = [payload]
+    return " ".join(_as_text(value) for value in values if value is not None)
+
+
+#: Codepoints that render as an ASCII letter but do not decode as one. NFKC
+#: folds the fullwidth and ligature forms; it deliberately does not fold these,
+#: because U+0430 and a Latin ``a`` are different letters and
+#: conflating them would corrupt ordinary Cyrillic text. A lexical detector
+#: matching English keywords wants them folded anyway: nobody writes
+#: "Ignore previous instructions" with one Cyrillic capital by accident.
+#:
+#: Best-effort, not the full Unicode confusables table. Adding a row makes one
+#: more spelling detectable and can never make a plain-ASCII payload invisible.
+_CONFUSABLES: dict[str, str] = {
+    # Cyrillic, upper
+    "\u0410": "A",
+    "\u0412": "B",
+    "\u0415": "E",
+    "\u0406": "I",
+    "\u0408": "J",
+    "\u041a": "K",
+    "\u041c": "M",
+    "\u041d": "H",
+    "\u041e": "O",
+    "\u0420": "P",
+    "\u0421": "C",
+    "\u0422": "T",
+    "\u0423": "Y",
+    "\u0425": "X",
+    "\u0405": "S",
+    # Cyrillic, lower
+    "\u0430": "a",
+    "\u0435": "e",
+    "\u0456": "i",
+    "\u0458": "j",
+    "\u043e": "o",
+    "\u0440": "p",
+    "\u0441": "c",
+    "\u0443": "y",
+    "\u0445": "x",
+    "\u0455": "s",
+    "\u051b": "q",
+    "\u051d": "w",
+    # Greek, upper
+    "\u0391": "A",
+    "\u0392": "B",
+    "\u0395": "E",
+    "\u0396": "Z",
+    "\u0397": "H",
+    "\u0399": "I",
+    "\u039a": "K",
+    "\u039c": "M",
+    "\u039d": "N",
+    "\u039f": "O",
+    "\u03a1": "P",
+    "\u03a4": "T",
+    "\u03a5": "Y",
+    "\u03a7": "X",
+    # Greek, lower
+    "\u03bf": "o",
+    "\u03c1": "p",
+}
+
+_CONFUSABLE_TABLE = str.maketrans(_CONFUSABLES)
+
+
+def _fold_for_matching(text: str) -> str:
+    """Return *text* in the form the goal-hijack patterns are matched against.
+
+    Three steps, in this order:
+
+    1. Drop every ``Cc``/``Cf``/``Cs`` codepoint. That is the zero-width
+       family (U+200B..U+200D, U+FEFF, the soft hyphen, the bidi controls):
+       characters that occupy a position in the string and none on the screen,
+       so a zero-width space placed inside ``ignore`` still reads as the word
+       to a person while matching nothing here. Dropping before normalising
+       is what makes the result NFKC rather
+       than merely NFKC-derived, the discipline
+       :mod:`bernstein.core.volunteer.issue_sanitize` documents.
+    2. NFKC. Folds the fullwidth, ligature and compatibility spellings.
+    3. Map the confusables NFKC leaves alone (see :data:`_CONFUSABLES`).
+
+    The result is used for *matching only*. It is not the payload, and a
+    finding derived from it says so, because the bytes an operator has to go
+    and look at are the ones that arrived.
+
+    Args:
+        text: The haystack as it arrived.
+
+    Returns:
+        The folded text. Never longer than the input in codepoints.
+    """
+    legible = "".join(ch for ch in text if unicodedata.category(ch) not in _INVISIBLE_CATEGORIES)
+    return unicodedata.normalize("NFKC", legible).translate(_CONFUSABLE_TABLE)
+
+
+#: Unicode general categories dropped before matching: ``Cc`` control, ``Cf``
+#: format, ``Cs`` surrogate. None of them render.
+_INVISIBLE_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
+
+
+def _search_goal_hijack(text: str) -> tuple[re.Pattern[str], str, bool] | None:
+    """Find a goal-hijack pattern in *text*, folding obfuscations first.
+
+    Args:
+        text: The candidate text.
+
+    Returns:
+        The pattern that matched, the matched substring, and whether the
+        folding changed the text (so the caller can say the match came from
+        the folded form). ``None`` when nothing matched.
+    """
+    folded = _fold_for_matching(text)
+    for pattern in _GOAL_HIJACK_PATTERNS:
+        match = pattern.search(folded)
+        if match:
+            return pattern, match.group(0), folded != text
+    return None
+
+
 _GOAL_HIJACK_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(p, re.IGNORECASE)
     for p in (
@@ -168,26 +331,34 @@ def detect_asi01_goal_hijack(context: dict[str, Any]) -> ASIFinding:
     haystack_parts: list[str] = []
     for key in ("prompt", "retrieved_content", "system_prompt"):
         value = context.get(key)
-        if isinstance(value, str):
-            haystack_parts.append(value)
-        elif isinstance(value, Iterable) and not isinstance(value, (bytes, bytearray)):
-            haystack_parts.extend(str(item) for item in value)
+        if value is None:
+            continue
+        # bytes and bytearray are Iterable, so an unguarded Iterable branch
+        # would scan them one integer at a time. They are decoded whole
+        # instead: a payload sent down a binary channel is still a payload.
+        if isinstance(value, (str, bytes, bytearray, memoryview)):
+            haystack_parts.append(_as_text(value))
+        elif isinstance(value, Iterable):
+            haystack_parts.extend(_as_text(item) for item in value)
+        else:
+            haystack_parts.append(_as_text(value))
     haystack = "\n".join(haystack_parts)
     if not haystack:
         return _ok(ASIClass.ASI01_GOAL_HIJACK, name)
-    for pattern in _GOAL_HIJACK_PATTERNS:
-        match = pattern.search(haystack)
-        if match:
-            return _flag(
-                ASIClass.ASI01_GOAL_HIJACK,
-                name,
-                ASISeverity.WARNING,
-                evidence=f"matched pattern {pattern.pattern!r}: {match.group(0)!r}",
-                remediation=(
-                    "Review the retrieved/user content for prompt injection; "
-                    "isolate untrusted input and quote it before passing to the model."
-                ),
-            )
+    hit = _search_goal_hijack(haystack)
+    if hit is not None:
+        pattern, matched, folded = hit
+        origin = " (after folding an obfuscated spelling)" if folded else ""
+        return _flag(
+            ASIClass.ASI01_GOAL_HIJACK,
+            name,
+            ASISeverity.WARNING,
+            evidence=f"matched pattern {pattern.pattern!r}: {matched!r}{origin}",
+            remediation=(
+                "Review the retrieved/user content for prompt injection; "
+                "isolate untrusted input and quote it before passing to the model."
+            ),
+        )
     return _ok(ASIClass.ASI01_GOAL_HIJACK, name)
 
 
@@ -208,12 +379,12 @@ def detect_asi02_tool_misuse(context: dict[str, Any]) -> ASIFinding:
     tool_name = context.get("tool_name")
     tool_args = context.get("tool_args") or {}
     descriptions: dict[str, str] = context.get("tool_descriptions") or {}
-    if not tool_name or not isinstance(tool_args, dict):
+    if not tool_name:
         return _ok(ASIClass.ASI02_TOOL_MISUSE, name)
     description = (descriptions.get(tool_name) or "").lower()
     advertises_shell = any(token in description for token in ("shell", "command", "exec", "filesystem", "path", "file"))
     suspicious = re.compile(r"[;&|`$><]|(?:\.\./){2,}|/etc/(?:passwd|shadow)")
-    rendered = " ".join(str(v) for v in tool_args.values() if v is not None)
+    rendered = _rendered_values(tool_args)
     if rendered and not advertises_shell and suspicious.search(rendered):
         return _flag(
             ASIClass.ASI02_TOOL_MISUSE,
@@ -255,6 +426,43 @@ def detect_asi03_identity_privilege(context: dict[str, Any]) -> ASIFinding:
     return _ok(ASIClass.ASI03_IDENTITY_PRIVILEGE, name, DetectorStatus.DELEGATING)
 
 
+def _unsigned_components(components: Any) -> list[str] | None:
+    """Return the names of loaded components that carry no signature.
+
+    ``None`` means the manifest could not be read as a component list at
+    all, which is not the same answer as an empty list: an unreadable
+    manifest is one whose components were never checked, so the caller
+    reports it rather than passing.
+
+    A mapping is read as ``name -> record``, the shape a manifest takes
+    once it has travelled as a JSON object instead of an array. An entry
+    that is not a record carries no ``signed`` field to read, so it counts
+    as unsigned rather than as absent.
+
+    Args:
+        components: The ``loaded_components`` value as it arrived.
+
+    Returns:
+        The unsigned components' names, or ``None`` when the value is not
+        a component manifest.
+    """
+    entries: list[tuple[str, Any]]
+    if isinstance(components, Mapping):
+        entries = [(str(key), record) for key, record in components.items()]
+    elif isinstance(components, (list, tuple, set, frozenset)):
+        entries = [("<anonymous>", record) for record in components]
+    else:
+        return None
+    unsigned: list[str] = []
+    for label, record in entries:
+        if isinstance(record, Mapping):
+            if not record.get("signed"):
+                unsigned.append(str(record.get("name", label)))
+        else:
+            unsigned.append(label)
+    return unsigned
+
+
 def detect_asi04_supply_chain(context: dict[str, Any]) -> ASIFinding:
     """ASI04 Agentic Supply Chain - unsigned MCP/plugin/skill load.
 
@@ -271,12 +479,25 @@ def detect_asi04_supply_chain(context: dict[str, Any]) -> ASIFinding:
     """
     name = "asi04_supply_chain"
     components = context.get("loaded_components") or []
-    if not isinstance(components, Iterable):
-        return _ok(ASIClass.ASI04_SUPPLY_CHAIN, name, DetectorStatus.DELEGATING)
-    unsigned = [c.get("name", "<anonymous>") for c in components if isinstance(c, dict) and not c.get("signed")]
+    unsigned = _unsigned_components(components)
+    severity = ASISeverity.INFO if context.get("allow_unsigned_in_dev") else ASISeverity.WARNING
+    if unsigned is None:
+        return _flag(
+            ASIClass.ASI04_SUPPLY_CHAIN,
+            name,
+            severity,
+            evidence=(
+                f"loaded_components is a {type(components).__name__}, not a component "
+                "manifest, so no component in it was checked for a signature"
+            ),
+            remediation=(
+                "Pass loaded_components as a list of {'name': ..., 'signed': bool} "
+                "records, or as a mapping of name to that record."
+            ),
+            status=DetectorStatus.DELEGATING,
+        )
     if not unsigned:
         return _ok(ASIClass.ASI04_SUPPLY_CHAIN, name, DetectorStatus.DELEGATING)
-    severity = ASISeverity.INFO if context.get("allow_unsigned_in_dev") else ASISeverity.WARNING
     return _flag(
         ASIClass.ASI04_SUPPLY_CHAIN,
         name,
@@ -316,9 +537,9 @@ def detect_asi05_code_execution(context: dict[str, Any]) -> ASIFinding:
     tool_name = context.get("tool_name")
     tool_args = context.get("tool_args") or {}
     safe = set(context.get("code_safe_tools") or [])
-    if tool_name in safe or not isinstance(tool_args, dict):
+    if tool_name in safe:
         return _ok(ASIClass.ASI05_CODE_EXECUTION, name)
-    rendered = " ".join(str(v) for v in tool_args.values() if v is not None)
+    rendered = _rendered_values(tool_args)
     for pattern in _CODE_EXEC_PATTERNS:
         match = pattern.search(rendered)
         if match:
@@ -350,7 +571,11 @@ def detect_asi06_memory_poisoning(context: dict[str, Any]) -> ASIFinding:
     write = context.get("memory_write")
     if not isinstance(write, dict):
         return _ok(ASIClass.ASI06_MEMORY_POISONING, name)
-    if write.get("source") == "untrusted":
+    # A trust label is a label, not a byte string. Integration partners emit
+    # "Untrusted" and "UNTRUSTED" through JSON envelopes that case-normalise
+    # on the way, and an exact-match check reads every one of those as
+    # trusted, which is the wrong direction to be wrong in.
+    if str(write.get("source", "")).strip().casefold() == "untrusted":
         return _flag(
             ASIClass.ASI06_MEMORY_POISONING,
             name,
@@ -358,16 +583,17 @@ def detect_asi06_memory_poisoning(context: dict[str, Any]) -> ASIFinding:
             evidence=f"untrusted memory write: {str(write.get('content', ''))[:120]!r}",
             remediation="Quarantine writes from untrusted sources or require provenance.",
         )
-    content = str(write.get("content", ""))
-    for pattern in _GOAL_HIJACK_PATTERNS:
-        if pattern.search(content):
-            return _flag(
-                ASIClass.ASI06_MEMORY_POISONING,
-                name,
-                ASISeverity.WARNING,
-                evidence=f"memory write contains goal-hijack pattern {pattern.pattern!r}",
-                remediation="Reject the write; sanitize before persisting.",
-            )
+    hit = _search_goal_hijack(_as_text(write.get("content", "")))
+    if hit is not None:
+        pattern, _matched, folded = hit
+        origin = " (after folding an obfuscated spelling)" if folded else ""
+        return _flag(
+            ASIClass.ASI06_MEMORY_POISONING,
+            name,
+            ASISeverity.WARNING,
+            evidence=f"memory write contains goal-hijack pattern {pattern.pattern!r}{origin}",
+            remediation="Reject the write; sanitize before persisting.",
+        )
     return _ok(ASIClass.ASI06_MEMORY_POISONING, name)
 
 

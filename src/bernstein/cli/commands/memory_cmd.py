@@ -18,16 +18,11 @@ from bernstein.core.memory.chain import (
 )
 from bernstein.core.memory.cross_task_kb import CrossTaskKB, Scope, redact_value
 from bernstein.core.memory.sqlite_store import MemoryType, SQLiteMemoryStore
+from bernstein.core.security.audit import load_or_create_audit_key
 
 _MEMORY_DB_PATH = ".sdd/memory/memory.db"
 
 console = Console()
-
-
-def _load_hmac_key() -> bytes:
-    from bernstein.core.security.audit import load_or_create_audit_key
-
-    return load_or_create_audit_key()
 
 
 def _chain_root(workdir: str) -> Path:
@@ -259,7 +254,7 @@ def verify_memory(scope: str, namespace: str, workdir: str) -> None:
 
     Exit codes: 0 = OK, 1 = no entries / bad input, 2 = tamper detected.
     """
-    chain = MemoryChain(_chain_root(workdir), hmac_key=_load_hmac_key())
+    chain = MemoryChain(_chain_root(workdir), hmac_key=load_or_create_audit_key())
     result = chain.verify(MemoryScope(scope), namespace, spine_root=_spine_root(workdir))
     console.print()
     console.print(f"[bold]Memory chain[/bold] scope={scope} namespace={namespace} entries={result.count}")
@@ -298,7 +293,7 @@ def why_memory(fact: str, scope: str, namespace: str, workdir: str) -> None:
 
     Exit codes: 0 = found, 1 = unknown fact / unresolved provenance.
     """
-    chain = MemoryChain(_chain_root(workdir), hmac_key=_load_hmac_key())
+    chain = MemoryChain(_chain_root(workdir), hmac_key=load_or_create_audit_key())
     origin = chain.why(
         fact,
         scope=MemoryScope(scope),
@@ -343,7 +338,7 @@ def forget_memory(entry_hash: str, scope: str, namespace: str, actor: str, workd
 
     Exit codes: 0 = tombstoned, 1 = target entry not found.
     """
-    chain = MemoryChain(_chain_root(workdir), hmac_key=_load_hmac_key())
+    chain = MemoryChain(_chain_root(workdir), hmac_key=load_or_create_audit_key())
     target = None
     for entry in chain.iter_entries(MemoryScope(scope), namespace):
         if entry.entry_hash == entry_hash:
@@ -366,4 +361,58 @@ def forget_memory(entry_hash: str, scope: str, namespace: str, actor: str, workd
         f"[green]OK[/green] tombstoned [bold]{entry_hash[:19]}...[/bold] "
         f"(tombstone={tombstone.entry_hash[:19]}...); original retained and chain intact."
     )
+    raise SystemExit(0)
+
+
+@memory_group.command("show")
+@click.option("--scope", type=_SCOPE_CHOICE, required=True, help="Identity scope (chain namespace).")
+@click.option("--namespace", required=True, help="Chain key within the scope.")
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit the canonical fold bytes verbatim instead of a table.",
+)
+def show_memory(scope: str, namespace: str, workdir: str, as_json: bool) -> None:
+    """Print what a scope/namespace currently says, and where each line came from.
+
+    The current state is the deterministic fold of the record chain:
+    every write in append order, minus the ones a tombstone has
+    forgotten. ``--json`` emits the canonical fold bytes, which are
+    byte-identical across readers and therefore safe to hash or diff.
+
+    Exit codes: 0 = live claims printed, 1 = nothing live in this
+    scope/namespace.
+    """
+    chain = MemoryChain(_chain_root(workdir), hmac_key=load_or_create_audit_key())
+    memory_scope = MemoryScope(scope)
+    entries = chain.fold(memory_scope, namespace)
+
+    if as_json:
+        click.echo(chain.fold_bytes(memory_scope, namespace).decode("utf-8"))
+        raise SystemExit(0 if entries else 1)
+
+    console.print()
+    if not entries:
+        console.print(f"[yellow]No live claims[/yellow] in scope={scope} namespace={namespace}.")
+        raise SystemExit(1)
+
+    table = Table(title=f"Memory state (scope={scope}, namespace={namespace})")
+    table.add_column("Claim")
+    table.add_column("Run", style="cyan")
+    table.add_column("Step", style="cyan")
+    table.add_column("Actor", style="green")
+    table.add_column("Entry", style="dim")
+    for entry in entries:
+        table.add_row(entry.claim, entry.run_id, entry.step_id, entry.actor, entry.entry_hash)
+    console.print(table)
     raise SystemExit(0)

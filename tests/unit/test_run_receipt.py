@@ -319,6 +319,248 @@ def test_audit_range_round_trip_and_strip_collapse(tmp_path: Path) -> None:
     assert result_mut.status == "tampered"
 
 
+def test_audit_range_since_until_hmac_relabel_fails(tmp_path: Path) -> None:
+    """Relabelling the declared audit window is tamper, not a silent pass.
+
+    since/until/head_hmac describe which window the embedded audit events
+    were claimed to come from. Under schema 1.1.0, these fields are bound
+    into the signed subject alongside audit_range_head_sha256 and
+    audit_range_event_count.
+    """
+    sdd = tmp_path / ".sdd"
+    _seed_run(sdd)
+    _seed_audit(sdd)
+    receipt = build_run_receipt(
+        _RUN_ID,
+        sdd,
+        _kms(tmp_path),
+        include_audit_range=True,
+        audit_hmac_key=_HMAC_KEY,
+        audit_since="2020-01-01T00:00:00.000000Z",
+        audit_until="2100-01-01T00:00:00.000000Z",
+        write=False,
+    )
+    assert verify_run_receipt(receipt.receipt_bytes).ok
+
+    for field in ("since", "until", "head_hmac"):
+        doc = json.loads(receipt.receipt_bytes)
+        doc["audit_range"][field] = "forged"
+        result = verify_run_receipt(_reserialize(doc))
+        assert not result.ok, f"relabelling audit_range.{field} should fail verification"
+        assert result.status == "tampered"
+
+
+def test_relabelled_since_fails_verification(tmp_path: Path) -> None:
+    """Mutating since in an audit range fails verification as tampered."""
+    sdd = tmp_path / ".sdd"
+    _seed_run(sdd)
+    _seed_audit(sdd)
+    receipt = build_run_receipt(
+        _RUN_ID,
+        sdd,
+        _kms(tmp_path),
+        include_audit_range=True,
+        audit_hmac_key=_HMAC_KEY,
+        audit_since="2020-01-01T00:00:00.000000Z",
+        audit_until="2100-01-01T00:00:00.000000Z",
+        write=False,
+    )
+    doc = json.loads(receipt.receipt_bytes)
+    doc["audit_range"]["since"] = "2025-01-01T00:00:00.000000Z"
+    result = verify_run_receipt(_reserialize(doc))
+    assert not result.ok
+    assert result.status == "tampered"
+
+
+def test_relabelled_until_fails_verification(tmp_path: Path) -> None:
+    """Mutating until in an audit range fails verification as tampered."""
+    sdd = tmp_path / ".sdd"
+    _seed_run(sdd)
+    _seed_audit(sdd)
+    receipt = build_run_receipt(
+        _RUN_ID,
+        sdd,
+        _kms(tmp_path),
+        include_audit_range=True,
+        audit_hmac_key=_HMAC_KEY,
+        audit_since="2020-01-01T00:00:00.000000Z",
+        audit_until="2100-01-01T00:00:00.000000Z",
+        write=False,
+    )
+    doc = json.loads(receipt.receipt_bytes)
+    doc["audit_range"]["until"] = "2099-01-01T00:00:00.000000Z"
+    result = verify_run_receipt(_reserialize(doc))
+    assert not result.ok
+    assert result.status == "tampered"
+
+
+def test_swapped_head_hmac_fails_verification(tmp_path: Path) -> None:
+    """Mutating head_hmac in an audit range fails verification as tampered."""
+    sdd = tmp_path / ".sdd"
+    _seed_run(sdd)
+    _seed_audit(sdd)
+    receipt = build_run_receipt(
+        _RUN_ID,
+        sdd,
+        _kms(tmp_path),
+        include_audit_range=True,
+        audit_hmac_key=_HMAC_KEY,
+        audit_since="2020-01-01T00:00:00.000000Z",
+        audit_until="2100-01-01T00:00:00.000000Z",
+        write=False,
+    )
+    doc = json.loads(receipt.receipt_bytes)
+    doc["audit_range"]["head_hmac"] = "0" * 64
+    result = verify_run_receipt(_reserialize(doc))
+    assert not result.ok
+    assert result.status == "tampered"
+
+
+def test_audit_event_count_in_subject_fails_on_mismatch(tmp_path: Path) -> None:
+    """Mutating event_count in an audit range fails verification as tampered."""
+    sdd = tmp_path / ".sdd"
+    _seed_run(sdd)
+    _seed_audit(sdd)
+    receipt = build_run_receipt(
+        _RUN_ID,
+        sdd,
+        _kms(tmp_path),
+        include_audit_range=True,
+        audit_hmac_key=_HMAC_KEY,
+        audit_since="2020-01-01T00:00:00.000000Z",
+        audit_until="2100-01-01T00:00:00.000000Z",
+        write=False,
+    )
+    doc = json.loads(receipt.receipt_bytes)
+    doc["audit_range"]["event_count"] = 999
+    result = verify_run_receipt(_reserialize(doc))
+    assert not result.ok
+    assert result.status == "tampered"
+
+
+def test_schema_1_0_0_receipt_verifies_under_legacy_binding(tmp_path: Path) -> None:
+    """A schema 1.0.0 receipt with an audit range verifies under legacy binding with a warning."""
+    from bernstein.core.replay.run_receipt import (
+        _binding_block,
+        _canonical_json_bytes,
+        _extract_endpoint_identities,
+        _load_journal_rows_strict,
+        _project_journal_row,
+        _signature_preimage,
+        _spine_rows,
+        _walk_spine_rows,
+        run_journal_path,
+    )
+    from bernstein.core.security.audit_receipt import _read_range_slice
+
+    sdd = tmp_path / ".sdd"
+    _seed_run(sdd)
+    _seed_audit(sdd)
+
+    journal_path = run_journal_path(sdd, _RUN_ID)
+    events = _load_journal_rows_strict(journal_path, _RUN_ID)
+    journal_rows = [_project_journal_row(row) for row in events]
+    journal_head = str(events[-1].get("event_hash", ""))
+
+    spine_rows = _spine_rows(sdd, _RUN_ID)
+    spine_head, _, _ = _walk_spine_rows(spine_rows)
+
+    rebuilt, head_hmac, head_sha256 = _read_range_slice(
+        sdd / "audit",
+        since="2020-01-01T00:00:00.000000Z",
+        until="2100-01-01T00:00:00.000000Z",
+        key=_HMAC_KEY,
+    )
+    audit_block = {
+        "since": "2020-01-01T00:00:00.000000Z",
+        "until": "2100-01-01T00:00:00.000000Z",
+        "head_hmac": head_hmac,
+        "head_sha256": head_sha256,
+        "event_count": len(rebuilt),
+        "events": rebuilt,
+    }
+
+    # Mint a legacy 1.0.0 binding (only audit_range_head_sha256 in subject)
+    legacy_binding = _binding_block(
+        run_id=_RUN_ID,
+        journal_head=journal_head,
+        journal_count=len(journal_rows),
+        spine_head=spine_head,
+        spine_count=len(spine_rows),
+        audit_head_sha256=head_sha256,
+        endpoint_identities=_extract_endpoint_identities(journal_rows),
+        schema_version="1.0.0",
+    )
+    binding_bytes = _canonical_json_bytes(legacy_binding)
+    subject_sha256 = hashlib.sha256(binding_bytes).hexdigest()
+
+    kms = _kms(tmp_path)
+    sig = kms.sign(_signature_preimage(binding_bytes))
+    jwk = kms.public_key_jwk()
+
+    legacy_receipt: dict[str, Any] = {
+        "schema_version": "1.0.0",
+        "receipt_type": "https://bernstein.run/attestations/run-receipt/v1",
+        "run_id": _RUN_ID,
+        "subject": {
+            "name": f"run-receipt-{_RUN_ID}",
+            "digest": {"sha256": subject_sha256},
+        },
+        "journal": {
+            "head_hash": journal_head,
+            "event_count": len(journal_rows),
+            "events": journal_rows,
+        },
+        "spine": {
+            "head_hash": spine_head,
+            "entry_count": len(spine_rows),
+            "entries": spine_rows,
+        },
+        "signing": {
+            "alg": "EdDSA",
+            "key_id": "test-run-receipt-key",
+            "payload_type": "application/vnd.bernstein.run-receipt+json",
+            "public_key_jwk": jwk,
+            "signature_b64": base64.b64encode(sig).decode("ascii"),
+        },
+        "audit_range": audit_block,
+    }
+
+    result = verify_run_receipt(_reserialize(legacy_receipt))
+    assert result.ok
+    assert result.status == "ok"
+    assert result.binding_version == "1.0.0"
+    assert "audit window unbound in schema 1.0.0" in result.warnings
+
+
+def test_receipt_without_audit_range_binding_bytes_unchanged(tmp_path: Path) -> None:
+    """Receipts without an audit range produce byte-identical binding blocks in 1.0.0 and 1.1.0."""
+    from bernstein.core.replay.run_receipt import (
+        _binding_block,
+        _canonical_json_bytes,
+    )
+
+    block_100 = _binding_block(
+        run_id="test-run",
+        journal_head="head1",
+        journal_count=3,
+        spine_head="spine1",
+        spine_count=2,
+        audit_head_sha256=None,
+        schema_version="1.0.0",
+    )
+    block_110 = _binding_block(
+        run_id="test-run",
+        journal_head="head1",
+        journal_count=3,
+        spine_head="spine1",
+        spine_count=2,
+        audit_head_sha256=None,
+        schema_version="1.1.0",
+    )
+    assert _canonical_json_bytes(block_100) == _canonical_json_bytes(block_110)
+
+
 def test_audit_range_requires_build_inputs(tmp_path: Path) -> None:
     """include_audit_range without key/window is refused, never half-built."""
     sdd = tmp_path / ".sdd"

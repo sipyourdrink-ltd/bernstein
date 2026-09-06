@@ -23,12 +23,7 @@ from pathlib import Path
 import click
 
 from bernstein.cli.helpers import console
-
-
-def _load_hmac_key() -> bytes:
-    from bernstein.core.security.audit import load_or_create_audit_key
-
-    return load_or_create_audit_key()
+from bernstein.core.security.audit import load_or_create_audit_key
 
 
 def _sdd_dir(workdir: Path) -> Path:
@@ -120,7 +115,7 @@ def escalation_verify_cmd(receipt_id: str, workdir: str) -> None:
     result = verify_escalation_receipt(
         sdd_dir=_sdd_dir(root),
         lineage_root=_lineage_root(root),
-        hmac_key=_load_hmac_key(),
+        hmac_key=load_or_create_audit_key(),
         receipt_id=receipt_id,
     )
     console.print()

@@ -60,6 +60,8 @@ class TaskVerificationResult:
     # Replayed score (None if replay failed / receipt missing).
     replayed_score: float | None = None
     replayed_passed: bool | None = None
+    risk_class: str | None = None
+    capability_receipt_hash: str | None = None
 
 
 @dataclass
@@ -86,6 +88,10 @@ class BundleVerificationResult:
         for tr in self.task_results:
             mark = "✓" if tr.status == VerificationStatus.MATCH else "✗"
             lines.append(f"  {mark} {tr.task_id:<40} {tr.status.value}")
+            if tr.risk_class:
+                lines.append(f"    ├─ risk_class      : {tr.risk_class}")
+            if tr.capability_receipt_hash:
+                lines.append(f"    ├─ capability_hash : {tr.capability_receipt_hash}")
             if tr.detail:
                 lines.append(f"    └─ {tr.detail}")
         return "\n".join(lines)
@@ -234,9 +240,15 @@ class BenchVerifier:
                 ),
             )
 
+        risk_class = result.receipt.get("risk_class") or result.harness_output.get("risk_class")
+        cap_receipt = result.receipt.get("capability_receipt")
+        cap_hash = cap_receipt.get("receipt_hash") if isinstance(cap_receipt, dict) else None
+
         return TaskVerificationResult(
             task_id=task_id,
             status=VerificationStatus.MATCH,
             replayed_score=replayed_score,
             replayed_passed=replayed_passed,
+            risk_class=risk_class,
+            capability_receipt_hash=cap_hash,
         )

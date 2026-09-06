@@ -180,6 +180,8 @@ class MultiCellOrchestrator:
     ) -> None:
         self._config = config
         self._spawner = spawner
+        if hasattr(self._spawner, "set_max_agent_runtime_s"):
+            self._spawner.set_max_agent_runtime_s(config.max_agent_runtime_s)
         self._workdir = workdir
         self._bulletin = bulletin or BulletinBoard()
         self._client = client or httpx.Client(timeout=10.0)
