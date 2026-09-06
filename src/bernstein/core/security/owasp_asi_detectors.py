@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import unicodedata
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -185,6 +186,122 @@ def _rendered_values(payload: Any) -> str:
     return " ".join(_as_text(value) for value in values if value is not None)
 
 
+#: Codepoints that render as an ASCII letter but do not decode as one. NFKC
+#: folds the fullwidth and ligature forms; it deliberately does not fold these,
+#: because U+0430 and a Latin ``a`` are different letters and
+#: conflating them would corrupt ordinary Cyrillic text. A lexical detector
+#: matching English keywords wants them folded anyway: nobody writes
+#: "Ignore previous instructions" with one Cyrillic capital by accident.
+#:
+#: Best-effort, not the full Unicode confusables table. Adding a row makes one
+#: more spelling detectable and can never make a plain-ASCII payload invisible.
+_CONFUSABLES: dict[str, str] = {
+    # Cyrillic, upper
+    "\u0410": "A",
+    "\u0412": "B",
+    "\u0415": "E",
+    "\u0406": "I",
+    "\u0408": "J",
+    "\u041a": "K",
+    "\u041c": "M",
+    "\u041d": "H",
+    "\u041e": "O",
+    "\u0420": "P",
+    "\u0421": "C",
+    "\u0422": "T",
+    "\u0423": "Y",
+    "\u0425": "X",
+    "\u0405": "S",
+    # Cyrillic, lower
+    "\u0430": "a",
+    "\u0435": "e",
+    "\u0456": "i",
+    "\u0458": "j",
+    "\u043e": "o",
+    "\u0440": "p",
+    "\u0441": "c",
+    "\u0443": "y",
+    "\u0445": "x",
+    "\u0455": "s",
+    "\u051b": "q",
+    "\u051d": "w",
+    # Greek, upper
+    "\u0391": "A",
+    "\u0392": "B",
+    "\u0395": "E",
+    "\u0396": "Z",
+    "\u0397": "H",
+    "\u0399": "I",
+    "\u039a": "K",
+    "\u039c": "M",
+    "\u039d": "N",
+    "\u039f": "O",
+    "\u03a1": "P",
+    "\u03a4": "T",
+    "\u03a5": "Y",
+    "\u03a7": "X",
+    # Greek, lower
+    "\u03bf": "o",
+    "\u03c1": "p",
+}
+
+_CONFUSABLE_TABLE = str.maketrans(_CONFUSABLES)
+
+
+def _fold_for_matching(text: str) -> str:
+    """Return *text* in the form the goal-hijack patterns are matched against.
+
+    Three steps, in this order:
+
+    1. Drop every ``Cc``/``Cf``/``Cs`` codepoint. That is the zero-width
+       family (U+200B..U+200D, U+FEFF, the soft hyphen, the bidi controls):
+       characters that occupy a position in the string and none on the screen,
+       so a zero-width space placed inside ``ignore`` still reads as the word
+       to a person while matching nothing here. Dropping before normalising
+       is what makes the result NFKC rather
+       than merely NFKC-derived, the discipline
+       :mod:`bernstein.core.volunteer.issue_sanitize` documents.
+    2. NFKC. Folds the fullwidth, ligature and compatibility spellings.
+    3. Map the confusables NFKC leaves alone (see :data:`_CONFUSABLES`).
+
+    The result is used for *matching only*. It is not the payload, and a
+    finding derived from it says so, because the bytes an operator has to go
+    and look at are the ones that arrived.
+
+    Args:
+        text: The haystack as it arrived.
+
+    Returns:
+        The folded text. Never longer than the input in codepoints.
+    """
+    legible = "".join(ch for ch in text if unicodedata.category(ch) not in _INVISIBLE_CATEGORIES)
+    return unicodedata.normalize("NFKC", legible).translate(_CONFUSABLE_TABLE)
+
+
+#: Unicode general categories dropped before matching: ``Cc`` control, ``Cf``
+#: format, ``Cs`` surrogate. None of them render.
+_INVISIBLE_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
+
+
+def _search_goal_hijack(text: str) -> tuple[re.Pattern[str], str, bool] | None:
+    """Find a goal-hijack pattern in *text*, folding obfuscations first.
+
+    Args:
+        text: The candidate text.
+
+    Returns:
+        The pattern that matched, the matched substring, and whether the
+        folding changed the text (so the caller can say the match came from
+        the folded form). ``None`` when nothing matched.
+    """
+    folded = _fold_for_matching(text)
+    for pattern in _GOAL_HIJACK_PATTERNS:
+        match = pattern.search(folded)
+        if match:
+            return pattern, match.group(0), folded != text
+    return None
+
+
 _GOAL_HIJACK_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(p, re.IGNORECASE)
     for p in (
@@ -228,19 +345,20 @@ def detect_asi01_goal_hijack(context: dict[str, Any]) -> ASIFinding:
     haystack = "\n".join(haystack_parts)
     if not haystack:
         return _ok(ASIClass.ASI01_GOAL_HIJACK, name)
-    for pattern in _GOAL_HIJACK_PATTERNS:
-        match = pattern.search(haystack)
-        if match:
-            return _flag(
-                ASIClass.ASI01_GOAL_HIJACK,
-                name,
-                ASISeverity.WARNING,
-                evidence=f"matched pattern {pattern.pattern!r}: {match.group(0)!r}",
-                remediation=(
-                    "Review the retrieved/user content for prompt injection; "
-                    "isolate untrusted input and quote it before passing to the model."
-                ),
-            )
+    hit = _search_goal_hijack(haystack)
+    if hit is not None:
+        pattern, matched, folded = hit
+        origin = " (after folding an obfuscated spelling)" if folded else ""
+        return _flag(
+            ASIClass.ASI01_GOAL_HIJACK,
+            name,
+            ASISeverity.WARNING,
+            evidence=f"matched pattern {pattern.pattern!r}: {matched!r}{origin}",
+            remediation=(
+                "Review the retrieved/user content for prompt injection; "
+                "isolate untrusted input and quote it before passing to the model."
+            ),
+        )
     return _ok(ASIClass.ASI01_GOAL_HIJACK, name)
 
 
@@ -453,7 +571,11 @@ def detect_asi06_memory_poisoning(context: dict[str, Any]) -> ASIFinding:
     write = context.get("memory_write")
     if not isinstance(write, dict):
         return _ok(ASIClass.ASI06_MEMORY_POISONING, name)
-    if write.get("source") == "untrusted":
+    # A trust label is a label, not a byte string. Integration partners emit
+    # "Untrusted" and "UNTRUSTED" through JSON envelopes that case-normalise
+    # on the way, and an exact-match check reads every one of those as
+    # trusted, which is the wrong direction to be wrong in.
+    if str(write.get("source", "")).strip().casefold() == "untrusted":
         return _flag(
             ASIClass.ASI06_MEMORY_POISONING,
             name,
@@ -461,16 +583,17 @@ def detect_asi06_memory_poisoning(context: dict[str, Any]) -> ASIFinding:
             evidence=f"untrusted memory write: {str(write.get('content', ''))[:120]!r}",
             remediation="Quarantine writes from untrusted sources or require provenance.",
         )
-    content = str(write.get("content", ""))
-    for pattern in _GOAL_HIJACK_PATTERNS:
-        if pattern.search(content):
-            return _flag(
-                ASIClass.ASI06_MEMORY_POISONING,
-                name,
-                ASISeverity.WARNING,
-                evidence=f"memory write contains goal-hijack pattern {pattern.pattern!r}",
-                remediation="Reject the write; sanitize before persisting.",
-            )
+    hit = _search_goal_hijack(_as_text(write.get("content", "")))
+    if hit is not None:
+        pattern, _matched, folded = hit
+        origin = " (after folding an obfuscated spelling)" if folded else ""
+        return _flag(
+            ASIClass.ASI06_MEMORY_POISONING,
+            name,
+            ASISeverity.WARNING,
+            evidence=f"memory write contains goal-hijack pattern {pattern.pattern!r}{origin}",
+            remediation="Reject the write; sanitize before persisting.",
+        )
     return _ok(ASIClass.ASI06_MEMORY_POISONING, name)
 
 
