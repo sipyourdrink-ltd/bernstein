@@ -159,12 +159,14 @@ class CrossModelVerdict:
         feedback: One-line summary from the reviewer.
         issues: Specific issues found (empty when approved).
         reviewer_model: Model that performed the review.
+        writer_model: Model that wrote the code being reviewed.
     """
 
     verdict: Literal["approve", "request_changes"]
     feedback: str
     issues: list[str] = field(default_factory=list[str])
     reviewer_model: str = ""
+    writer_model: str = ""
 
 
 def select_reviewer_model(writer_model: str, override: str | None = None) -> str:
@@ -178,6 +180,11 @@ def select_reviewer_model(writer_model: str, override: str | None = None) -> str
         OpenRouter model identifier for the reviewer.
     """
     if override:
+        if override.strip().lower() == writer_model.strip().lower():
+            raise ValueError(
+                f"non-independent reviewer: override model '{override}' "
+                f"collides with writer model '{writer_model}' on model axis"
+            )
         return override
     lower = writer_model.lower()
     for prefix, reviewer in _WRITER_TO_REVIEWER.items():
@@ -226,7 +233,7 @@ def _build_prompt(task: Task, diff: str, conventions_block: str = "") -> str:
     )
 
 
-def _parse_response(raw: str, reviewer_model: str) -> CrossModelVerdict:
+def _parse_response(raw: str, reviewer_model: str, writer_model: str = "") -> CrossModelVerdict:
     """Parse the reviewer LLM response into a CrossModelVerdict.
 
     Defaults to "approve" when the response cannot be parsed, so a reviewer
@@ -257,6 +264,7 @@ def _parse_response(raw: str, reviewer_model: str) -> CrossModelVerdict:
             feedback="Reviewer returned unparseable response - defaulting to approve",
             issues=[],
             reviewer_model=reviewer_model,
+            writer_model=writer_model,
         )
 
     raw_verdict = str(data.get("verdict", "approve")).lower()
@@ -273,6 +281,7 @@ def _parse_response(raw: str, reviewer_model: str) -> CrossModelVerdict:
         feedback=str(data.get("feedback", "")),
         issues=issues,
         reviewer_model=reviewer_model,
+        writer_model=writer_model,
     )
 
 
@@ -324,6 +333,7 @@ async def verify_with_cross_model(
             feedback=result.reasoning,
             issues=issues,
             reviewer_model=", ".join(voter_models),
+            writer_model=writer_model,
         )
 
     # --- Single-reviewer path (backward-compatible QUORUM 1-of-1) ---
@@ -379,9 +389,10 @@ async def verify_with_cross_model(
             feedback=f"Reviewer call failed: {exc}",
             issues=[],
             reviewer_model=reviewer,
+            writer_model=writer_model,
         )
 
-    verdict = _parse_response(raw, reviewer)
+    verdict = _parse_response(raw, reviewer, writer_model=writer_model)
     logger.info(
         "cross_model_verifier: task=%s verdict=%s issues=%d",
         task.id,
