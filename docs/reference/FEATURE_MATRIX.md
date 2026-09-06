@@ -264,6 +264,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein chaos`](../operations/chaos-engineering.md) | Full | 3 | Fault injection |
 | [`bernstein audit`](../security/audit-log.md) | Full | 4 | Cryptographic audit chain. Seventeen subcommands: `seal`, `verify`, `verify-hmac`, `verify-gates`, `verify-multitenant`, `verify-suspension`, `show`, `query`, `diagnose`, `receipt`, `taint`, `capabilities`, `ack-tear`, `export`, `pack`, `slice`, `archive` |
 | [`bernstein verify`](cli/verify.md) | Full | 4 | Merkle/HMAC verification |
+| [`bernstein verify coverage <head-sha>`](../operations/verify-coverage.md) | Full | 3 | Grade the four `MergeAdmissionReceipt` coverage fields by presence on the receipt; `0`/`1`/`2`/`3` exit codes for consistent, missing receipt, malformed shape, and absent-required-field (#5400) |
 | `bernstein benchmark` | Full | 4 | Deprecated alias for `bernstein eval`, removed in v4.0.0 |
 | [`bernstein eval`](../eval/golden-harness.md) | Full | 4 | Evaluation harness |
 | `bernstein workspace` | Full | 3 | Multi-repo workspace |

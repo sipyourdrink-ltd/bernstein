@@ -8,8 +8,8 @@ air-gap wheelhouse signatures, WAL hash-chain integrity,
 execution-determinism fingerprints, lesson-memory provenance, and formal
 property checks. The legacy modes live on the default `legacy` subcommand:
 any invocation whose first token is not `run` / `receipt` / `ladder` /
-`pins` / `legacy` routes there, so pre-group invocations keep their exact
-behaviour and exit codes.
+`pins` / `coverage` / `legacy` routes there, so pre-group invocations
+keep their exact behaviour and exit codes.
 Each legacy mode is selected by its own flag (or a positional argument for
 wheelhouse mode); passing more than one runs all of them and combines their
 exit codes with bitwise OR.
@@ -24,6 +24,7 @@ bernstein verify run <run-id> --signing-key-path key.pem    # build the signed r
 bernstein verify receipt <path> [--public-key pub.pem]      # verify a receipt offline (0/1/2)
 bernstein verify ladder <receipt-hash>                      # re-derive a verifier-ladder receipt (0/1/2)
 bernstein verify pins --manifest pins.yaml --loaded loaded.json  # check the loaded set against the pins (0/1/2)
+bernstein verify coverage <head-sha>                        # grade the four receipt coverage fields by presence (0/1/2/3)
 bernstein verify <wheelhouse-path>                          # air-gap wheelhouse signatures
 bernstein verify --wal-integrity <run-id>                   # WAL hash-chain check
 bernstein verify --determinism <run-id>                     # print execution fingerprint
@@ -184,6 +185,28 @@ the pin exactly.
 | 1 | The manifest or the loaded set could not be read or failed validation. |
 | 2 | At least one entry drifted. |
 
+## Coverage report (`verify coverage HEAD_SHA`)
+
+Grades the four `MergeAdmissionReceipt` fields that anchor an admission
+decision by **presence** on the receipt: `gate_results_hash`,
+`ruleset_hash`, `required_context_ids`, `review_receipt_id`. Each field
+is reported as `verified`, `skipped` (intentionally absent — e.g.
+`authority: operator_review` does not need `ruleset_hash`), or
+`unverified` (required for the admission shape but absent). The receipt
+itself is not re-hashed: `MergeAdmissionReceipt` is sealed and
+`gate_results_hash` cannot be reproduced without `blast_radius`, which is
+not a receipt field. Operator guide:
+[`docs/operations/verify-coverage.md`](../../operations/verify-coverage.md).
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Coverage is structurally consistent (every required field populated). |
+| 1 | No readable receipt for `head-sha`, or bad input. |
+| 2 | Malformed / unknown admission shape: `head-sha` present but none of the four coverage fields are populated. |
+| 3 | One or more required coverage fields are absent (the admission was not actually covered). |
+
+Pass `--json` to emit the per-field status alongside the exit code.
+
 ## Legacy modes
 
 ### Wheelhouse signature verification
@@ -264,6 +287,10 @@ Every verification command in Bernstein follows a strict exit-code contract. The
 | `audit verify` | `0` | `Passed` across all pillars | All audit log pillars (HMAC chain, Merkle tree, checkpoints, evidence, artifacts, receipts, gates, grants) pass |
 | | `1` | `FAILED` / non-zero exit | Any audit pillar failed verification, broken HMAC chain, tear evidence, or missing audit directory |
 | | `2` | `[red]--payload requires --receipt.[/red]` | Invalid flag combination / usage error |
+| `verify coverage <head-sha>` | `0` | `Merge admission coverage ... consistent` | Every required coverage field is populated; intentionally-skipped fields are fine |
+| | `1` | `No merge receipt found for <head-sha>` | Missing receipt or unreadable input |
+| | `2` | `malformed admission receipt: no coverage fields populated` | Receipt has `head_sha` but none of the four coverage fields populated |
+| | `3` | `required coverage fields absent: <names>` | One or more required coverage fields are absent on a well-formed receipt |
 
 ## Source
 
@@ -271,6 +298,8 @@ Every verification command in Bernstein follows a strict exit-code contract. The
 `src/bernstein/core/replay/run_receipt.py` (receipt build + offline verify);
 `src/bernstein/core/security/receipt_key_chain.py` (key succession chain);
 `src/bernstein/core/quality/verifier_ladder.py` (ladder receipts);
+`src/bernstein/core/quality/merge_receipt.py` (merge admission receipts;
+used by `verify coverage`);
 `src/bernstein/core/plugins_core/plugin_pin_manifest.py` (pin manifest,
 verify, and idempotent apply).
 

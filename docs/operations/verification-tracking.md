@@ -39,6 +39,19 @@ stamps `task.verification_count` (0–3) and `task.flagged_unverified`
 (bool) on the task object so any downstream consumer can filter on
 them.
 
+> **Two different "verified" signals.** The coarse nudge signal this page
+> describes is built from what the agent's log summary claims
+> (`tests_run`, `quality_gates_run`, `completion_signals_checked`). It is
+> self-reported and can lie when an agent forgets to log what it did.
+> The receipt-backed structural-coverage report from
+> [`bernstein verify coverage`](verify-coverage.md) is a different
+> signal: it reads the sealed `MergeAdmissionReceipt` and grades the
+> four fields that anchor the admission decision by presence, so it
+> sees what was actually recorded at admission time, not what an agent
+> said it did afterwards. Use the coarse nudge to spot agents that
+> skip verification; use `bernstein verify coverage <head-sha>` to
+> confirm a specific admission was covered.
+
 ---
 
 ## When the alert fires

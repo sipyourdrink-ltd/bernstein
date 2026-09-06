@@ -97,6 +97,7 @@ def verify_cmd() -> None:
       bernstein verify run <run-id>               Build the signed run receipt
       bernstein verify receipt <path>             Verify a receipt offline (0/1/2)
       bernstein verify ladder <receipt-hash>      Re-derive a verifier-ladder receipt (0/1/2)
+      bernstein verify coverage <head-sha>       Report gate/oracle coverage for a merge (0/1/2/3)
       bernstein verify <wheelhouse-path>          Verify air-gap wheelhouse signatures
       bernstein verify --wal-integrity <run-id>   Validate hash chain
       bernstein verify --determinism  <run-id>    Show execution fingerprint
@@ -1534,6 +1535,176 @@ def verify_receipt_cmd(
 # ---------------------------------------------------------------------------
 # Verifier-ladder receipts (issue #2927)
 # ---------------------------------------------------------------------------
+
+
+@verify_cmd.command("coverage")
+@click.argument("head_sha", required=True)
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option(
+    "--json", "as_json", is_flag=True, default=False, help="Emit the coverage report as JSON alongside the exit code."
+)
+def verify_coverage_cmd(head_sha: str, workdir: str, as_json: bool) -> None:
+    """Report gate/oracle coverage exercised by the merge admission for HEAD_SHA.
+
+    Loads the merge admission receipt and grades structural coverage: each of
+    the four receipt fields that anchor the admission decision
+    (``gate_results_hash``, ``ruleset_hash``, ``required_context_ids``,
+    ``review_receipt_id``) is checked for presence only.  An ``unverified``
+    entry means the field is absent on a well-formed receipt; a ``skipped``
+    entry means the field is intentionally absent (e.g. ``authority:
+    operator_review`` skips some gates).  The receipt is **not** re-hashed:
+    the ``MergeAdmissionReceipt`` schema is sealed (R19) and the verifier
+    cannot reproduce ``gate_results_hash`` without ``blast_radius``, which is
+    deliberately not a receipt field.
+
+    Exit codes:
+
+    \b
+      0  coverage is structurally consistent
+      1  no receipt found for HEAD_SHA or bad input
+      2  malformed / unknown admission shape (head_sha present but none of
+         the four coverage fields are populated)
+      3  one or more required coverage fields are absent (unverified)
+    """
+    from bernstein.core.quality.merge_receipt import read_merge_receipt
+
+    root = Path(workdir).resolve()
+    receipt = read_merge_receipt(root, head_sha)
+
+    if receipt is None:
+        console.print(f"[red]![/red] No merge receipt found for {head_sha}")
+        raise SystemExit(1)
+
+    # Build the unverified remainder from the receipt's own fields.
+    # "Verified" = field is populated.
+    # "Unverified" = field is required but absent on a well-formed receipt.
+    # "Skipped" = field is intentionally absent (e.g. operator_review skips some gates).
+    remainder: dict[str, str] = {}
+    reasons: dict[str, str] = {}
+
+    if not receipt.gate_results_hash:
+        remainder["gate_results_hash"] = "unverified"
+        reasons["gate_results_hash"] = "no gate results hash recorded"
+    else:
+        remainder["gate_results_hash"] = "verified"
+
+    if not receipt.ruleset_hash:
+        remainder["ruleset_hash"] = "skipped"
+        reasons["ruleset_hash"] = "no ruleset hash recorded (operator review or no ruleset)"
+    else:
+        remainder["ruleset_hash"] = "verified"
+
+    if not receipt.required_context_ids:
+        remainder["required_context_ids"] = "skipped"
+        reasons["required_context_ids"] = "no required contexts recorded"
+    else:
+        remainder["required_context_ids"] = "verified"
+
+    if not receipt.review_receipt_id:
+        remainder["review_receipt_id"] = "skipped"
+        reasons["review_receipt_id"] = "no linked review receipt (autonomous or no review performed)"
+    else:
+        remainder["review_receipt_id"] = "verified"
+
+    if not receipt.journal_head:
+        remainder["journal_head"] = "unverified"
+        reasons["journal_head"] = "no journal head recorded"
+    else:
+        remainder["journal_head"] = "verified"
+
+    if not receipt.signature:
+        remainder["signature"] = "unverified"
+        reasons["signature"] = "receipt is unsigned"
+    else:
+        remainder["signature"] = "verified"
+
+    # Categorise all keys
+    verified_items = [k for k, v in remainder.items() if v == "verified"]
+    unverified_items = [k for k, v in remainder.items() if v == "unverified"]
+    skipped_items = [k for k, v in remainder.items() if v == "skipped"]
+
+    # Determine exit code.
+    # Exit 2 = malformed / unknown admission shape: head_sha is present but
+    # none of the four coverage fields are populated on the receipt itself.
+    # The receipt cannot be graded because there is nothing to grade
+    # against.
+    coverage_populated = (
+        bool(receipt.gate_results_hash)
+        or bool(receipt.ruleset_hash)
+        or bool(receipt.required_context_ids)
+        or bool(receipt.review_receipt_id)
+    )
+    exit_code = 0
+    reason = ""
+    if not coverage_populated:
+        exit_code = 2
+        reason = "malformed admission receipt: no coverage fields populated"
+    elif unverified_items:
+        exit_code = 3
+        reason = f"unverified remainder: {', '.join(unverified_items)}"
+
+    if as_json:
+        console.print_json(
+            data={
+                "head_sha": head_sha,
+                "decision": receipt.decision,
+                "authority": receipt.authority,
+                "coverage": {
+                    "verified": verified_items,
+                    "unverified": unverified_items,
+                    "skipped": skipped_items,
+                },
+                "remainder": remainder,
+                "reasons": reasons,
+                "exit_code": exit_code,
+                "reason": reason or "coverage consistent",
+            }
+        )
+        raise SystemExit(exit_code)
+
+    # Human-readable output
+    console.print()
+    console.print(
+        f"[bold]Merge admission coverage[/bold]  {head_sha[:12]}…  ({receipt.decision} / {receipt.authority})"
+    )
+    console.print()
+
+    if verified_items:
+        console.print("[green]Verified[/green]")
+        for item in verified_items:
+            reason_str = f"  ({reasons[item]})" if item in reasons else ""
+            console.print(f"  [green]✓[/green] {item}{reason_str}")
+        console.print()
+
+    if unverified_items:
+        console.print("[red]Unverified[/red]")
+        for item in unverified_items:
+            reason_str = f"  ({reasons[item]})" if item in reasons else ""
+            console.print(f"  [red]✗[/red] {item}{reason_str}")
+        console.print()
+
+    if skipped_items:
+        console.print("[yellow]Skipped[/yellow]")
+        for item in skipped_items:
+            reason_str = f"  ({reasons[item]})" if item in reasons else ""
+            console.print(f"  [yellow]-[/yellow] {item}{reason_str}")
+        console.print()
+
+    if exit_code == 0:
+        console.print("[dim]Coverage is consistent; no unverified remainder.[/dim]")
+    elif exit_code == 2:
+        console.print(f"[red]![/red] Exit 2: {reason}")
+    else:
+        console.print(f"[red]![/red] Exit 3: {reason}")
+
+    raise SystemExit(exit_code)
 
 
 @verify_cmd.command("ladder")
