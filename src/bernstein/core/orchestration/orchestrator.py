@@ -1741,7 +1741,15 @@ class Orchestrator:
         # Checking "done" alone re-blocked dependents forever after that
         # transition, so lower-priority independent tasks were claimed ahead
         # of a high-priority task whose dependency had already completed.
-        done_ids = {t.id for t in done_tasks} | {t.id for t in tasks_by_status.get("closed", [])}
+        from bernstein.core.tasks.unreachable import satisfied_dependency_ids
+
+        # Lineage-aware: a retry carries a NEW id, so a dependent's depends_on
+        # still names the original. satisfied_dependency_ids folds
+        # original_task_id/retry_of in, which is what the store's claim check
+        # and blocking_dependency already do; this filter's raw id set was the
+        # one copy that did not, and a successful retry could not unblock its
+        # dependents (finding L, 2026-09-03).
+        done_ids = satisfied_dependency_ids(done_tasks + list(tasks_by_status.get("closed", [])))
         now = time.time()
         open_tasks = [
             t
