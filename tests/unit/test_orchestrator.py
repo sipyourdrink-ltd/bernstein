@@ -6993,9 +6993,6 @@ def test_chain_append_lock_bounded_wait(tmp_path: Path, monkeypatch: pytest.Monk
     from bernstein.core.security import audit
     from bernstein.core.security.audit import _chain_append_lock
 
-    # Make the timeout tiny so the test runs instantly
-    monkeypatch.setattr(audit, "AUDIT_LOCK_TIMEOUT_S", 0.1)
-
     audit_dir = tmp_path / ".sdd" / "audit"
     audit_dir.mkdir(parents=True, exist_ok=True)
     lock_path = audit_dir / ".chain.lock"
