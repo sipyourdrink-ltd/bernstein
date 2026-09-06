@@ -358,6 +358,17 @@ bernstein stop
 pkill -f bernstein   # kills everything including your own shell session
 ```
 
+## Telling us you use it
+
+If you run Bernstein — in production, or as a pilot against a real workload —
+add yourself to [ADOPTERS.md](ADOPTERS.md). Open a pull request with one row in
+whichever of the two tables fits; there is no issue to file first and no
+approval step.
+
+Entries are self-reported, so nobody is added on anyone else's behalf. That
+also means the list is only as complete as the people who write themselves
+into it, which is the trade the page deliberately makes.
+
 ## Recognition
 
 All contributors are listed in [CONTRIBUTORS.md](CONTRIBUTORS.md).
