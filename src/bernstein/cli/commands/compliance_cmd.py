@@ -928,3 +928,67 @@ def pack_incident(
         operator_key_path=resolved_key,
     )
     click.echo(f"Incident pack written to: {out_path} ({len(gaps)} evidence gap(s))")
+
+
+# ---------------------------------------------------------------------------
+# `bernstein compliance controls` - Central control registry inspection
+# ---------------------------------------------------------------------------
+
+
+@compliance_group.command("controls")
+@click.option(
+    "--framework",
+    default=None,
+    help="Filter by compliance framework (eu_ai_act, owasp_asi, owasp_skills, nist_ai_rmf, iso_42001, finos_aigf).",
+)
+@click.option(
+    "--coverage",
+    is_flag=True,
+    default=False,
+    help="Show evaluation benchmark suite coverage for each control.",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["text", "json", "markdown"], case_sensitive=False),
+    default="text",
+    show_default=True,
+    help="Output format.",
+)
+def controls_command(framework: str | None, coverage: bool, output_format: str) -> None:
+    """List compliance controls and their mapped benchmark suites."""
+    from bernstein.compliance.controls import get_default_registry
+    from bernstein.eval.bench.golden_suite import build_golden_suite_v1
+
+    registry = get_default_registry()
+    controls = registry.list_controls(framework=framework)
+
+    suites = [build_golden_suite_v1()] if coverage else []
+    cov_map = registry.coverage(suites) if coverage else {}
+
+    if output_format == "json":
+        data = []
+        for c in controls:
+            d = c.to_dict()
+            if coverage:
+                d["suites_covering"] = cov_map.get(c.control_id, [])
+            data.append(d)
+        click.echo(json.dumps(data, indent=2))
+        return
+
+    if output_format == "markdown":
+        click.echo(registry.to_markdown_table(suites=suites if coverage else None))
+        return
+
+    # Text table format
+    click.echo(f"{'Control ID':<14} {'Category':<14} {'Frameworks':<28} Title")
+    click.echo("─" * 95)
+
+    for c in controls:
+        fw_list = ", ".join(c.references.keys())
+        click.echo(f"{c.control_id:<14} {c.category:<14} {fw_list:<28} {c.title}")
+        if coverage:
+            covering = cov_map.get(c.control_id, [])
+            cov_str = ", ".join(covering) if covering else "None"
+            click.echo(f"  └─ Suites covering: {cov_str}")
+    click.echo(f"\nTotal: {len(controls)} controls")

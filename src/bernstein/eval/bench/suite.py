@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.compliance.controls import ControlRegistry
+
 # ---------------------------------------------------------------------------
 # Task spec (mirrors yaml_runner task shape, kept dependency-free here)
 # ---------------------------------------------------------------------------
@@ -62,12 +64,14 @@ class BenchSuite:
     """
     A versioned, content-addressed collection of :class:`BenchTask` objects.
 
-    ``suite_hash`` is derived from the *ordered* sequence of per-task hashes,
-    so adding, removing, or reordering any task changes the suite identity.
+    ``suite_hash`` is derived from the *ordered* sequence of per-task hashes
+    and declared control IDs, so adding, removing, or reordering any task
+    or control changes the suite identity.
     """
 
     version: str
     tasks: list[BenchTask] = field(default_factory=list)
+    controls: list[str] = field(default_factory=list)
 
     # Computed lazily and cached.
     _suite_hash: str | None = field(default=None, init=False, repr=False, compare=False)
@@ -81,11 +85,28 @@ class BenchSuite:
     def _compute_hash(self) -> str:
         task_hashes = [t.content_hash() for t in self.tasks]
         payload = json.dumps(
-            {"version": self.version, "task_hashes": task_hashes},
+            {"version": self.version, "task_hashes": task_hashes, "controls": list(self.controls)},
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
         return hashlib.sha256(payload).hexdigest()
+
+    def validate_controls(self, registry: ControlRegistry | None = None) -> None:
+        """Validate that the suite declares at least one control and all controls are registered."""
+        if not self.controls:
+            raise ValueError(
+                f"BenchSuite {self.version!r} must declare at least one control ID from the compliance registry."
+            )
+        if registry is None:
+            from bernstein.compliance.controls import get_default_registry
+
+            registry = get_default_registry()
+        invalid = registry.validate_control_ids(self.controls)
+        if invalid:
+            raise ValueError(
+                f"BenchSuite {self.version!r} declares unregistered control IDs: {invalid}. "
+                "All controls must be registered in bernstein.compliance.controls."
+            )
 
     # ------------------------------------------------------------------
     # Serialisation
@@ -95,6 +116,7 @@ class BenchSuite:
         return {
             "version": self.version,
             "suite_hash": self.suite_hash,
+            "controls": list(self.controls),
             "tasks": [
                 {
                     "id": t.id,
@@ -128,7 +150,8 @@ class BenchSuite:
             )
             for t in raw["tasks"]
         ]
-        suite = cls(version=raw["version"], tasks=tasks)
+        controls = raw.get("controls", [])
+        suite = cls(version=raw["version"], tasks=tasks, controls=controls)
         # Integrity check: stored hash must match recomputed hash.
         if suite.suite_hash != raw["suite_hash"]:
             raise ValueError(
