@@ -271,11 +271,13 @@ src/bernstein/eval/bench/
 ├── verifier.py          # BenchVerifier, VerificationStatus
 ├── leaderboard.py       # Leaderboard, LeaderboardEntry, Markdown render
 ├── reliability.py       # pass^k reliability floor (see reliability.md)
+├── goal_drift_suite.py  # goal-drift trajectory evaluation suite (goal-drift-v1)
 ├── tool_surface_suite.py# tool-surface risk evaluation suite (tool-surface-v1)
 └── golden_suite.py      # starter golden-v1 task suite
 
 tests/unit/eval/bench/
 ├── test_bench.py                   # TDD suite — all acceptance criteria
+├── test_goal_drift_suite.py        # goal-drift suite tests
 ├── test_reliability.py             # pass^k reliability floor tests
 └── test_tool_surface_risk_suite.py # tool surface risk suite tests
 
@@ -284,6 +286,14 @@ docs/eval/
 ├── reliability.md            # pass^k reliability floor
 └── trajectory-receipts.md   # offline-verifiable benchmark score receipts (#2925)
 ```
+
+---
+
+## Goal-Drift Suite (`goal-drift-v1`)
+
+The `goal-drift-v1` suite evaluates long-running agent trajectories for deviations from their task contracts (`DriftContract`). It measures scope compliance and forbidden changes per step deterministically from lineage events and diffs without model calls.
+
+Controls covered: `CTRL-GOAL-ALIGNMENT`, `ASI01`.
 
 ---
 
