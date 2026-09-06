@@ -22,3 +22,7 @@ tests/fixtures/receipt-vectors/*.pem -text
 # is compared byte-for-byte, so no checkout may translate their line endings.
 tests/fixtures/trust-record-vectors/*.json -text
 tests/fixtures/trust-record-vectors/*.pem -text
+# Evidence envelope vectors are byte-exact test vectors: line endings must not be translated.
+tests/fixtures/evidence-envelope-vectors/*.json -text
+tests/fixtures/evidence-envelope-vectors/*.pem -text
+tests/fixtures/evidence-envelope-vectors/*.sha256 -text

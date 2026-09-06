@@ -31,6 +31,7 @@ from bernstein.compliance.evidence_pack import (
     build_evidence_pack,
     get_standard_map,
 )
+from bernstein.core.security.evidence_envelope import canonical_envelope_bytes
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -325,3 +326,69 @@ class TestDeferredStandardsRejected:
         )
         assert result.exit_code != 0
         assert "--standard" in result.output or "'--standard'" in result.output
+
+
+# ---------------------------------------------------------------------------
+# RFC 8785 (JCS) canonicalization and golden vector compliance (#5504)
+# ---------------------------------------------------------------------------
+
+
+class TestRFC8785Canonicalization:
+    def test_json_artefacts_in_pack_are_canonical_jcs_bytes(self, sdd_dir: Path) -> None:
+        """Every JSON artefact in the emitted zip matches RFC 8785 canonical bytes."""
+        pack = build_evidence_pack(
+            sdd_dir=sdd_dir,
+            standard="ai-act",
+        )
+        assert pack.archive_path is not None
+        with zipfile.ZipFile(pack.archive_path) as zf:
+            json_artefacts = ["manifest.json", "controls.json", "audit-chain/data_catalog.json"]
+            for name in json_artefacts:
+                raw_bytes = zf.read(name)
+                parsed = json.loads(raw_bytes)
+                re_encoded = canonical_envelope_bytes(parsed)
+                assert raw_bytes == re_encoded, f"{name} does not match canonical_envelope_bytes"
+
+    def test_supplementary_plane_and_bmp_key_ordering_rfc8785(self) -> None:
+        """RFC 8785 §3.2.3 requires sorting property names by UTF-16 code units.
+
+        A supplementary-plane property name (e.g. U+1F600 '😀', encoded in UTF-16
+        as high surrogate 0xD83D followed by low surrogate 0xDE00) must sort
+        BEFORE a BMP property name in the private-use / high range (e.g. U+E000 '',
+        code unit 0xE000), because 0xD83D < 0xE000. Under Python's standard code point
+        sorting (sort_keys=True), 0x1F600 > 0xE000 so the order would be inverted.
+        """
+        payload = {
+            "\ue000": "bmp-high",
+            "\U0001f600": "supplementary",
+        }
+        canonical_bytes = canonical_envelope_bytes(payload)
+        # Expected: emoji key ("\xf0\x9f\x98\x80") comes first because 0xD83D < 0xE000
+        assert canonical_bytes == b'{"\xf0\x9f\x98\x80":"supplementary","\xee\x80\x80":"bmp-high"}'
+
+    def test_pack_with_non_ascii_data_reproduces_canonical_bytes(self, tmp_path: Path) -> None:
+        """Evidence pack containing non-ASCII keys/values canonicalises cleanly."""
+        sdd = tmp_path / ".sdd"
+        audit_events = [
+            {
+                "timestamp": "2026-01-05T10:00:00+00:00",
+                "event_type": "task.created",
+                "actor": "alice",
+                "resource_type": "task",
+                "resource_id": "T-1",
+                "details": {"\U0001f680_launch": "ok", "\u03b1_greek": "alpha"},
+                "hmac": "a" * 64,
+                "prev_hmac": "0" * 64,
+            },
+        ]
+        _write_jsonl(sdd / "audit" / "2026-01-05.jsonl", audit_events)
+        pack = build_evidence_pack(
+            sdd_dir=sdd,
+            standard="ai-act",
+        )
+        assert pack.archive_path is not None
+        with zipfile.ZipFile(pack.archive_path) as zf:
+            for name in ["manifest.json", "controls.json", "audit-chain/data_catalog.json"]:
+                raw_bytes = zf.read(name)
+                parsed = json.loads(raw_bytes)
+                assert raw_bytes == canonical_envelope_bytes(parsed)

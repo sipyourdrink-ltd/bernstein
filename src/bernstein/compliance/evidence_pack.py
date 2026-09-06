@@ -54,6 +54,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
+from bernstein.core.security.evidence_envelope import canonical_envelope_bytes
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -237,8 +239,8 @@ class EvidencePack:
 
 
 def _canonical_json(payload: Any) -> bytes:
-    """Serialise ``payload`` as deterministic JSON (sort_keys, indent=2)."""
-    return (json.dumps(payload, sort_keys=True, indent=2) + "\n").encode("utf-8")
+    """Serialise ``payload`` as RFC 8785 (JCS) canonical JSON bytes."""
+    return canonical_envelope_bytes(payload)
 
 
 def _parse_iso(value: str) -> datetime | None:
