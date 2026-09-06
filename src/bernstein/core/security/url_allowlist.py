@@ -70,16 +70,27 @@ def ensure_http_url(
         allow_http: When True, accept ``http://`` URLs in addition to
             ``https://``. Even when False, plain ``http://`` is still accepted
             for localhost / loopback hosts so developers can hit local mock
-            servers without flipping the flag globally.
+            servers without flipping the flag globally. That exemption applies
+            to the scheme rule only - a loopback host is still rejected under
+            ``strict``, which is the flag that exists to reject it.
         source: Optional human-readable label used in the error message
             (e.g. ``"jira webhook"``) for easier debugging.
+        strict: When True, resolve the host and reject the URL if *any*
+            address it answers with is loopback, private, link-local,
+            reserved, multicast or unspecified. Resolution failure is a
+            rejection. Use it for a URL whose destination was chosen by
+            someone other than the operator; :func:`ensure_public_http_url`
+            is the same check with the flag already set.
+        resolver: Optional hostname resolver, for tests. Defaults to
+            :func:`socket.getaddrinfo`.
 
     Returns:
         ``url`` if it passes validation.
 
     Raises:
-        UrlSchemeError: If the URL is empty, unparseable, or uses any scheme
-            other than the permitted ones.
+        UrlSchemeError: If the URL is empty, unparseable, uses any scheme
+            other than the permitted ones, or - under ``strict`` - has a host
+            that is missing, unresolvable, or resolves to an internal address.
     """
     if not url or not isinstance(url, str):
         raise UrlSchemeError(_msg(source, "URL is empty or not a string"))
@@ -91,11 +102,15 @@ def ensure_http_url(
 
     allowed = _HTTP_AND_HTTPS if allow_http else _HTTPS_ONLY
     host = (parsed.hostname or "").lower()
-    if scheme == "http" and host in _LOCAL_HOSTS:
-        # Loopback hosts are always permitted on plain HTTP - most operator
-        # toolchains expect to be able to point Bernstein at a local mock.
-        return url
-    if scheme not in allowed:
+    # Loopback hosts are always permitted on plain HTTP - most operator
+    # toolchains expect to be able to point Bernstein at a local mock. This
+    # exempts the *scheme* rule and nothing else: it must not return early,
+    # because ``strict`` exists to reject internal destinations and loopback
+    # is the most internal destination there is. Skipping the check for the
+    # one host it most wants to see is the opposite of what the flag asks
+    # for, and it is silent - the caller gets the URL back looking validated.
+    loopback_http = scheme == "http" and host in _LOCAL_HOSTS
+    if scheme not in allowed and not loopback_http:
         raise UrlSchemeError(
             _msg(
                 source,
@@ -104,7 +119,6 @@ def ensure_http_url(
         )
     # Strict mode: reject internal destinations after hostname resolution.
     if strict:
-        host = (parsed.hostname or "").lower()
         if not host:
             raise UrlSchemeError(_msg(source, f"URL has no host: {url!r}"))
         resolve = resolver or _default_resolver

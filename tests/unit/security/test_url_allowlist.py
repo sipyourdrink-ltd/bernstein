@@ -137,6 +137,68 @@ def test_strict_unresolvable_host_is_rejected() -> None:
         ensure_http_url("https://nx.example/entry.json", strict=True, resolver=_fails)
 
 
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "[::1]"])
+def test_strict_mode_rejects_the_loopback_host_the_scheme_rule_exempts(host: str) -> None:
+    """The plain-HTTP exemption is a scheme exemption, not a strict-mode one.
+
+    Every other strict test on this function uses ``https://``, which never
+    reaches the loopback branch - so the branch returned ``url`` before the
+    strict block ran, and ``strict=True`` was a no-op for the exact host it
+    exists to reject. ``test_loopback_http_exemption_does_not_leak_into_strict_mode``
+    below asserts this same invariant, but against ``ensure_public_http_url``,
+    where it cannot leak: that function calls this one *without* ``strict``
+    and does its own resolution afterwards.
+    """
+    with pytest.raises(UrlSchemeError, match="internal address"):
+        ensure_http_url(
+            f"http://{host}:8052/entry.json",
+            allow_http=True,
+            strict=True,
+            resolver=_resolves_to("127.0.0.1"),
+        )
+
+
+def test_strict_mode_rejects_loopback_even_without_allow_http() -> None:
+    """``allow_http=False`` was the shape that reached the early return."""
+    with pytest.raises(UrlSchemeError, match="internal address"):
+        ensure_http_url(
+            "http://localhost:8052/entry.json",
+            strict=True,
+            resolver=_resolves_to("127.0.0.1"),
+        )
+
+
+def test_a_loopback_name_answering_with_a_public_address_is_still_judged_on_that() -> None:
+    """Strict mode judges resolved addresses, not the spelling of the host.
+
+    The fix must not degrade into "the string 'localhost' is banned" - the
+    check is on where the name points.
+    """
+    url = "http://localhost:8052/entry.json"
+    assert ensure_http_url(url, allow_http=True, strict=True, resolver=_resolves_to("93.184.216.34")) == url
+
+
+def test_loopback_http_is_still_exempt_from_the_scheme_rule() -> None:
+    """The exemption itself is intact: no strict flag, no resolution, accepted.
+
+    This is the developer-pointing-at-a-local-mock case the exemption is for,
+    and it is what makes the fix a narrowing of ``strict`` rather than a
+    removal of the exemption.
+    """
+    url = "http://127.0.0.1:8052/health"
+    assert ensure_http_url(url) == url
+
+
+def test_a_non_loopback_http_url_is_still_rejected_on_scheme_before_resolving() -> None:
+    """Reordering the branches must not let plain HTTP in through the side."""
+
+    def _must_not_be_called(_host: str) -> list[str]:  # pragma: no cover - asserted by not raising
+        raise AssertionError("resolved a URL that should have failed the scheme rule")
+
+    with pytest.raises(UrlSchemeError, match="not permitted"):
+        ensure_http_url("http://example.com/x", strict=True, resolver=_must_not_be_called)
+
+
 def test_strict_source_label_appears_in_error() -> None:
     with pytest.raises(UrlSchemeError, match="skills_catalog.fetcher"):
         ensure_http_url(
