@@ -25,8 +25,8 @@ uv run python scripts/run_tests.py tests/unit/test_foo.py[::test_name]  # one fi
   (`BEARTYPE_USE_CLAW=enable`; CI's beartype job sets it, local defaults off).
 - Docs-guard tests (`unit/test_naming_policy_docs.py`, `unit/test_nested_agents_context.py`)
   pin repo-level invariants; extend them when adding gated docs.
-- `unit/test_token_orphans.py` fails on a new caller-less module under `core/tokens/`;
-  its `KNOWN_ORPHANS` set only ever shrinks.
+- Exact-set orphan guards use `unit/_orphan_scan.py` to keep allowlists shrinking and compare
+  pull-request merge results with the head tree, reporting base drift as a stale baseline.
 - Tests for `scripts/*.py` load the script via importlib; git-derived
   behaviour runs on synthetic repos (`unit/test_context_staleness.py`).
 
