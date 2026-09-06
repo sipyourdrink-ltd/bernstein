@@ -22,6 +22,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from bernstein.core import _REDIRECT_MAP
+from tests.unit._ratchet import assert_ratchet_matches
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TOKENS_DIR = REPO_ROOT / "src" / "bernstein" / "core" / "tokens"
@@ -153,20 +154,16 @@ def _current_orphans() -> set[str]:
 
 
 def test_no_new_orphan_token_modules() -> None:
-    """The set of caller-less modules may shrink, never grow."""
+    """The set of caller-less modules may shrink, never grow (#5552, #5503)."""
     current = _current_orphans()
-
-    appeared = sorted(current - KNOWN_ORPHANS)
-    assert not appeared, (
-        f"new caller-less modules under core/tokens/: {appeared}. Wire each one to a "
-        "consumer that exists today, or delete the module together with its tests and "
-        "its bernstein/core/__init__.py alias entry."
-    )
-
-    removed = sorted(KNOWN_ORPHANS - current)
-    assert not removed, (
-        f"{removed} now has a caller or is gone from the tree; strike it from "
-        "KNOWN_ORPHANS so the list keeps shrinking."
+    file_mapping = {name: f"src/bernstein/core/tokens/{name}.py" for name in _module_names()}
+    assert_ratchet_matches(
+        current,
+        KNOWN_ORPHANS,
+        subject="core/tokens/ orphan allowlist",
+        constant_name="KNOWN_ORPHANS",
+        file_mapping=file_mapping,
+        wire_hint="Wire each one to a consumer that exists today, or delete the module together with its tests and its bernstein/core/__init__.py alias entry.",
     )
 
 

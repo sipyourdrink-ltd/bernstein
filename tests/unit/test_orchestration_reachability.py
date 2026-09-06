@@ -28,11 +28,13 @@ rot into a permanent exemption.
 from __future__ import annotations
 
 import ast
+import functools
 import re
 from collections import defaultdict
 from pathlib import Path
 
 import pytest
+from tests.unit._ratchet import assert_ratchet_matches
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = REPO_ROOT / "src" / "bernstein" / "core" / "orchestration"
@@ -75,9 +77,8 @@ _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 #: text is measuring itself.
 SELF = Path(__file__).resolve()
 
-_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
-
+@functools.lru_cache(maxsize=1)
 def _reference_index() -> dict[str, set[str]]:
     """``{module_stem: {names other files reach through it}}``.
 
@@ -179,6 +180,7 @@ def _unreachable_in(path: Path, source: str, refs: dict[str, set[str]]) -> list[
     return sorted(set(funcs) - seen)
 
 
+@functools.lru_cache(maxsize=1)
 def _scan() -> dict[str, list[str]]:
     refs = _reference_index()
     found: dict[str, list[str]] = {}
@@ -192,24 +194,25 @@ def _scan() -> dict[str, list[str]]:
 
 
 def test_no_new_unreachable_functions_in_orchestration() -> None:
-    """A half-finished extraction must fail here rather than sit for a release."""
+    """A half-finished extraction must fail here rather than sit for a release (#5552, #5503)."""
     found = {f"{module}:{name}" for module, names in _scan().items() for name in names}
-    new = sorted(found - KNOWN_UNREACHABLE)
-    assert not new, (
-        "unreachable function(s) in core/orchestration/ that nothing can call: "
-        f"{new}. Either wire them up or delete them; a copy nothing calls drifts from the "
-        "one that runs, which is how ORCH-009 left two run loops (#4882)."
+    file_mapping = {
+        entry: f"src/bernstein/core/orchestration/{entry.split(':')[0]}"
+        for entry in (found | KNOWN_UNREACHABLE)
+    }
+    assert_ratchet_matches(
+        found,
+        KNOWN_UNREACHABLE,
+        subject="functions in core/orchestration/",
+        constant_name="KNOWN_UNREACHABLE",
+        file_mapping=file_mapping,
+        wire_hint="Either wire them up or delete them; a copy nothing calls drifts from the one that runs, which is how ORCH-009 left two run loops (#4882).",
     )
 
 
 def test_allowlist_has_no_stale_entries() -> None:
-    """The allowlist may only shrink, so a fix is forced to remove its entry."""
-    found = {f"{module}:{name}" for module, names in _scan().items() for name in names}
-    stale = sorted(KNOWN_UNREACHABLE - found)
-    assert not stale, (
-        f"these are no longer unreachable: {stale}. Remove them from KNOWN_UNREACHABLE - "
-        "an exemption that outlives its reason is how the list stops meaning anything."
-    )
+    """The allowlist may only shrink (asserted in test_no_new_unreachable_functions_in_orchestration)."""
+    test_no_new_unreachable_functions_in_orchestration()
 
 
 def test_the_deleted_run_loop_stays_deleted() -> None:

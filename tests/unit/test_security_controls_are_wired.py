@@ -34,11 +34,13 @@ in this package turns the guard into a deletion machine.
 from __future__ import annotations
 
 import ast
+import functools
 import re
 from collections import defaultdict
 from pathlib import Path
 
 import pytest
+from tests.unit._ratchet import assert_ratchet_matches
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = REPO_ROOT / "src" / "bernstein" / "core" / "security"
@@ -112,6 +114,7 @@ def _module_aliases(tree: ast.AST) -> dict[str, str]:
     return aliases
 
 
+@functools.lru_cache(maxsize=1)
 def _static_references() -> dict[str, set[str]]:
     """``{module_stem: {names reached through it statically}}``, alias-aware."""
     refs: dict[str, set[str]] = defaultdict(set)
@@ -138,6 +141,7 @@ def _static_references() -> dict[str, set[str]]:
     return refs
 
 
+@functools.lru_cache(maxsize=1)
 def _written_anywhere() -> set[str]:
     """Every identifier-shaped token appearing outside `core/security/`.
 
@@ -157,6 +161,7 @@ def _written_anywhere() -> set[str]:
     return seen
 
 
+@functools.lru_cache(maxsize=1)
 def _classify() -> tuple[set[str], set[str]]:
     """``(proved_uncalled, unproven)`` over public functions in `core/security/`."""
     refs = _static_references()
@@ -187,24 +192,25 @@ def _classify() -> tuple[set[str], set[str]]:
 
 
 def test_no_security_control_is_proved_uncalled() -> None:
-    """Fails only on what the guard can prove: a name written nowhere else at all."""
+    """Fails only on what the guard can prove: a name written nowhere else at all (#5552, #5503)."""
     proved, _unproven = _classify()
-    new = sorted(proved - KNOWN_UNCALLED)
-    assert not new, (
-        "public entry point(s) in core/security/ that nothing anywhere references, in code "
-        f"or in prose: {new}. A security control with no call site is not a control - wire "
-        "it, or delete it, or add it to KNOWN_UNCALLED with the reason."
+    file_mapping = {
+        entry: f"src/bernstein/core/security/{entry.split(':')[0]}"
+        for entry in (proved | KNOWN_UNCALLED)
+    }
+    assert_ratchet_matches(
+        proved,
+        KNOWN_UNCALLED,
+        subject="public entry points in core/security/",
+        constant_name="KNOWN_UNCALLED",
+        file_mapping=file_mapping,
+        wire_hint="A security control with no call site is not a control - wire it, or delete it, or add it to KNOWN_UNCALLED with the reason.",
     )
 
 
 def test_no_stale_exemptions() -> None:
-    """The exemption list may only shrink."""
-    proved, _unproven = _classify()
-    stale = sorted(KNOWN_UNCALLED - proved)
-    assert not stale, (
-        f"these are no longer proved-uncalled: {stale}. Remove them from KNOWN_UNCALLED - "
-        "an exemption that outlives its reason is how the list stops meaning anything."
-    )
+    """The exemption list may only shrink (asserted in test_no_security_control_is_proved_uncalled)."""
+    test_no_security_control_is_proved_uncalled()
 
 
 def test_the_unproven_list_is_reported_and_never_fails() -> None:
