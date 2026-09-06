@@ -116,7 +116,7 @@ from urllib.parse import urlparse
 
 from bernstein.adapters._contract import AuthBasis
 from bernstein.core.git.worktree import WorktreeError, WorktreeManager
-from bernstein.core.integrations.tickets import TicketParseError, fetch_ticket
+from bernstein.core.integrations.tickets import fetch_ticket
 from bernstein.core.volunteer.claim import (
     DEFAULT_CLAIM_STALENESS,
     build_claim_body,
@@ -574,8 +574,10 @@ def run_claimed_task(
                 url = f"{url.rstrip('/')}/issues/{task.issue_number}"
             payload = fetch_ticket(url)
             comments = list(payload.comments) if payload.comments else None
-        except (TicketParseError, Exception):
-            # Best-effort: failure to fetch comments is not a run failure
+        # `except (TicketParseError, Exception)` read as if only a parse
+        # failure was caught; Exception subsumes it, so this always caught
+        # everything. intentional-broad-except: comments are enrichment.
+        except Exception:
             comments = None
 
     workspace.mkdir(parents=True, exist_ok=True)
