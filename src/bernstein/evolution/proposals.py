@@ -17,7 +17,7 @@ from bernstein.core.models import (
     UpgradeProposalDetails,
 )
 from bernstein.evolution.detector import ImprovementOpportunity, UpgradeCategory
-from bernstein.evolution.upgrade_targets import upgrade_owned_files
+from bernstein.evolution.upgrade_targets import UPGRADE_CATEGORY_TARGETS, upgrade_owned_files
 
 if TYPE_CHECKING:
     from bernstein.evolution.aggregator import AnomalyDetection
@@ -76,6 +76,15 @@ class UpgradeProposal:
     #: proposer; ``to_task`` below sets ``role="manager"`` for routing, which
     #: identifies the executor and is deliberately not the same thing.
     produced_by: str = ""
+
+    @property
+    def target_files(self) -> list[str]:
+        """Return runtime-anchored files the executor may change."""
+        return [
+            relative_path
+            for anchor, relative_path in UPGRADE_CATEGORY_TARGETS.get(self.category, ())
+            if anchor == "state_dir"
+        ]
 
     def to_task(self) -> Task:
         """Convert upgrade proposal to a Task."""

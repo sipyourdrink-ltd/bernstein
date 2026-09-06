@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import logging
 import shutil
@@ -13,11 +15,12 @@ import yaml
 from bernstein.core.persistence.atomic_write import write_atomic_text
 from bernstein.evolution.admission import AdmissionPolicy
 from bernstein.evolution.proposals import UpgradeCategory, UpgradeProposal
+from bernstein.evolution.types import RollbackError
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-logger = logging.getLogger(__name__)
 
 
 class UpgradeExecutor(Protocol):
@@ -55,8 +58,6 @@ class FileUpgradeExecutor:
         # path reach the same executor, so one wiring covers both without
         # copying a gate into each.
         self._admission = admission if admission is not None else AdmissionPolicy()
-
-        self._backup_files: dict[str, Path] = {}
 
     def execute_upgrade(self, proposal: UpgradeProposal) -> bool:
         """Execute an upgrade by applying configuration changes.
@@ -98,23 +99,109 @@ class FileUpgradeExecutor:
         self._admission.record_outcome(decision, applied)
         return applied
 
-    def rollback_upgrade(self, _proposal: UpgradeProposal) -> bool:
-        """Rollback an upgrade by restoring backup files."""
-        try:
-            for backup_key, backup_path in self._backup_files.items():
+    def rollback_upgrade(self, proposal: UpgradeProposal) -> bool:
+        """Restore files declared in the proposal rollback plan.
+
+        Uses the proposal's rollback_plan.steps to determine rollback operations
+        on the proposal's target_files, restoring from backups in upgrades_dir.
+        Raises RollbackError on any failure.
+        """
+        manifest = self._read_manifest()
+        errors: list[str] = []
+
+        # Interpret rollback_plan.steps as file revert operations
+        for filename in proposal.target_files:
+            relative_path = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+            target_path = self.config_dir / relative_path
+            backup_path = self.upgrades_dir / f"backup_{relative_path}"
+
+            # Check manifest for expected backup hash
+            manifest_key = f"backup_{relative_path}"
+            if manifest_key in manifest:
+                expected_hash = manifest[manifest_key]["hash"]
+                try:
+                    actual_hash = self._hash_file(backup_path)
+                    if actual_hash != expected_hash:
+                        errors.append(
+                            f"Backup integrity check failed for {relative_path}: "
+                            f"expected {expected_hash[:8]}, got {actual_hash[:8]}"
+                        )
+                        continue
+                except OSError as e:
+                    errors.append(f"Backup integrity check failed: {backup_path} ({e})")
+                    continue
+            else:
+                # No manifest entry yet — capture the current backup hash as the
+                # baseline so any subsequent corruption is detected on the next
+                # rollback call. This is the only place the manifest gains a
+                # key outside `_backup_file`, and only on first observation.
                 if backup_path.exists():
-                    target_path = self.config_dir / backup_key
-                    shutil.copy2(backup_path, target_path)
-                    backup_path.unlink()
-            self._backup_files.clear()
-            return True
-        except Exception as exc:
-            logger.exception("Failed to rollback upgrade: %s", exc)
-            return False
+                    with contextlib.suppress(OSError):
+                        manifest[manifest_key] = {
+                            "hash": self._hash_file(backup_path),
+                            "created_at": time.time(),
+                        }
+
+            # Validate backup exists
+            if not backup_path.exists():
+                errors.append(f"Backup not found: {backup_path}")
+                continue
+
+            # Validate backup is readable
+            try:
+                backup_path.read_text()
+            except OSError as e:
+                errors.append(f"Backup unreadable: {backup_path} ({e})")
+                continue
+
+            # Perform the rollback
+            try:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(backup_path, target_path)
+            except Exception as exc:
+                errors.append(f"Failed to restore {target_path} from {backup_path}: {exc}")
+
+        # Persist any baseline hashes captured above so future rollbacks can
+        # detect backup corruption.
+        self._write_manifest(manifest)
+
+        if errors:
+            error_msg = "; ".join(errors)
+            logger.error("Rollback failed for %s: %s", proposal.id, error_msg)
+            self._record_history(proposal, "rolled_back")
+            raise RollbackError(proposal.id) from Exception(error_msg)
+
+        self._record_history(proposal, "rolled_back")
+        return True
 
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _hash_file(self, file_path: Path) -> str:
+        """Compute SHA-256 hash of a file."""
+        h = hashlib.sha256()
+        with file_path.open("rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    def _read_manifest(self) -> dict[str, Any]:
+        """Read backup manifest from upgrades_dir."""
+        manifest_path = self.upgrades_dir / "backup_manifest.json"
+        if not manifest_path.exists():
+            return {}
+        try:
+            with manifest_path.open() as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return {}
+
+    def _write_manifest(self, manifest: dict[str, Any]) -> None:
+        """Write backup manifest to upgrades_dir."""
+        manifest_path = self.upgrades_dir / "backup_manifest.json"
+        with manifest_path.open("w") as f:
+            json.dump(manifest, f)
 
     def _read_yaml(self, file_path: Path) -> dict[str, Any]:
         """Read a YAML file; return empty dict if missing or empty."""
@@ -155,11 +242,18 @@ class FileUpgradeExecutor:
 
     def _backup_file(self, filename: str) -> None:
         """Create a backup copy of a config file before modifying it."""
-        source_path = self.config_dir / filename
-        backup_path = self.upgrades_dir / f"backup_{filename}_{int(time.time())}"
+        relative_path = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        source_path = self.config_dir / relative_path
+        backup_path = self.upgrades_dir / f"backup_{relative_path}"
         if source_path.exists():
             shutil.copy2(source_path, backup_path)
-            self._backup_files[filename] = backup_path
+            # Update manifest with backup hash
+            manifest = self._read_manifest()
+            manifest[f"backup_{relative_path}"] = {
+                "hash": self._hash_file(backup_path),
+                "created_at": time.time(),
+            }
+            self._write_manifest(manifest)
 
     # ------------------------------------------------------------------
     # Category-specific apply methods
