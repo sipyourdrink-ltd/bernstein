@@ -240,6 +240,7 @@ Everything deep lives on the [docs site](https://bernstein.readthedocs.io/):
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | the full capability list: MCP server mode, signed agent cards, sandbox backends, artifact sinks, regulatory mappings |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | where the value lands, and where Bernstein is the wrong tool |
+| [integrations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/integrations.md) | what we bridge to under its own name - Okta, SCIM, Vault, OPA, SPIFFE, OpenTelemetry - and what is deliberately not planned |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | declarative YAML DAGs of agent / command / loop nodes |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | browser dashboard on the same API the TUI uses |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | experimental: run agents on Cloudflare Workers with R2 workspace sync against your own account. The hosted `api.bernstein.run` service is not yet available |

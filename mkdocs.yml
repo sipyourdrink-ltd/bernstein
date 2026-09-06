@@ -152,6 +152,7 @@ nav:
       - index.md
       - Use cases: use-cases.md
       - Scope (what this does not do): scope.md
+      - Integrations: integrations.md
       - What's new: whats-new.md
       - Mentions: mentions.md
       - Benchmarks: benchmarks/BENCHMARKS.md
