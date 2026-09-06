@@ -371,13 +371,32 @@ async def verify_with_cross_model(
         len(diff),
     )
 
+    from bernstein.core.routing.outbound_coverage import (
+        get_active_outbound_recorder,
+        in_recorded_call_scope,
+    )
+
+    _recorder = get_active_outbound_recorder()
+    if _recorder is not None:
+        try:
+            _recorder.check_and_record(
+                prompt=prompt,
+                model=reviewer,
+                provider=config.provider,
+                max_tokens=config.max_tokens,
+                temperature=0.0,
+            )
+        except Exception as _rec_exc:
+            logger.debug("Outbound recorder error: %s", _rec_exc)
+
     try:
-        raw = await _memoized_review_call(worktree_path)(
-            reviewer_model=reviewer,
-            provider=config.provider,
-            prompt=prompt,
-            max_tokens=config.max_tokens,
-        )
+        with in_recorded_call_scope():
+            raw = await _memoized_review_call(worktree_path)(
+                reviewer_model=reviewer,
+                provider=config.provider,
+                prompt=prompt,
+                max_tokens=config.max_tokens,
+            )
     except RuntimeError as exc:
         logger.warning(
             "cross_model_verifier: LLM call failed for task %s: %s - defaulting to approve",
