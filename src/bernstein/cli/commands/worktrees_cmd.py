@@ -37,6 +37,7 @@ from bernstein.core.worktrees.classifier import (
     reap_worktree,
     worktree_fingerprint,
 )
+from bernstein.core.worktrees.run_helpers import capture_helpers_before_reap
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -539,6 +540,14 @@ def run_gc(
             # 1-2: fingerprint then record BEFORE any destruction. A raised
             # exception here aborts the sweep with the worktree intact.
             _append_reap_event(log, row, dry_run=dry_run, reaped=True, forced=force_unsaved)
+            # 2b: content-address executed agent helpers while the directory
+            # still exists (#5322 PR1). Best-effort — never blocks reap.
+            capture_helpers_before_reap(
+                repo_root,
+                row.path,
+                row.session_id,
+                dry_run=dry_run,
+            )
             # 3: only now is it safe to destroy.
             removed = reap_worktree(repo_root, row, dry_run=dry_run)
             if on_progress is not None:
