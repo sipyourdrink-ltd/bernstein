@@ -6990,7 +6990,6 @@ def test_chain_append_lock_bounded_wait(tmp_path: Path, monkeypatch: pytest.Monk
     import os
 
     from bernstein.core.persistence.file_locks import LockTimeout
-    from bernstein.core.security import audit
     from bernstein.core.security.audit import _chain_append_lock
 
     audit_dir = tmp_path / ".sdd" / "audit"
