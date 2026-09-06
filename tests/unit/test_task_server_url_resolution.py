@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
 from bernstein.core.agents.spawner_core import _render_auth_section, _resolve_task_server_url
 from bernstein.core.defaults import SDD_SERVER_PORT
 
