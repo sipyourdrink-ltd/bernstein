@@ -5,11 +5,13 @@ fields on `worker-completion/v1`, so a completion could assert that a command
 ran and exited 0 while pointing at no receipt at all:
 
 ```python
-parse_terminal_payload({
-    "contract": "worker-completion/v1",
-    "summary": "ran the suite, all green",
-    "verification": {"command": "pytest -q", "exit_code": 0},
-})   # parsed, receipt_ref=None
+parse_terminal_payload(
+    {
+        "contract": "worker-completion/v1",
+        "summary": "ran the suite, all green",
+        "verification": {"command": "pytest -q", "exit_code": 0},
+    }
+)  # parsed, receipt_ref=None
 ```
 
 A claim backed by a receipt and one the worker simply asserted serialized
