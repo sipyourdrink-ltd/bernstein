@@ -141,6 +141,19 @@ _PENDING_SHAPES: Final[tuple[_AllowedShape, ...]] = (
         ),
     ),
     _AllowedShape(
+        fields=frozenset({"errors", "records", "valid"}),
+        classes=frozenset({"SignoffChainResult", "PrincipalChainResult"}),
+        reason=(
+            "core/identity/access_review.py and core/identity/principals.py "
+            "reconstruct two HMAC chains offline and report the records walked "
+            "plus the first break. The record types differ (SignoffRecord, "
+            "PrincipalReceipt) and only the principal chain replays into a "
+            "registry. Pending: the same `VerifyResult` specialisation the "
+            "spine/memory pair is waiting on; the (valid, records, errors) "
+            "triple is that shape with `ok` renamed."
+        ),
+    ),
+    _AllowedShape(
         fields=frozenset({"count", "errors", "status"}),
         classes=frozenset({"SpineVerifyResult", "MemoryVerifyResult"}),
         reason=(
