@@ -21,7 +21,7 @@ import time
 from dataclasses import dataclass, field
 from enum import IntEnum
 
-from bernstein.core.defaults import AGENT
+from bernstein.core import defaults as _defaults
 from bernstein.core.platform_compat import is_signal_supported
 
 logger = logging.getLogger(__name__)
@@ -54,10 +54,17 @@ class EscalationThresholds:
         sigkill_s: Seconds before sending SIGKILL.
     """
 
-    warn_s: float = AGENT.escalation_warn_s
-    sigusr1_s: float = AGENT.escalation_sigusr1_s
-    sigterm_s: float = AGENT.escalation_sigterm_s
-    sigkill_s: float = AGENT.escalation_sigkill_s
+    # ``default_factory``, not a plain default: a default expression is evaluated
+    # once when this class is DEFINED, which is always before bernstein.yaml's
+    # ``tuning:`` block reaches ``defaults.override`` - and ``override`` rebinds
+    # the module attribute rather than mutating the frozen singleton, so a
+    # class-definition-time read is a permanent snapshot of the shipped values.
+    # Measured 2026-09-03 (finding X): ``escalation_sigterm_s: 1200`` in the
+    # config snapshot, ``Sent SIGTERM ... heartbeat stale for 125s`` in the log.
+    warn_s: float = field(default_factory=lambda: float(_defaults.AGENT.escalation_warn_s))
+    sigusr1_s: float = field(default_factory=lambda: float(_defaults.AGENT.escalation_sigusr1_s))
+    sigterm_s: float = field(default_factory=lambda: float(_defaults.AGENT.escalation_sigterm_s))
+    sigkill_s: float = field(default_factory=lambda: float(_defaults.AGENT.escalation_sigkill_s))
 
     def validate(self) -> list[str]:
         """Validate that thresholds are monotonically increasing.
