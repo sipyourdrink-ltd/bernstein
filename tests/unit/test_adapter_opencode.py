@@ -233,6 +233,33 @@ def test_contract_pins_the_flags_the_adapter_now_depends_on() -> None:
     assert "--continue" in spec.required_flags
 
 
+class TestEventChannelDeclaration:
+    """Regression for #3676: the declared channel must match the spawn command.
+
+    ``event_channel`` names what the upstream CLI *emits* (see the
+    ``EventChannel`` docstring and ``docs/adapters/capability_contract.md``),
+    not what Bernstein currently parses -- the same reading ``cursor`` is
+    declared under with no dedicated stream parser either. ``opencode.py``
+    passes ``--format json``, under which the CLI emits NDJSON, so the
+    declared channel is ``stream-json``. This test fails first if a future
+    change either drops ``--format json`` from the spawn command (the
+    declaration would then overclaim) or the declaration drifts back to
+    ``text-signals`` while the flag stays (the declaration would then
+    underclaim) -- either direction breaks the tie this test pins.
+    """
+
+    def test_declared_channel_is_stream_json(self) -> None:
+        from bernstein.adapters._contract import STRATEGY_MATRIX, EventChannel
+
+        assert STRATEGY_MATRIX["opencode"].event_channel is EventChannel.STREAM_JSON
+
+    def test_spawn_command_requests_the_structured_output_the_declaration_names(self) -> None:
+        adapter = OpenCodeAdapter()
+        cmd = adapter._build_command(model="openai/gpt-5.4-mini", prompt="fix the bug")
+        assert "--format" in cmd
+        assert cmd[cmd.index("--format") + 1] == "json"
+
+
 class TestSessionContinuation:
     """``resume=flag`` has to describe a flag the adapter actually passes."""
 
