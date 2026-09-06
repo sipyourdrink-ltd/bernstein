@@ -683,18 +683,62 @@ def run_parallel(
     return 1 if failed else 0
 
 
-def _report_empty_selection(shard: tuple[int, int] | None, context: str) -> None:
+def _describe_rev(rev: str) -> str:
+    """``<rev> (<short sha>)``, or bare ``<rev>`` when git cannot resolve it.
+
+    Best-effort by design: this only ever decorates a message, so a detached
+    checkout, a missing ref or no git at all costs the sha and nothing else.
+    """
+    try:
+        sha = subprocess.run(
+            ["git", "rev-parse", "--short", rev],
+            cwd=Path(__file__).parent.parent,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return rev
+    return f"{rev} ({sha})" if sha else rev
+
+
+def _compared_range(base: str) -> str:
+    """The comparison an affected-set run actually performed, in words.
+
+    ``--affected HEAD`` compares the WORKING TREE against HEAD, which is not a
+    commit range and must not be printed as one.
+    """
+    if base == "HEAD":
+        return f"working tree vs {_describe_rev('HEAD')}"
+    return f"{_describe_rev(base)}...{_describe_rev('HEAD')}"
+
+
+def _report_empty_selection(shard: tuple[int, int] | None, context: str, base: str | None = None) -> None:
     """Print a clear message when the selected file set is empty.
 
     An empty shard (N greater than the file count, or a small affected set
     split across many shards) is a legitimate no-op that must exit 0 - not a
     discovery failure. The message disambiguates the two for CI log readers.
+
+    ``base`` names the commits that were compared to reach an empty affected
+    set, because a run that tested nothing and a run that tested everything
+    look identical in the Actions UI: both are a green check (#5111). Without
+    the range, "nothing was affected" is unfalsifiable from the outside - the
+    reader cannot tell a correct no-op from a diff computed against the wrong
+    base. On GitHub Actions the same sentence is also emitted as a ``notice``
+    annotation, so it surfaces on the run summary rather than only inside a
+    step's log.
     """
     if shard is not None:
-        print(f"No {context}test files in shard {shard[0]}/{shard[1]} - nothing to run (empty shard)")
+        message = f"No {context}test files in shard {shard[0]}/{shard[1]} - nothing to run (empty shard)"
     else:
         suffix = "affected tests found" if context else "test files found"
-        print(f"No {suffix} - nothing to run")
+        message = f"No {suffix} - nothing to run"
+    if base is not None:
+        message += f"; compared {_compared_range(base)}"
+    print(message)
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print(f"::notice title=Nothing to run::{message}")
 
 
 def discover_affected_files(base: str) -> list[Path]:
@@ -898,11 +942,14 @@ def main() -> None:
                 changed_files = discover_changed_files(args.affected)
                 deleted_files = discover_changed_files(args.affected, diff_filter="D")
                 if changed_files_require_tests(changed_files, deleted_files):
-                    print("No affected tests found for code or workflow changes; failing closed.")
+                    print(
+                        "No affected tests found for code or workflow changes; failing closed. "
+                        f"Compared {_compared_range(args.affected)}."
+                    )
                     for changed_file in changed_files:
                         print(f"  {changed_file}")
                     sys.exit(1)
-            _report_empty_selection(shard, context="affected ")
+            _report_empty_selection(shard, context="affected ", base=args.affected)
             sys.exit(0)
         shard_label = f" [shard {shard[0]}/{shard[1]}]" if shard else ""
         print(f"Running {len(files)} affected test files{shard_label} (each in its own process)")

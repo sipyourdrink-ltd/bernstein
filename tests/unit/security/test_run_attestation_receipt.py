@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 import pytest_asyncio
 
+from bernstein.core.identity.agent_card import AgentIdentityCard
 from bernstein.core.observability.otlp_ingest_receipt import (
     ATTR_COVERAGE,
     ATTR_COVERAGE_DETAIL,
@@ -22,7 +23,6 @@ from bernstein.core.observability.otlp_ingest_receipt import (
     ATTR_SOURCE_PROFILE,
 )
 from bernstein.core.security.agent_card_signer import generate_ed25519_keypair, sign_agent_card
-from bernstein.core.security.agent_identity import AgentIdentityCard
 from bernstein.core.security.audit_chain import (
     EVENT_IDENTITY_SPAWN_ATTESTATION,
     AuditChainStore,

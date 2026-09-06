@@ -238,7 +238,7 @@ def _builtin_registrations() -> tuple[tuple[str, TrackerFactory, str, tuple[str,
     from bernstein.core.trackers.linear import LinearTracker
     from bernstein.core.trackers.servicenow import ServiceNowTracker
 
-    return (
+    return (  # type: ignore[return-value]  # structural tuple match
         (
             "linear",
             LinearTracker,

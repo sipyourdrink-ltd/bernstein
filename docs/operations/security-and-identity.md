@@ -60,7 +60,7 @@ user_id, scopes)`. Three issuers exist:
   `localStorage`. Device flow (`/auth/cli/device`, `/auth/cli/token`)
   issues the same token via polling for CLI-based logins
   (`routes/auth.py:324-372`).
-- **Agent identity** - `core/security/agent_identity.py` issues task-scoped JWTs
+- **Agent identity** - `core/identity/agent_jwt.py` issues task-scoped JWTs
   with claims `{session_id, user_id=identity_id, task_ids: [...],
   permissions: [...]}`. Stored in `.sdd/auth/identities/`.
 - **Cluster nodes** - `ClusterAuthenticator.issue_node_token(node_id)`
@@ -340,7 +340,7 @@ for. The identities surface lives at `core/routes/identities.py`.
 | `POST /identities/{id}/revoke`                | Revoke an agent identity. Body `{reason: "..."}`. Future requests with the identity's JWT fail.    | `routes/identities.py:91-103`         |
 | `GET /identities/{id}/audit`                  | Per-identity audit trail. Returns the identity's events from the audit store. `?limit=100` default. | `routes/identities.py:111-122`        |
 
-Backing store: `core/security/agent_identity.py` (`AgentIdentityStore`) under
+Backing store: `core/identity/agent_jwt.py` (`AgentIdentityStore`) under
 `.sdd/auth/`. The store is created lazily on first request
 (`routes/identities.py:17-27`). Credentials are stored hashed; the API
 strips them before responses (`:82`).
@@ -745,7 +745,7 @@ Compliance modules in code (`core/security/`):
 | OIDC / SAML / device flow routes   | `src/bernstein/core/routes/auth.py`                                   |
 | Agent identities API               | `src/bernstein/core/routes/identities.py`                             |
 | SCIM 2.0 provisioning surface      | `src/bernstein/core/routes/scim.py`                                   |
-| Agent identity store               | `src/bernstein/core/security/agent_identity.py`                                |
+| Agent identity store               | `src/bernstein/core/identity/agent_jwt.py`                            |
 | Delegation capability tokens       | `src/bernstein/core/security/capability_tokens.py`, `permission_delegation.py` |
 | Delegation verify CLI              | `src/bernstein/cli/commands/delegation_cmd.py`                        |
 | Audit log (HMAC chain)             | `src/bernstein/core/security/audit.py`                                |

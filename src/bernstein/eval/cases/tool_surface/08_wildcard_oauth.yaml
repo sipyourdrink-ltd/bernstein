@@ -1,0 +1,15 @@
+id: wildcard_oauth
+name: OAuth Protected Wildcard Tool Server
+description: OAuth2 protected server exposing wildcard administrative control.
+auth_posture: oauth2_pkce
+has_untrusted_input: false
+has_sensitive_reach: false
+has_egress_channel: false
+has_wildcard_permissions: true
+tools:
+  - name: cluster_admin_manager
+    description: Perform administrative mutations across all cluster resources.
+    scope: "*"
+    wildcard: true
+resources: []
+prompts: []

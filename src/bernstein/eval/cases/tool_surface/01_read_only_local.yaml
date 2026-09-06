@@ -1,0 +1,19 @@
+id: read_only_local
+name: Local Read-Only Filesystem Server
+description: Hermetic read-only tool surface reading local documentation and files.
+auth_posture: static_bearer_token
+has_untrusted_input: false
+has_sensitive_reach: false
+has_egress_channel: false
+has_wildcard_permissions: false
+tools:
+  - name: read_local_file
+    description: Read contents of a file on local filesystem.
+    read_only: true
+    sensitive_reach: false
+    untrusted_input: false
+    egress: false
+resources:
+  - uri: "file:///docs/readme.txt"
+    name: local_readme
+prompts: []

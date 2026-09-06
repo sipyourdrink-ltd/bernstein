@@ -33,6 +33,7 @@ from bernstein.core.protocols.mcp.tool_tiers import (
     tools_for_tier,
 )
 from bernstein.mcp.cost_meter import COST_METER_ENV, cost_meter_enabled
+from bernstein.mcp.tool_surface import ServerManifest, evaluate_tool_surface_risk
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -163,6 +164,14 @@ def build_capability_card(spec_revision: str | None = None) -> dict[str, Any]:
             "perCallMeter": cost_meter_enabled(),
             "fields": ["latency_ms", "cost_usd", "call_id", "ok", "ts"],
         },
+        "toolSurface": evaluate_tool_surface_risk(
+            ServerManifest(
+                server_id="bernstein",
+                name="bernstein",
+                auth_posture="bearer" if _auth_modes().get("bearer_token_configured") else "anonymous",
+                tools=[{"name": t} for t in tools_for_tier(active_tier)],
+            )
+        ).to_dict(),
     }
 
 

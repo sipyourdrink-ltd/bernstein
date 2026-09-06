@@ -8,9 +8,9 @@ from typing import Any
 
 import pytest
 
+from bernstein.core.identity.agent_card import AgentIdentityCard
 from bernstein.core.lineage.identity import AgentCard, sign_detached
 from bernstein.core.security.agent_card_signer import canonicalize_jcs, generate_ed25519_keypair, sign_agent_card
-from bernstein.core.security.agent_identity import AgentIdentityCard
 from bernstein.core.security.audit_chain import AuditChainStore
 from bernstein.core.security.identity_spawn_anchor import IdentitySpawnAnchor, IdentitySpawnAnchorError
 from bernstein.core.security.native_toolcall_evidence import NativeToolCallEvidenceProvider

@@ -271,17 +271,37 @@ src/bernstein/eval/bench/
 ├── verifier.py          # BenchVerifier, VerificationStatus
 ├── leaderboard.py       # Leaderboard, LeaderboardEntry, Markdown render
 ├── reliability.py       # pass^k reliability floor (see reliability.md)
+├── tool_surface_suite.py# tool-surface risk evaluation suite (tool-surface-v1)
 └── golden_suite.py      # starter golden-v1 task suite
 
 tests/unit/eval/bench/
-├── test_bench.py        # TDD suite — all acceptance criteria
-└── test_reliability.py  # pass^k reliability floor tests
+├── test_bench.py                   # TDD suite — all acceptance criteria
+├── test_reliability.py             # pass^k reliability floor tests
+└── test_tool_surface_risk_suite.py # tool surface risk suite tests
 
 docs/eval/
 ├── bench.md                  # this document
 ├── reliability.md            # pass^k reliability floor
 └── trajectory-receipts.md   # offline-verifiable benchmark score receipts (#2925)
 ```
+
+---
+
+## Tool-Surface Risk Suite (`tool-surface-v1`)
+
+The `tool-surface-v1` benchmark suite evaluates MCP tool servers against lethal capability combinations, particularly the **Risky Triple** (untrusted input ingestion, sensitive data reach, and external egress).
+
+Controls covered: `CTRL-TOOL-INVENTORY`, `ASI02`, `AST04`.
+
+### Risk Classification Matrix
+
+| Risk Class | Description | Approval Gate | Unconfigured Approver |
+|---|---|---|---|
+| `CRITICAL` | Risky Triple present (sensitive reach + untrusted input + egress), or wildcard permissions without auth | **Forced** | Deny by default |
+| `HIGH` | Wildcard permissions with strong auth, or sensitive reach with egress or untrusted input | **Forced** | Deny by default |
+| `MEDIUM` | Sensitive reach alone, egress alone, or untrusted input alone | None | Allowed |
+| `LOW` | Read-only public tool surface (anonymous / weak auth) | None | Allowed |
+| `MINIMAL` | Read-only local tool surface (authenticated) | None | Allowed |
 
 ---
 

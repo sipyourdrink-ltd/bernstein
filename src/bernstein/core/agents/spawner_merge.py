@@ -263,7 +263,7 @@ def _signed_file_scope(worktree_root: Path, session_id: str) -> list[str] | _Unr
     if not auth_dir.exists():
         return None
 
-    from bernstein.core.agents.agent_identity import AgentIdentityStore
+    from bernstein.core.identity.agent_jwt import AgentIdentityStore
 
     try:
         identity = AgentIdentityStore(auth_dir).get(session_id)

@@ -222,7 +222,7 @@ def assemble_context_pack(
         agents_md = _safe(
             f"{_AGENTS_MD}:{target}",
             unavailable,
-            lambda t=target: find_nearest_agents_md(repo_root / t, repo_root),
+            lambda t=target: find_nearest_agents_md(repo_root / t, repo_root),  # type: ignore[misc]  # complex lambda
         )
         if agents_md:
             sections.append(PackSection(kind=_AGENTS_MD, target=target, items=(agents_md,), available=1))
