@@ -3578,6 +3578,7 @@ class Orchestrator:
         attestation aid and must not fail a run that already completed.
         """
         try:
+            from bernstein.core.persistence.file_locks import LockTimeout
             from bernstein.core.security.audit_chain import AuditChainStore
             from bernstein.core.security.intent_capsule import seal_capsules_bound_to_run
 
@@ -3589,6 +3590,12 @@ class Orchestrator:
             )
             if sealed:
                 logger.info("Sealed %d intent capsule(s) for run %s", len(sealed), self._run_id)
+        except LockTimeout:
+            logger.warning(
+                "Failed to acquire lock to seal intent capsules for run %s: timeout. "
+                "The receipt will not be written. Check for stale lock files.",
+                self._run_id,
+            )
         except Exception as exc:
             logger.warning("Failed to seal intent capsules: %s", sanitize_log(str(exc)))
 
