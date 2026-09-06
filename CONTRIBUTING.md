@@ -226,6 +226,35 @@ Run locally before committing:
 uv run python scripts/check_routes_broad_except.py
 ```
 
+### Production reachability (security and identity controls)
+
+`src/bernstein/core/security/**.py` and `src/bernstein/core/identity/**.py`
+are policed by a CI lint (`scripts/check_unreachable_controls.py`) that fails
+the build when a public symbol has no caller inside the shipped package. A
+control whose only importers are its own tests, an `__init__` re-export, or
+the lazy module map in `src/bernstein/core/__init__.py` passes every other
+check while never running.
+
+Only `Name` loads and attribute accesses count as callers. Imports and string
+literals do not, which is what makes a re-export and the lazy module map
+invisible to the check. Reachability is a fixpoint, so a symbol called only by
+another unreached symbol is still unreached.
+
+Known cases live in `unreachable_controls_allowlist.txt`, one line per symbol
+with a mandatory written reason. Removing an entry is the goal: an entry whose
+symbol becomes reachable fails the gate, so the list cannot rot.
+
+Run locally before committing:
+
+```bash
+uv run python scripts/check_unreachable_controls.py
+# after adding or deleting a symbol, refresh the entry list (reasons survive):
+uv run python scripts/check_unreachable_controls.py --update
+```
+
+Replace every `REASON REQUIRED` marker `--update` writes before committing --
+the gate rejects it.
+
 See [AGENTS.md](AGENTS.md) for the full doctrine, including change classification, conflict protocol, and zero-tolerance failures.
 
 ## CLI Structure
