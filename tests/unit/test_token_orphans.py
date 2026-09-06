@@ -167,6 +167,11 @@ def test_no_new_orphan_token_modules() -> None:
     )
 
 
+def test_no_stale_exemptions() -> None:
+    """The exemption list may only shrink (asserted in test_no_new_orphan_token_modules)."""
+    test_no_new_orphan_token_modules()
+
+
 def test_a_wired_module_is_seen_through_its_legacy_alias() -> None:
     """`token_monitor` is reachable only via `bernstein.core.token_monitor`.
 

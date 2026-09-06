@@ -189,6 +189,11 @@ def test_every_compliance_module_has_a_non_test_importer() -> None:
     )
 
 
+def test_no_stale_exemptions() -> None:
+    """The exemption list may only shrink (asserted in test_every_compliance_module_has_a_non_test_importer)."""
+    test_every_compliance_module_has_a_non_test_importer()
+
+
 def test_a_wired_module_is_seen_through_its_legacy_alias() -> None:
     """`compliance_policies` is reachable only via its `core/__init__.py` redirect.
 
