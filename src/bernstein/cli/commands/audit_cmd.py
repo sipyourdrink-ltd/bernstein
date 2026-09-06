@@ -3031,6 +3031,194 @@ def verify_multitenant_cmd(
     raise SystemExit(1)
 
 
+@audit_group.command("verify-export")
+@click.option(
+    "--bundle",
+    "bundle_path",
+    required=True,
+    type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+    help="Path to a multi-tenant audit-export bundle (JSON) to verify export integrity for.",
+)
+@click.option(
+    "--key",
+    "key_path",
+    default=None,
+    type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+    help="Path to the HMAC key file (defaults to the standard audit key location).",
+)
+def verify_export_cmd(
+    bundle_path: str,
+    key_path: str | None,
+) -> None:
+    """Verify export integrity: segment receipts, sequence, and chain completeness.
+
+    \b
+    Checks that an exported bundle's segment receipt is valid:
+      1. Every event carries a non-empty prev_hmac linking to the prior event.
+      2. Sequence numbers are monotonically increasing with no gaps.
+      3. The segment receipt's first_sequence / last_sequence match the events.
+      4. The segment receipt's chain_head_hash matches the last event's hmac.
+      5. The segment receipt's signature is valid under the operator's HMAC key.
+
+    \b
+    Reports: contiguous / gap at N / reordered at N. Works on the export
+    alone, without the database.
+
+    Exits non-zero on any failure.
+    """
+    import hashlib as _hashlib
+    import hmac as _hmac
+    import json as _json
+
+    from bernstein.core.security.audit import AuditKeyMissingError, load_audit_key
+    from bernstein.core.security.audit_multitenant import _GENESIS_HMAC
+
+    bundle_file = Path(bundle_path)
+    try:
+        raw = bundle_file.read_bytes()
+    except OSError as exc:
+        console.print(f"[red]Cannot read bundle: {exc}[/red]")
+        raise SystemExit(1) from None
+
+    try:
+        bundle = _json.loads(raw)
+    except _json.JSONDecodeError as exc:
+        console.print(f"[red]Bundle is not valid JSON: {exc}[/red]")
+        raise SystemExit(1) from None
+
+    errors: list[str] = []
+
+    # --- 1. Structural checks on segment_receipt ---
+    receipt = bundle.get("segment_receipt")
+    if receipt is None:
+        errors.append("segment_receipt is missing from the bundle")
+    elif not isinstance(receipt, dict):
+        errors.append(f"segment_receipt must be an object, got {type(receipt).__name__}")
+    else:
+        for req_field in ("first_sequence", "last_sequence", "chain_head_hash", "signature"):
+            if req_field not in receipt:
+                errors.append(f"segment_receipt missing required field: {req_field}")
+
+    # --- 2. Check prev_hmac and sequence on every event ---
+    events = bundle.get("events")
+    if events is None:
+        errors.append("bundle has no events field")
+    elif not isinstance(events, list):
+        errors.append(f"events must be a list, got {type(events).__name__}")
+    else:
+        prev_expected = _GENESIS_HMAC
+        prev_seq = 0
+        for idx, event in enumerate(events):
+            if not isinstance(event, dict):
+                errors.append(f"events[{idx}]: expected object, got {type(event).__name__}")
+                continue
+            ev_prev = event.get("prev_hmac")
+            if ev_prev is None:
+                errors.append(f"events[{idx}]: missing prev_hmac (chain link dropped)")
+            elif ev_prev != prev_expected:
+                errors.append(
+                    f"events[{idx}]: prev_hmac mismatch — expected {prev_expected[:16]}…, "
+                    f"got {str(ev_prev)[:16]}… (reordered or deleted record)",
+                )
+            prev_expected = str(event.get("hmac", ""))
+
+            ev_seq = event.get("sequence")
+            if ev_seq is None:
+                errors.append(f"events[{idx}]: missing sequence number")
+            elif not isinstance(ev_seq, int):
+                errors.append(f"events[{idx}]: sequence must be an integer, got {type(ev_seq).__name__}")
+            elif ev_seq != prev_seq + 1:
+                if ev_seq == prev_seq:
+                    errors.append(f"events[{idx}]: duplicate sequence {ev_seq}")
+                elif ev_seq < prev_seq:
+                    errors.append(f"events[{idx}]: reordered at sequence {ev_seq} (expected {prev_seq + 1})")
+                else:
+                    errors.append(f"events[{idx}]: gap at sequence {prev_seq + 1}..{ev_seq - 1}")
+            if isinstance(ev_seq, int):
+                prev_seq = ev_seq
+
+    # --- 3. Cross-check segment receipt against events ---
+    if events and isinstance(events, list) and len(events) > 0 and isinstance(receipt, dict):
+        first_ev = events[0]
+        last_ev = events[-1]
+        if isinstance(first_ev, dict) and isinstance(last_ev, dict):
+            declared_first = receipt.get("first_sequence")
+            declared_last = receipt.get("last_sequence")
+            actual_first = first_ev.get("sequence")
+            actual_last = last_ev.get("sequence")
+            if declared_first != actual_first:
+                errors.append(
+                    f"segment_receipt.first_sequence={declared_first} does not match "
+                    f"first event sequence={actual_first}",
+                )
+            if declared_last != actual_last:
+                errors.append(
+                    f"segment_receipt.last_sequence={declared_last} does not match last event sequence={actual_last}",
+                )
+            declared_head = receipt.get("chain_head_hash")
+            actual_head = last_ev.get("hmac", "")
+            if declared_head != actual_head:
+                errors.append(
+                    f"segment_receipt.chain_head_hash does not match last event hmac "
+                    f"(declared={str(declared_head)[:16]}…, actual={str(actual_head)[:16]}…)",
+                )
+
+    # --- 4. Verify the segment receipt signature ---
+    if isinstance(receipt, dict) and "signature" in receipt:
+        try:
+            key = Path(key_path).read_bytes().strip() if key_path else load_audit_key()
+        except (AuditKeyMissingError, OSError) as exc:
+            console.print(f"[yellow]Cannot load audit key: {exc}[/yellow]")
+            console.print("[yellow]Segment receipt signature verification skipped (no key).[/yellow]")
+            key = None
+
+        if key is not None:
+            receipt_payload = {
+                "first_sequence": receipt.get("first_sequence", 0),
+                "last_sequence": receipt.get("last_sequence", 0),
+                "chain_head_hash": receipt.get("chain_head_hash", ""),
+            }
+            canonical = _json.dumps(receipt_payload, sort_keys=True, separators=(",", ":")).encode()
+            expected_sig = _hmac.new(key, canonical, _hashlib.sha256).hexdigest()
+            if not _hmac.compare_digest(str(receipt.get("signature", "")), expected_sig):
+                errors.append("segment_receipt signature does not verify under the audit key")
+
+    # --- Report ---
+    console.print()
+    if not errors:
+        console.print(
+            Panel(
+                "[bold green]Export Verification: PASSED[/bold green]\n"
+                "[dim]Segment receipt, sequence, and chain integrity all verified.[/dim]",
+                border_style="green",
+                expand=False,
+            ),
+        )
+        if isinstance(receipt, dict):
+            table = Table(show_header=False, box=None, padding=(0, 2))
+            table.add_column("Key", style="dim", no_wrap=True, min_width=18)
+            table.add_column("Value")
+            table.add_row("First sequence", str(receipt.get("first_sequence", "?")))
+            table.add_row("Last sequence", str(receipt.get("last_sequence", "?")))
+            table.add_row("Chain head hash", str(receipt.get("chain_head_hash", "?"))[:16] + "…")
+            table.add_row("Signature", "verified" if key is not None else "skipped (no key)")
+            table.add_row("Events", str(len(events) if isinstance(events, list) else 0))
+            console.print(table)
+        console.print()
+        raise SystemExit(0)
+
+    failing_list = "\n".join(f"  [red]![/red] {e}" for e in errors)
+    console.print(
+        Panel(
+            f"[bold red]Export Verification: FAILED[/bold red]\n\n[bold]Finding(s):[/bold]\n{failing_list}",
+            border_style="red",
+            expand=False,
+        ),
+    )
+    console.print()
+    raise SystemExit(1)
+
+
 @audit_group.command("pack")
 @click.option(
     "--soc2",

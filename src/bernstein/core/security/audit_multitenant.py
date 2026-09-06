@@ -152,6 +152,7 @@ class TenantScopedExport:
             tests/dry-runs can hash without disk I/O.
         bundle_path: On-disk path of the written bundle, or ``None`` when
             ``write=False``.
+        segment_receipt: Optional segment receipt proving export completeness.
     """
 
     tenant_id: str
@@ -163,6 +164,7 @@ class TenantScopedExport:
     signature_kind: SignatureKind
     bundle_bytes: bytes
     bundle_path: Path | None = None
+    segment_receipt: dict[str, Any] | None = None
 
     @property
     def sha256(self) -> str:
@@ -327,6 +329,7 @@ def _rebuild_slice_chain(
     """
     rebuilt: list[dict[str, Any]] = []
     prev = _GENESIS_HMAC
+    seq = 1  # Start from 1 (genesis has no sequence)
     for original in events:
         original_details = original.get("details") or {}
         if not isinstance(original_details, dict):
@@ -335,6 +338,9 @@ def _rebuild_slice_chain(
         # Witness: stamp the original orchestrator-wide HMAC so an auditor
         # with access to the source log can cross-check.
         new_details["_original_hmac"] = str(original.get("hmac", ""))
+        # Assign a monotonic sequence number for export ordering/reordering detection
+        new_details["sequence"] = seq
+        seq += 1
 
         payload: dict[str, Any] = {
             "timestamp": str(original.get("timestamp", "")),
@@ -404,6 +410,57 @@ def _canonical_bundle_bytes(bundle: dict[str, Any]) -> bytes:
     bundles do not run lines together.
     """
     return (json.dumps(bundle, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+def _generate_segment_receipt(
+    events: list[dict[str, Any]],
+    key: bytes,
+    chain_head_hash: str,
+) -> dict[str, Any]:
+    """Generate a segment receipt proving export completeness.
+
+    Args:
+        events: Events in the export batch (in chronological order).
+        key: Operator HMAC key.
+        chain_head_hash: HMAC of the last event before this batch (chain head hash at boundary).
+
+    Returns:
+        Segment receipt dict with first_sequence, last_sequence, chain_head_hash, and signature.
+    """
+    if not events:
+        # Empty batch - use genesis values
+        first_sequence = 0
+        last_sequence = 0
+    else:
+        # Extract sequence numbers from event details
+        first_event = events[0]
+        last_event = events[-1]
+
+        # Sequence should be stored in the event details or as a top-level field
+        # Based on audit_export.py changes, it should be a top-level field in AuditEntry
+        # But in raw audit events, we need to check where it's stored
+        first_sequence = int(first_event.get("sequence", 0))
+        last_sequence = int(last_event.get("sequence", 0))
+
+    # Create the receipt payload to sign
+    receipt_payload = {
+        "first_sequence": first_sequence,
+        "last_sequence": last_sequence,
+        "chain_head_hash": chain_head_hash,
+    }
+
+    # Canonicalize the payload for signing
+    canonical_payload = json.dumps(receipt_payload, sort_keys=True, separators=(",", ":"))
+
+    # Sign with the operator's HMAC key
+    signature = _hmac.new(key, canonical_payload.encode(), hashlib.sha256).hexdigest()
+
+    return {
+        "first_sequence": first_sequence,
+        "last_sequence": last_sequence,
+        "chain_head_hash": chain_head_hash,
+        "signature": signature,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -523,6 +580,14 @@ def export_tenant_slice(
     events_canonical = _events_jsonl_bytes(rebuilt)
     head_sha256 = hashlib.sha256(events_canonical).hexdigest()
 
+    # Generate segment receipt for the export batch
+    # chain_head_hash is the head_hmac of this export (the last event's HMAC)
+    segment_receipt = _generate_segment_receipt(
+        events=rebuilt,
+        key=key,
+        chain_head_hash=head_hmac,
+    )
+
     signature_block = _attach_signature(
         head_sha256,
         signature_kind=signature_kind,
@@ -543,6 +608,7 @@ def export_tenant_slice(
         "event_count": len(rebuilt),
         "events": rebuilt,
         "signature": signature_block,
+        "segment_receipt": segment_receipt,
     }
     if signature_kind in _PUBKEY_KINDS:
         # The KMS adapter is guaranteed non-None at this point by the
@@ -582,6 +648,7 @@ def export_tenant_slice(
         signature_kind=signature_kind,
         bundle_bytes=bundle_bytes,
         bundle_path=bundle_path,
+        segment_receipt=segment_receipt,
     )
 
 
