@@ -38,6 +38,11 @@ from typing import Final, get_origin
 
 import pytest
 
+#: Scans the whole source tree, so no diff produces an import edge to this
+#: file and the affected-set selector would never pick it. The marker puts it
+#: in every pull request's slice (#5428).
+pytestmark = pytest.mark.whole_tree_guard
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOT = REPO_ROOT / "src" / "bernstein"
 

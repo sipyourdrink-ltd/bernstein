@@ -760,6 +760,48 @@ def discover_affected_files(base: str) -> list[Path]:
     return sorted(paths)
 
 
+#: Suites the guard-discovery scan walks. A whole-tree guard lives beside the
+#: unit tests it is collected with; nothing outside these needs indexing.
+_GUARD_SEARCH_DIRS = ("tests/unit", "tests/integration")
+
+#: How a file declares itself a whole-tree guard. Matched as source text rather
+#: than by importing the module: discovery runs before pytest starts, and a
+#: guard that fails to import must still be selected so the failure is seen.
+_GUARD_MARKER = re.compile(r"@pytest\.mark\.whole_tree_guard\b|pytest\.mark\.whole_tree_guard\b")
+
+
+def discover_whole_tree_guard_files(root: Path | None = None) -> list[Path]:
+    """Return every test file carrying the ``whole_tree_guard`` marker.
+
+    A whole-tree guard asserts an invariant by *scanning* the source tree - no
+    module under ``core/`` is unreachable, exactly one receipt-verify protocol
+    exists - rather than by importing the code it checks. The affected-set
+    selector builds its map from import edges, so no diff ever produces one to
+    a guard, and a pull request that adds the very thing a guard forbids runs
+    green on its own checks and reds in the merge group instead (#5428).
+
+    Args:
+        root: Repository root to search under. Defaults to this script's repo.
+
+    Returns:
+        Repo-relative paths, sorted, so a run's selection is reproducible.
+    """
+    base = root if root is not None else Path(__file__).resolve().parent.parent
+    found: list[Path] = []
+    for search_dir in _GUARD_SEARCH_DIRS:
+        directory = base / search_dir
+        if not directory.is_dir():
+            continue
+        for path in directory.rglob("test_*.py"):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:  # pragma: no cover - unreadable file is not a guard
+                continue
+            if _GUARD_MARKER.search(text):
+                found.append(path.relative_to(base))
+    return sorted(found)
+
+
 def discover_changed_files(base: str, diff_filter: str | None = None) -> list[str]:
     """Return repo-relative changed paths for empty affected-set decisions.
 
@@ -932,23 +974,45 @@ def main() -> None:
 
     if args.affected is not None:
         affected_files = discover_affected_files(args.affected)
-        files = affected_files
+        # The fail-closed decision is a statement about the *affected* set, so
+        # it is taken before the guards are unioned in. Guards are selected on
+        # every run and would otherwise make the set unconditionally non-empty,
+        # which would retire the gate rather than satisfy it.
+        if not affected_files:
+            changed_files = discover_changed_files(args.affected)
+            deleted_files = discover_changed_files(args.affected, diff_filter="D")
+            if changed_files_require_tests(changed_files, deleted_files):
+                print(
+                    "No affected tests found for code or workflow changes; failing closed. "
+                    f"Compared {_compared_range(args.affected)}."
+                )
+                for changed_file in changed_files:
+                    print(f"  {changed_file}")
+                sys.exit(1)
+        # Whole-tree guards scan the tree instead of importing it, so no diff
+        # produces an import edge to them and the affected set never contains
+        # one. They run on every pull request rather than first failing in the
+        # merge group (#5428).
+        #
+        # The set is fixed and small, so it is carried by the FIRST shard
+        # rather than distributed: copying it into every shard would multiply a
+        # constant cost by the shard count, and adding it to every shard's
+        # slice would mean a shard whose affected set is empty is no longer
+        # empty - the contract
+        # ``test_empty_affected_shard_remains_success_when_other_shards_have_tests``
+        # pins. Unsharded runs take the whole set.
+        carries_guards = shard is None or shard[0] == 1
+        guard_files = (
+            [f for f in discover_whole_tree_guard_files() if f not in set(affected_files)] if carries_guards else []
+        )
         if args.keyword:
-            files = [f for f in files if args.keyword in f.stem]
-        if shard is not None:
-            files = shard_files(files, *shard, durations=shard_durations or None)
+            affected_files = [f for f in affected_files if args.keyword in f.stem]
+            guard_files = [f for f in guard_files if args.keyword in f.stem]
+        files = shard_files(affected_files, *shard, durations=shard_durations or None) if shard else affected_files
+        if guard_files:
+            print(f"Including {len(guard_files)} whole-tree guard test file(s) regardless of the diff")
+        files = sorted(set(files) | set(guard_files))
         if not files:
-            if not affected_files:
-                changed_files = discover_changed_files(args.affected)
-                deleted_files = discover_changed_files(args.affected, diff_filter="D")
-                if changed_files_require_tests(changed_files, deleted_files):
-                    print(
-                        "No affected tests found for code or workflow changes; failing closed. "
-                        f"Compared {_compared_range(args.affected)}."
-                    )
-                    for changed_file in changed_files:
-                        print(f"  {changed_file}")
-                    sys.exit(1)
             _report_empty_selection(shard, context="affected ", base=args.affected)
             sys.exit(0)
         shard_label = f" [shard {shard[0]}/{shard[1]}]" if shard else ""

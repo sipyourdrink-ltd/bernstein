@@ -808,6 +808,7 @@ markers = [
     "allow_network: opt out of the autouse unit no-network guard (rare; a genuine integration test belongs in tests/integration/ instead)",
     "protocol: protocol compatibility tests; applied to every item under tests/protocol/ by that directory's conftest, and run by the publish workflow's release gate",
     "auditor_question: binds one conformance vector under tests/integration/conformance/auditor/ to the question it answers; the argument is a question number registered in that suite's questions.py",
+    "whole_tree_guard: asserts an invariant over the whole source tree by scanning it; no diff produces an import edge to these, so `scripts/run_tests.py --affected` selects them on every pull request regardless of what changed",
 ]
 # Visible warnings without converting to errors; individual tests or runs
 # can tighten via `pytest -W error::DeprecationWarning`.
