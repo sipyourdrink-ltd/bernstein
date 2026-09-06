@@ -92,6 +92,11 @@ class PreviewTokenIssuer:
     def __init__(self, secret: str, *, algorithm: str = "HS256") -> None:
         if not secret:
             raise ValueError("PreviewTokenIssuer requires a non-empty secret")
+        # The manager is built per-issue, so an algorithm it cannot sign with
+        # would otherwise surface on the first link an operator tries to
+        # create rather than when the issuer is configured. Constructing one
+        # here is the cheapest way to apply exactly the manager's own rule.
+        JWTManager(secret, algorithm=algorithm)
         self._secret = secret
         self._algorithm = algorithm
 

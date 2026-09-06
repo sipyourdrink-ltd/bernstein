@@ -9,12 +9,29 @@ import logging
 import time
 from dataclasses import dataclass, field
 from threading import Lock
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
 _REFRESH_BUFFER_SECONDS: float = 300.0  # 5 minutes
 _MAX_REFRESH_FAILURES: int = 3
+
+#: The HMAC family this manager can sign and verify, mapped to the digest each
+#: one names. Kept in step with ``auth.create_jwt`` / ``auth.verify_jwt``, which
+#: accept the same three: ``BERNSTEIN_AUTH_JWT_ALGORITHM`` selects one for both
+#: sides, so a token this manager issues has to be one that verifier accepts.
+#:
+#: An algorithm outside this set is refused at construction rather than
+#: defaulted. The header is a claim about how the signature was produced, and
+#: a manager that cannot honour the claim must not make it.
+_DIGESTS: dict[str, Callable[[], Any]] = {
+    "HS256": hashlib.sha256,
+    "HS384": hashlib.sha384,
+    "HS512": hashlib.sha512,
+}
 
 
 @dataclass
@@ -42,11 +59,24 @@ class JWTManager:
         Args:
             secret: Secret key for signing tokens.
             expiry_hours: Token expiry in hours (default 24).
-            algorithm: Signing algorithm (default HS256).
+            algorithm: Signing algorithm. One of ``HS256``, ``HS384`` or
+                ``HS512`` - the same three ``auth.create_jwt`` accepts.
+
+        Raises:
+            ValueError: If *algorithm* is not one this manager can sign with.
+                Refused here rather than silently downgraded: the value ends
+                up in the token header as a claim about how the signature was
+                made, and a manager that cannot honour that claim must not
+                issue it.
         """
+        digest = _DIGESTS.get(algorithm)
+        if digest is None:
+            msg = f"Unsupported algorithm: {algorithm!r} (supported: {sorted(_DIGESTS)})"
+            raise ValueError(msg)
         self._secret = secret.encode("utf-8")
         self._expiry_seconds = expiry_hours * 3600
         self._algorithm = algorithm
+        self._digest = digest
 
     def create_token(
         self,
@@ -119,7 +149,7 @@ class JWTManager:
 
         # Create signature
         message = f"{header_b64}.{payload_b64}"
-        signature = hmac.new(self._secret, message.encode(), hashlib.sha256).digest()
+        signature = hmac.new(self._secret, message.encode(), self._digest).digest()
         signature_b64 = self._base64url_encode(signature)
 
         return f"{header_b64}.{payload_b64}.{signature_b64}"
@@ -165,10 +195,11 @@ class JWTManager:
         if not hmac.compare_digest(alg_obj.encode("utf-8"), self._algorithm.encode("utf-8")):
             raise ValueError(f"Unexpected alg {alg_obj!r}; expected {self._algorithm!r}")
 
-        # Verify signature (HMAC-SHA256 is the only algorithm this manager
-        # supports today; _algorithm is validated above).
+        # Verify with the digest the configured algorithm names. The header
+        # was compared against ``self._algorithm`` above, so this is the
+        # digest that header claims - never one chosen by the token.
         message = f"{header_b64}.{payload_b64}"
-        expected_signature = hmac.new(self._secret, message.encode(), hashlib.sha256).digest()
+        expected_signature = hmac.new(self._secret, message.encode(), self._digest).digest()
         actual_signature = self._base64url_decode(signature_b64)
 
         if not hmac.compare_digest(expected_signature, actual_signature):
