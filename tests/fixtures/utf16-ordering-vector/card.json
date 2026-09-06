@@ -1,0 +1,25 @@
+{
+  "adapter": "claude",
+  "agent_id": "utf16-ordering-vector",
+  "budget_mode": "graceful-finish-on-low",
+  "capabilities": [],
+  "created_at": 1767225600.0,
+  "denied_capabilities": [],
+  "expires_at": 1798761600.0,
+  "extensions": {
+    "plain": "ascii-control",
+    "￿": "bmp-u-ffff",
+    "𝄞": "supplementary-u-1d11e"
+  },
+  "max_budget_usd": 10.0,
+  "max_steps": 30,
+  "max_tokens": 64000,
+  "model": "claude-opus-5",
+  "protocol_version": "",
+  "role": "reviewer",
+  "scope": [],
+  "security_schemes": [],
+  "signatures": [],
+  "supported_interfaces": [],
+  "svid_reference": ""
+}
