@@ -193,9 +193,7 @@ def test_github_parser_has_no_literal_event_name_comparisons() -> None:
             hit = sorted(_FORBIDDEN_EVENT_LITERALS.intersection(candidates))
             if hit:
                 offenders.append(f"{name}:{node.lineno}:{hit}")
-    assert not offenders, (
-        "ingest parsers must not compare event-name literals; found: " + ", ".join(offenders)
-    )
+    assert not offenders, "ingest parsers must not compare event-name literals; found: " + ", ".join(offenders)
 
 
 def test_journal_entry_records_catalogue_content_hash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
