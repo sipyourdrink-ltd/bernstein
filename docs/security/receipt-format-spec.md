@@ -161,6 +161,36 @@ retained events rather than trust the serialized values.
 > (a different document type). The run-attestation receipt binds only the
 > audit-chain witnesses listed above.
 
+### Run-receipt subject binding (schema 1.1.0)
+
+A run receipt (`https://bernstein.run/attestations/run-receipt/v1`) binds the
+recomputed heads and counts of the journal, spine, and optional audit range into
+a canonical subject dictionary:
+
+```json
+{
+  "audit_range_event_count": 2,
+  "audit_range_head_hmac": "<hex>",
+  "audit_range_head_sha256": "<hex>",
+  "audit_range_since": "2020-01-01T00:00:00.000000Z",
+  "audit_range_until": "2100-01-01T00:00:00.000000Z",
+  "endpoints": [{"adapter": "...", "base_url": "...", "model": "...", "profile": "..."}],
+  "journal_event_count": 3,
+  "journal_head": "<hex>",
+  "run_id": "<run-id>",
+  "spine_entry_count": 2,
+  "spine_head": "<hex>"
+}
+```
+
+- When `audit_range` is omitted, all `audit_range_*` keys are omitted from the
+  binding block, preserving byte-identity across versions.
+- Under schema `1.1.0`, embedding an audit range binds `audit_range_since`,
+  `audit_range_until`, `audit_range_event_count`, and `audit_range_head_hmac`
+  alongside `audit_range_head_sha256` to prevent post-signing window relabelling.
+- Under legacy schema `1.0.0`, only `audit_range_head_sha256` is bound. Legacy
+  receipts verify with a warning (`"audit window unbound in schema 1.0.0"`).
+
 ## Signing key
 
 Every format signs with the same Ed25519 key, embedded in the receipt as an

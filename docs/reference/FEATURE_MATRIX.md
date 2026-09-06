@@ -312,6 +312,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein escalation show/verify`](../operations/stall-escalation.md) | Full | 3 | Project and reconstruct escalation receipts from the journal |
 | [`bernstein supervisor status/escalate`](../api/supervisor.md) | Full | 3 | Supervise stalled workers and seal stall escalation receipts |
 | [`bernstein delegation verify`](../operations/delegation-verify.md) | Full | 4 | Reconstruct and verify a run's delegation chain |
+| [`bernstein identity review`](../operations/access-review.md) | Full | 4 | Derive a signed per-principal access review from the identity chains and record a reviewer's sign-off as a chain event |
 | [`bernstein credential emit/verify`](../operations/content-credentials.md) | Full | 3 | Project an artifact's lineage into a signed C2PA credential and verify it |
 | [`bernstein skills provenance/verify`](../operations/skill-provenance.md) | Full | 3 | Recompute a skill's install receipt and usage-provenance graph |
 | [`bernstein schedule verify/audit`, `schedule show --at`](../operations/schedule.md) | Full | 3 | Replay recorded fires, chain-check fire receipts, project a schedule at a time |

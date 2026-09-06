@@ -18,7 +18,14 @@ from rich.table import Table
 
 from bernstein.cli.helpers import console
 from bernstein.core.observability.decision_log import parse_duration
-from bernstein.core.persistence import run_scorecard as run_scorecard_mod
+from bernstein.core.persistence.run_scorecard import (
+    RunScorecard,
+    VerifyResult,
+    build_run_scorecard,
+    read_scorecard_artifact,
+    verify_scorecard,
+    write_scorecard_artifact,
+)
 from bernstein.core.persistence.runs_report import RunOutcome, list_finished_runs
 from bernstein.core.persistence.work_ledger import WorkLedger, run_ledger_dir
 
@@ -118,12 +125,15 @@ def runs_report_cmd(since: str | None, workdir: Path | None, output_json: bool) 
     help="Emit the scorecard content as JSON instead of a one-line summary.",
 )
 def runs_scorecard_cmd(run_id: str, workdir: Path | None, verify: bool, output_json: bool) -> None:
-    """Derive a content-addressed scorecard for a single run (#5404).
+    """Build or verify the per-run scorecard (#5404).
 
-    The scorecard is the deterministic, content-addressed projection of a
+    By default builds the scorecard from the run's work ledger and writes
+    the content-addressed artifact under ``<root>/.sdd/runs/<run_id>/scorecard/``.
+    Pass ``--verify`` to re-derive and compare instead of writing. The
+    scorecard is the deterministic, content-addressed projection of a
     run's work ledger -- the same facts ``bernstein runs report`` already
-    classifies plus a small set of counters (steps, tasks,
-    cost_usd, host, parent_run_id, attempt_count, elapsed_seconds).
+    classifies plus a small set of counters (steps, tasks, cost_usd,
+    host, parent_run_id, attempt_count, elapsed_seconds).
 
     \b
     Modes:
@@ -152,12 +162,12 @@ def runs_scorecard_cmd(run_id: str, workdir: Path | None, verify: bool, output_j
         chosen = artifacts[-1]
         for candidate in reversed(artifacts):
             try:
-                run_scorecard_mod.read_scorecard_artifact(candidate)
+                read_scorecard_artifact(candidate)
             except (ValueError, OSError):
                 continue
             chosen = candidate
             break
-        result = run_scorecard_mod.verify_scorecard(root, run_id, chosen)
+        result: VerifyResult = verify_scorecard(root, run_id, chosen)
         if output_json:
             console.print_json(
                 json.dumps(
@@ -175,24 +185,27 @@ def runs_scorecard_cmd(run_id: str, workdir: Path | None, verify: bool, output_j
         else:
             console.print(f"[red]FAIL[/red] {result.description}")
         if not result.ok:
+            # The mismatch has already been reported: as the JSON envelope on
+            # the machine path, as the FAIL line on the human path. Exit
+            # non-zero without emitting a second message, which would append a
+            # trailing line after the envelope and stop it parsing as JSON.
             raise click.exceptions.Exit(1)
         return
 
     with WorkLedger.open(ledger_dir) as journal:
-        scorecard = run_scorecard_mod.build_run_scorecard(journal)
-    artifact_path = run_scorecard_mod.write_scorecard_artifact(root, run_id, scorecard)
+        scorecard: RunScorecard = build_run_scorecard(journal)
+    out_path = write_scorecard_artifact(root, run_id, scorecard)
 
     if output_json:
-        console.print_json(
-            json.dumps({"artifact": str(artifact_path), "sha256": scorecard.sha256, "content": scorecard.content})
-        )
+        envelope = {
+            "artifact": str(out_path),
+            "sha256": scorecard.sha256,
+            "content": scorecard.content,
+        }
+        console.print_json(json.dumps(envelope))
         return
 
-    console.print(
-        f"wrote {artifact_path} (sha {scorecard.sha256[:16]}..., "
-        f"outcome={scorecard.content['outcome']}, tasks_total={scorecard.content['tasks_total']}, "
-        f"cost_usd={scorecard.content['cost_usd']})"
-    )
+    console.print(f"wrote {out_path} (sha {scorecard.sha256[:16]}..., outcome={scorecard.content.get('outcome', '?')})")
 
 
 __all__ = ["runs_group"]

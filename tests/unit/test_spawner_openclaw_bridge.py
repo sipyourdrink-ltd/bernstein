@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
 
 import pytest
-from bernstein.core.models import AgentSession
+from bernstein.core.models import AgentSession, Scope
 from bernstein.core.spawner import AgentSpawner
 
 from bernstein.adapters.plugin_sdk import SamplingParamsRefusal
@@ -117,6 +117,22 @@ def test_bridge_is_preferred_over_local_adapter(
     assert session.bridge_session_key == "agent:ops:bernstein-backend-1"
     adapter.spawn.assert_not_called()
     assert bridge.spawn_calls
+
+
+def test_bridge_request_uses_resolved_runtime_floor(
+    tmp_path: Path,
+    make_task: Callable[..., Task],
+    mock_adapter_factory: Callable[..., CLIAdapter],
+) -> None:
+    adapter = cast("MagicMock", mock_adapter_factory(pid=42))
+    bridge = _FakeBridge()
+    spawner = _make_spawner(tmp_path, adapter, bridge)
+    spawner.set_max_agent_runtime_s(5400)
+
+    session = spawner.spawn_for_tasks([make_task(scope=Scope.SMALL)])
+
+    assert session.timeout_s == 5400
+    assert bridge.spawn_calls[0].timeout_seconds == 5400
 
 
 def test_bridge_pre_accept_failure_falls_back_to_local(
