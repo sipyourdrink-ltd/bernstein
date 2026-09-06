@@ -29,7 +29,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
 
@@ -76,6 +76,58 @@ def _canonical_json(value: Any) -> bytes:
 def _sha256_of(value: Any) -> str:
     """Return the ``sha256:``-prefixed digest of *value*'s canonical JSON."""
     return "sha256:" + hashlib.sha256(_canonical_json(value)).hexdigest()
+
+
+#: Recorded when the served model id could not be resolved. Absence is a
+#: fact in its own right: "we do not know which model served this" must never
+#: be readable as "a different one did".
+UNRESOLVED_IDENTITY: Final[str] = "unresolved"
+
+
+@dataclass(frozen=True, slots=True)
+class ProducingIdentity:
+    """Who produced the artefact a panel judged (issue #5473).
+
+    A verdict names its judges and, until this record, nothing named the party
+    whose work they judged -- so "reviewed independently" was an assertion
+    nobody could check from the artefact.
+
+    The four axes are the ones a disjointness question is actually asked on:
+    the same served model behind two adapter names is not independence, and
+    neither is two models from one family when the policy cares about family.
+
+    ``model_served`` is deliberately allowed to be ``UNRESOLVED_IDENTITY``
+    rather than dropped. #5037 established that requested and served ids are
+    different facts; an unresolvable served id is an unknown, and a later
+    verifier must be able to tell an unknown from a mismatch.
+    """
+
+    adapter: str
+    model_requested: str
+    model_served: str = UNRESOLVED_IDENTITY
+    family: str = UNRESOLVED_IDENTITY
+
+    def __post_init__(self) -> None:
+        if not self.adapter:
+            raise ValueError("adapter must be a non-empty string")
+        if not self.model_requested:
+            raise ValueError("model_requested must be a non-empty string")
+        if not self.model_served:
+            raise ValueError(
+                "model_served must be a non-empty string; use UNRESOLVED_IDENTITY "
+                "when the served id is unknown, so absence is recorded as absence"
+            )
+        if not self.family:
+            raise ValueError("family must be a non-empty string; use UNRESOLVED_IDENTITY when unknown")
+
+    def to_dict(self) -> dict[str, str]:
+        """Serialise for the record's binding, keys in a fixed order."""
+        return {
+            "adapter": self.adapter,
+            "model_requested": self.model_requested,
+            "model_served": self.model_served,
+            "family": self.family,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,10 +273,16 @@ class AdjudicationRecord:
     final_verdict: Verdict
     timestamp: int
     journal_entry_hash: str = ""
+    # Additive, optional (issue #5473). ``None`` is dropped from the canonical
+    # bytes, so every record written before this field keeps its exact wire
+    # form and spine anchor. Present, it puts the producing identity inside
+    # the signed binding rather than beside it, which is what makes a later
+    # disjointness check answerable from the record alone.
+    producing_identity: ProducingIdentity | None = None
 
     def _binding(self) -> dict[str, Any]:
         """Return the anchor-free binding (the bytes the spine hashes)."""
-        return {
+        binding: dict[str, Any] = {
             "run_id": self.run_id,
             "inputs_hash": self.inputs_hash,
             "rubric_hash": self.rubric_hash,
@@ -233,6 +291,11 @@ class AdjudicationRecord:
             "final_verdict": self.final_verdict.value,
             "timestamp": self.timestamp,
         }
+        # Added only when set. A key present with a null would change the
+        # canonical bytes of every pre-existing record and break its anchor.
+        if self.producing_identity is not None:
+            binding["producing_identity"] = self.producing_identity.to_dict()
+        return binding
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the anchor-free binding to canonical JSON bytes."""
@@ -281,6 +344,7 @@ def adjudicate(
     panel: PanelConfig,
     judge_verdicts: tuple[JudgeVerdict, ...],
     now: int,
+    producing_identity: ProducingIdentity | None = None,
 ) -> AdjudicationRecord:
     """Bind inputs + rubric + panel + verdicts into an anchored, signed record.
 
@@ -301,6 +365,12 @@ def adjudicate(
         panel: The independent panel configuration.
         judge_verdicts: Per-judge verdicts in panel declaration order.
         now: Integer timestamp; recorded and used as the spine timestamp.
+        producing_identity: Who produced the artefact being judged (#5473).
+            Optional and additive: omitted, the record's canonical bytes and
+            anchor are exactly what they were before this parameter existed.
+            Supplied, it lands inside the signed binding, so a verifier can
+            decide disjointness from the record without consulting the config
+            that was in force at the time.
 
     Returns:
         The anchored :class:`AdjudicationRecord`.
@@ -323,6 +393,7 @@ def adjudicate(
         per_judge_verdict=tuple(v.to_dict() for v in judge_verdicts),
         final_verdict=final,
         timestamp=now,
+        producing_identity=producing_identity,
     )
 
     spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=hmac_key)
@@ -345,6 +416,7 @@ def adjudicate(
         final_verdict=record.final_verdict,
         timestamp=record.timestamp,
         journal_entry_hash=anchor,
+        producing_identity=record.producing_identity,
     )
     # Persist the full record (binding + anchor) for offline `gate verify`.
     out_dir = records_dir(lineage_root, run_id)

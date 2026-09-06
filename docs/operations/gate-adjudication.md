@@ -30,10 +30,37 @@ Each adjudication is one signed record:
 | `per_judge_verdict` | One entry per judge, in panel declaration order. |
 | `final_verdict` | The aggregated terminal verdict (`pass` / `fail`). |
 | `timestamp` | Integer timestamp, stable across replays of a fixture. |
+| `producing_identity` | Optional. Who produced the artefact judged: `adapter`, `model_requested`, `model_served`, `family`. |
 | `journal_entry_hash` | The lineage-spine entry hash over the record's canonical bytes. |
 
 Records persist under `.sdd/lineage/<run_id>/adjudication_records/*.json`,
 colocated with the run's spine directory.
+
+### The producing identity
+
+A record names its judges. Until `producing_identity`, it did not name the
+party whose work they judged, so *"this was reviewed independently"* was an
+assertion a reader could not check from the artefact.
+
+The field is **optional and additive**. When unset it is dropped from the
+canonical bytes entirely, so every record written before it keeps its exact
+wire form and its exact spine anchor. When set, it lands **inside the signed
+binding**, not beside it, so a later verifier decides disjointness from the
+record alone rather than from whatever configuration was in force at the time.
+
+Four axes, because those are the ones a disjointness question is actually
+asked on: the same served model behind two adapter names is not independence,
+and neither is two models of one family when the policy cares about family.
+
+`model_served` and `family` default to `unresolved` rather than being omitted.
+Requested and served ids are different facts (see the model-reference work in
+#5037), and a reader must be able to tell *"we do not know which model served
+this"* from *"a different one did"*.
+
+**This field records; it does not decide.** A record carrying a producer
+identical to its judge is still written, and still verifies. Deriving a
+verdict class from disjointness, and refusing a collision, are separate
+changes.
 
 ## Panel independence
 
