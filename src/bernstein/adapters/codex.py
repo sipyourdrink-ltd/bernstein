@@ -134,6 +134,86 @@ _TIERS_REPLACING_VENDOR_SANDBOX = frozenset({"container", "vm"})
 _UNDECLARED_HOST_ISOLATION = "none"
 
 
+def _worktree_gitdir_roots(workdir: Path) -> list[str]:
+    """Return the git dirs ``codex exec`` must be able to write in *workdir*.
+
+    A linked git worktree's ``.git`` is a FILE pointing at
+    ``<repo>/.git/worktrees/<id>``, which lies OUTSIDE the worktree. Codex's
+    ``workspace-write`` sandbox makes only the workspace root writable, so an
+    agent spawned in a Bernstein worktree cannot create ``index.lock`` and can
+    therefore never commit. Measured 2026-09-03, verbatim from a real run:
+    ``fatal: Unable to create '<repo>/.git/worktrees/<id>/index.lock':
+    Operation not permitted``. Every codex agent in the v3 acceptance run did
+    its work, failed to commit, and exited 0 with the tree dirty; the
+    reap-and-merge then committed it as ``[WIP]`` and the task was recorded
+    FAILED.
+
+    A normal checkout keeps its git dir inside the workspace, so this returns
+    nothing and the argv is unchanged. Anything that is not a git repository
+    returns nothing too - the sandbox stays exactly as it was.
+
+    This reads git's own on-disk layout rather than shelling out to
+    ``git rev-parse``: it runs on the spawn path, where a subprocess buys a
+    fork, a ``PATH`` lookup and a timeout to answer a question two small files
+    already answer. The layout is git's documented worktree contract - a linked
+    worktree's ``.git`` file holds ``gitdir: <path>``, and that directory holds
+    a ``commondir`` file naming the shared git dir (``gitrepository-layout(5)``).
+
+    Returns:
+        Absolute paths to add as writable roots, nearest-enclosing first, with
+        any path already contained in another dropped.
+    """
+    dot_git = workdir / ".git"
+    try:
+        # A directory here is an ordinary checkout: the git dir is already
+        # inside the workspace root and needs no extra grant.
+        if not dot_git.is_file():
+            return []
+        pointer = dot_git.read_text(encoding="utf-8").strip()
+    except OSError:
+        return []
+
+    _GITDIR_PREFIX = "gitdir:"
+    if not pointer.startswith(_GITDIR_PREFIX):
+        return []
+    raw_git_dir = pointer[len(_GITDIR_PREFIX) :].strip()
+    if not raw_git_dir:
+        return []
+    git_dir = Path(raw_git_dir)
+    if not git_dir.is_absolute():
+        git_dir = workdir / git_dir
+
+    # ``commondir`` exists only in a LINKED worktree's git dir. Its absence
+    # means ``.git`` is a file for the other reason - ``--separate-git-dir`` -
+    # where the git dir is already the common one and git writes nothing
+    # outside it that a second root would cover.
+    try:
+        common_raw = (git_dir / "commondir").read_text(encoding="utf-8").strip()
+    except OSError:
+        return []
+    if not common_raw:
+        return []
+    common_dir = Path(common_raw)
+    if not common_dir.is_absolute():
+        common_dir = git_dir / common_dir
+
+    try:
+        git_dir = git_dir.resolve()
+        common_dir = common_dir.resolve()
+    except OSError:
+        return []
+
+    # The common dir holds objects and refs, which a commit writes too, so it is
+    # the load-bearing one; the per-worktree dir (index, HEAD) is normally nested
+    # inside it and then needs no separate root. Both are passed only for a
+    # layout where it is not. ``--add-dir`` is repeatable - verified against
+    # codex-cli 0.152.0, not assumed.
+    roots = [str(common_dir)]
+    if not git_dir.is_relative_to(common_dir):
+        roots.append(str(git_dir))
+    return roots
+
+
 def _has_codex_auth() -> bool:
     """Return True when Codex has a usable credential: an API key or OAuth session."""
     return bool(os.environ.get("OPENAI_API_KEY")) or _CODEX_AUTH_FILE.exists()
@@ -367,6 +447,16 @@ class CodexAdapter(CLIAdapter):
             "-o",
             str(output_path),
         ]
+        # Make the worktree's git dir writable so the agent can actually commit.
+        # No-op outside a linked worktree. See _worktree_gitdir_roots.
+        #
+        # Only the sandboxed spawn needs this. When the vendor sandbox is
+        # dropped (#5341/#5343) there is no workspace root to extend, so the
+        # roots would be inert argv; keeping them off that path leaves the
+        # bypass invocation byte-identical to what it is today.
+        if not self._sandbox_bypassed():
+            for _root in _worktree_gitdir_roots(workdir):
+                cmd.extend(["--add-dir", _root])
         # Session-id binding is contract-driven: the argv gains a flag only
         # when the contract names one. ``codex exec`` exposes no flag that
         # accepts a caller-supplied session id -- only a ``resume

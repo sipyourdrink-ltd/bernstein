@@ -57,6 +57,14 @@ from bernstein.core.govern.playbook_models import (
     PlaybookValidationError,
     RemediationAction,
 )
+from bernstein.core.govern.probe import (
+    CollectionMethod,
+    CostClass,
+    Probe,
+    ProbeError,
+    ProbeSet,
+    load_probe_set,
+)
 from bernstein.core.govern.proposal import DraftProposal, ProposalStatus
 from bernstein.core.govern.reconcile import (
     compute_reconcile_diff,
@@ -262,6 +270,8 @@ __all__ = [
     "ChangeOutcome",
     "ChangeResult",
     "ChangeStatus",
+    "CollectionMethod",
+    "CostClass",
     "DesiredEntity",
     "DesiredState",
     "DiffAction",
@@ -292,6 +302,9 @@ __all__ = [
     "Playbook",
     "PlaybookClause",
     "PlaybookValidationError",
+    "Probe",
+    "ProbeError",
+    "ProbeSet",
     "ProducerState",
     "ProposalStatus",
     "ReconcileDiff",
@@ -319,6 +332,7 @@ __all__ = [
     "compute_reconcile_diff",
     "freshness_gated_read",
     "load_lane_set",
+    "load_probe_set",
     "observation_store_root",
     "propose_reconcile",
     "reconcile_lanes",
