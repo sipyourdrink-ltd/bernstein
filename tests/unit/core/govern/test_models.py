@@ -38,7 +38,16 @@ class TestSurface:
             "surface": "arn:aws:s3:::my-bucket",
             "observed_value": "public-read",
             "evidence_ref": "query-123",
+            # Serialized, but deliberately NOT hashed -- see identity_dict.
+            "observed_at": 0.0,
         }
+
+    def test_surface_identity_excludes_the_observation_time(self) -> None:
+        """The hash is about the environment; the timestamp is about the observer."""
+        seen_now = Surface("arn:aws:s3:::b", "public-read", "q1", observed_at=1000.0)
+        seen_later = Surface("arn:aws:s3:::b", "public-read", "q1", observed_at=2000.0)
+        assert seen_now.identity_dict() == seen_later.identity_dict()
+        assert "observed_at" not in seen_now.identity_dict()
 
     def test_surface_from_dict(self) -> None:
         d = {
