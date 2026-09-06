@@ -35,6 +35,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from bernstein.core import _REDIRECT_MAP
+from bernstein.testing.ratchet import assert_ratchet_matches
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src" / "bernstein"
@@ -164,7 +165,7 @@ def _current_orphans() -> set[str]:
 
 
 def test_every_compliance_module_has_a_non_test_importer() -> None:
-    """The set of caller-less compliance modules may shrink, never grow.
+    """The set of caller-less compliance modules may shrink, never grow (#5552, #5503).
 
     Load-bearing: on an unmodified tree this fails without the allowlist,
     because three compliance modules had zero non-test importers when the
@@ -174,19 +175,23 @@ def test_every_compliance_module_has_a_non_test_importer() -> None:
     and fails again the moment a fifth compliance module goes dark.
     """
     current = _current_orphans()
-
-    appeared = sorted(current - KNOWN_ORPHANS)
-    assert not appeared, (
-        f"new caller-less compliance modules: {appeared}. Wire each one to a consumer "
-        "that exists today, or delete the module together with its tests and its "
-        "bernstein/core/__init__.py alias entry."
+    file_mapping = {
+        label: p.relative_to(REPO_ROOT).as_posix()
+        for label, (p, _) in CANDIDATES.items()
+    }
+    assert_ratchet_matches(
+        current,
+        KNOWN_ORPHANS,
+        subject="compliance module reachability allowlist",
+        constant_name="KNOWN_ORPHANS",
+        file_mapping=file_mapping,
+        wire_hint="Wire each one to a consumer that exists today, or delete the module together with its tests and its bernstein/core/__init__.py alias entry.",
     )
 
-    removed = sorted(KNOWN_ORPHANS - current)
-    assert not removed, (
-        f"{removed} now has a caller or is gone from the tree; strike it from "
-        "KNOWN_ORPHANS so the list keeps shrinking."
-    )
+
+def test_no_stale_exemptions() -> None:
+    """The exemption list may only shrink (asserted in test_every_compliance_module_has_a_non_test_importer)."""
+    test_every_compliance_module_has_a_non_test_importer()
 
 
 def test_a_wired_module_is_seen_through_its_legacy_alias() -> None:
