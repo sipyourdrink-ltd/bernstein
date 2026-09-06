@@ -289,7 +289,7 @@ def get_adapter(cli_name: str, *, admission_gate: AdmissionGateLike | None = Non
     if admission_gate is not None:
         admission_gate.admit(cli_name)
 
-    instance = adapter_cls if isinstance(adapter_cls, CLIAdapter) else adapter_cls()
+    instance = adapter_cls if isinstance(adapter_cls, CLIAdapter) else adapter_cls() # type: ignore[assignment]  # dynamic adapter resolution
     instance.registry_name = cli_name
     return instance
 
