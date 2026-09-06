@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from bernstein.core.govern.agent_presence import (
+    AgentPresence,
+    Enrollment,
+    apply_presence,
+    enrollment_gap,
+)
 from bernstein.core.govern.apply import (
     ApplyStatus,
     ChangeApplier,
@@ -264,6 +270,7 @@ def _compare_values(observed: str, ceiling: str) -> int:
 
 
 __all__ = [
+    "AgentPresence",
     "ApplyStatus",
     "Barrier",
     "ChangeApplier",
@@ -278,6 +285,7 @@ __all__ = [
     "DraftProposal",
     "DuplicationFinding",
     "DuplicationReport",
+    "Enrollment",
     "EntityKind",
     "EntityPolicy",
     "EntityStatus",
@@ -322,12 +330,14 @@ __all__ = [
     "UnremediatedFinding",
     "Verdict",
     "apply_plan",
+    "apply_presence",
     "build_restore_plan",
     "collect_duplication",
     "collect_remediation",
     "compute_inputs_hash",
     "compute_plan",
     "compute_reconcile_diff",
+    "enrollment_gap",
     "freshness_gated_read",
     "load_lane_set",
     "load_probe_set",
